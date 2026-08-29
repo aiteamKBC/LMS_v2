@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { BrandLockup } from '@/components/BrandLockup';
 import { WorkspaceSwitcher } from '@/components/feature/WorkspaceSwitcher';
+import { isLearnerFlowAccount } from '@/lib/learnerFlowAccess';
 
 interface HeaderProps {
   pageTitle: string;
@@ -166,6 +167,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
   // record, so a real staff Position wins over the coarse RBAC role name.
   const roleLabel = auth.account?.position || auth.roles[0]?.name || '';
   const initials = initialsOf(displayName);
+  const focusedLearner = isLearnerFlowAccount(auth.account?.email || auth.user?.email);
 
   return (
     <>
@@ -173,14 +175,16 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
         read as one continuous bar across the top of the workspace. */}
     <header className={`workspace-topbar flex shrink-0 items-center gap-2 border-b border-foreground-100 bg-background-50 px-2 sm:px-3 md:gap-3 md:px-4 ${role === 'admin' ? 'h-[60px]' : 'h-14'}`}>
       {/* Hamburger — mobile only */}
-      <button
-        onClick={onToggleMobileSidebar}
-        className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-primary-50/70 hover:text-primary-700 lg:hidden"
-        title="Toggle menu"
-        aria-label="Toggle menu"
-      >
-        <AppIcon className="ri-menu-line text-lg"></AppIcon>
-      </button>
+      {onToggleMobileSidebar && (
+        <button
+          onClick={onToggleMobileSidebar}
+          className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-primary-50/70 hover:text-primary-700 lg:hidden"
+          title="Toggle menu"
+          aria-label="Toggle menu"
+        >
+          <AppIcon className="ri-menu-line text-lg"></AppIcon>
+        </button>
+      )}
 
       {/* Provider logo — below lg only. From lg up the sidebar carries the
           brand, and showing it twice was the duplication that read as clutter. */}
@@ -200,11 +204,13 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
         )}
       </div>
 
-      <button type="button" onClick={onOpenSearch} aria-label="Search users, accounts, modules" className="ml-auto hidden h-9 w-[min(22rem,32vw)] shrink-0 items-center gap-2 rounded-lg border border-foreground-200/70 bg-background-100/40 px-3 text-left text-[11px] text-foreground-400 transition-smooth hover:border-primary-300 hover:bg-background-50 lg:flex">
-        <AppIcon className="ri-search-line shrink-0 text-sm text-foreground-300"></AppIcon>
-        <span className="min-w-0 flex-1 truncate">Search users, accounts, modules...</span>
-        <kbd className="hidden rounded border border-foreground-200 bg-background-50 px-1.5 py-0.5 text-[9px] font-semibold text-foreground-500 xl:inline">⌘K</kbd>
-      </button>
+      {!focusedLearner && (
+        <button type="button" onClick={onOpenSearch} aria-label="Search users, accounts, modules" className="ml-auto hidden h-9 w-[min(22rem,32vw)] shrink-0 items-center gap-2 rounded-lg border border-foreground-200/70 bg-background-100/40 px-3 text-left text-[11px] text-foreground-400 transition-smooth hover:border-primary-300 hover:bg-background-50 lg:flex">
+          <AppIcon className="ri-search-line shrink-0 text-sm text-foreground-300"></AppIcon>
+          <span className="min-w-0 flex-1 truncate">Search users, accounts, modules...</span>
+          <kbd className="hidden rounded border border-foreground-200 bg-background-50 px-1.5 py-0.5 text-[9px] font-semibold text-foreground-500 xl:inline">⌘K</kbd>
+        </button>
+      )}
 
       {/* Below lg the title has no room, so the actions simply push right. */}
       <div className="flex-1 lg:hidden"></div>
@@ -218,13 +224,13 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
           reachable only from the dashboard. */}
       <WorkspaceSwitcher />
 
-      <div className="hidden items-center gap-1 sm:flex">
+      {!focusedLearner && <div className="hidden items-center gap-1 sm:flex">
         <Link to="/notifications" aria-label="Notifications" className="relative flex h-8 w-8 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-primary-50 hover:text-primary-600">
           <AppIcon className="ri-notification-3-line text-base"></AppIcon>
           <span className="absolute right-0.5 top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary-600 px-0.5 text-[8px] font-bold text-white">3</span>
         </Link>
         <Link to="/tasks" aria-label="Tasks" className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-primary-50 hover:text-primary-600"><AppIcon className="ri-clipboard-line text-base"></AppIcon></Link>
-      </div>
+      </div>}
 
       {/* Profile — kept: it is the only route to Sign Out. */}
       <div className="flex items-center gap-0.5">

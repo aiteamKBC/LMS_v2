@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { Panel } from '@/components/ui/Panel';
 import { SectionHeader } from '@/components/ui/SectionHeader';
+import { ProgressBar } from '@/components/ui/ProgressMetric';
+import { StatusBadge } from '@/components/ui/StatusBadge';
 import { formatDemoMinutes, setDemoTimeOverride, type DemoProgrammeSummary } from '@/lib/demoTime';
 
 // ============================================================================
@@ -25,12 +27,53 @@ function SummaryFigure({ icon, label, value }: { icon: string; label: string; va
   );
 }
 
-/** One material card in "Your Materials": name, progress, learning time,
- * current week/status and a Continue button. `summary` is the material's own
- * component-level rollup (see `timingsForModuleIds` + `summariseDemoTimings`)
- * — never a separately-tracked figure. */
+/** Cosmetic icon per card position — purely presentational, cycles through a
+ * fixed palette keyed by the material's authored `order` so it stays stable
+ * across renders without encoding any meaning of its own. */
+const MATERIAL_ICONS = ['ri-book-2-line', 'ri-bar-chart-box-line', 'ri-lightbulb-flash-line', 'ri-shield-check-line', 'ri-team-line', 'ri-compass-3-line'];
+
+type DemoMaterialStatus = 'not-available' | 'completed' | 'in-progress' | 'not-started';
+
+function materialStatus(available: boolean, complete: boolean, completionPct: number): DemoMaterialStatus {
+  if (!available) return 'not-available';
+  if (complete) return 'completed';
+  if (completionPct > 0) return 'in-progress';
+  return 'not-started';
+}
+
+const STATUS_META: Record<DemoMaterialStatus, { label: string; tone: 'positive' | 'info' | 'neutral' }> = {
+  'not-available': { label: 'Not yet available', tone: 'neutral' },
+  completed: { label: 'Completed', tone: 'positive' },
+  'in-progress': { label: 'In progress', tone: 'info' },
+  'not-started': { label: 'Not started', tone: 'neutral' },
+};
+
+/** The same Not started / In progress / Completed / Not yet available badge
+ * `DemoMaterialCard` shows, for reuse on the material drill-down header. */
+export function DemoMaterialStatusBadge({
+  available,
+  complete,
+  completionPct,
+  size = 'md',
+  className,
+}: {
+  available: boolean;
+  complete: boolean;
+  completionPct: number;
+  size?: 'sm' | 'md' | 'lg';
+  className?: string;
+}) {
+  const meta = STATUS_META[materialStatus(available, complete, completionPct)];
+  return <StatusBadge tone={meta.tone} label={meta.label} size={size} className={className} />;
+}
+
+/** One material card in "Your Materials": title, status, progress, learning
+ * time and the current/next activity, ending in a compact CTA. `summary` is
+ * the material's own component-level rollup (see `timingsForModuleIds` +
+ * `summariseDemoTimings`) — never a separately-tracked figure. */
 export function DemoMaterialCard({
   name,
+  order = 1,
   summary,
   currentWeekLabel,
   complete,
@@ -38,6 +81,8 @@ export function DemoMaterialCard({
   onContinue,
 }: {
   name: string;
+  /** The material's authored display order — used only to pick a stable icon. */
+  order?: number;
   summary: DemoProgrammeSummary;
   /** The material's current week label, or null when every week is done. */
   currentWeekLabel: string | null;
@@ -47,56 +92,71 @@ export function DemoMaterialCard({
   available: boolean;
   onContinue: () => void;
 }) {
-  const statusLabel = !available
-    ? 'Not yet available'
+  const status = materialStatus(available, complete, summary.completionPct);
+  const meta = STATUS_META[status];
+  const icon = MATERIAL_ICONS[(Math.max(1, order) - 1) % MATERIAL_ICONS.length];
+  const activityLabel = !available
+    ? null
     : complete
-      ? 'Complete'
+      ? 'All components complete'
       : currentWeekLabel
-        ? currentWeekLabel
-        : 'Not started';
+        ? `Continue: ${currentWeekLabel}`
+        : 'Ready to start';
+
   return (
-    <Panel>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-[14px] font-semibold text-foreground-900">{name}</p>
-          <p className="mt-0.5 text-[11px] text-foreground-400">{statusLabel}</p>
-        </div>
-        {available && (
-          <span className="shrink-0 rounded-full bg-primary-100 px-2 py-0.5 text-[11px] font-semibold text-primary-700">
-            {summary.completionPct}%
+    <Panel className="flex min-h-[190px] h-full flex-col">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-start gap-2.5">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-100 text-primary-600">
+            <AppIcon className={`${icon} text-[16px]`} />
           </span>
-        )}
+          <div className="min-w-0 pt-0.5">
+            <p className="text-[15px] font-semibold leading-snug text-foreground-900">{name}</p>
+            {activityLabel && <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-foreground-400">{activityLabel}</p>}
+          </div>
+        </div>
+        <StatusBadge tone={meta.tone} label={meta.label} size="sm" className="shrink-0" />
       </div>
+
       {available ? (
         <>
-          <ProgressBarThin percent={summary.completionPct} />
-          <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-foreground-500">
-            <span className="inline-flex items-center gap-1">
-              <AppIcon className="ri-time-line text-[11px]" />
-              {formatDemoMinutes(summary.completedMinutes)} of {formatDemoMinutes(summary.expectedMinutes)}
-            </span>
-            <span>{summary.materialsCompleted}/{summary.materialsTotal} complete</span>
+          <div className="mt-3.5 flex items-center justify-between gap-2">
+            <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-foreground-400">Progress</span>
+            <span className="text-[12px] font-semibold tabular-nums text-foreground-800">{summary.completionPct}%</span>
           </div>
-          <button
-            type="button"
-            onClick={onContinue}
-            className="mt-3 w-full rounded-lg bg-primary-600 px-3 py-2 text-[12px] font-semibold text-white transition hover:bg-primary-700"
-          >
-            Continue
-          </button>
+          <ProgressBar percent={summary.completionPct} tone="bg-primary-500" className="mt-1" />
+
+          <div className="mt-4 flex flex-1 flex-wrap items-end justify-between gap-x-4 gap-y-3">
+            <div className="flex flex-col gap-1 text-[11px] text-foreground-500">
+              <span className="inline-flex items-center gap-1">
+                <AppIcon className="ri-time-line text-[11px]" />
+                {formatDemoMinutes(summary.completedMinutes)} of {formatDemoMinutes(summary.expectedMinutes)}
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <AppIcon className="ri-list-check-2 text-[11px]" />
+                {summary.materialsCompleted}/{summary.materialsTotal} components
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={onContinue}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-primary-600 px-4 py-2 text-[12px] font-semibold text-white shadow-sm transition hover:bg-primary-700"
+            >
+              Open material
+              <AppIcon className="ri-arrow-right-line text-[12px]" />
+            </button>
+          </div>
         </>
       ) : (
-        <p className="mt-3 text-[11px] text-foreground-400">This material has no published content yet.</p>
+        <div className="mt-3.5 flex flex-1 flex-col justify-between gap-3">
+          <p className="text-[11px] text-foreground-400">This material has no published content yet.</p>
+          <span className="inline-flex w-fit items-center gap-1 rounded-lg bg-background-100 px-3 py-1.5 text-[12px] font-semibold text-foreground-400">
+            <AppIcon className="ri-time-line text-[12px]" />
+            Coming soon
+          </span>
+        </div>
       )}
     </Panel>
-  );
-}
-
-function ProgressBarThin({ percent }: { percent: number }) {
-  return (
-    <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-background-200">
-      <div className="h-full rounded-full bg-primary-500 transition-all" style={{ width: `${Math.max(0, Math.min(100, percent))}%` }} />
-    </div>
   );
 }
 

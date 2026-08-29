@@ -30,7 +30,7 @@ function formatSize(bytes: number): string {
 }
 
 export function AssignmentEvidence({
-  kind, learnerId, componentId, trainingPlanDetails, onUploaded,
+  kind, learnerId, componentId, trainingPlanDetails, onUploaded, inputId, showPanel = true,
 }: {
   kind: LearnerKind;
   learnerId: string;
@@ -38,6 +38,10 @@ export function AssignmentEvidence({
   trainingPlanDetails: EvidenceTrainingPlanDetails;
   /** Fired after a successful upload so callers can re-check completion criteria. */
   onUploaded?: () => void;
+  /** Lets a button elsewhere on the same page open this uploader directly. */
+  inputId?: string;
+  /** Keep only the file input mounted when the page supplies its own trigger. */
+  showPanel?: boolean;
 }) {
   const [files, setFiles] = useState<EvidenceRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,6 +110,20 @@ export function AssignmentEvidence({
     }
   };
 
+  if (!showPanel) {
+    return (
+      <input
+        ref={inputRef}
+        id={inputId}
+        type="file"
+        accept={ACCEPT}
+        disabled={uploading}
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+      />
+    );
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between gap-3 mb-2">
@@ -114,6 +132,7 @@ export function AssignmentEvidence({
           <AppIcon className="ri-upload-2-line" /> {uploading ? 'Uploading…' : 'Choose file'}
           <input
             ref={inputRef}
+            id={inputId}
             type="file"
             accept={ACCEPT}
             disabled={uploading}

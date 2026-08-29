@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -214,6 +214,7 @@ export default function ComponentViewPage() {
   const [record, setRecord] = useState<DoneRecord | null>(null);
   // Bumped by the uploader so the criteria panel re-checks after an upload.
   const [evidenceVersion, setEvidenceVersion] = useState(0);
+  const evidenceInputId = useId();
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const trackingSessionRef = useRef<TimeTrackingSession | null>(null);
   const trackingPromiseRef = useRef<Promise<TimeTrackingSession> | null>(null);
@@ -307,6 +308,26 @@ export default function ComponentViewPage() {
 
   const parsed = useMemo(() => (isVideo && component?.videoUrl ? parseVideoUrl(component.videoUrl) : null), [isVideo, component?.videoUrl]);
   const pageTitle = meta?.detail || meta?.label || 'Activity';
+  const activityEvidenceContext: EvidenceContext | null = component
+    && componentId
+    && id
+    && (kind === 'commercial' || kind === 'apprenticeship')
+    ? {
+        kind,
+        learnerId: id,
+        componentId,
+        onUploaded: () => setEvidenceVersion((version) => version + 1),
+        trainingPlanDetails: {
+          moduleId: component.moduleId ?? null,
+          moduleTitle: moduleTitle || null,
+          weekId: component.weekId ?? null,
+          weekTitle: weekTitle || null,
+          componentId,
+          componentTitle: pageTitle,
+          componentType: component.type || null,
+        },
+      }
+    : null;
 
   // Non-video content has no player progress → run the wall-clock.
   useEffect(() => { if (component && !isVideo) setUnsupported(true); }, [component, isVideo]);
@@ -451,6 +472,7 @@ export default function ComponentViewPage() {
       pageTitle={pageTitle}
       pageSubtitle={[moduleTitle, weekTitle].filter(Boolean).join(' · ')}
       userName="Learner" userRole="Learner"
+      hideBreadcrumbs
     >
       <div className="p-3 md:p-6 max-w-6xl mx-auto">
         <button
@@ -521,21 +543,7 @@ export default function ComponentViewPage() {
                 onPlayingChange={setPlayerPlaying}
                 onEnded={finishConsuming}
                 onUnsupported={() => setUnsupported(true)}
-                evidenceContext={
-                  // Evidence is collected on assignments only.
-                  componentRequiresEvidence(component.type) && kind && id && componentId
-                    ? {
-                        kind: kind as LearnerKind, learnerId: id, componentId,
-                        onUploaded: () => setEvidenceVersion((v) => v + 1),
-                        trainingPlanDetails: {
-                          moduleId: component.moduleId ?? null, moduleTitle: moduleTitle || null,
-                          weekId: component.weekId ?? null, weekTitle: weekTitle || null,
-                          componentId,
-                          componentTitle: pageTitle, componentType: component.type || null,
-                        },
-                      }
-                    : null
-                }
+                evidenceContext={null}
               />
               {(component.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session' && component.teamsLiveSessionId && (
                 <LiveSessionResultsCard
@@ -576,6 +584,15 @@ export default function ComponentViewPage() {
                     <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-mono text-sm font-semibold tabular-nums bg-background-100 text-foreground-700" title="Time on this activity">
                       <AppIcon className="ri-timer-line" /> {formatClock(elapsedSeconds)}
                     </div>
+                  )}
+                  {activityEvidenceContext && canProgress && (
+                    <label
+                      htmlFor={evidenceInputId}
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-primary-200 bg-white px-4 py-2 text-sm font-semibold text-primary-700 transition-colors hover:border-primary-300 hover:bg-primary-50"
+                    >
+                      <AppIcon className="ri-upload-2-line" />
+                      Upload evidence
+                    </label>
                   )}
                   <button
                     onClick={finishConsuming}
@@ -621,6 +638,18 @@ export default function ComponentViewPage() {
                     )}
                   </ul>
                 </div>
+              )}
+
+              {activityEvidenceContext && canProgress && (
+                <AssignmentEvidence
+                  kind={activityEvidenceContext.kind}
+                  learnerId={activityEvidenceContext.learnerId}
+                  componentId={activityEvidenceContext.componentId}
+                  trainingPlanDetails={activityEvidenceContext.trainingPlanDetails}
+                  onUploaded={activityEvidenceContext.onUploaded}
+                  inputId={evidenceInputId}
+                  showPanel={false}
+                />
               )}
             </div>
 
