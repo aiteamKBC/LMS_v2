@@ -63,7 +63,9 @@ export function setDemoTimeOverride(scopeKey: string, key: string, minutes: numb
     if (minutes == null || !Number.isFinite(minutes)) {
       delete overrides[key];
     } else {
-      overrides[key] = Math.max(0, Math.round(minutes));
+      // Keep second-level precision for the HH:MM:SS editor while retaining
+      // minutes as the shared unit used by material/programme summaries.
+      overrides[key] = Math.max(0, Math.round(minutes * 60) / 60);
     }
     localStorage.setItem(storageKey(scopeKey), JSON.stringify(overrides));
   } catch {

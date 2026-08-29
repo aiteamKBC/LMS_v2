@@ -20,6 +20,8 @@ interface WorkspaceShellProps {
   showBackButton?: boolean;
   /** Replaces the route-derived final breadcrumb (which may contain a raw id). */
   breadcrumbCurrentLabel?: string;
+  /** Removes the workspace title and breadcrumbs for focused, content-first pages. */
+  hidePageChrome?: boolean;
 }
 
 interface BreadcrumbItem {
@@ -146,6 +148,7 @@ export function WorkspaceShell({
   workspaceLabel,
   showBackButton = false,
   breadcrumbCurrentLabel,
+  hidePageChrome = false,
 }: WorkspaceShellProps) {
   // A learner who is still onboarding, or who has finished enrolment but is not
   // yet being taught, gets a reduced sidebar — most of the workspace needs a
@@ -231,17 +234,19 @@ export function WorkspaceShell({
         className="workspace-content flex-1 flex flex-col min-w-0 bg-background-200 transition-[margin] duration-300 ease-out"
         style={{ marginLeft: `var(--kbc-sidebar-offset, 0px)` }}
       >
-        <Header
-          pageTitle={pageTitle}
-          pageSubtitle={pageSubtitle}
-          onOpenSearch={() => setSearchOpen(true)}
-          userName={displayName}
-          onToggleMobileSidebar={handleToggleMobileSidebar}
-          role={role}
-        />
+        {!hidePageChrome && (
+          <Header
+            pageTitle={pageTitle}
+            pageSubtitle={pageSubtitle}
+            onOpenSearch={() => setSearchOpen(true)}
+            userName={displayName}
+            onToggleMobileSidebar={handleToggleMobileSidebar}
+            role={role}
+          />
+        )}
 
         {/* Breadcrumbs */}
-        {breadcrumbs.length > 0 && (
+        {!hidePageChrome && breadcrumbs.length > 0 && (
           <div className="workspace-breadcrumbs flex h-8 shrink-0 items-center overflow-hidden border-b border-background-300/40 bg-background-200 px-3 md:px-5">
             <nav className="flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Breadcrumb">
               <Link to="/" className="text-foreground-300 hover:text-foreground-500 transition-smooth">

@@ -92,6 +92,11 @@ describe('demoTime', () => {
       expect(getDemoTimeOverride('apprenticeship:1', 'comp-1')).toBeNull();
     });
 
+    it('keeps second-level precision', () => {
+      setDemoTimeOverride('apprenticeship:1', 'comp-seconds', 21 / 60);
+      expect(getDemoTimeOverride('apprenticeship:1', 'comp-seconds')).toBe(21 / 60);
+    });
+
     it('is scoped per learner', () => {
       setDemoTimeOverride('apprenticeship:1', 'comp-1', 10);
       expect(getDemoTimeOverride('apprenticeship:2', 'comp-1')).toBeNull();

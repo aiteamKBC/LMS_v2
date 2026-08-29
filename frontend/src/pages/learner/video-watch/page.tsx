@@ -14,13 +14,21 @@ import {
   type JourneyComponent,
 } from '@/utils/learnerJourney';
 import { fetchEvidence } from '@/api/evidence';
-import { ReflectionWindow, formatClock } from '@/components/feature/ReflectionWindow';
+import { ReflectionWindow, formatClock, formatRecordedClock, parseClockSeconds } from '@/components/feature/ReflectionWindow';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { useAuth } from '@/hooks/useAuth';
 import { isInspectionDemoAccount } from '@/lib/learnerFlowAccess';
-import { actualMinutesFor, demoTimeKey, expectedMinutesFor } from '@/lib/demoTime';
+import { actualMinutesFor, demoTimeKey, expectedMinutesFor, setDemoTimeOverride, useDemoTimeOverrides } from '@/lib/demoTime';
+import {
+  activityTimerStorageKey,
+  canResumeActivityTimer,
+  clearActivityTimer,
+  readActivityTimer,
+  saveActivityTimerElapsed,
+  saveActivityTimerSession,
+} from '@/lib/activityTimer';
 import { DemoTimeChip } from '@/components/feature/DemoTimePanel';
 import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
@@ -46,6 +54,101 @@ interface FoundContext {
   weekTitle: string;
   weekComponents: JourneyComponent[];
   weeks: { week: string; count: number; active: boolean }[];
+}
+
+interface TimedCompletion {
+  submittedAt?: string | null;
+  timeTaken?: string | null;
+  passed?: boolean | null;
+}
+
+/** The latest successful completion time for one sidebar activity. */
+function completionTimeFor(component: JourneyComponent, detail: LearnerDetail | null): string | null {
+  let records: TimedCompletion[] = [];
+  if (component.isQuiz) {
+    records = (component.quizAttempts || []).filter((attempt) => attempt.passed);
+  } else if (component.componentId && componentContentKind(component.type) === 'video') {
+    records = (detail?.videoProgress || []).filter(
+      (entry) => entry.componentId === component.componentId && entry.passed !== false,
+    );
+  } else if (component.componentId) {
+    records = (detail?.componentProgress || []).filter(
+      (entry) => entry.componentId === component.componentId && entry.passed !== false,
+    );
+  }
+
+  const latest = records.reduce<TimedCompletion | null>((current, record) => {
+    if (!current) return record;
+    return String(record.submittedAt || '') >= String(current.submittedAt || '') ? record : current;
+  }, null);
+  return formatRecordedClock(latest?.timeTaken);
+}
+
+function CompletionTimeInput({ value, onSave }: { value: string; onSave: (seconds: number | null) => void }) {
+  const [draft, setDraft] = useState(value);
+  const [invalid, setInvalid] = useState(false);
+
+  useEffect(() => {
+    setDraft(value);
+    setInvalid(false);
+  }, [value]);
+
+  const save = () => {
+    if (!draft.trim()) {
+      onSave(null);
+      return;
+    }
+    const seconds = parseClockSeconds(draft);
+    if (seconds == null) {
+      setInvalid(true);
+      return;
+    }
+    setInvalid(false);
+    const formatted = formatClock(seconds);
+    setDraft(formatted);
+    onSave(seconds);
+  };
+
+  const updateDraft = (nextValue: string) => {
+    setDraft(nextValue);
+    setInvalid(false);
+
+    // Persist as soon as the learner has entered a complete valid clock. This
+    // means a refresh or route change cannot lose the latest value just because
+    // the input did not get a chance to blur first.
+    if (!nextValue.trim()) {
+      onSave(null);
+      return;
+    }
+    const seconds = parseClockSeconds(nextValue);
+    if (seconds != null) onSave(seconds);
+  };
+
+  return (
+    <label className="flex items-center gap-2 border-t border-emerald-100 bg-emerald-50/70 px-4 py-2 text-[10px] font-semibold text-emerald-800">
+      <AppIcon className="ri-timer-line shrink-0 text-[11px]" />
+      <span className="shrink-0">Time taken</span>
+      <input
+        type="text"
+        inputMode="numeric"
+        value={draft}
+        onChange={(event) => updateDraft(event.target.value)}
+        onBlur={save}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') event.currentTarget.blur();
+          if (event.key === 'Escape') { event.preventDefault(); setDraft(value); setInvalid(false); }
+        }}
+        placeholder="00:00:00"
+        aria-label="Completion time in hours, minutes and seconds"
+        aria-invalid={invalid}
+        className={`ml-auto w-24 rounded-md border bg-white px-2 py-1 text-center font-mono text-[11px] font-bold tabular-nums outline-none focus:ring-2 ${
+          invalid
+            ? 'border-red-400 text-red-700 focus:ring-red-200'
+            : 'border-emerald-200 text-emerald-800 focus:border-emerald-400 focus:ring-emerald-100'
+        }`}
+      />
+    </label>
+  );
 }
 
 /** Route a component to the right learner page (video and quiz keep their own routes). */
@@ -85,6 +188,7 @@ function locate(detail: LearnerDetail | null, componentId: string): FoundContext
 
 export default function ComponentViewPage() {
   const { kind, id, componentId } = useParams<{ kind: string; id: string; componentId: string }>();
+  const timerStorageKey = activityTimerStorageKey(kind, id, componentId);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   useEffect(() => { rememberLearner(kind, id); }, [kind, id]);
@@ -102,7 +206,9 @@ export default function ComponentViewPage() {
   const [currentTime, setCurrentTime] = useState(0);
   const [playerPlaying, setPlayerPlaying] = useState(false);
   const [unsupported, setUnsupported] = useState(false); // no player progress events → wall-clock
-  const [wallElapsed, setWallElapsed] = useState(0);
+  const [wallElapsed, setWallElapsed] = useState(
+    () => readActivityTimer(timerStorageKey)?.elapsedSeconds ?? 0,
+  );
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [record, setRecord] = useState<DoneRecord | null>(null);
@@ -111,6 +217,12 @@ export default function ComponentViewPage() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const trackingSessionRef = useRef<TimeTrackingSession | null>(null);
   const trackingPromiseRef = useRef<Promise<TimeTrackingSession> | null>(null);
+
+  // React Router can reuse this page while only the component id changes.
+  // Restore the independently saved counter for the newly selected activity.
+  useEffect(() => {
+    setWallElapsed(readActivityTimer(timerStorageKey)?.elapsedSeconds ?? 0);
+  }, [timerStorageKey]);
 
   useEffect(() => {
     if ((kind !== 'commercial' && kind !== 'apprenticeship') || !id) {
@@ -175,6 +287,7 @@ export default function ComponentViewPage() {
   const { auth } = useAuth();
   const isDemoAccount = isInspectionDemoAccount(auth.account?.email);
   const demoScopeKey = kind && id ? `${kind}:${id}` : '';
+  const demoTimeOverrides = useDemoTimeOverrides(demoScopeKey);
   const demoKey = componentId ? demoTimeKey({ isQuiz: false, componentId }) : '';
   const demoExpectedMinutes = component ? expectedMinutesFor(component) : null;
 
@@ -222,7 +335,7 @@ export default function ComponentViewPage() {
 
   // Shown to the learner. Rendered from the hours above rather than from each
   // source's own units, so "Planned time" reads as hours-and-minutes ("1h 42m")
-  // everywhere instead of switching to a MM:SS clock for videos — which is what
+  // everywhere instead of switching to an HH:MM:SS clock for videos — which is what
   // made a 1h42m video look like 102 hours.
   const plannedTimeLabel = plannedHours != null ? formatHoursMinutes(plannedHours) : '';
 
@@ -238,29 +351,53 @@ export default function ComponentViewPage() {
     const activityKind = isVideo ? 'video' : 'component';
     let cancelled = false;
     trackingSessionRef.current = null;
+
+    const savedTimer = readActivityTimer(timerStorageKey);
+    if (canResumeActivityTimer(savedTimer, trackingMode)) {
+      const savedSession = savedTimer!.session!;
+      trackingSessionRef.current = savedSession;
+      trackingPromiseRef.current = Promise.resolve(savedSession);
+      setWallElapsed(savedTimer!.elapsedSeconds);
+      return () => { cancelled = true; };
+    }
+
+    // An expired or incompatible signed session cannot verify its old seconds.
+    // Start clean rather than showing a value the server would later reject.
+    if (savedTimer) {
+      clearActivityTimer(timerStorageKey);
+      setWallElapsed(0);
+    }
+
     const pending = startTimeTracking(activityKind, componentId, learnerKind, id, trackingMode);
     trackingPromiseRef.current = pending;
     pending
       .then((session) => {
         if (!cancelled) {
           trackingSessionRef.current = session;
+          saveActivityTimerSession(timerStorageKey, session);
         }
       })
       .catch((error) => {
         if (!cancelled) setSubmitError(error instanceof Error ? error.message : 'Could not start activity timing');
       });
     return () => { cancelled = true; };
-  }, [phase, openable, componentId, kind, id, canProgress, isVideo, trackingMode]);
+  }, [phase, openable, componentId, kind, id, canProgress, isVideo, trackingMode, timerStorageKey]);
 
   // Only visible time counts. Supported videos must also actually be playing;
   // iframe-only players use the explicit visible-page fallback.
   useEffect(() => {
     if (phase !== 'consume' || (!unsupported && !playerPlaying)) return;
     timerRef.current = setInterval(() => {
-      if (document.visibilityState === 'visible') setWallElapsed((s) => s + 1);
+      if (document.visibilityState === 'visible') {
+        setWallElapsed((seconds) => {
+          const next = seconds + 1;
+          saveActivityTimerElapsed(timerStorageKey, next);
+          return next;
+        });
+      }
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [phase, unsupported, playerPlaying]);
+  }, [phase, unsupported, playerPlaying, timerStorageKey]);
 
   const finishConsuming = () => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -299,6 +436,7 @@ export default function ComponentViewPage() {
         });
         setRecord({ timeTaken: res.record.timeTaken, ksbs: res.record.ksbs, reportedTime: res.record.reportedTime, feedback: res.record.feedback });
       }
+      clearActivityTimer(timerStorageKey);
       setPhase('results');
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : 'Could not save progress');
@@ -450,7 +588,7 @@ export default function ComponentViewPage() {
                     }`}
                   >
                     <AppIcon className={criteria && !criteria.met ? 'ri-lock-line' : 'ri-check-line'} />
-                    {remaining === 0 ? 'Reflect' : 'Finish & Reflect'}
+                    Finish
                   </button>
                 </div>
               </div>
@@ -503,6 +641,13 @@ export default function ComponentViewPage() {
                     const contentAvailable = hasComponentContent(c);
                     const clickable = contentAvailable && isNavigableComponent(c) && !isCurrent;
                     const completed = isComponentComplete(c, completedIds);
+                    const timeKey = demoTimeKey({ isQuiz: c.isQuiz, quizId: c.quizMeta?.quizId, componentId: c.componentId });
+                    const overrideMinutes = timeKey ? demoTimeOverrides[timeKey] : undefined;
+                    const completionTime = completed
+                      ? overrideMinutes != null
+                        ? formatClock(Math.round(overrideMinutes * 60))
+                        : completionTimeFor(c, detail)
+                      : null;
                     const attempts = c.isQuiz ? (c.quizAttempts || []) : [];
                     const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
                     return (
@@ -530,6 +675,12 @@ export default function ComponentViewPage() {
                             }`}>
                               {cm.detail || cm.label}
                             </span>
+                            {completionTime && !isDemoAccount && (
+                              <span className="mt-0.5 flex items-center gap-1 font-mono text-[10px] font-semibold tabular-nums text-emerald-700" title="Time taken">
+                                <AppIcon className="ri-timer-line text-[10px]" />
+                                {completionTime}
+                              </span>
+                            )}
                           </span>
                           {c.isQuiz && lastAttempt && (
                             <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
@@ -548,6 +699,16 @@ export default function ComponentViewPage() {
                             <AppIcon className="ri-arrow-right-s-line text-foreground-400 text-sm shrink-0" />
                           ) : null}
                         </button>
+                        {completed && isDemoAccount && timeKey && (
+                          <CompletionTimeInput
+                            value={completionTime || '00:00:00'}
+                            onSave={(seconds) => setDemoTimeOverride(
+                              demoScopeKey,
+                              timeKey,
+                              seconds == null ? null : seconds / 60,
+                            )}
+                          />
+                        )}
                       </li>
                     );
                   })}

@@ -28,13 +28,13 @@ export function isInspectionDemoAccount(email: string | null | undefined): boole
 }
 
 /**
- * The focused flow has one landing page and one visual content runner.
+ * The focused flow has one materials landing page and one visual content runner.
  * Video and quiz use their own route implementations behind that runner, while
  * reflection and results are phases on those same pages.
  */
 export function isLearnerFlowPath(pathname: string): boolean {
   const path = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
-  if (path === '/workspace/learner') return true;
+  if (path === '/learner/materials') return true;
 
   return /^\/learner\/(?:component|video|quiz)\/(?:apprenticeship|commercial)\/[^/]+\/[^/]+$/.test(path);
 }

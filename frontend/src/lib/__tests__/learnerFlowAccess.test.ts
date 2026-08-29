@@ -16,8 +16,8 @@ describe('learner flow access', () => {
   });
 
   it.each([
-    '/workspace/learner',
-    '/workspace/learner/',
+    '/learner/materials',
+    '/learner/materials/',
     '/learner/component/apprenticeship/82/COMP-1',
     '/learner/video/commercial/42/COMP-2',
     '/learner/quiz/apprenticeship/82/17',
@@ -31,6 +31,7 @@ describe('learner flow access', () => {
     '/learner/calendar',
     '/learner/progress',
     '/learner/messages',
+    '/workspace/learner',
     '/workspace/learner/apprenticeship/82',
   ])('rejects the additional learner path %s', (path) => {
     expect(isLearnerFlowPath(path)).toBe(false);

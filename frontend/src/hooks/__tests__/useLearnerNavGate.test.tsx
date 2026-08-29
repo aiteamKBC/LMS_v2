@@ -48,7 +48,7 @@ beforeEach(() => {
 });
 
 describe('useLearnerNavGate', () => {
-  it('shows only Overview to a focused learner account', () => {
+  it('shows only Materials to a focused learner account', () => {
     getRememberedLearner.mockReturnValue({ kind: 'apprenticeship', id: 'focused-1' });
     const { result } = renderHook(() => useLearnerNavGate(
       'learner',
@@ -57,6 +57,11 @@ describe('useLearnerNavGate', () => {
     ));
 
     expect(result.current.map((item) => item.id)).toEqual(['learner-overview']);
+    expect(result.current[0]).toMatchObject({
+      label: 'Materials',
+      href: '/learner/materials',
+      icon: 'ri-book-open-line',
+    });
   });
 
   it('shows no menu at all rather than the wrong one while the status loads', () => {

@@ -148,7 +148,14 @@ export function useLearnerNavGate(role: string, navItems: SidebarNavItem[], acco
 
   // Not a learner — the gate doesn't apply.
   if (role === 'learner' && isLearnerFlowAccount(accountEmail)) {
-    return navItems.filter((item) => item.id === 'learner-overview');
+    return navItems
+      .filter((item) => item.id === 'learner-overview')
+      .map((item) => ({
+        ...item,
+        label: 'Materials',
+        icon: 'ri-book-open-line',
+        href: '/learner/materials',
+      }));
   }
   if (!learner) return navItems;
   // First visit of the session, status still in flight. An empty rail for that

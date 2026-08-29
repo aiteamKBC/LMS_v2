@@ -39,15 +39,15 @@ export function AppRoutes() {
   }, [navigate]);
 
   // These provisioned learner accounts intentionally have a two-screen UI:
-  // their overview/material list and the content runner. Quiz and video URLs
+  // their material list and the content runner. Quiz and video URLs
   // are implementation details of the runner and remain available so time,
   // reflection and results continue to work. A copied/bookmarked URL to any
-  // other learner page returns to the overview instead of exposing the normal
+  // other learner page returns to Materials instead of exposing the normal
   // learner workspace.
   const focusedLearner = auth.account?.role === 'learner'
     && isLearnerFlowAccount(auth.account.email);
   const guardedElement = focusedLearner && !isLearnerFlowPath(pathname)
-    ? createElement(Navigate, { to: '/workspace/learner', replace: true })
+    ? createElement(Navigate, { to: '/learner/materials', replace: true })
     : element;
 
   // Keyed by pathname so the boundary resets on navigation: a crashed page must
