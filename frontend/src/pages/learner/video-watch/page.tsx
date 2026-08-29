@@ -1098,11 +1098,6 @@ const WORD_FILE_RE = /\.docx(\?.*)?$/i;
 const EXCEL_FILE_RE = /\.(xlsx|xls|csv)(\?.*)?$/i;
 const TEXT_FILE_RE = /\.(txt|md|rtf)(\?.*)?$/i;
 
-/** True when a URL points straight at a playable audio file (not a listening page). */
-function isDirectAudioUrl(url: string): boolean {
-  return AUDIO_FILE_RE.test(url);
-}
-
 function googleDriveFileId(url: string): string | null {
   const match =
     url.match(/drive\.google\.com\/file\/d\/([\w-]{10,})/) ||
@@ -1121,12 +1116,22 @@ function legacyAttachmentProxyUrl(url: string): string | null {
   return id ? `/learner_api/media/legacy-attachment/${id}/` : null;
 }
 
+function proxiedMaterialUrl(url: string): string {
+  const driveId = googleDriveFileId(url);
+  return driveId ? `/learner_api/media/google-drive/${driveId}/` : (legacyAttachmentProxyUrl(url) || url);
+}
+
 function displayableMediaSource(url: string, fileName?: string | null): { kind: 'image' | 'video'; src: string } | null {
   const probe = `${fileName || ''} ${url}`;
-  const driveId = googleDriveFileId(url);
-  const src = driveId ? `/learner_api/media/google-drive/${driveId}/` : (legacyAttachmentProxyUrl(url) || url);
+  const src = proxiedMaterialUrl(url);
   if (IMAGE_FILE_RE.test(probe)) return { kind: 'image', src };
   if (VIDEO_FILE_RE.test(probe)) return { kind: 'video', src };
+  return null;
+}
+
+function directAudioSource(url: string, fileName?: string | null): string | null {
+  const probe = `${fileName || ''} ${url}`;
+  if (AUDIO_FILE_RE.test(probe) || googleDriveFileId(url)) return proxiedMaterialUrl(url);
   return null;
 }
 
@@ -1177,6 +1182,7 @@ function decodeInlineText(value: string): string {
 }
 
 function AttachedFileCard({ url, fileName }: { url: string; fileName?: string | null }) {
+  const href = proxiedMaterialUrl(url);
   return (
     <div className="rounded-xl border border-background-300 bg-background-50 p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1190,7 +1196,7 @@ function AttachedFileCard({ url, fileName }: { url: string; fileName?: string | 
           </div>
         </div>
         <a
-          href={url}
+          href={href}
           target="_blank"
           rel="noreferrer"
           className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl bg-primary-600 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-primary-700"
@@ -1205,7 +1211,7 @@ function AttachedFileCard({ url, fileName }: { url: string; fileName?: string | 
 
 function InlineAttachmentPreview({ url, title, fileName }: { url: string; title: string; fileName?: string | null }) {
   const media = displayableMediaSource(url, fileName);
-  const previewUrl = legacyAttachmentProxyUrl(url) || url;
+  const previewUrl = proxiedMaterialUrl(url);
   const legacyId = legacyAttachmentId(url);
   const probe = fileProbe(url, fileName);
   const isPdf = PDF_FILE_RE.test(probe);
@@ -1828,15 +1834,15 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
   }
 
   if (contentKind === 'audio') {
-    const directAudio = component.audioUrl && isDirectAudioUrl(component.audioUrl);
+    const audioSource = component.audioUrl ? directAudioSource(component.audioUrl, component.fileName) : null;
     return (
       <div className="rounded-2xl border border-background-300 bg-gradient-to-br from-violet-50 to-background-50 p-6">
         <div className="flex items-center gap-3 mb-4">
           <span className="w-11 h-11 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center"><AppIcon className="ri-headphone-line text-xl" /></span>
           <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Listen, then finish and reflect below.</p></div>
         </div>
-        {directAudio ? (
-          <audio controls preload="metadata" className="w-full" src={component.audioUrl!}>Your browser does not support audio playback.</audio>
+        {audioSource ? (
+          <audio controls preload="metadata" className="w-full" src={audioSource}>Your browser does not support audio playback.</audio>
         ) : component.audioUrl ? (
           <>
             {/* Not a direct media file (e.g. a podcast listening page) — fetch
@@ -1855,7 +1861,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
           <p className="text-sm text-foreground-500">No audio was set for this podcast. You can still record your reflection below.</p>
         )}
         {component.audioUrl && (
-          <a href={component.audioUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-600 hover:text-violet-700"><AppIcon className="ri-external-link-line" />Open in a new tab</a>
+          <a href={proxiedMaterialUrl(component.audioUrl)} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-600 hover:text-violet-700"><AppIcon className="ri-external-link-line" />Open in a new tab</a>
         )}
       </div>
     );
@@ -1890,7 +1896,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
         {component.audioUrl && (
           <div className="mt-4 pt-4 border-t border-background-200">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-2">Audio version</p>
-            <audio controls preload="metadata" className="w-full" src={component.audioUrl} />
+            <audio controls preload="metadata" className="w-full" src={proxiedMaterialUrl(component.audioUrl)} />
           </div>
         )}
       </div>
