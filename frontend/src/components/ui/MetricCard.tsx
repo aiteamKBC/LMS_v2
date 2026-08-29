@@ -70,7 +70,7 @@ export const MetricCard = memo(function MetricCard({
   );
 
   const surface = cn(
-    'rounded-xl bg-background-50 p-4 text-left shadow-sm',
+    'rounded-xl border border-foreground-100/70 bg-background-50 p-4 text-left shadow-sm',
     active ? 'ring-1 ring-primary-200' : '',
     className,
   );
@@ -137,7 +137,7 @@ export function MetricRow({ children, className }: { children: ReactNode; classN
   return (
     <div
       className={cn(
-        'grid grid-cols-2 gap-x-5 gap-y-4 rounded-xl bg-background-50 p-4 shadow-sm sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6',
+        'grid grid-cols-2 gap-x-5 gap-y-4 rounded-xl border border-foreground-100/70 bg-background-50 p-4 shadow-sm sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6',
         className,
       )}
     >

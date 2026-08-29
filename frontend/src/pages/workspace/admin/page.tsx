@@ -196,7 +196,7 @@ export default function AdminDashboard() {
       userName={auth.account?.displayName || auth.user?.fullName || 'Platform Admin'}
       userRole="Super Administrator"
     >
-      <div className="space-y-4 p-3 md:space-y-5 md:p-6">
+      <div className="super-admin-dashboard space-y-4 p-3 md:space-y-5 md:p-6">
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
           <div>
             <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground-950 md:text-3xl">Welcome back, Super Admin 👋</h1>
@@ -474,7 +474,7 @@ export default function AdminDashboard() {
           {/* Right column */}
           <div className="space-y-4 md:space-y-6">
             {/* System status */}
-            <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
+            <section className="super-admin-system-status bg-white rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <div className="flex items-center justify-between mb-1">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">System status</h3>
                 <Link to="/admin/system" className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Details</Link>

@@ -151,7 +151,7 @@ export default function CurriculumStudio() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <div className="space-y-5 bg-background-100 p-4 md:p-6">
+      <div className="curriculum-studio-page space-y-5 bg-background-100 p-4 md:p-6">
         <section className="overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br from-primary-700 via-primary-900 to-primary-950 text-white shadow-xl">
           <div className="grid xl:grid-cols-[minmax(0,1fr)_420px]">
             <div className="p-4 text-white md:p-5">
@@ -546,7 +546,7 @@ function KpiCard({ icon, label, value, detail, loading, progress, tone = 'defaul
   return (
     <div className="rounded-xl border border-foreground-200 bg-background-50 p-4 shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-200">
       <div className="flex items-start justify-between gap-3">
-        <span className={`flex h-9 w-9 items-center justify-center rounded-lg ${toneClass}`}><AppIcon className={icon} /></span>
+        <span className={`curriculum-kpi-icon flex h-9 w-9 items-center justify-center rounded-lg ${toneClass}`}><AppIcon className={icon} /></span>
         <ProgressRing value={progress ?? 0} loading={loading} tone={ringTone} />
       </div>
       <p className="mt-2 text-xs font-bold text-foreground-800">{label}</p>
@@ -564,7 +564,7 @@ function AttentionCard({ issue }: { issue: AttentionIssue }) {
           <p className="text-2xl font-bold text-foreground-950">{issue.count}</p>
           <h3 className="mt-1 text-sm font-bold text-foreground-900">{issue.label}</h3>
         </div>
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600">
+        <span className="curriculum-attention-icon flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600">
           <AppIcon className="ri-error-warning-line" />
         </span>
       </div>
@@ -752,7 +752,7 @@ function SectionHeader({ title, detail, action, href, onAction, actionExpanded, 
   actionControls?: string;
 }) {
   return (
-    <div className="flex flex-col gap-2 border-b border-foreground-200 p-3 md:flex-row md:items-center md:justify-between">
+    <div className="curriculum-section-header flex flex-col gap-2 border-b border-foreground-200 p-3 md:flex-row md:items-center md:justify-between">
       <div>
         <h2 className="text-sm font-bold text-foreground-950">{title}</h2>
         <p className="mt-1 text-xs text-foreground-500">{detail}</p>

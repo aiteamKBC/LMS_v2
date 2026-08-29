@@ -200,6 +200,7 @@ export function WorkspaceShell({
   return (
     <div
       className="dashboard-theme workspace-shell flex h-screen bg-background-200 overflow-hidden"
+      data-workspace-role={role}
       // The offset itself is applied under a `lg` media query in index.css —
       // below that breakpoint the sidebar is an off-canvas drawer and must
       // reserve nothing.

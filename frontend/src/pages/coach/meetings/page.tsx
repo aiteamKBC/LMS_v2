@@ -1,11 +1,9 @@
 import { useEffect, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { CardSkeleton } from '@/components/feature/Skeletons';
 import { RowAction } from '@/components/ui/ActionRow';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FilterToolbar, SearchInput } from '@/components/ui/FilterToolbar';
-import { MetricCard } from '@/components/ui/MetricCard';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
@@ -307,13 +305,6 @@ export default function CoachMeetings() {
           )}
         />
 
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <MetricCard label="This month" value={thisMonthEvents.length} icon="ri-calendar-line" tone="neutral" active={filter === 'this-month'} onClick={() => changeFilter('this-month')} />
-          <MetricCard label="Overdue" value={atRiskEvents.length} icon="ri-alarm-warning-line" tone="critical" active={filter === 'at-risk'} onClick={() => changeFilter('at-risk')} />
-          <MetricCard label="Due soon" value={dueSoonEvents.length} icon="ri-calendar-event-line" tone="upcoming" active={filter === 'due-soon'} onClick={() => changeFilter('due-soon')} />
-          <MetricCard label="Not scheduled" value={needsScheduleEvents.length} icon="ri-calendar-2-line" tone="caution" active={filter === 'needs-schedule'} onClick={() => changeFilter('needs-schedule')} />
-        </div>
-
         {error ? (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-[13px] text-red-700">
             {error}
@@ -348,9 +339,6 @@ export default function CoachMeetings() {
           </div>
 
           <div className="grid gap-3 bg-background-100/55 p-3 sm:p-5 xl:grid-cols-2">
-            {/* Cards straight into the surrounding grid, so the placeholders sit
-                where the meetings themselves will. */}
-            {loading && Array.from({ length: 4 }).map((_, index) => <CardSkeleton key={index} />)}
             {!loading && !error && filtered.length === 0 ? (
               <div className="xl:col-span-2">
                 <EmptyState

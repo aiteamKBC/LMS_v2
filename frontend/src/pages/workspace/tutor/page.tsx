@@ -551,7 +551,7 @@ export default function TutorDashboard() {
         userName={auth.account?.displayName || auth.user?.fullName || 'Administrator'}
         userRole="Administrator"
       >
-        <div className="mx-auto max-w-5xl space-y-5 p-3 md:p-6">
+        <div className="tutor-workspace-page mx-auto max-w-5xl space-y-5 p-3 md:p-6">
           <TutorDirectoryPicker
             onSelect={selected => setTutorViewAs({ email: selected.email, name: selected.name }, adminEmail)}
           />
@@ -575,7 +575,7 @@ export default function TutorDashboard() {
       userName={data?.tutor?.name || auth.account?.displayName || 'Tutor'}
       userRole="Tutor"
     >
-      <div className="mx-auto max-w-5xl space-y-5 p-3 md:p-6">
+      <div className="tutor-workspace-page mx-auto max-w-5xl space-y-5 p-3 md:p-6">
         {/* Whose workspace this is, and the way back to the other cards. The
             modules below are that tutor's own — the admin is reading their
             workspace, not a copy of it. */}
