@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views
+from . import programme_audit, views
 
 
 urlpatterns = [
@@ -19,6 +19,8 @@ urlpatterns = [
     path('curriculum/programmes/tree/', views.curriculum_programme_tree_save, name='curriculum-programme-tree-save'),
     path('curriculum/free-programmes/<str:programme_id>/modules/', views.curriculum_free_programme_modules, name='curriculum-free-programme-modules'),
     path('curriculum/programmes/<str:identifier>/detail/', views.curriculum_programme_tree_detail, name='curriculum-programme-tree-detail'),
+    path('curriculum/programmes/<str:programme_id>/audit-assets/', programme_audit.programme_audit_assets, name='curriculum-programme-audit-assets'),
+    path('curriculum/programme-audit/status/', programme_audit.programme_audit_status, name='curriculum-programme-audit-status'),
     path('curriculum/programmes/<str:programme_id>/ksb-coverage/', views.curriculum_programme_ksb_coverage, name='curriculum-programme-ksb-coverage'),
     path('curriculum/programmes/<str:programme_id>/learner-ksb-impact/', views.curriculum_programme_learner_ksb_impact, name='curriculum-programme-learner-ksb-impact'),
     path('curriculum/programmes/<str:programme_id>/learner-roster/', views.curriculum_programme_learner_roster, name='curriculum-programme-learner-roster'),

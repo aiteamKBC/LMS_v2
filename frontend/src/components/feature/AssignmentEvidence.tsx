@@ -30,14 +30,20 @@ function formatSize(bytes: number): string {
 }
 
 export function AssignmentEvidence({
-  kind, learnerId, componentId, trainingPlanDetails, onUploaded,
+  kind, learnerId, componentId, trainingPlanDetails, onUploaded, onFileSelected, inputId, showPanel = true,
 }: {
   kind: LearnerKind;
   learnerId: string;
   componentId: string;
   trainingPlanDetails: EvidenceTrainingPlanDetails;
   /** Fired after a successful upload so callers can re-check completion criteria. */
-  onUploaded?: () => void;
+  onUploaded?: (files: EvidenceRecord[]) => void;
+  /** Fired immediately after the learner chooses a file, so external triggers can swap their label. */
+  onFileSelected?: (fileName: string) => void;
+  /** Lets a button elsewhere on the same page open this uploader directly. */
+  inputId?: string;
+  /** Keep only the file input mounted when the page supplies its own trigger. */
+  showPanel?: boolean;
 }) {
   const [files, setFiles] = useState<EvidenceRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,7 +65,7 @@ export function AssignmentEvidence({
           // are met, so tell the caller when the approved count moves.
           const was = prev.filter((f) => f.status === 'approved').length;
           const now = rows.filter((f) => f.status === 'approved').length;
-          if (now !== was) onUploadedRef.current?.();
+          if (now !== was) onUploadedRef.current?.(rows);
           return rows;
         });
       })
@@ -81,6 +87,7 @@ export function AssignmentEvidence({
 
   const handleFile = async (file: File) => {
     setError(null);
+    onFileSelected?.(file.name);
     if (file.size > MAX_BYTES) {
       setError('File exceeds the 50 MB size limit.');
       return;
@@ -106,6 +113,20 @@ export function AssignmentEvidence({
     }
   };
 
+  if (!showPanel) {
+    return (
+      <input
+        ref={inputRef}
+        id={inputId}
+        type="file"
+        accept={ACCEPT}
+        disabled={uploading}
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+      />
+    );
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between gap-3 mb-2">
@@ -114,6 +135,7 @@ export function AssignmentEvidence({
           <AppIcon className="ri-upload-2-line" /> {uploading ? 'Uploading…' : 'Choose file'}
           <input
             ref={inputRef}
+            id={inputId}
             type="file"
             accept={ACCEPT}
             disabled={uploading}

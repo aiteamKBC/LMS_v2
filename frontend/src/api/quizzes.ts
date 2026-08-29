@@ -60,6 +60,7 @@ export interface QuizSubmission {
   answers: Record<string, QuizAnswerValue>;
   timeTakenSeconds: number;
   startedAt: string;
+  trackingToken: string;
   module?: string | null;
   week?: string | null;
   ksbs?: string[];           // KSB codes the learner marked as fulfilled
@@ -95,6 +96,10 @@ export interface QuizAttempt {
   startedAt: string;
   submittedAt: string;
   timeTaken: string;          // "MM:SS", e.g. "00:26"
+  timeTrackingSource: string;
+  claimedSeconds: number;
+  serverSessionSeconds: number;
+  verifiedSeconds: number;
 }
 
 export interface QuizAttemptResult {
@@ -110,7 +115,7 @@ export interface QuizAttemptResult {
   quizName: string;
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+async function request<T>(url: string, init?: globalThis.RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...init });

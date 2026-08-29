@@ -18,7 +18,15 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client, SimpleTestCase, override_settings
 
 from curriculum_api import upload_storage
-from curriculum_api.views import COMPONENT_UPLOAD_MAX_BYTES, COMPONENT_UPLOAD_ROOT, component_upload_metadata, parse_byte_range
+from curriculum_api.management.commands.repoint_programme_audit_to_azure import (
+    attachment_id_from_row, attachment_id_from_url, stable_urls,
+)
+from curriculum_api.views import (
+    COMPONENT_UPLOAD_MAX_BYTES,
+    COMPONENT_UPLOAD_ROOT,
+    component_upload_metadata,
+    parse_byte_range,
+)
 
 RELATIVE = f'{COMPONENT_UPLOAD_ROOT}/MOD-1/COMP-1/deck.pptx'
 
@@ -104,6 +112,33 @@ class BlobNameTests(SimpleTestCase):
             upload_storage.upload_url(RELATIVE),
             '/curriculum_api/curriculum/uploads/MOD-1/COMP-1/deck.pptx',
         )
+
+
+class ProgrammeAuditAzureMappingTests(SimpleTestCase):
+    def test_reads_attachment_id_from_an_office_wrapped_wordpress_url(self):
+        wrapped = (
+            'https://view.officeapps.live.com/op/embed.aspx?src='
+            'https%3A%2F%2Fkentbusinesscollege.org%2Fwp-json%2Fkbc-lms%2Fv1%2F'
+            'material%2F43%2Fview%3Fattachment_id%3D42%26token%3Dsecret'
+        )
+        self.assertEqual(attachment_id_from_url(wrapped), '42')
+
+    def test_raw_component_keeps_the_mapping_idempotent_after_repointing(self):
+        raw = {'reading': {'iframe_url': 'https://example.test/view?attachment_id=42'}}
+        self.assertEqual(attachment_id_from_row('/curriculum_api/new.pdf', raw), '42')
+        self.assertEqual(
+            attachment_id_from_row(
+                '/curriculum_api/new.pdf',
+                '{"reading":{"iframe_url":"https://example.test/view?attachment_id=42"}}',
+            ),
+            '42',
+        )
+
+    def test_office_files_use_preview_but_pdf_files_embed_directly(self):
+        pdf = stable_urls('_legacy_files/42/handout.pdf')
+        deck = stable_urls('_legacy_files/43/deck.pptx')
+        self.assertEqual(pdf[0], pdf[1])
+        self.assertEqual(deck[1], f'{deck[0]}?preview=1')
 
 
 class LocalBackendTests(SimpleTestCase):
@@ -413,3 +448,34 @@ class RangeServingTests(SimpleTestCase):
         with self.local():
             response = self.client.get('/curriculum_api/curriculum/uploads/../../secrets.env')
             self.assertIn(response.status_code, (301, 404))
+
+
+class OfficePreviewTests(SimpleTestCase):
+    """Office uploads get an iframe page without persisting an Azure token."""
+
+    def setUp(self):
+        self.client = Client()
+        self.url = '/curriculum_api/curriculum/uploads/_legacy_files/42/deck.pptx?preview=1'
+
+    @patch('curriculum_api.views.upload_storage.signed_read_url')
+    @patch('curriculum_api.views.upload_storage.exists', return_value=True)
+    def test_preview_wraps_a_short_lived_azure_url_in_office_online(
+        self, _exists, signed_read_url,
+    ):
+        signed_read_url.return_value = (
+            'https://kbcdocs.blob.core.windows.net/curriculum-uploads/'
+            '_legacy_files/42/deck.pptx?sig=short-lived'
+        )
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Cache-Control'], 'private, no-store')
+        self.assertEqual(response['X-Frame-Options'], 'SAMEORIGIN')
+        self.assertIn('https://view.officeapps.live.com/op/embed.aspx?src=', response.content.decode())
+        self.assertIn('sig%3Dshort-lived', response.content.decode())
+
+    @patch('curriculum_api.views.upload_storage.exists', return_value=False)
+    def test_a_missing_office_upload_is_a_404(self, _exists):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 404)

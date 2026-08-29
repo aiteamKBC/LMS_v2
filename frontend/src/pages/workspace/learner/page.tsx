@@ -7,7 +7,12 @@ import { TRAINING_ACTIVITIES } from '@/mocks/training-plan';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
-import { buildLearnerJourney, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, hasComponentContent, isOpenableComponent, parseHours, recordedKsbEvidenceCodes, type JourneyComponent } from '@/utils/learnerJourney';
+import { useAuth } from '@/hooks/useAuth';
+import { isInspectionDemoAccount } from '@/lib/learnerFlowAccess';
+import { demoProgrammeFor, materialForModuleId, type DemoMaterialDef } from '@/lib/demoProgrammeMaterials';
+import { buildDemoTimings, currentWeekStatus, demoCompletionState, expectedMinutesFor, formatDemoMinutes, summariseDemoTimings, timingsForModuleIds, useDemoTimeOverrides, type DemoProgrammeSummary } from '@/lib/demoTime';
+import { DemoMaterialCard, DemoMaterialStatusBadge } from '@/components/feature/DemoTimePanel';
+import { buildLearnerJourney, completedComponentIds, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, hasComponentContent, isOpenableComponent, parseHours, recordedKsbEvidenceCodes, type JourneyComponent, type JourneyModule, type JourneyWeek } from '@/utils/learnerJourney';
 import type {
   LearnerComponentProgress,
   LearnerDetail,
@@ -130,11 +135,12 @@ function weekPeriodLabel(value: string): string | null {
 /* ─────────────────────────────────────────────
    Scroll-triggered reveal component
    ───────────────────────────────────────────── */
-function SectionReveal({ children, className = '', delay = 0 }: { children: React.ReactNode; className?: string; delay?: number }) {
+function SectionReveal({ children, className = '', delay = 0, immediate = false }: { children: React.ReactNode; className?: string; delay?: number; immediate?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
+    if (immediate) return;
     const el = ref.current;
     if (!el) return;
     const observer = new IntersectionObserver(
@@ -148,13 +154,13 @@ function SectionReveal({ children, className = '', delay = 0 }: { children: Reac
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [delay]);
+  }, [delay, immediate]);
 
   return (
     <div
       ref={ref}
       className={`transition-all duration-[500ms] ease-out ${className} ${
-        visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'
+        immediate || visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'
       }`}
     >
       {children}
@@ -405,6 +411,79 @@ export default function LearnerOverview() {
   }, [currentStation, currentWeekLabel, journey]);
   const evidencedKsbCodes = useMemo(() => recordedKsbEvidenceCodes(real), [real]);
 
+  /* ── Inspection-demo time overlay — scoped to the 3 provisioned accounts ──
+     Everything here is derived from data already fetched above (journey,
+     videoProgress, componentProgress); see lib/demoTime.ts. The
+     programme/material structure itself comes from the central config in
+     lib/demoProgrammeMaterials.ts — nothing here string-matches a title. */
+  const { auth } = useAuth();
+  const demoProgramme = useMemo(() => demoProgrammeFor(auth.account?.email), [auth.account?.email]);
+  const isDemoAccount = isRealMode && isInspectionDemoAccount(auth.account?.email) && demoProgramme != null;
+  const demoScopeKey = kind && id ? `${kind}:${id}` : '';
+  const demoOverrides = useDemoTimeOverrides(demoScopeKey);
+  const allJourneyComponents = useMemo(() => journey.flatMap((m) => m.weeks.flatMap((w) => w.components)), [journey]);
+  const demoCompletedIds = useMemo(() => completedComponentIds(real), [real]);
+  const demoTimings = useMemo(
+    () => (isDemoAccount
+      ? buildDemoTimings(allJourneyComponents, real?.videoProgress ?? [], real?.componentProgress ?? [], demoCompletedIds, demoOverrides)
+      : []),
+    [isDemoAccount, allJourneyComponents, real, demoCompletedIds, demoOverrides],
+  );
+  // Each material's constituent modules (by authored module id), its own
+  // component-level rollup, and its "current week" — the same journey data
+  // used everywhere else, grouped per lib/demoProgrammeMaterials.ts.
+  const demoMaterialCards = useMemo(() => {
+    if (!demoProgramme) return [];
+    return demoProgramme.materials.map((materialDef: DemoMaterialDef) => {
+      const modules = journey.filter((m) => m.weeks.some((w) => w.components.some((c) => materialForModuleId(demoProgramme, c.moduleId)?.key === materialDef.key)));
+      const timings = timingsForModuleIds(demoTimings, materialDef.moduleIds);
+      const weekStatus = currentWeekStatus(modules, demoCompletedIds);
+      return {
+        def: materialDef,
+        modules,
+        summary: summariseDemoTimings(timings),
+        weekStatus,
+        available: materialDef.moduleIds.length > 0 && modules.length > 0,
+      };
+    });
+  }, [demoProgramme, journey, demoTimings, demoCompletedIds]);
+  // Which material's drill-down (weeks/components) is open, if any — a
+  // purely client-side view toggle, not a route, so "Back to programme"
+  // never needs a navigation.
+  const [openMaterialKey, setOpenMaterialKey] = useState<string | null>(null);
+  const openMaterial = useMemo(
+    () => (openMaterialKey ? demoMaterialCards.find((m) => m.def.key === openMaterialKey) ?? null : null),
+    [openMaterialKey, demoMaterialCards],
+  );
+
+  /** Jump straight into a material's first unfinished activity, skipping its
+   * drill-down. A fully completed material reopens from its first activity,
+   * which keeps the drill-down's "Continue" button useful for review. */
+  const openDemoMaterial = useCallback((material: (typeof demoMaterialCards)[number]) => {
+    if (!kind || !id || !canProgress) return;
+
+    const activities = material.modules.flatMap((module) =>
+      module.weeks.flatMap((week) =>
+        week.components.map((component) => {
+          const query = `?module=${encodeURIComponent(module.module)}&week=${encodeURIComponent(week.week)}`;
+          let href: string | null = null;
+          if (component.isQuiz && hasComponentContent(component)) {
+            href = `/learner/quiz/${kind}/${id}/${component.quizMeta!.quizId}${query}`;
+          } else if (component.type === 'video' && component.videoUrl && component.componentId) {
+            href = `/learner/video/${kind}/${id}/${component.componentId}${query}`;
+          } else if (isOpenableComponent(component)) {
+            href = `/learner/component/${kind}/${id}/${component.componentId}${query}`;
+          }
+          const state = componentProgress(component, real?.videoProgress ?? [], real?.componentProgress ?? []).state;
+          const complete = state === 'passed' || state === 'watched' || state === 'completed';
+          return { href, complete };
+        }),
+      ),
+    ).filter((activity): activity is { href: string; complete: boolean } => activity.href !== null);
+
+    const next = activities.find((activity) => !activity.complete) || activities[0];
+    if (next) navigate(next.href);
+  }, [canProgress, id, kind, navigate, real?.componentProgress, real?.videoProgress]);
   // OTJ hours: completed + planned come from the backend (stored in
   // Active_users.Completed_hours / planned_hours). "activities" counts every
   // completed item across kinds (distinct quizzes + videos + future types).
@@ -708,56 +787,123 @@ export default function LearnerOverview() {
       roleLabel={learnerNav.label}
       navItems={learnerNav.items}
       workspaceLabel={learnerNav.workspaceLabel}
-      pageTitle="Overview"
-      pageSubtitle={isRealMode ? subtitleParts.join(' · ') : `${p.programme} ${p.programmeLevel} · ${p.employer} · Cohort ${p.cohort}`}
+      pageTitle={isDemoAccount ? 'Materials' : 'Overview'}
+      pageSubtitle={isDemoAccount ? undefined : isRealMode ? subtitleParts.join(' · ') : `${p.programme} ${p.programmeLevel} · ${p.employer} · Cohort ${p.cohort}`}
       userName={isRealMode ? heroFullName : p.fullName}
       userRole={isRealMode ? (heroProgramme ? `${heroProgramme} Learner` : 'Learner') : `${p.programme} Apprentice`}
+      hidePageChrome={isDemoAccount}
     >
       <PageContainer>
 
         {/* ================================================================
             PROFILE HEADER
             ================================================================ */}
-        <SectionReveal delay={0}>
-          <PageHeader
-            icon="ri-graduation-cap-line"
-            title={displayLearnerName}
-            description={headerDescription}
-            meta={
-              <>
-                <ProfileFact icon="ri-stack-line" label="Cohort" value={displayCohort} />
-                <ProfileFact icon="ri-flag-2-line" label="Module" value={currentModuleLabel} />
-                <ProfileFact icon="ri-user-star-line" label="Coach" value={coachDisplayName} />
-                <ProfileFact icon="ri-calendar-event-line" label="Start date" value={startDateDisplay} />
-                <ProfileFact icon="ri-calendar-check-line" label="Planned end" value={plannedEndDisplay} />
-                <StatusBadge status={isRealMode ? real?.programmeStatus : p.status} tone={!isRealMode ? 'positive' : undefined} />
-              </>
-            }
-            actions={
-              <>
-                <RowAction label="Message coach" icon="ri-chat-3-line" onClick={() => navigate('/learner/messages')} />
-                <RowAction label="Continue learning" icon="ri-play-circle-line" emphasis="primary" onClick={() => navigate(trainingPlanHref)} />
-              </>
-            }
-          />
-        </SectionReveal>
+        {!isDemoAccount && (
+          <SectionReveal delay={0}>
+            <PageHeader
+              icon="ri-graduation-cap-line"
+              title={displayLearnerName}
+              description={headerDescription}
+              meta={
+                <>
+                  <ProfileFact icon="ri-stack-line" label="Cohort" value={displayCohort} />
+                  <ProfileFact icon="ri-flag-2-line" label="Module" value={currentModuleLabel} />
+                  <ProfileFact icon="ri-user-star-line" label="Coach" value={coachDisplayName} />
+                  <ProfileFact icon="ri-calendar-event-line" label="Start date" value={startDateDisplay} />
+                  <ProfileFact icon="ri-calendar-check-line" label="Planned end" value={plannedEndDisplay} />
+                  <StatusBadge status={isRealMode ? real?.programmeStatus : p.status} tone={!isRealMode ? 'positive' : undefined} />
+                </>
+              }
+              actions={
+                <>
+                  <RowAction label="Message coach" icon="ri-chat-3-line" onClick={() => navigate('/learner/messages')} />
+                  <RowAction label="Continue learning" icon="ri-play-circle-line" emphasis="primary" onClick={() => navigate(trainingPlanHref)} />
+                </>
+              }
+            />
+          </SectionReveal>
+        )}
+
+        {/* ================================================================
+            INSPECTION-DEMO: material cards, or one material's drill-down
+            ================================================================ */}
+        {isDemoAccount && !openMaterial && (
+          <SectionReveal delay={0} immediate>
+            <div className="overflow-hidden rounded-3xl bg-gradient-to-br from-primary-800 via-primary-600 to-violet-400 px-6 py-7 text-white shadow-lg shadow-primary-950/10 md:px-8">
+              <div className="flex flex-wrap items-center justify-between gap-5">
+                <div className="flex min-w-0 items-center gap-4">
+                  <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-white/15 ring-1 ring-white/20">
+                    <AppIcon className="ri-book-2-line text-2xl" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/65">Learning programme</p>
+                    <h1 className="mt-1 text-2xl font-heading font-bold leading-tight text-white">Your Materials</h1>
+                    <p className="mt-1 text-[13px] text-white/75">{demoProgramme?.programmeName}</p>
+                  </div>
+                </div>
+                <div className="rounded-2xl bg-white/10 px-5 py-3 text-right ring-1 ring-white/15">
+                  <p className="text-2xl font-bold tabular-nums">{demoMaterialCards.length}</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-white/65">Materials</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
+              {demoMaterialCards.map((material, index) => (
+                <div
+                  key={material.def.key}
+                  className={demoMaterialCards.length % 2 === 1 && index === demoMaterialCards.length - 1 ? 'lg:col-span-2' : undefined}
+                >
+                  <DemoMaterialCard
+                    name={material.def.name}
+                    order={material.def.order}
+                    summary={material.summary}
+                    currentWeekLabel={material.weekStatus.label}
+                    complete={material.weekStatus.complete}
+                    available={material.available}
+                    onContinue={() => openDemoMaterial(material)}
+                  />
+                </div>
+              ))}
+            </div>
+          </SectionReveal>
+        )}
+
+        {isDemoAccount && openMaterial && (
+          <SectionReveal delay={0} immediate>
+            <DemoMaterialDrilldown
+              material={openMaterial}
+              kind={kind}
+              id={id}
+              videos={real?.videoProgress ?? []}
+              completions={real?.componentProgress ?? []}
+              reflectionStatuses={reflectionStatuses}
+              canProgress={canProgress}
+              demoCompletedIds={demoCompletedIds}
+              onBack={() => setOpenMaterialKey(null)}
+              onContinue={() => openDemoMaterial(openMaterial)}
+            />
+          </SectionReveal>
+        )}
 
         {/* ================================================================
             COMPACT PROGRESS CARDS
             ================================================================ */}
-        <SectionReveal delay={60}>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <ProgressStat icon="ri-road-map-line" label="Programme Progress" value={programmeProgressValue} percent={programmeProgressPercent} caption={programmeProgressCaption} tone="brand" />
-            <ProgressStat icon="ri-calendar-check-line" label="Attendance" value={attendanceValue} percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
-            <ProgressStat icon="ri-time-line" label="OTJ Hours" value={otjValue} percent={otjPercent} caption={otjCaption} tone={otjTone} />
-            <ProgressStat icon="ri-bar-chart-2-line" label="KSB Progress" value={ksbValue} percent={ksbPercent} caption={ksbCaption} tone={ksbTone} />
-          </div>
-        </SectionReveal>
+        {!isDemoAccount && (
+          <SectionReveal delay={60}>
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <ProgressStat icon="ri-road-map-line" label="Programme Progress" value={programmeProgressValue} percent={programmeProgressPercent} caption={programmeProgressCaption} tone="brand" />
+              <ProgressStat icon="ri-calendar-check-line" label="Attendance" value={attendanceValue} percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
+              <ProgressStat icon="ri-time-line" label="OTJ Hours" value={otjValue} percent={otjPercent} caption={otjCaption} tone={otjTone} />
+              <ProgressStat icon="ri-bar-chart-2-line" label="KSB Progress" value={ksbValue} percent={ksbPercent} caption={ksbCaption} tone={ksbTone} />
+            </div>
+          </SectionReveal>
+        )}
 
         {/* ================================================================
             CONTINUE LEARNING + UPCOMING / MY COACH
             ================================================================ */}
-        <SectionReveal delay={100}>
+        {!isDemoAccount && <SectionReveal delay={100}>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <div className="lg:col-span-2">
               <Panel>
@@ -766,7 +912,7 @@ export default function LearnerOverview() {
                   icon="ri-play-circle-line"
                   description={isRealMode ? (currentWeek ? `${currentWeek.week.week} · ${currentWeek.module}` : undefined) : "This week's plan"}
                   actions={
-                    ((isRealMode && real && journey.length > 0) || !isRealMode) ? (
+                    (isRealMode && real && journey.length > 0) || !isRealMode ? (
                       <Link to={trainingPlanHref} className="text-[12px] font-semibold text-primary-600 hover:text-primary-700">
                         View full plan
                       </Link>
@@ -784,8 +930,10 @@ export default function LearnerOverview() {
                 )}
                 <div className="mt-3">
                   {isRealMode ? (
-                    (journey.length === 0 || !currentWeek) ? (
+                    journey.length === 0 ? (
                       loading ? <RowsSkeleton rows={4} /> : <EmptyState size="sm" title="No training plan yet" description="Your training plan will appear here once it's built." />
+                    ) : !currentWeek ? (
+                      <EmptyState size="sm" title="No training plan yet" description="Your training plan will appear here once it's built." />
                     ) : (
                       <CurrentWeekCard
                         moduleTitle={currentWeek.module}
@@ -865,12 +1013,12 @@ export default function LearnerOverview() {
               </Panel>
             </div>
           </div>
-        </SectionReveal>
+        </SectionReveal>}
 
         {/* ================================================================
             MY TASKS
             ================================================================ */}
-        <SectionReveal delay={140}>
+        {!isDemoAccount && <SectionReveal delay={140}>
           <Panel>
             <SectionHeader title="My Tasks" count={tasks.length} description="What needs your attention next" icon="ri-list-check-3" />
             <div className="mt-3 space-y-2">
@@ -890,12 +1038,12 @@ export default function LearnerOverview() {
               )}
             </div>
           </Panel>
-        </SectionReveal>
+        </SectionReveal>}
 
         {/* ================================================================
             MY APPRENTICESHIP JOURNEY
             ================================================================ */}
-        <SectionReveal delay={180}>
+        {!isDemoAccount && <SectionReveal delay={180}>
           <Panel>
             <SectionHeader
               title="My Apprenticeship Journey"
@@ -920,7 +1068,7 @@ export default function LearnerOverview() {
               )}
             </div>
           </Panel>
-        </SectionReveal>
+        </SectionReveal>}
 
       </PageContainer>
     </WorkspaceShell>
@@ -991,6 +1139,7 @@ function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen }: {
   completions: LearnerComponentProgress[];
   reflectionStatus?: string;
   onOpen?: () => void;
+  /** Inspection-demo accounts only — see isInspectionDemoAccount. */
 }) {
   const meta = componentTypeMeta(c.title);
   const prog = componentProgress(c, videos, completions);
@@ -1064,7 +1213,7 @@ function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen }: {
 }
 
 /** The Continue Learning card body: progress + this week's components. */
-function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, components, videos, completions, kind, learnerId, reflectionStatuses, canProgress }: {
+function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, components, videos, completions, kind, learnerId, reflectionStatuses, canProgress, showWeekHeading = false, hideHeader = false }: {
   moduleTitle: string; weekLabel: string; weekIndex: number; totalWeeks: number; components: JourneyComponent[];
   videos: LearnerVideoProgress[]; completions: LearnerComponentProgress[];
   kind?: string; learnerId?: string;
@@ -1072,6 +1221,11 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
   /** False for a staff/coach viewer: the rows still show progress, but none of
    *  them opens the runner that would record progress as the learner. */
   canProgress: boolean;
+  /** Inspection-demo accounts only — see isInspectionDemoAccount. */
+  showWeekHeading?: boolean;
+  /** Suppress both built-in headings — the inspection-demo drill-down draws
+   *  its own week header instead. */
+  hideHeader?: boolean;
 }) {
   const navigate = useNavigate();
   const availableComponents = components.filter(hasComponentContent);
@@ -1106,25 +1260,36 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
 
   return (
     <div>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary-100 bg-primary-50/50 px-3.5 py-2.5">
-        <span className="flex min-w-0 items-center gap-2.5">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-100 text-primary-700">
-            <AppIcon className="ri-calendar-event-line text-[15px]" />
+      {!hideHeader && showWeekHeading && (
+        <div className="mb-4 flex items-center gap-3" aria-label={weekLabel}>
+          <span className="h-px flex-1 bg-foreground-200" />
+          <h3 className="max-w-[70%] text-center text-[14px] font-bold text-foreground-900">{weekLabel}</h3>
+          <span className="h-px flex-1 bg-foreground-200" />
+        </div>
+      )}
+      {!hideHeader && !showWeekHeading && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary-100 bg-primary-50/50 px-3.5 py-2.5">
+          <span className="flex min-w-0 items-center gap-2.5">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-100 text-primary-700">
+              <AppIcon className="ri-calendar-event-line text-[15px]" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">Current period</span>
+              <span className="block truncate text-[12px] font-semibold text-foreground-800">{period || 'Date not scheduled yet'}</span>
+            </span>
           </span>
-          <span className="min-w-0">
-            <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">Current period</span>
-            <span className="block truncate text-[12px] font-semibold text-foreground-800">{period || 'Date not scheduled yet'}</span>
+          <span className="shrink-0 rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-semibold text-primary-700 ring-1 ring-primary-200">
+            Week {weekIndex + 1} of {totalWeeks}
           </span>
-        </span>
-        <span className="shrink-0 rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-semibold text-primary-700 ring-1 ring-primary-200">
-          Week {weekIndex + 1} of {totalWeeks}
-        </span>
-      </div>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <span className="text-[13px] font-semibold text-foreground-900">{done}/{total} complete</span>
-        <span className="text-[13px] font-semibold tabular-nums text-primary-700">{percent}%</span>
-      </div>
-      <ProgressBar percent={total ? percent : null} className="mb-4" />
+        </div>
+      )}
+      {!hideHeader && (
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <span className="text-[13px] font-semibold text-foreground-900">{done}/{total} complete</span>
+          <span className="text-[13px] font-semibold tabular-nums text-primary-700">{percent}%</span>
+        </div>
+      )}
+      {!hideHeader && <ProgressBar percent={total ? percent : null} className="mb-4" />}
       {total === 0 ? (
         <EmptyState size="sm" title="No components in this week yet." />
       ) : (
@@ -1142,6 +1307,230 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
         </div>
       )}
     </div>
+  );
+}
+
+/* ─────────────────────────────────────────────
+   Inspection-demo material drill-down — see isInspectionDemoAccount.
+   A client-side view toggle (never a route): header with back/progress/time,
+   then a per-week timeline built from the exact same CurrentWeekCard /
+   CurrentWeekRow used above, so the components inside stay the existing
+   real components.
+   ───────────────────────────────────────────── */
+function DemoMaterialDrilldown({
+  material,
+  kind,
+  id,
+  videos,
+  completions,
+  reflectionStatuses,
+  canProgress,
+  demoCompletedIds,
+  onBack,
+  onContinue,
+}: {
+  material: {
+    def: DemoMaterialDef;
+    modules: JourneyModule[];
+    summary: DemoProgrammeSummary;
+    weekStatus: { label: string | null; complete: boolean };
+    available: boolean;
+  };
+  kind?: string;
+  id?: string;
+  videos: LearnerVideoProgress[];
+  completions: LearnerComponentProgress[];
+  reflectionStatuses: LearningReflectionStatusMap;
+  canProgress: boolean;
+  demoCompletedIds: Set<string>;
+  onBack: () => void;
+  onContinue: () => void;
+}) {
+  const { def, modules, summary, weekStatus, available } = material;
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onBack}
+        className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-primary-600 hover:text-primary-700"
+      >
+        <AppIcon className="ri-arrow-left-line text-[13px]" />
+        Back to programme
+      </button>
+
+      <Panel className="mt-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[16px] font-bold leading-snug text-foreground-900">{def.name}</p>
+            {available && (
+              <p className="mt-0.5 text-[12px] text-foreground-400">
+                {weekStatus.complete ? 'All components complete' : weekStatus.label ? `Continue: ${weekStatus.label}` : 'Ready to start'}
+              </p>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <DemoMaterialStatusBadge available={available} complete={weekStatus.complete} completionPct={summary.completionPct} />
+            {available && !weekStatus.complete && (
+              <button
+                type="button"
+                onClick={onContinue}
+                className="inline-flex items-center gap-1 rounded-lg bg-primary-600 px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-primary-700"
+              >
+                Continue
+                <AppIcon className="ri-play-circle-line text-[13px]" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {available && (
+          <>
+            <div className="mt-4 flex items-center justify-between gap-2">
+              <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-foreground-400">Material progress</span>
+              <span className="text-[12px] font-semibold tabular-nums text-foreground-800">{summary.completionPct}%</span>
+            </div>
+            <ProgressBar percent={summary.completionPct} tone="bg-primary-500" className="mt-1" />
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className="inline-flex items-center gap-1 rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-medium text-foreground-600">
+                <AppIcon className="ri-time-line text-[11px]" />
+                {formatDemoMinutes(summary.completedMinutes)} of {formatDemoMinutes(summary.expectedMinutes)}
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-medium text-foreground-600">
+                <AppIcon className="ri-list-check-2 text-[11px]" />
+                {summary.materialsCompleted}/{summary.materialsTotal} components complete
+              </span>
+            </div>
+          </>
+        )}
+      </Panel>
+
+      {available ? (
+        <div className="mt-4 space-y-4">
+          {modules.map((mod) => (
+            <div key={mod.module}>
+              {modules.length > 1 && (
+                <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-foreground-400">{mod.module}</p>
+              )}
+              <div className="space-y-3">
+                {mod.weeks.map((week, weekIndex) => (
+                  <DemoWeekAccordion
+                    key={`${mod.module}-${week.week}`}
+                    week={week}
+                    weekIndex={weekIndex}
+                    totalWeeks={mod.weeks.length}
+                    moduleTitle={mod.module}
+                    kind={kind}
+                    learnerId={id}
+                    videos={videos}
+                    completions={completions}
+                    reflectionStatuses={reflectionStatuses}
+                    canProgress={canProgress}
+                    demoCompletedIds={demoCompletedIds}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-4">
+          <EmptyState size="sm" title="Not yet available" description="This material has no published content yet." />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One week's row in the drill-down timeline: title, component count,
+ * completion progress, expected time and status — expands to the week's
+ * existing component rows (CurrentWeekCard/CurrentWeekRow, unchanged). */
+function DemoWeekAccordion({
+  week,
+  weekIndex,
+  totalWeeks,
+  moduleTitle,
+  kind,
+  learnerId,
+  videos,
+  completions,
+  reflectionStatuses,
+  canProgress,
+  demoCompletedIds,
+}: {
+  week: JourneyWeek;
+  weekIndex: number;
+  totalWeeks: number;
+  moduleTitle: string;
+  kind?: string;
+  learnerId?: string;
+  videos: LearnerVideoProgress[];
+  completions: LearnerComponentProgress[];
+  reflectionStatuses: LearningReflectionStatusMap;
+  canProgress: boolean;
+  demoCompletedIds: Set<string>;
+}) {
+  const openable = week.components.filter(hasComponentContent);
+  const total = openable.length;
+  const done = openable.filter((c) => demoCompletionState(c, demoCompletedIds) === 'completed').length;
+  const percent = total ? Math.round((done / total) * 100) : 0;
+  const status: 'completed' | 'in-progress' | 'not-started' = total === 0 ? 'not-started' : done === total ? 'completed' : done > 0 ? 'in-progress' : 'not-started';
+  const expectedMinutes = openable.reduce((n, c) => n + (expectedMinutesFor(c) || 0), 0);
+  const [expanded, setExpanded] = useState(weekIndex === 0 && status !== 'completed');
+
+  const statusMeta: Record<typeof status, { label: string; tone: 'positive' | 'info' | 'neutral' }> = {
+    completed: { label: 'Completed', tone: 'positive' },
+    'in-progress': { label: 'In progress', tone: 'info' },
+    'not-started': { label: 'Not started', tone: 'neutral' },
+  };
+  const meta = statusMeta[status];
+
+  return (
+    <Panel padding="none" className="overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-background-100/70"
+      >
+        <div className="flex min-w-0 items-center gap-3">
+          <AppIcon className={`ri-arrow-right-s-line shrink-0 text-[16px] text-foreground-400 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+          <div className="min-w-0">
+            <p className="truncate text-[13px] font-semibold text-foreground-900">{week.week}</p>
+            <p className="mt-0.5 truncate text-[11px] text-foreground-400">
+              {total} {total === 1 ? 'component' : 'components'}
+              {expectedMinutes > 0 ? ` · ${formatDemoMinutes(expectedMinutes)}` : ''}
+            </p>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-3">
+          {total > 0 && (
+            <span className="hidden items-center gap-2 sm:flex">
+              <ProgressBar percent={percent} tone="bg-primary-500" className="w-20" />
+              <span className="text-[11px] font-semibold tabular-nums text-foreground-600">{done}/{total}</span>
+            </span>
+          )}
+          <StatusBadge tone={meta.tone} label={meta.label} size="sm" />
+        </div>
+      </button>
+      {expanded && (
+        <div className="border-t border-foreground-100 px-4 py-3.5">
+          <CurrentWeekCard
+            moduleTitle={moduleTitle}
+            weekLabel={week.week}
+            weekIndex={weekIndex}
+            totalWeeks={totalWeeks}
+            components={week.components}
+            videos={videos}
+            completions={completions}
+            kind={kind}
+            learnerId={learnerId}
+            reflectionStatuses={reflectionStatuses}
+            canProgress={canProgress}
+            hideHeader
+          />
+        </div>
+      )}
+    </Panel>
   );
 }
 

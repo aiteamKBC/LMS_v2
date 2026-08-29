@@ -584,6 +584,7 @@ export const ROUTE_PERMISSIONS: RoutePermissionMap[] = [
   { path: '/', allowedRoles: ['*'] },
   { path: '/login', allowedRoles: ['*'] },
   { path: '/onboarding', allowedRoles: ['learner', 'compliance', 'qa', 'tenant-admin', 'super-admin'] },
+  { path: '/learner/materials', allowedRoles: ['learner'] },
   { path: '/workspace/learner', allowedRoles: ['learner', 'coach', 'tutor', 'tenant-admin', 'super-admin'] },
   { path: '/workspace/coach', allowedRoles: ['coach', 'tenant-admin', 'super-admin'] },
   { path: '/workspace/tutor', allowedRoles: ['tutor', 'tenant-admin', 'super-admin'] },

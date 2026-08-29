@@ -334,6 +334,11 @@ const routes: RouteObject[] = [
     element: <LearnerOverview />,
   },
   {
+    // Focused inspection accounts land directly on their material cards.
+    path: "/learner/materials",
+    element: <LearnerOverview />,
+  },
+  {
     path: "/workspace/coach",
     element: <CoachDashboard />,
   },
