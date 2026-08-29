@@ -37,6 +37,12 @@ SAFE_LOG_FIELDS = (
     "row_count",
     "matched_id",
     "reason",
+    # Session lifecycle (login.sessions). Ids, a boolean and a duration -- no
+    # token, no token hash, no email, no IP, so turning these into counters
+    # never puts a credential or a person's identity in the log stream.
+    "session_id",
+    "remember",
+    "ttl_seconds",
 )
 
 

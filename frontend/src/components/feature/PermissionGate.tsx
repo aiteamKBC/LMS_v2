@@ -1,5 +1,4 @@
 import { type ReactNode } from 'react';
-import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import type { PermissionLevel, AccessScope } from '@/mocks/rbac';
 
@@ -33,38 +32,24 @@ export function PermissionGate({
 }
 
 // ============================================================
-// RouteGuard — protect routes, redirect to login or 403
+// Route protection lives elsewhere
 // ============================================================
-
-interface RouteGuardProps {
-  children: ReactNode;
-  /** Optional: specific permission required */
-  permission?: string;
-  minLevel?: PermissionLevel;
-  /** Fallback path if unauthorized */
-  fallbackPath?: string;
-}
-
-export function RouteGuard({
-  children,
-  permission,
-  minLevel = 'view',
-  fallbackPath = '/login',
-}: RouteGuardProps) {
-  const { auth, hasPermission } = useAuth();
-
-  // Not authenticated — redirect to login
-  if (!auth.isAuthenticated) {
-    return <Navigate to="/login" replace />;
-  }
-
-  // Permission check
-  if (permission && !hasPermission(permission, minLevel)) {
-    return <Navigate to={fallbackPath} replace />;
-  }
-
-  return <>{children}</>;
-}
+//
+// A `RouteGuard` used to sit here. It was imported by nothing — every one of the
+// 266 routes in router/config.tsx rendered unguarded, so a signed-out visitor
+// pasting any path got the page — and it would not have been safe to wire up as
+// written: it tested `auth.isAuthenticated`, which `previewAs` satisfies with no
+// server session, and it redirected before `isInitialized`, which would have
+// bounced a genuinely signed-in user to /login on every refresh.
+//
+// Both are fixed in `RequireAuth`, which the router applies to everything not
+// listed in PUBLIC_PATHS. Use that; there is nothing to opt a route into.
+//
+// Nothing in this file is a security boundary either. It decides what this
+// browser draws, and drawing is not access: the boundary is the session gate in
+// front of the API (backend `login/api_gate.py`) plus the per-view decorators in
+// `login/permissions.py`. Hiding a button that calls an ungated endpoint hides
+// nothing.
 
 // ============================================================
 // RoleGate — conditionally render children based on role slug

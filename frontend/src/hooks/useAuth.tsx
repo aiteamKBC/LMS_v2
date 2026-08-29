@@ -10,6 +10,8 @@ import { apiLogin, apiLogout, apiMe, type AuthUser, type Role } from '@/api/auth
 import { rememberSignedInLearner } from '@/hooks/useMyLearner';
 import { clearCoachViewAs, syncCoachViewAsAccount } from '@/lib/coachViewAs';
 import { clearTutorViewAs, syncTutorViewAsAccount } from '@/lib/tutorViewAs';
+import { installSessionExpiryHandler, resetSessionExpiryNotice } from '@/lib/sessionExpiry';
+import { useToastOptional } from '@/hooks/useToast';
 
 // ============================================================
 // Types
@@ -181,6 +183,9 @@ function hasWildcardAccess(roles: RoleDef[]): boolean {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+  // Optional on purpose: ToastProvider sits above this one in App.tsx, but
+  // signing someone out must not depend on a toast being available.
+  const toast = useToastOptional();
 
   const [auth, setAuth] = useState<AuthState>(SIGNED_OUT);
   // Starts false: the session lives in an HttpOnly cookie, which JS cannot
@@ -207,6 +212,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; };
   }, []);
 
+  // A 401 from a gated API means the session this browser holds is gone —
+  // expired, revoked, the account deactivated, or signed out elsewhere. Before
+  // the API gate existed those requests were answered anyway and a lapsed
+  // session went unnoticed; now every panel on the page fails at once, so
+  // something has to say why rather than leaving a screen of broken cards.
+  //
+  // Installed here rather than at a call site because roughly forty modules
+  // under api/ and lib/ each own their own fetch. See lib/sessionExpiry.
+  useEffect(() => {
+    return installSessionExpiryHandler(() => {
+      // `navigate` rather than a reload: it keeps the SPA mounted, and the
+      // `from` state is what returns the person to the page they were on once
+      // they sign in again.
+      const from = `${window.location.pathname}${window.location.search}`;
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+      clearCoachViewAs();
+      clearTutorViewAs();
+      setAuth(SIGNED_OUT);
+      toast?.warning(
+        'Your session has ended',
+        'Please sign in again to continue where you left off.',
+      );
+      navigate('/login', { state: { from }, replace: true });
+    });
+  }, [navigate, toast]);
+
   // Sign-out in another tab should not leave this one showing a console it can
   // no longer load data for. The flag is a same-origin broadcast only — the
   // authority is always the cookie and /me.
@@ -228,6 +259,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string, remember = false) => {
     // Throws AuthError on failure; the caller renders err.message.
     const account = await apiLogin(email, password, remember);
+    // Re-arm the expiry notice: this browser has a live session again.
+    resetSessionExpiryNotice();
     setAuth(stateFromAccount(account));
     localStorage.setItem(AUTH_STORAGE_KEY, account.email);
     return account;
