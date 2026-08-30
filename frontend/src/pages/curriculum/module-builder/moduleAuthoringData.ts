@@ -1,4 +1,5 @@
 import type { CurriculumKsbEntry, CurriculumModule, LibraryComponent } from '@/lib/curriculumApi';
+import { clearCurriculumGetCache } from '@/lib/curriculumApi';
 import {
   assertComponentUploadAllowed,
   uploadComponentFile,
@@ -1367,10 +1368,12 @@ export function restoreModuleTeamsMeeting(moduleCatalogueId: string, options: { 
     method: 'POST',
     body: JSON.stringify({ createMissingComponents: Boolean(options.createMissingComponents) }),
     timeoutMs: 30000,
-  }).then(result => ({
-    ...result,
-    module: recalculateModule(result.module),
-  }));
+  }).then(result => {
+    // Re-attaching rewrites the module's live-session components, so the cached
+    // module list and Teams views must not keep serving the pre-restore state.
+    clearCurriculumGetCache();
+    return { ...result, module: recalculateModule(result.module) };
+  });
 }
 
 /**
@@ -1408,6 +1411,13 @@ export function createTeamsMeeting(input: TeamsMeetingInput) {
     method: 'POST',
     body: JSON.stringify(input),
     timeoutMs: 45000,
+  }).then(result => {
+    // This POST goes through this module's own client, so it never triggers the
+    // curriculum GET cache's mutation invalidation. Clear it here so the module
+    // list, the module-workspace Teams tab and the Teams Meetings page all read
+    // the new meeting the next time they load, instead of a pre-create snapshot.
+    clearCurriculumGetCache();
+    return result;
   });
 }
 
@@ -1421,6 +1431,9 @@ export function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<Te
     method: 'PATCH',
     body: JSON.stringify(input),
     timeoutMs: 45000,
+  }).then(result => {
+    clearCurriculumGetCache();
+    return result;
   });
 }
 
@@ -1454,7 +1467,10 @@ export function rescheduleTeamsOccurrence(
       body: JSON.stringify(input),
       timeoutMs: 45000,
     },
-  );
+  ).then(result => {
+    clearCurriculumGetCache();
+    return result;
+  });
 }
 
 export interface TeamsArtifactSyncResult {
