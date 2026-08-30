@@ -190,12 +190,55 @@ export function applyModuleWeekSessionPlan(
   const sessions = plan?.sessions || [];
   if (!sessions.length) return module;
   let weeksMoved = false;
-  const weekStructure = module.weekStructure.map((week, index) => {
-    const sessionDate = sessions[index]?.date || '';
-    const sessionDay = sessions[index]?.day || '';
-    if ((week.sessionDate || '') === sessionDate && (week.sessionDay || '') === sessionDay) return week;
+  let sessionIndex = 0;
+  const weekStructure = module.weekStructure.map(week => {
+    const liveComponents = week.components.filter(component => component.type === 'live-session');
+    let firstSession: ModuleWeekSessionPlan['sessions'][number] | undefined;
+    let components = week.components;
+    if (liveComponents.length) {
+      const plannedByComponentId = new Map<string, ModuleWeekSessionPlan['sessions'][number] | undefined>();
+      liveComponents.forEach(component => {
+        const planned = sessions[sessionIndex];
+        sessionIndex += 1;
+        firstSession ||= planned;
+        plannedByComponentId.set(component.id, planned);
+      });
+      let componentsMoved = false;
+      const plannedComponents = week.components.map(component => {
+        if (component.type !== 'live-session') return component;
+        const planned = plannedByComponentId.get(component.id);
+        if (!planned?.date) return component;
+        const settings = component.settings || {};
+        const trackedOccurrence = Boolean(
+          settings.sessionDateTimeUtc
+          || (settings.teamsLiveSessionId && Number(settings.teamsSessionNumber || 0) > 0),
+        );
+        if (settings.sessionDate || trackedOccurrence) return component;
+        componentsMoved = true;
+        weeksMoved = true;
+        return {
+          ...component,
+          settings: {
+            ...settings,
+            sessionDate: planned.date,
+            sessionDay: planned.day || '',
+          },
+        };
+      });
+      if (componentsMoved) components = plannedComponents;
+    } else {
+      firstSession = sessions[sessionIndex];
+      sessionIndex += 1;
+    }
+    const sessionDate = firstSession?.date || '';
+    const sessionDay = firstSession?.day || '';
+    if (
+      components === week.components
+      && (week.sessionDate || '') === sessionDate
+      && (week.sessionDay || '') === sessionDay
+    ) return week;
     weeksMoved = true;
-    return { ...week, sessionDate, sessionDay };
+    return { ...week, components, sessionDate, sessionDay };
   });
   const currentEndDate = String(module.endDate || '').trim();
   const endDateFollowsPlan = options.followEndDate !== false
@@ -1229,6 +1272,26 @@ export function formatCalendarDateTime(value: unknown, timeZone = calendarTimeZo
   return `${parts.day} ${parts.month} ${parts.year}, ${parts.hour === '24' ? '00' : parts.hour}:${parts.minute}`;
 }
 
+/**
+ * A UTC instant split into the calendar-zone date and clock a tutor edits — the
+ * inverse of `zonedNaiveToUtcIso`, so `zonedNaiveToUtcIso(`${date}T${time}`)`
+ * round-trips back to the same instant. Empty parts when it cannot be parsed.
+ */
+export function utcIsoToCalendarParts(value: unknown, timeZone = calendarTimeZone): { date: string; time: string } {
+  const instant = parseUtcInstant(value);
+  if (Number.isNaN(instant.getTime())) return { date: '', time: '' };
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+  }).formatToParts(instant).reduce<Record<string, string>>((accumulator, part) => {
+    if (part.type !== 'literal') accumulator[part.type] = part.value;
+    return accumulator;
+  }, {});
+  if (!parts.year || !parts.day) return { date: '', time: '' };
+  return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour === '24' ? '00' : parts.hour}:${parts.minute}` };
+}
+
 function clockIn(instant: Date, timeZone: string) {
   return new Intl.DateTimeFormat('en-GB', {
     timeZone, hour: '2-digit', minute: '2-digit', hour12: false,
@@ -1359,6 +1422,39 @@ export function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<Te
     body: JSON.stringify(input),
     timeoutMs: 45000,
   });
+}
+
+export interface TeamsOccurrenceRescheduleResult {
+  updated: boolean;
+  occurrence: {
+    liveSessionId: string;
+    sessionNumber: number;
+    startDateTimeUtc: string;
+    durationMinutes: number;
+    joinUrl: string;
+    eventId: string;
+  };
+  warnings?: Array<{ code?: string; message: string; detail?: string }>;
+}
+
+/**
+ * Move one session of a live-session series to a date/time of its own, leaving
+ * every other session — and the module's default time — untouched. The tracked
+ * occurrence keeps its own duration unless `durationMinutes` is passed.
+ */
+export function rescheduleTeamsOccurrence(
+  liveSessionId: string,
+  sessionNumber: number,
+  input: { startDateTimeUtc: string; durationMinutes?: number },
+) {
+  return apiJson<TeamsOccurrenceRescheduleResult>(
+    `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/occurrences/${sessionNumber}/schedule/`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+      timeoutMs: 45000,
+    },
+  );
 }
 
 export interface TeamsArtifactSyncResult {

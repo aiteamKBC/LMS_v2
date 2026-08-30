@@ -60,6 +60,7 @@ import {
   restoreModuleTeamsMeeting,
   saveModuleStructure,
   uploadComponentResource,
+  utcIsoToCalendarParts,
   type AdvancedModuleDetails,
   type CompletionCriteria,
   type KsbMapping,
@@ -77,6 +78,7 @@ import {
 // and the RichTextEditor included) off the initial Module Builder load. Types come
 // from the non-lazy barrel — type imports are erased and pull in no runtime code.
 import { ComponentEditor as WeekComponentEditor, WeekComponentRail, WeekOverviewPanel } from '@/pages/curriculum/shared/components/weekAuthoringLazy';
+import { LiveSessionScheduleEditor } from './LiveSessionScheduleEditor';
 import type { GroupOption, WeekComponentUploader, WeekScope } from '@/pages/curriculum/shared/components/weekAuthoring';
 import { fetchComponentPointsDefaults, fetchWeekTemplates, fetchWeekTemplateDetail, filterWeekTemplatesForScope, loadCurriculumScope, type WeekTemplate } from '@/pages/curriculum/week-builder/weekTemplateData';
 // Round-trip the module's components to Excel so KSBs can be filled in ChatGPT
@@ -624,7 +626,10 @@ export default function ModuleBuilder() {
     setNoticeAlert(null);
     const wasDirty = Boolean(savedModuleSnapshotRef.current && moduleSnapshot(module) !== savedModuleSnapshotRef.current);
     try {
-      const result = await restoreModuleTeamsMeeting(module.catalogueId);
+      const [result, sessionPlan] = await Promise.all([
+        restoreModuleTeamsMeeting(module.catalogueId),
+        loadModuleWeekSessionPlan(module.catalogueId, module.weekStructure.length),
+      ]);
       const meetingSettings = result.meeting as ModuleComponent['settings'];
       // The endpoint answers with the module as it now stands, and each week's
       // live-session component carries that week's own session — so the stored
@@ -634,7 +639,7 @@ export default function ModuleBuilder() {
       let nextSnapshot = '';
       setWorkingModule(current => {
         if (!current || current.catalogueId !== module.catalogueId) return current;
-        const next = recalculateModule({
+        const restoredModule = recalculateModule({
           ...current,
           deliveryMetadata: {
             ...(current.deliveryMetadata || {}),
@@ -651,7 +656,8 @@ export default function ModuleBuilder() {
               components: [
                 ...week.components.map(component => (
                   component.type === 'live-session'
-                    ? { ...component, settings: { ...component.settings, ...(restoredById.get(component.id)?.settings || meetingSettings) } }
+                    && restoredById.get(component.id)
+                    ? { ...component, settings: { ...component.settings, ...restoredById.get(component.id)!.settings } }
                     : component
                 )),
                 // A week that had no live session now has the one the re-attach
@@ -662,6 +668,9 @@ export default function ModuleBuilder() {
             };
           }),
         });
+        const next = sessionPlan
+          ? applyModuleWeekSessionPlan(restoredModule, sessionPlan, { followEndDate: false })
+          : restoredModule;
         nextSnapshot = moduleSnapshot(next);
         return next;
       });
@@ -1642,6 +1651,7 @@ export default function ModuleBuilder() {
                   rulePoints={componentPointsByType[selectedComponent.type]}
                   weekScope={weekScopeForModule}
                   weekSessionDate={selectedWeek.sessionDate}
+                  weekSessionTime={selectedWeek.sessionStartTime}
                   uploadResource={uploadComponentForModule}
                   restoreTeamsMeeting={selectedComponent.type === 'live-session' ? restoreTeamsMeetingForWorkingModule : undefined}
                   restoringTeamsMeeting={restoringTeamsModuleId === workingModule.catalogueId}
@@ -1790,7 +1800,13 @@ export default function ModuleBuilder() {
               // The series is now tracked against this module, so re-attaching pulls
               // its join link into every live-session component and saves them — the
               // one-step "create and it's saved" the per-component modal can't give.
-              onCreated={() => { void restoreTeamsMeetingForWorkingModule(); }}
+              onCreated={() => {
+                // Generated components may still be local. Persist their ids first
+                // so restore can pair every one with its own tracked occurrence.
+                void saveModuleStructure(workingModule.catalogueId, workingModule)
+                  .then(() => restoreTeamsMeetingForWorkingModule())
+                  .catch(err => setActionMessage(err instanceof Error ? err.message : 'Unable to save live sessions before restoring Teams data.'));
+              }}
             />
           );
         })()}
@@ -3089,9 +3105,12 @@ function TypeSpecificFields({
             </button>
           </div>
           {getString('liveSessionUrl') && (
-            <div className="mt-3">
-              <TextInput label="Teams meeting URL" value={getString('liveSessionUrl')} onChange={value => onSettingChange('liveSessionUrl', value)} />
-            </div>
+            <LiveSessionScheduleEditor
+              component={component}
+              onSettingChange={onSettingChange}
+              fallbackDate={week.sessionDate}
+              fallbackTime={week.sessionStartTime}
+            />
           )}
         </div>
         <TextArea label="Session outline" value={getString('sessionPurpose')} onChange={value => onSettingChange('sessionPurpose', value)} rows={3} />
@@ -3102,6 +3121,16 @@ function TypeSpecificFields({
             onClose={() => setTeamsMeetingOpen(false)}
             onCreated={(result, input) => {
               const meeting = result.meeting;
+              const liveSessionIndex = module.weekStructure
+                .flatMap(item => item.components.filter(candidate => candidate.type === 'live-session'))
+                .findIndex(candidate => candidate.id === component.id);
+              const scheduled = liveSessionIndex >= 0 ? input.scheduledOccurrences?.[liveSessionIndex] : undefined;
+              const scheduledParts = scheduled ? utcIsoToCalendarParts(scheduled.startDateTimeUtc) : { date: '', time: '' };
+              const hasExplicitSchedule = Boolean(
+                component.settings.sessionDate
+                || component.settings.sessionDateTimeUtc
+                || (component.settings.teamsLiveSessionId && Number(component.settings.teamsSessionNumber || 0) > 0),
+              );
               onSettingChange('liveSessionUrl', meeting.joinUrl || meeting.webLink);
               onSettingChange('teamsEventId', meeting.eventId);
               onSettingChange('teamsLiveSessionId', meeting.liveSessionId);
@@ -3109,7 +3138,15 @@ function TypeSpecificFields({
               onSettingChange('teamsOrganizerEmail', meeting.organizerEmail);
               onSettingChange('teamsAttendees', meeting.attendees);
               onSettingChange('teamsPresenters', meeting.presenters);
-              onSettingChange('sessionDateTimeUtc', meeting.startDateTimeUtc);
+              if (scheduled) {
+                onSettingChange('teamsSessionNumber', scheduled.sessionNumber);
+                if (!hasExplicitSchedule) {
+                  onSettingChange('sessionDateTimeUtc', scheduled.startDateTimeUtc);
+                  onSettingChange('teamsStartDateTimeUtc', scheduled.startDateTimeUtc);
+                  if (scheduledParts.date) onSettingChange('sessionDate', scheduledParts.date);
+                  if (scheduledParts.time) onSettingChange('sessionTime', scheduledParts.time);
+                }
+              }
               onSettingChange('durationMinutes', meeting.durationMinutes);
               onSettingChange('teamsProvider', meeting.provider);
               onSettingChange('teamsRepeat', meeting.repeat);
