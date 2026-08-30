@@ -800,11 +800,12 @@ export default function LearnerOverview() {
         {/* ================================================================
             PROFILE HEADER
             ================================================================ */}
-        <SectionReveal delay={0}>
-          <header
-            className="relative overflow-hidden rounded-2xl px-5 py-5 shadow-sm md:px-7 md:py-6"
-            style={{ background: 'linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 30%, oklch(var(--primary-100)) 66%, oklch(var(--background-50)) 100%)' }}
-          >
+        {!isDemoAccount && (
+          <SectionReveal delay={0}>
+            <header
+              className="relative overflow-hidden rounded-2xl px-5 py-5 shadow-sm md:px-7 md:py-6"
+              style={{ background: 'linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 30%, oklch(var(--primary-100)) 66%, oklch(var(--background-50)) 100%)' }}
+            >
             <div
               aria-hidden="true"
               className="pointer-events-none absolute inset-0 opacity-40"
@@ -853,8 +854,71 @@ export default function LearnerOverview() {
               </div>
               <ProfileFact icon="ri-calendar-check-line" label="Planned end" value={plannedEndDisplay} />
             </div>
-          </header>
-        </SectionReveal>
+            </header>
+          </SectionReveal>
+        )}
+
+        {/* ================================================================
+            INSPECTION-DEMO: material cards, or one material's drill-down
+            ================================================================ */}
+        {isDemoAccount && !openMaterial && (
+          <SectionReveal delay={0} immediate>
+            <div className="overflow-hidden rounded-3xl bg-gradient-to-br from-primary-800 via-primary-600 to-violet-400 px-6 py-7 text-white shadow-lg shadow-primary-950/10 md:px-8">
+              <div className="flex flex-wrap items-center justify-between gap-5">
+                <div className="flex min-w-0 items-center gap-4">
+                  <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-white/15 ring-1 ring-white/20">
+                    <AppIcon className="ri-book-2-line text-2xl" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/65">Learning programme</p>
+                    <h1 className="mt-1 text-2xl font-heading font-bold leading-tight text-white">Your Materials</h1>
+                    <p className="mt-1 text-[13px] text-white/75">{demoProgramme?.programmeName}</p>
+                  </div>
+                </div>
+                <div className="rounded-2xl bg-white/10 px-5 py-3 text-right ring-1 ring-white/15">
+                  <p className="text-2xl font-bold tabular-nums">{demoMaterialCards.length}</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-white/65">Materials</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
+              {demoMaterialCards.map((material, index) => (
+                <div
+                  key={material.def.key}
+                  className={demoMaterialCards.length % 2 === 1 && index === demoMaterialCards.length - 1 ? 'lg:col-span-2' : undefined}
+                >
+                  <DemoMaterialCard
+                    name={material.def.name}
+                    order={material.def.order}
+                    summary={material.summary}
+                    currentWeekLabel={material.weekStatus.label}
+                    complete={material.weekStatus.complete}
+                    available={material.available}
+                    onContinue={() => setOpenMaterialKey(material.def.key)}
+                  />
+                </div>
+              ))}
+            </div>
+          </SectionReveal>
+        )}
+
+        {isDemoAccount && openMaterial && (
+          <SectionReveal delay={0} immediate>
+            <DemoMaterialDrilldown
+              material={openMaterial}
+              kind={kind}
+              id={id}
+              videos={real?.videoProgress ?? []}
+              completions={real?.componentProgress ?? []}
+              reflectionStatuses={reflectionStatuses}
+              canProgress={canProgress}
+              demoCompletedIds={demoCompletedIds}
+              onBack={() => setOpenMaterialKey(null)}
+              onContinue={() => openDemoMaterial(openMaterial)}
+            />
+          </SectionReveal>
+        )}
 
         {/* ================================================================
             COMPACT PROGRESS CARDS
@@ -873,7 +937,7 @@ export default function LearnerOverview() {
         {/* ================================================================
             CONTINUE LEARNING + UPCOMING / MY COACH
             ================================================================ */}
-        <SectionReveal delay={100}>
+        {!isDemoAccount && <SectionReveal delay={100}>
           <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
             <div className="space-y-4 lg:col-span-2">
               <Panel>
@@ -1043,7 +1107,7 @@ export default function LearnerOverview() {
               </Panel>
             </div>
           </div>
-        </SectionReveal>
+        </SectionReveal>}
 
         {/* ================================================================
             MY TASKS
