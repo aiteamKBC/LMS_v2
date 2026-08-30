@@ -3301,6 +3301,30 @@ table tbody td:last-child {
     oklch(var(--primary-50) / 0.42);
 }
 
+.calendar-hero-art__today-month,
+.calendar-hero-art__today-day {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  transform: translateX(-50%);
+  color: oklch(var(--primary-700));
+  font-weight: 800;
+  line-height: 1;
+  text-align: center;
+  text-shadow: 0 0.08rem 0.18rem oklch(var(--background-50) / 0.9);
+}
+
+.calendar-hero-art__today-month {
+  top: 1.3rem;
+  font-size: 0.62rem;
+  letter-spacing: 0;
+}
+
+.calendar-hero-art__today-day {
+  top: 2rem;
+  font-size: 1.65rem;
+}
+
 .calendar-hero-art__ring {
   position: absolute;
   top: -0.78rem;

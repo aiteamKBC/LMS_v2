@@ -24,6 +24,7 @@ export function LearnerMonthCard({
   learner,
   monthLabel,
   monthKey,
+  coachName,
   selected,
   expanded,
   inlineFilter,
@@ -37,6 +38,7 @@ export function LearnerMonthCard({
   learner: MonthlyLearnerActivity;
   monthLabel: string;
   monthKey: string;
+  coachName: string;
   selected: boolean;
   expanded: boolean;
   inlineFilter: InlineActivityFilter;
@@ -69,7 +71,7 @@ export function LearnerMonthCard({
             <button
               type="button"
               onClick={onOpenOverview}
-              className="px-3 py-2 rounded-lg border border-primary-200 bg-primary-50 text-primary-700 text-[12px] font-semibold hover:bg-primary-100 transition-smooth cursor-pointer"
+              className="h-9 px-3 flex items-center rounded-lg border border-primary-200 bg-primary-50 text-primary-700 text-[12px] font-semibold hover:bg-primary-100 transition-smooth cursor-pointer"
             >
               <AppIcon className="ri-layout-right-line mr-1.5"></AppIcon>
               Overview
@@ -77,7 +79,7 @@ export function LearnerMonthCard({
             <button
               type="button"
               onClick={onOpenCaseFile}
-              className="px-3 py-2 rounded-lg bg-primary-600 text-white text-[12px] font-semibold hover:bg-primary-700 transition-smooth cursor-pointer"
+              className="h-9 px-3 flex items-center rounded-lg bg-primary-600 text-white text-[12px] font-semibold hover:bg-primary-700 transition-smooth cursor-pointer"
             >
               View File
             </button>
@@ -85,7 +87,7 @@ export function LearnerMonthCard({
               type="button"
               onClick={onToggleTimeline}
               aria-label={expanded ? 'Collapse learner monthly cycle' : 'Open learner monthly cycle'}
-              className="w-9 h-9 rounded-lg border border-foreground-200 text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer"
+              className="h-9 w-9 flex items-center justify-center rounded-lg border border-foreground-200 text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer"
             >
               <AppIcon className={cn(expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line', 'text-lg')}></AppIcon>
             </button>
@@ -104,7 +106,7 @@ export function LearnerMonthCard({
             </div>
             <button
               type="button"
-              onClick={() => downloadLearnerMonthlyCyclePdf(learner, monthLabel, monthKey)}
+              onClick={() => downloadLearnerMonthlyCyclePdf(learner, monthLabel, monthKey, coachName)}
               className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-primary-200 bg-white px-4 text-[12px] font-bold text-primary-700 shadow-sm transition-smooth hover:bg-primary-50 cursor-pointer"
             >
               <AppIcon className="ri-file-pdf-line text-sm"></AppIcon>

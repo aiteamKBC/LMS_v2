@@ -58,7 +58,7 @@ interface FoundContext {
   moduleTitle: string;
   weekTitle: string;
   weekComponents: JourneyComponent[];
-  weeks: { week: string; count: number; completed: number; active: boolean }[];
+  weeks: { week: string; count: number; completed: number; active: boolean; components: JourneyComponent[] }[];
 }
 
 interface TimedCompletion {
@@ -168,67 +168,73 @@ function CompletionTimeInput({
 }
 
 function ActivityTimeSpentInput({ onChange }: { onChange: (seconds: number | null) => void }) {
-  const [draft, setDraft] = useState('');
-  const [invalid, setInvalid] = useState(false);
+  const [parts, setParts] = useState({ hours: '', minutes: '', seconds: '' });
 
-  const commit = () => {
-    if (!draft.trim()) {
-      setInvalid(false);
-      onChange(null);
-      return;
-    }
-    const parsed = parseClockSeconds(draft);
-    if (parsed == null) {
-      setInvalid(true);
-      return;
-    }
-    setInvalid(false);
-    setDraft(formatClock(parsed));
-    onChange(parsed);
+  const totalSeconds = (next: typeof parts): number | null => {
+    if (!next.hours && !next.minutes && !next.seconds) return null;
+    return (Number(next.hours) || 0) * 3600 + (Number(next.minutes) || 0) * 60 + (Number(next.seconds) || 0);
   };
 
+  const updatePart = (part: keyof typeof parts, rawValue: string) => {
+    const value = rawValue.replace(/\D/g, '').slice(0, part === 'hours' ? 3 : 2);
+    const next = { ...parts, [part]: value };
+    setParts(next);
+    onChange(totalSeconds(next));
+  };
+
+  const normalise = () => {
+    const total = totalSeconds(parts);
+    if (total == null) return;
+    const [hours, minutes, seconds] = formatClock(total).split(':');
+    setParts({ hours, minutes, seconds });
+    onChange(total);
+  };
+
+  const fields: { key: keyof typeof parts; label: string; ariaLabel: string }[] = [
+    { key: 'hours', label: 'hr', ariaLabel: 'Hours spent' },
+    { key: 'minutes', label: 'min', ariaLabel: 'Minutes spent' },
+    { key: 'seconds', label: 'sec', ariaLabel: 'Seconds spent' },
+  ];
+
   return (
-    <label
-      className={`inline-flex items-center gap-2 rounded-xl border bg-white px-3 py-2 shadow-sm transition-colors ${
-        invalid
-          ? 'border-red-300 text-red-700'
-          : 'border-background-300 text-foreground-700 focus-within:border-primary-300 focus-within:ring-2 focus-within:ring-primary-100'
-      }`}
-      title="Input"
+    <div
+      className="inline-flex items-center gap-2 rounded-xl border border-background-300 bg-white px-3 py-1.5 text-foreground-700 shadow-sm transition-colors focus-within:border-primary-300 focus-within:ring-2 focus-within:ring-primary-100"
+      title="Enter time spent in hours, minutes and seconds"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) normalise();
+      }}
     >
-      <AppIcon className={`ri-timer-line text-sm ${invalid ? 'text-red-600' : 'text-foreground-500'}`} />
-      <span className="text-[12px] font-semibold text-foreground-600">Input</span>
-      <input
-        type="text"
-        inputMode="numeric"
-        value={draft}
-        onChange={(event) => {
-          const nextValue = event.target.value;
-          setDraft(nextValue);
-          setInvalid(false);
-          if (!nextValue.trim()) {
-            onChange(null);
-            return;
-          }
-          const parsed = parseClockSeconds(nextValue);
-          onChange(parsed == null ? null : parsed);
-        }}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') event.currentTarget.blur();
-          if (event.key === 'Escape') {
-            event.preventDefault();
-            setDraft('');
-            setInvalid(false);
-            onChange(null);
-          }
-        }}
-        placeholder="00:00:00"
-        aria-label="Input time spent"
-        aria-invalid={invalid}
-        className="w-24 bg-transparent text-center font-mono text-sm font-semibold tabular-nums outline-none placeholder:font-sans placeholder:text-[12px] placeholder:font-semibold placeholder:text-foreground-400"
-      />
-    </label>
+      <AppIcon className="ri-timer-line text-sm text-foreground-500" />
+      <span className="text-[12px] font-semibold text-foreground-600">Time spent</span>
+      <span className="flex items-center gap-1">
+        {fields.map((field, index) => (
+          <span key={field.key} className="flex items-center gap-1">
+            {index > 0 && <span className="font-mono text-foreground-300">:</span>}
+            <label className="grid justify-items-center gap-0.5">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={parts[field.key]}
+                onChange={(event) => updatePart(field.key, event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') event.currentTarget.blur();
+                  if (event.key === 'Escape') {
+                    event.preventDefault();
+                    const empty = { hours: '', minutes: '', seconds: '' };
+                    setParts(empty);
+                    onChange(null);
+                  }
+                }}
+                placeholder="00"
+                aria-label={field.ariaLabel}
+                className="w-7 bg-transparent text-center font-mono text-sm font-bold tabular-nums outline-none placeholder:text-foreground-300"
+              />
+              <span className="text-[8px] font-bold uppercase tracking-wide text-foreground-400">{field.label}</span>
+            </label>
+          </span>
+        ))}
+      </span>
+    </div>
   );
 }
 
@@ -264,6 +270,7 @@ function locate(detail: LearnerDetail | null, componentId: string, completedIds:
             count: w.components.length,
             completed: w.components.filter((component) => isComponentComplete(component, completedIds)).length,
             active: w.week === wk.week,
+            components: w.components,
           })),
         };
       }
@@ -821,14 +828,6 @@ export default function ComponentViewPage() {
                     const isCurrent = !c.isQuiz && c.componentId === componentId;
                     const contentAvailable = hasComponentContent(c);
                     const clickable = contentAvailable && isNavigableComponent(c) && !isCurrent;
-                    const completed = isComponentComplete(c, completedIds);
-                    const timeKey = demoTimeKey({ isQuiz: c.isQuiz, quizId: c.quizMeta?.quizId, componentId: c.componentId });
-                    const overrideMinutes = timeKey ? demoTimeOverrides[timeKey] : undefined;
-                    const completionTime = completed
-                      ? overrideMinutes != null
-                        ? formatClock(Math.round(overrideMinutes * 60))
-                        : completionTimeFor(c, detail)
-                      : null;
                     const attempts = c.isQuiz ? (c.quizAttempts || []) : [];
                     const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
                     return (
@@ -911,12 +910,17 @@ export default function ComponentViewPage() {
                   <ul className="divide-y divide-background-300">
                     {(ctx?.weeks ?? []).map((w) => {
                       const weekComplete = w.count > 0 && w.completed >= w.count;
+                      const navigable = w.components.filter((item) => hasComponentContent(item) && isNavigableComponent(item));
+                      const target = navigable.find((item) => !isComponentComplete(item, completedIds)) || navigable[0] || null;
                       return (
                         <li key={w.week}>
                           <button
-                            onClick={() => navigate(backHref)}
+                            disabled={!target}
+                            onClick={() => target && navigate(componentRoute(kind, id, target, moduleTitle, w.week))}
                             className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
-                              weekComplete
+                              !target
+                                ? 'cursor-not-allowed bg-background-100/70 opacity-55'
+                                : weekComplete
                                 ? 'bg-emerald-50 text-emerald-900 hover:bg-emerald-100'
                                 : w.active ? 'bg-background-100' : 'hover:bg-background-50 cursor-pointer'
                             }`}
@@ -936,7 +940,9 @@ export default function ComponentViewPage() {
                                 {w.count} components{weekComplete ? ' complete' : ''}
                               </span>
                             </span>
-                            {weekComplete ? (
+                            {!target ? (
+                              <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
+                            ) : weekComplete ? (
                               <span className="text-[10px] font-semibold text-emerald-700 shrink-0">Done</span>
                             ) : w.active && (
                               <span className="text-[10px] font-semibold text-primary-600 shrink-0">Current</span>

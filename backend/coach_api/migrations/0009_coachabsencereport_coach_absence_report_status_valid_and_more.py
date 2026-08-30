@@ -3,6 +3,73 @@
 from django.db import migrations, models
 
 
+ABSENCE_STATUS_CONSTRAINT = models.CheckConstraint(
+    condition=models.Q(("status__in", ["pending", "approved", "declined"])),
+    name="coach_absence_report_status_valid",
+)
+
+CALENDAR_STATUS_CONSTRAINT = models.CheckConstraint(
+    condition=models.Q(
+        (
+            "status__in",
+            [
+                "not-scheduled",
+                "scheduled",
+                "in-progress",
+                "awaiting-signature",
+                "completed",
+                "cancelled",
+            ],
+        )
+    ),
+    name="coach_calendar_event_status_valid",
+)
+
+
+def constraint_exists(schema_editor, model, name):
+    if schema_editor.connection.vendor != "postgresql":
+        return False
+    with schema_editor.connection.cursor() as cursor:
+        cursor.execute(
+            """
+            select 1
+            from pg_constraint c
+            join pg_class t on t.oid = c.conrelid
+            join pg_namespace n on n.oid = t.relnamespace
+            where c.conname = %s
+              and n.nspname = %s
+              and t.relname = %s
+            limit 1
+            """,
+            [name, model._meta.db_table.split('"."')[0].strip('"'), model._meta.db_table.split('"."')[-1].strip('"')],
+        )
+        return bool(cursor.fetchone())
+
+
+def add_constraint_if_missing(schema_editor, model, constraint):
+    if not constraint_exists(schema_editor, model, constraint.name):
+        schema_editor.add_constraint(model, constraint)
+
+
+def remove_constraint_if_present(schema_editor, model, constraint):
+    if constraint_exists(schema_editor, model, constraint.name):
+        schema_editor.remove_constraint(model, constraint)
+
+
+def add_status_constraints(apps, schema_editor):
+    CoachAbsenceReport = apps.get_model("coach_api", "CoachAbsenceReport")
+    CoachCalendarEvent = apps.get_model("coach_api", "CoachCalendarEvent")
+    add_constraint_if_missing(schema_editor, CoachAbsenceReport, ABSENCE_STATUS_CONSTRAINT)
+    add_constraint_if_missing(schema_editor, CoachCalendarEvent, CALENDAR_STATUS_CONSTRAINT)
+
+
+def remove_status_constraints(apps, schema_editor):
+    CoachAbsenceReport = apps.get_model("coach_api", "CoachAbsenceReport")
+    CoachCalendarEvent = apps.get_model("coach_api", "CoachCalendarEvent")
+    remove_constraint_if_present(schema_editor, CoachCalendarEvent, CALENDAR_STATUS_CONSTRAINT)
+    remove_constraint_if_present(schema_editor, CoachAbsenceReport, ABSENCE_STATUS_CONSTRAINT)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,12 +77,19 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddConstraint(
-            model_name='coachabsencereport',
-            constraint=models.CheckConstraint(condition=models.Q(('status__in', ['pending', 'approved', 'declined'])), name='coach_absence_report_status_valid'),
-        ),
-        migrations.AddConstraint(
-            model_name='coachcalendarevent',
-            constraint=models.CheckConstraint(condition=models.Q(('status__in', ['not-scheduled', 'scheduled', 'in-progress', 'awaiting-signature', 'completed', 'cancelled'])), name='coach_calendar_event_status_valid'),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunPython(add_status_constraints, remove_status_constraints),
+            ],
+            state_operations=[
+                migrations.AddConstraint(
+                    model_name='coachabsencereport',
+                    constraint=ABSENCE_STATUS_CONSTRAINT,
+                ),
+                migrations.AddConstraint(
+                    model_name='coachcalendarevent',
+                    constraint=CALENDAR_STATUS_CONSTRAINT,
+                ),
+            ],
         ),
     ]

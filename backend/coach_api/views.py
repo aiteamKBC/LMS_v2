@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 # `time` below is datetime.time, so the sleep function is imported under its own
 # name to avoid shadowing it.
@@ -55,7 +56,7 @@ from learner_api.models import (
     learner_ksbs_relation_exists,
 )
 from learner_api.constants import ACCESS_COACH, ACCESS_SUPER_ADMIN
-from learner_api.active_users import dedupe_otjh_progress_records, refresh_learner_ksb_snapshot
+from learner_api.active_users import dedupe_otjh_progress_records, hydrate_source_training_plan, refresh_learner_ksb_snapshot
 from learner_api.calendar_connections import (
     booking_conflicts as personal_calendar_booking_conflicts,
 )
@@ -1828,13 +1829,19 @@ def monthly_activity_dedupe_identity(entry: dict, index: int) -> str:
 
 def monthly_learning_type(entry: dict) -> str:
     kind = clean_text(entry.get("kind")).lower()
-    component_type = clean_text(entry.get("componentType") or entry.get("type")).replace("-", " ")
+    component_type = clean_text(entry.get("componentType") or entry.get("type")).lower().replace("-", "_")
     if kind == "quiz":
         return "Quiz"
     if kind == "video":
         return "Video"
+    if component_type == "assignment":
+        return "Assignment"
+    if component_type == "podcast":
+        return "Audio"
+    if component_type == "reading":
+        return "Reading"
     if component_type:
-        return component_type.title()
+        return component_type.replace("_", " ").title()
     if kind == "component":
         return "Component"
     return clean_text(entry.get("action")) or "Activity"
@@ -1867,6 +1874,160 @@ def monthly_learning_detail(entry: dict) -> str:
     return clean_text(entry.get("module") or entry.get("week")) or "--"
 
 
+def curriculum_monthly_target_hours_weeks(training_plan) -> list[list[str]]:
+    """Training plan components grouped by week, in plan order.
+
+    A learner's plan is a flat sequence of weeks (module order, then week order
+    within it) with no date of its own. Split out from
+    `curriculum_monthly_target_hours` so callers can collect component ids
+    across many learners and fetch `expected_otjh` in one batched query instead
+    of one per learner.
+    """
+    weeks: list[list[str]] = []
+    for module in list_or_empty(training_plan):
+        if not isinstance(module, dict):
+            continue
+        for week in list_or_empty(module.get("weeks")):
+            if not isinstance(week, dict):
+                continue
+            component_ids = [
+                training_plan_component_id(component)
+                for component in list_or_empty(week.get("components"))
+                if isinstance(component, dict) and training_plan_component_id(component)
+            ]
+            weeks.append(component_ids)
+    return weeks
+
+
+def training_plan_has_components(training_plan) -> bool:
+    return any(component_ids for component_ids in curriculum_monthly_target_hours_weeks(training_plan))
+
+
+def monthly_target_training_plan(row: LearnerProfile | SimpleNamespace):
+    plan = getattr(row, "training_plan", None)
+    if training_plan_has_components(plan):
+        return plan
+
+    source = getattr(row, "_caseload_source", None)
+    if source is None:
+        return plan
+
+    try:
+        hydrated = hydrate_source_training_plan(source)
+    except Exception as exc:
+        logger.warning(
+            "Could not hydrate monthly target training plan for learner %s: %s",
+            getattr(row, "id", None),
+            exc,
+        )
+        return plan
+
+    if training_plan_has_components(hydrated):
+        try:
+            setattr(row, "training_plan", hydrated)
+        except Exception:
+            pass
+        return hydrated
+    return plan
+
+
+def training_plan_component_id(component: dict) -> str:
+    return clean_text(
+        component.get("componentId")
+        or component.get("component_id")
+        or component.get("id")
+    )
+
+
+def training_plan_expected_otjh_lookup(training_plan) -> dict[str, float]:
+    lookup: dict[str, float] = {}
+    for module in list_or_empty(training_plan):
+        if not isinstance(module, dict):
+            continue
+        for week in list_or_empty(module.get("weeks")):
+            if not isinstance(week, dict):
+                continue
+            for component in list_or_empty(week.get("components")):
+                if not isinstance(component, dict):
+                    continue
+                component_id = training_plan_component_id(component)
+                expected = component.get("expectedOtjh")
+                if expected in (None, ""):
+                    expected = component.get("expected_otjh")
+                if not component_id or expected in (None, ""):
+                    continue
+                try:
+                    lookup[component_id] = float(expected)
+                except (TypeError, ValueError):
+                    continue
+    return lookup
+
+
+def curriculum_monthly_target_hours(
+    training_plan,
+    learner_start_date: date | None,
+    start_date: date,
+    end_date: date,
+    expected_by_id: dict[str, float],
+) -> float:
+    """The learner's own planned OTJH for one month, read off their training plan.
+
+    A week's components count toward the month whose [start_date, end_date]
+    window contains that week's start. This is an estimate, not the authored
+    calendar: weeks are assumed contiguous with no gaps for holidays or breaks.
+
+    `expected_by_id` is a pre-fetched, batched lookup (see
+    `curriculum_monthly_target_hours_weeks` and `curriculum_expected_otjh_by_component_id`)
+    — this function does no DB work of its own.
+    """
+    raw_weeks = [
+        week
+        for module in list_or_empty(training_plan)
+        if isinstance(module, dict)
+        for week in list_or_empty(module.get("weeks"))
+        if isinstance(week, dict)
+    ]
+    if not raw_weeks:
+        return 0.0
+
+    plan_expected_by_id = training_plan_expected_otjh_lookup(training_plan)
+    total_hours = 0.0
+    for index, week in enumerate(raw_weeks):
+        explicit_start = parse_date_value(
+            week.get("startDate") or week.get("start_date") or week.get("weekStart") or week.get("week_start")
+        )
+        if isinstance(explicit_start, datetime):
+            explicit_start = explicit_start.date()
+        # Prefer authored curriculum week dates. Older plans have no dates, so
+        # retain the contiguous-week calculation from the learner start date;
+        # when that is also absent, anchor week 1 to the requested month.
+        week_start = explicit_start or (
+            (learner_start_date or start_date) + timedelta(weeks=index)
+        )
+        if not (start_date <= week_start <= end_date):
+            continue
+        component_ids = [
+            training_plan_component_id(component)
+            for component in list_or_empty(week.get("components"))
+            if isinstance(component, dict) and training_plan_component_id(component)
+        ]
+        total_hours += sum(
+            expected_by_id.get(component_id, plan_expected_by_id.get(component_id, 0.0))
+            for component_id in component_ids
+        )
+    return round(total_hours, 1)
+
+
+def monthly_target_start_date(row: LearnerProfile | SimpleNamespace) -> date | None:
+    source = getattr(row, "_caseload_source", None)
+    start_value = getattr(source, "start_date", None) if source is not None else None
+    start_value = start_value or getattr(row, "start_date", None)
+    start_date = parse_date_value(start_value)
+    if isinstance(start_date, datetime):
+        return start_date.date()
+    return start_date
+
+
 def training_plan_component_lookup(training_plan) -> dict[str, dict[str, str]]:
     lookup: dict[str, dict[str, str]] = {}
     for module in list_or_empty(training_plan):
@@ -1880,7 +2041,7 @@ def training_plan_component_lookup(training_plan) -> dict[str, dict[str, str]]:
             for component in list_or_empty(week.get("components")):
                 if not isinstance(component, dict):
                     continue
-                component_id = clean_text(component.get("componentId"))
+                component_id = training_plan_component_id(component)
                 if not component_id:
                     continue
                 lookup[component_id] = {
@@ -1896,20 +2057,23 @@ def curriculum_expected_otjh_by_component_id(component_ids: list[str]) -> dict[s
     ids = sorted({clean_text(component_id) for component_id in component_ids if clean_text(component_id)})
     if not ids:
         return {}
-    try:
-        with connections["enrolment"].cursor() as cur:
-            cur.execute(
-                "SELECT id, expected_otjh FROM curriculum.components WHERE id = ANY(%s)",
-                [ids],
-            )
-            return {
-                component_id: float(expected)
-                for component_id, expected in cur.fetchall()
-                if expected is not None
-            }
-    except DatabaseError as exc:
-        logger.warning("Could not look up component expected_otjh for OTJH breakdown: %s", exc)
-        return {}
+    for alias in ("default", "enrolment"):
+        try:
+            with connections[alias].cursor() as cur:
+                cur.execute(
+                    "SELECT id, expected_otjh FROM curriculum.components WHERE id = ANY(%s)",
+                    [ids],
+                )
+                values = {
+                    component_id: float(expected)
+                    for component_id, expected in cur.fetchall()
+                    if expected is not None
+                }
+                if values:
+                    return values
+        except DatabaseError as exc:
+            logger.warning("Could not look up component expected_otjh on %s: %s", alias, exc)
+    return {}
 
 
 def component_expected_otjh_hours(component_id: str, component_meta: dict, expected_by_id: dict[str, float], progress_entry: dict | None = None) -> float | None:
@@ -2176,6 +2340,15 @@ def monthly_status_label(status: str) -> str:
     return value.replace("-", " ").title() if value else "--"
 
 
+def monthly_event_is_unscheduled(status: str) -> bool:
+    value = clean_text(status).lower().replace("_", "-")
+    return value in {
+        CoachCalendarEvent.STATUS_NOT_SCHEDULED,
+        "needs-schedule",
+        "need-schedule",
+    } or value.replace("-", " ") in {"needs schedule", "need schedule"}
+
+
 def monthly_event_display_date(event: dict) -> date | None:
     return date_only(event.get("scheduledDate") or event.get("date") or event.get("targetDate"))
 
@@ -2246,6 +2419,8 @@ def build_monthly_activity_learner(
     events: list[dict],
     start_date: date,
     end_date: date,
+    attendance_rows: list[dict] | None = None,
+    expected_otjh_by_component_id: dict[str, float] | None = None,
 ) -> dict:
     progress_entries = [entry for entry in list_or_empty(row.training_plan_progress) if isinstance(entry, dict)]
     activity_entries = learner_activity_feed_entries(row)
@@ -2280,7 +2455,7 @@ def build_monthly_activity_learner(
     review_count = event_sources.count("progress-review")
     catchup_count = event_sources.count(CATCH_UP_EVENT_TYPE)
     needs_schedule_count = sum(
-        1 for event in learner_events if clean_text(event.get("status")).lower() == CoachCalendarEvent.STATUS_NOT_SCHEDULED
+        1 for event in learner_events if monthly_event_is_unscheduled(event.get("status"))
     )
     booked_count = sum(
         1
@@ -2293,6 +2468,9 @@ def build_monthly_activity_learner(
     seen_activity_keys: set[str] = set()
 
     for index, event in enumerate(learner_events):
+        event_status = clean_text(event.get("status")).lower()
+        if monthly_event_is_unscheduled(event_status) or event_status == CoachCalendarEvent.STATUS_CANCELLED:
+            continue
         event_date = monthly_event_display_date(event)
         if not event_date:
             continue
@@ -2354,6 +2532,24 @@ def build_monthly_activity_learner(
             )
         )
 
+    for index, attendance_row in enumerate(attendance_rows or []):
+        session_date = attendance_row.get("session_date")
+        if not isinstance(session_date, date) or not (start_date <= session_date <= end_date):
+            continue
+        status = clean_text(attendance_row.get("attendance_status")).lower()
+        activities.append(
+            build_monthly_activity_item(
+                item_id=f"attendance:{attendance_row.get('session_id')}:{index}",
+                item_date=session_date,
+                item_type="Attendance",
+                title=clean_text(attendance_row.get("session_title")) or "Live session",
+                detail="Present" if status == "present" else "Absent",
+                tone="emerald" if status == "present" else "red",
+                source="attendance",
+                status=status,
+            )
+        )
+
     activities.sort(key=lambda item: (item["date"], item["title"]), reverse=True)
 
     needs_action: list[str] = []
@@ -2379,7 +2575,14 @@ def build_monthly_activity_learner(
         monthly_status = "on-track"
 
     last_activity = activities[0] if activities else None
-    monthly_target_hours = round(max(to_number(learner.get("otjhTarget")) / 12, 1), 1)
+    target_training_plan = monthly_target_training_plan(row)
+    monthly_target_hours = curriculum_monthly_target_hours(
+        target_training_plan,
+        monthly_target_start_date(row),
+        start_date,
+        end_date,
+        expected_otjh_by_component_id or {},
+    )
 
     return {
         "id": learner["id"],
@@ -6107,7 +6310,15 @@ def coach_monthly_activity(request):
 
     try:
         rows = fetch_caseload_learner_profiles(owner_email)
-        timetable_payload = collect_generated_timetable(owner_email, start_date=start_date, end_date=end_date)
+        timetable_payload = collect_generated_timetable(
+            owner_email,
+            start_date=start_date,
+            end_date=end_date,
+            # Attendance is loaded from its dedicated projection below, and
+            # Monthly Cycle does not render timetable scheduler queues.
+            include_live_sessions=False,
+            include_scheduler_queues=False,
+        )
         events = timetable_payload.get("events", [])
         active_pairs = [
             (row, learner)
@@ -6115,8 +6326,36 @@ def coach_monthly_activity(request):
             for learner in [serialize_caseload_learner(row, refresh_live_snapshots=refresh_live_snapshots)]
             if learner.get("enrollmentStatus") == "active"
         ]
+        # Curriculum is the attendance source of truth: live-session
+        # occurrences and their imported Microsoft Teams attendance reports.
+        attendance_rows = fetch_verified_teams_attendance_rows(
+            [row.id for row, _learner in active_pairs if getattr(row, "id", None)],
+            start_date=start_date,
+            end_date=end_date,
+        )
+        attendance_by_learner_id: dict[int, list[dict]] = defaultdict(list)
+        for attendance_row in attendance_rows:
+            learner_id = to_int(attendance_row.get("learner_id"))
+            if learner_id:
+                attendance_by_learner_id[learner_id].append(attendance_row)
+        expected_otjh_by_component_id = curriculum_expected_otjh_by_component_id(
+            [
+                component_id
+                for row, _learner in active_pairs
+                for component_ids in curriculum_monthly_target_hours_weeks(monthly_target_training_plan(row))
+                for component_id in component_ids
+            ]
+        )
         learners = [
-            build_monthly_activity_learner(row, learner, events, start_date, end_date)
+            build_monthly_activity_learner(
+                row,
+                learner,
+                events,
+                start_date,
+                end_date,
+                attendance_rows=attendance_by_learner_id.get(to_int(learner.get("id")), []),
+                expected_otjh_by_component_id=expected_otjh_by_component_id,
+            )
             for row, learner in active_pairs
         ]
     except Exception:

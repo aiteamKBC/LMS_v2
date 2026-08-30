@@ -10,8 +10,8 @@ import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { useAuth } from '@/hooks/useAuth';
 import { isInspectionDemoAccount } from '@/lib/learnerFlowAccess';
 import { demoProgrammeFor, materialForModuleId, type DemoMaterialDef } from '@/lib/demoProgrammeMaterials';
-import { buildDemoTimings, currentWeekStatus, demoCompletionState, expectedMinutesFor, formatDemoMinutes, summariseDemoTimings, timingsForModuleIds, useDemoTimeOverrides, type DemoProgrammeSummary } from '@/lib/demoTime';
-import { DemoMaterialCard, DemoMaterialStatusBadge } from '@/components/feature/DemoTimePanel';
+import { buildDemoTimings, currentWeekStatus, summariseDemoTimings, timingsForModuleIds, useDemoTimeOverrides, type DemoProgrammeSummary } from '@/lib/demoTime';
+import { DemoMaterialCard } from '@/components/feature/DemoTimePanel';
 import { SignOutConfirmModal } from '@/components/feature/Header';
 import { buildLearnerJourney, completedComponentIds, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, hasComponentContent, isOpenableComponent, parseHours, recordedKsbEvidenceCodes, type JourneyComponent, type JourneyModule, type JourneyWeek } from '@/utils/learnerJourney';
 import type {
@@ -449,18 +449,8 @@ export default function LearnerOverview() {
       };
     });
   }, [demoProgramme, journey, demoTimings, demoCompletedIds]);
-  // Which material's drill-down (weeks/components) is open, if any — a
-  // purely client-side view toggle, not a route, so "Back to programme"
-  // never needs a navigation.
-  const [openMaterialKey, setOpenMaterialKey] = useState<string | null>(null);
-  const openMaterial = useMemo(
-    () => (openMaterialKey ? demoMaterialCards.find((m) => m.def.key === openMaterialKey) ?? null : null),
-    [openMaterialKey, demoMaterialCards],
-  );
-
-  /** Jump straight into a material's first unfinished activity, skipping its
-   * drill-down. A fully completed material reopens from its first activity,
-   * which keeps the drill-down's "Continue" button useful for review. */
+  /** Jump straight into a material's first unfinished activity. A fully
+   * completed material reopens from its first activity for review. */
   const openDemoMaterial = useCallback((material: (typeof demoMaterialCards)[number]) => {
     if (!kind || !id || !canProgress) return;
 
@@ -800,11 +790,12 @@ export default function LearnerOverview() {
         {/* ================================================================
             PROFILE HEADER
             ================================================================ */}
-        <SectionReveal delay={0}>
-          <header
-            className="relative overflow-hidden rounded-2xl px-5 py-5 shadow-sm md:px-7 md:py-6"
-            style={{ background: 'linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 30%, oklch(var(--primary-100)) 66%, oklch(var(--background-50)) 100%)' }}
-          >
+        {!isDemoAccount && (
+          <SectionReveal delay={0}>
+            <header
+              className="relative overflow-hidden rounded-2xl px-5 py-5 shadow-sm md:px-7 md:py-6"
+              style={{ background: 'linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 30%, oklch(var(--primary-100)) 66%, oklch(var(--background-50)) 100%)' }}
+            >
             <div
               aria-hidden="true"
               className="pointer-events-none absolute inset-0 opacity-40"
@@ -853,8 +844,54 @@ export default function LearnerOverview() {
               </div>
               <ProfileFact icon="ri-calendar-check-line" label="Planned end" value={plannedEndDisplay} />
             </div>
-          </header>
-        </SectionReveal>
+            </header>
+          </SectionReveal>
+        )}
+
+        {/* ================================================================
+            INSPECTION-DEMO: material cards
+            ================================================================ */}
+        {isDemoAccount && (
+          <SectionReveal delay={0} immediate>
+            <div className="overflow-hidden rounded-3xl bg-gradient-to-br from-primary-800 via-primary-600 to-violet-400 px-6 py-7 text-white shadow-lg shadow-primary-950/10 md:px-8">
+              <div className="flex flex-wrap items-center justify-between gap-5">
+                <div className="flex min-w-0 items-center gap-4">
+                  <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-white/15 ring-1 ring-white/20">
+                    <AppIcon className="ri-book-2-line text-2xl" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/65">Learning programme</p>
+                    <h1 className="mt-1 text-2xl font-heading font-bold leading-tight text-white">Your Materials</h1>
+                    <p className="mt-1 text-[13px] text-white/75">{demoProgramme?.programmeName}</p>
+                  </div>
+                </div>
+                <div className="rounded-2xl bg-white/10 px-5 py-3 text-right ring-1 ring-white/15">
+                  <p className="text-2xl font-bold tabular-nums">{demoMaterialCards.length}</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-white/65">Materials</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
+              {demoMaterialCards.map((material, index) => (
+                <div
+                  key={material.def.key}
+                  className={demoMaterialCards.length % 2 === 1 && index === demoMaterialCards.length - 1 ? 'lg:col-span-2' : undefined}
+                >
+                  <DemoMaterialCard
+                    name={material.def.name}
+                    order={material.def.order}
+                    summary={material.summary}
+                    currentWeekLabel={material.weekStatus.label}
+                    complete={material.weekStatus.complete}
+                    available={material.available}
+                    onContinue={() => openDemoMaterial(material)}
+                  />
+                </div>
+              ))}
+            </div>
+          </SectionReveal>
+        )}
 
         {/* ================================================================
             COMPACT PROGRESS CARDS
@@ -873,7 +910,7 @@ export default function LearnerOverview() {
         {/* ================================================================
             CONTINUE LEARNING + UPCOMING / MY COACH
             ================================================================ */}
-        <SectionReveal delay={100}>
+        {!isDemoAccount && <SectionReveal delay={100}>
           <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
             <div className="space-y-4 lg:col-span-2">
               <Panel>
@@ -1043,7 +1080,7 @@ export default function LearnerOverview() {
               </Panel>
             </div>
           </div>
-        </SectionReveal>
+        </SectionReveal>}
 
         {/* ================================================================
             MY TASKS
@@ -1427,6 +1464,42 @@ function LearningWeekStrip() {
 }
 
 
+function DemoMaterialStatusBadge({ available, complete, completionPct }: { available: boolean; complete: boolean; completionPct?: number }) {
+  if (!available) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-background-200 px-2 py-0.5 text-[10px] font-semibold text-foreground-500">
+        <AppIcon className="ri-lock-line text-[10px]" />
+        Not yet available
+      </span>
+    );
+  }
+
+  if (complete) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+        <AppIcon className="ri-check-line text-[10px]" />
+        Complete
+      </span>
+    );
+  }
+
+  if ((completionPct ?? 0) > 0) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-primary-100 px-2 py-0.5 text-[10px] font-semibold text-primary-700">
+        <AppIcon className="ri-play-circle-line text-[10px]" />
+        In progress
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-semibold text-foreground-600">
+      <AppIcon className="ri-play-circle-line text-[10px]" />
+      Ready to start
+    </span>
+  );
+}
+
 /* ─────────────────────────────────────────────
    Inspection-demo material drill-down — see isInspectionDemoAccount.
    A client-side view toggle (never a route): header with back/progress/time,
@@ -1511,7 +1584,7 @@ function DemoMaterialDrilldown({
             <div className="mt-3 flex flex-wrap gap-2">
               <span className="inline-flex items-center gap-1 rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-medium text-foreground-600">
                 <AppIcon className="ri-time-line text-[11px]" />
-                {formatDemoMinutes(summary.completedMinutes)} of {formatDemoMinutes(summary.expectedMinutes)}
+                {formatHoursMinutes(summary.completedMinutes)} of {formatHoursMinutes(summary.expectedMinutes)}
               </span>
               <span className="inline-flex items-center gap-1 rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-medium text-foreground-600">
                 <AppIcon className="ri-list-check-2 text-[11px]" />
@@ -1589,10 +1662,10 @@ function DemoWeekAccordion({
 }) {
   const openable = week.components.filter(hasComponentContent);
   const total = openable.length;
-  const done = openable.filter((c) => demoCompletionState(c, demoCompletedIds) === 'completed').length;
+  const done = openable.filter((c) => demoCompletedIds.has(c.componentId || '')).length;
   const percent = total ? Math.round((done / total) * 100) : 0;
   const status: 'completed' | 'in-progress' | 'not-started' = total === 0 ? 'not-started' : done === total ? 'completed' : done > 0 ? 'in-progress' : 'not-started';
-  const expectedMinutes = openable.reduce((n, c) => n + (expectedMinutesFor(c) || 0), 0);
+  const expectedMinutes = openable.reduce((n, c) => n + ('expectedMinutes' in c && typeof c.expectedMinutes === 'number' ? c.expectedMinutes : 0), 0);
   const [expanded, setExpanded] = useState(weekIndex === 0 && status !== 'completed');
 
   const statusMeta: Record<typeof status, { label: string; tone: 'positive' | 'info' | 'neutral' }> = {
@@ -1615,7 +1688,7 @@ function DemoWeekAccordion({
             <p className="truncate text-[13px] font-semibold text-foreground-900">{week.week}</p>
             <p className="mt-0.5 truncate text-[11px] text-foreground-400">
               {total} {total === 1 ? 'component' : 'components'}
-              {expectedMinutes > 0 ? ` · ${formatDemoMinutes(expectedMinutes)}` : ''}
+              {expectedMinutes > 0 ? ` · ${formatHoursMinutes(expectedMinutes)}` : ''}
             </p>
           </div>
         </div>

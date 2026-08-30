@@ -62,6 +62,13 @@ const STEP_META: Record<StructureWizardStep, {
   skipLabel: string;
   /** What the step after this one is for, named in the brief. */
   nextIs: string;
+  /**
+   * The page that adds a *second* record of this kind to the same parent. One
+   * run writes one record per step, and nothing on screen used to say so — a
+   * reader who wanted two groups under a cohort had no way to know the wizard
+   * was not going to offer them a second one.
+   */
+  moreAt: string;
 }> = {
   programme: {
     label: 'Programme',
@@ -69,6 +76,7 @@ const STEP_META: Record<StructureWizardStep, {
     continueLabel: 'Create programme & continue',
     skipLabel: 'Use an existing programme',
     nextIs: 'its first cohort',
+    moreAt: 'Programmes',
   },
   cohort: {
     label: 'Cohort',
@@ -76,6 +84,7 @@ const STEP_META: Record<StructureWizardStep, {
     continueLabel: 'Create cohort & continue',
     skipLabel: 'Use an existing cohort',
     nextIs: 'the cohort’s first group',
+    moreAt: 'Cohorts',
   },
   group: {
     label: 'Group',
@@ -83,6 +92,7 @@ const STEP_META: Record<StructureWizardStep, {
     continueLabel: 'Create group & continue',
     skipLabel: 'Use an existing group',
     nextIs: 'the group’s first module',
+    moreAt: 'Groups',
   },
   module: {
     label: 'Module',
@@ -90,6 +100,7 @@ const STEP_META: Record<StructureWizardStep, {
     continueLabel: 'Create module & continue',
     skipLabel: 'Finish without a module',
     nextIs: 'where its weeks get their components',
+    moreAt: 'Modules',
   },
   outline: {
     label: 'Weeks',
@@ -99,6 +110,7 @@ const STEP_META: Record<StructureWizardStep, {
     continueLabel: 'Finish',
     skipLabel: '',
     nextIs: '',
+    moreAt: '',
   },
 };
 
