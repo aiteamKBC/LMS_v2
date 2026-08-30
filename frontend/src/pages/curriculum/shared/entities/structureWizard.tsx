@@ -300,6 +300,29 @@ function WizardStepBrief({
   );
 }
 
+function WizardBeforeYouStart() {
+  return (
+    <div className="mt-2.5 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-[11px] leading-4 text-amber-800">
+      <p className="font-bold text-amber-900">
+        <AppIcon className="ri-file-info-line mr-1.5 text-xs" />
+        Before you start — this run creates one of each
+      </p>
+      <p className="mt-1">
+        The guided setup walks programme → cohort → group → module and links each record to the one above it. It writes exactly one record per step and then moves on — there is no “add another” inside the run. Plan the run around the first of each, and add the rest afterwards.
+      </p>
+      <ul className="mt-1 space-y-0.5 pl-3.5">
+        <li className="before:mr-2 before:content-['›']">More than one programme? Create the first here, then add the others on the <strong>Programmes</strong> page.</li>
+        <li className="before:mr-2 before:content-['›']">More than one cohort? Create the first here, then add the others on the <strong>Cohorts</strong> page.</li>
+        <li className="before:mr-2 before:content-['›']">More than one group? Create the first here, then add the others on the <strong>Groups</strong> page.</li>
+        <li className="before:mr-2 before:content-['›']">More than one module? Create the first here, then add the others on the <strong>Modules</strong> page.</li>
+      </ul>
+      <p className="mt-1">
+        Any step can be passed over with <strong>Use an existing...</strong>, which attaches the next record to something already stored instead of creating a new one. Each step saves as it is submitted, so stopping part way keeps whatever has been created. The run ends at the module — the components inside its weeks are authored in the Module Builder.
+      </p>
+    </div>
+  );
+}
+
 /**
  * Cheap to mount and closed by default: the collections it needs are fetched on
  * the way in, not on every page load. The host page keeps its own list in step
@@ -546,6 +569,7 @@ export function CurriculumStructureWizard({
       <>
         <WizardRail steps={steps} step={step} created={created} resolved={chainNames} />
         <WizardStepBrief steps={steps} step={target} inherited={inheritedFor(target)} siblingCount={siblingCountFor(target)} />
+        {target === 'programme' && <WizardBeforeYouStart />}
       </>
     ),
     // A record step with nothing after it keeps its form's own label ("Create
