@@ -217,11 +217,9 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
       {/* The shared workspace controls stay visible on every desktop page so
           the dashboard and its child pages have the same navigation chrome. */}
 
-      {/* Workspace switcher — administrators only, and the reason the Super
-          Admin dashboard no longer carries a Workspaces panel: from here every
-          section is one click away on every page, rather than five sections
-          reachable only from the dashboard. */}
-      {role !== 'admin' && <WorkspaceSwitcher />}
+      {/* Keep the workspace switcher available in the shared top bar so
+          administrators can return to the workspace list from any page. */}
+      <WorkspaceSwitcher />
 
       <div className="hidden items-center gap-1 sm:flex">
         <Link to="/notifications" aria-label="Notifications" className="kbc-topbar-icon-button relative flex h-8 w-8 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-primary-50 hover:text-primary-600">
