@@ -192,7 +192,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
           page and thrown away, which is what left the bar looking empty. */}
       <div className={`hidden min-w-0 lg:block ${role === 'admin' ? 'w-[22rem] shrink-0' : 'flex-1'}`}>
         <div className="flex min-w-0 items-center gap-3">
-          {role === 'admin' && <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-foreground-500"><AppIcon className="ri-grid-line text-base"></AppIcon></span>}
+          {role === 'admin' && <span className="kbc-topbar-title-icon flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-foreground-500"><AppIcon className="ri-grid-line text-base"></AppIcon></span>}
           <p className="kbc-topbar-title truncate font-heading text-[14px] font-bold leading-tight text-foreground-900">{pageTitle}</p>
         </div>
         {role !== 'admin' && pageSubtitle && (
@@ -216,14 +216,18 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
           Admin dashboard no longer carries a Workspaces panel: from here every
           section is one click away on every page, rather than five sections
           reachable only from the dashboard. */}
-      <WorkspaceSwitcher />
+      {role !== 'admin' && <WorkspaceSwitcher />}
 
       <div className="hidden items-center gap-1 sm:flex">
         <Link to="/notifications" aria-label="Notifications" className="kbc-topbar-icon-button relative flex h-8 w-8 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-primary-50 hover:text-primary-600">
           <AppIcon className="ri-notification-3-line text-base"></AppIcon>
           <span className="absolute right-0.5 top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary-600 px-0.5 text-[8px] font-bold text-white">3</span>
         </Link>
-        <Link to="/tasks" aria-label="Tasks" className="kbc-topbar-icon-button flex h-8 w-8 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-primary-50 hover:text-primary-600"><AppIcon className="ri-clipboard-line text-base"></AppIcon></Link>
+        {role === 'admin' ? (
+          <Link to="/support/knowledge-base" aria-label="Help" className="kbc-topbar-icon-button flex h-8 w-8 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-primary-50 hover:text-primary-600"><AppIcon className="ri-question-line text-base"></AppIcon></Link>
+        ) : (
+          <Link to="/tasks" aria-label="Tasks" className="kbc-topbar-icon-button flex h-8 w-8 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-primary-50 hover:text-primary-600"><AppIcon className="ri-clipboard-line text-base"></AppIcon></Link>
+        )}
       </div>
 
       {/* Profile — kept: it is the only route to Sign Out. */}
@@ -241,7 +245,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
             }`}
           >
             <AccountAvatar initials={initials} className="h-7 w-7 shadow-sm shadow-primary-900/25" />
-            {role === 'admin' && <span className="hidden max-w-[5rem] truncate text-[11px] font-semibold text-foreground-700 xl:inline">Super Admin</span>}
+            {role === 'admin' && <span className="kbc-topbar-user-name hidden max-w-[5rem] truncate text-[11px] font-semibold text-white xl:inline">Super Admin</span>}
             <AppIcon
               className={`ri-arrow-down-s-line hidden text-xs text-foreground-400 transition-transform duration-200 sm:inline ${profileOpen ? 'rotate-180' : ''}`}
             ></AppIcon>
