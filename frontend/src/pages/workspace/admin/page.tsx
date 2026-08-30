@@ -80,6 +80,7 @@ export default function AdminDashboard() {
   // dismissals belong to the person, not to the tab.
   const accountId = auth.account?.id ?? null;
   const [dismissed, setDismissed] = useState<Set<string>>(() => readDismissed(accountId));
+  const [alertsOpen, setAlertsOpen] = useState(false);
   useEffect(() => setDismissed(readDismissed(accountId)), [accountId]);
 
   useEffect(() => {
@@ -181,6 +182,7 @@ export default function AdminDashboard() {
 
   const visibleAttention = attention.filter(a => !dismissed.has(a.signature));
   const hiddenCount = attention.length - visibleAttention.length;
+  const hasVisibleWarning = visibleAttention.some(a => a.tone === 'warning');
 
   const dismissAlert = (signature: string) =>
     setDismissed(dismiss(accountId, signature, attention.map(a => a.signature)));
@@ -196,8 +198,8 @@ export default function AdminDashboard() {
       userName={auth.account?.displayName || auth.user?.fullName || 'Platform Admin'}
       userRole="Super Administrator"
     >
-      <div className="space-y-4 p-3 md:space-y-5 md:p-6">
-        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
+      <div className="super-admin-dashboard space-y-3 p-3 md:space-y-4 md:p-8">
+        <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
           <div>
             <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground-950 md:text-3xl">Welcome back, Super Admin 👋</h1>
             <p className="mt-1 text-[11px] text-foreground-500 md:text-xs">Monitor platform health, user engagement and system performance in real time.</p>
@@ -206,17 +208,87 @@ export default function AdminDashboard() {
             <button type="button" className="inline-flex h-9 items-center gap-2 rounded-lg border border-foreground-200/70 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700 shadow-sm transition-smooth hover:border-primary-300 hover:bg-primary-50/40">
               <AppIcon className="ri-calendar-line text-sm text-foreground-500"></AppIcon>
               <span>May 13 - May 19, 2024</span>
-              <AppIcon className="ri-arrow-down-s-line text-xs text-foreground-400"></AppIcon>
+              <AppIcon className="ri-arrow-down-s-line super-admin-arrow-icon text-xs text-foreground-400"></AppIcon>
             </button>
-            <button type="button" className="inline-flex h-9 items-center gap-2 rounded-lg border border-foreground-200/70 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700 shadow-sm transition-smooth hover:border-primary-300 hover:bg-primary-50/40">
-              <AppIcon className="ri-equalizer-line text-sm text-foreground-500"></AppIcon>
-              <span>Filters</span>
-            </button>
+            <div className="super-admin-filters-anchor relative">
+              <button
+                type="button"
+                onClick={() => setAlertsOpen(open => !open)}
+                aria-expanded={alertsOpen}
+                aria-controls="super-admin-alerts"
+                className={`super-admin-filters-button inline-flex h-10 items-center gap-2 rounded-xl px-3.5 text-xs font-extrabold shadow-sm transition-smooth ${hasVisibleWarning ? 'super-admin-filters-button--has-warning' : ''}`}
+              >
+                <AppIcon className="ri-alert-line text-sm text-foreground-500"></AppIcon>
+                <span>Platform issues</span>
+                {visibleAttention.length > 0 && (
+                  <span className="super-admin-filters-count" aria-label={`${visibleAttention.length} active alert${visibleAttention.length === 1 ? '' : 's'}`}>
+                    {visibleAttention.length}
+                  </span>
+                )}
+              </button>
+
+              {alertsOpen && (
+                <div id="super-admin-alerts" className="super-admin-alert-popover" role="region" aria-label="Platform issues">
+                  <div className="super-admin-alert-popover__header">
+                    <div>
+                      <p className="text-sm font-extrabold text-foreground-950">Platform issues</p>
+                      <p className="mt-0.5 text-[11px] text-foreground-500">Platform issues that need your attention</p>
+                    </div>
+                    <span className="super-admin-alert-popover__count">{visibleAttention.length}</span>
+                  </div>
+
+                  {visibleAttention.length > 0 ? (
+                    <div className="super-admin-alert-list">
+                      {visibleAttention.map((a) => (
+                        <div
+                          key={a.signature}
+                          className={`super-admin-alert-item ${a.tone === 'critical' ? 'super-admin-alert-item--critical' : 'super-admin-alert-item--warning'}`}
+                        >
+                          <Link
+                            to={a.href}
+                            onClick={() => setAlertsOpen(false)}
+                            className="super-admin-alert-item__link"
+                          >
+                            <span className="super-admin-alert-item__icon">
+                              <AppIcon className={a.tone === 'critical' ? 'ri-error-warning-fill' : 'ri-alert-line'}></AppIcon>
+                            </span>
+                            <span className="super-admin-alert-item__text">{a.text}</span>
+                            <AppIcon className="ri-arrow-right-line super-admin-arrow-icon super-admin-alert-item__arrow"></AppIcon>
+                          </Link>
+                          <button
+                            type="button"
+                            onClick={() => dismissAlert(a.signature)}
+                            title="Dismiss for me — it returns if this changes"
+                            aria-label={`Dismiss: ${a.text}`}
+                            className="super-admin-alert-item__dismiss"
+                          >
+                            <AppIcon className="ri-close-line"></AppIcon>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="super-admin-alert-popover__empty">No active alerts.</p>
+                  )}
+
+                  {hiddenCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setDismissed(restoreAll(accountId))}
+                      className="super-admin-alert-popover__restore"
+                    >
+                      <AppIcon className="ri-eye-off-line"></AppIcon>
+                      {hiddenCount} alert{hiddenCount === 1 ? '' : 's'} dismissed · show {hiddenCount === 1 ? 'it' : 'them'} again
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-[minmax(0,1fr)_26rem]">
-        <section className="relative min-h-[180px] overflow-hidden rounded-xl border border-primary-200/60 p-5 shadow-sm md:p-6" style={{ background: 'linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 28%, oklch(var(--primary-100)) 62%, oklch(var(--background-50)) 100%)' }}>
+        <div className="super-admin-hero-row grid grid-cols-1 items-stretch gap-3 md:grid-cols-[minmax(0,3fr)_minmax(23rem,2fr)]">
+        <section className="super-admin-hero relative h-full min-h-[180px] overflow-hidden rounded-xl border border-primary-200/60 p-5 shadow-sm md:p-6" style={{ background: 'linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 28%, oklch(var(--primary-100)) 62%, oklch(var(--background-50)) 100%)' }}>
           <div className="absolute top-0 left-0 right-0 h-px bg-white/10"></div>
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute opacity-20" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
@@ -240,13 +312,15 @@ export default function AdminDashboard() {
           </div>
         </section>
 
-        <section className="h-fit rounded-xl border border-foreground-200/70 bg-background-50 p-3.5 shadow-sm md:p-4">
-          <div className="mb-2 flex items-center gap-2"><AppIcon className="ri-flashlight-line text-sm text-primary-600"></AppIcon><h2 className="font-heading text-sm font-semibold text-foreground-900">Quick actions</h2></div>
-          <div className="divide-y divide-foreground-100/70">
+        <section className="super-admin-quick-actions flex h-full flex-col rounded-xl border border-foreground-200/70 bg-background-50 p-3 shadow-sm md:p-3.5">
+          <div className="mb-1.5 flex items-center gap-2"><AppIcon className="ri-flashlight-line text-sm text-primary-600"></AppIcon><h2 className="font-heading text-sm font-semibold text-foreground-900">Quick actions</h2></div>
+          <div className="super-admin-quick-actions__grid grid grid-cols-1 gap-x-6 sm:grid-cols-2">
             <QuickAction href="/admin/users" icon="ri-user-add-line" label="Invite new user" />
-            <QuickAction href="/curriculum/cohorts" icon="ri-group-line" label="Create cohort" />
-            <QuickAction href="/admin/platform-report" icon="ri-file-chart-line" label="Generate platform report" />
             <QuickAction href="/admin/access-logs" icon="ri-shield-check-line" label="View audit logs" />
+            <QuickAction href="/curriculum/cohorts" icon="ri-group-line" label="Create cohort" />
+            <QuickAction href="/admin/roles" icon="ri-shield-star-line" label="Manage roles" />
+            <QuickAction href="/admin/platform-report" icon="ri-file-chart-line" label="Generate platform report" />
+            <QuickAction href="/admin/platform-report" icon="ri-download-2-line" label="Export data" />
           </div>
         </section>
         </div>
@@ -268,66 +342,7 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        {/* ============================================================ */}
-        {/* Attention — only real conditions, only when they hold        */}
-        {/* ============================================================ */}
-        {visibleAttention.length > 0 && (
-          <div className="space-y-2">
-            {/* The card is the wrapper, not the link: a <button> cannot live
-                inside an <a>, and nesting one would also mean every dismiss
-                click had to cancel a navigation it had already started. */}
-            {visibleAttention.map((a) => (
-              <div
-                key={a.signature}
-                className={`rounded-xl flex items-stretch transition-smooth ${
-                  a.tone === 'critical'
-                    ? 'bg-red-50 border border-red-200/60'
-                    : 'bg-amber-50 border border-amber-200/60'
-                }`}
-              >
-                <Link
-                  to={a.href}
-                  className={`flex flex-1 min-w-0 items-start gap-3 rounded-l-xl p-3.5 cursor-pointer transition-smooth ${
-                    a.tone === 'critical' ? 'hover:bg-red-100/70' : 'hover:bg-amber-100/70'
-                  }`}
-                >
-                  <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${a.tone === 'critical' ? 'bg-red-100' : 'bg-amber-100'}`}>
-                    <AppIcon className={`${a.tone === 'critical' ? 'ri-error-warning-fill text-red-600' : 'ri-alert-line text-amber-600'} text-sm`}></AppIcon>
-                  </span>
-                  <p className={`text-[13px] font-medium flex-1 ${a.tone === 'critical' ? 'text-red-900' : 'text-amber-900'}`}>{a.text}</p>
-                  <AppIcon className={`ri-arrow-right-line text-sm shrink-0 ${a.tone === 'critical' ? 'text-red-400' : 'text-amber-400'}`}></AppIcon>
-                </Link>
-                <button
-                  type="button"
-                  onClick={() => dismissAlert(a.signature)}
-                  title="Dismiss for me — it returns if this changes"
-                  aria-label={`Dismiss: ${a.text}`}
-                  className={`flex w-10 shrink-0 items-center justify-center rounded-r-xl transition-smooth cursor-pointer ${
-                    a.tone === 'critical'
-                      ? 'text-red-400 hover:bg-red-100/70 hover:text-red-700'
-                      : 'text-amber-400 hover:bg-amber-100/70 hover:text-amber-700'
-                  }`}
-                >
-                  <AppIcon className="ri-close-line text-sm"></AppIcon>
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* The way back. Without it a dismissal is irreversible and the count is
-            simply gone, which is a worse dashboard than one that nags. */}
-        {hiddenCount > 0 && (
-          <button
-            type="button"
-            onClick={() => setDismissed(restoreAll(accountId))}
-            className="flex items-center gap-2 text-[12px] text-foreground-400 hover:text-foreground-700 transition-smooth cursor-pointer"
-          >
-            <AppIcon className="ri-eye-off-line text-[13px]"></AppIcon>
-            {hiddenCount} alert{hiddenCount === 1 ? '' : 's'} dismissed · show {hiddenCount === 1 ? 'it' : 'them'} again
-          </button>
-        )}
-
+        {/* Alerts are surfaced from the Filters control above. */}
         {!loading && overview && attention.length === 0 && (
           <div className="bg-emerald-50/80 border border-emerald-200/50 rounded-xl p-3.5 flex items-center gap-3">
             <span className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
@@ -342,7 +357,7 @@ export default function AdminDashboard() {
         {/* ============================================================ */}
         {/* Stat cards                                                    */}
         {/* ============================================================ */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
+        <div className="super-admin-stat-grid grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
           <MiniStat loading={loading} label="Sign-in accounts" value={acc?.total} sub={`${acc?.active ?? 0} able to sign in`} icon="ri-user-line" color="primary" href="/admin/users" />
           <MiniStat loading={loading} label="Active last 30 days" value={acc?.activeLast30d} sub={`${acc?.liveSessions ?? 0} live sessions`} icon="ri-circle-line" color="blue" href="/admin/access-logs" />
           <MiniStat loading={loading} label="Awaiting first sign-in" value={acc?.neverSignedIn} sub={`${overview?.invitations.pending ?? 0} invitations pending`} icon="ri-mail-line" color="amber" href="/admin/users?status=invited" />
@@ -356,14 +371,14 @@ export default function AdminDashboard() {
         {/* ============================================================ */}
         {/* Main grid                                                     */}
         {/* ============================================================ */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
-          <div className="lg:col-span-2 space-y-4 md:space-y-6">
+        <div className="super-admin-main-grid grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.8fr)_minmax(20rem,1fr)] md:gap-6">
+          <div className="min-w-0 space-y-3 md:space-y-4">
             {/* Accounts by role */}
-            <section>
+            <section className="super-admin-accounts-section rounded-xl border border-foreground-200/60 bg-background-50 p-3 md:p-4">
               <div className="flex items-center justify-between mb-3 md:mb-4">
                 <h2 className="text-base font-heading font-semibold text-foreground-900">Accounts by role</h2>
-                <Link to="/admin/roles" className="text-[12px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">
-                  Manage roles <AppIcon className="ri-arrow-right-line text-[10px] ml-0.5"></AppIcon>
+                <Link to="/admin/roles" className="super-admin-arrow-link inline-flex items-center gap-1 text-[12px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">
+                  Manage roles <AppIcon className="ri-arrow-right-line super-admin-arrow-icon text-[10px]"></AppIcon>
                 </Link>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -371,7 +386,7 @@ export default function AdminDashboard() {
                   const total = acc.total || 1;
                   const pct = Math.round((count / total) * 100);
                   return (
-                    <Link key={role} to={`/admin/users?role=${role}`} className="block bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium cursor-pointer">
+                    <Link key={role} to={`/admin/users?role=${role}`} className="block bg-background-50 rounded-xl border border-foreground-200/60 p-3 card-premium cursor-pointer md:p-3.5">
                       <div className="flex items-start justify-between mb-3">
                         <div className="flex items-center gap-3">
                           <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center shrink-0">
@@ -403,10 +418,10 @@ export default function AdminDashboard() {
             </section>
 
             {/* Authentication activity */}
-            <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
+            <section className="super-admin-auth-activity bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Authentication activity</h3>
-                <Link to="/admin/access-logs" className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Access logs</Link>
+                <Link to="/admin/access-logs" className="super-admin-arrow-link inline-flex items-center gap-1 text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Access logs <AppIcon className="ri-arrow-right-line super-admin-arrow-icon text-[10px]"></AppIcon></Link>
               </div>
               {overview?.authActivity.available ? (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -432,10 +447,10 @@ export default function AdminDashboard() {
             </section>
 
             {/* Audit trail */}
-            <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
+            <section className="super-admin-recent-events bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Recent access events</h3>
-                <Link to="/admin/access-logs" className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Full log</Link>
+                <Link to="/admin/access-logs" className="super-admin-arrow-link inline-flex items-center gap-1 text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Full log <AppIcon className="ri-arrow-right-line super-admin-arrow-icon text-[10px]"></AppIcon></Link>
               </div>
               {audit.length === 0 ? (
                 <p className="text-[12px] text-foreground-400 py-6 text-center">
@@ -472,15 +487,15 @@ export default function AdminDashboard() {
           </div>
 
           {/* Right column */}
-          <div className="space-y-4 md:space-y-6">
+          <div className="space-y-3 md:space-y-4">
             {/* System status */}
-            <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
+            <section className="super-admin-system-status relative overflow-hidden bg-white rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <div className="flex items-center justify-between mb-1">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">System status</h3>
-                <Link to="/admin/system" className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Details</Link>
+                <Link to="/admin/system" className="super-admin-arrow-link inline-flex items-center gap-1 text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Details <AppIcon className="ri-arrow-right-line super-admin-arrow-icon text-[10px]"></AppIcon></Link>
               </div>
               <p className="text-[10px] text-foreground-400 mb-4">Whether each subsystem is configured in this deployment.</p>
-              <div className="space-y-2.5">
+              <div className="super-admin-system-checks relative z-10 space-y-2.5">
                 {system ? system.checks.map(check => (
                   <div key={check.id} className="flex items-center gap-3">
                     <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
@@ -497,13 +512,19 @@ export default function AdminDashboard() {
                   <p className="text-[12px] text-foreground-400 py-2">{loading ? 'Checking…' : 'Unavailable.'}</p>
                 )}
               </div>
+              <div aria-hidden="true" className="super-admin-system-art">
+                <div className="super-admin-system-art__halo"></div>
+                <div className="super-admin-system-art__shield">
+                  <AppIcon className="ri-check-line"></AppIcon>
+                </div>
+              </div>
             </section>
 
             {/* Invitations */}
             <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Invitations</h3>
-                <Link to="/admin/notifications" className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Email log</Link>
+                <Link to="/admin/notifications" className="super-admin-arrow-link inline-flex items-center gap-1 text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Email log <AppIcon className="ri-arrow-right-line super-admin-arrow-icon text-[10px]"></AppIcon></Link>
               </div>
               {overview ? (
                 <div className="grid grid-cols-3 gap-2">
@@ -530,7 +551,7 @@ export default function AdminDashboard() {
               <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">Compliance documents</h3>
-                  <Link to="/admin/documents" className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Browse</Link>
+                  <Link to="/admin/documents" className="super-admin-arrow-link inline-flex items-center gap-1 text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Browse <AppIcon className="ri-arrow-right-line super-admin-arrow-icon text-[10px]"></AppIcon></Link>
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   <Figure value={overview.documents.total} label="Stored" tone="neutral" />
@@ -552,6 +573,9 @@ export default function AdminDashboard() {
             )}
           </div>
         </div>
+        <footer className="super-admin-footer text-center text-[10px] text-foreground-400">
+          © 2024 Super Admin Workspace. All rights reserved.
+        </footer>
       </div>
     </WorkspaceShell>
   );
@@ -562,10 +586,10 @@ export default function AdminDashboard() {
 /* ======================================================================== */
 function QuickAction({ href, icon, label }: { href: string; icon: string; label: string }) {
   return (
-    <Link to={href} className="flex items-center gap-2.5 py-2.5 text-[11px] text-foreground-700 transition-smooth hover:text-primary-600">
+    <Link to={href} className="super-admin-quick-action flex items-center gap-2.5 border-b border-foreground-100/70 py-2 text-[11px] text-foreground-700 transition-smooth hover:text-primary-600">
       <span className="flex h-6 w-6 items-center justify-center rounded-md bg-primary-50 text-primary-500"><AppIcon className={`${icon} text-xs`}></AppIcon></span>
       <span className="flex-1">{label}</span>
-      <AppIcon className="ri-arrow-right-s-line text-foreground-300"></AppIcon>
+      <AppIcon className="ri-arrow-right-s-line super-admin-arrow-icon text-foreground-300"></AppIcon>
     </Link>
   );
 }
@@ -608,7 +632,7 @@ function Figure({ value, label, tone }: { value: number; label: string; tone: 'o
     neutral: 'text-foreground-800',
   };
   return (
-    <div className="bg-background-100/70 rounded-lg p-3 text-center">
+    <div className="super-admin-figure bg-background-100/70 rounded-lg p-3 text-center">
       <p className={`text-2xl font-heading font-bold ${toneMap[tone]}`}>{value}</p>
       <p className="text-[10px] text-foreground-400 mt-0.5">{label}</p>
     </div>

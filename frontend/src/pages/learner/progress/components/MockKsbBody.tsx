@@ -670,17 +670,17 @@ export function MockKsbBody({ showHero = true }: { showHero?: boolean }) {
 function StatCard({ label, value, total, color, icon }: { label: string; value: number; total: number; color: string; icon: string }) {
   const pct = Math.round((value / total) * 100);
   const colorMap: Record<string, { iconBg: string; iconText: string; accent: string; bar: string }> = {
-    emerald: { iconBg: 'bg-emerald-100', iconText: 'text-emerald-600', accent: 'text-emerald-700', bar: 'bg-emerald-500' },
-    amber: { iconBg: 'bg-amber-100', iconText: 'text-amber-600', accent: 'text-amber-700', bar: 'bg-amber-500' },
-    primary: { iconBg: 'bg-primary-100', iconText: 'text-primary-600', accent: 'text-primary-700', bar: 'bg-primary-500' },
-    red: { iconBg: 'bg-red-100', iconText: 'text-red-600', accent: 'text-red-700', bar: 'bg-red-500' },
+    emerald: { iconBg: 'bg-gradient-to-br from-[#b9f6db] via-[#34d399] to-[#059669] shadow-sm shadow-emerald-500/25', iconText: 'text-white', accent: 'text-emerald-700', bar: 'bg-emerald-500' },
+    amber: { iconBg: 'bg-gradient-to-br from-[#f8dda0] via-[#d49a38] to-[#b27715] shadow-sm shadow-[#b27715]/25', iconText: 'text-white', accent: 'text-amber-700', bar: 'bg-amber-500' },
+    primary: { iconBg: 'bg-gradient-to-br from-[#d8c9ff] via-[#8b5cf6] to-[#5420a8] shadow-sm shadow-primary-500/25', iconText: 'text-white', accent: 'text-primary-700', bar: 'bg-primary-500' },
+    red: { iconBg: 'bg-gradient-to-br from-[#fecaca] via-[#f87171] to-[#dc2626] shadow-sm shadow-red-500/25', iconText: 'text-white', accent: 'text-red-700', bar: 'bg-red-500' },
   };
   const c = colorMap[color] || colorMap.primary;
   return (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
       <div className="flex items-center gap-2.5 mb-2">
-        <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${c.iconBg} ${c.iconText}`}>
-          <AppIcon className={`${icon} text-sm`}></AppIcon>
+        <span className={`w-10 h-10 rounded-xl flex items-center justify-center ring-1 ring-black/5 ${c.iconBg} ${c.iconText}`}>
+          <AppIcon className={`${icon} text-base`}></AppIcon>
         </span>
         <span className="text-xs text-foreground-400">{label}</span>
       </div>

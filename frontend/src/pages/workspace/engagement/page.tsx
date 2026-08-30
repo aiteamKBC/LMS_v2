@@ -213,7 +213,7 @@ export default function EngagementDashboard() {
       pageTitle="Engagement Command Centre" pageSubtitle="Learner engagement monitoring and attendance risk tracking"
       userName="Tom Harrington" userRole="Engagement Manager"
     >
-      <div className="p-6 space-y-6">
+      <div className="engagement-command-page p-6 space-y-6">
         {/* Hero Banner */}
         <WorkspaceHeroBanner
           title="Engagement Command Centre"

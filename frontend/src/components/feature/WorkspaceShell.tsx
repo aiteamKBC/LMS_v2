@@ -133,7 +133,12 @@ function buildBreadcrumbs(pathname: string, search: string, navItems: SidebarNav
       }
     }
   } else {
-    crumbs.push({ label: workspaceLabel, href: pathname, isLink: true });
+    if (roleLabel === 'Super Admin') {
+      crumbs.push({ label: 'Dashboard', href: pathname, isLink: true });
+      crumbs.push({ label: workspaceLabel, href: pathname, isLink: false });
+    } else {
+      crumbs.push({ label: workspaceLabel, href: pathname, isLink: true });
+    }
   }
 
   return crumbs;
@@ -217,6 +222,7 @@ export function WorkspaceShell({
   return (
     <div
       className="dashboard-theme workspace-shell flex h-screen bg-background-200 overflow-hidden"
+      data-workspace-role={role}
       // The offset itself is applied under a `lg` media query in index.css —
       // below that breakpoint the sidebar is an off-canvas drawer and must
       // reserve nothing.
@@ -257,10 +263,14 @@ export function WorkspaceShell({
         {!hidePageChrome && !hideBreadcrumbs && breadcrumbs.length > 0 && (
           <div className="workspace-breadcrumbs flex h-8 shrink-0 items-center overflow-hidden border-b border-background-300/40 bg-background-200 px-3 md:px-5">
             <nav className="flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Breadcrumb">
-              <Link to="/" className="text-foreground-300 hover:text-foreground-500 transition-smooth">
-                <AppIcon className="ri-home-3-line text-base"></AppIcon>
-              </Link>
-              <AppIcon className="ri-arrow-right-s-line text-foreground-200 text-xs"></AppIcon>
+              {roleLabel !== 'Super Admin' && (
+                <>
+                  <Link to="/" className="text-foreground-300 hover:text-foreground-500 transition-smooth">
+                    <AppIcon className="ri-home-3-line text-base"></AppIcon>
+                  </Link>
+                  <AppIcon className="ri-arrow-right-s-line text-foreground-200 text-xs"></AppIcon>
+                </>
+              )}
               {breadcrumbs.map((crumb, index) => (
                 <span key={`${crumb.href}-${index}`} className="flex items-center gap-1.5">
                   {index < breadcrumbs.length - 1 ? (

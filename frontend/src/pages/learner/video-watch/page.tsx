@@ -58,7 +58,7 @@ interface FoundContext {
   moduleTitle: string;
   weekTitle: string;
   weekComponents: JourneyComponent[];
-  weeks: { week: string; count: number; completed: number; active: boolean }[];
+  weeks: { week: string; count: number; completed: number; active: boolean; components: JourneyComponent[] }[];
 }
 
 interface TimedCompletion {
@@ -168,67 +168,73 @@ function CompletionTimeInput({
 }
 
 function ActivityTimeSpentInput({ onChange }: { onChange: (seconds: number | null) => void }) {
-  const [draft, setDraft] = useState('');
-  const [invalid, setInvalid] = useState(false);
+  const [parts, setParts] = useState({ hours: '', minutes: '', seconds: '' });
 
-  const commit = () => {
-    if (!draft.trim()) {
-      setInvalid(false);
-      onChange(null);
-      return;
-    }
-    const parsed = parseClockSeconds(draft);
-    if (parsed == null) {
-      setInvalid(true);
-      return;
-    }
-    setInvalid(false);
-    setDraft(formatClock(parsed));
-    onChange(parsed);
+  const totalSeconds = (next: typeof parts): number | null => {
+    if (!next.hours && !next.minutes && !next.seconds) return null;
+    return (Number(next.hours) || 0) * 3600 + (Number(next.minutes) || 0) * 60 + (Number(next.seconds) || 0);
   };
 
+  const updatePart = (part: keyof typeof parts, rawValue: string) => {
+    const value = rawValue.replace(/\D/g, '').slice(0, part === 'hours' ? 3 : 2);
+    const next = { ...parts, [part]: value };
+    setParts(next);
+    onChange(totalSeconds(next));
+  };
+
+  const normalise = () => {
+    const total = totalSeconds(parts);
+    if (total == null) return;
+    const [hours, minutes, seconds] = formatClock(total).split(':');
+    setParts({ hours, minutes, seconds });
+    onChange(total);
+  };
+
+  const fields: { key: keyof typeof parts; label: string; ariaLabel: string }[] = [
+    { key: 'hours', label: 'hr', ariaLabel: 'Hours spent' },
+    { key: 'minutes', label: 'min', ariaLabel: 'Minutes spent' },
+    { key: 'seconds', label: 'sec', ariaLabel: 'Seconds spent' },
+  ];
+
   return (
-    <label
-      className={`inline-flex items-center gap-2 rounded-xl border bg-white px-3 py-2 shadow-sm transition-colors ${
-        invalid
-          ? 'border-red-300 text-red-700'
-          : 'border-background-300 text-foreground-700 focus-within:border-primary-300 focus-within:ring-2 focus-within:ring-primary-100'
-      }`}
-      title="Input"
+    <div
+      className="inline-flex items-center gap-2 rounded-xl border border-background-300 bg-white px-3 py-1.5 text-foreground-700 shadow-sm transition-colors focus-within:border-primary-300 focus-within:ring-2 focus-within:ring-primary-100"
+      title="Enter time spent in hours, minutes and seconds"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) normalise();
+      }}
     >
-      <AppIcon className={`ri-timer-line text-sm ${invalid ? 'text-red-600' : 'text-foreground-500'}`} />
-      <span className="text-[12px] font-semibold text-foreground-600">Input</span>
-      <input
-        type="text"
-        inputMode="numeric"
-        value={draft}
-        onChange={(event) => {
-          const nextValue = event.target.value;
-          setDraft(nextValue);
-          setInvalid(false);
-          if (!nextValue.trim()) {
-            onChange(null);
-            return;
-          }
-          const parsed = parseClockSeconds(nextValue);
-          onChange(parsed == null ? null : parsed);
-        }}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') event.currentTarget.blur();
-          if (event.key === 'Escape') {
-            event.preventDefault();
-            setDraft('');
-            setInvalid(false);
-            onChange(null);
-          }
-        }}
-        placeholder="00:00:00"
-        aria-label="Input time spent"
-        aria-invalid={invalid}
-        className="w-24 bg-transparent text-center font-mono text-sm font-semibold tabular-nums outline-none placeholder:font-sans placeholder:text-[12px] placeholder:font-semibold placeholder:text-foreground-400"
-      />
-    </label>
+      <AppIcon className="ri-timer-line text-sm text-foreground-500" />
+      <span className="text-[12px] font-semibold text-foreground-600">Time spent</span>
+      <span className="flex items-center gap-1">
+        {fields.map((field, index) => (
+          <span key={field.key} className="flex items-center gap-1">
+            {index > 0 && <span className="font-mono text-foreground-300">:</span>}
+            <label className="grid justify-items-center gap-0.5">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={parts[field.key]}
+                onChange={(event) => updatePart(field.key, event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') event.currentTarget.blur();
+                  if (event.key === 'Escape') {
+                    event.preventDefault();
+                    const empty = { hours: '', minutes: '', seconds: '' };
+                    setParts(empty);
+                    onChange(null);
+                  }
+                }}
+                placeholder="00"
+                aria-label={field.ariaLabel}
+                className="w-7 bg-transparent text-center font-mono text-sm font-bold tabular-nums outline-none placeholder:text-foreground-300"
+              />
+              <span className="text-[8px] font-bold uppercase tracking-wide text-foreground-400">{field.label}</span>
+            </label>
+          </span>
+        ))}
+      </span>
+    </div>
   );
 }
 
@@ -264,6 +270,7 @@ function locate(detail: LearnerDetail | null, componentId: string, completedIds:
             count: w.components.length,
             completed: w.components.filter((component) => isComponentComplete(component, completedIds)).length,
             active: w.week === wk.week,
+            components: w.components,
           })),
         };
       }
@@ -352,15 +359,12 @@ export default function ComponentViewPage() {
     return () => { cancelled = true; };
   }, [kind, id]);
 
-  // Every component id this learner has finished, so each sidebar row can show
-  // whether it is already done. Nothing needs folding in for a component
-  // completed on this visit: submitting swaps the whole layout for the results
-  // screen, and the sidebar is only ever rendered while still consuming.
+  // Keep completion state derived from the same progress records used by the
+  // learner journey. This is also needed by the sidebar's done counts.
   const completedIds = useMemo(() => completedComponentIds(detail), [detail]);
-  const ctx = useMemo(() => (componentId ? locate(detail, componentId, completedIds) : null), [detail, componentId, completedIds]);
-  const weekDoneCount = useMemo(
-    () => (ctx?.weekComponents ?? []).filter((c) => isComponentComplete(c, completedIds)).length,
-    [ctx, completedIds],
+  const ctx = useMemo(
+    () => (componentId ? locate(detail, componentId, completedIds) : null),
+    [detail, componentId, completedIds],
   );
   const component = ctx?.component ?? null;
   const meta = component ? componentTypeMeta(component.title) : null;
@@ -395,6 +399,7 @@ export default function ComponentViewPage() {
   const moduleTitle = ctx?.moduleTitle ?? searchParams.get('module') ?? '';
   const weekTitle = ctx?.weekTitle ?? searchParams.get('week') ?? '';
   const backHref = kind && id ? `/workspace/learner/${kind}/${id}` : '/workspace/learner';
+  const weekDoneCount = ctx?.weeks.find((w) => w.active)?.completed ?? 0;
 
   // Inspection-demo accounts only — see isInspectionDemoAccount. The results
   // screen shows an editable "demo time" beside the expected time; everyone
@@ -813,7 +818,7 @@ export default function ComponentViewPage() {
                 <div className="px-4 py-3 border-b border-background-300">
                   <h2 className="text-sm font-heading font-bold text-foreground-800">{weekTitle || 'This week'}</h2>
                   <p className="text-[11px] text-foreground-400 mt-0.5">
-                    {ctx?.weekComponents.length ?? 0} components
+                    {ctx?.weekComponents.length ?? 0} components{' '}
                     {weekDoneCount > 0 && <span className="text-emerald-600 font-semibold"> · {weekDoneCount} done</span>}
                   </p>
                 </div>
@@ -823,16 +828,18 @@ export default function ComponentViewPage() {
                     const isCurrent = !c.isQuiz && c.componentId === componentId;
                     const contentAvailable = hasComponentContent(c);
                     const clickable = contentAvailable && isNavigableComponent(c) && !isCurrent;
+                    const attempts = c.isQuiz ? (c.quizAttempts || []) : [];
+                    const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
                     const completed = isComponentComplete(c, completedIds);
-                    const timeKey = demoTimeKey({ isQuiz: c.isQuiz, quizId: c.quizMeta?.quizId, componentId: c.componentId });
-                    const overrideMinutes = timeKey ? demoTimeOverrides[timeKey] : undefined;
+                    const timeKey = c.componentId
+                      ? demoTimeKey({ isQuiz: c.isQuiz, quizId: c.quizMeta?.quizId, componentId: c.componentId })
+                      : '';
+                    const overrideMinutes = timeKey ? demoTimeOverrides[timeKey] : null;
                     const completionTime = completed
                       ? overrideMinutes != null
                         ? formatClock(Math.round(overrideMinutes * 60))
                         : completionTimeFor(c, detail)
                       : null;
-                    const attempts = c.isQuiz ? (c.quizAttempts || []) : [];
-                    const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
                     return (
                       <li key={c.componentId || c.title}>
                         <button
@@ -913,12 +920,17 @@ export default function ComponentViewPage() {
                   <ul className="divide-y divide-background-300">
                     {(ctx?.weeks ?? []).map((w) => {
                       const weekComplete = w.count > 0 && w.completed >= w.count;
+                      const navigable = w.components.filter((item) => hasComponentContent(item) && isNavigableComponent(item));
+                      const target = navigable.find((item) => !isComponentComplete(item, completedIds)) || navigable[0] || null;
                       return (
                         <li key={w.week}>
                           <button
-                            onClick={() => navigate(backHref)}
+                            disabled={!target}
+                            onClick={() => target && navigate(componentRoute(kind, id, target, moduleTitle, w.week))}
                             className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
-                              weekComplete
+                              !target
+                                ? 'cursor-not-allowed bg-background-100/70 opacity-55'
+                                : weekComplete
                                 ? 'bg-emerald-50 text-emerald-900 hover:bg-emerald-100'
                                 : w.active ? 'bg-background-100' : 'hover:bg-background-50 cursor-pointer'
                             }`}
@@ -938,7 +950,9 @@ export default function ComponentViewPage() {
                                 {w.count} components{weekComplete ? ' complete' : ''}
                               </span>
                             </span>
-                            {weekComplete ? (
+                            {!target ? (
+                              <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
+                            ) : weekComplete ? (
                               <span className="text-[10px] font-semibold text-emerald-700 shrink-0">Done</span>
                             ) : w.active && (
                               <span className="text-[10px] font-semibold text-primary-600 shrink-0">Current</span>
@@ -1440,15 +1454,15 @@ function PdfCanvasPreview({ url, title, fileName }: { url: string; title: string
       try {
         setStatus('loading');
         setError(null);
-        const pdfjs = await import('pdfjs-dist');
-        pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
+        const { GlobalWorkerOptions, getDocument } = await import('pdfjs-dist');
+        GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
         const response = await fetch(url, {
           credentials: 'same-origin',
           headers: { Accept: 'application/pdf,*/*' },
         });
         if (!response.ok) throw new Error(`File request failed (${response.status})`);
         const buffer = await response.arrayBuffer();
-        const document = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
+        const document = await getDocument({ data: new Uint8Array(buffer) }).promise;
         loadedPdf = document;
         if (!cancelled) {
           setPdf(document);
@@ -2030,4 +2044,3 @@ function CriterionRow({ met, label, hint, showHint }: { met: boolean; label: str
     </li>
   );
 }
-
