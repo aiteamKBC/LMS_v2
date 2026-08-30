@@ -8,7 +8,6 @@ import { cn } from '@/lib/cn';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { CompactMetric } from '@/components/ui/MetricCard';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { DataTable, type DataColumn } from '@/components/ui/DataTable';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -580,17 +579,6 @@ export default function CoachKsbImpact() {
           title="Monthly KSB Impact"
           description="Track Knowledge, Skills and Behaviours progress across your caseload and spot learners who need support."
           icon="ri-stack-line"
-          meta={
-            <>
-              <CompactMetric
-                label={stats.highRisk ? 'Needs attention' : 'Caseload status'}
-                value={stats.highRisk ? `${stats.highRisk} high-risk learner${stats.highRisk === 1 ? '' : 's'}` : 'Everything on track'}
-                tone={stats.highRisk ? 'critical' : 'positive'}
-              />
-              <CompactMetric label="Average KSB progress" value={`${stats.averageOverall}%`} tone="brand" />
-              <CompactMetric label="Validated / target" value={`${stats.totalCompleted ?? 0}/${stats.totalTarget ?? 0}`} />
-            </>
-          }
         />
 
         <section className="space-y-3">
