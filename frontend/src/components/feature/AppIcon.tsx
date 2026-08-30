@@ -341,7 +341,7 @@ export function AppIcon({ name, className = '', size = '1em', style, ...props }:
       className={visualClassName || undefined}
       width={size}
       height={size}
-      strokeWidth={1.8}
+      strokeWidth={2.05}
       fill={isFilled ? 'currentColor' : 'none'}
       style={{ verticalAlign: 'middle', ...style }}
     />

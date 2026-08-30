@@ -7,7 +7,6 @@ import { CardSkeleton } from '@/components/feature/Skeletons';
 import { RowAction } from '@/components/ui/ActionRow';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FilterToolbar, SearchInput } from '@/components/ui/FilterToolbar';
-import { MetricCard } from '@/components/ui/MetricCard';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
@@ -887,13 +886,6 @@ export default function CoachProgressReviews() {
             </button>
           )}
         />
-
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <MetricCard label="This month" value={thisMonth} icon="ri-calendar-line" tone="neutral" active={tab === 'this-month'} onClick={() => changeTab('this-month')} />
-          <MetricCard label="Overdue" value={overdue} icon="ri-alarm-warning-line" tone="critical" active={tab === 'overdue'} onClick={() => changeTab('overdue')} />
-          <MetricCard label="Due soon" value={dueSoon} icon="ri-calendar-event-line" tone="upcoming" active={tab === 'due-soon'} onClick={() => changeTab('due-soon')} />
-          <MetricCard label="Not scheduled" value={pendingSchedule} icon="ri-calendar-2-line" tone="caution" active={tab === 'needs-schedule'} onClick={() => changeTab('needs-schedule')} />
-        </div>
 
         {error ? (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-[13px] text-red-700">

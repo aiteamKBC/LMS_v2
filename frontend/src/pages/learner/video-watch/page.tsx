@@ -352,15 +352,12 @@ export default function ComponentViewPage() {
     return () => { cancelled = true; };
   }, [kind, id]);
 
-  // Every component id this learner has finished, so each sidebar row can show
-  // whether it is already done. Nothing needs folding in for a component
-  // completed on this visit: submitting swaps the whole layout for the results
-  // screen, and the sidebar is only ever rendered while still consuming.
+  // Keep completion state derived from the same progress records used by the
+  // learner journey. This is also needed by the sidebar's done counts.
   const completedIds = useMemo(() => completedComponentIds(detail), [detail]);
-  const ctx = useMemo(() => (componentId ? locate(detail, componentId, completedIds) : null), [detail, componentId, completedIds]);
-  const weekDoneCount = useMemo(
-    () => (ctx?.weekComponents ?? []).filter((c) => isComponentComplete(c, completedIds)).length,
-    [ctx, completedIds],
+  const ctx = useMemo(
+    () => (componentId ? locate(detail, componentId, completedIds) : null),
+    [detail, componentId, completedIds],
   );
   const component = ctx?.component ?? null;
   const meta = component ? componentTypeMeta(component.title) : null;
@@ -395,6 +392,7 @@ export default function ComponentViewPage() {
   const moduleTitle = ctx?.moduleTitle ?? searchParams.get('module') ?? '';
   const weekTitle = ctx?.weekTitle ?? searchParams.get('week') ?? '';
   const backHref = kind && id ? `/workspace/learner/${kind}/${id}` : '/workspace/learner';
+  const weekDoneCount = ctx?.weeks.find((w) => w.active)?.completed ?? 0;
 
   // Inspection-demo accounts only — see isInspectionDemoAccount. The results
   // screen shows an editable "demo time" beside the expected time; everyone
@@ -813,7 +811,7 @@ export default function ComponentViewPage() {
                 <div className="px-4 py-3 border-b border-background-300">
                   <h2 className="text-sm font-heading font-bold text-foreground-800">{weekTitle || 'This week'}</h2>
                   <p className="text-[11px] text-foreground-400 mt-0.5">
-                    {ctx?.weekComponents.length ?? 0} components
+                    {ctx?.weekComponents.length ?? 0} components{' '}
                     {weekDoneCount > 0 && <span className="text-emerald-600 font-semibold"> · {weekDoneCount} done</span>}
                   </p>
                 </div>
@@ -833,6 +831,16 @@ export default function ComponentViewPage() {
                       : null;
                     const attempts = c.isQuiz ? (c.quizAttempts || []) : [];
                     const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
+                    const completed = isComponentComplete(c, completedIds);
+                    const timeKey = c.componentId
+                      ? demoTimeKey({ isQuiz: c.isQuiz, quizId: c.quizMeta?.quizId, componentId: c.componentId })
+                      : '';
+                    const overrideMinutes = timeKey ? demoTimeOverrides[timeKey] : null;
+                    const completionTime = completed
+                      ? overrideMinutes != null
+                        ? formatClock(Math.round(overrideMinutes * 60))
+                        : completionTimeFor(c, detail)
+                      : null;
                     return (
                       <li key={c.componentId || c.title}>
                         <button
@@ -1440,15 +1448,15 @@ function PdfCanvasPreview({ url, title, fileName }: { url: string; title: string
       try {
         setStatus('loading');
         setError(null);
-        const pdfjs = await import('pdfjs-dist');
-        pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
+        const { GlobalWorkerOptions, getDocument } = await import('pdfjs-dist');
+        GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
         const response = await fetch(url, {
           credentials: 'same-origin',
           headers: { Accept: 'application/pdf,*/*' },
         });
         if (!response.ok) throw new Error(`File request failed (${response.status})`);
         const buffer = await response.arrayBuffer();
-        const document = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
+        const document = await getDocument({ data: new Uint8Array(buffer) }).promise;
         loadedPdf = document;
         if (!cancelled) {
           setPdf(document);
@@ -2030,4 +2038,3 @@ function CriterionRow({ met, label, hint, showHint }: { met: boolean; label: str
     </li>
   );
 }
-

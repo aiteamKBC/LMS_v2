@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 import { type CalendarEvent } from '@/pages/learner/clubs/data';
@@ -8,6 +9,9 @@ import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { PageContainer } from '@/components/ui/PageContainer';
+import { Panel } from '@/components/ui/Panel';
+import { SectionHeader } from '@/components/ui/SectionHeader';
 import {
   fetchLearnerCalendarEvents, bookLearnerCalendarSession, fetchLearnerCoach,
   fetchCalendarConnections, startCalendarOAuth, connectCredentialCalendar,
@@ -56,27 +60,48 @@ function CalendarMoreMenu({
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="inline-flex h-[42px] items-center gap-1.5 rounded-xl border border-foreground-200 bg-background-50 px-3.5 text-[13px] font-semibold text-foreground-600 transition-smooth hover:border-foreground-300 hover:text-foreground-900 cursor-pointer"
+        className="inline-flex h-[42px] min-w-[84px] items-center justify-center gap-1.5 rounded-xl border border-foreground-200 bg-white px-3.5 text-[13px] font-semibold text-foreground-900 transition-smooth hover:border-foreground-300 hover:bg-background-50 cursor-pointer"
       >
         <AppIcon className="ri-more-2-fill text-[16px]"></AppIcon>
         More
       </button>
       {open && (
-        <div role="menu" className="absolute right-0 top-full z-50 mt-2 w-64 overflow-hidden rounded-2xl border border-foreground-100 bg-background-50 shadow-lg animate-in fade-in slide-in-from-top-1 duration-150">
+        <div role="menu" aria-label="Calendar actions" className="calendar-more-menu absolute right-0 top-full z-50 mt-2 max-h-[min(70vh,14rem)] w-72 max-w-[calc(100vw-2rem)] overflow-y-auto overscroll-contain rounded-2xl border border-foreground-200 bg-white p-1.5 shadow-xl shadow-foreground-900/10 animate-in fade-in slide-in-from-top-1 duration-150">
           {items.map((item) => (
             <button
               key={item.label}
               type="button"
               role="menuitem"
               onClick={() => { item.onClick(); setOpen(false); }}
-              className="flex w-full items-center gap-3 px-3.5 py-2.5 text-left text-[13px] font-medium text-foreground-700 transition-smooth hover:bg-background-100 cursor-pointer"
+              className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] font-medium text-foreground-800 transition-smooth hover:bg-primary-50 hover:text-primary-700 cursor-pointer"
             >
-              <AppIcon className={`${item.icon} text-[15px] text-foreground-400`}></AppIcon>
-              {item.label}
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
+                <AppIcon className={`${item.icon} text-[15px]`}></AppIcon>
+              </span>
+              <span className="min-w-0 truncate">{item.label}</span>
             </button>
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function LearnerCalendarHeroArt() {
+  return (
+    <div className="calendar-hero-art">
+      <span className="calendar-hero-art__dots" />
+      <span className="calendar-hero-art__sprig" />
+      <span className="calendar-hero-art__back-page" />
+      <div className="calendar-hero-art__calendar">
+        <span className="calendar-hero-art__ring calendar-hero-art__ring--one" />
+        <span className="calendar-hero-art__ring calendar-hero-art__ring--two" />
+        <span className="calendar-hero-art__ring calendar-hero-art__ring--three" />
+        <span className="calendar-hero-art__ring calendar-hero-art__ring--four" />
+        <span className="calendar-hero-art__ring calendar-hero-art__ring--five" />
+        <span className="calendar-hero-art__calendar-top" />
+        <span className="calendar-hero-art__calendar-grid" />
+      </div>
     </div>
   );
 }
@@ -870,11 +895,11 @@ export function LearnerCalendarContent() {
             <p className="text-sm text-foreground-500 leading-relaxed mb-5">{showEventDetails.description}</p>
             <div className="flex gap-2">
               {showEventDetails.meetingLink && (
-                <a href={showEventDetails.meetingLink} target="_blank" rel="noreferrer" className="meeting-join-action flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap text-center"><AppIcon className="ri-video-chat-line mr-1"></AppIcon>Join Meeting</a>
+                <a href={showEventDetails.meetingLink} target="_blank" rel="noreferrer" className="meeting-join-action inline-flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap text-center"><AppIcon className="ri-video-chat-line h-4 w-4 shrink-0"></AppIcon><span>Join Meeting</span></a>
               )}
-              <button onClick={() => handleExportICS(showEventDetails)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-download-line mr-1"></AppIcon>Export .ics</button>
+              <button onClick={() => handleExportICS(showEventDetails)} className="inline-flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-download-line h-4 w-4 shrink-0"></AppIcon><span>Export .ics</span></button>
               {showEventDetails.id.startsWith('custom-') && (
-                <button onClick={() => handleRemoveFromCalendar(showEventDetails.id)} className="px-4 py-2.5 rounded-xl border border-red-200 text-sm font-semibold text-red-600 hover:bg-red-50 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-calendar-close-line mr-1"></AppIcon>Remove</button>
+                <button onClick={() => handleRemoveFromCalendar(showEventDetails.id)} className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-red-200 text-sm font-semibold text-red-600 hover:bg-red-50 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-calendar-close-line h-4 w-4 shrink-0"></AppIcon><span>Remove</span></button>
               )}
             </div>
           </div>
@@ -908,8 +933,8 @@ export function LearnerCalendarContent() {
       {/* ═══════════ SELECTED DAY DRAWER ═══════════ */}
       {showDayDrawer && (
         <>
-          <div className="fixed inset-0 z-30 bg-black/30 backdrop-blur-[1px] animate-in fade-in duration-150" onClick={() => setShowDayDrawer(false)} />
-          <div className="fixed inset-y-0 right-0 z-40 flex w-full max-w-sm flex-col border-l-2 border-background-300 bg-background-50 shadow-2xl animate-in slide-in-from-right duration-200">
+    <div className="calendar-day-drawer-backdrop fixed inset-0 z-[90] bg-black/30 backdrop-blur-[1px] animate-in fade-in duration-150" onClick={() => setShowDayDrawer(false)} />
+    <div className="calendar-day-drawer fixed inset-y-0 right-0 z-[100] flex w-full max-w-sm flex-col border-l-2 border-background-300 bg-white shadow-2xl animate-in slide-in-from-right duration-200">
             <div className="flex items-center justify-between gap-3 border-b border-background-200 px-5 py-4">
               <div className="min-w-0">
                 <p className="text-[10px] font-bold uppercase tracking-widest text-primary-600">
@@ -976,16 +1001,16 @@ export function LearnerCalendarContent() {
         </div>
       )}
 
-      <div className="space-y-5 p-3 sm:p-4 md:space-y-6 md:p-6">
+      <PageContainer className="learner-calendar-page">
 
         {calendarError && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 flex items-center gap-3">
+          <div className="rounded-xl border border-red-200/70 bg-red-50 px-4 py-3 flex items-center gap-3 shadow-sm">
             <AppIcon className="ri-error-warning-line text-red-500"></AppIcon>
             <p className="text-sm text-red-700">Could not load your coaching sessions: {calendarError}</p>
           </div>
         )}
         {calendarLoading && !calendarError && (
-          <div className="rounded-xl border border-background-300 bg-background-50 p-4">
+          <div className="rounded-xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
             <RowsSkeleton rows={3} avatar={false} />
           </div>
         )}
@@ -995,11 +1020,13 @@ export function LearnerCalendarContent() {
           icon="ri-calendar-2-line"
           title="My Calendar"
           description="Sessions, coaching and club events — all in one place"
+          className="calendar-page-header"
+          decoration={<LearnerCalendarHeroArt />}
           actions={
             <>
               <button
                 onClick={() => setShowBookModal(true)}
-                className="inline-flex h-[42px] cursor-pointer items-center gap-2 rounded-xl bg-primary-600 px-4 text-[13px] font-semibold text-white transition-smooth hover:bg-primary-700"
+                className="inline-flex h-[42px] min-w-[181px] cursor-pointer items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[13px] font-semibold text-white transition-smooth hover:bg-primary-700"
               >
                 <AppIcon className="ri-user-star-line text-[15px]"></AppIcon>
                 Book Coach Session
@@ -1018,7 +1045,8 @@ export function LearnerCalendarContent() {
         />
 
         {/* ═══════════ TOP BAR: VIEW TOGGLE + NAV ═══════════ */}
-        <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
+        <Panel padding="sm" className="border border-foreground-200/70 shadow-sm">
+          <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
           <div className="grid w-full grid-cols-3 items-center gap-1 rounded-xl bg-background-100 p-1 sm:flex sm:w-auto">
             {([{ key: 'monthly' as ViewMode, label: 'Month', icon: 'ri-calendar-2-line' },{ key: 'weekly' as ViewMode, label: 'Week', icon: 'ri-calendar-view' },{ key: 'daily' as ViewMode, label: 'Day', icon: 'ri-calendar-line' }]).map((v) => (
               <button key={v.key} onClick={() => setViewMode(v.key)} className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-sm font-semibold transition-smooth whitespace-nowrap cursor-pointer sm:px-4 ${viewMode === v.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}><AppIcon className={`${v.icon} text-sm`}></AppIcon>{v.label}</button>
@@ -1032,19 +1060,20 @@ export function LearnerCalendarContent() {
               <button onClick={handleNext} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-arrow-right-s-line"></AppIcon></button>
             </div>
           </div>
-        </div>
+          </div>
+        </Panel>
 
         {/* ═══════════ MAIN CONTENT ═══════════ */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 md:gap-6">
+        <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
 
           {/* ── CALENDAR VIEW AREA (2/3) ── */}
           <div className="lg:col-span-2 space-y-4">
 
             {/* MONTHLY VIEW */}
             {viewMode === 'monthly' && (
-              <div className="overflow-hidden rounded-2xl border border-background-300 bg-background-50 sm:border-2">
+              <div className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
                 {/* Day headers */}
-                <div className="grid grid-cols-7 border-b-2 border-background-300">
+                <div className="grid grid-cols-7 border-b border-foreground-100">
                   {DAYS_OF_WEEK.map((day, i) => (
                     <div key={day} className={`px-1 py-3 text-center sm:px-2 ${i >= 5 ? 'bg-background-100/60' : 'bg-background-100/30'}`}>
                       <span className="text-[10px] font-semibold uppercase tracking-wide text-foreground-500 sm:text-xs sm:tracking-wider">{day}</span>
@@ -1054,7 +1083,7 @@ export function LearnerCalendarContent() {
                 {/* Day cells */}
                 <div className="grid grid-cols-7">
                   {monthCells.map((day, idx) => {
-                    if (day === null) return <div key={`empty-${idx}`} className="aspect-square border-b border-r border-background-300 bg-background-50/40 sm:aspect-[4/3] sm:border-b-2 sm:border-r-2" />;
+                    if (day === null) return <div key={`empty-${idx}`} className="aspect-square border-b border-r border-foreground-100 bg-background-50/40 sm:aspect-[4/3]" />;
                     const eventsForDay = getEventsForDay(day, viewMonth);
                     const isSel = day === selectedDay && viewMode === 'monthly';
                     const isTdy = isToday(day, viewMonth, viewYear);
@@ -1064,9 +1093,9 @@ export function LearnerCalendarContent() {
                       <button
                         key={`d-${day}`}
                         onClick={() => { setSelectedDay(day); setShowDayDrawer(true); }}
-                        className={`flex aspect-square cursor-pointer flex-col border-b border-r border-background-300 p-1 text-left transition-all duration-150 hover:z-10 hover:bg-primary-50/20 sm:aspect-[4/3] sm:border-b-2 sm:border-r-2 sm:p-1.5 ${isSel ? 'ring-2 ring-primary-400 ring-inset bg-primary-50/30 z-10' : isTdy ? 'bg-primary-50/15' : 'bg-background-50'}`}
+                        className={`flex aspect-square cursor-pointer flex-col border-b border-r border-foreground-100 p-1 text-left transition-all duration-150 hover:z-10 hover:bg-primary-50/20 sm:aspect-[4/3] sm:p-1.5 ${isSel ? 'z-10 bg-[#fff8eb] shadow-[inset_0_0_0_1px_rgba(178,119,21,0.18)] ring-2 ring-[#b27715]/70 ring-inset' : isTdy ? 'bg-primary-50/15' : 'bg-background-50'}`}
                       >
-                        <span className={`mb-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold sm:mb-1 sm:h-6 sm:w-6 sm:text-xs ${isTdy ? 'bg-primary-500 text-white' : isSel ? 'bg-primary-100 text-primary-700' : 'text-foreground-500'}`}>{day}</span>
+                        <span className={`mb-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold sm:mb-1 sm:h-6 sm:w-6 sm:text-xs ${isSel ? 'bg-[#fff8eb] text-[#b27715] shadow-[0_2px_6px_rgba(178,119,21,0.3)] ring-1 ring-[#b27715]/50' : isTdy ? 'bg-primary-500 text-white' : 'text-foreground-500'}`}>{day}</span>
                         <div className="flex-1 w-full overflow-hidden space-y-0.5 min-w-0">
                           {visibleEvents.map((ev) => {
                             const dotColor = getEventDotColor(ev.type, ev.color);
@@ -1096,18 +1125,18 @@ export function LearnerCalendarContent() {
 
             {/* WEEKLY VIEW */}
             {viewMode === 'weekly' && (
-              <div className="overflow-x-auto rounded-2xl border border-background-300 bg-background-50 sm:border-2">
+              <div className="overflow-x-auto rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
                 {/* Week day headers */}
-                <div className="grid min-w-[760px] grid-cols-8 border-b-2 border-background-300">
+                <div className="grid min-w-[760px] grid-cols-8 border-b border-foreground-100">
                   <div className="px-2 py-3 bg-background-100/30"></div>
                   {weekDates.map((wd, idx) => {
                     const isTdy = isToday(wd.day, wd.month, viewYear);
                     const isSel = wd.day === selectedDay && wd.month === viewMonth;
                     return (
                       <button key={`wh-${wd.day}-${wd.month}`} onClick={() => { setSelectedDay(wd.day); setViewMonth(wd.month); }}
-                        className={`px-2 py-3 text-center cursor-pointer transition-smooth ${isSel ? 'bg-primary-50/40' : 'hover:bg-background-100/50'} ${idx >= 5 ? 'bg-background-100/20' : ''}`}>
+                        className={`px-2 py-3 text-center cursor-pointer transition-smooth ${isSel ? 'bg-[#fff8eb]' : 'hover:bg-background-100/50'} ${idx >= 5 ? 'bg-background-100/20' : ''}`}>
                         <span className="text-[10px] font-semibold text-foreground-400 uppercase block">{DAYS_SHORT[idx]}</span>
-                        <span className={`text-sm font-bold inline-flex items-center justify-center w-7 h-7 rounded-full mt-1 ${isTdy ? 'bg-primary-500 text-white' : isSel ? 'text-primary-700' : 'text-foreground-700'}`}>{wd.day}</span>
+                        <span className={`text-sm font-bold inline-flex items-center justify-center w-7 h-7 rounded-full mt-1 ${isSel ? 'bg-[#fff8eb] text-[#b27715] shadow-[0_2px_6px_rgba(178,119,21,0.3)] ring-1 ring-[#b27715]/50' : isTdy ? 'bg-primary-500 text-white' : 'text-foreground-700'}`}>{wd.day}</span>
                       </button>
                     );
                   })}
@@ -1117,8 +1146,8 @@ export function LearnerCalendarContent() {
                   {HOURS.map((hour) => {
                     const isCurrentHourRow = viewMode === 'weekly' && currentHour === hour;
                     return (
-                      <div key={`h-${hour}`} className={`grid min-w-[760px] grid-cols-8 border-b-2 border-background-300 ${isCurrentHourRow ? 'bg-primary-50/15' : ''}`}>
-                        <div className="px-3 py-3 text-right border-r-2 border-background-300">
+                      <div key={`h-${hour}`} className={`grid min-w-[760px] grid-cols-8 border-b border-foreground-100 ${isCurrentHourRow ? 'bg-primary-50/15' : ''}`}>
+                        <div className="px-3 py-3 text-right border-r border-foreground-100">
                           <span className="text-xs font-semibold text-foreground-400">{hour.toString().padStart(2, '0')}:00</span>
                         </div>
                         {weekDates.map((wd, wdi) => {
@@ -1129,7 +1158,7 @@ export function LearnerCalendarContent() {
                           const isSel = wd.day === selectedDay && wd.month === viewMonth;
                           return (
                             <div key={`ws-${wd.day}-${wd.month}-${hour}`}
-                              className={`min-h-[48px] p-0.5 relative cursor-pointer transition-smooth hover:bg-primary-50/15 ${isSel ? 'bg-primary-50/25' : ''} ${wdi >= 5 ? 'bg-background-100/10' : ''}`}
+                              className={`min-h-[48px] p-0.5 relative cursor-pointer transition-smooth hover:bg-primary-50/15 ${isSel ? 'bg-[#fff8eb]/70' : ''} ${wdi >= 5 ? 'bg-background-100/10' : ''}`}
                               onClick={() => { setSelectedDay(wd.day); setViewMonth(wd.month); }}>
                               {eventsInSlot.map((ev) => {
                                 const typeColor = getEventColorClass(ev.type, ev.color);
@@ -1157,9 +1186,9 @@ export function LearnerCalendarContent() {
 
             {/* DAILY VIEW */}
             {viewMode === 'daily' && (
-              <div className="bg-background-50 rounded-2xl border-2 border-background-300 overflow-hidden">
+              <div className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
                 {/* Day header */}
-                <div className="px-5 py-4 border-b-2 border-background-300 flex items-center gap-4 bg-background-100/30">
+                <div className="flex items-center gap-4 border-b border-foreground-100 bg-background-100/30 px-5 py-4">
                   <span className={`w-12 h-12 rounded-2xl flex items-center justify-center text-base font-bold ${isToday(selectedDay, viewMonth, viewYear) ? 'bg-primary-500 text-white' : 'bg-background-100 text-foreground-700'}`}>{selectedDay}</span>
                   <div>
                     <p className="text-sm font-heading font-bold text-foreground-900">{DAYS_OF_WEEK[new Date(viewYear, viewMonth, selectedDay).getDay() === 0 ? 6 : new Date(viewYear, viewMonth, selectedDay).getDay() - 1]}, {MONTH_NAMES[viewMonth]} {selectedDay}, {viewYear}</p>
@@ -1175,8 +1204,8 @@ export function LearnerCalendarContent() {
                     });
                     const isCurrentHourRow = currentHour === hour && isToday(selectedDay, viewMonth, viewYear);
                     return (
-                      <div key={`dh-${hour}`} className={`flex items-start border-b-2 border-background-300 min-h-[64px] ${isCurrentHourRow ? 'bg-primary-50/15' : ''}`}>
-                        <div className="w-[72px] shrink-0 px-4 py-3 text-right border-r-2 border-background-300">
+                      <div key={`dh-${hour}`} className={`flex min-h-[64px] items-start border-b border-foreground-100 ${isCurrentHourRow ? 'bg-primary-50/15' : ''}`}>
+                        <div className="w-[72px] shrink-0 border-r border-foreground-100 px-4 py-3 text-right">
                           <span className="text-xs font-semibold text-foreground-400">{hour.toString().padStart(2, '0')}:00</span>
                         </div>
                         <div className="flex-1 py-1.5 px-3 relative min-h-[64px]">
@@ -1214,9 +1243,9 @@ export function LearnerCalendarContent() {
           <div className="space-y-4">
 
             {/* Upcoming Events */}
-            <div className="rounded-2xl border border-background-300 bg-background-50 p-4 sm:border-2 sm:p-5">
-              <h3 className="text-sm font-heading font-bold text-foreground-900 mb-4 flex items-center gap-2"><AppIcon className="ri-calendar-todo-line text-primary-500"></AppIcon>Upcoming</h3>
-              <div className="space-y-2">
+            <Panel>
+              <SectionHeader title="Upcoming" icon="ri-calendar-todo-line" />
+              <div className="mt-3 space-y-2">
                 {myEvents.filter((ev) => {
                   const evDate = parseEventDate(ev);
                   if (!evDate) return false;
@@ -1251,11 +1280,11 @@ export function LearnerCalendarContent() {
                   </div>
                 )}
               </div>
-            </div>
+            </Panel>
           </div>
 
         </div>
-      </div>
+      </PageContainer>
     </>
   );
 }

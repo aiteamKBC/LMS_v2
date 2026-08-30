@@ -304,14 +304,16 @@ function ProgressStat({ icon, label, value, percent, caption, tone = 'neutral' }
 }) {
   const style = toneStyle(tone);
   return (
-    <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-foreground-400">{label}</p>
-        <AppIcon className={`${icon} shrink-0 text-[15px] ${tone === 'neutral' ? 'text-foreground-300' : style.text}`} />
+    <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
+      <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-sm ring-1 ring-black/5 ${style.bg} ${tone === 'neutral' ? 'text-foreground-400' : style.text}`}>
+        <AppIcon className={`${icon} text-xl`} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[12px] font-semibold text-foreground-500">{label}</p>
+        <p className={`mt-1 text-[22px] font-semibold leading-none tabular-nums ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{value}</p>
+        <ProgressBar percent={percent} tone={percent == null || tone === 'neutral' ? undefined : style.dot} className="mt-2.5" />
+        {caption ? <p className="mt-1.5 truncate text-[12px] leading-snug text-foreground-500">{caption}</p> : null}
       </div>
-      <p className={`mt-1.5 text-[22px] font-semibold leading-none tabular-nums ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{value}</p>
-      <ProgressBar percent={percent} tone={percent == null || tone === 'neutral' ? undefined : style.dot} className="mt-2.5" />
-      {caption ? <p className="mt-1.5 truncate text-[12px] leading-snug text-foreground-500">{caption}</p> : null}
     </div>
   );
 }

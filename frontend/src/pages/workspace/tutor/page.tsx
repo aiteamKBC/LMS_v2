@@ -127,7 +127,7 @@ function NextSessionCard({ session }: { session: TutorNextSession }) {
             <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-white/80">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" /> Next session
             </span>
-            <h2 className="mt-1 truncate font-heading text-lg font-bold leading-tight">{day || 'Scheduled'}</h2>
+            <h2 className="mt-1 truncate font-heading text-lg font-bold leading-tight text-white">{day || 'Scheduled'}</h2>
             <p className="truncate text-[12px] text-white/75">{session.moduleTitle || 'Module'}</p>
           </div>
           <div className="shrink-0 text-right">
@@ -551,7 +551,7 @@ export default function TutorDashboard() {
         userName={auth.account?.displayName || auth.user?.fullName || 'Administrator'}
         userRole="Administrator"
       >
-        <div className="mx-auto max-w-5xl space-y-5 p-3 md:p-6">
+        <div className="tutor-workspace-page mx-auto max-w-5xl space-y-5 p-3 md:p-6">
           <TutorDirectoryPicker
             onSelect={selected => setTutorViewAs({ email: selected.email, name: selected.name }, adminEmail)}
           />
@@ -575,7 +575,7 @@ export default function TutorDashboard() {
       userName={data?.tutor?.name || auth.account?.displayName || 'Tutor'}
       userRole="Tutor"
     >
-      <div className="mx-auto max-w-5xl space-y-5 p-3 md:p-6">
+      <div className="tutor-workspace-page mx-auto max-w-5xl space-y-5 p-3 md:p-6">
         {/* Whose workspace this is, and the way back to the other cards. The
             modules below are that tutor's own — the admin is reading their
             workspace, not a copy of it. */}

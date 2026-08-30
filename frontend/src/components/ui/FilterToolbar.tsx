@@ -45,7 +45,7 @@ export function FilterToolbar({
   return (
     <div
       className={cn(
-        'rounded-xl bg-background-50 p-3 shadow-sm',
+        'rounded-xl border border-foreground-100/70 bg-background-50 p-3 shadow-sm',
         className,
       )}
     >
