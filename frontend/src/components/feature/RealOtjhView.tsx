@@ -5,6 +5,9 @@ import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import { formatHoursMinutes, parseHours } from '@/utils/learnerJourney';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
+// Explicit, not auto-imported: vitest.config.ts leaves unplugin-auto-import out,
+// so a test that renders this view would crash on it (same reason as Modal.tsx).
+import { AppIcon } from '@/components/feature/AppIcon';
 
 const learnerNav = roleNavMap.learner;
 
@@ -18,15 +21,62 @@ const learnerNav = roleNavMap.learner;
 
 interface LogRow {
   title: string;
-  type: string;      // "Quiz" | "Video"
+  type: string;      // "Quiz" | "Video" | "Reading" | "Assignment" | …
   icon: string;
   tint: string;
   at: string;        // ISO
   ksbs: string[];
-  hours: string;     // reportedTime as-is
+  /** What this activity put towards the total, in hours. */
+  hours: number;
+  /** What the learner said it took, shown under the contribution when they differ. */
+  reported: string;
+  /** One row per quiz/component; repeats of the same one are folded in here. */
+  dedupeKey: string;
   passed?: boolean;
   isQuiz: boolean;
 }
+
+/**
+ * The hours one activity contributed, by the same rule the backend totals with
+ * (see active_users.completed_hours_from_progress): the component's own
+ * off-the-job hours when it has them, and only failing that whatever the learner
+ * reported. A bare number is hours up to 24 and minutes above it — the same
+ * reading _reported_minutes applies, so this panel cannot disagree with the
+ * "Completed" figure beside it.
+ */
+function contributedHours(expectedOtjh: unknown, reported: string, fallback?: number): number {
+  const expected = Number(expectedOtjh);
+  if (Number.isFinite(expected) && expected > 0) return expected;
+  const text = String(reported || '').trim().toLowerCase();
+  if (text) {
+    if (text.includes(':')) {
+      const [minutes, seconds] = text.split(':').map(Number);
+      if (Number.isFinite(minutes)) return (minutes + (Number.isFinite(seconds) ? seconds / 60 : 0)) / 60;
+    }
+    const hours = Number(text.match(/([\d.]+)\s*(?:hours?|hrs?|h)\b/)?.[1] || 0);
+    const minutes = Number(text.match(/([\d.]+)\s*(?:minutes?|mins?|m)\b/)?.[1] || 0);
+    if (hours || minutes) return hours + minutes / 60;
+    const bare = Number(text.match(/[\d.]+/)?.[0] || 0);
+    if (bare) return bare > 24 ? bare / 60 : bare;
+  }
+  return Number.isFinite(Number(fallback)) ? Number(fallback) : 0;
+}
+
+/** "reading" -> "Reading", "live_session" -> "Live session". */
+function activityTypeLabel(type: string): string {
+  const words = String(type || 'Activity').replace(/[_-]+/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1).toLowerCase();
+}
+
+const TYPE_ICONS: Record<string, { icon: string; tint: string }> = {
+  video: { icon: 'ri-play-circle-line', tint: 'bg-red-100 text-red-600' },
+  reading: { icon: 'ri-book-open-line', tint: 'bg-blue-100 text-blue-600' },
+  podcast: { icon: 'ri-mic-line', tint: 'bg-violet-100 text-violet-600' },
+  powerpoint: { icon: 'ri-slideshow-line', tint: 'bg-amber-100 text-amber-600' },
+  assignment: { icon: 'ri-file-edit-line', tint: 'bg-emerald-100 text-emerald-600' },
+  reflection: { icon: 'ri-chat-quote-line', tint: 'bg-primary-100 text-primary-600' },
+  live_session: { icon: 'ri-team-line', tint: 'bg-secondary-100 text-secondary-600' },
+};
 
 const RAG = (status: string | null | undefined) =>
   !status ? { bg: 'bg-emerald-100', text: 'text-emerald-700', dot: 'bg-emerald-500' }
@@ -85,45 +135,100 @@ export function OtjhBody({
   const plannedPercent = planned > 0 ? Math.round((completed / planned) * 100) : 0;
   const targetPercent = target > 0 ? Math.min(100, Math.round((completed / target) * 100)) : 0;
 
-  // Activity log: quiz attempts + video watches, newest first.
+  // Every completion that put hours on the total, newest first: quizzes, videos,
+  // and the readings, decks, podcasts and assignments finished through the
+  // component runner. Those last were missing, so a learner whose hours came
+  // from them saw a log that did not account for the number above it.
   const rows = useMemo<LogRow[]>(() => {
-    const componentTitleById = new Map(
+    const components = new Map(
       (real?.components ?? [])
-        .filter((component) => component.componentId && component.component.trim())
-        .map((component) => [String(component.componentId), component.component.trim()]),
+        .filter((component) => component.componentId)
+        .map((component) => [String(component.componentId), component]),
     );
+    const titleFor = (componentId: unknown, fallback: string) =>
+      components.get(String(componentId))?.component?.trim() || fallback;
+    const expectedFor = (componentId: unknown) =>
+      Number(components.get(String(componentId))?.expectedOtjh ?? NaN);
+
     const quiz = (real?.quizAttempts ?? []).map<LogRow>((a) => ({
       title: `Quiz attempt${a.attempt ? ` #${a.attempt}` : ''}`,
       type: 'Quiz', icon: 'ri-questionnaire-line',
       tint: a.passed ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600',
-      at: a.submittedAt, ksbs: a.ksbs || [], hours: a.reportedTime || a.timeTaken || '—',
+      at: a.submittedAt, ksbs: a.ksbs || [],
+      hours: contributedHours(
+        (a as { expectedOtjh?: number }).expectedOtjh,
+        a.reportedTime || a.timeTaken || '',
+      ),
+      reported: a.reportedTime || a.timeTaken || '',
+      // A quiz is one activity however many attempts it took, which is how the
+      // total counts it.
+      dedupeKey: `quiz:${a.quizId ?? a.componentId ?? a.submittedAt}`,
       passed: a.passed, isQuiz: true,
     }));
+
     const video = (real?.videoProgress ?? []).map<LogRow>((v) => ({
-      title: componentTitleById.get(String(v.componentId)) || 'Video watched',
+      title: titleFor(v.componentId, 'Video watched'),
       type: 'Video', icon: 'ri-play-circle-line', tint: 'bg-red-100 text-red-600',
-      at: v.submittedAt, ksbs: v.ksbs || [], hours: v.reportedTime || v.timeTaken || '—',
+      at: v.submittedAt, ksbs: v.ksbs || [],
+      hours: contributedHours(
+        (v as { expectedOtjh?: number }).expectedOtjh,
+        v.reportedTime || v.timeTaken || '',
+        expectedFor(v.componentId),
+      ),
+      reported: v.reportedTime || v.timeTaken || '',
+      dedupeKey: `component:${v.componentId || v.submittedAt}`,
       isQuiz: false,
     }));
-    return [...quiz, ...video].sort((a, b) => (b.at || '').localeCompare(a.at || ''));
+
+    const activities = (real?.componentProgress ?? []).map<LogRow>((c) => {
+      const look = TYPE_ICONS[String(c.componentType || '').toLowerCase()];
+      return {
+        title: titleFor(c.componentId, activityTypeLabel(c.componentType)),
+        type: activityTypeLabel(c.componentType),
+        icon: look?.icon || 'ri-check-double-line',
+        tint: look?.tint || 'bg-primary-100 text-primary-600',
+        at: c.submittedAt, ksbs: c.ksbs || [],
+        hours: contributedHours(
+          (c as { expectedOtjh?: number }).expectedOtjh,
+          c.reportedTime || c.timeTaken || '',
+          expectedFor(c.componentId),
+        ),
+        reported: c.reportedTime || c.timeTaken || '',
+        dedupeKey: `component:${c.componentId || c.submittedAt}`,
+        isQuiz: false,
+      };
+    });
+
+    return [...quiz, ...video, ...activities]
+      .sort((a, b) => (b.at || '').localeCompare(a.at || ''));
   }, [real]);
 
-  // Hours by activity type (real breakdown).
+  // What the log accounts for. The total counts each quiz or component once
+  // however many times it was completed, so the same fold is applied here —
+  // otherwise a re-watched video would make this disagree with "Completed".
+  const loggedHours = useMemo(() => {
+    const counted = new Set<string>();
+    return rows.reduce((total, row) => {
+      if (counted.has(row.dedupeKey)) return total;
+      counted.add(row.dedupeKey);
+      return total + row.hours;
+    }, 0);
+  }, [rows]);
+
+  // The same contributions, grouped by what kind of activity they were.
   const breakdown = useMemo(() => {
     const map = new Map<string, number>();
-    for (const r of rows) {
-      const mins = (() => {
-        const text = String(r.hours || '').trim().toLowerCase();
-        const hours = Number(text.match(/([\d.]+)\s*(?:hours?|hrs?|h)\b/i)?.[1] || 0);
-        const minutes = Number(text.match(/([\d.]+)\s*(?:minutes?|mins?|m)\b/i)?.[1] || 0);
-        if (hours || minutes) return (hours * 60) + minutes;
-        const numeric = Number(text.match(/[\d.]+/)?.[0] || 0);
-        return Number.isFinite(numeric) ? numeric * 60 : 0;
-      })();
-      map.set(r.type, (map.get(r.type) || 0) + mins / 60);
+    const counted = new Set<string>();
+    for (const row of rows) {
+      if (counted.has(row.dedupeKey)) continue;
+      counted.add(row.dedupeKey);
+      map.set(row.type, (map.get(row.type) || 0) + row.hours);
     }
-    const max = Math.max(1, ...map.values());
-    return Array.from(map.entries()).map(([type, hrs]) => ({ type, hrs, pct: Math.round((hrs / max) * 100) }));
+    const withHours = Array.from(map.entries()).filter(([, hrs]) => hrs > 0);
+    const max = Math.max(1, ...withHours.map(([, hrs]) => hrs));
+    return withHours
+      .sort((a, b) => b[1] - a[1])
+      .map(([type, hrs]) => ({ type, hrs, pct: Math.round((hrs / max) * 100) }));
   }, [rows]);
 
   return (
@@ -201,12 +306,16 @@ export function OtjhBody({
                   <p className="text-[10px] text-foreground-400">Recorded learning activity and submitted time</p>
                 </div>
               </div>
-              <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-semibold text-foreground-500">{rows.length} {rows.length === 1 ? 'entry' : 'entries'}</span>
+              {/* The hours as well as the count: this log is what the figure
+                  above is made of, so it has to be checkable against it. */}
+              <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-semibold text-foreground-500">
+                {rows.length} {rows.length === 1 ? 'entry' : 'entries'} · {formatHoursMinutes(loggedHours)}
+              </span>
             </div>
             {loading ? (
               <div className="p-5"><RowsSkeleton rows={4} avatar={false} /></div>
             ) : rows.length === 0 ? (
-              <div className="p-5"><EmptyState text={isObserver ? 'No logged activity yet.' : 'No logged activity yet — complete a quiz or video to see it here.'} /></div>
+              <div className="p-5"><EmptyState text={isObserver ? 'No logged activity yet.' : 'No logged activity yet — finish a video, reading, quiz or assignment to see it here.'} /></div>
             ) : (
               <div className="max-h-[520px] divide-y divide-foreground-100 overflow-y-auto">
                 {rows.map((r, i) => (
@@ -226,7 +335,18 @@ export function OtjhBody({
                         {r.ksbs.length > 4 && <span className="text-[10px] text-foreground-400">+{r.ksbs.length - 4}</span>}
                       </div>
                     )}
-                    <span className="shrink-0 text-[12px] font-semibold text-foreground-700 tabular-nums w-16 text-right">{r.hours}</span>
+                    <span className="shrink-0 w-20 text-right">
+                      <span className="block text-[12px] font-semibold text-foreground-700 tabular-nums">
+                        {r.hours > 0 ? formatHoursMinutes(r.hours) : '—'}
+                      </span>
+                      {/* What the learner said it took, shown only when that is
+                          not the same as what the component is worth — "2h ·
+                          said 2h" is noise. */}
+                      {r.reported && r.hours > 0
+                        && Math.abs(contributedHours(0, r.reported) - r.hours) > 0.01 && (
+                        <span className="block text-[10px] text-foreground-400">said {r.reported}</span>
+                      )}
+                    </span>
                     {r.isQuiz && (
                       <span className={`shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full ${r.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
                         {r.passed ? 'Passed' : 'Attempted'}

@@ -1091,6 +1091,63 @@ def _audit_sources_by_component_id(component_ids):
         return {}
 
 
+def _cohort_schedule(cohort_name, programme_name):
+    """The dates the learner's cohort runs to, or an empty dict.
+
+    Gateway is not something a learner reaches by finishing their modules early:
+    the practical period runs to the cohort's end date, and only then does
+    Gateway open and the EPA window (``epa_months``) begin. The learner page
+    needs those dates to say "modules complete, Gateway opens in March" rather
+    than declaring someone Gateway-ready a year ahead of their cohort.
+    """
+    cohort_name = _s(cohort_name)
+    if not cohort_name:
+        return {}
+    try:
+        with connections["default"].cursor() as cur:
+            cur.execute(
+                """
+                SELECT start_date, end_date, apprenticeship_end_date,
+                       apprenticeship_end_override, epa_months
+                FROM curriculum.cohorts
+                WHERE cohort_name = %s
+                  AND (%s = '' OR programme_name = %s)
+                  AND deleted_at IS NULL
+                ORDER BY updated_at DESC NULLS LAST
+                LIMIT 1
+                """,
+                [cohort_name, _s(programme_name), _s(programme_name)],
+            )
+            row = cur.fetchone()
+    except DatabaseError as exc:
+        logger.warning("Could not read cohort schedule for %r: %s", cohort_name, exc)
+        return {}
+    if not row:
+        return {}
+    start, end, epa_end, epa_end_override, epa_months = row
+    return {
+        "cohortStartDate": _iso_date(start),
+        # The practical period's last day. Gateway opens once it has passed.
+        "gatewayStartDate": _iso_date(end),
+        "epaEndDate": _iso_date(epa_end_override or epa_end),
+        "epaMonths": epa_months if isinstance(epa_months, int) else None,
+    }
+
+
+def _iso_date(value):
+    if not value:
+        return ""
+    return value.isoformat() if hasattr(value, "isoformat") else _s(value)[:10]
+
+
+def _apply_cohort_schedule(detail, source):
+    """Add the cohort's dates to a learner payload, without failing the page."""
+    detail.update({
+        "cohortStartDate": "", "gatewayStartDate": "", "epaEndDate": "", "epaMonths": None,
+    })
+    detail.update(_cohort_schedule(getattr(source, "cohort", ""), getattr(source, "programme", "")))
+
+
 def _resolve_from_master(modules, weeks, components):
     """Rebuild the module -> week -> component tree LIVE from the master
     authoring tables (curriculum.module_authoring_*) so coach edits in the
@@ -1464,6 +1521,7 @@ def build_learner_detail(source, pk):
             logger.warning("Could not refresh learner KSB snapshot for %s: %s", pk, exc)
 
     detail = to_learner_detail(source, learner_profile)
+    _apply_cohort_schedule(detail, source)
     # Live-resolve titles + membership from the master authoring tables so coach
     # edits in Module Builder reflect here immediately (structured-plan learners).
     detail["modules"], detail["week"], detail["components"] = _resolve_from_master(

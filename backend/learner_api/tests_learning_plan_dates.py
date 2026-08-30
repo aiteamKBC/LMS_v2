@@ -62,7 +62,9 @@ class ModuleWindowTests(SimpleTestCase):
             request = factory.patch(url, data=json.dumps(body), content_type="application/json")
 
         catalogue = [_module_payload(row) for row in MODULE_ROWS]
-        with patch("learner_api.learning_plan.EnrolmentUser") as model, \
+        # Saving a plan now re-runs progression, which reads compliance and
+        # cohort rows; those are not what these assert.
+        with patch("learner_api.learning_plan.advance_learner"),                 patch("learner_api.learning_plan.EnrolmentUser") as model, \
                 patch("learner_api.learning_plan._programme_modules", return_value=catalogue), \
                 patch("learner_api.learning_plan._all_modules", return_value=catalogue), \
                 patch("learner_api.learning_plan._group_module_ids", return_value=["MOD-1", "MOD-2"]):

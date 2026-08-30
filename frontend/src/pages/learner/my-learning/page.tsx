@@ -177,10 +177,15 @@ function OverviewTab({
 
   const currentStation = currentIndex >= 0 ? stations[currentIndex] : null;
   const allModulesDone = currentIndex === -1 && stations.length > 0;
-  const currentModuleLabel = currentStation ? currentStation.module.module : allModulesDone ? 'Gateway ready' : EMPTY_VALUE;
+  const gatewayOpen = gatewayIsOpen(real?.gatewayStartDate);
+  const currentModuleLabel = currentStation
+    ? currentStation.module.module
+    : allModulesDone
+      ? (gatewayOpen ? 'Gateway ready' : 'Modules complete')
+      : EMPTY_VALUE;
   const modulesDone = stations.filter((s) => s.status === 'completed').length;
 
-  const stageStatuses = journeyStageStatuses(real?.programmeStatus, allModulesDone);
+  const stageStatuses = journeyStageStatuses(real?.programmeStatus, allModulesDone, gatewayOpen);
 
   const nextActivities = currentWeek
     ? currentWeek.week.components.filter((c) => !(c.componentId && completedIds.has(c.componentId))).slice(0, 4)
@@ -318,11 +323,36 @@ function ProgressStat({ icon, label, value, percent, caption, tone = 'neutral' }
 
 type StageStatus = 'done' | 'current' | 'upcoming';
 
+/** Has the cohort reached the day Gateway opens?
+ *
+ * The practical period runs to the cohort's end date; Gateway is a scheduled
+ * point in the programme, not a reward for finishing the modules early. A
+ * learner with no cohort date on file is not held back by a date we do not
+ * have — their modules being complete is then all there is to go on. */
+export function gatewayIsOpen(gatewayStartDate: string | null | undefined, today = new Date()): boolean {
+  const date = (gatewayStartDate || '').trim();
+  if (!date) return true;
+  // Compared as calendar days: a cohort's gateway date is a date, not an
+  // instant, so it opens at the start of that day in the reader's timezone.
+  const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  return todayIso >= date.slice(0, 10);
+}
+
 /** Best-effort mapping of the freeform `programmeStatus` string (plus whether
- * every module is finished) onto the four fixed checkpoints. There's no
- * dedicated gateway/EPA boolean on the learner record, so this reads the same
- * status text a coach would. */
-function journeyStageStatuses(programmeStatus: string | null | undefined, allModulesDone: boolean): StageStatus[] {
+ * every module is finished, and whether the cohort has reached Gateway) onto
+ * the four fixed checkpoints. There's no dedicated gateway/EPA boolean on the
+ * learner record, so this reads the same status text a coach would.
+ *
+ * Finishing every module early does NOT move a learner to Gateway — that told
+ * a learner they were Gateway-ready a year before their cohort's gateway date.
+ * A coach who has actually moved them on (the status text says gateway, EPA or
+ * achieved) still wins: that is a decision about this learner, not an inference
+ * from a date. */
+function journeyStageStatuses(
+  programmeStatus: string | null | undefined,
+  allModulesDone: boolean,
+  gatewayOpen: boolean,
+): StageStatus[] {
   const s = (programmeStatus || '').trim().toLowerCase();
   const isEpaStage = /\bepa\b|end.?point/.test(s);
   const isGatewayStage = /gateway/.test(s);
@@ -331,7 +361,9 @@ function journeyStageStatuses(programmeStatus: string | null | undefined, allMod
   if (isAchieved) return ['done', 'done', 'done', 'done'];
   if (isEpaStage) return ['done', 'done', 'done', 'current'];
   if (isGatewayStage) return ['done', 'done', 'current', 'upcoming'];
-  if (allModulesDone) return ['done', 'done', 'current', 'upcoming'];
+  if (allModulesDone && gatewayOpen) return ['done', 'done', 'current', 'upcoming'];
+  // Modules finished but Gateway still ahead: the learner stays on the module
+  // stage, which is where the programme still has them.
   return ['done', 'current', 'upcoming', 'upcoming'];
 }
 
