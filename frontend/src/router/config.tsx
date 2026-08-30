@@ -145,6 +145,7 @@ const LearnerCompliancePage = lazy(() => import("../pages/learner/compliance/pag
 const LearnerOnboardingReviewsPage = lazy(() => import("../pages/learner/onboarding/reviews/page"));
 const LearnerReviewFormPage = lazy(() => import("../pages/learner/onboarding/reviews/form"));
 const LearnerOverview = lazy(() => import("../pages/workspace/learner/page"));
+const LearnerDemoMaterialPage = lazy(() => import("../pages/learner/demo-material/page"));
 const LearnerProfilePage = lazy(() => import("../pages/learner/profile/page"));
 const MISDashboard = lazy(() => import("../pages/workspace/mis/page"));
 // These two modules export both a detail page (default) and a list page (named),
@@ -337,6 +338,14 @@ const routes: RouteObject[] = [
     // Focused inspection accounts land directly on their material cards.
     path: "/learner/materials",
     element: <LearnerOverview />,
+  },
+  {
+    path: "/learner/material/:materialKey",
+    element: <LearnerDemoMaterialPage />,
+  },
+  {
+    path: "/learner/material/:materialKey/:kind/:id",
+    element: <LearnerDemoMaterialPage />,
   },
   {
     path: "/workspace/coach",

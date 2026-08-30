@@ -594,7 +594,9 @@ def hydrate_training_plan(plan):
             weeks_by_module[module_id][-1]["components"].append({
                 "componentId": str(component_id),
                 "componentTitle": _s(component_title) or _s(component_type) or "Activity",
-                "expectedOtjh": _decimal(component_expected_otjh),
+                # This tree is persisted in a JSONField. psycopg returns NUMERIC
+                # as Decimal, which Python's standard JSON encoder cannot write.
+                "expectedOtjh": _number(component_expected_otjh),
             })
 
     expanded = []

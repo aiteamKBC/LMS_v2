@@ -35,6 +35,7 @@ export function isInspectionDemoAccount(email: string | null | undefined): boole
 export function isLearnerFlowPath(pathname: string): boolean {
   const path = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
   if (path === '/learner/materials') return true;
+  if (/^\/learner\/material\/[^/]+(?:\/(?:apprenticeship|commercial)\/[^/]+)?$/.test(path)) return true;
 
   return /^\/learner\/(?:component|video|quiz)\/(?:apprenticeship|commercial)\/[^/]+\/[^/]+$/.test(path);
 }

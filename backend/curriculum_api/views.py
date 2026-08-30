@@ -9,6 +9,7 @@ import calendar
 import os
 import re
 import threading
+import tempfile
 import uuid
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -17526,7 +17527,38 @@ def curriculum_presentation_slides(request):
     preview at all. This renders the deck in-house instead — see
     curriculum_api.pptx_slides for what the model does and does not carry.
     """
-    relative_path = uploads_relative_path(request.GET.get('src'))
+    source = clean_str(request.GET.get('src'))
+    relative_path = uploads_relative_path(source)
+    legacy_match = re.search(r'/learner_api/media/legacy-attachment/([0-9]{1,20})/', urlparse(source).path)
+    if not relative_path and legacy_match:
+        attachment_id = legacy_match.group(1)
+        cache_key = f'legacy-attachment/{attachment_id}.pptx'
+        stamp = f'legacy-attachment:{attachment_id}'
+        cached = pptx_slides.deck_model_for_stamp(cache_key, stamp)
+        if cached is not None:
+            return JsonResponse(cached)
+
+        # Imported LMS decks are served by the authenticated same-origin media
+        # proxy, not by the normal component-upload store. Pull one temporary
+        # copy for python-pptx, then keep only the rendered slide-model cache.
+        from learner_api.media_proxy import _load_legacy_attachment_bytes
+
+        data, error = _load_legacy_attachment_bytes(attachment_id)
+        if error:
+            return json_error('The legacy slide deck could not be loaded.', status=error.status_code)
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.pptx', delete=False) as temporary:
+                temporary.write(data)
+                temporary_path = temporary.name
+            deck = pptx_slides.render_uploaded_deck(cache_key, temporary_path, stamp=stamp)
+        except pptx_slides.UnsupportedDeck as render_error:
+            return json_error(str(render_error), status=415)
+        finally:
+            if temporary_path:
+                Path(temporary_path).unlink(missing_ok=True)
+        return JsonResponse(deck)
+
     if not relative_path:
         return json_error('A slide deck upload path is required.', status=400)
     # The deck may live in blob storage, and python-pptx needs a real file, so a

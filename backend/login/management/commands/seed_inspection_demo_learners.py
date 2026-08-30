@@ -65,9 +65,7 @@ DEMO_LEARNERS = [
             ("MOD-202608223E23693425BC", "G1-Keith-Strategy&Planning"),                                     # Strategy Planning
             ("MOD-20260822222D7B9190AA", "G1-Femi-Customer Journey"),                                        # Customer Journey
             ("MOD-20260822BFA56444DE10", "Commercial Intelligence - Marketing Manager"),                    # Commercial Intelligence
-            # "AI in Marketing" has no authored module yet — intentionally
-            # omitted; see demoProgrammeMaterials.ts, which still lists it
-            # with an empty moduleIds so the UI shows it as unavailable.
+            ("MOD-AI-IN-MARKETING-MM", "AI in Marketing"),                                                    # AI in Marketing
         ],
     },
     {

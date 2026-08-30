@@ -105,6 +105,11 @@ _DISABLED_VALUES = {"0", "false", "no", "off"}
 #: Roles that run the staff console. Same set as ``permissions.staff_only``.
 STAFF = frozenset({"admin", "staff"})
 
+# Learner material tables are read-only and intentionally exposed to learners,
+# while still excluding employer accounts. The views additionally restrict a
+# learner to the programme assigned to their inspection-demo account.
+LEARNER_AND_STAFF = frozenset({"admin", "staff", "learner"})
+
 #: A rule of ``ANY`` requires a session and nothing more.
 ANY = None
 
@@ -137,6 +142,11 @@ ANY = None
 #: ``/django_admin/`` and ``/media/`` are likewise absent: the admin has its own
 #: login, and media is served by the reverse proxy rather than routed here.
 RULES = (
+    ("/curriculum_api/curriculum/programme-audit/materials/", LEARNER_AND_STAFF),
+    # Authored learner activities reference PDFs, decks, audio and other files
+    # through this stable upload URL. Learners need the file itself after the
+    # activity page has authorised and linked it; employers still do not.
+    ("/curriculum_api/curriculum/uploads/", LEARNER_AND_STAFF),
     # Slide decks are rendered inside the learner's video and component pages,
     # so this one curriculum path serves every signed-in account. It reads a
     # presentation the learner's own week already links to.

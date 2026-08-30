@@ -151,6 +151,7 @@ export function VideoPlayer({
       <video
         src={parsed.src}
         controls
+        preload="metadata"
         className="absolute inset-0 w-full h-full bg-black"
         onLoadedMetadata={(e) => onDuration?.(Math.round((e.target as HTMLVideoElement).duration))}
         onTimeUpdate={(e) => onProgress?.((e.target as HTMLVideoElement).currentTime)}
