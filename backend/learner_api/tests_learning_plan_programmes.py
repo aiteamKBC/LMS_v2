@@ -60,7 +60,10 @@ class LearningPlanProgrammeTests(SimpleTestCase):
             factory.get(url) if method == "GET"
             else factory.patch(url, data=json.dumps(body), content_type="application/json")
         )
-        with patch("learner_api.learning_plan.EnrolmentUser") as model, \
+        # Saving a plan now re-runs progression, which reads compliance and
+        # cohort rows; neither is what these assert.
+        with patch("learner_api.learning_plan.advance_learner"), \
+                patch("learner_api.learning_plan.EnrolmentUser") as model, \
                 patch("learner_api.learning_plan._programme_modules", return_value=OWN_ONLY), \
                 patch("learner_api.learning_plan._all_modules", return_value=CATALOGUE), \
                 patch("learner_api.learning_plan._group_module_ids", return_value=["MOD-OWN-1"]):

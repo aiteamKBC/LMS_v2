@@ -4,13 +4,14 @@
  * The legacy MBA import brought in 3,884 Google Drive links, all in Drive's
  * share form (".../view"). That URL in an iframe renders Drive's own web page —
  * a sign-in or "you need permission" notice — rather than a player, which is
- * exactly what learners saw. "/preview" is the embeddable form.
+ * exactly what learners saw. They now go through the media proxy, which returns
+ * the file itself, so the real <video> element plays it and can seek.
  */
 import { describe, expect, it } from 'vitest';
 import { parseVideoUrl } from '../VideoPlayer';
 
 describe('parseVideoUrl', () => {
-  it('turns a Drive share link into its embeddable form', () => {
+  it('sends every shape of Drive link through the media proxy', () => {
     const id = '1Drhebl7pnUqpuH6wbkcDlr-NakfQ2USW';
     for (const url of [
       `https://drive.google.com/file/d/${id}/view`,
@@ -19,7 +20,11 @@ describe('parseVideoUrl', () => {
       `https://drive.google.com/open?id=${id}`,
       `https://drive.google.com/uc?export=download&id=${id}`,
     ]) {
-      expect(parseVideoUrl(url).src).toBe(`https://drive.google.com/file/d/${id}/preview`);
+      // 'file' rather than an iframe: it is played by the real video element,
+      // which is what gives the learner a scrubber.
+      expect(parseVideoUrl(url)).toEqual({
+        kind: 'file', src: `/learner_api/media/google-drive/${id}/`,
+      });
     }
   });
 

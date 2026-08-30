@@ -34,6 +34,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from .constants import DELIVERY_PROGRAMME_STATUS
+from .learner_progression import advance_learner
 from .mappers import _s
 from .models import EnrolmentUser
 
@@ -322,6 +323,13 @@ def learning_plan(request, pk):
     except DatabaseError as exc:
         logger.exception("learning_plan: save failed")
         return _error(f"Database error: {exc}", 502)
+
+    # For a commercial learner the plan is the last thing progression waits for:
+    # with a start date already passed, agreeing the plan is what makes them
+    # Active. Nothing else on this path would notice, so a learner who was ready
+    # the moment their plan was saved sat in Delivery until some unrelated edit
+    # happened to run the check. Never raises — see advance_learner.
+    advance_learner(learner)
 
     return JsonResponse(_serialize(learner))
 

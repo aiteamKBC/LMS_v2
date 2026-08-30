@@ -127,3 +127,51 @@ class WeeksAndSessionsAreStoredApart(CurriculumPersistenceHarness):
             self.assertEqual(views.delivery_days_per_week({'session_week_day': value}), 1, value)
         self.assertEqual(views.delivery_days_per_week({'session_week_day': 'Monday, Thursday'}), 2)
         self.assertEqual(views.delivery_days_per_week({'session_week_day': 'Mon,Tue,Wed'}), 3)
+
+    def test_two_live_sessions_in_one_week_get_distinct_delivery_dates(self):
+        """Each live component uses its delivery slot, not the week's first date."""
+        module_id = 'MOD-TWO-SESSIONS-SAME-WEEK'
+        views.authoring_upsert(views.AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
+            'module_catalogue_id': module_id,
+            'programme_id': 'PROG-SPLIT',
+            'programme_name': 'Split Programme',
+            'title': 'Monday and Wednesday module',
+            'weeks_number': 2,
+            'sessions_number': 4,
+            'start_date': '2026-09-07',
+            'session_week_day': 'Monday, Wednesday',
+            'session_start_time': '09:00',
+            'session_end_time': '10:00',
+        })
+        for week_number in (1, 2):
+            week_id = f'WEEK-TWICE-{week_number}'
+            views.authoring_upsert(views.AUTHORING_WEEKS_TABLE, ['id'], {
+                'id': week_id,
+                'module_catalogue_id': module_id,
+                'week_number': week_number,
+                'display_order': week_number,
+                'title': f'Week {week_number}',
+            })
+            for slot in (1, 2):
+                views.authoring_upsert(views.AUTHORING_COMPONENTS_TABLE, ['id'], {
+                    'id': f'COMP-TWICE-{week_number}-{slot}',
+                    'week_id': week_id,
+                    'module_catalogue_id': module_id,
+                    'type': 'live_session',
+                    'title': f'Live session {slot}',
+                    'display_order': slot,
+                    'settings_json': views.json_db_value({}),
+                })
+
+        payload = views.get_authoring_structure_payload(module_id)
+        visible_dates = [
+            component['settings'].get('sessionDate') or week['sessionDate']
+            for week in payload['weekStructure']
+            for component in week['components']
+            if component['type'] == 'live-session'
+        ]
+
+        self.assertEqual(
+            visible_dates,
+            ['2026-09-07', '2026-09-09', '2026-09-14', '2026-09-16'],
+        )

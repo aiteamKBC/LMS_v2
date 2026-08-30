@@ -61,6 +61,7 @@ from .active_users import (
     sync_active_user,
 )
 from .identity import learner_profile_for_source
+from .learner_progression import advance_learner
 from .learning_plan import (
     _group_module_ids,
     _module_payload,
@@ -775,6 +776,10 @@ def module_shift(request, pk):
             # learner's own workspace reads the materialised plan rather than
             # this list — both are derived, so both are refreshed here.
             recompute_completed_hours(profile.id)
+        # The shift writes the same plan column the learning-plan endpoint does,
+        # so it owes progression the same check: a learner whose first plan
+        # arrives this way is as ready to start as one who agreed it there.
+        advance_learner(learner)
         if _s(learner.programme_status).lower() == "active":
             sync_active_user(learner)
 
