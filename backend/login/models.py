@@ -151,6 +151,13 @@ class LoginSession(models.Model):
     created_at = models.DateTimeField(db_column="Created_at", auto_now_add=True)
     last_seen_at = models.DateTimeField(db_column="Last_seen_at", null=True, blank=True)
 
+    #: Whether "remember me" was ticked at sign-in. Persisted because renewal
+    #: happens long after login and has to know which policy governs this
+    #: session — see ``security.session_policy``. Defaults False, which is also
+    #: what the backfill gives rows created before the column existed: the safer
+    #: of the two policies is the right guess when the answer is unknown.
+    remember = models.BooleanField(db_column="Remember", default=False)
+
     class Meta:
         managed = False
         db_table = 'login"."Login_sessions'

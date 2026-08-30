@@ -9,6 +9,8 @@ from django.urls import Resolver404, resolve
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
+from login.api_gate import refusal_for
+
 
 ALLOWED_API_PREFIXES = (
     "/curriculum_api/",
@@ -60,6 +62,30 @@ def _execute_get(parent_request, item):
         return {"id": request_id, "status": 400, "body": "", "headers": {}}
 
     parsed = urlsplit(safe_url)
+
+    # Apply the API gate to the sub-request. It has to be done here rather than
+    # left to middleware: dispatch below calls the view function directly, so
+    # nothing in MIDDLEWARE — the gate included — ever sees these. Without this,
+    # posting a batch would read any gated prefix the caller's own role is
+    # refused at the front door, which is a bypass of the whole role layer.
+    #
+    # Checked against the parent's already-resolved account, so it costs no
+    # extra query, and a batch of 40 items costs 40 dictionary lookups.
+    refusal = refusal_for(
+        parsed.path,
+        getattr(parent_request, "login_account", None),
+        django_user_is_authenticated=bool(
+            getattr(getattr(parent_request, "user", None), "is_authenticated", False)
+        ),
+    )
+    if refusal is not None:
+        return {
+            "id": request_id,
+            "status": refusal.status_code,
+            "body": base64.b64encode(refusal.content).decode("ascii"),
+            "headers": {"Content-Type": "application/json"},
+        }
+
     try:
         match = resolve(parsed.path)
         response = match.func(

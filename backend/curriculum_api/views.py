@@ -115,6 +115,87 @@ def invalidate_curriculum_cache():
         _TABLE_EXISTS_CACHE.pop(key, None)
 
 
+# ---------------------------------------------------------------------------
+# Curriculum write tracking
+#
+# Two layers, both correlated by the request_id that
+# config.observability.RequestObservabilityMiddleware puts on every request, so
+# one request's whole story can be pulled out of the stream with a single grep.
+#
+#   INFO  - decision events. What a handler *chose* to do and why: created a new
+#           row, matched an existing one, skipped an archived namesake, revived a
+#           tombstone, refused. Low volume (a handful per request) and always on,
+#           because these are the events whose absence made the "recreate an
+#           archived group" bug invisible: the API answered 200 and nothing,
+#           anywhere, recorded that the write had landed on an archived row.
+#
+#   DEBUG - storage events. One line per write call reaching a curriculum table,
+#           with the table, the key and the row count. Complete by construction
+#           (every write funnels through the helpers below) but far too chatty
+#           for normal running: a tree save writes thousands of rows. Turn it on
+#           per-process with CURRICULUM_WRITE_TRACE=true, or globally with
+#           LOG_LEVEL=DEBUG.
+#
+# Ids, tables, counts and branch names only. Never names of groups, cohorts or
+# staff -- config.observability.SAFE_LOG_FIELDS drops anything not on its
+# allowlist in production, and the allowlist is deliberately id-only so that
+# turning the trace on cannot start spilling people's names into the logs.
+# ---------------------------------------------------------------------------
+
+write_logger = logging.getLogger('curriculum_api.writes')
+
+CURRICULUM_WRITE_TRACE = os.environ.get('CURRICULUM_WRITE_TRACE', 'false').lower() == 'true'
+
+
+def _write_log_fields(fields):
+    """Keep only the allowlisted, non-empty fields, stringified for the log."""
+    allowed = (
+        'entity_type', 'entity_id', 'parent_id', 'action',
+        'outcome', 'table', 'row_count', 'matched_id', 'reason',
+    )
+    return {
+        key: (value if isinstance(value, int) else clean_str(value))
+        for key, value in fields.items()
+        if key in allowed and value not in (None, '')
+    }
+
+
+def log_curriculum_decision(action, **fields):
+    """Record what a curriculum write handler decided, and on which row.
+
+    ``action`` is a dotted event name (``group.create``, ``cohort.archive``).
+    ``outcome`` is the branch taken, and is the field worth alerting on: an
+    ``outcome`` that is not what the caller expected is the whole point of this
+    log existing.
+    """
+    safe = _write_log_fields({'action': action, **fields})
+    summary = ' '.join(f'{key}={value}' for key, value in sorted(safe.items()) if key != 'action')
+    write_logger.info('%s %s', action, summary, extra={'event': f'curriculum.{action}', **safe})
+
+
+def log_curriculum_storage(action, table, *, rows=None, **fields):
+    """Record one write reaching a curriculum table. DEBUG; see the note above.
+
+    ``rows`` may be the returned row list or an int; anything else is ignored
+    rather than guessed at, because this must never be the reason a write fails.
+    """
+    if not (CURRICULUM_WRITE_TRACE or write_logger.isEnabledFor(logging.DEBUG)):
+        return
+    try:
+        if isinstance(rows, int):
+            row_count = rows
+        elif rows is None:
+            row_count = None
+        else:
+            row_count = len(rows)
+        safe = _write_log_fields({'action': action, 'table': table, 'row_count': row_count, **fields})
+        summary = ' '.join(f'{key}={value}' for key, value in sorted(safe.items()) if key != 'action')
+        write_logger.debug('storage.%s %s', action, summary, extra={'event': f'curriculum.storage.{action}', **safe})
+    except Exception:
+        # A trace that can break a write is worse than no trace.
+        logger.debug('Curriculum write trace failed.', exc_info=True)
+
+
 # Whole-table reads memoised for the duration of one payload build. build_programmes()
 # calls programme_component_ksb_mapping_count() and programme_learner_ksb_progress()
 # once per programme, and each of those re-reads authoring modules, programmes,
@@ -426,6 +507,10 @@ def ensure_ksb_profile_identity_columns():
         ensure_columns('ksb_profiles', {
             'ksb_profile_id': 'varchar(128)',
             'programme_ids': 'jsonb',
+            # A reusable profile can carry its own KSB definitions while still
+            # inheriting funding, duration and compliance metadata from the
+            # Skills England standard it was derived from.
+            'standard_source_id': 'varchar(128)',
         })
         if connection.vendor == 'postgresql':
             with connection.cursor() as cursor:
@@ -537,7 +622,7 @@ def json_body(request):
 
 
 COMPONENT_UPLOAD_ROOT = 'curriculum_component_uploads'
-COMPONENT_UPLOAD_MAX_BYTES = 80 * 1024 * 1024
+COMPONENT_UPLOAD_MAX_BYTES = 5 * 1024 * 1024
 COMPONENT_UPLOAD_EXTENSIONS = {
     'podcast': {'.mp3', '.m4a', '.mp4', '.wav', '.aac', '.ogg', '.oga', '.webm'},
     'powerpoint': {'.ppt', '.pptx', '.pps', '.ppsx', '.pdf'},
@@ -563,9 +648,11 @@ def component_upload_metadata(module_catalogue_id, component_id, component_type,
     if suffix not in allowed:
         return None, f'{component_type} uploads must use one of: {", ".join(sorted(allowed))}.'
     if uploaded_file.size > COMPONENT_UPLOAD_MAX_BYTES:
-        return None, 'File is too large. Maximum upload size is 80 MB.'
+        return None, 'File is too large. Maximum upload size is 5 MB.'
 
-    timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S')
+    # Microseconds make the path unique even when the same component retries or
+    # replaces a same-named resource within one second.
+    timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S%f')
     stem = safe_upload_segment(Path(original_name).stem, 'resource')
     stored_name = f'{stem}-{timestamp}{suffix}'
     relative_path = f'{COMPONENT_UPLOAD_ROOT}/{module_catalogue_id}/{component_id}/{stored_name}'
@@ -2691,7 +2778,15 @@ def soft_delete_rows(table, where_sql, where_params=None, *, via_parent='', dele
     if not active_checks:
         active_checks.append('1 = 1')
     guarded_where = f'({where_sql}) and (' + ' and '.join(active_checks) + ')'
-    return update_rows(table, guarded_where, where_params or [], payload)
+    rows = update_rows(table, guarded_where, where_params or [], payload)
+    # Logged even when it matches nothing: a soft delete that hits zero rows is
+    # almost always the interesting case (already archived, or wrong id).
+    log_curriculum_storage(
+        'soft_delete', table, rows=rows,
+        entity_id=' '.join(clean_str(value) for value in (where_params or [])),
+        parent_id=via_parent, reason=deleted_by,
+    )
+    return rows
 
 
 def authoring_soft_delete(table, where_sql, params=None, *, via_parent='', deleted_by='system', extra=None):
@@ -3851,13 +3946,15 @@ def restore_rows_via_parent(table, parent_id):
         payload['is_archived'] = False
     if has_column(table, 'status') and table in {'cohorts'}:
         payload['status'] = 'active'
-    return update_rows(
+    rows = update_rows(
         table,
         f'{quote_ident("deleted_via_parent")} = %s',
         [parent_id],
         payload,
         allow_null_columns=RESTORE_NULLABLE_COLUMNS,
     )
+    log_curriculum_storage('restore', table, rows=rows, parent_id=parent_id)
+    return rows
 
 
 def restore_programme_authoring_structure(identifier, programme=None, config=None):
@@ -4263,6 +4360,7 @@ def permanently_delete_programme_structure(plan):
         if not where_sql or not table_exists(table):
             return
         rows = delete_rows(table, where_sql, params)
+        log_curriculum_storage('hard_delete', table, rows=rows)
         if rows:
             removed[table] = len(rows)
 
@@ -7802,6 +7900,7 @@ def build_ksb_data(ksb_profiles, modules, training_rows):
             'id': framework_id,
             'profileId': profile.get('id'),
             'ksbProfileId': framework_id,
+            'standardSourceId': clean_str(profile.get('standard_source_id')),
             'programmeId': primary_programme_id,
             'programmeIds': programme_ids,
             'cohortIds': [],
@@ -7829,6 +7928,7 @@ def build_ksb_data(ksb_profiles, modules, training_rows):
             'frameworkId': framework_id,
             'profileId': profile.get('id'),
             'ksbProfileId': framework_id,
+            'standardSourceId': clean_str(profile.get('standard_source_id')),
             'programmeId': primary_programme_id,
             'programmeIds': programme_ids,
             'cohortIds': [],
@@ -10335,6 +10435,33 @@ def surviving_authoring_module_rows(module_rows=None):
     return [row for row in rows if row and not curriculum_row_effectively_deleted(row)]
 
 
+def archived_authoring_ids(table, id_column):
+    """Ids of the soft-deleted rows in an authoring table.
+
+    Archiving stamps ``deleted_at`` and leaves the row where it is, and the
+    ``*_authoring_detail_rows`` readers deliberately return every row so archive
+    views can still show withdrawn curriculum. Anything that matches a *new*
+    record against the stored ones has to skip these ids first: treating an
+    archived row as a duplicate turns "create it again" into an update of a
+    tombstone, so the write lands on a row nothing lists and the caller is told
+    the record already exists while no record appears.
+    """
+    ident = clean_str(id_column)
+    try:
+        rows = authoring_fetch_all(
+            table,
+            columns=[ident, 'deleted_at', 'is_programme_deleted', 'is_archived'],
+        )
+    except (Exception, AssertionError) as exc:
+        logger.warning('Could not read archived ids for %s: %s', table, exc)
+        return set()
+    return {
+        clean_str(row.get(ident))
+        for row in rows
+        if clean_str(row.get(ident)) and curriculum_row_effectively_deleted(row)
+    }
+
+
 def refresh_group_module_cache(group_id, module_rows=None):
     """Rebuild ``groups.module_ids``/``module_names`` from surviving modules.
 
@@ -10439,11 +10566,15 @@ def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
             f'insert or replace into {authoring_table_name(table)} ({", ".join(quote_ident(column) for column in columns)}) '
             f'values ({placeholders})'
         )
+    key_value = ' '.join(clean_str(values.get(column)) for column in key_columns)
     with connection.cursor() as cursor:
         cursor.execute(query, [values[column] for column in columns])
         if connection.vendor == 'postgresql':
-            return rows_as_dicts(cursor)[0]
+            row = rows_as_dicts(cursor)[0]
+            log_curriculum_storage('upsert', table, rows=1, entity_id=key_value)
+            return row
     where = ' and '.join(f'{quote_ident(column)} = %s' for column in key_columns)
+    log_curriculum_storage('upsert', table, rows=1, entity_id=key_value)
     return authoring_fetch_all(table, where, [values[column] for column in key_columns])[0]
 
 
@@ -10499,6 +10630,10 @@ def authoring_bulk_upsert(table, key_columns, payloads, batch_size=100):
                 values.extend(row.get(column) for column in all_columns)
             placeholders = ', '.join([row_placeholder] * len(batch))
             cursor.execute(f'{prefix}{placeholders}{suffix}', values)
+    # Deliberately one line for the whole call, not one per row: a tree save
+    # bulk-writes thousands of components and a per-row trace would bury
+    # everything else in the request.
+    log_curriculum_storage('bulk_upsert', table, rows=len(payloads))
 
 
 def free_programme_upsert(table, key_columns, payload):
@@ -10558,9 +10693,16 @@ def resolve_cohort_row(identifier):
     for candidate in authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE):
         if matches_curriculum_identifier(candidate.get('cohort_id'), ident):
             return candidate
-    for candidate in authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE):
-        if normalise(candidate.get('cohort_name')) == normalise(ident):
-            return candidate
+    # A name can now be shared by a live cohort and an archived namesake, so
+    # the live one wins; the tombstone is only returned when nothing else holds
+    # the name.
+    name_matches = [
+        candidate for candidate in authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE)
+        if normalise(candidate.get('cohort_name')) == normalise(ident)
+    ]
+    surviving = [row for row in name_matches if not curriculum_row_effectively_deleted(row)]
+    for candidate in surviving or name_matches:
+        return candidate
     return None
 
 
@@ -10579,10 +10721,16 @@ def resolve_group_row(identifier):
     # ambiguous. Returning an arbitrary match writes modules into whichever row
     # the scan happened to reach first; refuse instead and let the caller supply
     # a canonical id (or a cohort-scoped lookup).
+    # Archived namesakes do not make a name ambiguous: recreating a group under
+    # an archived group's name is legal, and the live row is unmistakably the
+    # one meant. Only fall back to the archived rows when no live row holds the
+    # name at all.
     name_matches = [
         candidate for candidate in authoring_fetch_all(GROUPS_TABLE)
         if normalise(candidate.get('group_name')) == normalise(ident)
     ]
+    surviving = [row for row in name_matches if not curriculum_row_effectively_deleted(row)]
+    name_matches = surviving or name_matches
     if len(name_matches) == 1:
         return name_matches[0]
     if len(name_matches) > 1:
@@ -10636,18 +10784,23 @@ def update_authoring_rows(table, where_sql, where_params, payload):
         return authoring_fetch_all(table, where_sql, where_params)
     assignments = ', '.join(f'{quote_ident(column)} = %s' for column in columns)
     params = [payload[column] for column in columns] + list(where_params)
+    key_value = ' '.join(clean_str(value) for value in where_params)
     with connection.cursor() as cursor:
         if connection.vendor == 'postgresql':
             cursor.execute(
                 f'update {authoring_table_name(table)} set {assignments} where {where_sql} returning *',
                 params,
             )
-            return rows_as_dicts(cursor)
+            rows = rows_as_dicts(cursor)
+            log_curriculum_storage('update', table, rows=rows, entity_id=key_value)
+            return rows
         cursor.execute(
             f'update {authoring_table_name(table)} set {assignments} where {where_sql}',
             params,
         )
-    return authoring_fetch_all(table, where_sql, where_params)
+    rows = authoring_fetch_all(table, where_sql, where_params)
+    log_curriculum_storage('update', table, rows=rows, entity_id=key_value)
+    return rows
 
 
 def json_array_remove(raw_value, target):
@@ -12528,7 +12681,7 @@ def live_session_component_points(default=10):
     return parse_int(getattr(rule, 'points', None), default) if rule else default
 
 
-def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series_settings, occurrence_rows, *, create_missing=False):
+def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series_settings, occurrence_rows, *, create_missing=False, dry_run=False):
     """Write a tracked Teams meeting onto the weeks of a module.
 
     A module's live sessions and its meeting's sessions are one list, read in
@@ -12542,6 +12695,13 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
     the list. That is what makes re-attaching enough to put a whole created
     series in front of the learner, instead of only the weeks somebody had
     already authored a session into. Returns ``(updated, created)``.
+
+    ``dry_run`` counts what the call *would* do and writes nothing. It exists so
+    a caller can ask "is there anything here to re-attach?" using this very
+    walk, rather than a second implementation of the same rule that could drift
+    from it. The ``created`` count is the one that answers that question: the
+    update pass rewrites every existing live-session component every time, so it
+    is never zero and never means work is outstanding.
     """
     module_row = (authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id]) or [{}])[0]
     group_rows = authoring_fetch_all(GROUPS_TABLE, 'group_id = %s', [module_row.get('group_id')]) if module_row.get('group_id') else []
@@ -12600,11 +12760,12 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                 settings_for_week = settings_for_session(session_index)
                 session_index += 1
                 handled_component_ids.add(clean_str(row.get('id')))
-                update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [row.get('id')], {
-                    'settings_json': json_db_value({**component_builder_settings(row), **settings_for_week}),
-                    'live_sessions_link': clean_str(settings_for_week.get('liveSessionUrl') or settings_for_week.get('teamsMeetingUrl')),
-                    'updated_at': now,
-                })
+                if not dry_run:
+                    update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [row.get('id')], {
+                        'settings_json': json_db_value({**component_builder_settings(row), **settings_for_week}),
+                        'live_sessions_link': clean_str(settings_for_week.get('liveSessionUrl') or settings_for_week.get('teamsMeetingUrl')),
+                        'updated_at': now,
+                    })
                 updated += 1
             continue
         if not create_missing:
@@ -12617,6 +12778,9 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         join_url = clean_str(settings_for_week.get('liveSessionUrl') or settings_for_week.get('teamsMeetingUrl'))
         position = len(components_by_week.get(week_id, []))
         duration = parse_int(settings_for_week.get('durationMinutes'), session_duration) or session_duration
+        if dry_run:
+            created += 1
+            continue
         authoring_upsert(AUTHORING_COMPONENTS_TABLE, ['id'], {
             'id': f'COMP-{uuid.uuid4().hex.upper()}',
             'week_id': week_id,
@@ -12659,14 +12823,15 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
             continue
         if clean_str(row.get('id')) in handled_component_ids:
             continue
-        update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [row.get('id')], {
-            'settings_json': json_db_value({**component_builder_settings(row), **series_settings}),
-            'live_sessions_link': clean_str(series_settings.get('liveSessionUrl')),
-            'updated_at': now,
-        })
+        if not dry_run:
+            update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [row.get('id')], {
+                'settings_json': json_db_value({**component_builder_settings(row), **series_settings}),
+                'live_sessions_link': clean_str(series_settings.get('liveSessionUrl')),
+                'updated_at': now,
+            })
         updated += 1
 
-    if updated or created:
+    if (updated or created) and not dry_run:
         invalidate_curriculum_cache()
     return updated, created
 
@@ -12709,6 +12874,11 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
 
     updated_components = 0
     created_components = 0
+    # Opt-in on GET, because GET is also the Module Builder's silent restore and
+    # that path must stay as cheap as it is. ``?probe=1`` asks the same walk what
+    # re-attaching would create, so the UI can hide the button when the answer
+    # is nothing rather than offering an action with no effect.
+    pending_components = None
     if request.method == 'POST':
         updated_components, created_components = attach_teams_meeting_to_module_weeks(
             resolved_id,
@@ -12717,15 +12887,29 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
             occurrence_rows,
             create_missing=create_missing,
         )
+    elif truthy(request.GET.get('probe')):
+        _would_update, pending_components = attach_teams_meeting_to_module_weeks(
+            resolved_id,
+            sessions[0],
+            settings_update,
+            occurrence_rows,
+            create_missing=True,
+            dry_run=True,
+        )
 
     payload = get_authoring_structure_payload(resolved_id)
-    return JsonResponse({
+    body = {
         'restored': request.method == 'POST',
         'updatedComponents': updated_components,
         'createdComponents': created_components,
         'meeting': settings_update,
         'module': payload,
-    })
+    }
+    if pending_components is not None:
+        # Weeks that have no live-session component yet, so re-attaching has
+        # real work to do.
+        body['pendingComponents'] = pending_components
+    return JsonResponse(body)
 
 
 @require_GET
@@ -12844,6 +13028,120 @@ def curriculum_teams_meeting_summary(request):
             entry['occurrenceDates'] = [iso_value(item.get('scheduled_start')) for item in occurrences]
         results.append(entry)
     return curriculum_results_response(results, request=request)
+
+
+@require_GET
+def curriculum_live_session_occurrences(request):
+    """Real per-occurrence state for a set of modules or live-session series.
+
+    The Sessions tab lists a whole programme's live sessions and must show each
+    one's true status (``scheduled`` / ``completed`` / ``cancelled``), which lives
+    only on ``curriculum.live_session_occurrences`` and is written by the Graph
+    artifact-sync -- never derived from a date here. The programme-detail payload
+    carries the components (with their ``teamsLiveSessionId``/``teamsOccurrenceId``)
+    but no occurrence status, so this is the one extra read that turns the tab from
+    a date guess into the sync service's actual record.
+
+    Narrow it with ``?module_catalogue_ids=A,B`` and/or ``?live_session_ids=X,Y``
+    (the caller already holds both from the components it rendered). Read-only,
+    additive, and deliberately light: attendance/transcripts/recordings are NOT
+    included -- those load lazily per series from the artifacts endpoint only when
+    a completed row is expanded.
+    """
+    try:
+        ensure_live_session_tracking_tables()
+    except (Exception, AssertionError):
+        return JsonResponse({'series': [], 'occurrences': []})
+
+    module_ids = [
+        clean_str(item)
+        for item in clean_str(
+            request.GET.get('module_catalogue_ids') or request.GET.get('moduleCatalogueIds')
+        ).split(',')
+        if clean_str(item)
+    ]
+    requested_session_ids = [
+        clean_str(item)
+        for item in clean_str(
+            request.GET.get('live_session_ids') or request.GET.get('liveSessionIds')
+        ).split(',')
+        if clean_str(item)
+    ]
+    if not module_ids and not requested_session_ids:
+        return JsonResponse({'series': [], 'occurrences': []})
+
+    where = "status = 'active'"
+    params = []
+    id_clauses = []
+    if module_ids:
+        clause, values = curriculum_in_clause('module_catalogue_id', module_ids)
+        if clause:
+            id_clauses.append(clause)
+            params.extend(values)
+    if requested_session_ids:
+        clause, values = curriculum_in_clause('id', requested_session_ids)
+        if clause:
+            id_clauses.append(clause)
+            params.extend(values)
+    if not id_clauses:
+        return JsonResponse({'series': [], 'occurrences': []})
+    where += ' and (' + ' or '.join(id_clauses) + ')'
+
+    try:
+        series_rows = authoring_fetch_all(
+            LIVE_SESSIONS_TABLE, where, params, 'updated_at desc, created_at desc'
+        )
+    except (Exception, AssertionError):
+        logger.warning('Could not read live-session series.', exc_info=True)
+        return JsonResponse({'series': [], 'occurrences': []})
+
+    module_by_session = {}
+    series_payload = []
+    for row in series_rows:
+        session_id = clean_str(row.get('id'))
+        if not session_id:
+            continue
+        module_by_session[session_id] = clean_str(row.get('module_catalogue_id'))
+        series_payload.append({
+            'liveSessionId': session_id,
+            'moduleCatalogueId': clean_str(row.get('module_catalogue_id')),
+            'moduleTitle': clean_str(row.get('module_title')),
+            'status': clean_str(row.get('status')) or 'active',
+            'joinUrl': clean_str(row.get('join_url')),
+            'provider': clean_str(row.get('provider')),
+        })
+
+    occurrences_payload = []
+    session_ids = list(module_by_session.keys())
+    if session_ids:
+        clause, values = curriculum_in_clause('live_session_id', session_ids)
+        try:
+            occurrence_rows = authoring_fetch_all(
+                LIVE_SESSION_OCCURRENCES_TABLE, clause, values, 'live_session_id, session_number'
+            )
+        except (Exception, AssertionError):
+            logger.warning('Could not read live-session occurrences.', exc_info=True)
+            occurrence_rows = []
+        iso_value = utc_iso_value
+        for row in occurrence_rows:
+            live_session_id = clean_str(row.get('live_session_id'))
+            occurrences_payload.append({
+                'occurrenceId': clean_str(row.get('id')),
+                'liveSessionId': live_session_id,
+                'moduleCatalogueId': module_by_session.get(live_session_id, ''),
+                'sessionNumber': parse_int(row.get('session_number'), 0),
+                'status': clean_str(row.get('status')) or 'scheduled',
+                'scheduledStart': iso_value(row.get('scheduled_start')),
+                'scheduledEnd': iso_value(row.get('scheduled_end')),
+                'actualStart': iso_value(row.get('actual_start')),
+                'actualEnd': iso_value(row.get('actual_end')),
+                'participantCount': parse_int(row.get('participant_count'), 0),
+                'joinUrl': clean_str(row.get('join_url')),
+                'attendanceReportId': clean_str(row.get('attendance_report_id')),
+                'artifactsSyncedAt': iso_value(row.get('artifacts_synced_at')),
+            })
+
+    return JsonResponse({'series': series_payload, 'occurrences': occurrences_payload})
 
 
 def get_authoring_structure_payload(module_catalogue_id):
@@ -14200,8 +14498,11 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
             'status': clean_str(payload.get('status') or existing_module_row.get('status') or 'draft').lower(),
             'sessions_number': stored_sessions_number,
             'weeks_number': authored_week_count or None,
-            'start_date': payload.get('startDate') if 'startDate' in payload else payload.get('start_date') if 'start_date' in payload else existing_module_row.get('start_date') or None,
-            'end_date': payload.get('endDate') if 'endDate' in payload else payload.get('end_date') if 'end_date' in payload else existing_module_row.get('end_date') or None,
+            # parse_date, not the raw value: callers that merge a stored payload
+            # send '' for a module that has no dates, and an empty string reaching
+            # a date column is a DataError, not a null. '' means "no date".
+            'start_date': parse_date(payload.get('startDate') if 'startDate' in payload else payload.get('start_date') if 'start_date' in payload else existing_module_row.get('start_date')),
+            'end_date': parse_date(payload.get('endDate') if 'endDate' in payload else payload.get('end_date') if 'end_date' in payload else existing_module_row.get('end_date')),
             'total_otjh': declared_total,
             'quality_score': quality_score,
             'source_type': payload.get('sourceType') or payload.get('source_type') or existing_module_row.get('source_type') or None,
@@ -15497,6 +15798,7 @@ def curriculum_programme_restore(request, identifier):
 
     with transaction.atomic():
         restored = restore_programme_authoring_structure(identifier, programme, config)
+    log_curriculum_decision('programme.restore', outcome='restored', entity_id=identifier)
     return JsonResponse({
         'restored': True,
         'id': identifier,
@@ -15526,10 +15828,18 @@ def curriculum_programme_detail(request, identifier):
         # An archived programme can be removed for good, with everything beneath it.
         # Archiving stays the default so a delete is never irreversible by accident.
         if request_wants_permanent_programme_delete(request):
+            log_curriculum_decision(
+                'programme.delete', outcome='permanent_requested', entity_id=identifier,
+            )
             return permanent_programme_delete_response(identifier, programme, config)
 
         with transaction.atomic():
             soft_deleted = soft_delete_programme_authoring_structure(identifier, programme, config)
+        log_curriculum_decision(
+            'programme.archive', outcome='soft_deleted', entity_id=identifier,
+            # The cascade's own per-table counts; the tables it took down with it.
+            reason=','.join(f'{table}:{count}' for table, count in sorted((soft_deleted or {}).items())),
+        )
         return JsonResponse({
             'deleted': True,
             'permanent': False,
@@ -16786,7 +17096,14 @@ def curriculum_component_upload(request, component_id):
         return json_error('Uploads are only supported for reading, podcast, PowerPoint and assignment components.', status=400)
 
     module_catalogue_id = clean_str(request.POST.get('moduleCatalogueId') or request.POST.get('moduleId') or 'module')
-    metadata, error = component_upload_metadata(module_catalogue_id, component_id, component_type, uploaded_file)
+    try:
+        metadata, error = component_upload_metadata(module_catalogue_id, component_id, component_type, uploaded_file)
+    except Exception:
+        logger.exception('Unable to store upload for curriculum component %s.', component_id)
+        return json_error(
+            'The file could not be stored. Please retry the upload.',
+            status=503,
+        )
     if error:
         return json_error(error, status=400)
 
@@ -16819,7 +17136,14 @@ def curriculum_week_component_upload(request, component_id):
     # patched row-by-row — so this just stores the file and hands back its
     # metadata; the frontend writes it into the component's own settings and
     # persists it the normal way.
-    metadata, error = component_upload_metadata('week-template', component_id, component_type, uploaded_file)
+    try:
+        metadata, error = component_upload_metadata('week-template', component_id, component_type, uploaded_file)
+    except Exception:
+        logger.exception('Unable to store upload for week component %s.', component_id)
+        return json_error(
+            'The file could not be stored. Please retry the upload.',
+            status=503,
+        )
     if error:
         return json_error(error, status=400)
 
@@ -16962,6 +17286,49 @@ def curriculum_uploaded_file(request, path):
     if '..' in str(path).split('/'):
         raise Http404('File not found.')
     relative_path = f'{COMPONENT_UPLOAD_ROOT}/{path}'
+
+    # Browsers cannot render Office documents directly.  The normal URL still
+    # streams/downloads the original file, while ``?preview=1`` returns a tiny
+    # same-origin page containing the Office Online viewer.  Azure stays
+    # private: Microsoft receives only a short-lived, read-only SAS URL and the
+    # database continues to store the stable LMS path without any token.
+    preview_requested = clean_str(request.GET.get('preview')).lower() in {'1', 'true', 'yes'}
+    extension = Path(relative_path).suffix.lower()
+    office_extensions = {'.doc', '.docx', '.docm', '.xls', '.xlsx', '.ppt', '.pptx', '.pptm'}
+    if preview_requested and extension in office_extensions:
+        if not upload_storage.exists(relative_path):
+            raise Http404('File not found.')
+        source_url = upload_storage.signed_read_url(relative_path)
+        if not source_url:
+            # Local-development fallback.  It works when this Django origin is
+            # publicly reachable; Office Online will show its own error when it
+            # is a localhost/private address.
+            source_url = request.build_absolute_uri(request.path)
+        viewer_url = (
+            'https://view.officeapps.live.com/op/embed.aspx?src='
+            f'{urllib_parse.quote(source_url, safe="")}'
+        )
+        filename = Path(relative_path).name
+        response = HttpResponse(
+            f'''<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(filename)}</title>
+  <style>html, body, iframe {{ width: 100%; height: 100%; margin: 0; border: 0; }}</style>
+</head>
+<body><iframe src="{escape(viewer_url, quote=True)}" title="{escape(filename, quote=True)}"></iframe></body>
+</html>''',
+            content_type='text/html; charset=utf-8',
+        )
+        response['Content-Security-Policy'] = (
+            "default-src 'none'; frame-src https://view.officeapps.live.com; "
+            "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
+        )
+        response['Cache-Control'] = 'private, no-store'
+        return response
+
     probe = upload_storage.open_stream(relative_path, offset=0, length=1)
     if probe is None:
         raise Http404('File not found.')
@@ -19556,6 +19923,10 @@ def curriculum_module_week_detail(request, module_catalogue_id, week_id):
         authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s and week_id = %s', [module_catalogue_id, week_id], via_parent=week_id, deleted_by='week-delete')
         authoring_soft_delete(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s and week_id = %s', [module_catalogue_id, week_id], via_parent=week_id, deleted_by='week-delete')
         authoring_soft_delete(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s and id = %s', [module_catalogue_id, week_id], deleted_by='week-delete')
+    log_curriculum_decision(
+        'week.archive', outcome='soft_deleted', entity_id=week_id,
+        parent_id=module_catalogue_id, row_count=len(component_ids),
+    )
     invalidate_curriculum_cache()
     return JsonResponse({'deleted': True, 'permanent': False, 'moduleCatalogueId': module_catalogue_id, 'weekId': week_id})
 
@@ -19574,6 +19945,10 @@ def curriculum_module_detail(request, identifier):
     if existing_authoring:
         if request.method == 'DELETE':
             delete_module_authoring_structure(module_catalogue_id)
+            log_curriculum_decision(
+                'module.archive', outcome='soft_deleted', entity_id=module_catalogue_id,
+                parent_id=clean_str(existing_authoring.get('group_id')),
+            )
             repair_curriculum_parent_links(clean_str(existing_authoring.get('programme_id')))
             invalidate_curriculum_cache()
             return JsonResponse({'deleted': True, 'deletedAuthoring': True, 'id': identifier})
@@ -19697,6 +20072,7 @@ def curriculum_ksb_framework_collection(request):
     missing = require_fields(payload, ['name'])
     if missing:
         return json_error('Missing required fields.', fields=missing)
+    ensure_ksb_profile_identity_columns()
     name = clean_str(payload.get('name'))
     duplicate = next((row for row in get_ksb_profile_rows() if normalise(row.get('name')) == normalise(name)), None)
     if duplicate:
@@ -19704,10 +20080,14 @@ def curriculum_ksb_framework_collection(request):
     programme_id = canonical_programme_id(payload.get('programmeId') or payload.get('programme_id'), payload.get('programmeName') or payload.get('programme'))
     existing_profile_ids = [row.get('ksb_profile_id') for row in get_ksb_profile_rows()]
     ksb_profile_id = unique_ksb_profile_id(payload.get('ksbProfileId') or payload.get('ksb_profile_id') or programme_id, existing_profile_ids)
+    standard_source_id = clean_str(payload.get('standardSourceId') or payload.get('standard_source_id')).replace('standard:', '', 1)
+    if standard_source_id and not find_skills_england_standard(standard_source_id):
+        return json_error('Skills England standard not found.', fields=['standardSourceId'], status=400)
     row = insert_row('ksb_profiles', {
         'id': ksb_profile_id,
         'name': name,
         'ksb_profile_id': ksb_profile_id,
+        'standard_source_id': standard_source_id,
         'programme_ids': json.dumps(unique([
             programme_id,
             payload.get('programmeName'),
@@ -19768,6 +20148,12 @@ def curriculum_ksb_framework_detail(request, identifier):
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
+    standard_source_sent = 'standardSourceId' in payload or 'standard_source_id' in payload
+    standard_source_id = clean_str(
+        payload.get('standardSourceId') if 'standardSourceId' in payload else payload.get('standard_source_id')
+    ).replace('standard:', '', 1)
+    if standard_source_sent and standard_source_id and not find_skills_england_standard(standard_source_id):
+        return json_error('Skills England standard not found.', fields=['standardSourceId'], status=400)
     should_sync_programme_links = any(key in payload for key in ('programmeIds', 'programme_ids', 'programmeId', 'programme_id', 'programmeName', 'programme'))
     linked_programme_values = []
     if should_sync_programme_links:
@@ -19792,6 +20178,7 @@ def curriculum_ksb_framework_detail(request, identifier):
     updates = {
         'name': payload.get('name'),
         'ksb_profile_id': unique_ksb_profile_id(payload.get('ksbProfileId') or payload.get('ksb_profile_id'), [row.get('ksb_profile_id') for row in get_ksb_profile_rows() if clean_str(row.get('id')) != profile_id]) if any(key in payload for key in ('ksbProfileId', 'ksb_profile_id')) else None,
+        'standard_source_id': standard_source_id if standard_source_sent else None,
         'programme_ids': json.dumps(unique([
             canonical_programme_id(payload.get('programmeId') or payload.get('programme_id'), payload.get('programmeName') or payload.get('programme')),
             payload.get('programmeName'),
@@ -19973,6 +20360,7 @@ def create_curriculum_cohort(payload):
     """Create a cohort directly in ``curriculum.cohorts`` (normalized only)."""
     missing = require_fields(payload, ['name', 'programme'])
     if missing:
+        log_curriculum_decision('cohort.create', outcome='rejected', reason='missing-fields')
         return json_error('Missing required fields.', fields=missing)
     programme = clean_str(payload.get('programme'))
     programme_id = canonical_programme_id(
@@ -20005,9 +20393,28 @@ def create_curriculum_cohort(payload):
     # a POST that repeats an already-persisted cohort (e.g. because the freshly
     # minted id was not written back into the client draft) updates the stored
     # row instead of forking a duplicate or dying with a user-facing 409.
+    # An archived cohort is a soft-deleted row, not a missing one. It must not
+    # answer the duplicate question, or recreating a cohort under a name that
+    # was archived earlier would silently update the tombstone. Same rule, and
+    # same reason, as create_curriculum_group.
+    archived_cohort_ids = archived_authoring_ids(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id')
+    if clean_str(cohort_id) in archived_cohort_ids:
+        update_authoring_rows(
+            COHORT_AUTHORING_DETAILS_TABLE,
+            'cohort_id = %s',
+            [clean_str(cohort_id)],
+            restore_soft_delete_payload(COHORT_AUTHORING_DETAILS_TABLE),
+        )
+        archived_cohort_ids.discard(clean_str(cohort_id))
+        log_curriculum_decision(
+            'cohort.create', outcome='revived_archived', entity_id=cohort_id,
+            parent_id=programme_id, reason='explicit-id-names-archived-row',
+        )
+
     duplicate = next((
         detail for detail in cohort_authoring_detail_rows()
-        if (
+        if clean_str(detail.get('cohortId')) not in archived_cohort_ids
+        and (
             clean_str(detail.get('cohortId')) == clean_str(cohort_id)
             or (
                 normalise(detail.get('programmeId') or detail.get('programmeName')) in {normalise(programme_id), normalise(programme)}
@@ -20054,6 +20461,11 @@ def create_curriculum_cohort(payload):
         nullable = ['apprenticeship_end_date', 'apprenticeship_end_override']
         if 'epaMonths' in payload or 'epa_months' in payload:
             nullable.append('epa_months')
+        log_curriculum_decision(
+            'cohort.create', outcome='matched_existing', entity_id=existing_id,
+            parent_id=programme_id, matched_id=existing_id,
+            reason='live-namesake-in-same-programme' if existing_id != clean_str(cohort_id) else 'same-id',
+        )
         update_cohort_fields(existing_id, updates, allow_null_columns=tuple(nullable))
         invalidate_curriculum_cache()
         return JsonResponse({'created': False, 'cohort': curriculum_cohort_from_authoring_detail({
@@ -20087,6 +20499,10 @@ def create_curriculum_cohort(payload):
         'groups': [],
         'modules': [],
     }
+    log_curriculum_decision(
+        'cohort.create', outcome='created', entity_id=cohort_id, parent_id=programme_id,
+        reason='archived-namesake-ignored' if archived_cohort_ids else '',
+    )
     persist_cohort_authoring_detail(
         cohort,
         [],
@@ -20134,6 +20550,10 @@ def curriculum_cohort_detail(request, identifier):
     # canonical cohort_id and every unrelated column are preserved.
     cohort_row = resolve_cohort_row(identifier)
     if not cohort_row:
+        log_curriculum_decision(
+            f'cohort.{request.method.lower()}', outcome='rejected',
+            reason='not-found', entity_id=identifier,
+        )
         return json_error('Cohort not found.', status=404)
     cohort_id = clean_str(cohort_row.get('cohort_id'))
 
@@ -20145,6 +20565,10 @@ def curriculum_cohort_detail(request, identifier):
             unassign_authoring_modules_from_group(stored_group_id)
             authoring_soft_delete(GROUPS_TABLE, 'group_id = %s', [stored_group_id], via_parent=cohort_id, deleted_by='cohort-delete')
         authoring_soft_delete(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id], deleted_by='cohort-delete')
+        log_curriculum_decision(
+            'cohort.archive', outcome='soft_deleted', entity_id=cohort_id,
+            parent_id=clean_str(cohort_row.get('programme_id')),
+        )
         invalidate_curriculum_cache()
         return JsonResponse({'deleted': True, 'permanent': False, 'id': cohort_id})
 
@@ -20249,9 +20673,14 @@ def create_curriculum_group(payload):
     """
     missing = require_fields(payload, ['name', 'cohortId'])
     if missing:
+        log_curriculum_decision('group.create', outcome='rejected', reason='missing-fields')
         return json_error('Missing required fields.', fields=missing)
     cohort_row = resolve_cohort_row(payload.get('cohortId'))
     if not cohort_row:
+        log_curriculum_decision(
+            'group.create', outcome='rejected', reason='parent-cohort-not-found',
+            parent_id=payload.get('cohortId'),
+        )
         return json_error('Parent cohort not found.', status=404)
 
     cohort_id = clean_str(cohort_row.get('cohort_id'))
@@ -20264,9 +20693,29 @@ def create_curriculum_group(payload):
     requested_start_time = clean_str(payload.get('startTime') or payload.get('start_time') or payload.get('sessionStartTime') or payload.get('session_start_time'))
     requested_end_time = clean_str(payload.get('endTime') or payload.get('end_time') or payload.get('sessionEndTime') or payload.get('session_end_time'))
 
+    # Archiving a group soft-deletes its row rather than removing it, so the
+    # archived group is still in group_authoring_detail_rows(). Only a surviving
+    # row counts as a duplicate: matching the tombstone used to turn "create the
+    # same group again" into an update of the archived row, which is why the
+    # group never reappeared in the list.
+    archived_group_ids = archived_authoring_ids(GROUPS_TABLE, 'group_id')
+    if clean_str(group_id) in archived_group_ids:
+        # An explicit id naming an archived group is the caller asserting that
+        # identity, so bring the row back rather than writing into the tombstone
+        # or forking a second row under a minted id.
+        update_authoring_rows(
+            GROUPS_TABLE, 'group_id = %s', [clean_str(group_id)], restore_soft_delete_payload(GROUPS_TABLE),
+        )
+        archived_group_ids.discard(clean_str(group_id))
+        log_curriculum_decision(
+            'group.create', outcome='revived_archived', entity_id=group_id,
+            parent_id=cohort_id, reason='explicit-id-names-archived-row',
+        )
+
     duplicate = next((
         detail for detail in group_authoring_detail_rows()
-        if (
+        if clean_str(detail.get('id')) not in archived_group_ids
+        and (
             clean_str(detail.get('id')) == clean_str(group_id)
             or (
                 clean_str(detail.get('cohortId')) == cohort_id
@@ -20289,6 +20738,11 @@ def create_curriculum_group(payload):
             'color': clean_str(payload.get('color')) if 'color' in payload else clean_str(duplicate.get('color')),
             'status': clean_str(duplicate.get('status')) or 'planned',
         }
+        log_curriculum_decision(
+            'group.create', outcome='matched_existing', entity_id=existing_id,
+            parent_id=cohort_id, matched_id=existing_id,
+            reason='live-namesake-in-same-cohort' if existing_id != clean_str(group_id) else 'same-id',
+        )
         update_group_fields(existing_id, updates)
         update_cohort_fields(cohort_id, {'group_ids': json_array_add(cohort_row.get('group_ids'), existing_id)})
         module_assignment_ids = [
@@ -20331,6 +20785,12 @@ def create_curriculum_group(payload):
         'status': 'planned',
         'modules': [payload.get('moduleName')] if clean_str(payload.get('moduleName')) else [],
     }
+    log_curriculum_decision(
+        'group.create', outcome='created', entity_id=group_id, parent_id=cohort_id,
+        # Says out loud that an archived namesake was correctly stepped over,
+        # which is the branch that used to silently swallow the create.
+        reason='archived-namesake-ignored' if archived_group_ids else '',
+    )
     persist_group_authoring_detail(group, [], safe_authoring_module_rows(), {'source_type': 'module_authoring', 'source_id': group_id})
     # Link the group to its cohort by extending the cohort's group_ids array,
     # without touching any other cohort column.
@@ -20400,6 +20860,10 @@ def curriculum_group_detail(request, identifier):
     # changed.
     group_row = resolve_group_row(identifier)
     if not group_row:
+        log_curriculum_decision(
+            f'group.{request.method.lower()}', outcome='rejected',
+            reason='not-found', entity_id=identifier,
+        )
         return json_error('Group not found.', status=404)
     group_id = clean_str(group_row.get('group_id'))
 
@@ -20410,6 +20874,9 @@ def curriculum_group_detail(request, identifier):
             update_cohort_fields(cohort_id, {'group_ids': json_array_remove(cohort_row.get('group_ids'), group_id)})
         unassign_authoring_modules_from_group(group_id)
         authoring_soft_delete(GROUPS_TABLE, 'group_id = %s', [group_id], deleted_by='group-delete')
+        log_curriculum_decision(
+            'group.archive', outcome='soft_deleted', entity_id=group_id, parent_id=cohort_id,
+        )
         invalidate_curriculum_cache()
         return JsonResponse({'deleted': True, 'permanent': False, 'id': group_id})
 
@@ -20429,6 +20896,9 @@ def curriculum_group_detail(request, identifier):
             canonical_staff_assignment_name('tutor', payload.get('tutor')),
         )
         if conflicts:
+            log_curriculum_decision(
+                'group.patch', outcome='rejected', reason='tutor-conflict', entity_id=group_id,
+            )
             return tutor_conflict_error(candidate, conflicts)
 
     updates = {}
@@ -20466,6 +20936,23 @@ def curriculum_group_detail(request, identifier):
 
     with transaction.atomic():
         updated_group = update_group_fields(group_id, updates) or group_row
+        module_delivery_updates = {
+            key: updates[key]
+            for key in ('session_week_day', 'session_start_time', 'session_end_time')
+            if key in updates
+        }
+        if module_delivery_updates:
+            module_delivery_updates['updated_at'] = datetime.utcnow()
+            # Module rows are the source used to derive the session calendar.
+            # They inherit the group's slot when attached, so a later group edit
+            # must move those inherited copies too or the calendar stays on the
+            # day/time chosen when the group was first created.
+            update_authoring_rows(
+                AUTHORING_MODULES_TABLE,
+                'group_id = %s',
+                [group_id],
+                module_delivery_updates,
+            )
         next_cohort_id = clean_str(updated_group.get('cohort_id'))
         if next_cohort_id and next_cohort_id != previous_cohort_id:
             if previous_cohort_id:
@@ -20498,6 +20985,13 @@ def curriculum_group_detail(request, identifier):
                     'updated_at': datetime.utcnow(),
                 })
         notify_staff_assignment_change()
+    log_curriculum_decision(
+        'group.patch', outcome='updated', entity_id=group_id,
+        parent_id=clean_str(updated_group.get('cohort_id')),
+        # The columns that changed, never their values: a column list is enough
+        # to see what a request touched without logging anyone's name.
+        reason=','.join(sorted(updates)) or 'no-columns',
+    )
     invalidate_curriculum_cache()
     return JsonResponse({'updated': True, 'id': group_id})
 

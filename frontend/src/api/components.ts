@@ -14,6 +14,7 @@ export interface ComponentProgressSubmission {
   module?: string | null;
   startedAt: string;
   timeTakenSeconds: number;
+  trackingToken: string;
   componentTitle?: string | null;
   componentType?: string | null;
   ksbs?: string[];
@@ -32,6 +33,10 @@ export interface ComponentProgressRecord {
   startedAt: string | null;
   submittedAt: string;
   timeTaken: string | null;
+  timeTrackingSource: string;
+  claimedSeconds: number;
+  serverSessionSeconds: number;
+  verifiedSeconds: number;
 }
 
 export interface ComponentProgressResponse {

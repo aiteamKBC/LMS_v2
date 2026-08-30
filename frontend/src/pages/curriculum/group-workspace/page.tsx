@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
@@ -9,6 +9,7 @@ import {
   findGroup,
   formatDateLabel,
   moduleIdentity,
+  namedCurriculumWorkspacePath,
   normaliseKey,
   programmeIdentity,
   resolveGroupContext,
@@ -42,6 +43,7 @@ const SESSION_GRID = 'grid grid-cols-[110px_minmax(170px,1.4fr)_minmax(140px,1fr
 
 export default function GroupWorkspacePage() {
   const { id = '' } = useParams();
+  const [searchParams] = useSearchParams();
   const {
     programmes, cohorts, groups, modules, coaches, tutors, holidays,
     loading, loaded, refreshing, error, reload, applyLocal,
@@ -50,6 +52,7 @@ export default function GroupWorkspacePage() {
   const [tab, setTab] = useState<Tab>('overview');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [moduleDrawerOpen, setModuleDrawerOpen] = useState(false);
+  const [moduleCreating, setModuleCreating] = useState(false);
   const [sessions, setSessions] = useState<CurriculumSession[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
 
@@ -64,6 +67,7 @@ export default function GroupWorkspacePage() {
   };
 
   const group = useMemo(() => findGroup(groups, id), [groups, id]);
+  const groupDisplayName = cleanText(group?.name) || cleanText(searchParams.get('groupName')) || 'Group';
   const context = useMemo(
     () => (group ? resolveGroupContext(group, cohorts, programmes) : null),
     [cohorts, group, programmes],
@@ -156,8 +160,9 @@ export default function GroupWorkspacePage() {
       roleLabel="Curriculum Designer"
       navItems={curriculumNavItems}
       workspaceLabel="Curriculum Studio"
-      pageTitle={group?.name || 'Group'}
+      pageTitle={groupDisplayName}
       pageSubtitle={context ? `${context.cohortName} · ${context.programmeName}` : 'Loading group'}
+      breadcrumbCurrentLabel={`Groups — ${groupDisplayName}`}
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
@@ -171,10 +176,10 @@ export default function GroupWorkspacePage() {
             ...(context?.cohortId
               ? [{ label: context.cohortName, href: `/curriculum/cohorts/${encodeURIComponent(context.cohortId)}` }]
               : []),
-            { label: group?.name || id },
+            { label: groupDisplayName },
           ]}
           eyebrow="Group"
-          title={group?.name || 'Loading…'}
+          title={groupDisplayName}
           subtitle={context ? `${context.cohortName} · ${context.programmeName}` : ''}
           accentColor={group?.color}
           stats={[
@@ -198,12 +203,15 @@ export default function GroupWorkspacePage() {
               </button>
               <button
                 type="button"
-                onClick={() => setModuleDrawerOpen(true)}
-                disabled={!group}
+                onClick={() => {
+                  setTab('modules');
+                  setModuleDrawerOpen(true);
+                }}
+                disabled={!group || moduleCreating}
                 className="inline-flex h-10 items-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:opacity-50"
               >
-                <AppIcon className="ri-add-line text-sm"></AppIcon>
-                Add module
+                <AppIcon className={`${moduleCreating ? 'ri-loader-4-line animate-spin' : 'ri-add-line'} text-sm`}></AppIcon>
+                {moduleCreating ? 'Creating module...' : 'Add module'}
               </button>
             </>
           )}
@@ -233,7 +241,7 @@ export default function GroupWorkspacePage() {
               <DetailRow
                 label="Programme"
                 value={context?.programme ? (
-                  <Link to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(context.programme))}?tab=delivery`} className="text-primary-700 hover:underline">
+                  <Link to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(context.programme))}?tab=groups`} className="text-primary-700 hover:underline">
                     {context.programmeName}
                   </Link>
                 ) : cleanText(context?.programmeName, '—')}
@@ -257,7 +265,7 @@ export default function GroupWorkspacePage() {
             rows={groupModules}
             rowKey={module => moduleIdentity(module) || module.id}
             loading={loading && !loaded}
-            refreshing={refreshing}
+            refreshing={refreshing || moduleCreating}
             empty={(
               <EntityEmptyState
                 icon="ri-stack-line"
@@ -268,7 +276,7 @@ export default function GroupWorkspacePage() {
             renderRow={module => (
               <>
                 <StackedCell
-                  href={`/curriculum/modules/${encodeURIComponent(moduleIdentity(module))}`}
+                  href={namedCurriculumWorkspacePath('modules', moduleIdentity(module), module.name)}
                   primary={module.name}
                   secondary={`${module.weeks || 0} weeks · ${module.lessons || 0} lessons`}
                 />
@@ -353,6 +361,7 @@ export default function GroupWorkspacePage() {
         holidays={holidays}
         tutorNames={tutorNames}
         lockGroup
+        onSavingChange={setModuleCreating}
         onClose={() => setModuleDrawerOpen(false)}
         onSaved={async () => {
           await reload({ silent: true });

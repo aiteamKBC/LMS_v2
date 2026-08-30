@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, videos, views
+from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, time_tracking, videos, views
 
 urlpatterns = [
     path("tutor-learners/", views.tutor_learners, name="tutor-learners"),
@@ -82,6 +82,10 @@ urlpatterns = [
     path("employers/<int:pk>/", employers.employer_detail, name="employer-detail"),
     path("learner-detail/<str:kind>/<int:pk>/", learner_detail.learner_detail, name="learner-detail"),
     path("kbc-lms/all-students-schema/", lms_schema.all_students_schema, name="kbc-lms-all-students-schema"),
+    path("media/google-drive/<str:file_id>/", media_proxy.google_drive_media, name="google-drive-media"),
+    path("media/legacy-attachment/<str:attachment_id>/", media_proxy.legacy_attachment_media, name="legacy-attachment-media"),
+    path("media/legacy-attachment/<str:attachment_id>/pdf-info/", media_proxy.legacy_attachment_pdf_info, name="legacy-attachment-pdf-info"),
+    path("media/legacy-attachment/<str:attachment_id>/pdf-page/<int:page_number>/", media_proxy.legacy_attachment_pdf_page, name="legacy-attachment-pdf-page"),
     path("attendance/<str:kind>/<int:learner_id>/", attendance.learner_attendance, name="learner-attendance"),
     path("learners/<int:pk>/coach/", views.learner_coach, name="learner-coach"),
     # curriculum lookups for the training-plan builder
@@ -93,6 +97,8 @@ urlpatterns = [
     path("curriculum/components/", curriculum.components, name="curriculum-components"),
     path("curriculum/ksb-profile/", curriculum.ksb_profile, name="curriculum-ksb-profile"),
     path("curriculum/legacy-otjh/", curriculum.legacy_otjh, name="curriculum-legacy-otjh"),
+    # Signed start time shared by quizzes and learning components.
+    path("time-tracking/start/", time_tracking.start_time_tracking, name="time-tracking-start"),
     # quiz-taking
     path("quizzes/<int:quiz_id>/", quizzes.quiz_detail, name="quiz-detail"),
     path("quizzes/<int:quiz_id>/submit/", quizzes.submit_quiz_attempt, name="quiz-submit"),

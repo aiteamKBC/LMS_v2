@@ -200,7 +200,7 @@ describe('Module workspace — Schedule tab Teams calendar', () => {
       screen.getByText('The Teams calendar is not on these dates yet — send them from the Teams Meetings page.'),
     ).toBeInTheDocument());
     // The Schedule tab reports the calendar; it never sends to it.
-    expect(screen.queryByRole('button', { name: 'Send session dates to Teams' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Update Teams calendar' })).not.toBeInTheDocument();
     expect(screen.getAllByRole('link', { name: 'Manage on Teams Meetings' })[0])
       .toHaveAttribute('href', '/curriculum/teams-meetings?module=MOD-1');
   });
@@ -216,7 +216,7 @@ describe('Module workspace — Schedule tab Teams calendar', () => {
     // ...but nothing here writes to it. One link out, no action buttons.
     expect(screen.getByRole('link', { name: 'Manage on Teams Meetings' }))
       .toHaveAttribute('href', '/curriculum/teams-meetings?module=MOD-1');
-    expect(screen.queryByRole('button', { name: 'Send session dates to Teams' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Update Teams calendar' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Create Teams calendar' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Fetch attendance/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Re-attach meeting/ })).not.toBeInTheDocument();

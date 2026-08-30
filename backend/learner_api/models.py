@@ -652,6 +652,12 @@ class LearnerProfile(models.Model):
                 "startedAt": entry.started_at.isoformat() if entry.started_at else "",
                 "submittedAt": entry.submitted_at.isoformat() if entry.submitted_at else "",
                 "timeTaken": entry.time_taken,
+                "timeTrackingSource": entry.time_tracking_source,
+                "timeTrackingCalculation": entry.time_tracking_calculation,
+                "timeTrackingSessionId": entry.time_tracking_session_ref,
+                "claimedSeconds": entry.claimed_seconds,
+                "serverSessionSeconds": entry.server_session_seconds,
+                "verifiedSeconds": entry.verified_seconds,
                 "ksbs": [
                     row.ksb_code
                     for row in entry.ksb_links.all()
@@ -865,6 +871,12 @@ class LearnerProgressEntry(models.Model):
     started_at = models.DateTimeField(null=True, blank=True)
     submitted_at = models.DateTimeField(null=True, blank=True)
     time_taken = models.TextField(blank=True)
+    time_tracking_source = models.TextField(blank=True, default='')
+    time_tracking_calculation = models.TextField(blank=True, default='')
+    time_tracking_session_ref = models.TextField(blank=True, default='')
+    claimed_seconds = models.PositiveIntegerField(null=True, blank=True)
+    server_session_seconds = models.PositiveIntegerField(null=True, blank=True)
+    verified_seconds = models.PositiveIntegerField(null=True, blank=True)
     feed_kind = models.CharField(max_length=30, blank=True)
     feed_action = models.TextField(blank=True)
     feed_title = models.TextField(blank=True)

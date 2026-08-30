@@ -49,6 +49,7 @@ STEPS = (
     # unenforced ordering caused P0-1 and P0-2; running them here guarantees it.
     ("apply_employer_signing", True, "employer sign-off columns"),
     ("apply_document_learner_signature", False, "learner sign-off columns"),
+    ("apply_progress_time_tracking_schema", True, "verified learner-time provenance"),
 )
 
 

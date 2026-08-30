@@ -147,26 +147,6 @@ export function SlideDeckViewer({ src, title, fallback }: SlideDeckViewerProps) 
         </p>
       )}
 
-      {/* A strip of slide numbers beats scrubbing with the arrows on a long deck. */}
-      {slideCount > 1 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {deck.slides.map((entry, entryIndex) => (
-            <button
-              key={entry.number}
-              type="button"
-              onClick={() => setIndex(entryIndex)}
-              aria-current={entryIndex === index}
-              className={`h-7 min-w-7 rounded-md px-1.5 text-[11px] font-semibold transition-colors ${
-                entryIndex === index
-                  ? 'bg-orange-500 text-white'
-                  : 'border border-background-300 text-foreground-500 hover:bg-background-100'
-              }`}
-            >
-              {entry.number}
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

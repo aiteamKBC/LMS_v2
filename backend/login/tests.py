@@ -247,6 +247,319 @@ class LoginEndpointTests(LoginTestBase):
         self.assertTrue(events.filter(succeeded=True).exists())
 
 
+class RollingSessionCookieTests(LoginTestBase):
+    """The outbound half of rolling expiry, exercised through real requests.
+
+    The database side is covered in ``tests_unit.RollingRenewalTests``; what
+    matters here is the part only a full request/response can show — that the
+    browser is told about a renewal, that it is *not* told anything on an
+    ordinary request, and above all that the renewal cannot undo a sign-out.
+    """
+
+    def _sign_in(self, *, remember=False):
+        response = self.post(
+            "/login_api/login/",
+            {"email": self.email, "password": self.password, "remember": remember},
+        )
+        self.assertEqual(response.status_code, 200)
+        return LoginSession.objects.get(token_hash=hash_token(response.cookies["kbc_session"].value))
+
+    @staticmethod
+    def _make_due(session):
+        """Age Last_seen_at past the touch throttle, as real idling would."""
+        LoginSession.objects.filter(pk=session.pk).update(
+            last_seen_at=timezone.now() - timedelta(minutes=10)
+        )
+
+    def _assert_browser_session_cookie(self, cookie):
+        """Neither Max-Age nor Expires: the browser drops it when it closes.
+
+        Django writes an empty ``expires`` morsel when it is given neither, so
+        both read as "" rather than being absent from the morsel altogether.
+        """
+        self.assertEqual(cookie["max-age"], "", "the cookie was given a Max-Age")
+        self.assertEqual(cookie["expires"], "", "the cookie was given an Expires")
+
+    def _assert_persistent_cookie(self, cookie):
+        self.assertNotEqual(cookie["max-age"], "", "the cookie has no Max-Age")
+        self.assertNotEqual(cookie["expires"], "", "the cookie has no Expires")
+
+    # --- the choice reaches the row -----------------------------------------
+
+    def test_login_persists_whether_remember_me_was_ticked(self):
+        self.make_account()
+        self.assertFalse(self._sign_in(remember=False).remember)
+
+        self.client.cookies.clear()
+        self.assertTrue(self._sign_in(remember=True).remember)
+
+    # --- the choice reaches the browser -------------------------------------
+
+    def test_a_normal_login_gets_a_browser_session_cookie(self):
+        """What leaving "remember me" unticked now buys.
+
+        The session itself still lasts twelve rolling hours -- that is
+        ``Expires_at``, and it is unchanged. This is only about whether the
+        browser keeps the cookie once it closes, which for a console reached
+        from shared college machines is the difference between the next person
+        finding a live session and finding the sign-in page.
+        """
+        self.make_account()
+        response = self.post(
+            "/login_api/login/",
+            {"email": self.email, "password": self.password, "remember": False},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self._assert_browser_session_cookie(response.cookies["kbc_session"])
+
+    def test_a_remembered_login_gets_a_persistent_cookie(self):
+        from .security import SESSION_TTL_REMEMBER
+
+        self.make_account()
+        response = self.post(
+            "/login_api/login/",
+            {"email": self.email, "password": self.password, "remember": True},
+        )
+
+        cookie = response.cookies["kbc_session"]
+        self._assert_persistent_cookie(cookie)
+        self.assertEqual(
+            int(cookie["max-age"]), int(SESSION_TTL_REMEMBER.total_seconds())
+        )
+
+    # --- renewal reaches the browser ----------------------------------------
+
+    def test_a_renewing_request_extends_a_remembered_cookie(self):
+        self.make_account()
+        session = self._sign_in(remember=True)
+        self._make_due(session)
+
+        response = self.client.get("/login_api/me/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("kbc_session", response.cookies)
+        session.refresh_from_db()
+        # The cookie is told how long is actually left, not a fresh full window.
+        max_age = int(response.cookies["kbc_session"]["max-age"])
+        remaining = (session.expires_at - timezone.now()).total_seconds()
+        self.assertAlmostEqual(max_age, remaining, delta=30)
+
+    def test_a_renewal_extends_a_normal_session_without_persisting_it(self):
+        """Both halves matter.
+
+        The row really is extended, so somebody working is not signed out at
+        twelve hours. The cookie carrying it still dies with the browser, which
+        is the whole of what leaving "remember me" unticked asked for.
+        """
+        self.make_account()
+        session = self._sign_in()
+        before = session.expires_at
+        self._make_due(session)
+
+        response = self.client.get("/login_api/me/")
+
+        self.assertIn("kbc_session", response.cookies)
+        self._assert_browser_session_cookie(response.cookies["kbc_session"])
+        session.refresh_from_db()
+        self.assertGreater(session.expires_at, before)
+
+    def _assert_every_renewal(self, session, check):
+        """Drive three real renewals; ``check`` inspects the cookie each sent."""
+        for round_number in range(1, 4):
+            # Idle enough to be due a touch, and far enough short of its window
+            # that the renewal certainly moves it -- otherwise a no-op response
+            # would carry no cookie at all and prove nothing either way.
+            LoginSession.objects.filter(pk=session.pk).update(
+                last_seen_at=timezone.now() - timedelta(minutes=10),
+                expires_at=timezone.now() + timedelta(hours=1),
+            )
+
+            response = self.client.get("/login_api/me/")
+
+            with self.subTest(renewal=round_number):
+                self.assertIn("kbc_session", response.cookies)
+                check(response.cookies["kbc_session"])
+
+    def test_repeated_renewal_never_makes_a_normal_cookie_persistent(self):
+        """The regression this whole change hinges on.
+
+        Renewal re-sends the cookie, and five minutes of ordinary use is enough
+        to trigger one. A version of this that took persistence from anything
+        but the session row would promote a normal session to a persistent one
+        within minutes of signing in -- the choice undone by the very activity
+        it was meant to survive, and a single-renewal test would still pass.
+        """
+        self.make_account()
+
+        self._assert_every_renewal(
+            self._sign_in(), self._assert_browser_session_cookie
+        )
+
+    def test_repeated_renewal_keeps_a_remembered_cookie_persistent(self):
+        """The mirror of the test above: persistence is not lost either."""
+        self.make_account()
+
+        self._assert_every_renewal(
+            self._sign_in(remember=True), self._assert_persistent_cookie
+        )
+
+    def test_the_renewed_cookie_carries_the_same_token(self):
+        """Renewal extends a session. It does not rotate or reissue one."""
+        self.make_account()
+        session = self._sign_in()
+        original = self.client.cookies["kbc_session"].value
+        self._make_due(session)
+
+        response = self.client.get("/login_api/me/")
+
+        self.assertEqual(response.cookies["kbc_session"].value, original)
+        self.assertEqual(LoginSession.objects.filter(account_id=session.account_id).count(), 1)
+
+    def test_the_renewed_cookie_keeps_every_security_flag(self):
+        self.make_account()
+        session = self._sign_in()
+        self._make_due(session)
+
+        renewed = self.client.get("/login_api/me/").cookies["kbc_session"]
+
+        self.assertTrue(renewed["httponly"])
+        self.assertEqual(renewed["samesite"], "Lax")
+        self.assertEqual(renewed["path"], "/")
+
+    def test_renewed_and_issued_cookies_agree_on_every_flag(self):
+        """One helper sets both, so neither can drift from the other."""
+        self.make_account()
+        issued = self.post(
+            "/login_api/login/", {"email": self.email, "password": self.password}
+        ).cookies["kbc_session"]
+        session = LoginSession.objects.get(token_hash=hash_token(issued.value))
+        self._make_due(session)
+
+        renewed = self.client.get("/login_api/me/").cookies["kbc_session"]
+
+        # ``max-age`` and ``expires`` belong in this list for the same reason as
+        # the rest: on a normal session both are absent from each, and a renewal
+        # that quietly supplied one would be exactly the drift being ruled out.
+        for flag in (
+            "httponly", "samesite", "path", "secure", "domain", "max-age", "expires",
+        ):
+            self.assertEqual(renewed[flag], issued[flag], f"{flag} drifted on renewal")
+
+    # --- silence when nothing happened --------------------------------------
+
+    def test_a_request_that_does_not_renew_leaves_the_cookie_alone(self):
+        self.make_account()
+        self._sign_in()  # Last_seen_at is now, so the throttle holds.
+
+        response = self.client.get("/login_api/me/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("kbc_session", response.cookies)
+
+    def test_an_anonymous_request_sets_no_session_cookie(self):
+        self.assertNotIn("kbc_session", self.client.get("/login_api/me/").cookies)
+
+    def test_a_session_at_its_ceiling_is_not_given_a_longer_cookie(self):
+        from .security import SESSION_MAX_LIFETIME
+
+        self.make_account()
+        session = self._sign_in()
+        LoginSession.objects.filter(pk=session.pk).update(
+            created_at=timezone.now() - (SESSION_MAX_LIFETIME + timedelta(days=1)),
+            expires_at=timezone.now() + timedelta(minutes=5),
+            last_seen_at=timezone.now() - timedelta(minutes=10),
+        )
+
+        response = self.client.get("/login_api/me/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("kbc_session", response.cookies)
+
+    # --- renewal must never fight the session endpoints ----------------------
+
+    def test_logout_is_not_undone_by_the_response_middleware(self):
+        """The regression this guard exists for: a renewed cookie restoring a
+        session the same request had just signed out of."""
+        self.make_account()
+        session = self._sign_in()
+        self._make_due(session)  # so the logout request itself renews on the way in
+
+        response = self.client.post("/login_api/logout/", **XHR)
+
+        self.assertEqual(response.status_code, 200)
+        # The one Set-Cookie on the response is the deletion, not a renewal.
+        self.assertEqual(response.cookies["kbc_session"].value, "")
+        session.refresh_from_db()
+        self.assertIsNotNone(session.revoked_at)
+        self.assertEqual(self.client.get("/login_api/me/").status_code, 401)
+
+    def test_a_cookie_kept_from_before_logout_does_not_work_afterwards(self):
+        self.make_account()
+        session = self._sign_in()
+        stolen = self.client.cookies["kbc_session"].value
+        self._make_due(session)
+        self.client.post("/login_api/logout/", **XHR)
+
+        self.client.cookies["kbc_session"] = stolen
+        self.assertEqual(self.client.get("/login_api/me/").status_code, 401)
+
+    def test_login_while_already_signed_in_sets_only_the_new_cookie(self):
+        self.make_account()
+        session = self._sign_in()
+        self._make_due(session)  # the old session would renew on the way in
+
+        response = self.post(
+            "/login_api/login/", {"email": self.email, "password": self.password}
+        )
+
+        fresh = response.cookies["kbc_session"].value
+        self.assertNotEqual(fresh, "")
+        # The cookie the browser is left holding is the newly issued session.
+        self.assertTrue(
+            LoginSession.objects.filter(
+                token_hash=hash_token(fresh), revoked_at__isnull=True
+            ).exists()
+        )
+
+    def test_password_change_still_revokes_every_other_session(self):
+        self.make_account()
+        keep = self._sign_in()
+
+        other = Client(SERVER_NAME="localhost")
+        other.post(
+            "/login_api/login/",
+            data=json.dumps({"email": self.email, "password": self.password}),
+            content_type="application/json",
+            **XHR,
+        )
+        self.assertEqual(other.get("/login_api/me/").status_code, 200)
+
+        self._make_due(keep)
+        response = self.post(
+            "/login_api/change-password/",
+            {"currentPassword": self.password, "newPassword": "Lantern-Quarry-51!"},
+        )
+        self.assertEqual(response.status_code, 200)
+
+        # The other browser is out; this one, which made the change, stays in.
+        self.assertEqual(other.get("/login_api/me/").status_code, 401)
+        self.assertEqual(self.client.get("/login_api/me/").status_code, 200)
+
+    def test_a_disabled_account_is_refused_and_gets_no_cookie(self):
+        account = self.make_account()
+        session = self._sign_in()
+        self._make_due(session)
+
+        account.is_active = False
+        account.save(update_fields=["is_active"])
+
+        response = self.client.get("/login_api/me/")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertNotIn("kbc_session", response.cookies)
+
+
 class RoleTests(LoginTestBase):
     def test_super_admin_access_grants_admin_role(self):
         account = self.make_account(access="super-admin")
@@ -830,6 +1143,23 @@ class MicrosoftSsoCallbackTests(LoginTestBase):
         self.assertNotIn("kbc_session", response.cookies)
 
     # --- the address is in the login table ---
+
+    def test_an_sso_session_is_not_persistent(self):
+        """SSO has no "remember me" to tick, and does not assume one.
+
+        Two things are pinned, because the cookie alone would not hold: the
+        response carries a browser-session cookie, *and* the row says
+        ``Remember = false`` -- which is what keeps every later renewal sending
+        the same kind of cookie instead of promoting it.
+        """
+        self.make_account()
+
+        cookie = self._callback(signed_in_as=self.email).cookies["kbc_session"]
+
+        self.assertEqual(cookie["max-age"], "")
+        self.assertEqual(cookie["expires"], "")
+        session = LoginSession.objects.get(token_hash=hash_token(cookie.value))
+        self.assertFalse(session.remember)
 
     def test_a_known_address_is_signed_in(self):
         account = self.make_account()

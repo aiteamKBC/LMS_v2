@@ -26,7 +26,7 @@ from .active_users import (
 )
 from .active_users import connections as active_users_connections
 from .components import submit_component_progress
-from . import progress_rules
+from . import evidence_storage, progress_rules
 from .progress_rules import (
     progress_achievement_status,
     progress_counts_as_achieved,
@@ -53,6 +53,7 @@ from .learner_progression import ACTIVE_STATUS, READY_TO_ENROL_STATUS, _as_date,
 from .mappers import to_learner_detail
 from .models import LearnerProfile, _progress_entry_activity, _serialise_quiz_ref
 from .reflection_submissions import get_reflection_submission
+from .time_tracking import issue_tracking_session
 
 
 class LearnerQuizReferenceTests(SimpleTestCase):
@@ -76,7 +77,6 @@ class LearnerDetailPrefetchTests(SimpleTestCase):
         prefetch.assert_called_once_with(
             [profile],
             "ksb_assignment__profile_version__definitions",
-            "assigned_ksbs",
             "progress_entries__ksb_links",
             "progress_entries__quiz_answers__chosen_answers",
             "progress_entries__quiz_answers__correct_answers",
@@ -869,6 +869,14 @@ class LearnerOtjhTargetTests(SimpleTestCase):
     AZURE_SAS_TTL_MINUTES=15,
 )
 class EvidenceStorageUrlTests(SimpleTestCase):
+    @patch("learner_api.evidence_storage.BlobServiceClient")
+    def test_service_client_splits_multi_megabyte_uploads_into_small_blocks(self, service_client_class):
+        evidence_storage._service_client(upload_block_bytes=256 * 1024)
+
+        kwargs = service_client_class.call_args.kwargs
+        self.assertEqual(kwargs["max_single_put_size"], 256 * 1024)
+        self.assertEqual(kwargs["max_block_size"], 256 * 1024)
+
     @patch("learner_api.evidence_storage._service_client")
     def test_upload_rewinds_file_before_sending_it_to_azure(self, service_client):
         upload = BytesIO(b"complete-file-content")
@@ -882,6 +890,9 @@ class EvidenceStorageUrlTests(SimpleTestCase):
 
         uploaded_stream = blob_client.upload_blob.call_args.args[0]
         self.assertEqual(b"complete-file-content", uploaded_stream.read())
+        self.assertEqual(blob_client.upload_blob.call_args.kwargs["max_concurrency"], 2)
+        self.assertEqual(blob_client.upload_blob.call_args.kwargs["connection_timeout"], 60)
+        self.assertEqual(blob_client.upload_blob.call_args.kwargs["read_timeout"], 60)
 
     def test_canonical_url_round_trips_container_and_blob_name(self):
         url = blob_url(
@@ -1100,12 +1111,22 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
     """The service-layer rejections must surface as a client error, not a 200."""
 
     def _post(self, component_id):
+        tracking = issue_tracking_session(
+            activity_kind="component",
+            activity_id=component_id,
+            learner_kind="apprenticeship",
+            learner_id="19",
+            counting_mode="visible_page",
+        )
         request = RequestFactory().post(
             f"/learner_api/components/{component_id}/complete/?kind=apprenticeship&learnerId=19",
-            data=json.dumps({}),
+            data=json.dumps({"trackingToken": tracking["trackingToken"], "timeTakenSeconds": 0}),
             content_type="application/json",
         )
-        return submit_component_progress(request, component_id)
+        view = submit_component_progress
+        while hasattr(view, "__wrapped__"):
+            view = view.__wrapped__
+        return view(request, component_id)
 
     def _run(self, save_side_effect):
         profile = SimpleNamespace(training_plan_progress=[])
@@ -1115,11 +1136,12 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
                 with patch("learner_api.components.component_ksb_codes", return_value=["K1"]):
                     with patch("learner_api.components._completion_criteria", return_value=(True, None)):
                         with patch("learner_api.components.learner_profile_for_source", return_value=profile):
-                            with patch(
-                                "learner_api.components.save_progress_record",
-                                side_effect=save_side_effect,
-                            ):
-                                return self._post("COMP-UNDER-TEST")
+                            with patch("learner_api.components.tracking_session_already_used", return_value=False):
+                                with patch(
+                                    "learner_api.components.save_progress_record",
+                                    side_effect=save_side_effect,
+                                ):
+                                    return self._post("COMP-UNDER-TEST")
 
     def test_unknown_component_write_returns_400(self):
         response = self._run(OrphanComponentReferenceError("COMP-GHOST"))

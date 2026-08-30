@@ -13,6 +13,7 @@ export interface VideoProgressSubmission {
   module?: string | null;
   startedAt: string;
   timeTakenSeconds: number;
+  trackingToken: string;
   videoTitle?: string | null;
   ksbs?: string[];
   feedback?: string;
@@ -30,6 +31,10 @@ export interface VideoProgressRecord {
   startedAt: string | null;
   submittedAt: string;
   timeTaken: string | null;
+  timeTrackingSource: string;
+  claimedSeconds: number;
+  serverSessionSeconds: number;
+  verifiedSeconds: number;
 }
 
 // The full submit response: the slim record + display fields (not stored).

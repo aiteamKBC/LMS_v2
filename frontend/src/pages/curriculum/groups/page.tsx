@@ -11,6 +11,7 @@ import {
   formatDateLabel,
   groupsForScope,
   matchesSearch,
+  namedCurriculumWorkspacePath,
   normaliseKey,
   programmeIdentity,
   removeById,
@@ -280,7 +281,7 @@ export default function CurriculumGroupsPage() {
             return (
               <>
                 <StackedCell
-                  href={`/curriculum/groups/${encodeURIComponent(group.id)}`}
+                  href={namedCurriculumWorkspacePath('groups', group.id, group.name)}
                   primary={(
                     <span className="flex items-center gap-2">
                       <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: group.color || '#2563eb' }} />

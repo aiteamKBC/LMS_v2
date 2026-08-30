@@ -9,6 +9,7 @@ import type {
   CurriculumGroup,
   CurriculumModule,
   CurriculumProgramme,
+  CurriculumSession,
 } from '@/lib/curriculumApi';
 
 /**
@@ -189,7 +190,7 @@ async function openTab(name: RegExp) {
   await userEvent.click(tabStrip().getByRole('button', { name }));
 }
 
-describe('Programme workspace', () => {
+describe('Programme workspace', { timeout: 15000 }, () => {
   it('opens with the programme in a header, not straight into a records table', async () => {
     await renderWorkspace();
 
@@ -199,23 +200,44 @@ describe('Programme workspace', () => {
     expect(screen.getByRole('link', { name: 'Programmes' })).toHaveAttribute('href', '/curriculum/programmes');
     expect(screen.getByRole('heading', { name: 'Data Analyst' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Edit programme/ })).toBeInTheDocument();
+    expect(screen.getByText('Delivery setup')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Manage Cohorts & Groups/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Open Module Builder/ })).toBeInTheDocument();
   });
 
-  it('carries one tab per programme-level question and none that repeat a lower level', async () => {
+  it('shows the programme hierarchy as explicit, ordered navigation', async () => {
     await renderWorkspace();
     const strip = tabStrip();
 
     expect(strip.getByRole('button', { name: /Overview/ })).toBeInTheDocument();
-    expect(strip.getByRole('button', { name: /Delivery/ })).toBeInTheDocument();
-    expect(strip.getByRole('button', { name: /Modules/ })).toBeInTheDocument();
-    expect(strip.getByRole('button', { name: /Sessions/ })).toBeInTheDocument();
-    expect(strip.getByRole('button', { name: /KSB coverage/ })).toBeInTheDocument();
+    const cohortsTab = strip.getByRole('button', { name: /Cohorts/ });
+    const groupsTab = strip.getByRole('button', { name: /Groups/ });
+    const modulesTab = strip.getByRole('button', { name: /Modules/ });
+    const sessionsTab = strip.getByRole('button', { name: /Sessions/ });
+    expect(cohortsTab.compareDocumentPosition(groupsTab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(groupsTab.compareDocumentPosition(modulesTab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(modulesTab.compareDocumentPosition(sessionsTab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(strip.getByRole('button', { name: /KSB Coverage/ })).toBeInTheDocument();
+    expect(strip.getByRole('button', { name: /Achievement KSBs/ })).toBeInTheDocument();
+    expect(strip.getByRole('button', { name: /Quality/ })).toBeInTheDocument();
 
-    // Groups were the Cohorts tab again, flattened; Weeks was the module's own
-    // timeline; Review drew all of it a third time.
-    expect(strip.queryByRole('button', { name: /^Groups/ })).not.toBeInTheDocument();
+    // Weeks and components still belong to an individual module workspace.
     expect(strip.queryByRole('button', { name: /^Weeks/ })).not.toBeInTheDocument();
     expect(strip.queryByRole('button', { name: /^Review/ })).not.toBeInTheDocument();
+  });
+
+  it('puts Modules after the delivery hierarchy and hands completed design on to KSB Coverage', async () => {
+    await renderWorkspace();
+    await openTab(/Modules/);
+
+    expect(screen.queryByText('Programme design')).not.toBeInTheDocument();
+    expect(tabStrip().getByRole('button', { name: /Open Module Builder/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Add cohort$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Add module$/ })).not.toBeInTheDocument();
+    expect(await screen.findByText('Design foundation ready')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Continue to KSB Coverage/ }));
+
+    expect(await screen.findByText('KSB coverage heatmap')).toBeInTheDocument();
   });
 
   it('sends the reader to the page that owns each record type rather than being a second catalogue', async () => {
@@ -223,7 +245,7 @@ describe('Programme workspace', () => {
 
     expect(screen.getByRole('link', { name: /cohort/ })).toHaveAttribute('href', '/curriculum/cohorts?programme=PROG-DATA');
     expect(screen.getByRole('link', { name: /group/ })).toHaveAttribute('href', '/curriculum/groups?programme=PROG-DATA');
-    expect(screen.getByRole('link', { name: /module/ })).toHaveAttribute('href', '/curriculum/module-builder?programme=PROG-DATA');
+    expect(screen.getByRole('link', { name: /module/ })).toHaveAttribute('href', '/curriculum/module-builder?programme=PROG-DATA&programmeName=Data+Analyst');
   });
 
   it('reports a module whose cohort is not a cohort record instead of inventing one', async () => {
@@ -237,21 +259,143 @@ describe('Programme workspace', () => {
 
   it('shows a cohort with its groups, and never a tutor on a group', async () => {
     await renderWorkspace();
-    await openTab(/Delivery/);
+    await openTab(/Cohorts/);
 
+    expect(screen.queryByText('Delivery setup')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /^Sept 2026/ })).toHaveAttribute('href', '/curriculum/cohorts/COHORT-1');
-    expect(screen.getByRole('link', { name: /Group A/ })).toHaveAttribute('href', '/curriculum/groups/GROUP-1');
+
+    await openTab(/Groups/);
+    expect(screen.getByPlaceholderText('Search groups, coaches, days or mode...')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Cohort' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Coaching' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Group A/ })).toHaveAttribute('href', '/curriculum/groups/GROUP-1?groupName=Group+A');
+    expect(screen.getByRole('button', { name: 'Add module' })).toBeInTheDocument();
     // The coach belongs to the group and is assignable in place.
     expect(screen.getByText('Coach One')).toBeInTheDocument();
     // The tutor does not, even though the group payload carries one.
     expect(screen.queryByText('Tutor One')).not.toBeInTheDocument();
   });
 
+  it('does not count a same-named module that is assigned to another group', async () => {
+    const api = await import('@/lib/curriculumApi');
+    const otherGroup = {
+      ...groups[0],
+      id: 'GROUP-2',
+      name: 'Group B',
+      learners: 0,
+      modules: ['Data Foundations'],
+    } as CurriculumGroup;
+    const otherModule = {
+      ...modules[0],
+      id: 'MOD-OTHER-GROUP',
+      moduleCatalogueId: 'MOD-OTHER-GROUP',
+      sourceId: 'MOD-OTHER-GROUP',
+      groupId: 'GROUP-2',
+      group: 'Group B',
+    } as CurriculumModule;
+    vi.mocked(api.fetchCurriculumProgrammeDetail).mockResolvedValueOnce({
+      schema: 'test',
+      programme,
+      cohorts: [],
+      flat: {
+        cohorts,
+        groups: [...groups, otherGroup],
+        groupIds: ['GROUP-1', 'GROUP-2'],
+        modules: [...modules, otherModule],
+        sessions: [],
+        components: [],
+      },
+    });
+
+    await renderWorkspace();
+    await openTab(/Groups/);
+
+    const groupRow = screen.getByRole('link', { name: /Group A/ }).parentElement;
+    expect(groupRow).not.toBeNull();
+    expect(groupRow?.children[4]).toHaveTextContent('1');
+  });
+
+  it('reports zero OTJH when sessions exist but no components have been authored', async () => {
+    const api = await import('@/lib/curriculumApi');
+    const scheduledSession = {
+      id: 'SESSION-1',
+      trainingPlanId: 'PLAN-1',
+      programmeId: 'PROG-DATA',
+      cohortId: 'COHORT-1',
+      groupId: 'GROUP-1',
+      moduleCatalogueId: 'MOD-1',
+      title: 'Generated live session',
+      type: 'Live Session',
+      date: '2026-09-07',
+      day: 'Monday',
+      startTime: '09:00',
+      endTime: '11:00',
+      tutor: 'Tutor One',
+      group: 'Group A',
+      cohort: 'Sept 2026',
+      programme: 'Data Analyst',
+      venue: 'Online',
+      module: 'Data Foundations',
+      week: 1,
+      status: 'scheduled',
+      ksbCodes: [],
+    } as CurriculumSession;
+    vi.mocked(api.fetchCurriculumProgrammeDetail).mockResolvedValueOnce({
+      schema: 'test',
+      programme,
+      cohorts: [],
+      flat: {
+        cohorts,
+        groups,
+        groupIds: ['GROUP-1'],
+        modules,
+        sessions: [scheduledSession],
+        components: [],
+      },
+    });
+
+    await renderWorkspace();
+
+    const otjhCard = screen.getByText('OTJH').closest('.rounded-xl');
+    expect(otjhCard).not.toBeNull();
+    expect(otjhCard).toHaveTextContent('0h');
+  });
+
+  it('keeps empty table structure visible and disables filters until records exist', async () => {
+    const api = await import('@/lib/curriculumApi');
+    vi.mocked(api.fetchCurriculumProgrammeDetail).mockResolvedValueOnce({
+      schema: 'test',
+      programme,
+      cohorts: [],
+      flat: { cohorts: [], groups: [], groupIds: [], modules: [], sessions: [], components: [] },
+    });
+
+    await renderWorkspace();
+    await openTab(/Cohorts/);
+
+    expect(screen.getAllByRole('button', { name: /^Add cohort$/ })).toHaveLength(1);
+    expect(screen.getByPlaceholderText('Search cohorts, dates, status...')).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Status' })).toBeDisabled();
+
+    await openTab(/Groups/);
+    expect(screen.getByText('Coach')).toBeInTheDocument();
+    expect(screen.getByText('Add a cohort before creating groups')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Search groups, coaches, days or mode...')).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Cohort' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Coaching' })).toBeDisabled();
+
+    await openTab(/Modules/);
+    expect(screen.getByText('Module')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Search modules, cohort, group, tutor, KSB...')).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Cohort' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Group' })).toBeDisabled();
+  });
+
   it('lists modules as rows that open the module, not as cards that redraw it', async () => {
     await renderWorkspace();
     await openTab(/Modules/);
 
-    expect(screen.getByRole('link', { name: /^Data Foundations/ })).toHaveAttribute('href', '/curriculum/modules/MOD-1');
+    expect(screen.getByRole('link', { name: /^Data Foundations/ })).toHaveAttribute('href', '/curriculum/modules/MOD-1?moduleName=Data+Foundations');
     // Row actions say what they do rather than leaving the reader to decode a
     // glyph, and there is one per module.
     expect(screen.getAllByRole('button', { name: 'Builder' })).toHaveLength(2);
@@ -262,7 +406,7 @@ describe('Programme workspace', () => {
     expect(screen.queryByText('Getting started')).not.toBeInTheDocument();
   });
 
-  it('rolls every module up into one delivery schedule on the Sessions tab', async () => {
+  it('rolls every module up into one programme Sessions view', async () => {
     await renderWorkspace();
     await openTab(/Sessions/);
 

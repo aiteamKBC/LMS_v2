@@ -1,6 +1,7 @@
 import { lazy } from "react";
 import type { RouteObject } from "react-router-dom";
 import { Navigate } from "react-router-dom";
+import { RequireAuth } from "@/components/feature/RequireAuth";
 
 // Route components are code-split: each page becomes its own chunk, fetched on
 // first navigation instead of shipping in the entry bundle. `lazy` is provided
@@ -55,6 +56,9 @@ const CoachReportsPage = lazy(() => import("../pages/coach/reports/page"));
 const CoachTimetable = lazy(() => import("../pages/coach/timetable/page"));
 const CommunicationPage = lazy(() => import("../pages/communication/page"));
 const CurriculumDashboard = lazy(() => import("../pages/workspace/curriculum/page"));
+const CurriculumLibraryHub = lazy(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumLibraryHub })));
+const CurriculumDeliveryHub = lazy(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumDeliveryHub })));
+const CurriculumQualityHub = lazy(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumQualityHub })));
 const CurriculumFreeCourses = lazy(() => import("../pages/curriculum/free-courses/page"));
 const CurriculumKsbFrameworksPage = lazy(() => import("../pages/curriculum/ksb-frameworks/page"));
 const CurriculumCohorts = lazy(() => import("../pages/curriculum/cohorts/page"));
@@ -327,6 +331,11 @@ const routes: RouteObject[] = [
   },
   {
     path: "/workspace/learner/:kind/:id",
+    element: <LearnerOverview />,
+  },
+  {
+    // Focused inspection accounts land directly on their material cards.
+    path: "/learner/materials",
     element: <LearnerOverview />,
   },
   {
@@ -724,6 +733,18 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/programmes",
     element: <CurriculumProgrammes />,
+  },
+  {
+    path: "/curriculum/library",
+    element: <CurriculumLibraryHub />,
+  },
+  {
+    path: "/curriculum/delivery",
+    element: <CurriculumDeliveryHub />,
+  },
+  {
+    path: "/curriculum/quality",
+    element: <CurriculumQualityHub />,
   },
   {
     path: "/curriculum/free-courses",
@@ -1351,4 +1372,45 @@ const routes: RouteObject[] = [
   },
 ];
 
-export default routes;
+/**
+ * The only routes a signed-out visitor may render. Everything else in `routes`
+ * is nested under <RequireAuth> below, so protection is the default and opening
+ * a page to the public is an edit to this list — not something a new route gets
+ * for free by being added to the array like every other one.
+ *
+ * What is here and why:
+ *  - "/" and "/login" are the sign-in form itself.
+ *  - "/forgot-password", "/set-password", "/reset-password" are reached from an
+ *    emailed link by someone who by definition cannot sign in yet; each carries
+ *    its own single-use token, which the backend validates.
+ *  - "/access-required" is where a signed-in staff account with no access grant
+ *    lands. It holds no data — only the request-access button.
+ *
+ * "/home" is deliberately NOT here. It was the public launcher, and its "explore
+ * this section" buttons opened real workspaces reading live data for a visitor
+ * with no session at all.
+ */
+const PUBLIC_PATHS = new Set([
+  "/",
+  "/login",
+  "/access-required",
+  "/forgot-password",
+  "/set-password",
+  "/reset-password",
+]);
+
+const isPublic = (route: RouteObject) =>
+  typeof route.path === "string" && PUBLIC_PATHS.has(route.path);
+
+export default [
+  ...routes.filter(isPublic),
+  {
+    // Pathless layout route: matching is unchanged (children keep their own
+    // absolute paths), but nothing below renders until RequireAuth has a
+    // server session to render it for. The "*" catch-all lives in here too, so
+    // a signed-out visitor guessing at URLs is asked to sign in rather than
+    // being told which paths exist.
+    element: <RequireAuth />,
+    children: routes.filter((route) => !isPublic(route)),
+  },
+] satisfies RouteObject[];

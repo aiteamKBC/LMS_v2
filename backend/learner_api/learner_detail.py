@@ -89,20 +89,10 @@ def _active_profile_for_source(source, source_pk):
     # reads the same graph again).  Load the complete graph in a fixed number
     # of queries so learner pages stay fast as their history grows.
     try:
-        prefetch_related_objects(
-            [profile],
-            "ksb_assignment__profile_version__definitions",
-            "assigned_ksbs",
-            "progress_entries__ksb_links",
-            "progress_entries__quiz_answers__chosen_answers",
-            "progress_entries__quiz_answers__correct_answers",
-        )
-    except DatabaseError:
-        logger.warning(
-            "Could not prefetch legacy assigned KSBs for profile %s; retrying current graph.",
-            source_pk,
-            exc_info=True,
-        )
+        # ``Learner.learner_ksbs`` was the legacy per-learner snapshot and is
+        # absent from current environments. Do not prefetch it unconditionally:
+        # the LearnerProfile.ksbs compatibility property will query it lazily
+        # only when an older profile has no current KSB assignment.
         prefetch_related_objects(
             [profile],
             "ksb_assignment__profile_version__definitions",
@@ -1010,6 +1000,97 @@ def _component_resource_url(settings):
     return None
 
 
+def _audit_sources_by_component_id(component_ids):
+    """Best-effort source fallback from programme_audit rows.
+
+    Some learner-plan components are present in curriculum.components but their
+    live settings do not carry the playable/upload source the audit import
+    captured. When that happens, use programme_audit as a secondary catalogue
+    keyed by component_id so videos, audio, images and files still render for
+    learners.
+    """
+    ids = sorted({_s(value) for value in component_ids if _s(value)})
+    if not ids:
+        return {}
+    try:
+        with connections["enrolment"].cursor() as cur:
+            cur.execute(
+                """
+                SELECT table_name
+                FROM information_schema.columns
+                WHERE table_schema = 'programme_audit'
+                  AND column_name = 'component_id'
+                ORDER BY CASE WHEN table_name = 'assets' THEN 0 ELSE 1 END, table_name
+                """
+            )
+            tables = [row[0] for row in cur.fetchall()]
+
+            by_component = {}
+            for table in tables:
+                cur.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'programme_audit' AND table_name = %s
+                    """,
+                    [table],
+                )
+                columns = {row[0] for row in cur.fetchall()}
+                wanted = [
+                    name for name in (
+                        "component_id",
+                        "content_kind",
+                        "source_url",
+                        "embed_url",
+                        "file_name",
+                        "content_type",
+                        "duration_minutes",
+                        "settings",
+                        "raw_component",
+                    )
+                    if name in columns
+                ]
+                if "component_id" not in wanted:
+                    continue
+                selected_columns = ", ".join(f'"{name}"' for name in wanted)
+                cur.execute(
+                    f'SELECT {selected_columns} '
+                    f'FROM "programme_audit"."{table}" WHERE "component_id" = ANY(%s)',
+                    [ids],
+                )
+                for row in cur.fetchall():
+                    item = dict(zip(wanted, row))
+                    component_id = _s(item.get("component_id"))
+                    if not component_id or component_id in by_component:
+                        continue
+                    settings = item.get("settings")
+                    if isinstance(settings, str):
+                        try:
+                            settings = json.loads(settings) if settings else {}
+                        except (ValueError, TypeError):
+                            settings = {}
+                    raw_component = item.get("raw_component")
+                    if isinstance(raw_component, str):
+                        try:
+                            raw_component = json.loads(raw_component) if raw_component else {}
+                        except (ValueError, TypeError):
+                            raw_component = {}
+                    by_component[component_id] = {
+                        "contentKind": _s(item.get("content_kind")),
+                        "sourceUrl": _s(item.get("source_url")),
+                        "embedUrl": _s(item.get("embed_url")),
+                        "fileName": _s(item.get("file_name")),
+                        "contentType": _s(item.get("content_type")),
+                        "durationMinutes": item.get("duration_minutes"),
+                        "settings": settings if isinstance(settings, dict) else {},
+                        "rawComponent": raw_component if isinstance(raw_component, dict) else {},
+                    }
+            return by_component
+    except DatabaseError as exc:
+        logger.warning("Could not look up programme_audit source fallback: %s", exc)
+        return {}
+
+
 def _resolve_from_master(modules, weeks, components):
     """Rebuild the module -> week -> component tree LIVE from the master
     authoring tables (curriculum.module_authoring_*) so coach edits in the
@@ -1151,6 +1232,7 @@ def _resolve_from_master(modules, weeks, components):
                 component_id: (sum(float(item.get("weight") or 0) for item in items), len(items))
                 for component_id, items in ksbs_by_component.items()
             }
+            audit_sources_by_component = _audit_sources_by_component_id(component_ids)
     except DatabaseError as exc:
         logger.warning("Could not live-resolve training plan from master: %s", exc)
         return modules, weeks, components
@@ -1175,24 +1257,41 @@ def _resolve_from_master(modules, weeks, components):
                 settings = {}
         if not isinstance(settings, dict):
             settings = {}
+        audit_source = audit_sources_by_component.get(comp_id, {})
+        audit_settings = audit_source.get("settings") if isinstance(audit_source.get("settings"), dict) else {}
+        audit_raw = audit_source.get("rawComponent") if isinstance(audit_source.get("rawComponent"), dict) else {}
+        audit_url = (
+            _s(audit_source.get("sourceUrl"))
+            or _s(audit_source.get("embedUrl"))
+            or _s(audit_settings.get("videoUrl"))
+            or _s(audit_settings.get("audioUrl"))
+            or _s(audit_settings.get("podcastUrl"))
+            or _s(audit_settings.get("resourceUrl"))
+            or _s(audit_settings.get("uploadedFileUrl"))
+            or _s(audit_raw.get("videoUrl"))
+            or _s(audit_raw.get("resourceUrl"))
+        )
         live_session_url = (
             _s(stored_live_link)
             or _s(settings.get("liveSessionUrl"))
             or _s(settings.get("teamsMeetingUrl"))
             or None
         )
-        video_url = _s(settings.get("videoUrl")) or None
+        normalised_type = _s(ctype).strip().lower().replace("-", "_")
+        audit_kind = _s(audit_source.get("contentKind")).strip().lower().replace("-", "_")
+        video_url = _s(settings.get("videoUrl")) or (audit_url if normalised_type == "video" or audit_kind == "video" else "") or None
         # Generalised content payload per component type (mirrors the authoring
         # settings_json keys in the Module Builder). Lets the learner open a
         # podcast / reading / slide deck / reflection the same way as a video.
         # Podcast audio may be an external listening-page link (podcastUrl) or an
         # uploaded file (uploadedFileUrl) — either can be a real audio source.
         #
-        audio_url = component_audio_url(settings, ctype)
+        audio_url = component_audio_url(settings, ctype) or (audit_url if normalised_type == "podcast" or audit_kind == "audio" else None)
         content_html = _s(settings.get("readingContent")) or None
         file_name = (
             _s(settings.get("fileName"))
             or _s(settings.get("uploadedFileName"))
+            or _s(audit_source.get("fileName"))
             or None
         )
         download_allowed = bool(settings.get("downloadAllowed"))
@@ -1206,7 +1305,7 @@ def _resolve_from_master(modules, weeks, components):
         # PowerPoint (presentationUrl / uploadedFileUrl) and any other component
         # with an attached link/file all resolve to the same resourceUrl field,
         # picking the one the author actually chose — see _component_resource_url.
-        resource_url = _component_resource_url(settings)
+        resource_url = _component_resource_url(settings) or (audit_url if not video_url and not audio_url else None)
         duration = settings.get("durationMinutes")
         ksb_weight, ksb_count = ksb_weight_by_component.get(comp_id, (0.0, 0))
         linked_quiz = quiz_meta_by_id.get(quiz_id_by_component.get(comp_id))

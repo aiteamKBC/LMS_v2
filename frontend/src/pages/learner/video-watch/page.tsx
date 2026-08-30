@@ -1,22 +1,39 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import DOMPurify from 'dompurify';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerKsbItem } from '@/api/learnerDetail';
 import { submitVideoProgress } from '@/api/videos';
 import { submitComponentProgress } from '@/api/components';
+import { startTimeTracking, type TimeTrackingSession, type TrackingCountingMode } from '@/api/timeTracking';
 import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
+import { EvidenceFilesButton, EvidencePreviewModal, type EvidencePreview } from '@/components/feature/EvidenceFilesButton';
 import {
   buildLearnerJourney, componentTypeMeta, componentContentKind, componentNoun, hasComponentContent, isOpenableComponent, gradePercent, formatHoursMinutes,
   componentCriteria, componentRequiresEvidence, completedComponentIds, isComponentComplete,
   type JourneyComponent,
 } from '@/utils/learnerJourney';
-import { fetchEvidence } from '@/api/evidence';
-import { ReflectionWindow, formatClock } from '@/components/feature/ReflectionWindow';
+import { fetchEvidence, getEvidenceDownloadUrl, type EvidenceRecord } from '@/api/evidence';
+import { ReflectionWindow, formatClock, formatRecordedClock, parseClockSeconds } from '@/components/feature/ReflectionWindow';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
+import { useAuth } from '@/hooks/useAuth';
+import { isInspectionDemoAccount } from '@/lib/learnerFlowAccess';
+import { demoTimeKey, expectedMinutesFor, setDemoTimeOverride, useDemoTimeOverrides } from '@/lib/demoTime';
+import {
+  activityTimerStorageKey,
+  canResumeActivityTimer,
+  clearActivityTimer,
+  readActivityTimer,
+  saveActivityTimerElapsed,
+  saveActivityTimerSession,
+} from '@/lib/activityTimer';
+import { DemoTimeChip } from '@/components/feature/DemoTimePanel';
 import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { resolveDocEmbed } from '@/lib/docEmbed';
@@ -30,7 +47,8 @@ import {
 
 const learnerNav = roleNavMap.learner;
 
-type Phase = 'consume' | 'reflect' | 'results';
+type Phase = 'consume' | 'reflect' | 'confirm';
+type TimeSource = 'timer' | 'input';
 
 /** Normalised completion record for the results screen (video + component share these). */
 interface DoneRecord { timeTaken: string | null; ksbs: string[]; reportedTime: string; feedback: string }
@@ -40,7 +58,178 @@ interface FoundContext {
   moduleTitle: string;
   weekTitle: string;
   weekComponents: JourneyComponent[];
-  weeks: { week: string; count: number; active: boolean }[];
+  weeks: { week: string; count: number; completed: number; active: boolean }[];
+}
+
+interface TimedCompletion {
+  submittedAt?: string | null;
+  timeTaken?: string | null;
+  passed?: boolean | null;
+}
+
+/** The latest successful completion time for one sidebar activity. */
+function completionTimeFor(component: JourneyComponent, detail: LearnerDetail | null): string | null {
+  let records: TimedCompletion[] = [];
+  if (component.isQuiz) {
+    records = (component.quizAttempts || []).filter((attempt) => attempt.passed);
+  } else if (component.componentId && componentContentKind(component.type) === 'video') {
+    records = (detail?.videoProgress || []).filter(
+      (entry) => entry.componentId === component.componentId && entry.passed !== false,
+    );
+  } else if (component.componentId) {
+    records = (detail?.componentProgress || []).filter(
+      (entry) => entry.componentId === component.componentId && entry.passed !== false,
+    );
+  }
+
+  const latest = records.reduce<TimedCompletion | null>((current, record) => {
+    if (!current) return record;
+    return String(record.submittedAt || '') >= String(current.submittedAt || '') ? record : current;
+  }, null);
+  return formatRecordedClock(latest?.timeTaken);
+}
+
+function CompletionTimeInput({
+  value,
+  label = 'Time taken',
+  rightAddon,
+  onSave,
+}: {
+  value: string;
+  label?: string;
+  rightAddon?: ReactNode;
+  onSave: (seconds: number | null) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [invalid, setInvalid] = useState(false);
+
+  useEffect(() => {
+    setDraft(value);
+    setInvalid(false);
+  }, [value]);
+
+  const save = () => {
+    if (!draft.trim()) {
+      onSave(null);
+      return;
+    }
+    const seconds = parseClockSeconds(draft);
+    if (seconds == null) {
+      setInvalid(true);
+      return;
+    }
+    setInvalid(false);
+    const formatted = formatClock(seconds);
+    setDraft(formatted);
+    onSave(seconds);
+  };
+
+  const updateDraft = (nextValue: string) => {
+    setDraft(nextValue);
+    setInvalid(false);
+
+    // Persist as soon as the learner has entered a complete valid clock. This
+    // means a refresh or route change cannot lose the latest value just because
+    // the input did not get a chance to blur first.
+    if (!nextValue.trim()) {
+      onSave(null);
+      return;
+    }
+    const seconds = parseClockSeconds(nextValue);
+    if (seconds != null) onSave(seconds);
+  };
+
+  return (
+    <div className="flex items-center gap-2 border-t border-emerald-100 bg-emerald-50/70 px-4 py-2 text-[10px] font-semibold text-emerald-800">
+      <AppIcon className="ri-timer-line shrink-0 text-[11px]" />
+      <span className="shrink-0">{label}</span>
+      <input
+        type="text"
+        inputMode="numeric"
+        value={draft}
+        onChange={(event) => updateDraft(event.target.value)}
+        onBlur={save}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') event.currentTarget.blur();
+          if (event.key === 'Escape') { event.preventDefault(); setDraft(value); setInvalid(false); }
+        }}
+        placeholder="00:00:00"
+        aria-label="Completion time in hours, minutes and seconds"
+        aria-invalid={invalid}
+        className={`ml-auto w-24 rounded-md border bg-white px-2 py-1 text-center font-mono text-[11px] font-bold tabular-nums outline-none focus:ring-2 ${
+          invalid
+            ? 'border-red-400 text-red-700 focus:ring-red-200'
+            : 'border-emerald-200 text-emerald-800 focus:border-emerald-400 focus:ring-emerald-100'
+        }`}
+      />
+      {rightAddon}
+    </div>
+  );
+}
+
+function ActivityTimeSpentInput({ onChange }: { onChange: (seconds: number | null) => void }) {
+  const [draft, setDraft] = useState('');
+  const [invalid, setInvalid] = useState(false);
+
+  const commit = () => {
+    if (!draft.trim()) {
+      setInvalid(false);
+      onChange(null);
+      return;
+    }
+    const parsed = parseClockSeconds(draft);
+    if (parsed == null) {
+      setInvalid(true);
+      return;
+    }
+    setInvalid(false);
+    setDraft(formatClock(parsed));
+    onChange(parsed);
+  };
+
+  return (
+    <label
+      className={`inline-flex items-center gap-2 rounded-xl border bg-white px-3 py-2 shadow-sm transition-colors ${
+        invalid
+          ? 'border-red-300 text-red-700'
+          : 'border-background-300 text-foreground-700 focus-within:border-primary-300 focus-within:ring-2 focus-within:ring-primary-100'
+      }`}
+      title="Input"
+    >
+      <AppIcon className={`ri-timer-line text-sm ${invalid ? 'text-red-600' : 'text-foreground-500'}`} />
+      <span className="text-[12px] font-semibold text-foreground-600">Input</span>
+      <input
+        type="text"
+        inputMode="numeric"
+        value={draft}
+        onChange={(event) => {
+          const nextValue = event.target.value;
+          setDraft(nextValue);
+          setInvalid(false);
+          if (!nextValue.trim()) {
+            onChange(null);
+            return;
+          }
+          const parsed = parseClockSeconds(nextValue);
+          onChange(parsed == null ? null : parsed);
+        }}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') event.currentTarget.blur();
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            setDraft('');
+            setInvalid(false);
+            onChange(null);
+          }
+        }}
+        placeholder="00:00:00"
+        aria-label="Input time spent"
+        aria-invalid={invalid}
+        className="w-24 bg-transparent text-center font-mono text-sm font-semibold tabular-nums outline-none placeholder:font-sans placeholder:text-[12px] placeholder:font-semibold placeholder:text-foreground-400"
+      />
+    </label>
+  );
 }
 
 /** Route a component to the right learner page (video and quiz keep their own routes). */
@@ -58,7 +247,7 @@ function isNavigableComponent(c: JourneyComponent): boolean {
 }
 
 /** Find the target component + its week/module context inside the built journey. */
-function locate(detail: LearnerDetail | null, componentId: string): FoundContext | null {
+function locate(detail: LearnerDetail | null, componentId: string, completedIds: Set<string>): FoundContext | null {
   if (!detail) return null;
   const journey = buildLearnerJourney(detail);
   for (const mod of journey) {
@@ -70,7 +259,12 @@ function locate(detail: LearnerDetail | null, componentId: string): FoundContext
           moduleTitle: mod.module,
           weekTitle: wk.week,
           weekComponents: wk.components,
-          weeks: mod.weeks.map((w) => ({ week: w.week, count: w.components.length, active: w.week === wk.week })),
+          weeks: mod.weeks.map((w) => ({
+            week: w.week,
+            count: w.components.length,
+            completed: w.components.filter((component) => isComponentComplete(component, completedIds)).length,
+            active: w.week === wk.week,
+          })),
         };
       }
     }
@@ -78,8 +272,25 @@ function locate(detail: LearnerDetail | null, componentId: string): FoundContext
   return null;
 }
 
+function nextActivityRoute(detail: LearnerDetail | null, currentComponentId: string | undefined, kind: string | undefined, id: string | undefined): string | null {
+  if (!detail || !currentComponentId || !kind || !id) return null;
+  const journey = buildLearnerJourney(detail);
+  const ordered = journey.flatMap((module) => (
+    module.weeks.flatMap((week) => (
+      week.components.map((component) => ({ module: module.module, week: week.week, component }))
+    ))
+  ));
+  const currentIndex = ordered.findIndex((item) => item.component.componentId === currentComponentId);
+  if (currentIndex < 0) return null;
+  const next = ordered
+    .slice(currentIndex + 1)
+    .find((item) => hasComponentContent(item.component) && isNavigableComponent(item.component));
+  return next ? componentRoute(kind, id, next.component, next.module, next.week) : null;
+}
+
 export default function ComponentViewPage() {
   const { kind, id, componentId } = useParams<{ kind: string; id: string; componentId: string }>();
+  const timerStorageKey = activityTimerStorageKey(kind, id, componentId);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   useEffect(() => { rememberLearner(kind, id); }, [kind, id]);
@@ -92,18 +303,38 @@ export default function ComponentViewPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [phase, setPhase] = useState<Phase>('consume');
-  const [startedAt, setStartedAt] = useState<string | null>(null);
   // Real playback state (video only), driven by the player.
   const [realDuration, setRealDuration] = useState<number | null>(null);
-  const [currentTime, setCurrentTime] = useState(0);
+  const [playerPlaying, setPlayerPlaying] = useState(false);
   const [unsupported, setUnsupported] = useState(false); // no player progress events → wall-clock
-  const [wallElapsed, setWallElapsed] = useState(0);
+  const [wallElapsed, setWallElapsed] = useState(
+    () => readActivityTimer(timerStorageKey)?.elapsedSeconds ?? 0,
+  );
+  const [manualTimeSeconds, setManualTimeSeconds] = useState<number | null>(null);
+  const [timeSource, setTimeSource] = useState<TimeSource>('timer');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [record, setRecord] = useState<DoneRecord | null>(null);
   // Bumped by the uploader so the criteria panel re-checks after an upload.
   const [evidenceVersion, setEvidenceVersion] = useState(0);
+  const [evidenceFiles, setEvidenceFiles] = useState<EvidenceRecord[]>([]);
+  const [pendingEvidenceFileName, setPendingEvidenceFileName] = useState<string | null>(null);
+  const [evidencePreview, setEvidencePreview] = useState<EvidencePreview | null>(null);
+  const evidenceInputId = useId();
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const trackingSessionRef = useRef<TimeTrackingSession | null>(null);
+  const trackingPromiseRef = useRef<Promise<TimeTrackingSession> | null>(null);
+
+  // React Router can reuse this page while only the component id changes.
+  // Restore the independently saved counter for the newly selected activity.
+  useEffect(() => {
+    setWallElapsed(readActivityTimer(timerStorageKey)?.elapsedSeconds ?? 0);
+    setManualTimeSeconds(null);
+    setTimeSource('timer');
+    setPendingEvidenceFileName(null);
+    setEvidenceFiles([]);
+    setEvidencePreview(null);
+  }, [timerStorageKey]);
 
   useEffect(() => {
     if ((kind !== 'commercial' && kind !== 'apprenticeship') || !id) {
@@ -121,12 +352,12 @@ export default function ComponentViewPage() {
     return () => { cancelled = true; };
   }, [kind, id]);
 
-  const ctx = useMemo(() => (componentId ? locate(detail, componentId) : null), [detail, componentId]);
   // Every component id this learner has finished, so each sidebar row can show
   // whether it is already done. Nothing needs folding in for a component
   // completed on this visit: submitting swaps the whole layout for the results
   // screen, and the sidebar is only ever rendered while still consuming.
   const completedIds = useMemo(() => completedComponentIds(detail), [detail]);
+  const ctx = useMemo(() => (componentId ? locate(detail, componentId, completedIds) : null), [detail, componentId, completedIds]);
   const weekDoneCount = useMemo(
     () => (ctx?.weekComponents ?? []).filter((c) => isComponentComplete(c, completedIds)).length,
     [ctx, completedIds],
@@ -150,7 +381,10 @@ export default function ComponentViewPage() {
     let cancelled = false;
     fetchEvidence(kind as LearnerKind, id, { sectionRef: componentId })
       .then((rows) => {
-        if (!cancelled) setEvidenceCount(rows.filter((r) => r.status === 'approved').length);
+        if (!cancelled) {
+          setEvidenceFiles(rows);
+          setEvidenceCount(rows.filter((r) => r.status === 'approved').length);
+        }
       })
       .catch(() => { /* the criteria panel just shows 0; the server re-checks on submit */ });
     return () => { cancelled = true; };
@@ -160,7 +394,17 @@ export default function ComponentViewPage() {
 
   const moduleTitle = ctx?.moduleTitle ?? searchParams.get('module') ?? '';
   const weekTitle = ctx?.weekTitle ?? searchParams.get('week') ?? '';
-  const backHref = kind && id ? `/learner/training-plan/${kind}/${id}` : '/learner/training-plan';
+  const backHref = kind && id ? `/workspace/learner/${kind}/${id}` : '/workspace/learner';
+
+  // Inspection-demo accounts only — see isInspectionDemoAccount. The results
+  // screen shows an editable "demo time" beside the expected time; everyone
+  // else sees the page exactly as before.
+  const { auth } = useAuth();
+  const isDemoAccount = isInspectionDemoAccount(auth.account?.email);
+  const demoScopeKey = kind && id ? `${kind}:${id}` : '';
+  const demoTimeOverrides = useDemoTimeOverrides(demoScopeKey);
+  const demoKey = componentId ? demoTimeKey({ isQuiz: false, componentId }) : '';
+  const demoExpectedMinutes = component ? expectedMinutesFor(component) : null;
 
   // A quiz component has nowhere to show its questions — the quiz page owns
   // that. Reaching this page for one (a direct link, a bookmark, the sidebar
@@ -177,13 +421,48 @@ export default function ComponentViewPage() {
   }, [linkedQuizId, kind, id, moduleTitle, weekTitle, navigate]);
 
   const parsed = useMemo(() => (isVideo && component?.videoUrl ? parseVideoUrl(component.videoUrl) : null), [isVideo, component?.videoUrl]);
-  const pageTitle = meta?.detail || meta?.label || 'Activity';
+  const pageTitle = decodeInlineText(meta?.detail || meta?.label || 'Activity');
+  const activityEvidenceContext: EvidenceContext | null = component
+    && componentId
+    && id
+    && (kind === 'commercial' || kind === 'apprenticeship')
+    ? {
+        kind,
+        learnerId: id,
+        componentId,
+        onUploaded: (files) => {
+          setEvidenceFiles(files);
+          setEvidenceVersion((version) => version + 1);
+        },
+        trainingPlanDetails: {
+          moduleId: component.moduleId ?? null,
+          moduleTitle: moduleTitle || null,
+          weekId: component.weekId ?? null,
+          weekTitle: weekTitle || null,
+          componentId,
+          componentTitle: pageTitle,
+          componentType: component.type || null,
+        },
+      }
+    : null;
+  const visibleEvidenceFile = evidenceFiles[0] ?? null;
+  const evidenceFileLabel = pendingEvidenceFileName || visibleEvidenceFile?.filename || null;
+  const evidenceFileStatus = visibleEvidenceFile?.status || (pendingEvidenceFileName ? 'pending' : null);
+  const openEvidenceFile = async (file: EvidenceRecord) => {
+    try {
+      const url = await getEvidenceDownloadUrl(kind as LearnerKind, id || '', file.id);
+      setEvidencePreview({ file, url });
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : 'Could not open the evidence file.');
+    }
+  };
 
   // Non-video content has no player progress → run the wall-clock.
   useEffect(() => { if (component && !isVideo) setUnsupported(true); }, [component, isVideo]);
 
-  const remaining = realDuration !== null ? Math.max(0, Math.round(realDuration - currentTime)) : null;
-  const elapsedSeconds = isVideo && !unsupported ? Math.round(currentTime) : wallElapsed;
+  // Seeking changes the playhead/duration metadata, but cannot add watched time.
+  const elapsedSeconds = wallElapsed;
+  const submittedTimeSeconds = timeSource === 'input' && manualTimeSeconds != null ? manualTimeSeconds : elapsedSeconds;
   // Planned time preset in the reflection window: always the component's
   // authored expected_otjh (its OTJ hours) when set, so "the planned time"
   // means the same thing for every component type in the training plan.
@@ -205,33 +484,86 @@ export default function ComponentViewPage() {
 
   // Shown to the learner. Rendered from the hours above rather than from each
   // source's own units, so "Planned time" reads as hours-and-minutes ("1h 42m")
-  // everywhere instead of switching to a MM:SS clock for videos — which is what
+  // everywhere instead of switching to an HH:MM:SS clock for videos — which is what
   // made a 1h42m video look like 102 hours.
   const plannedTimeLabel = plannedHours != null ? formatHoursMinutes(plannedHours) : '';
 
-  // Stamp the start time once we're on an openable component.
-  useEffect(() => {
-    if (phase === 'consume' && openable && startedAt === null) setStartedAt(new Date().toISOString());
-  }, [phase, openable, startedAt]);
+  const trackingMode: TrackingCountingMode = isVideo && parsed?.kind !== 'vimeo'
+    ? 'active_playback'
+    : 'visible_page';
 
-  // Wall-clock counter (non-video, or an unsupported player).
+  // The server stamps and signs the start, preventing claims for time before
+  // this learner opened this specific activity.
   useEffect(() => {
-    if (phase !== 'consume' || !unsupported) return;
-    timerRef.current = setInterval(() => setWallElapsed((s) => s + 1), 1000);
+    if (phase !== 'consume' || !openable || !componentId || !kind || !id || !canProgress) return;
+    const learnerKind = kind as LearnerKind;
+    const activityKind = isVideo ? 'video' : 'component';
+    let cancelled = false;
+    trackingSessionRef.current = null;
+
+    const savedTimer = readActivityTimer(timerStorageKey);
+    if (canResumeActivityTimer(savedTimer, trackingMode)) {
+      const savedSession = savedTimer!.session!;
+      trackingSessionRef.current = savedSession;
+      trackingPromiseRef.current = Promise.resolve(savedSession);
+      setWallElapsed(savedTimer!.elapsedSeconds);
+      return () => { cancelled = true; };
+    }
+
+    // An expired or incompatible signed session cannot verify its old seconds.
+    // Start clean rather than showing a value the server would later reject.
+    if (savedTimer) {
+      clearActivityTimer(timerStorageKey);
+      setWallElapsed(0);
+    }
+
+    const pending = startTimeTracking(activityKind, componentId, learnerKind, id, trackingMode);
+    trackingPromiseRef.current = pending;
+    pending
+      .then((session) => {
+        if (!cancelled) {
+          trackingSessionRef.current = session;
+          saveActivityTimerSession(timerStorageKey, session);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) setSubmitError(error instanceof Error ? error.message : 'Could not start activity timing');
+      });
+    return () => { cancelled = true; };
+  }, [phase, openable, componentId, kind, id, canProgress, isVideo, trackingMode, timerStorageKey]);
+
+  // Only visible time counts. Supported videos must also actually be playing;
+  // iframe-only players use the explicit visible-page fallback.
+  useEffect(() => {
+    if (phase !== 'consume' || (!unsupported && !playerPlaying)) return;
+    timerRef.current = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        setWallElapsed((seconds) => {
+          const next = seconds + 1;
+          saveActivityTimerElapsed(timerStorageKey, next);
+          return next;
+        });
+      }
+    }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [phase, unsupported]);
+  }, [phase, unsupported, playerPlaying, timerStorageKey]);
 
   const finishConsuming = () => {
     if (timerRef.current) clearInterval(timerRef.current);
     if (component?.reflectionRequired === false) {
-      void finalizeSubmit({
-        ksbs: (component.ksbMappings || []).map(mapping => mapping.code),
-        feedback: '',
-        reportedTime: plannedTimeLabel,
-      });
+      setPhase('confirm');
       return;
     }
     setPhase('reflect');
+  };
+
+  const confirmCompletion = () => {
+    if (!component) return;
+    void finalizeSubmit({
+      ksbs: (component.ksbMappings || []).map(mapping => mapping.code),
+      feedback: '',
+      reportedTime: plannedTimeLabel,
+    });
   };
 
   const finalizeSubmit = async (reflection: { ksbs: string[]; feedback: string; reportedTime: string }) => {
@@ -239,10 +571,12 @@ export default function ComponentViewPage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
+      const tracking = trackingSessionRef.current || await trackingPromiseRef.current;
+      if (!tracking) throw new Error('Activity timing did not start. Reopen the activity and try again.');
       if (isVideo) {
         const res = await submitVideoProgress(componentId, kind as 'commercial' | 'apprenticeship', id, {
           week: weekTitle || null, module: moduleTitle || null,
-          startedAt: startedAt || new Date().toISOString(), timeTakenSeconds: elapsedSeconds,
+          startedAt: tracking.startedAt, timeTakenSeconds: submittedTimeSeconds, trackingToken: tracking.trackingToken,
           videoTitle: meta?.detail || meta?.label || 'Video',
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
         });
@@ -250,13 +584,28 @@ export default function ComponentViewPage() {
       } else {
         const res = await submitComponentProgress(componentId, kind as 'commercial' | 'apprenticeship', id, {
           week: weekTitle || null, module: moduleTitle || null,
-          startedAt: startedAt || new Date().toISOString(), timeTakenSeconds: elapsedSeconds,
+          startedAt: tracking.startedAt, timeTakenSeconds: submittedTimeSeconds, trackingToken: tracking.trackingToken,
           componentTitle: pageTitle, componentType: component.type || undefined,
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
         });
         setRecord({ timeTaken: res.record.timeTaken, ksbs: res.record.ksbs, reportedTime: res.record.reportedTime, feedback: res.record.feedback });
       }
-      setPhase('results');
+      clearActivityTimer(timerStorageKey);
+      if (isDemoAccount && demoKey) {
+        setDemoTimeOverride(
+          demoScopeKey,
+          demoKey,
+          timeSource === 'input' && manualTimeSeconds != null ? manualTimeSeconds / 60 : null,
+        );
+      }
+      setWallElapsed(0);
+      setManualTimeSeconds(null);
+      setTimeSource('timer');
+      const refreshed = await fetchLearnerDetail(kind as LearnerKind, id);
+      setDetail(refreshed);
+      setPhase('consume');
+      const nextHref = nextActivityRoute(refreshed, componentId, kind, id);
+      if (nextHref) navigate(nextHref, { replace: true });
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : 'Could not save progress');
     } finally {
@@ -270,13 +619,17 @@ export default function ComponentViewPage() {
       pageTitle={pageTitle}
       pageSubtitle={[moduleTitle, weekTitle].filter(Boolean).join(' · ')}
       userName="Learner" userRole="Learner"
+      hideBreadcrumbs
     >
       <div className="p-3 md:p-6 max-w-6xl mx-auto">
         <button
-          onClick={() => navigate(-1)}
-          className="mb-4 inline-flex items-center gap-1.5 text-[13px] font-semibold text-foreground-500 hover:text-foreground-800 transition-colors cursor-pointer"
+          onClick={() => navigate(backHref)}
+          className="mb-5 inline-flex items-center gap-2 rounded-xl border border-background-300 bg-white px-4 py-2.5 text-[13px] font-semibold text-foreground-700 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary-200 hover:text-primary-700 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 cursor-pointer"
         >
-          <AppIcon className="ri-arrow-left-line" /> Back to training plan
+          <span className="grid h-6 w-6 place-items-center rounded-lg bg-primary-50 text-primary-700">
+            <AppIcon className="ri-arrow-left-line text-sm" />
+          </span>
+          Back to training plan
         </button>
 
         {loading ? (
@@ -286,7 +639,7 @@ export default function ComponentViewPage() {
         ) : !component ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Component not found in this learner's plan." /></div>
         ) : !canProgress ? (
-          <ReadOnlyLearnerNotice what="complete their own training-plan activities" onBack={() => navigate(-1)} />
+          <ReadOnlyLearnerNotice what="complete their own training-plan activities" onBack={() => navigate(backHref)} />
         ) : !openable ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="This component can't be completed here yet." /></div>
         ) : isVideo && !parsed ? (
@@ -314,12 +667,8 @@ export default function ComponentViewPage() {
               learnerId={id}
               evidenceSectionRef={componentId}
               reflectionQuestion={component.reflectionQuestion}
-              onClose={() => navigate(-1)}
+              onClose={() => navigate(backHref)}
             />
-          </div>
-        ) : phase === 'results' && record ? (
-          <div className="w-full max-w-5xl mx-auto">
-            <ResultsScreen record={record} title={pageTitle} noun={noun} onBack={() => navigate(-1)} />
           </div>
         ) : (
           /* ── consume phase: content + details + sidebar ── */
@@ -327,24 +676,11 @@ export default function ComponentViewPage() {
             <div className="min-w-0">
               <ComponentContent component={component} contentKind={contentKind} parsed={parsed} title={pageTitle}
                 onDuration={(d) => setRealDuration((prev) => prev ?? d)}
-                onProgress={(t) => setCurrentTime(t)}
+                onProgress={() => undefined}
+                onPlayingChange={setPlayerPlaying}
                 onEnded={finishConsuming}
                 onUnsupported={() => setUnsupported(true)}
-                evidenceContext={
-                  // Evidence is collected on assignments only.
-                  componentRequiresEvidence(component.type) && kind && id && componentId
-                    ? {
-                        kind: kind as LearnerKind, learnerId: id, componentId,
-                        onUploaded: () => setEvidenceVersion((v) => v + 1),
-                        trainingPlanDetails: {
-                          moduleId: component.moduleId ?? null, moduleTitle: moduleTitle || null,
-                          weekId: component.weekId ?? null, weekTitle: weekTitle || null,
-                          componentId,
-                          componentTitle: pageTitle, componentType: component.type || null,
-                        },
-                      }
-                    : null
-                }
+                evidenceContext={null}
               />
               {(component.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session' && component.teamsLiveSessionId && (
                 <LiveSessionResultsCard
@@ -375,16 +711,41 @@ export default function ComponentViewPage() {
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
-                  {remaining !== null ? (
-                    <div className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-mono text-sm font-semibold tabular-nums ${
-                      remaining <= 10 ? 'bg-red-100 text-red-700' : 'bg-background-100 text-foreground-700'
-                    }`} title="Time remaining">
-                      <AppIcon className="ri-timer-line" /> {formatClock(remaining)}
-                    </div>
-                  ) : (
-                    <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-mono text-sm font-semibold tabular-nums bg-background-100 text-foreground-700" title="Time on this activity">
-                      <AppIcon className="ri-timer-line" /> {formatClock(elapsedSeconds)}
-                    </div>
+                  <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-mono text-sm font-semibold tabular-nums bg-background-100 text-foreground-700" title="Time on this activity">
+                    <AppIcon className="ri-timer-line" /> {formatClock(elapsedSeconds)}
+                  </div>
+                  <ActivityTimeSpentInput
+                    onChange={(seconds) => {
+                      setManualTimeSeconds(seconds);
+                      setTimeSource(seconds == null ? 'timer' : 'input');
+                    }}
+                  />
+                  {activityEvidenceContext && canProgress && (
+                    evidenceFileLabel ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (visibleEvidenceFile?.status === 'approved') void openEvidenceFile(visibleEvidenceFile);
+                        }}
+                        disabled={visibleEvidenceFile?.status !== 'approved'}
+                        className="inline-flex max-w-[220px] items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 transition-colors enabled:cursor-pointer enabled:hover:border-emerald-300 enabled:hover:bg-emerald-100 disabled:cursor-default"
+                        title={evidenceFileLabel}
+                      >
+                        <AppIcon className={evidenceFileStatus === 'approved' ? 'ri-file-check-line' : 'ri-file-line'} />
+                        <span className="truncate">{evidenceFileLabel}</span>
+                        {evidenceFileStatus === 'pending' && (
+                          <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">Scanning</span>
+                        )}
+                      </button>
+                    ) : (
+                      <label
+                        htmlFor={evidenceInputId}
+                        className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-primary-200 bg-white px-4 py-2 text-sm font-semibold text-primary-700 transition-colors hover:border-primary-300 hover:bg-primary-50"
+                      >
+                        <AppIcon className="ri-upload-2-line" />
+                        Upload evidence
+                      </label>
+                    )
                   )}
                   <button
                     onClick={finishConsuming}
@@ -397,7 +758,7 @@ export default function ComponentViewPage() {
                     }`}
                   >
                     <AppIcon className={criteria && !criteria.met ? 'ri-lock-line' : 'ri-check-line'} />
-                    {remaining === 0 ? 'Reflect' : 'Finish & Reflect'}
+                    Finish
                   </button>
                 </div>
               </div>
@@ -431,6 +792,19 @@ export default function ComponentViewPage() {
                   </ul>
                 </div>
               )}
+
+              {activityEvidenceContext && canProgress && (
+                <AssignmentEvidence
+                  kind={activityEvidenceContext.kind}
+                  learnerId={activityEvidenceContext.learnerId}
+                  componentId={activityEvidenceContext.componentId}
+                  trainingPlanDetails={activityEvidenceContext.trainingPlanDetails}
+                  onUploaded={activityEvidenceContext.onUploaded}
+                  onFileSelected={setPendingEvidenceFileName}
+                  inputId={evidenceInputId}
+                  showPanel={false}
+                />
+              )}
             </div>
 
             {/* Sidebar: week components + other weeks */}
@@ -450,6 +824,13 @@ export default function ComponentViewPage() {
                     const contentAvailable = hasComponentContent(c);
                     const clickable = contentAvailable && isNavigableComponent(c) && !isCurrent;
                     const completed = isComponentComplete(c, completedIds);
+                    const timeKey = demoTimeKey({ isQuiz: c.isQuiz, quizId: c.quizMeta?.quizId, componentId: c.componentId });
+                    const overrideMinutes = timeKey ? demoTimeOverrides[timeKey] : undefined;
+                    const completionTime = completed
+                      ? overrideMinutes != null
+                        ? formatClock(Math.round(overrideMinutes * 60))
+                        : completionTimeFor(c, detail)
+                      : null;
                     const attempts = c.isQuiz ? (c.quizAttempts || []) : [];
                     const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
                     return (
@@ -477,6 +858,12 @@ export default function ComponentViewPage() {
                             }`}>
                               {cm.detail || cm.label}
                             </span>
+                            {completionTime && !isDemoAccount && (
+                              <span className="mt-0.5 flex items-center gap-1 font-mono text-[10px] font-semibold tabular-nums text-emerald-700" title="Time taken">
+                                <AppIcon className="ri-timer-line text-[10px]" />
+                                {completionTime}
+                              </span>
+                            )}
                           </span>
                           {c.isQuiz && lastAttempt && (
                             <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
@@ -495,6 +882,22 @@ export default function ComponentViewPage() {
                             <AppIcon className="ri-arrow-right-s-line text-foreground-400 text-sm shrink-0" />
                           ) : null}
                         </button>
+                        {completed && isDemoAccount && timeKey && (
+                          <CompletionTimeInput
+                            value={completionTime || '00:00:00'}
+                            label={overrideMinutes != null ? 'Input' : 'Time taken'}
+                            rightAddon={
+                              !c.isQuiz && c.componentId && kind && id ? (
+                                <EvidenceFilesButton kind={kind as LearnerKind} learnerId={id} componentId={c.componentId} />
+                              ) : null
+                            }
+                            onSave={(seconds) => setDemoTimeOverride(
+                              demoScopeKey,
+                              timeKey,
+                              seconds == null ? null : seconds / 60,
+                            )}
+                          />
+                        )}
                       </li>
                     );
                   })}
@@ -508,35 +911,176 @@ export default function ComponentViewPage() {
                     <p className="text-[11px] text-foreground-400 mt-0.5">{ctx?.weeks.length} weeks</p>
                   </div>
                   <ul className="divide-y divide-background-300">
-                    {(ctx?.weeks ?? []).map((w) => (
-                      <li key={w.week}>
-                        <button
-                          onClick={() => navigate(backHref)}
-                          className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
-                            w.active ? 'bg-background-100' : 'hover:bg-background-50 cursor-pointer'
-                          }`}
-                        >
-                          <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-background-100 text-foreground-500">
-                            <AppIcon className="ri-calendar-line text-[12px]" />
-                          </span>
-                          <span className="flex-1 min-w-0">
-                            <span className={`block text-[13px] font-semibold leading-snug truncate ${w.active ? 'text-foreground-900' : 'text-foreground-700'}`}>
-                              {w.week}
+                    {(ctx?.weeks ?? []).map((w) => {
+                      const weekComplete = w.count > 0 && w.completed >= w.count;
+                      return (
+                        <li key={w.week}>
+                          <button
+                            onClick={() => navigate(backHref)}
+                            className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
+                              weekComplete
+                                ? 'bg-emerald-50 text-emerald-900 hover:bg-emerald-100'
+                                : w.active ? 'bg-background-100' : 'hover:bg-background-50 cursor-pointer'
+                            }`}
+                          >
+                            <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                              weekComplete ? 'bg-emerald-100 text-emerald-700' : 'bg-background-100 text-foreground-500'
+                            }`}>
+                              <AppIcon className={`${weekComplete ? 'ri-check-line' : 'ri-calendar-line'} text-[12px]`} />
                             </span>
-                            <span className="block text-[10px] text-foreground-400">{w.count} components</span>
-                          </span>
-                          {w.active && <span className="text-[10px] font-semibold text-primary-600 shrink-0">Current</span>}
-                        </button>
-                      </li>
-                    ))}
+                            <span className="flex-1 min-w-0">
+                              <span className={`block text-[13px] font-semibold leading-snug truncate ${
+                                weekComplete ? 'text-emerald-900' : w.active ? 'text-foreground-900' : 'text-foreground-700'
+                              }`}>
+                                {w.week}
+                              </span>
+                              <span className={`block text-[10px] ${weekComplete ? 'text-emerald-700' : 'text-foreground-400'}`}>
+                                {w.count} components{weekComplete ? ' complete' : ''}
+                              </span>
+                            </span>
+                            {weekComplete ? (
+                              <span className="text-[10px] font-semibold text-emerald-700 shrink-0">Done</span>
+                            ) : w.active && (
+                              <span className="text-[10px] font-semibold text-primary-600 shrink-0">Current</span>
+                            )}
+                          </button>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               )}
             </aside>
           </div>
         )}
+        {phase === 'confirm' && (
+          <CompletionConfirmPopup
+            title={pageTitle}
+            noun={noun}
+            timerLabel={formatClock(elapsedSeconds)}
+            inputLabel={manualTimeSeconds == null ? null : formatClock(manualTimeSeconds)}
+            selectedSource={timeSource}
+            evidenceFileName={evidenceFileLabel}
+            submitting={submitting}
+            error={submitError}
+            onSelectSource={setTimeSource}
+            onCancel={() => setPhase('consume')}
+            onConfirm={confirmCompletion}
+          />
+        )}
+        {evidencePreview && (
+          <EvidencePreviewModal preview={evidencePreview} onClose={() => setEvidencePreview(null)} />
+        )}
       </div>
     </WorkspaceShell>
+  );
+}
+
+function CompletionConfirmPopup({
+  title,
+  noun,
+  timerLabel,
+  inputLabel,
+  selectedSource,
+  evidenceFileName,
+  submitting,
+  error,
+  onSelectSource,
+  onCancel,
+  onConfirm,
+}: {
+  title: string; noun: string; timerLabel: string; inputLabel: string | null; selectedSource: TimeSource; evidenceFileName?: string | null;
+  submitting: boolean; error: string | null;
+  onSelectSource: (source: TimeSource) => void; onCancel: () => void; onConfirm: () => void;
+}) {
+  const selectedTimeLabel = selectedSource === 'input' && inputLabel ? inputLabel : timerLabel;
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-foreground-950/35 px-4 py-6 backdrop-blur-[2px]">
+      <div className="w-full max-w-md rounded-2xl border border-background-300 bg-white p-6 text-center shadow-2xl">
+        <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-full bg-primary-100">
+          <AppIcon className="ri-question-line text-2xl text-primary-700" />
+        </div>
+        <h1 className="text-lg font-heading font-bold text-foreground-900">
+          Confirm {noun} completion?
+        </h1>
+        <p className="mt-1 text-sm text-foreground-500">{title}</p>
+
+        <div className="mt-5 space-y-3 rounded-xl border border-background-300 bg-background-50 p-4 text-left">
+          <div className="flex items-center justify-between gap-3 border-b border-background-300 pb-3">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-foreground-500">Save time</span>
+            <span className="font-mono text-base font-bold tabular-nums text-foreground-900">{selectedTimeLabel}</span>
+          </div>
+          {evidenceFileName && (
+            <div className="flex items-center justify-between gap-3 border-b border-background-300 pb-3">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-foreground-500">Evidence</span>
+              <span className="min-w-0 truncate text-right text-sm font-semibold text-emerald-700" title={evidenceFileName}>
+                <AppIcon className="ri-attachment-2 mr-1" />
+                {evidenceFileName}
+              </span>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => onSelectSource('timer')}
+            disabled={submitting}
+            className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-colors ${
+              selectedSource === 'timer'
+                ? 'border-primary-300 bg-primary-50 text-primary-800'
+                : 'border-background-300 bg-white text-foreground-700 hover:bg-background-50'
+            } disabled:cursor-not-allowed disabled:opacity-60`}
+          >
+            <span className="inline-flex items-center gap-2 text-sm font-semibold">
+              <AppIcon className="ri-timer-line" />
+              Timer
+            </span>
+            <span className="font-mono text-sm font-bold tabular-nums">{timerLabel}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => inputLabel && onSelectSource('input')}
+            disabled={!inputLabel || submitting}
+            className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-colors ${
+              selectedSource === 'input' && inputLabel
+                ? 'border-primary-300 bg-primary-50 text-primary-800'
+                : 'border-background-300 bg-white text-foreground-700 hover:bg-background-50'
+            } disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white`}
+          >
+            <span className="inline-flex items-center gap-2 text-sm font-semibold">
+              <AppIcon className="ri-edit-2-line" />
+              Input
+            </span>
+            <span className="font-mono text-sm font-bold tabular-nums">{inputLabel || '--:--:--'}</span>
+          </button>
+        </div>
+
+        {error && (
+          <p className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-left text-xs font-semibold text-red-700">
+            {error}
+          </p>
+        )}
+
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={submitting}
+            className="inline-flex items-center justify-center rounded-xl border border-background-300 bg-white px-4 py-3 text-sm font-semibold text-foreground-700 shadow-sm transition-colors hover:bg-background-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            disabled={submitting}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <AppIcon className={submitting ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} />
+            {submitting ? 'Saving...' : 'Confirm'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -547,26 +1091,505 @@ export default function ComponentViewPage() {
    vs. what only supports a "open in new tab" fallback.
    ═══════════════════════════════════════════════════════ */
 const AUDIO_FILE_RE = /\.(mp3|wav|ogg|m4a|aac|flac)(\?.*)?$/i;
+const IMAGE_FILE_RE = /\.(png|jpe?g|gif|webp|bmp|svg)(\?.*)?$/i;
+const VIDEO_FILE_RE = /\.(mp4|webm|ogg|mov|m4v)(\?.*)?$/i;
+const PDF_FILE_RE = /\.pdf(\?.*)?$/i;
+const WORD_FILE_RE = /\.docx(\?.*)?$/i;
+const EXCEL_FILE_RE = /\.(xlsx|xls|csv)(\?.*)?$/i;
+const TEXT_FILE_RE = /\.(txt|md|rtf)(\?.*)?$/i;
 
-/** True when a URL points straight at a playable audio file (not a listening page). */
-function isDirectAudioUrl(url: string): boolean {
-  return AUDIO_FILE_RE.test(url);
+function googleDriveFileId(url: string): string | null {
+  const match =
+    url.match(/drive\.google\.com\/file\/d\/([\w-]{10,})/) ||
+    url.match(/drive\.google\.com\/open\?id=([\w-]{10,})/) ||
+    url.match(/drive\.google\.com\/uc\?[^#]*id=([\w-]{10,})/);
+  return match?.[1] ?? null;
+}
+
+function legacyAttachmentId(url: string): string | null {
+  const match = url.match(/\/_legacy_files\/([0-9]{1,20})\//);
+  return match?.[1] ?? null;
+}
+
+function legacyAttachmentProxyUrl(url: string): string | null {
+  const id = legacyAttachmentId(url);
+  return id ? `/learner_api/media/legacy-attachment/${id}/` : null;
+}
+
+function proxiedMaterialUrl(url: string): string {
+  const driveId = googleDriveFileId(url);
+  return driveId ? `/learner_api/media/google-drive/${driveId}/` : (legacyAttachmentProxyUrl(url) || url);
+}
+
+function displayableMediaSource(url: string, fileName?: string | null): { kind: 'image' | 'video'; src: string } | null {
+  const probe = `${fileName || ''} ${url}`;
+  const src = proxiedMaterialUrl(url);
+  if (IMAGE_FILE_RE.test(probe)) return { kind: 'image', src };
+  if (VIDEO_FILE_RE.test(probe)) return { kind: 'video', src };
+  return null;
+}
+
+function directAudioSource(url: string, fileName?: string | null): string | null {
+  const probe = `${fileName || ''} ${url}`;
+  if (AUDIO_FILE_RE.test(probe) || googleDriveFileId(url)) return proxiedMaterialUrl(url);
+  return null;
+}
+
+function fileProbe(url: string, fileName?: string | null): string {
+  return `${fileName || ''} ${url}`.split(/[?#]/)[0];
+}
+
+function fileLabelFrom(url: string, fileName?: string | null): string {
+  if (fileName) return decodeInlineText(fileName);
+  try {
+    const parsed = new URL(url, window.location.origin);
+    return decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop() || 'Attached file');
+  } catch {
+    return 'Attached file';
+  }
+}
+
+type AttachmentPreviewState =
+  | { status: 'loading' }
+  | { status: 'ready'; kind: 'html'; html: string }
+  | { status: 'ready'; kind: 'text'; text: string }
+  | { status: 'error'; message: string };
+
+function InlineMediaPreview({ url, title, fileName }: { url: string; title: string; fileName?: string | null }) {
+  const media = displayableMediaSource(url, fileName);
+  if (!media) return null;
+  if (media.kind === 'image') {
+    return (
+      <div className="overflow-hidden rounded-xl border border-background-300 bg-background-950/95 p-3">
+        <img src={media.src} alt={title} className="mx-auto max-h-[70vh] max-w-full rounded-lg object-contain" />
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-hidden rounded-xl border border-background-300 bg-black">
+      <video src={media.src} controls preload="metadata" className="mx-auto max-h-[70vh] w-full bg-black" />
+    </div>
+  );
+}
+
+function decodeInlineText(value: string): string {
+  return value
+    .replace(/&gt;/g, '>')
+    .replace(/&lt;/g, '<')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function AttachedFileCard({ url, fileName }: { url: string; fileName?: string | null }) {
+  const href = proxiedMaterialUrl(url);
+  return (
+    <div className="rounded-xl border border-background-300 bg-background-50 p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-blue-100 text-blue-700">
+            <AppIcon className="ri-file-excel-2-line text-lg" />
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-bold text-foreground-900">{fileLabelFrom(url, fileName)}</p>
+            <p className="text-xs text-foreground-500">Preview is not available for this file type.</p>
+          </div>
+        </div>
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl bg-primary-600 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-primary-700"
+        >
+          <AppIcon className="ri-external-link-line" />
+          Open file
+        </a>
+      </div>
+    </div>
+  );
+}
+
+function InlineAttachmentPreview({ url, title, fileName }: { url: string; title: string; fileName?: string | null }) {
+  const media = displayableMediaSource(url, fileName);
+  const previewUrl = proxiedMaterialUrl(url);
+  const legacyId = legacyAttachmentId(url);
+  const probe = fileProbe(url, fileName);
+  const isPdf = PDF_FILE_RE.test(probe);
+  const isWord = WORD_FILE_RE.test(probe);
+  const isExcel = EXCEL_FILE_RE.test(probe);
+  const isText = TEXT_FILE_RE.test(probe);
+  const canParseInline = isWord || isExcel || isText;
+  const [preview, setPreview] = useState<AttachmentPreviewState | null>(canParseInline ? { status: 'loading' } : null);
+
+  useEffect(() => {
+    if (!canParseInline) {
+      setPreview(null);
+      return;
+    }
+
+    let cancelled = false;
+    setPreview({ status: 'loading' });
+
+    async function loadPreview() {
+      try {
+        const response = await fetch(previewUrl, { credentials: 'same-origin' });
+        if (!response.ok) throw new Error(`File request failed (${response.status})`);
+
+        if (isWord) {
+          const arrayBuffer = await response.arrayBuffer();
+          const mammoth = await import('mammoth/mammoth.browser');
+          const result = await mammoth.convertToHtml({ arrayBuffer });
+          if (!cancelled) {
+            setPreview({ status: 'ready', kind: 'html', html: DOMPurify.sanitize(result.value || '<p>No preview content found.</p>') });
+          }
+          return;
+        }
+
+        if (isExcel) {
+          const arrayBuffer = await response.arrayBuffer();
+          const XLSX = await import('xlsx');
+          const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+          const sheetName = workbook.SheetNames[0];
+          const sheet = sheetName ? workbook.Sheets[sheetName] : null;
+          const html = sheet
+            ? XLSX.utils.sheet_to_html(sheet, { id: 'learner-inline-sheet-preview' })
+            : '<p>No worksheet found.</p>';
+          if (!cancelled) setPreview({ status: 'ready', kind: 'html', html: DOMPurify.sanitize(html) });
+          return;
+        }
+
+        const text = await response.text();
+        if (!cancelled) setPreview({ status: 'ready', kind: 'text', text });
+      } catch (error) {
+        if (!cancelled) {
+          setPreview({
+            status: 'error',
+            message: error instanceof Error ? error.message : 'Could not preview this file.',
+          });
+        }
+      }
+    }
+
+    void loadPreview();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canParseInline, isExcel, isText, isWord, previewUrl]);
+
+  if (media) return <InlineMediaPreview url={url} title={title} fileName={fileName} />;
+
+  if (isPdf) {
+    if (legacyId) return <LegacyPdfImagePreview attachmentId={legacyId} title={title} fileName={fileName} />;
+    const hostedPdfEmbed = resolveDocEmbed(previewUrl);
+    if (hostedPdfEmbed.mode === 'deck') return <DocumentEmbed url={previewUrl} title={title} />;
+    return <PdfCanvasPreview url={previewUrl} title={title} fileName={fileName} />;
+  }
+
+  if (preview?.status === 'loading') {
+    return (
+      <div className="grid min-h-[280px] place-items-center rounded-xl border border-background-300 bg-white text-sm font-semibold text-foreground-500 shadow-sm">
+        <span className="inline-flex items-center gap-2"><AppIcon className="ri-loader-4-line animate-spin" />Loading file preview...</span>
+      </div>
+    );
+  }
+
+  if (preview?.status === 'ready' && preview.kind === 'html') {
+    return (
+      <div className="max-h-[72vh] overflow-auto rounded-xl border border-background-300 bg-white p-6 shadow-sm">
+        <div
+          className="learner-file-preview max-w-none text-sm leading-relaxed text-foreground-800 [&_h1]:mb-3 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:text-xl [&_h2]:font-bold [&_h3]:mb-2 [&_h3]:mt-3 [&_h3]:text-lg [&_h3]:font-semibold [&_p]:mb-3 [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-background-300 [&_td]:px-3 [&_td]:py-2 [&_th]:border [&_th]:border-background-300 [&_th]:bg-background-100 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left"
+          dangerouslySetInnerHTML={{ __html: preview.html }}
+        />
+      </div>
+    );
+  }
+
+  if (preview?.status === 'ready' && preview.kind === 'text') {
+    return (
+      <pre className="max-h-[72vh] overflow-auto whitespace-pre-wrap rounded-xl border border-background-300 bg-white p-6 text-sm leading-relaxed text-foreground-800 shadow-sm">
+        {preview.text}
+      </pre>
+    );
+  }
+
+  if (preview?.status === 'error') {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+        <p className="font-bold">Could not show this file inline.</p>
+        <p className="mt-1 text-xs">{preview.message}</p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <DocumentEmbed url={url} title={title} />
+      <div className="mt-3">
+        <AttachedFileCard url={url} fileName={fileName} />
+      </div>
+    </>
+  );
+}
+
+function LegacyPdfImagePreview({ attachmentId, title, fileName }: { attachmentId: string; title: string; fileName?: string | null }) {
+  const [pageNumber, setPageNumber] = useState(1);
+  const [pageCount, setPageCount] = useState(1);
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [error, setError] = useState<string | null>(null);
+  const infoUrl = `/learner_api/media/legacy-attachment/${attachmentId}/pdf-info/`;
+  const pageUrl = `/learner_api/media/legacy-attachment/${attachmentId}/pdf-page/${pageNumber}/`;
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadInfo() {
+      try {
+        setStatus('loading');
+        setError(null);
+        const response = await fetch(infoUrl, { credentials: 'same-origin' });
+        if (!response.ok) throw new Error(`File request failed (${response.status})`);
+        const data = await response.json() as { pages?: number };
+        if (!cancelled) {
+          setPageCount(Math.max(1, Number(data.pages) || 1));
+          setStatus('ready');
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setStatus('error');
+          setError(loadError instanceof Error ? loadError.message : 'Could not load PDF preview.');
+        }
+      }
+    }
+    void loadInfo();
+    return () => {
+      cancelled = true;
+    };
+  }, [infoUrl]);
+
+  if (status === 'loading') {
+    return (
+      <div className="grid min-h-[420px] place-items-center rounded-xl border border-background-300 bg-white text-sm font-semibold text-foreground-500 shadow-sm">
+        <span className="inline-flex items-center gap-2"><AppIcon className="ri-loader-4-line animate-spin" />Loading PDF preview...</span>
+      </div>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+        <p className="font-bold">Could not show this PDF inline.</p>
+        <p className="mt-1 text-xs">{error || 'Could not load PDF pages.'}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-background-300 bg-background-100 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-background-300 bg-white px-4 py-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-bold text-foreground-900">{fileLabelFrom('', fileName) || title}</p>
+          <p className="text-xs text-foreground-500">Page {pageNumber} of {pageCount}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPageNumber((value) => Math.max(1, value - 1))}
+            disabled={pageNumber <= 1}
+            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50 disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="Previous page"
+          >
+            <AppIcon className="ri-arrow-left-s-line" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setPageNumber((value) => Math.min(pageCount, value + 1))}
+            disabled={pageNumber >= pageCount}
+            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50 disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="Next page"
+          >
+            <AppIcon className="ri-arrow-right-s-line" />
+          </button>
+        </div>
+      </div>
+      <div className="max-h-[72vh] overflow-auto p-4">
+        <img
+          key={pageUrl}
+          src={pageUrl}
+          alt={`${title} page ${pageNumber}`}
+          className="mx-auto block max-w-full rounded-lg bg-white shadow-sm"
+        />
+      </div>
+    </div>
+  );
+}
+
+function PdfCanvasPreview({ url, title, fileName }: { url: string; title: string; fileName?: string | null }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
+  const [pageNumber, setPageNumber] = useState(1);
+  const [pageCount, setPageCount] = useState(0);
+  const [scale, setScale] = useState(1.25);
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let loadedPdf: PDFDocumentProxy | null = null;
+
+    async function loadPdf() {
+      try {
+        setStatus('loading');
+        setError(null);
+        const pdfjs = await import('pdfjs-dist');
+        pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
+        const response = await fetch(url, {
+          credentials: 'same-origin',
+          headers: { Accept: 'application/pdf,*/*' },
+        });
+        if (!response.ok) throw new Error(`File request failed (${response.status})`);
+        const buffer = await response.arrayBuffer();
+        const document = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
+        loadedPdf = document;
+        if (!cancelled) {
+          setPdf(document);
+          setPageCount(document.numPages);
+          setPageNumber(1);
+          setStatus('ready');
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setStatus('error');
+          setError(loadError instanceof Error ? loadError.message : 'Could not load PDF preview.');
+        }
+      }
+    }
+
+    void loadPdf();
+
+    return () => {
+      cancelled = true;
+      void loadedPdf?.cleanup();
+    };
+  }, [url]);
+
+  useEffect(() => {
+    if (!pdf || !canvasRef.current) return;
+
+    let cancelled = false;
+    let renderTask: { cancel: () => void; promise: Promise<void> } | null = null;
+
+    async function renderPage() {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const page = await pdf.getPage(pageNumber);
+      if (cancelled) return;
+      const viewport = page.getViewport({ scale });
+      const context = canvas.getContext('2d');
+      if (!context) return;
+
+      canvas.width = Math.floor(viewport.width);
+      canvas.height = Math.floor(viewport.height);
+      canvas.style.width = '100%';
+      canvas.style.height = 'auto';
+      context.clearRect(0, 0, canvas.width, canvas.height);
+
+      renderTask = page.render({ canvas, canvasContext: context, viewport });
+      await renderTask.promise.catch((renderError: unknown) => {
+        if (!cancelled && !(renderError instanceof Error && renderError.name === 'RenderingCancelledException')) {
+          throw renderError;
+        }
+      });
+    }
+
+    void renderPage().catch((renderError: unknown) => {
+      if (!cancelled) {
+        setStatus('error');
+        setError(renderError instanceof Error ? renderError.message : 'Could not render PDF page.');
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      renderTask?.cancel();
+    };
+  }, [pageNumber, pdf, scale]);
+
+  if (status === 'loading') {
+    return (
+      <div className="grid min-h-[420px] place-items-center rounded-xl border border-background-300 bg-white text-sm font-semibold text-foreground-500 shadow-sm">
+        <span className="inline-flex items-center gap-2"><AppIcon className="ri-loader-4-line animate-spin" />Loading PDF preview...</span>
+      </div>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+        <p className="font-bold">Could not show this PDF inline.</p>
+        <p className="mt-1 text-xs">{error || fileLabelFrom(url, fileName)}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-background-300 bg-background-100 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-background-300 bg-white px-4 py-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-bold text-foreground-900">{fileLabelFrom(url, fileName) || title}</p>
+          <p className="text-xs text-foreground-500">Page {pageNumber} of {pageCount || 1}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setScale((value) => Math.max(0.75, value - 0.25))}
+            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50"
+            aria-label="Zoom out"
+          >
+            <AppIcon className="ri-subtract-line" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setScale((value) => Math.min(2.5, value + 0.25))}
+            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50"
+            aria-label="Zoom in"
+          >
+            <AppIcon className="ri-add-line" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setPageNumber((value) => Math.max(1, value - 1))}
+            disabled={pageNumber <= 1}
+            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50 disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="Previous page"
+          >
+            <AppIcon className="ri-arrow-left-s-line" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setPageNumber((value) => Math.min(pageCount || 1, value + 1))}
+            disabled={pageNumber >= (pageCount || 1)}
+            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50 disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="Next page"
+          >
+            <AppIcon className="ri-arrow-right-s-line" />
+          </button>
+        </div>
+      </div>
+      <div className="max-h-[72vh] overflow-auto p-4">
+        <canvas ref={canvasRef} className="mx-auto block max-w-full rounded-lg bg-white shadow-sm" />
+      </div>
+    </div>
+  );
 }
 
 /** A slide deck / document shown inline where that is possible, and an honest
  * "open it instead" card where it is not — an uploaded .pptx can only be
  * previewed by Microsoft's Office viewer, which cannot reach a file that isn't
  * published on the public internet. See @/lib/docEmbed. */
-function DocumentEmbed({ url, title, noun }: { url: string; title: string; noun: string }) {
+function DocumentEmbed({ url, title }: { url: string; title: string }) {
   const embed = resolveDocEmbed(url);
-  const unavailable = (reason: string) => (
-    <div className="rounded-xl border border-background-300 bg-background-50 p-5 text-center">
-      <AppIcon className="ri-file-download-line text-2xl text-foreground-400" />
-      <p className="mt-2 text-sm font-semibold text-foreground-800">This {noun} can&apos;t be shown here</p>
-      <p className="mx-auto mt-1 max-w-md text-xs text-foreground-500">{reason} Open or download it below, then come back to record your reflection.</p>
-    </div>
-  );
-  if (embed.mode === 'unavailable') return unavailable(embed.reason);
+  const unavailable = () => null;
+  if (embed.mode === 'unavailable') return null;
   if (embed.mode === 'deck') return <SlideDeckViewer src={embed.src} title={title} fallback={unavailable} />;
   return (
     // A 4:3 box on a wide card is taller than the screen, which puts the top of
@@ -607,7 +1630,7 @@ interface EvidenceContext {
   kind: LearnerKind;
   learnerId: string;
   componentId: string;
-  onUploaded: () => void;
+  onUploaded: (files: EvidenceRecord[]) => void;
   trainingPlanDetails: {
     moduleId: string | null; moduleTitle: string | null;
     weekId: string | null; weekTitle: string | null;
@@ -789,13 +1812,14 @@ function LiveSessionResultsCard({
   );
 }
 
-function ComponentBody({ component, contentKind, parsed, title, onDuration, onProgress, onEnded, onUnsupported }: {
+function ComponentBody({ component, contentKind, parsed, title, onDuration, onProgress, onPlayingChange, onEnded, onUnsupported }: {
   component: JourneyComponent;
   contentKind: ReturnType<typeof componentContentKind>;
   parsed: ReturnType<typeof parseVideoUrl> | null;
   title: string;
   onDuration: (d: number) => void;
   onProgress: (t: number) => void;
+  onPlayingChange: (playing: boolean) => void;
   onEnded: () => void;
   onUnsupported: () => void;
 }) {
@@ -803,22 +1827,22 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
     return (
       <div className="rounded-2xl overflow-hidden bg-black shadow-sm ring-1 ring-background-300">
         <div className="relative w-full mx-auto" style={{ aspectRatio: '16 / 9', maxHeight: 'calc(100vh - 14rem)' }}>
-          <VideoPlayer parsed={parsed} title={title} onDuration={onDuration} onProgress={onProgress} onEnded={onEnded} onUnsupported={onUnsupported} />
+          <VideoPlayer parsed={parsed} title={title} onDuration={onDuration} onProgress={onProgress} onPlayingChange={onPlayingChange} onEnded={onEnded} onUnsupported={onUnsupported} />
         </div>
       </div>
     );
   }
 
   if (contentKind === 'audio') {
-    const directAudio = component.audioUrl && isDirectAudioUrl(component.audioUrl);
+    const audioSource = component.audioUrl ? directAudioSource(component.audioUrl, component.fileName) : null;
     return (
       <div className="rounded-2xl border border-background-300 bg-gradient-to-br from-violet-50 to-background-50 p-6">
         <div className="flex items-center gap-3 mb-4">
           <span className="w-11 h-11 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center"><AppIcon className="ri-headphone-line text-xl" /></span>
           <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Listen, then finish and reflect below.</p></div>
         </div>
-        {directAudio ? (
-          <audio controls preload="metadata" className="w-full" src={component.audioUrl!}>Your browser does not support audio playback.</audio>
+        {audioSource ? (
+          <audio controls preload="metadata" className="w-full" src={audioSource}>Your browser does not support audio playback.</audio>
         ) : component.audioUrl ? (
           <>
             {/* Not a direct media file (e.g. a podcast listening page) — fetch
@@ -837,7 +1861,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
           <p className="text-sm text-foreground-500">No audio was set for this podcast. You can still record your reflection below.</p>
         )}
         {component.audioUrl && (
-          <a href={component.audioUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-600 hover:text-violet-700"><AppIcon className="ri-external-link-line" />Open in a new tab</a>
+          <a href={proxiedMaterialUrl(component.audioUrl)} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-600 hover:text-violet-700"><AppIcon className="ri-external-link-line" />Open in a new tab</a>
         )}
       </div>
     );
@@ -864,8 +1888,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
           <div className={component.contentHtml ? 'mt-4 pt-4 border-t border-background-200' : ''}>
             {/* Reading material stored as an external link/file — shown inline
                 through the same document embed PowerPoint uses. */}
-            <DocumentEmbed url={component.resourceUrl} title={title} noun="document" />
-            <a href={component.resourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-700"><AppIcon className="ri-external-link-line" />Open in a new tab</a>
+            <InlineAttachmentPreview url={component.resourceUrl} title={title} fileName={component.fileName} />
           </div>
         ) : !component.contentHtml && (
           <p className="text-sm text-foreground-500">No reading content was set. You can still record your reflection below.</p>
@@ -873,7 +1896,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
         {component.audioUrl && (
           <div className="mt-4 pt-4 border-t border-background-200">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-2">Audio version</p>
-            <audio controls preload="metadata" className="w-full" src={component.audioUrl} />
+            <audio controls preload="metadata" className="w-full" src={proxiedMaterialUrl(component.audioUrl)} />
           </div>
         )}
       </div>
@@ -888,17 +1911,9 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
           <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Review the slide deck, then finish and reflect below.</p></div>
         </div>
         {component.resourceUrl ? (
-          <DocumentEmbed url={component.resourceUrl} title={title} noun="slide deck" />
+          <InlineAttachmentPreview url={component.resourceUrl} title={title} fileName={component.fileName} />
         ) : (
           <p className="text-sm text-foreground-500">{component.fileName ? <>Slide deck: <span className="font-semibold text-foreground-700">{component.fileName}</span>. </> : ''}Review your slide deck for this week, then record your reflection below.</p>
-        )}
-        {component.resourceUrl && (
-          <div className="mt-3 flex items-center gap-4">
-            <a href={component.resourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs font-semibold text-orange-600 hover:text-orange-700"><AppIcon className="ri-external-link-line" />Open in a new tab</a>
-            {component.downloadAllowed && (
-              <a href={component.resourceUrl} download className="inline-flex items-center gap-1.5 text-xs font-semibold text-orange-600 hover:text-orange-700"><AppIcon className="ri-download-line" />Download slides</a>
-            )}
-          </div>
         )}
       </div>
     );
@@ -995,38 +2010,10 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
         </div>
       )}
       {component.resourceUrl && (
-        <a href={component.resourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-600 hover:text-emerald-700"><AppIcon className="ri-external-link-line" />Open resource</a>
-      )}
-    </div>
-  );
-}
-
-/* Results screen after a completion + reflection is saved. */
-function ResultsScreen({ record, title, noun, onBack }: { record: DoneRecord; title: string; noun: string; onBack: () => void }) {
-  return (
-    <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6 md:p-8 card-premium text-center">
-      <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 bg-emerald-100">
-        <AppIcon className="ri-checkbox-circle-line text-emerald-600 text-2xl" />
-      </div>
-      <h1 className="text-lg font-heading font-bold text-foreground-900 mb-1">{noun.charAt(0).toUpperCase() + noun.slice(1)} complete!</h1>
-      <p className="text-sm text-foreground-400 mb-6">{title}</p>
-
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6 text-left max-w-md mx-auto">
-        <StatTile icon="ri-timer-line" label="Time taken" value={record.timeTaken || '—'} />
-        <StatTile icon="ri-links-line" label="KSBs" value={String(record.ksbs?.length ?? 0)} />
-        <StatTile icon="ri-time-line" label="Reported" value={record.reportedTime || '—'} />
-      </div>
-
-      {record.feedback && (
-        <div className="text-left max-w-md mx-auto mb-6 rounded-xl border border-background-300 bg-white p-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-1">Your reflection</p>
-          <p className="text-sm text-foreground-700">{record.feedback}</p>
+        <div className="space-y-3">
+          <InlineAttachmentPreview url={component.resourceUrl} title={title} fileName={component.fileName} />
         </div>
       )}
-
-      <button onClick={onBack} className="px-6 py-2.5 rounded-xl text-sm font-semibold bg-primary-600 text-white hover:bg-primary-700 transition-colors cursor-pointer">
-        Back to Training Plan
-      </button>
     </div>
   );
 }
@@ -1044,14 +2031,3 @@ function CriterionRow({ met, label, hint, showHint }: { met: boolean; label: str
   );
 }
 
-function StatTile({ icon, label, value }: { icon: string; label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-background-300 bg-white px-3 py-2.5">
-      <div className="flex items-center gap-1.5 text-foreground-400 mb-0.5">
-        <AppIcon className={`${icon} text-xs`} />
-        <span className="text-[10px] font-semibold uppercase tracking-wider">{label}</span>
-      </div>
-      <p className="text-sm font-bold text-foreground-900 truncate">{value}</p>
-    </div>
-  );
-}

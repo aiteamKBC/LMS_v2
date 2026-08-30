@@ -8,9 +8,33 @@ import {
 } from '@/api/reflectionSubmission';
 
 export function formatClock(totalSeconds: number): string {
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+  const safeSeconds = Number.isFinite(totalSeconds)
+    ? Math.max(0, Math.floor(totalSeconds))
+    : 0;
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const seconds = safeSeconds % 60;
+  return [hours, minutes, seconds]
+    .map((value) => String(value).padStart(2, '0'))
+    .join(':');
+}
+
+/** Normalise stored completion clocks. Older records use MM:SS (and may have
+ * more than 59 minutes); newer UI always displays HH:MM:SS. */
+export function parseClockSeconds(value: string | null | undefined): number | null {
+  const parts = String(value || '').trim().split(':');
+  if (parts.length !== 2 && parts.length !== 3) return null;
+  const units = parts.map(Number);
+  if (units.some((part) => !Number.isFinite(part) || part < 0)) return null;
+  if (units.at(-1)! >= 60 || (parts.length === 3 && units[1] >= 60)) return null;
+  return parts.length === 3
+    ? units[0] * 3600 + units[1] * 60 + units[2]
+    : units[0] * 60 + units[1];
+}
+
+export function formatRecordedClock(value: string | null | undefined): string | null {
+  const totalSeconds = parseClockSeconds(value);
+  return totalSeconds == null ? null : formatClock(totalSeconds);
 }
 
 function formatKsbWeight(weight: number): string {
@@ -92,7 +116,7 @@ export function ReflectionWindow({
    *
    * Separate from `plannedTimeLabel` because that is only ever a display
    * string, and its unit depends on which fallback produced it — a component's
-   * authored OTJH renders as "1h 42m", a real video length as "102:25" (MM:SS),
+   * authored OTJH renders as "1h 42m", a real video length as "01:42:25" (HH:MM:SS),
    * an authored duration as "45 min". Reading a number back out of that text
    * cannot tell hours from minutes, so a 102-minute video was preset as 102
    * hours and submitted as such. Callers now convert to hours once, here.

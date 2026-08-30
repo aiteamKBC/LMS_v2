@@ -1,34 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { AuthError, apiAuthHealth, apiMicrosoftStart, type Role } from '@/api/auth';
+import { AuthError, apiAuthHealth, apiMicrosoftStart } from '@/api/auth';
+// Shared with RequireAuth, so the page you are sent to after signing in and
+// the page you are sent back to when refused are decided by one definition.
+import { homeRouteFor } from '@/lib/routeAccess';
 import styles from './page.module.css';
-
-/**
- * Where an account lands, in preference order.
- *
- * A staff account's `accessHome` wins: the backend derives it from the access
- * grant (ACCESS_HOME_ROUTES), so an enrolment officer opens the enrolment
- * console and a coach their own workspace. Falls back to the coarse role for
- * accounts with no access recorded, and for learners and employers.
- */
-function homeFor(account: {
-  role: Role;
-  accessHome?: string | null;
-  subjectId?: number | null;
-}): string {
-  if (account.role === 'employer' && account.subjectId) {
-    return `/employers/${account.subjectId}`;
-  }
-  return account.accessHome || HOME_BY_ROLE[account.role];
-}
-
-const HOME_BY_ROLE: Record<Role, string> = {
-  admin: '/workspace/admin',
-  staff: '/users',
-  employer: '/workspace/employer',
-  learner: '/workspace/learner',
-};
 
 export default function LoginPage() {
   const { login, auth, isInitialized } = useAuth();
@@ -71,11 +48,16 @@ export default function LoginPage() {
 
   // Bounce an already-signed-in visitor to their console after the server
   // session has been resolved.
+  //
+  // Gated on `account` — the server's record — rather than `isAuthenticated`, to
+  // match RequireAuth. The two must agree on what "signed in" means: a local
+  // preview identity satisfies `isAuthenticated` with no session behind it, so
+  // sending it to a protected route would have it bounced straight back here,
+  // and round again.
   useEffect(() => {
-    if (!isInitialized || !auth.isAuthenticated) return;
-    const home = auth.account ? homeFor(auth.account) : '/home';
-    navigate(from || home, { replace: true });
-  }, [isInitialized, auth.isAuthenticated, auth.account, from, navigate]);
+    if (!isInitialized || !auth.account) return;
+    navigate(from || homeRouteFor(auth.account), { replace: true });
+  }, [isInitialized, auth.account, from, navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -89,7 +71,7 @@ export default function LoginPage() {
     setIsLoading(true);
     try {
       const account = await login(email.trim(), password, rememberMe);
-      navigate(from || homeFor(account), { replace: true });
+      navigate(from || homeRouteFor(account), { replace: true });
     } catch (err) {
       setError(
         err instanceof AuthError
@@ -184,17 +166,29 @@ export default function LoginPage() {
                 </div>
               </div>
 
-              <button
-                type="button"
-                className={styles.rememberRow}
-                aria-pressed={rememberMe}
-                onClick={() => setRememberMe((remembered) => !remembered)}
-              >
-                <span className={styles.checkboxVisual} aria-hidden="true">
-                  <AppIcon className="ri-check-line" />
-                </span>
-                <span>Remember me</span>
-              </button>
+              <div className={styles.rememberGroup}>
+                <button
+                  type="button"
+                  className={styles.rememberRow}
+                  aria-pressed={rememberMe}
+                  aria-describedby="remember-hint"
+                  onClick={() => setRememberMe((remembered) => !remembered)}
+                >
+                  <span className={styles.checkboxVisual} aria-hidden="true">
+                    <AppIcon className="ri-check-line" />
+                  </span>
+                  <span>Remember me</span>
+                </button>
+                {/* Spelled out because it stopped being guessable. The box used
+                    to choose between a shorter and a longer sign-in, both of
+                    which survived closing the browser; now leaving it off ends
+                    the session with the browser. Unexplained, that reads as a
+                    bug rather than the thing the box was asking about. */}
+                <p id="remember-hint" className={styles.rememberHint}>
+                  Stay signed in on this device. Leave it off and closing your
+                  browser signs you out.
+                </p>
+              </div>
 
               {error && (
                 <div id="login-error" className={styles.error} role="alert" aria-live="polite">
