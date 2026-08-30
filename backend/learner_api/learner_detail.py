@@ -1000,6 +1000,97 @@ def _component_resource_url(settings):
     return None
 
 
+def _audit_sources_by_component_id(component_ids):
+    """Best-effort source fallback from programme_audit rows.
+
+    Some learner-plan components are present in curriculum.components but their
+    live settings do not carry the playable/upload source the audit import
+    captured. When that happens, use programme_audit as a secondary catalogue
+    keyed by component_id so videos, audio, images and files still render for
+    learners.
+    """
+    ids = sorted({_s(value) for value in component_ids if _s(value)})
+    if not ids:
+        return {}
+    try:
+        with connections["enrolment"].cursor() as cur:
+            cur.execute(
+                """
+                SELECT table_name
+                FROM information_schema.columns
+                WHERE table_schema = 'programme_audit'
+                  AND column_name = 'component_id'
+                ORDER BY CASE WHEN table_name = 'assets' THEN 0 ELSE 1 END, table_name
+                """
+            )
+            tables = [row[0] for row in cur.fetchall()]
+
+            by_component = {}
+            for table in tables:
+                cur.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'programme_audit' AND table_name = %s
+                    """,
+                    [table],
+                )
+                columns = {row[0] for row in cur.fetchall()}
+                wanted = [
+                    name for name in (
+                        "component_id",
+                        "content_kind",
+                        "source_url",
+                        "embed_url",
+                        "file_name",
+                        "content_type",
+                        "duration_minutes",
+                        "settings",
+                        "raw_component",
+                    )
+                    if name in columns
+                ]
+                if "component_id" not in wanted:
+                    continue
+                selected_columns = ", ".join(f'"{name}"' for name in wanted)
+                cur.execute(
+                    f'SELECT {selected_columns} '
+                    f'FROM "programme_audit"."{table}" WHERE "component_id" = ANY(%s)',
+                    [ids],
+                )
+                for row in cur.fetchall():
+                    item = dict(zip(wanted, row))
+                    component_id = _s(item.get("component_id"))
+                    if not component_id or component_id in by_component:
+                        continue
+                    settings = item.get("settings")
+                    if isinstance(settings, str):
+                        try:
+                            settings = json.loads(settings) if settings else {}
+                        except (ValueError, TypeError):
+                            settings = {}
+                    raw_component = item.get("raw_component")
+                    if isinstance(raw_component, str):
+                        try:
+                            raw_component = json.loads(raw_component) if raw_component else {}
+                        except (ValueError, TypeError):
+                            raw_component = {}
+                    by_component[component_id] = {
+                        "contentKind": _s(item.get("content_kind")),
+                        "sourceUrl": _s(item.get("source_url")),
+                        "embedUrl": _s(item.get("embed_url")),
+                        "fileName": _s(item.get("file_name")),
+                        "contentType": _s(item.get("content_type")),
+                        "durationMinutes": item.get("duration_minutes"),
+                        "settings": settings if isinstance(settings, dict) else {},
+                        "rawComponent": raw_component if isinstance(raw_component, dict) else {},
+                    }
+            return by_component
+    except DatabaseError as exc:
+        logger.warning("Could not look up programme_audit source fallback: %s", exc)
+        return {}
+
+
 def _resolve_from_master(modules, weeks, components):
     """Rebuild the module -> week -> component tree LIVE from the master
     authoring tables (curriculum.module_authoring_*) so coach edits in the
