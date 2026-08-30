@@ -7,7 +7,7 @@
 
 export type MonthlyStatus = 'on-track' | 'need-attention' | 'at-risk';
 export type ActivityTone = 'primary' | 'emerald' | 'amber' | 'red';
-export type InlineActivityFilter = 'all' | 'learning' | 'quiz' | 'video' | 'coaching' | 'evidence';
+export type InlineActivityFilter = 'all' | 'assignment' | 'attendance' | 'quiz' | 'video' | 'audio' | 'reading' | 'meeting';
 export type CoachingDeliveryKind = 'mcr' | 'pr' | 'catch-up' | 'support';
 export type CoachingDeliveryStatus = 'booked' | 'completed' | 'cancelled' | 'needs-schedule';
 

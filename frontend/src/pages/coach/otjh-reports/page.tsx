@@ -8,7 +8,6 @@ import { cn } from '@/lib/cn';
 import { type StatusTone } from '@/lib/statusTone';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { CompactMetric } from '@/components/ui/MetricCard';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { DataTable, type DataColumn } from '@/components/ui/DataTable';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -452,17 +451,6 @@ export default function CoachOtjhReports() {
           title="Off-The-Job Hours"
           description="Monitor completed hours against each learner's target and quickly identify caseload risks."
           icon="ri-time-line"
-          meta={
-            <>
-              <CompactMetric
-                label={stats.behind ? 'Needs attention' : 'Caseload status'}
-                value={stats.behind ? `${stats.behind} learner${stats.behind === 1 ? '' : 's'} at risk` : 'Everything on track'}
-                tone={stats.behind ? 'critical' : 'positive'}
-              />
-              <CompactMetric label="Overall completion" value={`${stats.completion}%`} tone="brand" />
-              <CompactMetric label="Completed / target hrs" value={`${formatHours(stats.totalCompleted)}/${formatHours(stats.totalTarget)}`} />
-            </>
-          }
         />
 
         <section className="space-y-3">

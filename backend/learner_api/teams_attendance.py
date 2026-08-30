@@ -27,6 +27,8 @@ def fetch_verified_teams_attendance_rows(
     module_refs: list[str] | None = None,
     *,
     all_learners: bool = False,
+    start_date=None,
+    end_date=None,
 ) -> list[dict]:
     """Build real attendance from completed Microsoft Teams reports."""
 
@@ -72,11 +74,26 @@ def fetch_verified_teams_attendance_rows(
         return []
 
     sessions_by_id = {session.id: session for session in sessions}
-    occurrences = list(
+    occurrence_queryset = (
         LiveSessionOccurrence.objects.using(database)
         .filter(live_session_id__in=list(sessions_by_id))
         .exclude(Q(attendance_report_id__isnull=True) | Q(attendance_report_id__exact=""))
-        .order_by("scheduled_start", "session_number", "id")
+    )
+    # Monthly/reporting callers only need a bounded slice. Applying the range
+    # before loading reports prevents one request from materialising every
+    # historical occurrence and attendance record for the whole caseload.
+    if start_date is not None:
+        occurrence_queryset = occurrence_queryset.filter(
+            Q(actual_start__date__gte=start_date)
+            | Q(actual_start__isnull=True, scheduled_start__date__gte=start_date)
+        )
+    if end_date is not None:
+        occurrence_queryset = occurrence_queryset.filter(
+            Q(actual_start__date__lte=end_date)
+            | Q(actual_start__isnull=True, scheduled_start__date__lte=end_date)
+        )
+    occurrences = list(
+        occurrence_queryset.order_by("scheduled_start", "session_number", "id")
     )
     if not occurrences:
         return []
