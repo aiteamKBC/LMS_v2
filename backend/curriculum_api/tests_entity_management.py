@@ -140,6 +140,75 @@ class EntityGroupCreationTests(CurriculumPersistenceHarness):
         self.assertIn(group['id'], views.parse_json_value(cohort_row.get('group_ids'), []))
 
 
+    def test_a_group_can_be_recreated_after_its_namesake_is_archived(self):
+        """Archive Group A, then add Group A to the same cohort again.
+
+        Archiving soft-deletes the row rather than removing it, so the archived
+        group is still readable. It must not be mistaken for a duplicate: doing
+        so turned the create into an update of the archived row, which left the
+        caller with created=False and no group anywhere in the listing.
+        """
+        cohort = self.seed_cohort()
+        first = self.post_json('/curriculum_api/curriculum/groups/', {
+            'name': 'Group A',
+            'cohortId': cohort['id'],
+            'coach': 'Coach One',
+        }).json()['group']
+
+        archived = self.client.delete(f'/curriculum_api/curriculum/groups/{first["id"]}/')
+        self.assertEqual(archived.status_code, 200, archived.content)
+
+        response = self.post_json('/curriculum_api/curriculum/groups/', {
+            'name': 'Group A',
+            'cohortId': cohort['id'],
+            'coach': 'Coach Two',
+        })
+        self.assertEqual(response.status_code, 201, response.content)
+        body = response.json()
+        self.assertTrue(body['created'])
+        recreated = body['group']
+
+        # A brand new row, not the tombstone written over.
+        self.assertNotEqual(recreated['id'], first['id'])
+        self.assertIsNotNone(self.row(views.GROUPS_TABLE, 'group_id', first['id']).get('deleted_at'))
+        self.assertIsNone(self.row(views.GROUPS_TABLE, 'group_id', recreated['id']).get('deleted_at'))
+
+        # And it is listed, which is the whole point of creating it again.
+        listing = self.client.get('/curriculum_api/curriculum/groups/')
+        self.assertEqual(listing.status_code, 200, listing.content)
+        listed = [item['id'] for item in listing.json()['results']]
+        self.assertIn(recreated['id'], listed)
+        self.assertNotIn(first['id'], listed)
+
+    def test_recreating_a_group_leaves_the_archived_one_archived(self):
+        cohort = self.seed_cohort()
+        first = self.post_json('/curriculum_api/curriculum/groups/', {
+            'name': 'Group A', 'cohortId': cohort['id'],
+        }).json()['group']
+        self.client.delete(f'/curriculum_api/curriculum/groups/{first["id"]}/')
+        self.post_json('/curriculum_api/curriculum/groups/', {
+            'name': 'Group A', 'cohortId': cohort['id'],
+        })
+
+        archived_row = self.row(views.GROUPS_TABLE, 'group_id', first['id'])
+        self.assertTrue(views.curriculum_row_effectively_deleted(archived_row))
+
+    def test_a_live_namesake_is_still_a_duplicate(self):
+        """The archive carve-out must not turn every create into a new row."""
+        cohort = self.seed_cohort()
+        first = self.post_json('/curriculum_api/curriculum/groups/', {
+            'name': 'Group A', 'cohortId': cohort['id'],
+        }).json()['group']
+
+        response = self.post_json('/curriculum_api/curriculum/groups/', {
+            'name': 'Group A', 'cohortId': cohort['id'], 'coach': 'Coach Two',
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+        body = response.json()
+        self.assertFalse(body['created'])
+        self.assertEqual(body['group']['id'], first['id'])
+
+
 class EntityModuleTests(CurriculumPersistenceHarness):
     """`Modules -> Add Module` and `Modules -> select module -> edit Tutor`."""
 

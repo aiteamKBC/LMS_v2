@@ -257,6 +257,16 @@ export function completedComponentIds(real: {
   return ids;
 }
 
+/** Has the learner finished this plan row? A quiz counts once it has been
+ * passed at all — a later failed retake is history and never revokes the
+ * achievement, the same rule `progressCountsAsAchieved` applies to every other
+ * completion source. Non-quiz rows are looked up in `completedIds`, which
+ * callers build with `completedComponentIds`. */
+export function isComponentComplete(c: JourneyComponent, completedIds: Set<string>): boolean {
+  if (c.isQuiz) return (c.quizAttempts || []).some((a) => a.passed);
+  return !!c.componentId && completedIds.has(c.componentId);
+}
+
 /** KSBs backed by a genuine completed learner activity. Failed attempts are
  * deliberately excluded — some legacy quiz attempts attach an entire KSB
  * profile even when the learner scored zero, and the same must hold for a

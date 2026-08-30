@@ -155,6 +155,46 @@ class ModuleAuthoringCompletionCriteria(models.Model):
         managed = False
 
 
+class ProgrammeAuditAsset(models.Model):
+    id = models.CharField(max_length=64, primary_key=True)
+    programme_id = models.CharField(max_length=255, db_index=True)
+    programme_source_id = models.CharField(max_length=255, blank=True, default='')
+    programme_name = models.CharField(max_length=500, blank=True, default='')
+    module_catalogue_id = models.CharField(max_length=128, blank=True, default='', db_index=True)
+    module_title = models.CharField(max_length=500, blank=True, default='')
+    week_id = models.CharField(max_length=128, blank=True, default='', db_index=True)
+    week_number = models.IntegerField(blank=True, null=True)
+    week_title = models.CharField(max_length=500, blank=True, default='')
+    component_id = models.CharField(max_length=128, blank=True, default='', db_index=True)
+    component_type = models.CharField(max_length=64, blank=True, default='')
+    content_kind = models.CharField(max_length=64, blank=True, default='', db_index=True)
+    title = models.CharField(max_length=500, blank=True, default='')
+    description = models.TextField(blank=True, default='')
+    source_url = models.TextField(blank=True, default='')
+    embed_url = models.TextField(blank=True, default='')
+    embed_code = models.TextField(blank=True, default='')
+    render_mode = models.CharField(max_length=64, blank=True, default='')
+    file_name = models.CharField(max_length=500, blank=True, default='')
+    content_type = models.CharField(max_length=255, blank=True, default='')
+    file_size = models.BigIntegerField(blank=True, null=True)
+    duration_minutes = models.IntegerField(blank=True, null=True)
+    expected_otjh = models.DecimalField(max_digits=8, decimal_places=2, blank=True, null=True)
+    points = models.IntegerField(blank=True, null=True)
+    status = models.CharField(max_length=64, blank=True, default='')
+    ksb_mappings = models.JSONField(default=list, blank=True)
+    settings = models.JSONField(default=dict, blank=True)
+    raw_component = models.JSONField(default=dict, blank=True)
+    raw_payload = models.JSONField(default=dict, blank=True)
+    imported_from = models.CharField(max_length=255, blank=True, default='')
+    source_key = models.CharField(max_length=512, blank=True, default='')
+    imported_at = models.DateTimeField(blank=True, null=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'programme_audit"."assets'
+        managed = False
+
+
 class ModuleAuthoringAdvancedDetails(models.Model):
     module_catalogue_id = models.CharField(max_length=128, primary_key=True)
     background = models.TextField(blank=True, default='')

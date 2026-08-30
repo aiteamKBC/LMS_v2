@@ -371,10 +371,15 @@ function StatCard({ icon, tint, label, value, total, barClass, hint }: {
   icon: string; tint: string; label: string; value: number; total: number; barClass: string; hint?: string;
 }) {
   const pct = total ? Math.round((value / total) * 100) : 0;
+  const iconGradient = tint.includes('emerald')
+    ? 'bg-gradient-to-br from-[#b9f6db] via-[#34d399] to-[#059669] text-white shadow-sm shadow-emerald-500/25'
+    : tint.includes('amber')
+      ? 'bg-gradient-to-br from-[#f8dda0] via-[#d49a38] to-[#b27715] text-white shadow-sm shadow-[#b27715]/25'
+      : 'bg-gradient-to-br from-[#e5e7eb] via-[#9ca3af] to-[#4b5563] text-white shadow-sm shadow-foreground-400/25';
   return (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
       <div className="flex items-center gap-2 mb-2">
-        <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${tint}`}><AppIcon className={`${icon} text-sm`} /></span>
+        <span className={`flex h-10 w-10 items-center justify-center rounded-xl ring-1 ring-black/5 ${iconGradient}`}><AppIcon className={`${icon} text-base`} /></span>
         <span className="text-xs text-foreground-400">{label}</span>
       </div>
       <p className="text-xl font-heading font-bold text-foreground-900 tabular-nums leading-tight">{value}<span className="text-sm text-foreground-400">/{total}</span></p>

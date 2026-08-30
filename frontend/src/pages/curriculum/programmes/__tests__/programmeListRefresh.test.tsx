@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createCurriculumProgramme } from '@/lib/curriculumApi';
+import { createCurriculumProgramme, type CurriculumProgramme } from '@/lib/curriculumApi';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 
 // ---------------------------------------------------------------------------
@@ -34,6 +34,7 @@ function jsonResponse(body: unknown) {
   } as unknown as Response;
 }
 
+/** Only the fields these assertions read; the rest of the row is irrelevant. */
 const programme = (name: string) => ({
   id: `PROG-${name}`,
   sourceId: `PROG-${name}`,
@@ -41,11 +42,11 @@ const programme = (name: string) => ({
   status: 'active',
   isArchived: false,
   isActive: true,
-});
+} as CurriculumProgramme);
 
 type HarnessApi = {
   reload: (options?: { skipCache?: boolean; silent?: boolean }) => unknown;
-  upsertProgramme: (programme: ReturnType<typeof programme>) => void;
+  upsertProgramme: (programme: CurriculumProgramme) => void;
 };
 
 function Harness({ onReady }: { onReady: (api: HarnessApi) => void }) {

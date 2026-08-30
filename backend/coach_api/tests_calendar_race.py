@@ -242,14 +242,30 @@ class CoachCalendarRaceTests(TransactionTestCase):
         self, graph_request, _credentials, caseload, _conflicts
     ):
         caseload.return_value = [self.learner]
-        graph_request.side_effect = [
-            RuntimeError("Microsoft Graph POST timed out"),
-            {
+        posts = []
+
+        def graph(method, _path, *, payload=None):
+            """Stand in for Graph: the first POST times out, the retry succeeds.
+
+            A fixed ``side_effect`` list used to sit here, which tied the test to
+            the exact number of calls the sync happens to make. The sync now
+            reads back the event and probes the Teams meeting behind it, so the
+            list ran dry mid-booking and a ``StopIteration`` surfaced as a 500 --
+            a failure of the fixture, not of the retry this test is about. Any
+            read answers with nothing; only the POSTs are the subject here.
+            """
+            if method != "POST":
+                return {}
+            posts.append(payload)
+            if len(posts) == 1:
+                raise RuntimeError("Microsoft Graph POST timed out")
+            return {
                 "id": "graph-after-timeout",
                 "webLink": "https://outlook.office.com/calendar/item/test",
                 "onlineMeeting": {"joinUrl": "https://teams.microsoft.com/l/meetup-join/test"},
-            },
-        ]
+            }
+
+        graph_request.side_effect = graph
         client, csrf_token = self._client()
         key = str(uuid.uuid4())
 
@@ -260,10 +276,11 @@ class CoachCalendarRaceTests(TransactionTestCase):
         self.assertEqual(
             CoachCalendarEvent.objects.filter(owner_email=self.coach_email).count(), 1
         )
-        self.assertEqual(graph_request.call_count, 2)
-        first_payload = graph_request.call_args_list[0].kwargs["payload"]
-        second_payload = graph_request.call_args_list[1].kwargs["payload"]
-        self.assertEqual(first_payload["transactionId"], second_payload["transactionId"])
+        # The retry is a retry of the same booking, not a second one: Graph is
+        # asked to create the event twice, both times under one transaction id,
+        # which is what stops the timeout leaving a duplicate in the calendar.
+        self.assertEqual(len(posts), 2)
+        self.assertEqual(posts[0]["transactionId"], posts[1]["transactionId"])
         record = CoachCalendarEvent.objects.get(idempotency_key=key)
         self.assertEqual(record.sync_state, CoachCalendarEvent.SYNC_SYNCED)
         self.assertEqual(record.sync_attempt_count, 2)

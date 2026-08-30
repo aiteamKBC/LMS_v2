@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import type { CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
+import type { CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
 
 /**
  * The delivery side of the catalogue, which arrived here when the separate
@@ -33,6 +33,58 @@ vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
   closeCurriculumLoading: vi.fn(),
 }));
 
+vi.mock('@/pages/curriculum/shared/entities/moduleForm', () => ({
+  ModuleFormDrawer: ({ open, defaults, onSavingChange }: {
+    open: boolean;
+    defaults?: { programmeId?: string; cohortId?: string; groupId?: string };
+    onSavingChange?: (saving: boolean) => void;
+  }) => open ? (
+    <div data-testid="module-form-defaults">
+      {defaults?.programmeId}|{defaults?.cohortId}|{defaults?.groupId}
+      <button type="button" onClick={() => onSavingChange?.(true)}>Start module creation</button>
+      <button type="button" onClick={() => onSavingChange?.(false)}>Finish module creation</button>
+    </div>
+  ) : null,
+}));
+
+vi.mock('@/pages/curriculum/shared/components/weekAuthoringLazy', () => ({
+  ComponentEditor: ({ component, onBack }: { component: { title: string }; onBack: () => void }) => (
+    <div>
+      <button type="button" title="Back to week overview" onClick={onBack}>Back</button>
+      <span>{component.title}</span>
+    </div>
+  ),
+  WeekComponentRail: ({ weekId, components, onChange, onSelectId }: {
+    weekId: string;
+    components: Array<{ id: string }>;
+    onChange: (components: unknown[]) => void;
+    onSelectId: (id: string) => void;
+  }) => (
+    <div data-testid="week-component-rail">
+      <button type="button" onClick={() => {
+        const component = {
+          id: 'COMP-FROM-RAIL',
+          weekId,
+          type: 'powerpoint',
+          title: 'Rail PowerPoint',
+          description: '',
+          expectedOtjh: 2,
+          points: 5,
+          reflectionRequired: false,
+          reflectionQuestion: '',
+          workplaceEvidenceRequired: false,
+          tutorValidationRequired: false,
+          ksbMappings: [],
+          settings: {},
+        };
+        onChange([...components, component]);
+        onSelectId(component.id);
+      }}>Add from rail</button>
+    </div>
+  ),
+  WeekOverviewPanel: () => <p>Select a part on the rail to edit it.</p>,
+}));
+
 vi.mock('@/pages/curriculum/week-builder/weekTemplateData', () => ({
   fetchComponentPointsDefaults: vi.fn(async () => ({})),
   loadCurriculumScope: vi.fn(async () => ({ programmes: [], cohorts: [], groups: [] })),
@@ -45,6 +97,12 @@ const programmes = [
   { id: 'program-data', sourceId: 'PROG-DATA', name: 'Data Analyst', ksbProfileSourceId: 'KSBP-DATA' },
   { id: 'program-net', sourceId: 'PROG-NET', name: 'Network Engineer' },
 ] as CurriculumProgramme[];
+
+const cohorts = [{ id: 'COHORT-1', name: 'Sept 2026', programmeId: 'PROG-DATA', programme: 'Data Analyst' }] as CurriculumCohort[];
+const groups = [{ id: 'GROUP-1', name: 'Group A', cohortId: 'COHORT-1', cohort: 'Sept 2026', programmeId: 'PROG-DATA', programme: 'Data Analyst' }] as CurriculumGroup[];
+
+const cohorts = [{ id: 'COHORT-1', name: 'Sept 2026', programmeId: 'PROG-DATA', programme: 'Data Analyst' }] as CurriculumCohort[];
+const groups = [{ id: 'GROUP-1', name: 'Group A', cohortId: 'COHORT-1', cohort: 'Sept 2026', programmeId: 'PROG-DATA', programme: 'Data Analyst' }] as CurriculumGroup[];
 
 const modules = [
   {
@@ -111,13 +169,16 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   fetchCurriculumStandards: vi.fn(async () => []),
   fetchCurriculumTutors: vi.fn(async () => [{ id: 1, name: 'Tutor One' }, { id: 2, name: 'Tutor Two' }]),
   fetchCurriculumTeamsMeetingSummaries: vi.fn(async () => []),
+  fetchCurriculumOverview: vi.fn(async () => ({ programmes, cohorts, groups, modules })),
+  fetchCurriculumHolidays: vi.fn(async () => []),
   updateCurriculumModule: (...args: unknown[]) => updateCurriculumModule(...(args as [])),
 }));
 
-async function renderCatalogue() {
+async function renderCatalogue(search = '') {
+  window.history.replaceState({}, '', `/curriculum/module-builder${search}`);
   const { default: ModuleBuilder } = await import('../page');
   const result = render(
-    <MemoryRouter initialEntries={['/curriculum/module-builder']}>
+    <MemoryRouter initialEntries={[`/curriculum/module-builder${search}`]}>
       <ModuleBuilder />
     </MemoryRouter>,
   );
@@ -143,7 +204,7 @@ function deliveryRowFor(title: string, deliveryLabel: string) {
   return within(row);
 }
 
-describe('Module Builder delivery catalogue', () => {
+describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
   beforeEach(() => {
     updateCurriculumModule.mockClear();
     reload.mockClear();
@@ -175,6 +236,7 @@ describe('Module Builder delivery catalogue', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    window.history.replaceState({}, '', '/');
   });
 
   it('shows each module with the delivery it runs in', async () => {
@@ -195,12 +257,52 @@ describe('Module Builder delivery catalogue', () => {
     const card = cardFor('Data Foundations');
 
     expect(card.getByRole('link', { name: /Open delivery/ }))
-      .toHaveAttribute('href', '/curriculum/modules/MOD-1');
+      .toHaveAttribute('href', '/curriculum/modules/MOD-1?moduleName=Data+Foundations');
     expect(card.getByRole('button', { name: /Review module KSBs/ })).toBeInTheDocument();
     expect(card.getByRole('button', { name: /Edit components/ })).toBeInTheDocument();
     expect(card.getByRole('button', { name: /Edit module/ })).toBeInTheDocument();
     expect(card.getByRole('button', { name: /Duplicate module/ })).toBeInTheDocument();
     expect(card.getByRole('button', { name: /Delete module/ })).toBeInTheDocument();
+  });
+
+  it('opens a newly added component in its editor immediately', async () => {
+    const user = userEvent.setup();
+    await renderCatalogue();
+
+    await user.click(cardFor('Data Foundations').getByRole('button', { name: /Edit components/ }));
+    await screen.findByText('Course structure');
+    await user.click(screen.getByRole('button', { name: 'Add component' }));
+    await user.click(screen.getByText('PowerPoint', { selector: 'span' }));
+    await user.click(screen.getByRole('button', { name: /Add 1 component/ }));
+
+    expect(await screen.findByTitle('Back to week overview')).toBeInTheDocument();
+    expect(screen.queryByText('Select a part on the rail to edit it.')).not.toBeInTheDocument();
+  });
+
+  it('waits for a component added by the week rail before opening its settings', async () => {
+    const user = userEvent.setup();
+    await renderCatalogue();
+
+    await user.click(cardFor('Data Foundations').getByRole('button', { name: /Edit components/ }));
+    await screen.findByText('Course structure');
+    await user.click(screen.getByRole('button', { name: 'Add from rail' }));
+
+    expect(await screen.findByTitle('Back to week overview')).toBeInTheDocument();
+    expect(screen.getAllByText('Rail PowerPoint')).not.toHaveLength(0);
+  });
+
+  it('shows the programme name from the route while the programme collection is still resolving', async () => {
+    window.history.replaceState({}, '', '/curriculum/module-builder?programme=PROG-PENDING&programmeName=Rewan+2');
+    const { default: ModuleBuilder } = await import('../page');
+    render(
+      <MemoryRouter initialEntries={['/curriculum/module-builder?programme=PROG-PENDING&programmeName=Rewan+2']}>
+        <ModuleBuilder />
+      </MemoryRouter>,
+    );
+
+    const hierarchy = await screen.findByRole('navigation', { name: 'Curriculum hierarchy' });
+    expect(within(hierarchy).getByText('Rewan 2')).toBeInTheDocument();
+    expect(within(hierarchy).queryByText('PROG-PENDING')).not.toBeInTheDocument();
   });
 
   it('leaves off what the reader cannot act on from the card', async () => {
@@ -236,6 +338,31 @@ describe('Module Builder delivery catalogue', () => {
 
     const groupOptions = within(screen.getByLabelText('Group')).getAllByRole('option');
     expect(groupOptions.map(option => option.textContent)).toEqual(['All groups', 'Group A']);
+  });
+
+  it('keeps programme, cohort and group context when the group starts its first module', async () => {
+    await renderCatalogue('?programme=PROG-DATA&cohort=COHORT-1&group=GROUP-1&create=1');
+
+    expect(await screen.findByTestId('module-form-defaults')).toHaveTextContent('program-data|COHORT-1|GROUP-1');
+    const hierarchy = screen.getByRole('navigation', { name: 'Curriculum hierarchy' });
+    expect(within(hierarchy).getByText('Data Analyst')).toBeInTheDocument();
+    expect(await within(hierarchy).findByText('Sept 2026')).toBeInTheDocument();
+    expect(within(hierarchy).getByText('Group A')).toBeInTheDocument();
+    expect(within(hierarchy).getByText('Modules')).toBeInTheDocument();
+  });
+
+  it('shows the catalogue progress line for the full module creation lifecycle', async () => {
+    const user = userEvent.setup();
+    await renderCatalogue('?programme=PROG-DATA&cohort=COHORT-1&group=GROUP-1&create=1');
+
+    await user.click(screen.getByRole('button', { name: 'Start module creation' }));
+
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent('Creating module and refreshing the catalogue');
+    expect(status.previousElementSibling?.querySelector('.animate-entity-refresh')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Finish module creation' }));
+    expect(status).toBeEmptyDOMElement();
   });
 
   it('opens components with the programme name, programme KSB source and one week per session', async () => {

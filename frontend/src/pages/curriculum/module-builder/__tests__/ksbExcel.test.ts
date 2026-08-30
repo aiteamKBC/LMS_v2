@@ -47,6 +47,9 @@ function component(id: string, extra: Partial<ModuleComponent> = {}): ModuleComp
     expectedOtjh: 1,
     points: 10,
     reflectionRequired: false,
+    // Required on ModuleComponent since the reflection question was added; empty
+    // is the "no question authored" case these rows stand for.
+    reflectionQuestion: '',
     workplaceEvidenceRequired: false,
     tutorValidationRequired: false,
     ksbMappings: [],
@@ -189,9 +192,24 @@ describe('exportModuleKsbWorkbook', () => {
       'Component Title': 'Intro',
       Description: 'Read this',
       'Current KSBs': 'K1, S2',
-      KSBs: '',
+      // The editable column ships pre-filled with the current mappings in the
+      // CODE:type:weight format the importer reads, so nothing is lost by default.
+      KSBs: 'K1:main:40, S2:main:40',
     });
-    expect(rows[1]).toMatchObject({ Week: 2, 'Component ID': 'C2', 'Current KSBs': '' });
+    expect(rows[1]).toMatchObject({ Week: 2, 'Component ID': 'C2', 'Current KSBs': '', KSBs: '' });
+  });
+
+  it('pre-fills the KSBs column with each code\'s classification and weight', async () => {
+    const module = moduleWith([week(1, [component('C1', {
+      ksbMappings: [
+        mapping('K1', { type: 'secondary', classification: 'secondary', weight: 25 }),
+        mapping('S3', { type: 'possible', classification: 'possible', weight: 10 }),
+      ],
+    })])]);
+    await exportModuleKsbWorkbook(module);
+    const workbook = writeFileMock.mock.calls[0][0] as XLSX.WorkBook;
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets.Components, { defval: '' });
+    expect(rows[0].KSBs).toBe('K1:secondary:25, S3:possible:10');
   });
 
   it('reports zero rows for a module with no components', async () => {
@@ -328,6 +346,19 @@ describe('importModuleKsbWorkbook', () => {
     const { summary } = await importModuleKsbWorkbook(file, baseModule());
     expect(summary).toMatchObject({ rowsWithKsbs: 0, componentsUpdated: 0, codesApplied: 0 });
   });
+
+  it('rejects a wrong file that has rows but no Component ID column', async () => {
+    const file = sheetFile([{ Name: 'Alice', Score: 90 }, { Name: 'Bob', Score: 80 }]);
+    await expect(importModuleKsbWorkbook(file, baseModule())).rejects.toThrow(/doesn't look like a KSB mapping sheet/i);
+  });
+
+  it('treats a sheet from a different module as unmatched rows, not a crash', async () => {
+    const file = sheetFile([{ 'Component ID': 'OTHER-1', KSBs: 'K1' }, { 'Component ID': 'OTHER-2', KSBs: 'S2' }]);
+    const { module, summary } = await importModuleKsbWorkbook(file, baseModule());
+    expect(summary).toMatchObject({ rowsWithKsbs: 2, componentsUpdated: 0, codesApplied: 0 });
+    expect(summary.unmatchedIds).toEqual(['OTHER-1', 'OTHER-2']);
+    expect(module.weekStructure[0].components[0].ksbMappings).toEqual([]);
+  });
 });
 
 // --- import: week -----------------------------------------------------------
@@ -396,5 +427,72 @@ describe('export → import round trip', () => {
     expect(next.weekStructure[0].components[0].ksbMappings[0].description).toBe('Kept K1');
     expect(next.weekStructure[1].components[0].ksbMappings.map(m => m.code)).toEqual(['B2']);
     expect(summary.codesApplied).toBe(3);
+  });
+
+  // The reported bug: adding a KSB must not wipe the current ones. With the KSBs
+  // column pre-filled on export, ChatGPT appends to it, so re-importing the sheet
+  // keeps the current codes and adds the new one — nothing is rewritten.
+  it('keeps current KSBs and adds new ones when the pre-filled cell is appended to', async () => {
+    const module = moduleWith([week(1, [component('C1', {
+      ksbMappings: [
+        mapping('K1', { type: 'main', classification: 'main', weight: 40, description: 'Kept K1' }),
+        mapping('K2', { type: 'secondary', classification: 'secondary', weight: 20, weightClass: 'soft' }),
+      ],
+    })])]);
+
+    await exportModuleKsbWorkbook(module);
+    const exported = writeFileMock.mock.calls[0][0] as XLSX.WorkBook;
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(exported.Sheets.Components, { defval: '' });
+
+    // The pre-fill carries the whole current set into the editable column...
+    expect(rows[0].KSBs).toBe('K1:main:40, K2:secondary:20');
+    // ...and ChatGPT appends the new code, leaving the current ones in place.
+    rows[0].KSBs = `${rows[0].KSBs}, K3:possible:10`;
+
+    const { module: next } = await importModuleKsbWorkbook(sheetFile(rows), module);
+    const mappings = next.weekStructure[0].components[0].ksbMappings;
+    expect(mappings.map(m => m.code)).toEqual(['K1', 'K2', 'K3']);
+    expect(mappings[0].description).toBe('Kept K1'); // definition of a kept code survives
+    expect(mappings[1]).toMatchObject({ code: 'K2', type: 'secondary', weight: 20 });
+    expect(mappings[2]).toMatchObject({ code: 'K3', type: 'possible', weight: 10 });
+  });
+
+  // The counterpart to "add": deleting a code from the pre-filled cell removes it,
+  // so the sheet stays the single source of truth and removal is still possible.
+  it('removes a KSB when its code is deleted from the pre-filled cell', async () => {
+    const module = moduleWith([week(1, [component('C1', {
+      ksbMappings: [mapping('K1'), mapping('K2'), mapping('K3')],
+    })])]);
+
+    await exportModuleKsbWorkbook(module);
+    const exported = writeFileMock.mock.calls[0][0] as XLSX.WorkBook;
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(exported.Sheets.Components, { defval: '' });
+
+    expect(rows[0].KSBs).toBe('K1:main:40, K2:main:40, K3:main:40');
+    // The worker drops K2 from the cell — it should be gone after import.
+    rows[0].KSBs = 'K1:main:40, K3:main:40';
+
+    const { module: next } = await importModuleKsbWorkbook(sheetFile(rows), module);
+    expect(next.weekStructure[0].components[0].ksbMappings.map(m => m.code)).toEqual(['K1', 'K3']);
+  });
+
+  // Safety net: blanking a cell that had KSBs leaves the component untouched
+  // rather than wiping it, so an accidental clear can't destroy current mappings.
+  it('leaves current KSBs unchanged when a pre-filled cell is blanked entirely', async () => {
+    const module = moduleWith([week(1, [component('C1', {
+      ksbMappings: [mapping('K1', { description: 'Kept K1' }), mapping('K2')],
+    })])]);
+
+    await exportModuleKsbWorkbook(module);
+    const exported = writeFileMock.mock.calls[0][0] as XLSX.WorkBook;
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(exported.Sheets.Components, { defval: '' });
+
+    rows[0].KSBs = ''; // cleared by hand
+    const { module: next, summary } = await importModuleKsbWorkbook(sheetFile(rows), module);
+
+    const mappings = next.weekStructure[0].components[0].ksbMappings;
+    expect(mappings.map(m => m.code)).toEqual(['K1', 'K2']); // untouched, not wiped
+    expect(mappings[0].description).toBe('Kept K1');
+    expect(summary).toMatchObject({ rowsWithKsbs: 0, componentsUpdated: 0, codesApplied: 0 });
   });
 });

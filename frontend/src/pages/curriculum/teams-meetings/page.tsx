@@ -23,9 +23,9 @@ import {
   loadTeamsMeetingArtifacts,
   loadTeamsMeetingConfiguration,
   parseUtcInstant,
+  probeModuleTeamsAttachment,
   restoreModuleTeamsMeeting,
   saveTeamsRecordingEvents,
-  syncTeamsMeetingArtifacts,
   teamsMeetingArtifactPreviewUrl,
   updateTeamsMeetingSchedule,
   viewerZoneOffset,
@@ -35,6 +35,7 @@ import {
   type TeamsMeetingInput,
   type TeamsRecordingEventInput,
 } from '../module-builder/moduleAuthoringData';
+import { EmailChipsInput, emailList } from '../module-builder/EmailChipsInput';
 import {
   cleanText,
   cohortsForProgramme,
@@ -42,6 +43,7 @@ import {
   matchesSearch,
   moduleIdentity,
   modulesForScope,
+  namedCurriculumWorkspacePath,
   normaliseKey,
   programmeIdentity,
   resolveModuleContext,
@@ -159,135 +161,6 @@ function naiveLocalFromUtc(value: unknown, timeZone = getCalendarTimeZone()): st
 
 /** A date and time as the Microsoft calendar shows it, not as this reader's PC does. */
 const calendarLabel = formatCalendarDateTime;
-
-function emailList(value: string): string[] {
-  return value.split(/[\s,;]+/).map(item => item.trim()).filter(Boolean);
-}
-
-const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-
-/**
- * Presenters/Attendees as removable chips instead of a raw "one per line"
- * textarea — each name typed or pasted becomes its own pill, invalid-looking
- * addresses are flagged in place, and Enter/comma/semicolon/paste all commit
- * a chip the same way. The value stays the newline-joined string every other
- * caller already reads and writes (`emailList()` at submit, `patch()` from
- * Prefill) — this only changes how it is edited, not what it is.
- */
-function EmailChipsInput({ value, onChange, placeholder = 'Type an email and press Enter…' }: {
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-}) {
-  const emails = useMemo(() => emailList(value), [value]);
-  const [draft, setDraft] = useState('');
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  // The outside-click listener below fires from a document-level handler, so
-  // it needs whatever was last typed without re-subscribing on every
-  // keystroke.
-  const draftRef = useRef(draft);
-  draftRef.current = draft;
-
-  const commit = useCallback((raw: string) => {
-    const additions = emailList(raw).map(email => email.toLowerCase());
-    if (!additions.length) { setDraft(''); return; }
-    onChange(Array.from(new Set([...emails, ...additions])).join('\n'));
-    setDraft('');
-  }, [emails, onChange]);
-
-  const removeAt = (index: number) => {
-    onChange(emails.filter((_, i) => i !== index).join('\n'));
-  };
-
-  // A half-typed draft is only ever committed by Enter/comma/paste, or by a
-  // click that lands outside the whole box -- never by a click landing
-  // *inside* it (another chip's remove or edit button, empty padding, a
-  // non-focusable area), which blur alone cannot tell apart from a real
-  // "I'm done here" click.
-  useEffect(() => {
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!draftRef.current.trim()) return;
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        commit(draftRef.current);
-      }
-    };
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => document.removeEventListener('mousedown', handlePointerDown);
-  }, [commit]);
-
-  // Editing is "un-commit this chip back into the draft" rather than typing
-  // in place inside the pill: the same Enter-to-commit path then re-validates
-  // whatever comes out, so a correction can't skip the checks a fresh chip
-  // gets.
-  const editAt = (index: number) => {
-    setDraft(emails[index]);
-    onChange(emails.filter((_, i) => i !== index).join('\n'));
-    inputRef.current?.focus();
-  };
-
-  return (
-    <div
-      ref={containerRef}
-      className="flex min-h-[84px] w-full flex-wrap items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-2.5 py-2 outline-none transition-smooth focus-within:border-primary-300"
-      onClick={() => inputRef.current?.focus()}
-    >
-      {emails.map((email, index) => {
-        const valid = EMAIL_PATTERN.test(email);
-        return (
-          <span
-            key={`${email}-${index}`}
-            className={`inline-flex max-w-full items-center gap-1 rounded-full border py-1 pl-2 pr-1 text-[11px] font-semibold ${
-              valid ? 'border-primary-200 bg-primary-50 text-primary-800' : 'border-red-200 bg-red-50 text-red-700'
-            }`}
-          >
-            <AppIcon className="ri-circle-fill shrink-0 text-[5px]"></AppIcon>
-            <button
-              type="button"
-              onClick={event => { event.stopPropagation(); editAt(index); }}
-              className="max-w-full truncate rounded-sm text-left hover:underline"
-              title="Click to edit"
-            >
-              {email}
-            </button>
-            <button
-              type="button"
-              onClick={event => { event.stopPropagation(); removeAt(index); }}
-              className="shrink-0 rounded-full p-0.5 transition-smooth hover:bg-black/10"
-              aria-label={`Remove ${email}`}
-            >
-              <AppIcon className="ri-close-line text-[11px]"></AppIcon>
-            </button>
-          </span>
-        );
-      })}
-      <input
-        ref={inputRef}
-        type="text"
-        inputMode="email"
-        value={draft}
-        onChange={event => setDraft(event.target.value)}
-        onKeyDown={event => {
-          if (event.key === 'Enter' || event.key === ',' || event.key === ';') {
-            event.preventDefault();
-            commit(draft);
-          } else if (event.key === 'Backspace' && !draft && emails.length) {
-            removeAt(emails.length - 1);
-          }
-        }}
-        onPaste={event => {
-          const text = event.clipboardData.getData('text');
-          if (/[\s,;]/.test(text.trim())) {
-            event.preventDefault();
-            commit(text);
-          }
-        }}
-        placeholder={emails.length ? '' : placeholder}
-        className="min-w-[160px] flex-1 border-0 bg-transparent p-1 text-[13px] text-foreground-900 outline-none placeholder:text-foreground-400"
-      />
-    </div>
-  );
-}
 
 /**
  * Row actions with their names on them. The shared `RowActions` is icon-only,
@@ -600,7 +473,7 @@ function ModuleSessionSchedulePreview({
             <p className="border-t border-background-200 px-3 py-2 text-[11px] font-semibold text-foreground-500">
               Nothing on the Teams calendar changes until you press
               {' '}
-              <span className="font-bold text-foreground-700">Send session dates to Teams</span>.
+              <span className="font-bold text-foreground-700">Update Teams calendar</span>.
             </p>
           )}
         </>
@@ -910,6 +783,12 @@ export default function CurriculumTeamsMeetingsPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ liveSessionId: string; artifact: TeamsMeetingArtifact; title: string } | null>(null);
+  /**
+   * Weeks of the selected module still waiting for a live-session component,
+   * per the server's dry run of the re-attach walk. `null` while unknown, which
+   * keeps the button hidden rather than flickering it in and straight back out.
+   */
+  const [pendingComponents, setPendingComponents] = useState<number | null>(null);
   const [transcriptPreview, setTranscriptPreview] = useState<{ liveSessionId: string; artifact: TeamsMeetingArtifact; title: string } | null>(null);
   // Whether a session is joinable or over is a fact about right now, so the
   // page keeps its own minute hand rather than freezing at first render.
@@ -1235,27 +1114,6 @@ export default function CurriculumTeamsMeetingsPage() {
     }
   };
 
-  const fetchArtifacts = async (row: MeetingRow) => {
-    const summary = row.summary;
-    if (!summary) return;
-    setBusy(`${row.catalogueId}:artifacts`);
-    setNotice(null);
-    try {
-      const result = await syncTeamsMeetingArtifacts(summary.liveSessionId);
-      setSelectedId(row.catalogueId);
-      await Promise.all([loadDetail(summary.liveSessionId), loadTeamsState()]);
-      await showCurriculumAlert({
-        title: result.partial ? 'Some Teams data could not be fetched' : 'Attendance and recordings updated',
-        text: `Saved ${result.synced.attendanceRecords} attendance record${result.synced.attendanceRecords === 1 ? '' : 's'}, ${result.synced.transcripts} transcript${result.synced.transcripts === 1 ? '' : 's'} and ${result.synced.recordings} recording${result.synced.recordings === 1 ? '' : 's'}.`,
-        timer: result.partial ? undefined : 2200,
-      });
-    } catch (err) {
-      setNotice({ tone: 'error', text: err instanceof Error ? err.message : 'The Teams sync failed.' });
-    } finally {
-      setBusy('');
-    }
-  };
-
   /**
    * Give every week of the module a live-session component holding this meeting.
    *
@@ -1481,8 +1339,13 @@ export default function CurriculumTeamsMeetingsPage() {
         });
       }
       createDrawer.close();
-      setSelectedId(row.catalogueId);
-      await loadTeamsState();
+      // The dialog was the create form and the create has happened, so it has
+      // nothing left to show: close it rather than re-selecting the module into
+      // its summary view, and let the confirmation land on the table behind.
+      setSelectedId('');
+      // Not awaited. The refresh is a round trip and the confirmation must not
+      // queue behind it -- the table catches up while the alert is on screen.
+      void loadTeamsState();
       // `settingsApplied` false means the calendar is right and the recording is
       // not: Graph refused the meeting options, so the session opens recording
       // nothing. It reads as success otherwise, which is how it went unnoticed.
@@ -1490,12 +1353,12 @@ export default function CurriculumTeamsMeetingsPage() {
       await showCurriculumAlert({
         title: optionsRefused
           ? 'Created, but NOT recording'
-          : result.warnings.length ? 'Created with warnings' : 'Teams calendar created',
+          : result.warnings.length ? 'Created with warnings' : 'Session dates sent to Teams',
         text: optionsRefused
           ? `The invitations and join links are in place, but Microsoft Teams refused the recording, transcription and lobby options, so these sessions will record nothing. Grant the Teams application access policy to ${result.meeting.organizerEmail || 'the organizer'}, then re-apply the meeting options.`
           : result.warnings.length
             ? result.warnings[0]
-            : `${occurrences.length} meeting${occurrences.length === 1 ? '' : 's'} on this module's session dates${attached ? `, linked to ${attached} live-session component${attached === 1 ? '' : 's'}` : ''}.`,
+            : `${occurrences.length} session date${occurrences.length === 1 ? '' : 's'} sent to Teams${attached ? `, linked to ${attached} live-session component${attached === 1 ? '' : 's'}` : ''}.`,
         timer: optionsRefused || result.warnings.length ? undefined : 2400,
       });
     } catch (err) {
@@ -1504,6 +1367,26 @@ export default function CurriculumTeamsMeetingsPage() {
       createDrawer.setSaving(false);
     }
   };
+
+  /**
+   * Ask whether re-attaching would actually do anything for the open module.
+   *
+   * Only for a module that has a calendar, and only while its dialog is open:
+   * the answer costs a read of that module's weeks and components, which is far
+   * too much to pay per row on the table behind it.
+   */
+  useEffect(() => {
+    if (!selected?.summary) { setPendingComponents(null); return; }
+    let cancelled = false;
+    const catalogueId = selected.catalogueId;
+    setPendingComponents(null);
+    void probeModuleTeamsAttachment(catalogueId)
+      .then(count => { if (!cancelled) setPendingComponents(count); })
+      // A probe that fails leaves the button hidden. It only ever adds an
+      // action, so failing closed costs nothing the user can see.
+      .catch(() => { if (!cancelled) setPendingComponents(0); });
+    return () => { cancelled = true; };
+  }, [selected?.catalogueId, selected?.summary]);
 
   // Opening the dialog for a module with no calendar opens the create form with
   // it. Keyed on the module, the organizer the backend reports, and the tutor /
@@ -1572,6 +1455,21 @@ export default function CurriculumTeamsMeetingsPage() {
     const amount = `${Number.isInteger(hours) ? hours : hours.toFixed(1)} hour${hours === 1 ? '' : 's'}`;
     return `${base} Your device is on ${viewerZoneLabel}, so your own Teams shows them ${amount} ${differenceMinutes > 0 ? 'later' : 'earlier'}.`;
   }, [timeZoneLabel]);
+
+  /**
+   * What a highlighted row means, said once, above the rows it applies to.
+   *
+   * The Actions column fills a button in to mark a row that is waiting on
+   * somebody. Unstated, that reads as decoration -- and the reader cannot look
+   * the convention up from a colour. It is only worth saying while there is a
+   * filled-in button to explain, so it appears exactly when one is on screen.
+   */
+  const listNote = useMemo(() => {
+    const highlight = stats.drifted
+      ? `${stats.drifted} module${stats.drifted === 1 ? '' : 's'} below ${stats.drifted === 1 ? 'has a' : 'have a'} highlighted Detail button: Teams is holding dates those modules have since changed. Open one and press Update Teams calendar to put it right.`
+      : '';
+    return [highlight, timeZoneNote].filter(Boolean).join(' ') || undefined;
+  }, [stats.drifted, timeZoneNote]);
 
   const programmeOptions = useMemo(
     () => programmes.map(programme => ({ value: programmeIdentity(programme), label: programme.name })),
@@ -1663,7 +1561,7 @@ export default function CurriculumTeamsMeetingsPage() {
             },
           ]}
           onReset={() => { setSearch(''); setProgrammeFilter(''); setCohortFilter(''); setStateFilter(''); }}
-          summary={timeZoneNote}
+          summary={listNote}
         />
 
         <EntityTable
@@ -1684,7 +1582,7 @@ export default function CurriculumTeamsMeetingsPage() {
           renderRow={row => (
             <>
               <StackedCell
-                href={`/curriculum/modules/${encodeURIComponent(row.catalogueId)}?tab=teams`}
+                href={`${namedCurriculumWorkspacePath('modules', row.catalogueId, row.name)}&tab=teams`}
                 primary={row.name}
                 secondary={row.programmeName}
               />
@@ -1715,7 +1613,12 @@ export default function CurriculumTeamsMeetingsPage() {
                     ? {
                       icon: 'ri-eye-line',
                       label: 'Detail',
-                      title: 'Show this module\u2019s session dates next to the dates Teams holds.',
+                      // Highlighted or not, the button says why. Colour alone asks
+                      // the reader to already know the convention, and the state it
+                      // stands for is exactly what they open this to find out.
+                      title: row.state === 'out-of-sync'
+                        ? `Needs attention: Teams is holding ${row.differingSessions} date${row.differingSessions === 1 ? '' : 's'} this module no longer has. Open to compare them and press Update Teams calendar.`
+                        : 'Up to date: the Teams calendar is on this module\u2019s session dates. Open to see the two side by side.',
                       primary: row.state === 'out-of-sync',
                       onClick: () => setSelectedId(row.catalogueId),
                     }
@@ -1755,26 +1658,22 @@ export default function CurriculumTeamsMeetingsPage() {
                     Closing is the title bar's X — no second Close down here. */}
                 {selected.summary ? (
                   <>
-                    <button
-                      type="button"
-                      onClick={() => void reattach(selected)}
-                      disabled={Boolean(busy)}
-                      title="Give every week of this module a live-session component for this meeting, on that week's own date — creating the ones that are missing."
-                      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <AppIcon className={busy === `${selected.catalogueId}:reattach` ? 'ri-loader-4-line animate-spin text-sm' : 'ri-history-line text-sm'}></AppIcon>
-                      Re-attach to components
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void fetchArtifacts(selected)}
-                      disabled={Boolean(busy) || !graphConfigured}
-                      title="Ask Teams for the attendance, transcripts and recordings of the meetings that have already run."
-                      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <AppIcon className={busy === `${selected.catalogueId}:artifacts` ? 'ri-loader-4-line animate-spin text-sm' : 'ri-refresh-line text-sm'}></AppIcon>
-                      Fetch attendance &amp; recordings
-                    </button>
+                    {/* Both of these are shown only in the state they can act
+                        in. Offered unconditionally they were noise: on a module
+                        whose sessions are all attached and none has run yet,
+                        neither one would have changed anything. */}
+                    {Boolean(pendingComponents) && (
+                      <button
+                        type="button"
+                        onClick={() => void reattach(selected)}
+                        disabled={Boolean(busy)}
+                        title={`${pendingComponents} week${pendingComponents === 1 ? '' : 's'} of this module ${pendingComponents === 1 ? 'has' : 'have'} no live-session component yet. This gives each one its own, on that week's own date.`}
+                        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <AppIcon className={busy === `${selected.catalogueId}:reattach` ? 'ri-loader-4-line animate-spin text-sm' : 'ri-history-line text-sm'}></AppIcon>
+                        Add {pendingComponents} missing live session{pendingComponents === 1 ? '' : 's'}
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => void pushDates(selected)}
@@ -1783,7 +1682,10 @@ export default function CurriculumTeamsMeetingsPage() {
                       className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <AppIcon className={busy === `${selected.catalogueId}:dates` ? 'ri-loader-4-line animate-spin text-sm' : 'ri-calendar-check-line text-sm'}></AppIcon>
-                      Send session dates to Teams
+                      {/* The calendar already exists by the time this button is
+                          rendered, so the action is an update, not a first send
+                          -- which is what its own confirmation has always said. */}
+                      Update Teams calendar
                     </button>
                   </>
                 ) : (

@@ -25,6 +25,7 @@ import {
   formatDateLabel,
   formatDateTimeLabel,
   moduleIdentity,
+  namedCurriculumWorkspacePath,
   normaliseKey,
   programmeIdentity,
   resolveModuleContext,
@@ -61,10 +62,11 @@ import { AppIcon } from '@/components/feature/AppIcon';
 
 type Tab = 'overview' | 'schedule' | 'components' | 'ksbs' | 'achievement' | 'teams';
 
-function moduleBuilderUrl(catalogueId: string, programmeId: string) {
+function moduleBuilderUrl(catalogueId: string, programmeId: string, programmeName = '') {
   const params = new URLSearchParams();
   if (catalogueId) params.set('module', catalogueId);
   if (programmeId) params.set('programme', programmeId);
+  if (programmeName) params.set('programmeName', programmeName);
   const query = params.toString();
   return `/curriculum/module-builder${query ? `?${query}` : ''}`;
 }
@@ -117,6 +119,10 @@ export default function ModuleWorkspacePage() {
   // this page opens it, it does not hold a second copy of those fields.
   const [moduleDrawerOpen, setModuleDrawerOpen] = useState(false);
   const module = useMemo(() => findModule(modules, id), [id, modules]);
+  const moduleDisplayName = cleanText(module?.name)
+    || cleanText(structure?.title)
+    || cleanText(searchParams.get('moduleName'))
+    || 'Module';
   const catalogueId = useMemo(
     () => (module ? moduleIdentity(module) : cleanText(id)),
     [id, module],
@@ -390,8 +396,9 @@ export default function ModuleWorkspacePage() {
       roleLabel="Curriculum Designer"
       navItems={curriculumNavItems}
       workspaceLabel="Curriculum Studio"
-      pageTitle={module?.name || 'Module'}
+      pageTitle={moduleDisplayName}
       pageSubtitle={context ? `${context.programmeName} / ${context.cohortName} / ${context.groupName}` : 'Loading module'}
+      breadcrumbCurrentLabel={`Modules — ${moduleDisplayName}`}
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
@@ -402,11 +409,11 @@ export default function ModuleWorkspacePage() {
           breadcrumbs={[
             { label: 'Curriculum', href: '/workspace/curriculum' },
             { label: 'Module Builder', href: '/curriculum/module-builder' },
-            ...(context?.groupId ? [{ label: context.groupName, href: `/curriculum/groups/${encodeURIComponent(context.groupId)}` }] : []),
-            { label: module?.name || id },
+            ...(context?.groupId ? [{ label: context.groupName, href: namedCurriculumWorkspacePath('groups', context.groupId, context.groupName) }] : []),
+            { label: moduleDisplayName },
           ]}
           eyebrow="Module"
-          title={module?.name || 'Loading…'}
+          title={moduleDisplayName}
           subtitle={context ? `${context.programmeName} / ${context.cohortName} / ${context.groupName}` : ''}
           accentColor={module?.color}
           dense
@@ -462,7 +469,7 @@ export default function ModuleWorkspacePage() {
               <DetailRow
                 label="Group"
                 value={context?.groupId ? (
-                  <Link to={`/curriculum/groups/${encodeURIComponent(context.groupId)}`} className="text-primary-700 hover:underline">
+                  <Link to={namedCurriculumWorkspacePath('groups', context.groupId, context.groupName)} className="text-primary-700 hover:underline">
                     {context.groupName}
                   </Link>
                 ) : cleanText(context?.groupName, '—')}
@@ -601,7 +608,7 @@ export default function ModuleWorkspacePage() {
             description="Component authoring lives in the Module Builder — this is the same content, read-only."
             actions={(
               <Link
-                to={moduleBuilderUrl(catalogueId, context?.programmeId || '')}
+                to={moduleBuilderUrl(catalogueId, context?.programmeId || '', context?.programmeName || '')}
                 className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700"
               >
                 <AppIcon className="ri-edit-line text-sm"></AppIcon>
@@ -657,7 +664,7 @@ export default function ModuleWorkspacePage() {
               description="Mapped in the Module Builder against the programme's KSB source."
               actions={(
                 <Link
-                  to={moduleBuilderUrl(catalogueId, context?.programmeId || '')}
+                  to={moduleBuilderUrl(catalogueId, context?.programmeId || '', context?.programmeName || '')}
                   className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
                 >
                   <AppIcon className="ri-edit-line text-sm"></AppIcon>

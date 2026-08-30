@@ -66,9 +66,11 @@ export function SlideDeckViewer({ src, title, fallback }: SlideDeckViewerProps) 
       />
     );
   }
-  if (!slideCount) return <>{fallback('This deck has no slides to show.')}</>;
+  if (!slideCount) return <>{fallback('This document has no pages to show.')}</>;
 
   const slide = deck.slides[Math.min(index, slideCount - 1)];
+  // A rendered PDF is pages; a deck is slides. Same component either way.
+  const unit = deck.unit === 'page' ? 'Page' : 'Slide';
   return (
     <div>
       {/* Arrow keys page through the deck once the viewer has focus — a global
@@ -76,7 +78,7 @@ export function SlideDeckViewer({ src, title, fallback }: SlideDeckViewerProps) 
       <div
         tabIndex={0}
         role="group"
-        aria-label={`${title}: slide ${slide.number} of ${slideCount}`}
+        aria-label={`${title}: ${unit.toLowerCase()} ${slide.number} of ${slideCount}`}
         onKeyDown={event => {
           if (event.key === 'ArrowRight' || event.key === 'PageDown') { step(1); event.preventDefault(); }
           if (event.key === 'ArrowLeft' || event.key === 'PageUp') { step(-1); event.preventDefault(); }
@@ -85,6 +87,13 @@ export function SlideDeckViewer({ src, title, fallback }: SlideDeckViewerProps) 
       >
         <SlideStage slide={slide} widthPx={deck.slideWidthPx} heightPx={deck.slideHeightPx} />
       </div>
+
+      {deck.truncated && deck.totalPages && (
+        <p className="mt-3 rounded-lg border border-background-200 bg-background-50 p-2.5 text-[11px] text-foreground-500">
+          Showing the first {slideCount} of {deck.totalPages} pages. Open or download the
+          file below to read the rest.
+        </p>
+      )}
 
       {deck.sourceMissing && (
         <p className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
@@ -103,7 +112,7 @@ export function SlideDeckViewer({ src, title, fallback }: SlideDeckViewerProps) 
             onClick={() => step(-1)}
             disabled={index === 0}
             className="w-9 h-9 rounded-lg border border-background-300 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:hover:bg-transparent"
-            aria-label="Previous slide"
+            aria-label={`Previous ${unit.toLowerCase()}`}
           >
             <AppIcon className="ri-arrow-left-s-line text-lg" />
           </button>
@@ -112,13 +121,13 @@ export function SlideDeckViewer({ src, title, fallback }: SlideDeckViewerProps) 
             onClick={() => step(1)}
             disabled={index >= slideCount - 1}
             className="w-9 h-9 rounded-lg border border-background-300 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:hover:bg-transparent"
-            aria-label="Next slide"
+            aria-label={`Next ${unit.toLowerCase()}`}
           >
             <AppIcon className="ri-arrow-right-s-line text-lg" />
           </button>
         </div>
         <p className="text-xs font-semibold text-foreground-600" aria-live="polite">
-          Slide {slide.number} of {slideCount}
+          {unit} {slide.number} of {slideCount}
         </p>
         {slide.notes && (
           <button
@@ -138,31 +147,17 @@ export function SlideDeckViewer({ src, title, fallback }: SlideDeckViewerProps) 
         </p>
       )}
 
-      {/* A strip of slide numbers beats scrubbing with the arrows on a long deck. */}
-      {slideCount > 1 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {deck.slides.map((entry, entryIndex) => (
-            <button
-              key={entry.number}
-              type="button"
-              onClick={() => setIndex(entryIndex)}
-              aria-current={entryIndex === index}
-              className={`h-7 min-w-7 rounded-md px-1.5 text-[11px] font-semibold transition-colors ${
-                entryIndex === index
-                  ? 'bg-orange-500 text-white'
-                  : 'border border-background-300 text-foreground-500 hover:bg-background-100'
-              }`}
-            >
-              {entry.number}
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
 
-/** One slide, drawn at its real size and scaled to fit the container width. */
+/** One slide or page, drawn at its real size and scaled to fit the frame.
+ *
+ * The frame keeps the document's aspect ratio but is capped to the window, so a
+ * portrait A4 page on a wide card does not become taller than the screen — the
+ * reader would land in the middle of a page whose top they cannot see. Because
+ * the cap can make the frame shorter than the ratio asks for, the scale fits
+ * BOTH dimensions and the stage is centred in whatever room is left. */
 function SlideStage({ slide, widthPx, heightPx }: { slide: Slide; widthPx: number; heightPx: number }) {
   const frameRef = useRef<HTMLDivElement | null>(null);
   const [scale, setScale] = useState(0);
@@ -170,22 +165,33 @@ function SlideStage({ slide, widthPx, heightPx }: { slide: Slide; widthPx: numbe
   useLayoutEffect(() => {
     const frame = frameRef.current;
     if (!frame) return;
-    const measure = () => setScale(frame.clientWidth / widthPx);
+    const measure = () => {
+      const { clientWidth, clientHeight } = frame;
+      if (!clientWidth || !clientHeight) return;
+      setScale(Math.min(clientWidth / widthPx, clientHeight / heightPx));
+    };
     measure();
     // ResizeObserver is absent in jsdom, so tests fall back to the one measure.
     if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(measure);
     observer.observe(frame);
-    return () => observer.disconnect();
-  }, [widthPx]);
+    // The cap is in viewport units, so a window resize changes the frame even
+    // when the card's own width has not moved.
+    window.addEventListener('resize', measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [widthPx, heightPx]);
 
   const background = slide.background ?? {};
   return (
     <div
       ref={frameRef}
-      className="relative w-full overflow-hidden rounded-xl border border-background-300"
+      className="relative flex w-full items-center justify-center overflow-hidden rounded-xl border border-background-300"
       style={{
         aspectRatio: `${widthPx} / ${heightPx}`,
+        maxHeight: 'calc(100vh - 14rem)',
         backgroundColor: background.color || '#ffffff',
         backgroundImage: background.image ? `url(${background.image})` : undefined,
         backgroundSize: 'cover',
@@ -194,10 +200,14 @@ function SlideStage({ slide, widthPx, heightPx }: { slide: Slide; widthPx: numbe
     >
       <div
         style={{
+          position: 'relative',
           width: widthPx,
           height: heightPx,
+          flex: 'none',
           transform: `scale(${scale})`,
-          transformOrigin: 'top left',
+          // Centred rather than top-left, so the leftover room from fitting the
+          // shorter dimension is split evenly.
+          transformOrigin: 'center',
           // Until the frame has been measured the stage would flash at full
           // size, overflowing the card.
           visibility: scale ? 'visible' : 'hidden',

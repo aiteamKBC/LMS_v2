@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import shutil
 import tempfile
+from threading import Lock
 from pathlib import Path
 
 from django.conf import settings
@@ -31,6 +32,16 @@ from django.core.files.storage import default_storage
 from learner_api import evidence_storage
 
 logger = logging.getLogger(__name__)
+
+# The current storage connection times out on one multi-megabyte Put Blob
+# request. Curriculum authoring files are capped at 5 MB, so 256 KB blocks keep
+# each socket write short while still allowing two blocks to upload together.
+CURRICULUM_UPLOAD_BLOCK_BYTES = 256 * 1024
+CURRICULUM_UPLOAD_ATTEMPTS = 3
+CURRICULUM_AZURE_TIMEOUT_SECONDS = 30
+
+_ready_containers = set()
+_ready_containers_lock = Lock()
 
 #: Prefix of the URL an upload is recorded under, unchanged by where bytes live.
 UPLOAD_URL_PREFIX = '/curriculum_api/curriculum/uploads/'
@@ -49,10 +60,28 @@ def ensure_container() -> None:
     """Create the container if it is not there yet. Safe to call repeatedly."""
     if not azure_enabled():
         return
-    client = evidence_storage._service_client().get_container_client(container_name())
-    if not client.exists():
-        client.create_container()
-        logger.info('Created Azure container %s for curriculum uploads', container_name())
+    key = (settings.AZURE_STORAGE_ACCOUNT, container_name())
+    if key in _ready_containers:
+        return
+    with _ready_containers_lock:
+        if key in _ready_containers:
+            return
+        client = evidence_storage._service_client(retry_total=1).get_container_client(container_name())
+        request_options = {
+            'connection_timeout': CURRICULUM_AZURE_TIMEOUT_SECONDS,
+            'read_timeout': CURRICULUM_AZURE_TIMEOUT_SECONDS,
+        }
+        if not client.exists(**request_options):
+            try:
+                client.create_container(**request_options)
+                logger.info('Created Azure container %s for curriculum uploads', container_name())
+            except Exception:
+                # A second process may have created it between exists() and
+                # create_container(). Confirm that before treating it as a
+                # storage failure.
+                if not client.exists(**request_options):
+                    raise
+        _ready_containers.add(key)
 
 
 def blob_name_for(relative_path) -> str:
@@ -90,13 +119,32 @@ def store(file_obj, relative_path, content_type='') -> str:
     """
     if not azure_enabled():
         return default_storage.save(relative_path, file_obj)
-    ensure_container()
-    if hasattr(file_obj, 'seek'):
-        file_obj.seek(0)
-    evidence_storage.upload_blob(
-        file_obj, container_name(), blob_name_for(relative_path), content_type, overwrite=False,
-    )
-    return relative_path
+    last_error = None
+    for attempt in range(1, CURRICULUM_UPLOAD_ATTEMPTS + 1):
+        try:
+            ensure_container()
+            if hasattr(file_obj, 'seek'):
+                file_obj.seek(0)
+            evidence_storage.upload_blob(
+                file_obj,
+                container_name(),
+                blob_name_for(relative_path),
+                content_type,
+                # The name is unique to this request. Overwrite makes a retry
+                # safe when Azure stored the bytes but its response was lost.
+                overwrite=True,
+                upload_block_bytes=CURRICULUM_UPLOAD_BLOCK_BYTES,
+                max_concurrency=1,
+                retry_total=1,
+            )
+            return relative_path
+        except Exception as error:  # noqa: BLE001 - retried, then reported
+            last_error = error
+            logger.warning(
+                'Curriculum upload attempt %s/%s failed for %s: %s',
+                attempt, CURRICULUM_UPLOAD_ATTEMPTS, relative_path, error,
+            )
+    raise last_error
 
 
 def exists(relative_path) -> bool:
@@ -217,6 +265,23 @@ def delete(relative_path) -> None:
 def upload_url(relative_path) -> str:
     """The URL an upload is recorded under, whatever holds its bytes."""
     return UPLOAD_URL_PREFIX + blob_name_for(relative_path)
+
+
+def signed_read_url(relative_path) -> str:
+    """A short-lived direct Azure URL for a stored upload, or ``''``.
+
+    Most callers should keep using :func:`upload_url`, which streams the bytes
+    through the LMS and never exposes storage credentials.  Office Online is
+    the exception: its servers must fetch a DOCX/XLSX/PPTX themselves, so the
+    iframe preview page hands Microsoft a read-only SAS URL that expires using
+    the normal evidence-storage TTL.
+    """
+    if not azure_enabled():
+        return ''
+    blob_name = blob_name_for(relative_path)
+    if not evidence_storage.blob_exists(container_name(), blob_name):
+        return ''
+    return evidence_storage.get_read_sas(container_name(), blob_name)
 
 
 #: Bulk uploads are big and the link is shared with other transfers, so they get

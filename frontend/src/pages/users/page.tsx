@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useEffect } from 'react';
+import { useMemo, useRef, useState, useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -9,7 +9,7 @@ import { fetchStaffUsers, type StaffUserRow } from '@/api/staffUsers';
 import { fetchProgrammes, fetchCohorts, fetchGroups } from '@/api/curriculum';
 import { listEmployers, type EmployerRow } from '@/api/employers';
 import type { UserListRow, UsersFilter } from './types';
-import { StatusBadge, Pagination, Hero, StatCard, inputClass, btnPrimary, btnSecondary } from './components/ui';
+import { StatusBadge, Pagination, inputClass, btnGold, btnSecondary } from './components/ui';
 import { CreateUserModal } from './components/CreateUserModal';
 import { CreateStaffModal } from './components/CreateStaffModal';
 import { CreateEmployerModal } from './components/CreateEmployerModal';
@@ -37,6 +37,7 @@ const SHIFT_STATUSES: string[] = ['Active', 'On break'];
  * union and narrows on `source === 'staff'`.
  */
 type DirectoryRow = UserListRow & Partial<StaffUserRow> & { employer?: EmployerRow };
+type SummaryFilter = 'all' | 'learners' | 'admins' | 'employers' | 'active';
 
 /**
  * An employer contact, shaped like a UserListRow so the directory can list them
@@ -89,7 +90,7 @@ function MultiSelect({ label, placeholder, options, selected, onChange, disabled
   const toggle = (opt: string) => onChange(selected.includes(opt) ? selected.filter((s) => s !== opt) : [...selected, opt]);
   return (
     <div>
-      <label className="block text-[11px] uppercase tracking-wider font-medium text-foreground-500 mb-1">{label}</label>
+      <label className="block text-[12px] font-semibold text-foreground-800 mb-1">{label}</label>
       <div className="relative" ref={ref}>
         <button
           type="button"
@@ -115,11 +116,11 @@ function MultiSelect({ label, placeholder, options, selected, onChange, disabled
   );
 }
 
-function TextFilter({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+function TextFilter({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
   return (
     <div>
-      <label className="block text-[11px] uppercase tracking-wider font-medium text-foreground-500 mb-1">{label}</label>
-      <input className={inputClass} value={value} onChange={(e) => onChange(e.target.value)} />
+      <label className="block text-[12px] font-semibold text-foreground-800 mb-1">{label}</label>
+      <input className={inputClass} placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} />
     </div>
   );
 }
@@ -127,12 +128,67 @@ function TextFilter({ label, value, onChange }: { label: string; value: string; 
 function SelectFilter({ label, value, options, onChange, disabled = false }: { label: string; value: string; options: { value: string; label: string }[]; onChange: (v: string) => void; disabled?: boolean }) {
   return (
     <div>
-      <label className="block text-[11px] uppercase tracking-wider font-medium text-foreground-500 mb-1">{label}</label>
+      <label className="block text-[12px] font-semibold text-foreground-800 mb-1">{label}</label>
       <select className={`${inputClass} ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`} disabled={disabled} value={value} onChange={(e) => onChange(e.target.value)}>
         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
     </div>
   );
+}
+
+function UserMetricCard({ icon, label, value, detail, tone, onClick, active = false }: { icon: string; label: string; value: ReactNode; detail: string; tone: 'primary' | 'amber' | 'violet' | 'emerald'; onClick?: () => void; active?: boolean }) {
+  const iconStyles = {
+    primary: 'border-white/30 bg-gradient-to-br from-[#d8c9ff] via-[#8b5cf6] to-[#5420a8] text-white shadow-md shadow-primary-500/25',
+    amber: 'border-white/30 bg-gradient-to-br from-[#f8dda0] via-[#d49a38] to-[#b27715] text-white shadow-md shadow-[#b27715]/25',
+    violet: 'border-white/30 bg-gradient-to-br from-[#ddd6fe] via-[#a78bfa] to-[#6d28d9] text-white shadow-md shadow-violet-500/25',
+    emerald: 'border-white/30 bg-gradient-to-br from-[#b9f6db] via-[#34d399] to-[#059669] text-white shadow-md shadow-emerald-500/25',
+  }[tone];
+
+  const surface = `flex min-h-[132px] items-start gap-4 rounded-2xl border border-primary-100/70 bg-white/90 p-5 text-left shadow-sm transition ${active ? 'ring-2 ring-primary-300' : 'hover:-translate-y-0.5 hover:shadow-md'} ${onClick ? 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400' : ''}`;
+  const content = (
+    <>
+      <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border text-[20px] ring-1 ring-black/5 ${iconStyles}`}>
+        <i className={icon} />
+      </span>
+      <div className="min-w-0">
+        <p className="text-[28px] font-semibold leading-none tracking-tight text-foreground-950">{value}</p>
+        <p className="mt-2 text-[13px] font-semibold text-foreground-800">{label}</p>
+        <p className="mt-1 text-[12px] text-foreground-500">{detail}</p>
+      </div>
+    </>
+  );
+
+  return onClick ? <button type="button" onClick={onClick} aria-pressed={active} className={surface}>{content}</button> : <div className={surface}>{content}</div>;
+}
+
+function ActiveProgrammeCard({ active, total, onClick, selected = false }: { active: number; total: number; onClick?: () => void; selected?: boolean }) {
+  const percentage = total > 0 ? Math.round((active / total) * 100) : 0;
+
+  const content = (
+    <>
+      <div className="min-w-0">
+        <p className="text-[13px] font-semibold text-foreground-800">Active on programme</p>
+        <p className="mt-3 text-[28px] font-semibold leading-none tracking-tight text-foreground-950">{active}</p>
+        <p className="mt-1 text-[12px] text-foreground-500">{percentage}% of learners</p>
+      </div>
+      <div className="flex shrink-0 items-center gap-5">
+        <svg viewBox="0 0 108 42" className="hidden h-12 w-28 text-emerald-500 sm:block" aria-hidden="true">
+          <path d="M2 24 C12 17, 18 17, 27 24 S40 37, 49 25 S64 19, 73 28 S87 33, 106 29" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+        </svg>
+        <div
+          className="flex h-[76px] w-[76px] items-center justify-center rounded-full"
+          style={{ background: `conic-gradient(#35b98a ${percentage}%, #ebeaf1 0)` }}
+        >
+          <div className="flex h-[58px] w-[58px] items-center justify-center rounded-full bg-white text-[16px] font-semibold text-foreground-700">
+            {percentage}%
+          </div>
+          </div>
+        </div>
+    </>
+  );
+
+  const surface = `flex min-h-[132px] items-center justify-between gap-4 rounded-2xl border border-primary-100/70 bg-white/90 p-5 text-left shadow-sm transition ${selected ? 'ring-2 ring-primary-300' : 'hover:-translate-y-0.5 hover:shadow-md'} ${onClick ? 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400' : ''}`;
+  return onClick ? <button type="button" onClick={onClick} aria-pressed={selected} className={surface}>{content}</button> : <div className={surface}>{content}</div>;
 }
 
 /** True when a row value doesn't match a chosen filter value, ignoring case/padding. */
@@ -181,6 +237,7 @@ export default function UsersListPage() {
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
 
   const [rows, setRows] = useState<DirectoryRow[]>([]);
+  const [summaryFilter, setSummaryFilter] = useState<SummaryFilter>('all');
   // The curriculum lookups behind the programme -> cohort -> group filters. They
   // come from curriculum.cohort_authoring_details, the same source the create
   // form picks from, so a filter can only offer combinations that really exist.
@@ -327,9 +384,18 @@ export default function UsersListPage() {
     [rows],
   );
 
-  const filtered = useMemo(() => rows.filter((r) => matches(r, applied)), [rows, applied]);
+  const filtered = useMemo(() => rows.filter((r) => {
+    if (!matches(r, applied)) return false;
+    if (summaryFilter === 'learners') return r.type === 'User';
+    if (summaryFilter === 'admins') return r.source === 'staff';
+    if (summaryFilter === 'employers') return r.source === 'employer';
+    if (summaryFilter === 'active') return r.programmeStatus === 'Active';
+    return true;
+  }), [rows, applied, summaryFilter]);
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const showingStart = filtered.length ? (page - 1) * PAGE_SIZE + 1 : 0;
+  const showingEnd = filtered.length ? Math.min(page * PAGE_SIZE, filtered.length) : 0;
 
   const learners = rows.filter((r) => r.type === 'User').length;
   // Counted by source, not "not a learner": employers are in the table too now,
@@ -348,7 +414,8 @@ export default function UsersListPage() {
       ...patch,
     }));
   const search = () => { setApplied(draft); setPage(1); };
-  const reset = () => { setDraft(EMPTY_FILTER); setApplied(EMPTY_FILTER); setPage(1); };
+  const reset = () => { setDraft(EMPTY_FILTER); setApplied(EMPTY_FILTER); setSummaryFilter('all'); setPage(1); };
+  const selectSummary = (next: SummaryFilter) => { setSummaryFilter(next); setPage(1); };
   // Commercial and apprenticeship ids come from different tables and overlap,
   // so every row action carries the row's source.
   const q = (row: UserListRow) => (row.source === 'commercial' ? '?source=commercial' : '');
@@ -395,57 +462,68 @@ export default function UsersListPage() {
   return (
     <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Users" pageSubtitle="Directory of learners and administrators" userName="Enrolment Officer" userRole="Enrolment Officer">
       <div className="p-6 space-y-6">
-        {/* Hero */}
-        <div className="animate-fade-in-up">
-          <Hero
-            icon="ri-group-line"
-            title="User Management"
-            subtitle={<><strong>{rows.length} users</strong> — {learners} learners, {admins} admins, {employerCount} employers, {active} active on programme.</>}
-            right={
-              <div ref={createRef}>
-                <button
-                  ref={createBtnRef}
-                  onClick={() => setCreateOpen((o) => !o)}
-                  className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-white text-primary-700 rounded-xl text-[13px] font-semibold hover:bg-white/90 transition-smooth cursor-pointer shadow-lg shadow-black/10"
+        <div
+          className="relative overflow-visible rounded-2xl border border-primary-100/80 p-5 shadow-sm sm:p-7"
+          style={{
+            backgroundColor: '#f8f6ff',
+            backgroundImage: 'radial-gradient(circle at 82% 18%, rgba(126, 87, 220, 0.12), transparent 28%), repeating-radial-gradient(ellipse at 78% 10%, transparent 0 18px, rgba(126, 87, 220, 0.07) 19px 21px, transparent 22px 34px)',
+          }}
+        >
+          <div className="flex flex-col items-start justify-between gap-5 sm:flex-row sm:items-center">
+            <div>
+              <h1 className="text-[25px] font-semibold tracking-tight text-foreground-950 sm:text-[28px]">User Management</h1>
+              <p className="mt-1 text-[13px] text-foreground-500">Manage learners, administrators and employers across all programmes.</p>
+            </div>
+            <div ref={createRef} className="relative">
+              <button
+                type="button"
+                ref={createBtnRef}
+                onClick={() => setCreateOpen((o) => !o)}
+                className={btnGold}
+              >
+                <i className="ri-add-line" />Create user<i className="ri-arrow-down-s-line" />
+              </button>
+              {createOpen && menuPos && createPortal(
+                <div
+                  ref={menuRef}
+                  style={{ top: menuPos.top, right: menuPos.right }}
+                  className="fixed z-[200] w-56 rounded-xl border border-foreground-200 bg-background-50 py-1.5 shadow-xl"
                 >
-                  <i className="ri-add-line" />Create<i className="ri-arrow-down-s-line" />
-                </button>
-                {/* Rendered into document.body: the Hero banner and the stats
-                    cards below it both create stacking contexts that paint over
-                    an in-flow menu no matter its z-index. A portal sidesteps
-                    that, so the menu is positioned from the button's rect. */}
-                {createOpen && menuPos && createPortal(
-                  <div
-                    ref={menuRef}
-                    style={{ top: menuPos.top, right: menuPos.right }}
-                    className="fixed w-56 bg-background-50 border border-foreground-200 rounded-xl shadow-xl py-1.5 z-[200]"
-                  >
-                    <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateModalOpen(true); }}><i className="ri-user-add-line mr-2 text-foreground-400" />Create user</button>
-                    <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateAdminOpen(true); }}><i className="ri-shield-user-line mr-2 text-foreground-400" />Create admin</button>
-                    <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateTutorOpen(true); }}><i className="ri-presentation-line mr-2 text-foreground-400" />Create tutor</button>
-                    <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateEmployerOpen(true); }}><i className="ri-briefcase-line mr-2 text-foreground-400" />Create employer profile</button>
-                    <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateOrgOpen(true); }}><i className="ri-building-line mr-2 text-foreground-400" />Create organisation profile</button>
-                  </div>,
-                  document.body
-                )}
-              </div>
-            }
-          />
-        </div>
+                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateModalOpen(true); }}><i className="ri-user-add-line mr-2 text-foreground-400" />Create user</button>
+                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateAdminOpen(true); }}><i className="ri-shield-user-line mr-2 text-foreground-400" />Create admin</button>
+                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateTutorOpen(true); }}><i className="ri-presentation-line mr-2 text-foreground-400" />Create tutor</button>
+                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateEmployerOpen(true); }}><i className="ri-briefcase-line mr-2 text-foreground-400" />Create employer profile</button>
+                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateOrgOpen(true); }}><i className="ri-building-line mr-2 text-foreground-400" />Create organisation profile</button>
+                </div>,
+                document.body,
+              )}
+            </div>
+          </div>
 
-        {/* Stats strip */}
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 stagger-children">
-          <StatCard icon="ri-group-line" label="Total users" value={rows.length} tint="primary" />
-          <StatCard icon="ri-graduation-cap-line" label="Learners" value={learners} tint="accent" />
-          <StatCard icon="ri-shield-user-line" label="Admins" value={admins} tint="secondary" />
-          <StatCard icon="ri-briefcase-line" label="Employers" value={employerCount} tint="amber" />
-          <StatCard icon="ri-play-circle-line" label="Active on programme" value={active} tint="emerald" />
+          <div className="mt-7 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[repeat(4,minmax(0,1fr))_1.45fr]">
+            <UserMetricCard icon="ri-group-line" label="Total users" value={rows.length} detail="Across all roles" tone="primary" active={summaryFilter === 'all'} onClick={() => selectSummary('all')} />
+            <UserMetricCard icon="ri-graduation-cap-line" label="Learners" value={learners} detail={`${rows.length ? Math.round((learners / rows.length) * 100) : 0}% of total`} tone="amber" active={summaryFilter === 'learners'} onClick={() => selectSummary('learners')} />
+            <UserMetricCard icon="ri-user-line" label="Admins" value={admins} detail={`${rows.length ? Math.round((admins / rows.length) * 100) : 0}% of total`} tone="violet" active={summaryFilter === 'admins'} onClick={() => selectSummary('admins')} />
+            <UserMetricCard icon="ri-briefcase-line" label="Employers" value={employerCount} detail={`${rows.length ? Math.round((employerCount / rows.length) * 100) : 0}% of total`} tone="amber" active={summaryFilter === 'employers'} onClick={() => selectSummary('employers')} />
+            <ActiveProgrammeCard active={active} total={rows.length} selected={summaryFilter === 'active'} onClick={() => selectSummary('active')} />
+          </div>
         </div>
 
         {/* Filter card */}
-        <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5 card-premium">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <TextFilter label="User name" value={draft.userName ?? ''} onChange={(v) => set({ userName: v })} />
+        <div className="overflow-hidden rounded-2xl border border-foreground-100 bg-background-50 shadow-sm">
+          <div className="flex items-center justify-between gap-4 px-5 py-4">
+            <div className="flex items-center gap-3">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary-600"><i className="ri-filter-3-line" /></span>
+              <div>
+                <h2 className="text-[14px] font-semibold text-foreground-900">Filter users</h2>
+                <p className="mt-0.5 text-[11px] text-foreground-400">Use filters to refine the user list.</p>
+              </div>
+            </div>
+            <button type="button" className="hidden items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700 sm:inline-flex"><i className="ri-star-line" />Save view</button>
+          </div>
+          <div className="border-t border-foreground-100 px-5 py-5">
+          <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
+            <TextFilter label="Search" placeholder="Search by name or email..." value={draft.userName ?? ''} onChange={(v) => set({ userName: v })} />
             {/* Programme -> cohort -> group, same gate as the Cohort filter: a
                 group only means something inside a programme. */}
             <MultiSelect
@@ -462,7 +540,7 @@ export default function UsersListPage() {
               onChange={(v) => set({ groups: v })}
               disabled={!draft.programme}
             />
-            <TextFilter label="Email" value={draft.email ?? ''} onChange={(v) => set({ email: v })} />
+            <TextFilter label="Email" placeholder="Enter email" value={draft.email ?? ''} onChange={(v) => set({ email: v })} />
             <MultiSelect label="Status" placeholder="Select statuses" options={STATUS_OPTIONS} selected={draft.statuses ?? []} onChange={(v) => set({ statuses: v })} />
             <SelectFilter label="Type" value={draft.type ?? 'all'} onChange={(v) => set({ type: v as UsersFilter['type'] })} options={[{ value: 'all', label: '--All--' }, ...typeOptions.map((t) => ({ value: t, label: t }))]} />
             <SelectFilter label="Programme" value={draft.programme ?? ''} onChange={(v) => set({ programme: v })} options={[{ value: '', label: '--All--' }, ...programmeOptions.map((p) => ({ value: p, label: p }))]} />
@@ -482,14 +560,27 @@ export default function UsersListPage() {
             <SelectFilter label="Case owner" value={draft.caseOwner ?? 'any'} onChange={(v) => set({ caseOwner: v })} options={[{ value: 'any', label: 'Any' }, ...CASE_OWNER_OPTIONS.map((c) => ({ value: c, label: c }))]} />
             <TextFilter label="Reference number" value={draft.referenceNumber ?? ''} onChange={(v) => set({ referenceNumber: v })} />
           </div>
-          <div className="flex items-center justify-end gap-3 mt-4">
-            <button className={btnSecondary} onClick={reset}><i className="ri-refresh-line" />Reset</button>
-            <button className={btnPrimary} onClick={search}><i className="ri-search-line" />Search</button>
+          <div className="mt-5 flex items-center justify-end gap-4 lg:col-span-4">
+            <button type="button" className="text-[12px] font-medium text-foreground-600 transition hover:text-primary-700" onClick={reset}>Clear all</button>
+            <button type="button" className={btnGold} onClick={search}><i className="ri-filter-3-line" />Apply filters</button>
+          </div>
           </div>
         </div>
 
         {/* Results table */}
-        <div className="bg-background-50 rounded-2xl border border-foreground-200/60 overflow-hidden card-premium">
+        <div className="overflow-hidden rounded-2xl border border-foreground-100 bg-background-50 shadow-sm">
+          <div className="flex items-center justify-between gap-4 px-5 py-4">
+            <div className="flex items-center gap-3">
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary-600"><i className="ri-group-line" /></span>
+              <div className="flex items-center gap-2">
+                <h2 className="text-[15px] font-semibold text-foreground-900">Users ({rows.length})</h2>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" className="hidden items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700 sm:inline-flex"><i className="ri-layout-column-line" />Columns</button>
+              <button type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700"><i className="ri-download-line" />Export<i className="ri-arrow-down-s-line" /></button>
+            </div>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-[13px]">
               <thead>
@@ -560,10 +651,10 @@ export default function UsersListPage() {
                           <button
                             onClick={() => setPlanFor(row)}
                             title={`${row.hasLearningPlan ? 'Edit' : 'Add'} ${row.name}'s learning plan`}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
+                            className="inline-flex max-w-full items-center gap-1 rounded-lg border border-foreground-200 px-2 py-1 text-[11px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
                           >
-                            <i className={`ri-${row.hasLearningPlan ? 'edit' : 'add'}-line`} />
-                            {row.hasLearningPlan ? 'Edit learning plan' : 'Add learning plan'}
+                            <i className={`ri-${row.hasLearningPlan ? 'edit' : 'add'}-line shrink-0 text-[12px]`} />
+                            <span className="truncate">{row.hasLearningPlan ? 'Edit learning plan' : 'Add learning plan'}</span>
                           </button>
                         ) : isLearner && row.learningPlan ? (
                           // Past planning — the plan is fixed, so this opens the
@@ -637,13 +728,16 @@ export default function UsersListPage() {
               </tbody>
             </table>
           </div>
-          <div className="border-t border-foreground-100"><Pagination page={page} totalPages={totalPages} onChange={setPage} /></div>
-        </div>
-
-        <div className="flex items-center justify-center gap-4 text-[11px] text-foreground-400">
-          <a href="#" className="hover:text-primary-600">Export</a>
-          <span className="w-1 h-1 rounded-full bg-foreground-200" />
-          <a href="#" className="hover:text-primary-600">Column settings</a>
+          <div className="flex flex-col items-center justify-between gap-3 border-t border-foreground-100 px-5 py-2.5 sm:flex-row">
+            <p className="text-[11px] text-foreground-500">Showing {showingStart} to {showingEnd} of {filtered.length} users</p>
+            <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+            <label className="hidden items-center gap-2 text-[11px] text-foreground-500 sm:flex">
+              Rows per page
+              <select className="rounded-lg border border-foreground-200 bg-background-50 px-2 py-1 text-[11px] text-foreground-700" value={PAGE_SIZE} aria-label="Rows per page" onChange={() => undefined}>
+                <option value={PAGE_SIZE}>{PAGE_SIZE}</option>
+              </select>
+            </label>
+          </div>
         </div>
       </div>
 

@@ -52,7 +52,7 @@ export const StatusBadge = memo(function StatusBadge({
   return (
     <span
       className={cn(
-        'inline-flex shrink-0 items-center whitespace-nowrap rounded-md border font-semibold',
+        'inline-flex shrink-0 items-center whitespace-nowrap rounded-lg border font-semibold',
         style.bg,
         style.border,
         style.text,

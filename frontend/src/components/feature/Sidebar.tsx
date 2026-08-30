@@ -93,6 +93,12 @@ export interface SidebarNavItem {
   icon: string;
   /** Leaf destination. Navigation groups intentionally omit it. */
   href?: string;
+  /**
+   * Existing routes that belong to this destination without changing their
+   * public URL. Hub-style navigation uses these aliases to keep one of the five
+   * primary destinations highlighted while a person works in a deeper tool.
+   */
+  matchPaths?: string[];
   badge?: number;
   comingSoon?: boolean;
   statusDot?: 'red' | 'amber' | 'blue' | 'green';
@@ -121,7 +127,7 @@ interface SidebarProps {
 function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   const key = `${id} ${label} ${sourceIcon}`.toLowerCase();
 
-  if (/dashboard|overview/.test(key)) return LayoutDashboard;
+  if (/dashboard|overview|\bhome\b/.test(key)) return LayoutDashboard;
   // Curriculum workspace groups get distinct icons so the sidebar is scannable.
   if (/programme\s*-?\s*design|programme-design/.test(key)) return Presentation;
   if (/curriculum\s*-?\s*builder|curriculum-builder/.test(key)) return Workflow;
@@ -209,7 +215,7 @@ function SidebarIcon({ id, label, sourceIcon, size = 18, className }: {
    ═══════════════════════════════════════════════════════ */
 
 const ROW_BASE =
-  'relative group flex items-center rounded-xl transition-colors duration-150 ' +
+  'kbc-sidebar-row relative group flex items-center rounded-xl transition-colors duration-150 ' +
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300';
 const ROW_IDLE = 'text-foreground-500 hover:bg-primary-50/70 hover:text-foreground-800';
 const ROW_ACTIVE = 'bg-primary-50 text-primary-700 font-semibold';
@@ -219,7 +225,7 @@ function ActiveMarker() {
   return (
     <span
       aria-hidden="true"
-      className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary-600"
+      className="kbc-sidebar-active-marker absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary-600"
     />
   );
 }
@@ -320,29 +326,32 @@ export function Sidebar({
     [filteredNavItems],
   );
 
-  const isActive = (href?: string) => {
+  const isActive = useCallback((href?: string, matchPaths: string[] = []) => {
     if (!href) return false;
     const [hrefPath] = href.split('?');
     const current = `${location.pathname}${location.search}`;
     if (href.includes('?')) return current === href;
     if (queryMatchedHref && hrefPath === queryMatchedHref.split('?')[0]) return false;
-    const matches = location.pathname === href || location.pathname.startsWith(href + '/');
+    const candidates = [hrefPath, ...matchPaths];
+    const matches = candidates.some(candidate => (
+      location.pathname === candidate || location.pathname.startsWith(candidate + '/')
+    ));
     if (!matches) return false;
 
     // Nested sibling routes can share a prefix (for example /learner/clubs
     // and /learner/clubs/events). Only the most specific matching item should
     // receive the active style.
-    return !navHrefs.some(candidate =>
+    return matchPaths.length > 0 || !navHrefs.some(candidate =>
       candidate.length > href.length
       && (location.pathname === candidate || location.pathname.startsWith(candidate + '/'))
     );
-  };
+  }, [location.pathname, location.search, navHrefs, queryMatchedHref]);
 
   // Keep the section containing the current route open when navigation is
   // supplied dynamically by the active role/configuration.
   useEffect(() => {
     const activeGroupIds = filteredNavItems
-      .filter(item => item.children?.some(child => isActive(child.href)))
+      .filter(item => item.children?.some(child => isActive(child.href, child.matchPaths)))
       .map(item => item.id);
     if (activeGroupIds.length === 0) return;
     setExpandedGroups(prev => {
@@ -350,7 +359,7 @@ export function Sidebar({
       activeGroupIds.forEach(id => next.add(id));
       return next.size === prev.size ? prev : next;
     });
-  }, [filteredNavItems, location.pathname, location.search]);
+  }, [filteredNavItems, isActive]);
 
   const hasChildren = (item: SidebarNavItem) => item.children && item.children.length > 0;
 
@@ -393,15 +402,15 @@ export function Sidebar({
 
   /** One panel, rendered either as the rail or expanded. */
   const panel = (variant: 'rail' | 'expanded', options?: { showPin?: boolean }) => (
-    <div className="flex h-screen w-full flex-col border-r border-foreground-100 bg-background-50">
+    <div className={`kbc-sidebar-panel kbc-sidebar-${variant} flex h-screen w-full flex-col border-r border-foreground-100 bg-background-50`}>
       {/* Header — brand, and the pin control on desktop */}
-      <div className={`flex h-14 shrink-0 items-center gap-2 border-b border-foreground-100/70 ${variant === 'rail' ? 'justify-center px-2' : 'px-3'}`}>
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-600 font-heading text-[12px] font-bold text-white">
+      <div className={`kbc-sidebar-header flex h-14 shrink-0 items-center gap-2 border-b border-foreground-100/70 ${variant === 'rail' ? 'justify-center px-2' : 'px-3'}`}>
+        <span className="kbc-sidebar-brand flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-600 font-heading text-[12px] font-bold text-white">
           KBC
         </span>
         {variant === 'expanded' && (
           <>
-            <span className="min-w-0 flex-1 truncate font-heading text-[13px] font-bold text-foreground-800">
+            <span className="kbc-sidebar-role min-w-0 flex-1 truncate font-heading text-[13px] font-bold text-foreground-800">
               {roleLabel}
             </span>
             {options?.showPin && onPinChange && (
@@ -422,7 +431,7 @@ export function Sidebar({
       </div>
 
       {/* Navigation */}
-      <nav aria-label={`${roleLabel} navigation`} className={`flex-1 overflow-y-auto overflow-x-hidden py-2.5 ${variant === 'rail' ? 'px-1.5' : 'px-2'}`}>
+      <nav aria-label={`${roleLabel} navigation`} className={`kbc-sidebar-nav flex-1 overflow-y-auto overflow-x-hidden py-2.5 ${variant === 'rail' ? 'px-1.5' : 'px-2'}`}>
         <div className={variant === 'rail' ? 'space-y-1' : 'space-y-0.5'}>
           {filteredNavItems.map(item => (
             <div key={item.id}>
@@ -513,10 +522,10 @@ function RailLabel({ children, compact }: { children: string; compact?: boolean 
 
 function RailLink({ item, isActive, compact }: {
   item: SidebarNavItem;
-  isActive: (href?: string) => boolean;
+  isActive: (href?: string, matchPaths?: string[]) => boolean;
   compact?: boolean;
 }) {
-  const active = isActive(item.href);
+  const active = isActive(item.href, item.matchPaths);
   return (
     <Link
       to={item.href ?? '#'}
@@ -525,7 +534,7 @@ function RailLink({ item, isActive, compact }: {
       className={`${ROW_BASE} ${active ? ROW_ACTIVE : ROW_IDLE} w-full flex-col justify-center gap-1 ${compact ? 'py-1.5' : 'py-2'} px-1`}
     >
       {active && <ActiveMarker />}
-      <span className="relative flex h-5 w-5 items-center justify-center">
+      <span className="kbc-sidebar-icon-well relative flex h-5 w-5 items-center justify-center">
         <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={compact ? 16 : 18} />
         {item.badge ? <RailDot className="bg-primary-500" /> : null}
         {item.statusDot && !item.badge ? <RailDot className="bg-red-500" /> : null}
@@ -546,13 +555,13 @@ function RailDot({ className }: { className: string }) {
  */
 function RailGroup({ item, isActive, isDropdownOpen, onOpen, onClose }: {
   item: SidebarNavItem;
-  isActive: (href?: string) => boolean;
+  isActive: (href?: string, matchPaths?: string[]) => boolean;
   isDropdownOpen: boolean;
   onOpen: () => void;
   onClose: () => void;
 }) {
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const anyChildActive = item.children?.some(child => isActive(child.href)) ?? false;
+  const anyChildActive = item.children?.some(child => isActive(child.href, child.matchPaths)) ?? false;
   const { hoverProps, flyout } = useFlyout({ item, isActive, isOpen: isDropdownOpen, onOpen, onClose, anchorRef: buttonRef });
 
   return (
@@ -567,7 +576,7 @@ function RailGroup({ item, isActive, isDropdownOpen, onOpen, onClose }: {
         className={`${ROW_BASE} ${anyChildActive ? ROW_ACTIVE : ROW_IDLE} w-full flex-col justify-center gap-1 px-1 py-2`}
       >
         {anyChildActive && <ActiveMarker />}
-        <span className="relative flex h-5 w-5 items-center justify-center">
+        <span className="kbc-sidebar-icon-well relative flex h-5 w-5 items-center justify-center">
           <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} />
           {item.badge ? <RailDot className="bg-primary-500" /> : null}
           {item.comingSoon && !item.badge ? <RailDot className="bg-amber-400" /> : null}
@@ -586,11 +595,11 @@ function RailGroup({ item, isActive, isDropdownOpen, onOpen, onClose }: {
 
 function ExpandedLink({ item, isActive, onNavigate, compact }: {
   item: SidebarNavItem;
-  isActive: (href?: string) => boolean;
+  isActive: (href?: string, matchPaths?: string[]) => boolean;
   onNavigate?: () => void;
   compact?: boolean;
 }) {
-  const active = isActive(item.href);
+  const active = isActive(item.href, item.matchPaths);
   return (
     <Link
       to={item.href ?? '#'}
@@ -599,7 +608,7 @@ function ExpandedLink({ item, isActive, onNavigate, compact }: {
       className={`${ROW_BASE} ${active ? ROW_ACTIVE : ROW_IDLE} gap-2.5 px-2.5 ${compact ? 'py-1.5 text-[12px]' : 'py-2 text-[13px]'}`}
     >
       {active && <ActiveMarker />}
-      <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+      <span className="kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center">
         <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={compact ? 16 : 18} />
       </span>
       <span className="min-w-0 flex-1 truncate">{item.label}</span>
@@ -619,12 +628,12 @@ function ExpandedLink({ item, isActive, onNavigate, compact }: {
  */
 function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate }: {
   item: SidebarNavItem;
-  isActive: (href?: string) => boolean;
+  isActive: (href?: string, matchPaths?: string[]) => boolean;
   isExpanded: boolean;
   onToggle: () => void;
   onNavigate?: () => void;
 }) {
-  const anyChildActive = item.children?.some(child => isActive(child.href)) ?? false;
+  const anyChildActive = item.children?.some(child => isActive(child.href, child.matchPaths)) ?? false;
 
   return (
     <div>
@@ -635,7 +644,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate }: {
         className={`${ROW_BASE} ${anyChildActive && !isExpanded ? ROW_ACTIVE : ROW_IDLE} w-full cursor-pointer gap-2.5 px-2.5 py-2 text-[13px]`}
       >
         {anyChildActive && !isExpanded && <ActiveMarker />}
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+        <span className="kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center">
           <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} />
         </span>
         <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
@@ -651,7 +660,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate }: {
       {isExpanded && item.children && (
         <div className="ml-[19px] mt-0.5 space-y-0.5 border-l border-foreground-100 pl-2">
           {item.children.map(child => {
-            const childActive = isActive(child.href);
+            const childActive = isActive(child.href, child.matchPaths);
             return (
               <Link
                 key={child.id}
@@ -660,7 +669,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate }: {
                 onClick={onNavigate}
                 className={`${ROW_BASE} ${childActive ? ROW_ACTIVE : ROW_IDLE} gap-2 px-2.5 py-1.5 text-[12.5px]`}
               >
-                <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                <span className="kbc-sidebar-icon-well kbc-sidebar-child-icon-well flex h-4 w-4 shrink-0 items-center justify-center">
                   <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={15} />
                 </span>
                 <span className="min-w-0 flex-1 truncate">{child.label}</span>
@@ -691,7 +700,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate }: {
  */
 function useFlyout({ item, isActive, isOpen, onOpen, onClose, anchorRef }: {
   item: SidebarNavItem;
-  isActive: (href?: string) => boolean;
+  isActive: (href?: string, matchPaths?: string[]) => boolean;
   isOpen: boolean;
   onOpen: () => void;
   onClose: () => void;
@@ -739,7 +748,7 @@ function useFlyout({ item, isActive, isOpen, onOpen, onClose, anchorRef }: {
   const flyout = isOpen && style ? createPortal(
     <div
       id={`dropdown-${item.id}`}
-      className="kbc-sb-flyout fixed z-[100] w-[252px] rounded-xl border border-foreground-100 bg-background-50 p-1.5 shadow-xl"
+      className="kbc-sb-flyout kbc-sidebar-flyout fixed z-[100] w-[252px] rounded-xl border border-foreground-100 bg-background-50 p-1.5 shadow-xl"
       style={{ top: style.top, left: style.left }}
       onMouseEnter={open}
       onMouseLeave={scheduleClose}
@@ -766,7 +775,7 @@ function useFlyout({ item, isActive, isOpen, onOpen, onClose, anchorRef }: {
 
       <div className="max-h-[calc(100vh-96px)] space-y-0.5 overflow-y-auto">
         {filteredChildren.map(child => {
-          const childActive = isActive(child.href);
+          const childActive = isActive(child.href, child.matchPaths);
           return (
             <Link
               key={child.id}
@@ -775,7 +784,7 @@ function useFlyout({ item, isActive, isOpen, onOpen, onClose, anchorRef }: {
               onClick={onClose}
               className={`${ROW_BASE} ${childActive ? ROW_ACTIVE : ROW_IDLE} gap-2.5 px-2.5 py-2 text-[12.5px]`}
             >
-              <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+              <span className="kbc-sidebar-icon-well kbc-sidebar-child-icon-well flex h-4 w-4 shrink-0 items-center justify-center">
                 <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={15} />
               </span>
               <span className="min-w-0 flex-1 truncate">{child.label}</span>

@@ -11,7 +11,7 @@ and reflected on, or not.
 """
 import json
 
-from django.db import DatabaseError, connections
+from django.db import DatabaseError, IntegrityError, connections
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -20,6 +20,7 @@ from .active_users import ComponentReferenceError, save_progress_record, sync_ac
 from .components import component_ksb_codes
 from .identity import learner_profile_for_source
 from .models import CommercialUser, EnrolmentUser
+from .time_tracking import TrackingSessionError, tracking_session_already_used, verify_tracking_session
 from login.permissions import learner_self_only
 
 SOURCE_MODELS = {
@@ -81,7 +82,6 @@ def submit_video_progress(request, component_id):
 
     week_title = payload.get("week")
     module_title = payload.get("module")
-    started_at = payload.get("startedAt")
     time_taken_seconds = payload.get("timeTakenSeconds")
     # KSBs are auto-mapped from the component's authored mappings rather than
     # picked by the learner (see components.component_ksb_codes). The client's
@@ -122,8 +122,24 @@ def submit_video_progress(request, component_id):
         1 for r in history if r.get("kind") == "video" and r.get("componentId") == component_id
     ) + 1
 
-    submitted_at = timezone.now().isoformat()
-    time_taken = _format_clock(time_taken_seconds)
+    submitted_at_dt = timezone.now()
+    try:
+        tracking = verify_tracking_session(
+            payload.get("trackingToken"),
+            activity_kind="video",
+            activity_id=component_id,
+            learner_kind=kind,
+            learner_id=learner_id,
+            claimed_seconds=time_taken_seconds,
+            submitted_at=submitted_at_dt,
+        )
+    except TrackingSessionError as exc:
+        return _error(str(exc), 400)
+    if tracking_session_already_used(tracking["sessionId"]):
+        return _error("This activity timing session has already been submitted.", 409)
+    started_at = tracking["startedAt"].isoformat()
+    submitted_at = submitted_at_dt.isoformat()
+    time_taken = _format_clock(tracking["verifiedSeconds"])
 
     # Slim, id-referenced record. The videoTitle/week/module NAMES are dropped —
     # the plan tree resolves them from componentId.
@@ -137,6 +153,12 @@ def submit_video_progress(request, component_id):
         "startedAt": started_at,
         "submittedAt": submitted_at,
         "timeTaken": time_taken,
+        "timeTrackingSource": tracking["source"],
+        "timeTrackingCalculation": tracking["calculation"],
+        "timeTrackingSessionId": tracking["sessionId"],
+        "claimedSeconds": tracking["claimedSeconds"],
+        "serverSessionSeconds": tracking["serverSessionSeconds"],
+        "verifiedSeconds": tracking["verifiedSeconds"],
     }
 
     if active is not None:
@@ -154,6 +176,10 @@ def submit_video_progress(request, component_id):
             save_progress_record(active, record, activity)
         except ComponentReferenceError as exc:
             return _error(str(exc), 400)
+        except IntegrityError as exc:
+            if "learner_progress_tracking_session_uq" in str(exc):
+                return _error("This activity timing session has already been submitted.", 409)
+            return _error(f"Database error saving progress: {exc}", 502)
         except DatabaseError as exc:
             return _error(f"Database error saving progress: {exc}", 502)
 

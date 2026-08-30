@@ -2,6 +2,60 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { fetchEvidence, getEvidenceDownloadUrl, type EvidenceRecord } from '@/api/evidence';
+import { AppIcon } from '@/components/feature/AppIcon';
+
+export interface EvidencePreview {
+  file: EvidenceRecord;
+  url: string;
+}
+
+export function EvidencePreviewModal({ preview, onClose }: { preview: EvidencePreview; onClose: () => void }) {
+  const fileName = preview.file.filename.toLowerCase();
+  const isImage = /\.(png|jpe?g|gif|webp|bmp|svg)(\?|$)/i.test(fileName);
+  const isVideo = /\.(mp4|webm|ogg|mov|m4v)(\?|$)/i.test(fileName);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[140] flex items-center justify-center bg-foreground-950/70 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-background-300 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-center gap-3 border-b border-background-200 px-4 py-3">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary-50 text-primary-700">
+            <AppIcon className="ri-attachment-2" />
+          </span>
+          <div className="min-w-0 flex-1 text-left">
+            <p className="truncate text-sm font-bold text-foreground-900">{preview.file.filename}</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Evidence preview</p>
+          </div>
+          <a
+            href={preview.url}
+            target="_blank"
+            rel="noreferrer"
+            className="hidden rounded-xl border border-background-300 px-3 py-2 text-xs font-semibold text-foreground-600 hover:bg-background-50 sm:inline-flex"
+          >
+            Open
+          </a>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid h-9 w-9 place-items-center rounded-xl border border-background-300 text-foreground-500 transition-colors hover:bg-background-50 hover:text-foreground-900"
+            aria-label="Close evidence preview"
+          >
+            <AppIcon className="ri-close-line text-lg" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 bg-background-950/95 p-4">
+          {isImage ? (
+            <img src={preview.url} alt={preview.file.filename} className="mx-auto max-h-[76vh] max-w-full rounded-lg object-contain" />
+          ) : isVideo ? (
+            <video src={preview.url} controls className="mx-auto max-h-[76vh] max-w-full rounded-lg bg-black" />
+          ) : (
+            <iframe title={preview.file.filename} src={preview.url} className="h-[76vh] w-full rounded-lg bg-white" />
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
 
 /* ═══════════════════════════════════════════════════════
    EVIDENCE FILES BUTTON — compact "view uploaded file(s)"
@@ -20,6 +74,7 @@ export function EvidenceFilesButton({ kind, learnerId, componentId }: {
   const [open, setOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [preview, setPreview] = useState<EvidencePreview | null>(null);
   // The menu is portalled to <body>: the training-plan week/module cards use
   // `overflow-hidden` for their rounded corners, which would otherwise clip an
   // absolutely-positioned dropdown.
@@ -73,7 +128,8 @@ export function EvidenceFilesButton({ kind, learnerId, componentId }: {
     setBusyId(file.id);
     try {
       const url = await getEvidenceDownloadUrl(kind, learnerId, file.id);
-      window.open(url, '_blank', 'noreferrer');
+      setPreview({ file, url });
+      setOpen(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not open the file.');
     } finally {
@@ -136,6 +192,7 @@ export function EvidenceFilesButton({ kind, learnerId, componentId }: {
         </div>,
         document.body,
       )}
+      {preview && <EvidencePreviewModal preview={preview} onClose={() => setPreview(null)} />}
     </div>
   );
 }

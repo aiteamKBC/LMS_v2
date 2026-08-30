@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 import os
+import sys
 from pathlib import Path
 from urllib.parse import parse_qsl, urlparse, unquote
 
@@ -149,6 +150,23 @@ if not SECRET_KEY:
             "development key is committed to this repository, so it cannot be "
             "used to sign anything outside local development."
         )
+# The API session gate (login/api_gate.py) 401s anonymous callers on the API
+# prefixes. The suites for the apps it newly covers — curriculum_api, audit_api,
+# engagement_api, quiz_api, manual_audit_api — call their endpoints through
+# django.test.Client with no session, because those endpoints had no
+# authentication when the tests were written. They also run under the default
+# test runner, which does not provision the unmanaged login tables (only
+# login.test_runner.EnrolmentTestRunner does), so they could not sign in even if
+# they were rewritten to try.
+#
+# So the gate is off for `manage.py test` unless the run asks for it. The gate
+# itself is covered by login/tests_api_gate.py, which sets the variable back on
+# — it lives in the suite that does have the login tables.
+#
+# `setdefault` so an explicit API_REQUIRE_AUTH=1 in the environment still wins.
+if "test" in sys.argv:
+    os.environ.setdefault("API_REQUIRE_AUTH", "0")
+
 CHAT_DEMO_BOOTSTRAP_ENABLED = os.environ.get(
     "CHAT_DEMO_BOOTSTRAP_ENABLED",
     # The current frontend authentication is local/demo authentication and
@@ -233,6 +251,12 @@ MIDDLEWARE = [
     # Django's own AuthenticationMiddleware so both identities are available and
     # neither shadows the other while the admin still uses django.contrib.auth.
     'login.middleware.LoginSessionMiddleware',
+    # Rejects anonymous callers on the API prefixes before any view runs. Must
+    # sit after LoginSessionMiddleware so the session is already resolved, and
+    # before anything that would act on the request. Answers only "is there a
+    # session" — who may reach which record is still the per-view decorators'
+    # job. See login/api_gate.py.
+    'login.api_gate.ApiSessionGateMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     # Turns a missing Curriculum table into a 503 naming the absent relations,
@@ -606,6 +630,43 @@ LOGGING = {
         'curriculum_api': {
             'handlers': ['console'],
             'level': 'INFO',
+            'propagate': False,
+        },
+        # Curriculum write tracking (curriculum_api.views.log_curriculum_*).
+        # INFO carries the decision events -- what each write chose to do and
+        # why -- and is always on because it is low volume and it is what makes
+        # a silent no-op visible. DEBUG adds one line per write reaching a
+        # curriculum table, which is complete but far too loud for normal
+        # running: a tree save writes thousands of rows. Raise it per-process
+        # with CURRICULUM_WRITE_TRACE=true.
+        'curriculum_api.writes': {
+            'handlers': ['console'],
+            'level': (
+                'DEBUG'
+                if os.environ.get('CURRICULUM_WRITE_TRACE', 'false').lower() == 'true'
+                else os.environ.get('CURRICULUM_WRITE_LOG_LEVEL', 'INFO')
+            ),
+            'propagate': False,
+        },
+        # Session lifecycle events (login/sessions.py): issued, renewed,
+        # rejected, revoked, and the one that matters most -- at_ceiling, the
+        # renewal that could not move because the session reached its absolute
+        # maximum. Low volume by construction: renewal is throttled to once per
+        # five minutes per session, so a busy console emits a handful an hour,
+        # not one per request. INFO is therefore always on; it is what makes
+        # "why was I signed out?" answerable from the log rather than guessed.
+        'login.sessions': {
+            'handlers': ['console'],
+            'level': os.environ.get('SESSION_LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
+        # Daphne warns when a client disconnects before a slow synchronous view
+        # finishes and it has to kill the orphaned application task. The
+        # underlying slowness is a real thing to fix separately; this just quiets
+        # the noise it prints to the console.
+        'daphne.server': {
+            'handlers': ['console'],
+            'level': 'ERROR',
             'propagate': False,
         },
     },

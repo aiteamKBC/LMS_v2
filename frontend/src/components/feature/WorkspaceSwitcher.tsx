@@ -83,12 +83,12 @@ export function WorkspaceSwitcher() {
   if (!auth.isAuthenticated || !isAdmin) return null;
 
   return (
-    <div className="relative shrink-0" ref={rootRef} onKeyDown={handleKeyDown}>
+    <div className="kbc-workspace-switcher relative shrink-0" ref={rootRef} onKeyDown={handleKeyDown}>
       <button
         onClick={() => setOpen((wasOpen) => !wasOpen)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className={`group flex h-9 cursor-pointer items-center gap-2 rounded-xl border pl-1.5 pr-2 transition-smooth ${
+        className={`kbc-workspace-switcher-button group flex h-9 cursor-pointer items-center gap-2 rounded-xl border pl-1.5 pr-2 transition-smooth ${
           open
             ? 'border-primary-300 bg-primary-50 shadow-sm'
             : 'border-foreground-200/70 hover:border-primary-300 hover:bg-primary-50/50'
