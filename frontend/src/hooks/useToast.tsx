@@ -55,3 +55,16 @@ export function useToast(): ToastContextValue {
   if (!ctx) throw new Error('useToast must be used within ToastProvider');
   return ctx;
 }
+
+/**
+ * The toast API, or null when there is no ToastProvider above.
+ *
+ * For callers to which toasting is a nicety rather than a requirement —
+ * AuthProvider is the case this was added for. It sits below ToastProvider in
+ * the real tree, but making that a hard dependency would mean every test and
+ * every future mounting of AuthProvider had to supply one to do anything at
+ * all, for a message it does not need to function.
+ */
+export function useToastOptional(): ToastContextValue | null {
+  return useContext(ToastContext);
+}

@@ -17286,6 +17286,49 @@ def curriculum_uploaded_file(request, path):
     if '..' in str(path).split('/'):
         raise Http404('File not found.')
     relative_path = f'{COMPONENT_UPLOAD_ROOT}/{path}'
+
+    # Browsers cannot render Office documents directly.  The normal URL still
+    # streams/downloads the original file, while ``?preview=1`` returns a tiny
+    # same-origin page containing the Office Online viewer.  Azure stays
+    # private: Microsoft receives only a short-lived, read-only SAS URL and the
+    # database continues to store the stable LMS path without any token.
+    preview_requested = clean_str(request.GET.get('preview')).lower() in {'1', 'true', 'yes'}
+    extension = Path(relative_path).suffix.lower()
+    office_extensions = {'.doc', '.docx', '.docm', '.xls', '.xlsx', '.ppt', '.pptx', '.pptm'}
+    if preview_requested and extension in office_extensions:
+        if not upload_storage.exists(relative_path):
+            raise Http404('File not found.')
+        source_url = upload_storage.signed_read_url(relative_path)
+        if not source_url:
+            # Local-development fallback.  It works when this Django origin is
+            # publicly reachable; Office Online will show its own error when it
+            # is a localhost/private address.
+            source_url = request.build_absolute_uri(request.path)
+        viewer_url = (
+            'https://view.officeapps.live.com/op/embed.aspx?src='
+            f'{urllib_parse.quote(source_url, safe="")}'
+        )
+        filename = Path(relative_path).name
+        response = HttpResponse(
+            f'''<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(filename)}</title>
+  <style>html, body, iframe {{ width: 100%; height: 100%; margin: 0; border: 0; }}</style>
+</head>
+<body><iframe src="{escape(viewer_url, quote=True)}" title="{escape(filename, quote=True)}"></iframe></body>
+</html>''',
+            content_type='text/html; charset=utf-8',
+        )
+        response['Content-Security-Policy'] = (
+            "default-src 'none'; frame-src https://view.officeapps.live.com; "
+            "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
+        )
+        response['Cache-Control'] = 'private, no-store'
+        return response
+
     probe = upload_storage.open_stream(relative_path, offset=0, length=1)
     if probe is None:
         raise Http404('File not found.')
@@ -20893,6 +20936,23 @@ def curriculum_group_detail(request, identifier):
 
     with transaction.atomic():
         updated_group = update_group_fields(group_id, updates) or group_row
+        module_delivery_updates = {
+            key: updates[key]
+            for key in ('session_week_day', 'session_start_time', 'session_end_time')
+            if key in updates
+        }
+        if module_delivery_updates:
+            module_delivery_updates['updated_at'] = datetime.utcnow()
+            # Module rows are the source used to derive the session calendar.
+            # They inherit the group's slot when attached, so a later group edit
+            # must move those inherited copies too or the calendar stays on the
+            # day/time chosen when the group was first created.
+            update_authoring_rows(
+                AUTHORING_MODULES_TABLE,
+                'group_id = %s',
+                [group_id],
+                module_delivery_updates,
+            )
         next_cohort_id = clean_str(updated_group.get('cohort_id'))
         if next_cohort_id and next_cohort_id != previous_cohort_id:
             if previous_cohort_id:

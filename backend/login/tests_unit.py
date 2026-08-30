@@ -18,6 +18,7 @@ production.
 """
 from __future__ import annotations
 
+import io
 import uuid
 from datetime import timedelta
 from unittest import mock
@@ -226,6 +227,31 @@ class LifetimeTests(SimpleTestCase):
     def test_remember_me_extends_but_does_not_remove_expiry(self):
         self.assertGreater(SESSION_TTL_REMEMBER, SESSION_TTL)
         self.assertLess(SESSION_TTL_REMEMBER, timedelta(days=400))
+
+    def test_every_rolling_window_sits_under_its_own_ceiling(self):
+        """A window at or above its ceiling would make the ceiling unreachable."""
+        from .security import SESSION_MAX_LIFETIME, SESSION_MAX_LIFETIME_REMEMBER
+
+        self.assertLess(SESSION_TTL, SESSION_MAX_LIFETIME)
+        self.assertLess(SESSION_TTL_REMEMBER, SESSION_MAX_LIFETIME_REMEMBER)
+
+    def test_no_session_may_live_indefinitely(self):
+        from .security import SESSION_MAX_LIFETIME, SESSION_MAX_LIFETIME_REMEMBER
+
+        self.assertLessEqual(SESSION_MAX_LIFETIME, timedelta(days=30))
+        self.assertLessEqual(SESSION_MAX_LIFETIME_REMEMBER, timedelta(days=180))
+
+    def test_session_policy_maps_the_choice_to_both_clocks(self):
+        from .security import (
+            SESSION_MAX_LIFETIME,
+            SESSION_MAX_LIFETIME_REMEMBER,
+            session_policy,
+        )
+
+        self.assertEqual(session_policy(False), (SESSION_TTL, SESSION_MAX_LIFETIME))
+        self.assertEqual(
+            session_policy(True), (SESSION_TTL_REMEMBER, SESSION_MAX_LIFETIME_REMEMBER)
+        )
 
     def test_invitation_window_is_workable_but_finite(self):
         self.assertGreaterEqual(INVITATION_TTL, timedelta(days=1))
@@ -614,6 +640,61 @@ class LinkBuildingTests(SimpleTestCase):
 # Sessions — needs the database, but only the two session tables
 # ---------------------------------------------------------------------------
 
+class ExpiryReasonTests(SimpleTestCase):
+    """Telling the two clocks apart.
+
+    This is the number ``session_stats`` reports and the one that would justify
+    changing the lifetimes, so it is worth pinning rather than trusting: an idle
+    expiry is the system working, a ceiling expiry signs somebody out mid-task.
+    """
+
+    @staticmethod
+    def _session(*, age, expires_in, remember=False):
+        """An unsaved row -- nothing here needs the database."""
+        now = timezone.now()
+        return LoginSession(
+            created_at=now - age, expires_at=now + expires_in, remember=remember
+        )
+
+    def test_an_idle_expiry_is_named_as_one(self):
+        from .sessions import expiry_reason
+
+        # Signed in an hour ago and expired ten minutes ago: nowhere near the
+        # seven-day ceiling, so this is somebody who simply stopped working.
+        session = self._session(
+            age=timedelta(hours=1), expires_in=-timedelta(minutes=10)
+        )
+
+        self.assertEqual(expiry_reason(session), "expired_idle")
+
+    def test_a_ceiling_expiry_is_named_as_one(self):
+        from .security import SESSION_MAX_LIFETIME
+        from .sessions import expiry_reason
+
+        session = self._session(age=SESSION_MAX_LIFETIME, expires_in=timedelta(0))
+
+        self.assertEqual(expiry_reason(session), "expired_ceiling")
+
+    def test_each_kind_is_measured_against_its_own_ceiling(self):
+        """Why the policy is read from the row and not assumed.
+
+        One identical row, two answers. A fortnight-old remembered session has
+        used two weeks of its ninety-day maximum and merely went idle; read as
+        an ordinary session it would look like it had blown through a seven-day
+        ceiling, and the ceiling count -- the whole point of the measurement --
+        would be wrong.
+        """
+        from .sessions import expiry_reason
+
+        session = self._session(
+            age=timedelta(days=14), expires_in=-timedelta(minutes=1), remember=True
+        )
+        self.assertEqual(expiry_reason(session), "expired_idle")
+
+        session.remember = False
+        self.assertEqual(expiry_reason(session), "expired_ceiling")
+
+
 class SessionLifecycleTests(TestCase):
     databases = {"default", "enrolment"}
 
@@ -720,6 +801,609 @@ class SessionLifecycleTests(TestCase):
         finally:
             LoginSession.objects.filter(account=other).delete()
             LoginAccount.objects.filter(pk=other.pk).delete()
+
+
+class RollingRenewalTests(TestCase):
+    """Rolling expiry: what ``touch_session`` may and may not move.
+
+    Time is controlled through the two columns the renewal reads rather than by
+    patching the clock — ``Last_seen_at`` drives the throttle and ``Created_at``
+    anchors the ceiling, so ageing a session is a matter of writing them. Both
+    go through ``queryset.update`` because ``Created_at`` is ``auto_now_add``
+    and would otherwise be silently rewritten to now.
+    """
+
+    databases = {"default", "enrolment"}
+
+    def setUp(self):
+        super().setUp()
+        self.account = LoginAccount.objects.create(
+            subject_type="staff",
+            subject_id=800_000 + (uuid.uuid4().int % 90_000),
+            email=f"roll-{uuid.uuid4().hex[:10]}@kbc.invalid",
+            display_name="Rolling Tester",
+            role=ROLE_STAFF,
+            password_hash=hash_password("Vaulted-Harbour-92!"),
+        )
+
+    def tearDown(self):
+        LoginSession.objects.filter(account=self.account).delete()
+        LoginAccount.objects.filter(pk=self.account.pk).delete()
+        super().tearDown()
+
+    def _session(self, *, remember=False, age=None, idle=None):
+        """A session, optionally aged and made due for a touch.
+
+        ``age`` backdates ``Created_at``, moving the session towards its
+        ceiling. It also pulls ``Expires_at`` in to a minute away, because that
+        is the only shape an old session can really have: one that has been
+        rolling forward all along, currently near the end of its window. Leaving
+        a full freshly-issued window on a week-old row would describe a session
+        already past its own ceiling, which nothing can produce.
+
+        ``idle`` backdates ``Last_seen_at``, making the session due a touch.
+        """
+        from .sessions import issue_session
+
+        _, session, _ = issue_session(self.account, remember=remember)
+        fields = {}
+        if age is not None:
+            fields["created_at"] = timezone.now() - age
+            fields["expires_at"] = timezone.now() + timedelta(minutes=1)
+        if idle is not None:
+            fields["last_seen_at"] = timezone.now() - idle
+        if fields:
+            LoginSession.objects.filter(pk=session.pk).update(**fields)
+            session.refresh_from_db()
+        return session
+
+    #: Comfortably past the 300-second touch throttle.
+    DUE = timedelta(minutes=10)
+
+    # --- the persisted choice ------------------------------------------------
+
+    def test_a_normal_session_is_stored_as_not_remembered(self):
+        session = self._session()
+        self.assertFalse(session.remember)
+        self.assertFalse(LoginSession.objects.get(pk=session.pk).remember)
+
+    def test_a_remember_me_session_is_stored_as_remembered(self):
+        session = self._session(remember=True)
+        self.assertTrue(session.remember)
+        self.assertTrue(LoginSession.objects.get(pk=session.pk).remember)
+
+    def test_the_initial_expiry_matches_the_rolling_window(self):
+        from .security import SESSION_TTL, SESSION_TTL_REMEMBER
+
+        normal = self._session()
+        remembered = self._session(remember=True)
+
+        self.assertAlmostEqual(
+            (normal.expires_at - normal.created_at).total_seconds(),
+            SESSION_TTL.total_seconds(),
+            delta=30,
+        )
+        self.assertAlmostEqual(
+            (remembered.expires_at - remembered.created_at).total_seconds(),
+            SESSION_TTL_REMEMBER.total_seconds(),
+            delta=30,
+        )
+
+    # --- renewal -------------------------------------------------------------
+
+    def test_an_active_normal_session_renews_its_expiry(self):
+        from .sessions import touch_session
+
+        session = self._session(idle=self.DUE)
+        before = session.expires_at
+
+        renewed = touch_session(session)
+
+        self.assertIsNotNone(renewed)
+        self.assertGreater(renewed, before)
+        session.refresh_from_db()
+        self.assertEqual(session.expires_at, renewed)
+
+    def test_an_active_remember_me_session_renews_its_expiry(self):
+        from .sessions import touch_session
+
+        session = self._session(remember=True, idle=self.DUE)
+        before = session.expires_at
+
+        renewed = touch_session(session)
+
+        self.assertIsNotNone(renewed)
+        self.assertGreater(renewed, before)
+
+    def test_renewal_uses_the_policy_the_session_was_issued_under(self):
+        """The whole reason the column exists: the two kinds renew differently."""
+        from .security import SESSION_TTL, SESSION_TTL_REMEMBER
+        from .sessions import touch_session
+
+        normal = touch_session(self._session(idle=self.DUE))
+        remembered = touch_session(self._session(remember=True, idle=self.DUE))
+        now = timezone.now()
+
+        self.assertAlmostEqual(
+            (normal - now).total_seconds(), SESSION_TTL.total_seconds(), delta=60
+        )
+        self.assertAlmostEqual(
+            (remembered - now).total_seconds(),
+            SESSION_TTL_REMEMBER.total_seconds(),
+            delta=60,
+        )
+
+    def test_renewal_does_not_move_created_at(self):
+        """``Created_at`` anchors the ceiling; rewriting it would remove it."""
+        from .sessions import touch_session
+
+        session = self._session(age=timedelta(days=2), idle=self.DUE)
+        created = session.created_at
+
+        touch_session(session)
+
+        session.refresh_from_db()
+        self.assertEqual(session.created_at, created)
+
+    # --- the throttle --------------------------------------------------------
+
+    def test_a_recently_touched_session_is_not_written_again(self):
+        from .sessions import touch_session
+
+        session = self._session(idle=timedelta(seconds=30))
+        before = session.expires_at
+
+        self.assertIsNone(touch_session(session))
+
+        session.refresh_from_db()
+        self.assertEqual(session.expires_at, before)
+
+    def test_the_throttle_governs_renewal_and_last_seen_together(self):
+        """One write covers both, so a busy dashboard costs one round trip."""
+        from .sessions import touch_session
+
+        session = self._session(idle=timedelta(seconds=30))
+        seen = session.last_seen_at
+
+        touch_session(session)
+
+        session.refresh_from_db()
+        self.assertEqual(session.last_seen_at, seen)
+
+    def test_activity_is_recorded_even_when_the_expiry_cannot_move(self):
+        from .security import SESSION_MAX_LIFETIME
+        from .sessions import touch_session
+
+        session = self._session(age=SESSION_MAX_LIFETIME + timedelta(days=1), idle=self.DUE)
+        before = session.expires_at
+
+        self.assertIsNone(touch_session(session))
+
+        session.refresh_from_db()
+        self.assertEqual(session.expires_at, before)
+        self.assertGreater(session.last_seen_at, timezone.now() - timedelta(minutes=1))
+
+    # --- the ceiling ---------------------------------------------------------
+
+    def test_renewal_is_clamped_to_the_absolute_ceiling(self):
+        from .security import SESSION_MAX_LIFETIME
+        from .sessions import touch_session
+
+        # Old enough that a full rolling window would reach past the ceiling.
+        age = SESSION_MAX_LIFETIME - timedelta(hours=2)
+        session = self._session(age=age, idle=self.DUE)
+
+        renewed = touch_session(session)
+
+        self.assertIsNotNone(renewed)
+        self.assertEqual(renewed, session.created_at + SESSION_MAX_LIFETIME)
+        self.assertLess(renewed, timezone.now() + SESSION_TTL)
+
+    def test_a_remember_me_session_is_clamped_to_its_own_ceiling(self):
+        from .security import SESSION_MAX_LIFETIME_REMEMBER
+        from .sessions import touch_session
+
+        age = SESSION_MAX_LIFETIME_REMEMBER - timedelta(days=1)
+        session = self._session(remember=True, age=age, idle=self.DUE)
+
+        renewed = touch_session(session)
+
+        self.assertEqual(renewed, session.created_at + SESSION_MAX_LIFETIME_REMEMBER)
+
+    def test_no_amount_of_activity_pushes_past_the_ceiling(self):
+        """Repeated renewal converges on the ceiling; it never walks through it."""
+        from .security import SESSION_MAX_LIFETIME
+        from .sessions import touch_session
+
+        session = self._session(age=SESSION_MAX_LIFETIME - timedelta(hours=1))
+        ceiling = session.created_at + SESSION_MAX_LIFETIME
+
+        for _ in range(5):
+            LoginSession.objects.filter(pk=session.pk).update(
+                last_seen_at=timezone.now() - self.DUE
+            )
+            session.refresh_from_db()
+            touch_session(session)
+
+        session.refresh_from_db()
+        self.assertLessEqual(session.expires_at, ceiling)
+
+    def test_a_session_at_its_ceiling_eventually_stops_resolving(self):
+        """The ceiling ends the session through the existing expiry path."""
+        from .sessions import issue_session, resolve_session, touch_session
+
+        token, session, _ = issue_session(self.account)
+        LoginSession.objects.filter(pk=session.pk).update(
+            expires_at=timezone.now() - timedelta(seconds=1)
+        )
+        session.refresh_from_db()
+
+        self.assertIsNone(resolve_session(token))
+        self.assertIsNone(touch_session(session))
+
+    # --- what may never be renewed -------------------------------------------
+
+    def test_an_expired_session_is_never_revived(self):
+        from .sessions import touch_session
+
+        session = self._session(idle=self.DUE)
+        expired_at = timezone.now() - timedelta(minutes=1)
+        LoginSession.objects.filter(pk=session.pk).update(expires_at=expired_at)
+        session.refresh_from_db()
+
+        self.assertIsNone(touch_session(session))
+
+        session.refresh_from_db()
+        self.assertEqual(session.expires_at, expired_at)
+
+    def test_a_revoked_session_is_never_renewed(self):
+        from .sessions import revoke_session, touch_session
+
+        session = self._session(idle=self.DUE)
+        before = session.expires_at
+        revoke_session(session)
+
+        self.assertIsNone(touch_session(session))
+
+        session.refresh_from_db()
+        self.assertEqual(session.expires_at, before)
+
+    def test_a_session_revoked_by_password_change_is_never_renewed(self):
+        from .sessions import revoke_all_for_account, touch_session
+
+        session = self._session(idle=self.DUE)
+        before = session.expires_at
+        revoke_all_for_account(self.account)
+
+        # The in-memory row is stale — it still looks live. The conditional
+        # UPDATE is what refuses it, which is the case that matters: another
+        # request revoked it after this one resolved.
+        self.assertIsNone(touch_session(session))
+
+        session.refresh_from_db()
+        self.assertEqual(session.expires_at, before)
+
+    def test_a_disabled_account_stops_resolving_before_any_renewal(self):
+        """Validation runs first, so a disabled account never reaches a touch."""
+        from .sessions import issue_session, resolve_session
+
+        token, session, _ = issue_session(self.account)
+        LoginSession.objects.filter(pk=session.pk).update(
+            last_seen_at=timezone.now() - self.DUE
+        )
+        before = LoginSession.objects.get(pk=session.pk).expires_at
+
+        self.account.is_active = False
+        self.account.save(update_fields=["is_active"])
+
+        self.assertIsNone(resolve_session(token))
+        self.assertEqual(LoginSession.objects.get(pk=session.pk).expires_at, before)
+
+    # --- concurrency ---------------------------------------------------------
+
+    def test_a_stale_request_cannot_shorten_an_expiry_another_one_set(self):
+        """Two tabs. The later target stands; the earlier one no-ops."""
+        from .sessions import touch_session
+
+        from .security import SESSION_TTL
+
+        session = self._session(idle=self.DUE)
+        stale = LoginSession.objects.get(pk=session.pk)
+
+        # Tab A leaves the row further out than a fresh rolling window reaches.
+        far = timezone.now() + SESSION_TTL + timedelta(hours=1)
+        LoginSession.objects.filter(pk=session.pk).update(expires_at=far)
+
+        # Tab B is still holding the row it read before that, so its own target
+        # is nearer than what is already stored. It must not pull the expiry back.
+        self.assertIsNone(touch_session(stale))
+
+        self.assertEqual(LoginSession.objects.get(pk=session.pk).expires_at, far)
+
+    def test_concurrent_renewals_converge_and_respect_the_ceiling(self):
+        from .security import SESSION_MAX_LIFETIME
+        from .sessions import touch_session
+
+        session = self._session(age=SESSION_MAX_LIFETIME - timedelta(minutes=30))
+        ceiling = session.created_at + SESSION_MAX_LIFETIME
+
+        # Several requests holding the same pre-renewal row, as tabs would.
+        copies = [LoginSession.objects.get(pk=session.pk) for _ in range(4)]
+        for copy in copies:
+            copy.last_seen_at = timezone.now() - self.DUE
+
+        results = [touch_session(copy) for copy in copies]
+
+        final = LoginSession.objects.get(pk=session.pk).expires_at
+        self.assertLessEqual(final, ceiling)
+        # Whoever won, the row never went backwards from what any of them saw.
+        for renewed in results:
+            if renewed is not None:
+                self.assertLessEqual(renewed, final)
+
+    def test_renewal_creates_no_additional_sessions(self):
+        from .sessions import touch_session
+
+        session = self._session(idle=self.DUE)
+        touch_session(session)
+
+        self.assertEqual(LoginSession.objects.filter(account=self.account).count(), 1)
+
+
+class PruneSessionsTests(TestCase):
+    """``prune_login_sessions``: what it removes, and what it must not.
+
+    The command deletes across the whole table, so every assertion here is about
+    specific rows rather than counts -- another test's leftovers would make a
+    count meaningless.
+    """
+
+    databases = {"default", "enrolment"}
+
+    def setUp(self):
+        super().setUp()
+        self.account = LoginAccount.objects.create(
+            subject_type="staff",
+            subject_id=900_000 + (uuid.uuid4().int % 90_000),
+            email=f"prune-{uuid.uuid4().hex[:10]}@kbc.invalid",
+            display_name="Prune Tester",
+            role=ROLE_STAFF,
+            password_hash=hash_password("Vaulted-Harbour-92!"),
+        )
+
+    def tearDown(self):
+        LoginSession.objects.filter(account=self.account).delete()
+        LoginAccount.objects.filter(pk=self.account.pk).delete()
+        super().tearDown()
+
+    def _session(self, *, expires_in=None, revoked_ago=None):
+        session = LoginSession.objects.create(
+            account=self.account,
+            token_hash=hash_token(generate_token()),
+            expires_at=timezone.now() + (expires_in or timedelta(hours=1)),
+            last_seen_at=timezone.now(),
+        )
+        if revoked_ago is not None:
+            LoginSession.objects.filter(pk=session.pk).update(
+                revoked_at=timezone.now() - revoked_ago
+            )
+        return session
+
+    @staticmethod
+    def _prune(**kwargs):
+        from django.core.management import call_command
+
+        call_command("prune_login_sessions", stdout=io.StringIO(), **kwargs)
+
+    def _assert_kept(self, session):
+        self.assertTrue(
+            LoginSession.objects.filter(pk=session.pk).exists(),
+            "a session that should have been kept was deleted",
+        )
+
+    def _assert_deleted(self, session):
+        self.assertFalse(
+            LoginSession.objects.filter(pk=session.pk).exists(),
+            "a session that should have been deleted survived",
+        )
+
+    def test_a_live_session_is_never_touched(self):
+        """The one outcome that would be an incident rather than a bug."""
+        live = self._session(expires_in=timedelta(hours=12))
+
+        self._prune(days=0)
+
+        self._assert_kept(live)
+
+    def test_a_long_dead_session_is_deleted(self):
+        old = self._session(expires_in=-timedelta(days=40))
+
+        self._prune()
+
+        self._assert_deleted(old)
+
+    def test_a_recently_dead_session_is_kept(self):
+        """Retention is the point: it is what answers "why was I signed out?"."""
+        recent = self._session(expires_in=-timedelta(days=2))
+
+        self._prune()
+
+        self._assert_kept(recent)
+
+    def test_a_recent_revocation_of_an_old_session_is_kept(self):
+        """The case a naive "expired long ago" filter gets wrong.
+
+        Expiry passed six weeks back, but the revocation is yesterday's -- and
+        the revocation is the event somebody would be asking about.
+        """
+        revoked = self._session(
+            expires_in=-timedelta(days=42), revoked_ago=timedelta(days=1)
+        )
+
+        self._prune()
+
+        self._assert_kept(revoked)
+
+    def test_an_old_revocation_is_deleted(self):
+        revoked = self._session(
+            expires_in=-timedelta(days=90), revoked_ago=timedelta(days=60)
+        )
+
+        self._prune()
+
+        self._assert_deleted(revoked)
+
+    def test_a_dry_run_deletes_nothing(self):
+        old = self._session(expires_in=-timedelta(days=40))
+
+        self._prune(dry_run=True)
+
+        self._assert_kept(old)
+
+    def test_a_negative_retention_is_refused(self):
+        from django.core.management.base import CommandError
+
+        with self.assertRaises(CommandError):
+            self._prune(days=-1)
+
+
+class SessionEventTests(TestCase):
+    """The structured events on ``login.sessions``.
+
+    Only the ceiling one is really load-bearing: it is the sole advance warning
+    that somebody working right now will be signed out and cannot prevent it.
+    """
+
+    databases = {"default", "enrolment"}
+
+    def setUp(self):
+        super().setUp()
+        self.account = LoginAccount.objects.create(
+            subject_type="staff",
+            subject_id=900_000 + (uuid.uuid4().int % 90_000),
+            email=f"event-{uuid.uuid4().hex[:10]}@kbc.invalid",
+            display_name="Event Tester",
+            role=ROLE_STAFF,
+            password_hash=hash_password("Vaulted-Harbour-92!"),
+        )
+
+    def tearDown(self):
+        LoginSession.objects.filter(account=self.account).delete()
+        LoginAccount.objects.filter(pk=self.account.pk).delete()
+        super().tearDown()
+
+    def _session(self, *, age=None, idle=None):
+        from .sessions import issue_session
+
+        _token, session, _ttl = issue_session(self.account)
+        fields = {}
+        if age is not None:
+            fields["created_at"] = timezone.now() - age
+            fields["expires_at"] = timezone.now() + timedelta(minutes=1)
+        if idle is not None:
+            fields["last_seen_at"] = timezone.now() - idle
+        if fields:
+            LoginSession.objects.filter(pk=session.pk).update(**fields)
+            session.refresh_from_db()
+        return session
+
+    @staticmethod
+    def _events(captured):
+        return [
+            record.event for record in captured.records if hasattr(record, "event")
+        ]
+
+    def test_signing_in_is_announced(self):
+        from .sessions import issue_session
+
+        with self.assertLogs("login.sessions", level="INFO") as captured:
+            issue_session(self.account, remember=True)
+
+        self.assertIn("session.issued", self._events(captured))
+        record = next(r for r in captured.records if r.event == "session.issued")
+        self.assertTrue(record.remember)
+        # No token, no hash, no email -- the allowlist in
+        # config.observability is what enforces it, this is what notices if the
+        # call site starts trying to smuggle one through.
+        self.assertFalse(hasattr(record, "token"))
+
+    def test_a_session_at_its_ceiling_announces_itself(self):
+        from .security import SESSION_MAX_LIFETIME
+        from .sessions import touch_session
+
+        session = self._session(
+            age=SESSION_MAX_LIFETIME, idle=timedelta(minutes=10)
+        )
+
+        with self.assertLogs("login.sessions", level="INFO") as captured:
+            # No renewal is possible: this is the point of the event.
+            self.assertIsNone(touch_session(session))
+
+        self.assertIn("session.at_ceiling", self._events(captured))
+
+    def test_an_ordinary_renewal_does_not_cry_ceiling(self):
+        from .sessions import touch_session
+
+        session = self._session(idle=timedelta(minutes=10))
+
+        with self.assertLogs("login.sessions", level="INFO") as captured:
+            self.assertIsNotNone(touch_session(session))
+
+        events = self._events(captured)
+        self.assertIn("session.renewed", events)
+        self.assertNotIn("session.at_ceiling", events)
+
+    def test_an_expired_session_is_rejected_with_the_reason_why(self):
+        from .sessions import issue_session, resolve_session
+
+        token, session, _ttl = issue_session(self.account)
+        LoginSession.objects.filter(pk=session.pk).update(
+            expires_at=timezone.now() - timedelta(seconds=1)
+        )
+
+        with self.assertLogs("login.sessions", level="INFO") as captured:
+            self.assertIsNone(resolve_session(token))
+
+        record = next(r for r in captured.records if r.event == "session.rejected")
+        self.assertEqual(record.reason, "expired_idle")
+
+    def test_revoking_every_session_reports_how_many(self):
+        from .sessions import issue_session, revoke_all_for_account
+
+        issue_session(self.account)
+        issue_session(self.account)
+
+        with self.assertLogs("login.sessions", level="INFO") as captured:
+            revoke_all_for_account(self.account)
+
+        record = next(
+            r for r in captured.records if r.event == "session.revoked_bulk"
+        )
+        self.assertEqual(record.row_count, 2)
+
+
+class SessionStatsCommandTests(TestCase):
+    """A smoke test: the command reads real columns and must keep matching them."""
+
+    databases = {"default", "enrolment"}
+
+    def test_it_reports_the_ceiling_split(self):
+        from django.core.management import call_command
+
+        out = io.StringIO()
+        call_command("session_stats", stdout=out)
+        printed = out.getvalue()
+
+        self.assertIn("Live sessions", printed)
+        self.assertIn("expired at the absolute ceiling", printed)
+        self.assertIn("Sign-ins per day", printed)
+
+    def test_a_zero_window_is_refused(self):
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+
+        with self.assertRaises(CommandError):
+            call_command("session_stats", days=0, stdout=io.StringIO())
 
 
 class ThrottleCounterTests(TestCase):

@@ -53,6 +53,7 @@ from .learner_progression import ACTIVE_STATUS, READY_TO_ENROL_STATUS, _as_date,
 from .mappers import to_learner_detail
 from .models import LearnerProfile, _progress_entry_activity, _serialise_quiz_ref
 from .reflection_submissions import get_reflection_submission
+from .time_tracking import issue_tracking_session
 
 
 class LearnerQuizReferenceTests(SimpleTestCase):
@@ -76,7 +77,6 @@ class LearnerDetailPrefetchTests(SimpleTestCase):
         prefetch.assert_called_once_with(
             [profile],
             "ksb_assignment__profile_version__definitions",
-            "assigned_ksbs",
             "progress_entries__ksb_links",
             "progress_entries__quiz_answers__chosen_answers",
             "progress_entries__quiz_answers__correct_answers",
@@ -1111,12 +1111,22 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
     """The service-layer rejections must surface as a client error, not a 200."""
 
     def _post(self, component_id):
+        tracking = issue_tracking_session(
+            activity_kind="component",
+            activity_id=component_id,
+            learner_kind="apprenticeship",
+            learner_id="19",
+            counting_mode="visible_page",
+        )
         request = RequestFactory().post(
             f"/learner_api/components/{component_id}/complete/?kind=apprenticeship&learnerId=19",
-            data=json.dumps({}),
+            data=json.dumps({"trackingToken": tracking["trackingToken"], "timeTakenSeconds": 0}),
             content_type="application/json",
         )
-        return submit_component_progress(request, component_id)
+        view = submit_component_progress
+        while hasattr(view, "__wrapped__"):
+            view = view.__wrapped__
+        return view(request, component_id)
 
     def _run(self, save_side_effect):
         profile = SimpleNamespace(training_plan_progress=[])
@@ -1126,11 +1136,12 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
                 with patch("learner_api.components.component_ksb_codes", return_value=["K1"]):
                     with patch("learner_api.components._completion_criteria", return_value=(True, None)):
                         with patch("learner_api.components.learner_profile_for_source", return_value=profile):
-                            with patch(
-                                "learner_api.components.save_progress_record",
-                                side_effect=save_side_effect,
-                            ):
-                                return self._post("COMP-UNDER-TEST")
+                            with patch("learner_api.components.tracking_session_already_used", return_value=False):
+                                with patch(
+                                    "learner_api.components.save_progress_record",
+                                    side_effect=save_side_effect,
+                                ):
+                                    return self._post("COMP-UNDER-TEST")
 
     def test_unknown_component_write_returns_400(self):
         response = self._run(OrphanComponentReferenceError("COMP-GHOST"))

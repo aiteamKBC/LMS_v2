@@ -40,11 +40,49 @@ from django.contrib.auth.hashers import make_password as dj_make_password
 from django.utils import timezone
 
 
-# --- lifetimes ----------------------------------------------------------------
-#: How long a signed-in session stays valid without "remember me".
+# --- session lifetimes --------------------------------------------------------
+# Two distinct clocks govern a session, and conflating them is the mistake this
+# split exists to prevent:
+#
+# *Rolling window* — how long a session survives **without activity**. Every
+#   touch pushes it forward, so somebody who is working is never signed out
+#   mid-task. On its own it would let a session (or a stolen cookie) live for
+#   ever on one request a day.
+#
+# *Absolute maximum* — how long a session may live **from Created_at**, no
+#   matter how active. This is the ceiling that makes the rolling window safe,
+#   and it is never moved: re-authentication eventually becomes mandatory.
+#
+# Renewal is ``min(now + rolling, Created_at + absolute)``. See
+# ``sessions.touch_session``.
+
+#: Rolling window without "remember me". Unchanged from the previous absolute
+#: TTL, so nobody is signed out *earlier* than they were before this feature.
 SESSION_TTL = timedelta(hours=12)
-#: With "remember me" ticked. Still finite — a session must eventually die.
-SESSION_TTL_REMEMBER = timedelta(days=30)
+#: Rolling window with "remember me" ticked. Deliberately **shorter** than the
+#: 30-day absolute TTL it replaces: 30 days was a hard cap, and reusing it as a
+#: rolling window would let a stolen cookie survive indefinitely on one request
+#: a month. Fourteen days still covers "I use this every working week".
+SESSION_TTL_REMEMBER = timedelta(days=14)
+
+#: Ceiling for a normal session. A week of continuous use is generous for a
+#: console that reaches learner records; past that, sign in again.
+SESSION_MAX_LIFETIME = timedelta(days=7)
+#: Ceiling for a "remember me" session. Long enough to be worth ticking, finite
+#: enough that a forgotten laptop does not stay signed in for ever.
+SESSION_MAX_LIFETIME_REMEMBER = timedelta(days=90)
+
+
+def session_policy(remember):
+    """``(rolling window, absolute maximum)`` for a session of this kind.
+
+    One place decides what "remember me" means, so issuance, renewal and the
+    tests cannot drift from one another.
+    """
+    if remember:
+        return SESSION_TTL_REMEMBER, SESSION_MAX_LIFETIME_REMEMBER
+    return SESSION_TTL, SESSION_MAX_LIFETIME
+
 #: Invitations are generous: onboarding often waits on the person's first working day.
 INVITATION_TTL = timedelta(days=7)
 #: Resets are deliberately short — the address may be a shared or stale inbox.

@@ -209,7 +209,7 @@ def login(request):
     record(EVENT_LOGIN, email=email, account_id=account.id, succeeded=True, ip=ip, user_agent=ua)
 
     response = JsonResponse({"user": identity.account_payload(account)})
-    return set_session_cookie(response, token, ttl)
+    return set_session_cookie(response, token, ttl, remember=remember)
 
 
 @csrf_exempt

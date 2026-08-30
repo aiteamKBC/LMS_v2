@@ -18,6 +18,8 @@ export interface ParsedVideo {
 }
 
 /** Classify a provider URL and extract the id/src needed to play it. */
+// Kept here because the parser and player share the provider contract.
+// eslint-disable-next-line react-refresh/only-export-components
 export function parseVideoUrl(url: string): ParsedVideo {
   const clean = url.trim();
   const yt =
@@ -28,15 +30,14 @@ export function parseVideoUrl(url: string): ParsedVideo {
   const vm = clean.match(/vimeo\.com\/(?:video\/)?(\d+)/);
   if (vm) return { kind: 'vimeo', src: `https://player.vimeo.com/video/${vm[1]}` };
   if (/\.(mp4|webm|ogg|mov|m4v)(\?.*)?$/i.test(clean)) return { kind: 'file', src: clean };
-  // Google Drive. A share link points at Drive's own page ("…/view"), which in an
-  // iframe renders the whole Drive UI — a sign-in or permission notice, not a
-  // player. "/preview" is the embeddable form. It still only plays for someone
-  // the file is shared with; that part is Drive's sharing settings, not this URL.
+  // Google Drive. Use our same-origin media proxy rather than Drive's /preview
+  // iframe: Drive can show "Unable to load video" for playable files, while the
+  // proxy returns the actual MP4 and preserves Range requests for seeking.
   const drive =
     clean.match(/drive\.google\.com\/file\/d\/([\w-]{10,})/) ||
     clean.match(/drive\.google\.com\/open\?id=([\w-]{10,})/) ||
     clean.match(/drive\.google\.com\/uc\?[^#]*id=([\w-]{10,})/);
-  if (drive) return { kind: 'vimeo', src: `https://drive.google.com/file/d/${drive[1]}/preview` };
+  if (drive) return { kind: 'file', src: `/learner_api/media/google-drive/${drive[1]}/` };
   // Unknown — best-effort iframe, treated like vimeo (no progress events).
   return { kind: 'vimeo', src: clean };
 }
@@ -75,18 +76,19 @@ function loadYouTubeApi(): Promise<YTNamespace> {
 }
 
 export function VideoPlayer({
-  parsed, title, onDuration, onProgress, onEnded, onUnsupported,
+  parsed, title, onDuration, onProgress, onPlayingChange, onEnded, onUnsupported,
 }: {
   parsed: ParsedVideo;
   title: string;
   onDuration?: (seconds: number) => void;   // real total length, once known
   onProgress?: (currentSeconds: number) => void; // real elapsed within the video
+  onPlayingChange?: (playing: boolean) => void; // actual playback state; seeking does not count as time
   onEnded?: () => void;                      // playback reached the end
   onUnsupported?: () => void;                // no progress events available (Vimeo/unknown)
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
-  const cbRef = useRef({ onDuration, onProgress, onEnded, onUnsupported });
-  cbRef.current = { onDuration, onProgress, onEnded, onUnsupported };
+  const cbRef = useRef({ onDuration, onProgress, onPlayingChange, onEnded, onUnsupported });
+  cbRef.current = { onDuration, onProgress, onPlayingChange, onEnded, onUnsupported };
 
   // ── YouTube: IFrame Player API ──
   useEffect(() => {
@@ -115,6 +117,7 @@ export function VideoPlayer({
               const d = player?.getDuration() ?? 0;
               if (d > 0) cbRef.current.onDuration?.(Math.round(d));
             }
+            cbRef.current.onPlayingChange?.(e.data === YT.PlayerState.PLAYING);
             if (e.data === YT.PlayerState.ENDED) cbRef.current.onEnded?.();
           },
         },
@@ -128,6 +131,7 @@ export function VideoPlayer({
 
     return () => {
       cancelled = true;
+      cbRef.current.onPlayingChange?.(false);
       if (poll) clearInterval(poll);
       try { player?.destroy(); } catch { /* player may not be constructed yet */ }
     };
@@ -150,7 +154,9 @@ export function VideoPlayer({
         className="absolute inset-0 w-full h-full bg-black"
         onLoadedMetadata={(e) => onDuration?.(Math.round((e.target as HTMLVideoElement).duration))}
         onTimeUpdate={(e) => onProgress?.((e.target as HTMLVideoElement).currentTime)}
-        onEnded={() => onEnded?.()}
+        onPlay={() => onPlayingChange?.(true)}
+        onPause={() => onPlayingChange?.(false)}
+        onEnded={() => { onPlayingChange?.(false); onEnded?.(); }}
       >
         Your browser does not support the video tag.
       </video>

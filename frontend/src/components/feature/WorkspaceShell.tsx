@@ -6,6 +6,7 @@ import { Header } from './Header';
 import { GlobalSearch } from './GlobalSearch';
 import { useAuth } from '@/hooks/useAuth';
 import { useLearnerNavGate } from '@/hooks/useLearnerNavGate';
+import { isLearnerFlowAccount } from '@/lib/learnerFlowAccess';
 
 interface WorkspaceShellProps {
   children: ReactNode;
@@ -20,6 +21,8 @@ interface WorkspaceShellProps {
   showBackButton?: boolean;
   /** Replaces the route-derived final breadcrumb (which may contain a raw id). */
   breadcrumbCurrentLabel?: string;
+  hidePageChrome?: boolean;
+  hideBreadcrumbs?: boolean;
 }
 
 interface BreadcrumbItem {
@@ -151,14 +154,18 @@ export function WorkspaceShell({
   workspaceLabel,
   showBackButton = false,
   breadcrumbCurrentLabel,
+  hidePageChrome = false,
+  hideBreadcrumbs = false,
 }: WorkspaceShellProps) {
   // A learner who is still onboarding, or who has finished enrolment but is not
   // yet being taught, gets a reduced sidebar — most of the workspace needs a
   // running training plan. Applied here so every learner page inherits it.
-  const navItems = useLearnerNavGate(role, navItemsProp);
+  const { auth } = useAuth();
+  const signedInEmail = auth.account?.email || auth.user?.email;
+  const hideFocusedLearnerSidebar = role === 'learner' && isLearnerFlowAccount(signedInEmail);
+  const navItems = useLearnerNavGate(role, navItemsProp, signedInEmail);
   const location = useLocation();
   const navigate = useNavigate();
-  const { auth } = useAuth();
   const [searchOpen, setSearchOpen] = useState(false);
   const [previousRoute, setPreviousRoute] = useState('');
 
@@ -217,37 +224,41 @@ export function WorkspaceShell({
       // The offset itself is applied under a `lg` media query in index.css —
       // below that breakpoint the sidebar is an off-canvas drawer and must
       // reserve nothing.
-      style={{ '--kbc-sidebar-width': `${sidebarPinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH}px` } as CSSProperties}
+      style={{ '--kbc-sidebar-width': `${hideFocusedLearnerSidebar ? 0 : sidebarPinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH}px` } as CSSProperties}
     >
-      <Sidebar
-        role={role}
-        roleLabel={roleLabel}
-        navItems={navItems}
-        userName={displayName}
-        userRole={displayRole}
-        pinned={sidebarPinned}
-        onPinChange={handlePinChange}
-        mobileOpen={mobileSidebarOpen}
-        onCloseMobile={() => setMobileSidebarOpen(false)}
-      />
+      {!hideFocusedLearnerSidebar && (
+        <Sidebar
+          role={role}
+          roleLabel={roleLabel}
+          navItems={navItems}
+          userName={displayName}
+          userRole={displayRole}
+          pinned={sidebarPinned}
+          onPinChange={handlePinChange}
+          mobileOpen={mobileSidebarOpen}
+          onCloseMobile={() => setMobileSidebarOpen(false)}
+        />
+      )}
       {/* Reserve exactly the sidebar's own width — the two numbers come from the
           same constants, so the content can never sit under the rail. The hover
           preview is deliberately not reserved: it floats above the page. */}
       <div
         className="workspace-content flex-1 flex flex-col min-w-0 bg-background-200 transition-[margin] duration-300 ease-out"
-        style={{ marginLeft: `var(--kbc-sidebar-offset, 0px)` }}
+        style={{ marginLeft: hideFocusedLearnerSidebar ? 0 : `var(--kbc-sidebar-offset, 0px)` }}
       >
-        <Header
-          pageTitle={pageTitle}
-          pageSubtitle={pageSubtitle}
-          onOpenSearch={() => setSearchOpen(true)}
-          userName={displayName}
-          onToggleMobileSidebar={handleToggleMobileSidebar}
-          role={role}
-        />
+        {!hidePageChrome && (
+          <Header
+            pageTitle={pageTitle}
+            pageSubtitle={pageSubtitle}
+            onOpenSearch={() => setSearchOpen(true)}
+            userName={displayName}
+            onToggleMobileSidebar={hideFocusedLearnerSidebar ? undefined : handleToggleMobileSidebar}
+            role={role}
+          />
+        )}
 
         {/* Breadcrumbs */}
-        {breadcrumbs.length > 0 && (
+        {!hidePageChrome && !hideBreadcrumbs && breadcrumbs.length > 0 && (
           <div className="workspace-breadcrumbs flex h-8 shrink-0 items-center overflow-hidden border-b border-background-300/40 bg-background-200 px-3 md:px-5">
             <nav className="flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Breadcrumb">
               {roleLabel !== 'Super Admin' && (
