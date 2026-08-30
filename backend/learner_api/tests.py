@@ -1,5 +1,6 @@
 import json
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
@@ -190,9 +191,9 @@ class TrainingPlanHydrationTests(SimpleTestCase):
         cursor = MagicMock()
         connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
         cursor.fetchall.return_value = [
-            ("mod-1", "Module 1", 11, "Week 1", 1, 101, "Watch this", "video"),
-            ("mod-1", "Module 1", 11, "Week 1", 1, 102, "Quiz", "quiz"),
-            ("mod-1", "Module 1", 12, "Week 2", 2, 103, "Read this", "reading"),
+            ("mod-1", "Module 1", 11, "Week 1", 1, 101, "Watch this", "video", Decimal("1.25")),
+            ("mod-1", "Module 1", 11, "Week 1", 1, 102, "Quiz", "quiz", Decimal("0.50")),
+            ("mod-1", "Module 1", 12, "Week 2", 2, 103, "Read this", "reading", None),
         ]
 
         result = hydrate_training_plan([{"moduleId": "mod-1", "moduleTitle": "Old title"}])
@@ -202,11 +203,11 @@ class TrainingPlanHydrationTests(SimpleTestCase):
             "moduleTitle": "Module 1",
             "weeks": [
                 {"weekId": "11", "weekTitle": "Week 1", "components": [
-                    {"componentId": "101", "componentTitle": "Watch this"},
-                    {"componentId": "102", "componentTitle": "Quiz"},
+                    {"componentId": "101", "componentTitle": "Watch this", "expectedOtjh": 1.25},
+                    {"componentId": "102", "componentTitle": "Quiz", "expectedOtjh": 0.5},
                 ]},
                 {"weekId": "12", "weekTitle": "Week 2", "components": [
-                    {"componentId": "103", "componentTitle": "Read this"},
+                    {"componentId": "103", "componentTitle": "Read this", "expectedOtjh": None},
                 ]},
             ],
         }])

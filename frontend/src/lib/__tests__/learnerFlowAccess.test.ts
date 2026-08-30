@@ -18,6 +18,8 @@ describe('learner flow access', () => {
   it.each([
     '/learner/materials',
     '/learner/materials/',
+    '/learner/material/ai-in-marketing',
+    '/learner/material/risk-management/apprenticeship/82',
     '/learner/component/apprenticeship/82/COMP-1',
     '/learner/video/commercial/42/COMP-2',
     '/learner/quiz/apprenticeship/82/17',
