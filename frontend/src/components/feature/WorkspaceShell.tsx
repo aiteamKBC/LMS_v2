@@ -21,7 +21,9 @@ interface WorkspaceShellProps {
   showBackButton?: boolean;
   /** Replaces the route-derived final breadcrumb (which may contain a raw id). */
   breadcrumbCurrentLabel?: string;
+  /** Removes the workspace title and breadcrumbs for focused, content-first pages. */
   hidePageChrome?: boolean;
+  /** Removes only the breadcrumb row while keeping the top header. */
   hideBreadcrumbs?: boolean;
 }
 

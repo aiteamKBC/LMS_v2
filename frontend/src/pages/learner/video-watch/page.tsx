@@ -821,6 +821,14 @@ export default function ComponentViewPage() {
                     const isCurrent = !c.isQuiz && c.componentId === componentId;
                     const contentAvailable = hasComponentContent(c);
                     const clickable = contentAvailable && isNavigableComponent(c) && !isCurrent;
+                    const completed = isComponentComplete(c, completedIds);
+                    const timeKey = demoTimeKey({ isQuiz: c.isQuiz, quizId: c.quizMeta?.quizId, componentId: c.componentId });
+                    const overrideMinutes = timeKey ? demoTimeOverrides[timeKey] : undefined;
+                    const completionTime = completed
+                      ? overrideMinutes != null
+                        ? formatClock(Math.round(overrideMinutes * 60))
+                        : completionTimeFor(c, detail)
+                      : null;
                     const attempts = c.isQuiz ? (c.quizAttempts || []) : [];
                     const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
                     const completed = isComponentComplete(c, completedIds);
@@ -1826,8 +1834,8 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
   if (contentKind === 'video' && parsed) {
     return (
       <div className="rounded-2xl overflow-hidden bg-black shadow-sm ring-1 ring-background-300">
-        <div className="relative w-full" style={{ aspectRatio: '16 / 9' }}>
-          <VideoPlayer parsed={parsed} title={title} onDuration={onDuration} onProgress={onProgress} onEnded={onEnded} onUnsupported={onUnsupported} />
+        <div className="relative w-full mx-auto" style={{ aspectRatio: '16 / 9', maxHeight: 'calc(100vh - 14rem)' }}>
+          <VideoPlayer parsed={parsed} title={title} onDuration={onDuration} onProgress={onProgress} onPlayingChange={onPlayingChange} onEnded={onEnded} onUnsupported={onUnsupported} />
         </div>
       </div>
     );

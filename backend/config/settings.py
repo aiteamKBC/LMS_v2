@@ -648,6 +648,18 @@ LOGGING = {
             ),
             'propagate': False,
         },
+        # Session lifecycle events (login/sessions.py): issued, renewed,
+        # rejected, revoked, and the one that matters most -- at_ceiling, the
+        # renewal that could not move because the session reached its absolute
+        # maximum. Low volume by construction: renewal is throttled to once per
+        # five minutes per session, so a busy console emits a handful an hour,
+        # not one per request. INFO is therefore always on; it is what makes
+        # "why was I signed out?" answerable from the log rather than guessed.
+        'login.sessions': {
+            'handlers': ['console'],
+            'level': os.environ.get('SESSION_LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
         # Daphne warns when a client disconnects before a slow synchronous view
         # finishes and it has to kill the orphaned application task. The
         # underlying slowness is a real thing to fix separately; this just quiets
