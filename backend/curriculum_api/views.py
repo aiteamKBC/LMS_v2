@@ -8613,6 +8613,20 @@ def date_ranges_overlap(left_start, left_end, right_start, right_end):
 
 
 def infer_duration_months(start_value, end_value, fallback=0):
+    """Read a contracted duration back off a start/end pair.
+
+    The exact inverse of ``calculate_cohort_end_date``: that rule stores the end
+    date as the day *before* the corresponding date, so the month count is taken
+    against ``end + 1 day`` rather than against the end date itself. Counting off
+    the end date only works for cohorts starting on the 1st -- there the end
+    lands in the previous month, so it needs a month adding back, while a cohort
+    starting mid-month ends in the same month as its corresponding date and does
+    not. Anchoring removes that split.
+
+    Authored end dates that do not follow the rule are counted down to whole
+    months: an anchor short of the corresponding day has not completed its final
+    month, unless it is the last day of its month and the day was clamped there.
+    """
     explicit = parse_int(fallback, 0)
     if explicit > 0:
         return explicit
@@ -8620,9 +8634,11 @@ def infer_duration_months(start_value, end_value, fallback=0):
     end = parse_date(end_value)
     if not start or not end or end < start:
         return 0
-    months = (end.year - start.year) * 12 + (end.month - start.month)
-    if end.day >= max(1, start.day - 1):
-        months += 1
+    anchor = end + timedelta(days=1)
+    months = (anchor.year - start.year) * 12 + (anchor.month - start.month)
+    clamped = anchor.day == calendar.monthrange(anchor.year, anchor.month)[1]
+    if anchor.day < start.day and not clamped:
+        months -= 1
     return max(1, months)
 
 
