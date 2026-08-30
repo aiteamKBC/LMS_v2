@@ -4,12 +4,31 @@ from django.test import SimpleTestCase
 
 from .media_proxy import (
     _embedded_kbc_media_url,
+    _legacy_upload_path_from_hint,
     _programme_audit_database_aliases,
     _raw_http_urls,
 )
 
 
 class ProgrammeAuditMediaFallbackTests(SimpleTestCase):
+    def test_accepts_upload_hint_for_the_same_legacy_attachment(self):
+        source = (
+            '/curriculum_api/curriculum/uploads/_legacy_files/80352/'
+            'Commercial-Intelligence-1.pptx.pdf'
+        )
+
+        self.assertEqual(
+            _legacy_upload_path_from_hint('80352', source),
+            '_legacy_files/80352/Commercial-Intelligence-1.pptx.pdf',
+        )
+
+    def test_rejects_upload_hint_for_another_attachment_or_unsafe_path(self):
+        other = '/curriculum_api/curriculum/uploads/_legacy_files/999/file.pdf'
+        traversal = '/curriculum_api/curriculum/uploads/_legacy_files/80352/../file.pdf'
+
+        self.assertEqual(_legacy_upload_path_from_hint('80352', other), '')
+        self.assertEqual(_legacy_upload_path_from_hint('80352', traversal), '')
+
     @patch('learner_api.media_proxy.connections')
     def test_prefers_dedicated_audit_database_with_legacy_fallbacks(self, mocked_connections):
         mocked_connections.databases = {'audit': {}, 'enrolment': {}, 'default': {}}

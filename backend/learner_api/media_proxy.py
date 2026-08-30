@@ -191,6 +191,26 @@ def _legacy_attachment_upload_path(attachment_id):
     return ''
 
 
+def _legacy_upload_path_from_hint(attachment_id, value):
+    """Accept only the existing upload URL for this exact legacy attachment.
+
+    Learner component payloads already contain the stable Azure-backed upload
+    path. Passing it to the PDF endpoints avoids making preview availability
+    depend on which database alias carries the imported audit tables.
+    """
+    path = urllib.parse.urlparse(value or '').path
+    marker = '/curriculum_api/curriculum/uploads/'
+    if marker not in path:
+        return ''
+    relative = urllib.parse.unquote(path.split(marker, 1)[1]).lstrip('/')
+    expected_prefix = f'_legacy_files/{attachment_id}/'
+    if not relative.startswith(expected_prefix) or '\\' in relative:
+        return ''
+    if any(part in ('', '.', '..') for part in relative.split('/')):
+        return ''
+    return relative
+
+
 def _legacy_attachment_source(attachment_id):
     """Find the original imported source for a legacy attachment id.
 
@@ -290,9 +310,11 @@ def _open_legacy_attachment(attachment_id, range_header=None):
     return urllib.request.urlopen(urllib.request.Request(media_url, headers=headers), timeout=45)
 
 
-def _load_legacy_attachment_bytes(attachment_id):
-    upload_path = _legacy_attachment_upload_path(attachment_id)
-    if upload_path:
+def _load_legacy_attachment_bytes(attachment_id, upload_hint=''):
+    hinted_path = _legacy_upload_path_from_hint(attachment_id, upload_hint)
+    discovered_path = _legacy_attachment_upload_path(attachment_id)
+    upload_paths = tuple(dict.fromkeys(path for path in (hinted_path, discovered_path) if path))
+    for upload_path in upload_paths:
         opened = upload_storage.open_stream(upload_path)
         if opened is not None:
             stream, _total, _content_type = opened
@@ -416,7 +438,7 @@ def legacy_attachment_pdf_info(request, attachment_id):
     if not LEGACY_ATTACHMENT_ID_RE.match(attachment_id or ""):
         return HttpResponse("Invalid attachment id.", status=400)
 
-    data, error = _load_legacy_attachment_bytes(attachment_id)
+    data, error = _load_legacy_attachment_bytes(attachment_id, request.GET.get('path', ''))
     if error:
         return error
 
@@ -442,7 +464,7 @@ def legacy_attachment_pdf_page(request, attachment_id, page_number):
     except (TypeError, ValueError):
         return HttpResponse("Invalid page number.", status=400)
 
-    data, error = _load_legacy_attachment_bytes(attachment_id)
+    data, error = _load_legacy_attachment_bytes(attachment_id, request.GET.get('path', ''))
     if error:
         return error
 

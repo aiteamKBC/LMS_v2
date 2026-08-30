@@ -1306,7 +1306,7 @@ function InlineAttachmentPreview({ url, title, fileName }: { url: string; title:
   if (media) return <InlineMediaPreview url={url} title={title} fileName={fileName} />;
 
   if (isPdf) {
-    if (legacyId) return <LegacyPdfImagePreview attachmentId={legacyId} title={title} fileName={fileName} />;
+    if (legacyId) return <LegacyPdfImagePreview attachmentId={legacyId} sourceUrl={url} title={title} fileName={fileName} />;
     const hostedPdfEmbed = resolveDocEmbed(previewUrl);
     if (hostedPdfEmbed.mode === 'deck') return <DocumentEmbed url={previewUrl} title={title} />;
     return <PdfCanvasPreview url={previewUrl} title={title} fileName={fileName} />;
@@ -1373,13 +1373,14 @@ function InlineAttachmentPreview({ url, title, fileName }: { url: string; title:
   );
 }
 
-function LegacyPdfImagePreview({ attachmentId, title, fileName }: { attachmentId: string; title: string; fileName?: string | null }) {
+function LegacyPdfImagePreview({ attachmentId, sourceUrl, title, fileName }: { attachmentId: string; sourceUrl: string; title: string; fileName?: string | null }) {
   const [pageNumber, setPageNumber] = useState(1);
   const [pageCount, setPageCount] = useState(1);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
-  const infoUrl = `/learner_api/media/legacy-attachment/${attachmentId}/pdf-info/`;
-  const pageUrl = `/learner_api/media/legacy-attachment/${attachmentId}/pdf-page/${pageNumber}/`;
+  const sourceQuery = `?path=${encodeURIComponent(sourceUrl)}`;
+  const infoUrl = `/learner_api/media/legacy-attachment/${attachmentId}/pdf-info/${sourceQuery}`;
+  const pageUrl = `/learner_api/media/legacy-attachment/${attachmentId}/pdf-page/${pageNumber}/${sourceQuery}`;
 
   useEffect(() => {
     let cancelled = false;
