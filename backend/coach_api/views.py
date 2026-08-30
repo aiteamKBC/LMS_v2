@@ -56,7 +56,7 @@ from learner_api.models import (
     learner_ksbs_relation_exists,
 )
 from learner_api.constants import ACCESS_COACH, ACCESS_SUPER_ADMIN
-from learner_api.active_users import dedupe_otjh_progress_records, refresh_learner_ksb_snapshot
+from learner_api.active_users import dedupe_otjh_progress_records, hydrate_source_training_plan, refresh_learner_ksb_snapshot
 from learner_api.calendar_connections import (
     booking_conflicts as personal_calendar_booking_conflicts,
 )
@@ -1891,12 +1891,76 @@ def curriculum_monthly_target_hours_weeks(training_plan) -> list[list[str]]:
             if not isinstance(week, dict):
                 continue
             component_ids = [
-                clean_text(component.get("componentId"))
+                training_plan_component_id(component)
                 for component in list_or_empty(week.get("components"))
-                if isinstance(component, dict) and clean_text(component.get("componentId"))
+                if isinstance(component, dict) and training_plan_component_id(component)
             ]
             weeks.append(component_ids)
     return weeks
+
+
+def training_plan_has_components(training_plan) -> bool:
+    return any(component_ids for component_ids in curriculum_monthly_target_hours_weeks(training_plan))
+
+
+def monthly_target_training_plan(row: LearnerProfile | SimpleNamespace):
+    plan = getattr(row, "training_plan", None)
+    if training_plan_has_components(plan):
+        return plan
+
+    source = getattr(row, "_caseload_source", None)
+    if source is None:
+        return plan
+
+    try:
+        hydrated = hydrate_source_training_plan(source)
+    except Exception as exc:
+        logger.warning(
+            "Could not hydrate monthly target training plan for learner %s: %s",
+            getattr(row, "id", None),
+            exc,
+        )
+        return plan
+
+    if training_plan_has_components(hydrated):
+        try:
+            setattr(row, "training_plan", hydrated)
+        except Exception:
+            pass
+        return hydrated
+    return plan
+
+
+def training_plan_component_id(component: dict) -> str:
+    return clean_text(
+        component.get("componentId")
+        or component.get("component_id")
+        or component.get("id")
+    )
+
+
+def training_plan_expected_otjh_lookup(training_plan) -> dict[str, float]:
+    lookup: dict[str, float] = {}
+    for module in list_or_empty(training_plan):
+        if not isinstance(module, dict):
+            continue
+        for week in list_or_empty(module.get("weeks")):
+            if not isinstance(week, dict):
+                continue
+            for component in list_or_empty(week.get("components")):
+                if not isinstance(component, dict):
+                    continue
+                component_id = training_plan_component_id(component)
+                expected = component.get("expectedOtjh")
+                if expected in (None, ""):
+                    expected = component.get("expected_otjh")
+                if not component_id or expected in (None, ""):
+                    continue
+                try:
+                    lookup[component_id] = float(expected)
+                except (TypeError, ValueError):
+                    continue
+    return lookup
 
 
 def curriculum_monthly_target_hours(
@@ -1916,20 +1980,52 @@ def curriculum_monthly_target_hours(
     `curriculum_monthly_target_hours_weeks` and `curriculum_expected_otjh_by_component_id`)
     — this function does no DB work of its own.
     """
-    if not learner_start_date:
+    raw_weeks = [
+        week
+        for module in list_or_empty(training_plan)
+        if isinstance(module, dict)
+        for week in list_or_empty(module.get("weeks"))
+        if isinstance(week, dict)
+    ]
+    if not raw_weeks:
         return 0.0
 
-    weeks = curriculum_monthly_target_hours_weeks(training_plan)
-    if not weeks:
-        return 0.0
-
+    plan_expected_by_id = training_plan_expected_otjh_lookup(training_plan)
     total_hours = 0.0
-    for index, component_ids in enumerate(weeks):
-        week_start = learner_start_date + timedelta(weeks=index)
+    for index, week in enumerate(raw_weeks):
+        explicit_start = parse_date_value(
+            week.get("startDate") or week.get("start_date") or week.get("weekStart") or week.get("week_start")
+        )
+        if isinstance(explicit_start, datetime):
+            explicit_start = explicit_start.date()
+        # Prefer authored curriculum week dates. Older plans have no dates, so
+        # retain the contiguous-week calculation from the learner start date;
+        # when that is also absent, anchor week 1 to the requested month.
+        week_start = explicit_start or (
+            (learner_start_date or start_date) + timedelta(weeks=index)
+        )
         if not (start_date <= week_start <= end_date):
             continue
-        total_hours += sum(expected_by_id.get(component_id, 0.0) for component_id in component_ids)
+        component_ids = [
+            training_plan_component_id(component)
+            for component in list_or_empty(week.get("components"))
+            if isinstance(component, dict) and training_plan_component_id(component)
+        ]
+        total_hours += sum(
+            expected_by_id.get(component_id, plan_expected_by_id.get(component_id, 0.0))
+            for component_id in component_ids
+        )
     return round(total_hours, 1)
+
+
+def monthly_target_start_date(row: LearnerProfile | SimpleNamespace) -> date | None:
+    source = getattr(row, "_caseload_source", None)
+    start_value = getattr(source, "start_date", None) if source is not None else None
+    start_value = start_value or getattr(row, "start_date", None)
+    start_date = parse_date_value(start_value)
+    if isinstance(start_date, datetime):
+        return start_date.date()
+    return start_date
 
 
 def training_plan_component_lookup(training_plan) -> dict[str, dict[str, str]]:
@@ -1945,7 +2041,7 @@ def training_plan_component_lookup(training_plan) -> dict[str, dict[str, str]]:
             for component in list_or_empty(week.get("components")):
                 if not isinstance(component, dict):
                     continue
-                component_id = clean_text(component.get("componentId"))
+                component_id = training_plan_component_id(component)
                 if not component_id:
                     continue
                 lookup[component_id] = {
@@ -1961,20 +2057,23 @@ def curriculum_expected_otjh_by_component_id(component_ids: list[str]) -> dict[s
     ids = sorted({clean_text(component_id) for component_id in component_ids if clean_text(component_id)})
     if not ids:
         return {}
-    try:
-        with connections["enrolment"].cursor() as cur:
-            cur.execute(
-                "SELECT id, expected_otjh FROM curriculum.components WHERE id = ANY(%s)",
-                [ids],
-            )
-            return {
-                component_id: float(expected)
-                for component_id, expected in cur.fetchall()
-                if expected is not None
-            }
-    except DatabaseError as exc:
-        logger.warning("Could not look up component expected_otjh for OTJH breakdown: %s", exc)
-        return {}
+    for alias in ("default", "enrolment"):
+        try:
+            with connections[alias].cursor() as cur:
+                cur.execute(
+                    "SELECT id, expected_otjh FROM curriculum.components WHERE id = ANY(%s)",
+                    [ids],
+                )
+                values = {
+                    component_id: float(expected)
+                    for component_id, expected in cur.fetchall()
+                    if expected is not None
+                }
+                if values:
+                    return values
+        except DatabaseError as exc:
+            logger.warning("Could not look up component expected_otjh on %s: %s", alias, exc)
+    return {}
 
 
 def component_expected_otjh_hours(component_id: str, component_meta: dict, expected_by_id: dict[str, float], progress_entry: dict | None = None) -> float | None:
@@ -2476,9 +2575,10 @@ def build_monthly_activity_learner(
         monthly_status = "on-track"
 
     last_activity = activities[0] if activities else None
+    target_training_plan = monthly_target_training_plan(row)
     monthly_target_hours = curriculum_monthly_target_hours(
-        getattr(row, "training_plan", None),
-        getattr(row, "start_date", None),
+        target_training_plan,
+        monthly_target_start_date(row),
         start_date,
         end_date,
         expected_otjh_by_component_id or {},
@@ -6242,7 +6342,7 @@ def coach_monthly_activity(request):
             [
                 component_id
                 for row, _learner in active_pairs
-                for component_ids in curriculum_monthly_target_hours_weeks(getattr(row, "training_plan", None))
+                for component_ids in curriculum_monthly_target_hours_weeks(monthly_target_training_plan(row))
                 for component_id in component_ids
             ]
         )

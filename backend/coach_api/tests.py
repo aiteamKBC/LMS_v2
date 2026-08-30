@@ -21,6 +21,8 @@ from coach_api.views import (
     coach_staff_display_name,
     collect_generated_timetable,
     completed_ksb_codes,
+    curriculum_monthly_target_hours,
+    curriculum_monthly_target_hours_weeks,
     fetch_caseload_learner_profiles,
     fetch_evidence_file_queue,
     fetch_source_schedule_rows,
@@ -587,6 +589,168 @@ class MonthlyActivityTests(SimpleTestCase):
         self.assertEqual(reported_minutes("1.5"), 90.0)
         self.assertEqual(reported_minutes("120"), 120.0)
         self.assertEqual(reported_minutes("90 min"), 90.0)
+
+    def test_monthly_target_uses_training_plan_weeks_and_component_expected_otjh(self):
+        training_plan = [{
+            "moduleTitle": "Module A",
+            "weeks": [
+                {
+                    "weekTitle": "Week 1",
+                    "components": [
+                        {"componentId": "component-1"},
+                        {"componentId": "component-2"},
+                    ],
+                },
+                {
+                    "weekTitle": "Week 2",
+                    "components": [
+                        {"componentId": "component-3"},
+                    ],
+                },
+            ],
+        }]
+
+        self.assertEqual(
+            curriculum_monthly_target_hours_weeks(training_plan),
+            [["component-1", "component-2"], ["component-3"]],
+        )
+        self.assertEqual(
+            curriculum_monthly_target_hours(
+                training_plan,
+                date(2026, 8, 24),
+                date(2026, 8, 1),
+                date(2026, 8, 31),
+                {"component-1": 1.5, "component-2": 2.0, "component-3": 3.0},
+            ),
+            6.5,
+        )
+
+    def test_monthly_target_falls_back_to_expected_otjh_embedded_in_plan(self):
+        training_plan = [{
+            "moduleTitle": "Module A",
+            "weeks": [{
+                "weekTitle": "Week 1",
+                "components": [
+                    {"id": "component-1", "expectedOtjh": "1.25"},
+                    {"component_id": "component-2", "expected_otjh": "2.75"},
+                ],
+            }],
+        }]
+
+        self.assertEqual(
+            curriculum_monthly_target_hours_weeks(training_plan),
+            [["component-1", "component-2"]],
+        )
+        self.assertEqual(
+            curriculum_monthly_target_hours(
+                training_plan,
+                date(2026, 8, 3),
+                date(2026, 8, 1),
+                date(2026, 8, 31),
+                {},
+            ),
+            4.0,
+        )
+
+    def test_monthly_target_uses_caseload_source_start_date_when_profile_start_is_blank(self):
+        row = SimpleNamespace(
+            id=42,
+            programme="TEST USER FLOW",
+            start_date=None,
+            training_plan=[{
+                "moduleTitle": "Module A",
+                "weeks": [{
+                    "weekTitle": "Week 1",
+                    "components": [{"componentId": "component-1"}],
+                }],
+            }],
+            training_plan_progress=[],
+            activity_feed=[],
+            _caseload_source=SimpleNamespace(start_date=date(2026, 8, 26)),
+        )
+        learner = {
+            "id": "42",
+            "name": "Mahmoud Fouda",
+            "initials": "MF",
+            "email": "mahmoud@example.com",
+            "cohortName": "Aug-2026",
+            "group": "G1-Wed",
+            "otjhStatus": "On Track",
+            "otjhTarget": 120,
+            "otjhCompleted": 40,
+        }
+
+        result = build_monthly_activity_learner(
+            row,
+            learner,
+            events=[],
+            start_date=date(2026, 8, 1),
+            end_date=date(2026, 8, 31),
+            expected_otjh_by_component_id={"component-1": 2.5},
+        )
+
+        self.assertEqual(result["otjh"]["monthlyTarget"], 2.5)
+
+    @patch("coach_api.views.hydrate_source_training_plan")
+    @patch("coach_api.views.fetch_verified_teams_attendance_rows", return_value=[])
+    @patch("coach_api.views.curriculum_expected_otjh_by_component_id", return_value={"component-1": 2.5})
+    @patch("coach_api.views.serialize_caseload_learner")
+    @patch("coach_api.views.collect_generated_timetable", return_value={"events": [], "owner_name": "Med Maher"})
+    @patch("coach_api.views.fetch_caseload_learner_profiles")
+    def test_coach_monthly_activity_hydrates_training_plan_for_monthly_target(
+        self,
+        fetch_rows,
+        collect_generated_timetable,
+        serialize_learner,
+        expected_lookup,
+        fetch_attendance,
+        hydrate_plan,
+    ):
+        source = SimpleNamespace(start_date=date(2026, 8, 26))
+        row = SimpleNamespace(
+            id=42,
+            coach_name="Med Maher",
+            programme="TEST USER FLOW",
+            start_date=None,
+            training_plan=[],
+            training_plan_progress=[],
+            activity_feed=[],
+            _caseload_source=source,
+        )
+        hydrated = [{
+            "moduleTitle": "Module A",
+            "weeks": [{
+                "weekTitle": "Week 1",
+                "components": [{"componentId": "component-1"}],
+            }],
+        }]
+        hydrate_plan.return_value = hydrated
+        fetch_rows.return_value = [row]
+        serialize_learner.return_value = {
+            "id": "42",
+            "name": "Mahmoud Fouda",
+            "initials": "MF",
+            "email": "mahmoud@example.com",
+            "cohortName": "Aug-2026",
+            "group": "G1-Wed",
+            "programme": "TEST USER FLOW",
+            "enrollmentStatus": "active",
+            "otjhStatus": "On Track",
+            "otjhTarget": 120,
+            "otjhCompleted": 40,
+        }
+
+        response = call_coach_view(coach_monthly_activity,
+            self.factory.get(
+                "/coach_api/coach/monthly-activity",
+                {"owner_email": "coach@example.com", "month": "2026-08"},
+            )
+        )
+
+        payload = json.loads(response.content)
+        hydrate_plan.assert_called_with(source)
+        expected_lookup.assert_called_once_with(["component-1"])
+        self.assertEqual(payload["learners"][0]["otjh"]["monthlyTarget"], 2.5)
 
     def test_build_monthly_activity_learner_dedupes_duplicate_feed_items(self):
         row = SimpleNamespace(
