@@ -16,7 +16,7 @@ export interface LessonContext {
   moduleTitle: string;
   weekTitle: string;
   weekComponents: JourneyComponent[];
-  weeks: { week: string; count: number; active: boolean }[];
+  weeks: { week: string; count: number; active: boolean; components: JourneyComponent[] }[];
 }
 
 /** Route a component to the right learner page (video and quiz keep their own routes). */
@@ -45,7 +45,7 @@ export function locateComponent(detail: LearnerDetail | null, componentId: strin
           moduleTitle: mod.module,
           weekTitle: wk.week,
           weekComponents: wk.components,
-          weeks: mod.weeks.map((w) => ({ week: w.week, count: w.components.length, active: w.week === wk.week })),
+          weeks: mod.weeks.map((w) => ({ week: w.week, count: w.components.length, active: w.week === wk.week, components: w.components })),
         };
       }
     }
@@ -64,7 +64,7 @@ export function locateQuiz(detail: LearnerDetail | null, quizId: number): Lesson
           moduleTitle: mod.module,
           weekTitle: wk.week,
           weekComponents: wk.components,
-          weeks: mod.weeks.map((w) => ({ week: w.week, count: w.components.length, active: w.week === wk.week })),
+          weeks: mod.weeks.map((w) => ({ week: w.week, count: w.components.length, active: w.week === wk.week, components: w.components })),
         };
       }
     }
@@ -79,15 +79,13 @@ interface LessonSidebarProps {
   /** The currently-open lesson, so its row is highlighted (not clickable). */
   activeComponentId?: string | null;
   activeQuizId?: number | null;
-  /** Where a week row / other-weeks navigation should go. */
-  backHref: string;
   /** Component ids the learner has already finished, so each row can show it.
    *  Build with `completedComponentIds(detail)`, plus anything completed in
    *  this visit that the fetched detail predates. */
   completedIds?: Set<string>;
 }
 
-export function LessonSidebar({ ctx, kind, id, activeComponentId, activeQuizId, backHref, completedIds }: LessonSidebarProps) {
+export function LessonSidebar({ ctx, kind, id, activeComponentId, activeQuizId, completedIds }: LessonSidebarProps) {
   const navigate = useNavigate();
   const moduleTitle = ctx?.moduleTitle ?? '';
   const weekTitle = ctx?.weekTitle ?? '';
@@ -174,27 +172,32 @@ export function LessonSidebar({ ctx, kind, id, activeComponentId, activeQuizId, 
             <p className="text-[11px] text-foreground-400 mt-0.5">{ctx?.weeks.length} weeks</p>
           </div>
           <ul className="divide-y divide-background-300">
-            {(ctx?.weeks ?? []).map((w) => (
-              <li key={w.week}>
-                <button
-                  onClick={() => navigate(backHref)}
-                  className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
-                    w.active ? 'bg-background-100' : 'hover:bg-background-50 cursor-pointer'
-                  }`}
-                >
-                  <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-background-100 text-foreground-500">
-                    <AppIcon className="ri-calendar-line text-[12px]" />
-                  </span>
-                  <span className="flex-1 min-w-0">
-                    <span className={`block text-[13px] font-semibold leading-snug truncate ${w.active ? 'text-foreground-900' : 'text-foreground-700'}`}>
-                      {w.week}
+            {(ctx?.weeks ?? []).map((w) => {
+              const navigable = w.components.filter((item) => hasComponentContent(item) && isNavigableComponent(item));
+              const target = navigable.find((item) => !isComponentComplete(item, done)) || navigable[0] || null;
+              return (
+                <li key={w.week}>
+                  <button
+                    disabled={!target}
+                    onClick={() => target && navigate(componentRoute(kind, id, target, moduleTitle, w.week))}
+                    className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
+                      !target ? 'cursor-not-allowed bg-background-100/70 opacity-55' : w.active ? 'bg-background-100' : 'hover:bg-background-50 cursor-pointer'
+                    }`}
+                  >
+                    <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-background-100 text-foreground-500">
+                      <AppIcon className={`${target ? 'ri-calendar-line' : 'ri-lock-line'} text-[12px]`} />
                     </span>
-                    <span className="block text-[10px] text-foreground-400">{w.count} components</span>
-                  </span>
-                  {w.active && <span className="text-[10px] font-semibold text-primary-600 shrink-0">Current</span>}
-                </button>
-              </li>
-            ))}
+                    <span className="flex-1 min-w-0">
+                      <span className={`block text-[13px] font-semibold leading-snug truncate ${w.active ? 'text-foreground-900' : 'text-foreground-700'}`}>
+                        {w.week}
+                      </span>
+                      <span className="block text-[10px] text-foreground-400">{w.count} components</span>
+                    </span>
+                    {w.active && <span className="text-[10px] font-semibold text-primary-600 shrink-0">Current</span>}
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
