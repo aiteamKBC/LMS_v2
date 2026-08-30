@@ -39,6 +39,21 @@ PROGRAMME_AUDIT_MATERIAL_TABLES = (
     "social_media",
     "strategy_planning",
 )
+PROGRAMME_AUDIT_DATABASE_ALIASES = ("audit", "enrolment", "default")
+
+
+def _programme_audit_database_aliases():
+    """Return configured databases that may carry imported material snapshots.
+
+    Production keeps ``programme_audit`` on its dedicated audit database, while
+    older/local environments may still have it on the enrolment/default
+    connection.  Keep the latter two as compatibility fallbacks.
+    """
+    configured = connections.databases
+    return tuple(
+        alias for alias in PROGRAMME_AUDIT_DATABASE_ALIASES
+        if alias in configured
+    )
 
 
 def _stream_response(upstream):
@@ -149,7 +164,7 @@ def _legacy_attachment_upload_path(attachment_id):
     """Resolve an attachment id to its stable Azure/local path via material tables."""
     like_legacy = f"%/_legacy_files/{attachment_id}/%"
     marker = '/curriculum_api/curriculum/uploads/'
-    for alias in ("enrolment", "default"):
+    for alias in _programme_audit_database_aliases():
         try:
             with connections[alias].cursor() as cur:
                 for table in PROGRAMME_AUDIT_MATERIAL_TABLES:
@@ -187,7 +202,7 @@ def _legacy_attachment_source(attachment_id):
     like_attachment = f"%attachment_id={attachment_id}%"
     like_encoded_attachment = f"%attachment_id%3D{attachment_id}%"
     like_legacy = f"%/_legacy_files/{attachment_id}/%"
-    for alias in ("enrolment", "default"):
+    for alias in _programme_audit_database_aliases():
         try:
             with connections[alias].cursor() as cur:
                 for table in PROGRAMME_AUDIT_MATERIAL_TABLES:
