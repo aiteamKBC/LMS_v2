@@ -8613,6 +8613,20 @@ def date_ranges_overlap(left_start, left_end, right_start, right_end):
 
 
 def infer_duration_months(start_value, end_value, fallback=0):
+    """Read a contracted duration back off a start/end pair.
+
+    The exact inverse of ``calculate_cohort_end_date``: that rule stores the end
+    date as the day *before* the corresponding date, so the month count is taken
+    against ``end + 1 day`` rather than against the end date itself. Counting off
+    the end date only works for cohorts starting on the 1st -- there the end
+    lands in the previous month, so it needs a month adding back, while a cohort
+    starting mid-month ends in the same month as its corresponding date and does
+    not. Anchoring removes that split.
+
+    Authored end dates that do not follow the rule are counted down to whole
+    months: an anchor short of the corresponding day has not completed its final
+    month, unless it is the last day of its month and the day was clamped there.
+    """
     explicit = parse_int(fallback, 0)
     if explicit > 0:
         return explicit
@@ -8620,9 +8634,11 @@ def infer_duration_months(start_value, end_value, fallback=0):
     end = parse_date(end_value)
     if not start or not end or end < start:
         return 0
-    months = (end.year - start.year) * 12 + (end.month - start.month)
-    if end.day >= max(1, start.day - 1):
-        months += 1
+    anchor = end + timedelta(days=1)
+    months = (anchor.year - start.year) * 12 + (anchor.month - start.month)
+    clamped = anchor.day == calendar.monthrange(anchor.year, anchor.month)[1]
+    if anchor.day < start.day and not clamped:
+        months -= 1
     return max(1, months)
 
 
@@ -21835,6 +21851,40 @@ def tutor_profile_for_identity(email, name):
     return None, ''
 
 
+def staff_profile_assignment_ids(role, row):
+    """Return the canonical module IDs assigned to a tutor profile.
+
+    Older staff-profile rows may still carry an explicit JSON assignment list.
+    Current staff profiles come from the enrolment directory, so their
+    curriculum assignment is represented by the tutor name/email stored on
+    authoring modules. Supporting both shapes keeps the workspace compatible
+    with existing data while the directory remains the identity source.
+    """
+    if role != 'tutor' or not row:
+        return []
+
+    stored_ids = clean_assignment_ids(as_json_value(
+        row.get('assigned_module_ids') or row.get('assignedModuleIds'),
+        [],
+    ))
+
+    profile_name = staff_profile_name(row)
+    profile_email = staff_profile_email(row)
+    if not profile_name and not profile_email:
+        return stored_ids
+
+    name_key = staff_assignment_key(profile_name)
+    email_key = normalise(profile_email) if profile_email else ''
+    assigned_ids = list(stored_ids)
+    for module in safe_authoring_module_rows():
+        module_id = clean_str(module.get('module_catalogue_id'))
+        tutor_name_key = staff_assignment_key(module.get('tutor_name'))
+        tutor_email_key = normalise(clean_str(module.get('tutor_email'))) if profile_email else ''
+        if module_id and ((name_key and tutor_name_key == name_key) or (email_key and tutor_email_key == email_key)):
+            assigned_ids.append(module_id)
+    return clean_assignment_ids(assigned_ids)
+
+
 def tutor_workspace_module_payload(row):
     """One assigned module, as the workspace shows it."""
     return {
@@ -21958,9 +22008,9 @@ def curriculum_tutor_workspace(request):
 
     profile, matched_by = tutor_profile_for_identity(email, name)
 
-    # A tutor's module scope is the explicit grant stored on their staff
-    # profile. Do not infer access from a matching tutor_name on a module: that
-    # field can be stale or belong to a different assignment workflow.
+    # A tutor's module scope is read from the explicit assignment grant when
+    # present, with the current curriculum name/email assignment as the
+    # directory-backed fallback.
     module_ids = list(staff_profile_assignment_ids('tutor', profile)) if profile else []
 
     if not profile:
@@ -22015,7 +22065,7 @@ def curriculum_tutor_workspace(request):
             'jobTitle': clean_str(profile.get('job_title')) if profile else '',
         },
         # This is the source of truth for both this list and `modules`.
-        'assignedModuleIds': [clean_str(module_id) for module_id in staff_profile_assignment_ids('tutor', profile)],
+        'assignedModuleIds': module_ids,
         'modules': modules,
         'nextSession': headline,
     })

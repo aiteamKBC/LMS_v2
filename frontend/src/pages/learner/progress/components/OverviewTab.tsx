@@ -21,25 +21,34 @@ interface AttentionItem {
   cta: string;
 }
 
+type MetricAccent = 'purple' | 'green' | 'orange';
+
 function ProgressStat({
-  icon, label, value, percent, caption, tone = 'neutral', onClick,
+  icon, label, value, percent, caption, tone = 'neutral', accent = 'purple', onClick,
 }: {
-  icon: string; label: string; value: string; percent: number | null; caption?: string; tone?: StatusTone; onClick: () => void;
+  icon: string; label: string; value: string; percent: number | null; caption?: string; tone?: StatusTone; accent?: MetricAccent; onClick: () => void;
 }) {
   const style = toneStyle(tone);
+  const accentClasses = {
+    purple: 'bg-gradient-to-br from-[#d8c9ff] via-[#8b5cf6] to-[#5420a8] text-white shadow-md shadow-primary-500/25',
+    green: 'bg-gradient-to-br from-[#b9f6db] via-[#34d399] to-[#059669] text-white shadow-md shadow-emerald-500/25',
+    orange: 'bg-gradient-to-br from-[#e2b45b] via-[#b27715] to-[#7a4e0a] text-white shadow-md shadow-[#b27715]/30',
+  }[accent];
   return (
     <button
       type="button"
       onClick={onClick}
-      className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 text-left shadow-sm transition hover:border-primary-200"
+      className="flex min-w-0 items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-4 text-left shadow-sm transition hover:border-primary-200 hover:shadow-md"
     >
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-foreground-400">{label}</p>
-        <AppIcon className={`${icon} shrink-0 text-[15px] ${tone === 'neutral' ? 'text-foreground-300' : style.text}`} />
+      <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ring-1 ring-black/5 ${accentClasses}`}>
+        <AppIcon className={`${icon} text-xl`} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[12px] font-semibold text-foreground-500">{label}</p>
+        <p className={`mt-1 text-[22px] font-semibold leading-none tabular-nums ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{value}</p>
+        <ProgressBar percent={percent} tone={percent == null || tone === 'neutral' ? undefined : style.dot} className="mt-2.5" />
+        {caption ? <p className="mt-1.5 truncate text-[12px] leading-snug text-foreground-500">{caption}</p> : null}
       </div>
-      <p className={`mt-1.5 text-[22px] font-semibold leading-none tabular-nums ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{value}</p>
-      <ProgressBar percent={percent} tone={percent == null || tone === 'neutral' ? undefined : style.dot} className="mt-2.5" />
-      {caption ? <p className="mt-1.5 truncate text-[12px] leading-snug text-foreground-500">{caption}</p> : null}
     </button>
   );
 }
@@ -108,21 +117,21 @@ export function OverviewTab({
       {/* Compact summary tiles */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <ProgressStat
-          icon="ri-folder-upload-line" label="Evidence" tone="brand"
+          icon="ri-book-open-line" label="Evidence" tone="brand" accent="purple"
           value={`${validatedEvidence}/${totalEvidence}`}
           percent={evidencePct}
           caption={totalEvidence ? `${totalEvidence - validatedEvidence - needsWorkEvidence} awaiting review` : 'No evidence uploaded yet'}
           onClick={() => onNavigateTab('evidence')}
         />
         <ProgressStat
-          icon="ri-time-line" label="OTJ Hours" tone={otjhStatus ? (otjhAtRisk ? 'caution' : 'positive') : 'brand'}
+          icon="ri-calendar-check-line" label="OTJ Hours" tone={otjhStatus ? (otjhAtRisk ? 'caution' : 'positive') : 'brand'} accent="green"
           value={formatHoursMinutes(completedHours)}
           percent={otjhPct}
           caption={targetHours > 0 ? `Target ${formatHoursMinutes(targetHours)}${otjhStatus ? ` · ${otjhStatus}` : ''}` : 'No target set yet'}
           onClick={() => onNavigateTab('otjh')}
         />
         <ProgressStat
-          icon="ri-bar-chart-2-line" label="KSB Progress" tone="brand"
+          icon="ri-time-line" label="KSB Progress" tone="brand" accent="orange"
           value={ksbTotal ? `${ksbPct}%` : '—'}
           percent={ksbPct}
           caption={ksbTotal ? `${ksbComplete} of ${ksbTotal} fully evidenced` : 'No KSBs defined yet'}

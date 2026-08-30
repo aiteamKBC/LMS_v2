@@ -47,7 +47,8 @@ export function LearnerMonthTimeline({
     const counts = INLINE_FILTERS.reduce((acc, item) => ({ ...acc, [item.key]: 0 }), {} as Record<InlineActivityFilter, number>);
     learner.activities.forEach((activity) => {
       counts.all += 1;
-      counts[inlineActivityCategory(activity.type)] += 1;
+      const category = inlineActivityCategory(activity.type);
+      if (category) counts[category] += 1;
     });
     return counts;
   }, [learner.activities]);

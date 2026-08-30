@@ -215,7 +215,7 @@ function SidebarIcon({ id, label, sourceIcon, size = 18, className }: {
    ═══════════════════════════════════════════════════════ */
 
 const ROW_BASE =
-  'relative group flex items-center rounded-xl transition-colors duration-150 ' +
+  'kbc-sidebar-row relative group flex items-center rounded-xl transition-colors duration-150 ' +
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300';
 const ROW_IDLE = 'text-foreground-500 hover:bg-primary-50/70 hover:text-foreground-800';
 const ROW_ACTIVE = 'bg-primary-50 text-primary-700 font-semibold';
@@ -225,7 +225,7 @@ function ActiveMarker() {
   return (
     <span
       aria-hidden="true"
-      className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary-600"
+      className="kbc-sidebar-active-marker absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-primary-600"
     />
   );
 }
@@ -402,15 +402,15 @@ export function Sidebar({
 
   /** One panel, rendered either as the rail or expanded. */
   const panel = (variant: 'rail' | 'expanded', options?: { showPin?: boolean }) => (
-    <div className="flex h-screen w-full flex-col border-r border-foreground-100 bg-background-50">
+    <div className={`kbc-sidebar-panel kbc-sidebar-${variant} flex h-screen w-full flex-col border-r border-foreground-100 bg-background-50`}>
       {/* Header — brand, and the pin control on desktop */}
-      <div className={`flex h-14 shrink-0 items-center gap-2 border-b border-foreground-100/70 ${variant === 'rail' ? 'justify-center px-2' : 'px-3'}`}>
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-600 font-heading text-[12px] font-bold text-white">
+      <div className={`kbc-sidebar-header flex h-14 shrink-0 items-center gap-2 border-b border-foreground-100/70 ${variant === 'rail' ? 'justify-center px-2' : 'px-3'}`}>
+        <span className="kbc-sidebar-brand flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-600 font-heading text-[12px] font-bold text-white">
           KBC
         </span>
         {variant === 'expanded' && (
           <>
-            <span className="min-w-0 flex-1 truncate font-heading text-[13px] font-bold text-foreground-800">
+            <span className="kbc-sidebar-role min-w-0 flex-1 truncate font-heading text-[13px] font-bold text-foreground-800">
               {roleLabel}
             </span>
             {options?.showPin && onPinChange && (
@@ -431,7 +431,7 @@ export function Sidebar({
       </div>
 
       {/* Navigation */}
-      <nav aria-label={`${roleLabel} navigation`} className={`flex-1 overflow-y-auto overflow-x-hidden py-2.5 ${variant === 'rail' ? 'px-1.5' : 'px-2'}`}>
+      <nav aria-label={`${roleLabel} navigation`} className={`kbc-sidebar-nav flex-1 overflow-y-auto overflow-x-hidden py-2.5 ${variant === 'rail' ? 'px-1.5' : 'px-2'}`}>
         <div className={variant === 'rail' ? 'space-y-1' : 'space-y-0.5'}>
           {filteredNavItems.map(item => (
             <div key={item.id}>
@@ -534,7 +534,7 @@ function RailLink({ item, isActive, compact }: {
       className={`${ROW_BASE} ${active ? ROW_ACTIVE : ROW_IDLE} w-full flex-col justify-center gap-1 ${compact ? 'py-1.5' : 'py-2'} px-1`}
     >
       {active && <ActiveMarker />}
-      <span className="relative flex h-5 w-5 items-center justify-center">
+      <span className="kbc-sidebar-icon-well relative flex h-5 w-5 items-center justify-center">
         <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={compact ? 16 : 18} />
         {item.badge ? <RailDot className="bg-primary-500" /> : null}
         {item.statusDot && !item.badge ? <RailDot className="bg-red-500" /> : null}
@@ -576,7 +576,7 @@ function RailGroup({ item, isActive, isDropdownOpen, onOpen, onClose }: {
         className={`${ROW_BASE} ${anyChildActive ? ROW_ACTIVE : ROW_IDLE} w-full flex-col justify-center gap-1 px-1 py-2`}
       >
         {anyChildActive && <ActiveMarker />}
-        <span className="relative flex h-5 w-5 items-center justify-center">
+        <span className="kbc-sidebar-icon-well relative flex h-5 w-5 items-center justify-center">
           <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} />
           {item.badge ? <RailDot className="bg-primary-500" /> : null}
           {item.comingSoon && !item.badge ? <RailDot className="bg-amber-400" /> : null}
@@ -608,7 +608,7 @@ function ExpandedLink({ item, isActive, onNavigate, compact }: {
       className={`${ROW_BASE} ${active ? ROW_ACTIVE : ROW_IDLE} gap-2.5 px-2.5 ${compact ? 'py-1.5 text-[12px]' : 'py-2 text-[13px]'}`}
     >
       {active && <ActiveMarker />}
-      <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+      <span className="kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center">
         <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={compact ? 16 : 18} />
       </span>
       <span className="min-w-0 flex-1 truncate">{item.label}</span>
@@ -644,7 +644,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate }: {
         className={`${ROW_BASE} ${anyChildActive && !isExpanded ? ROW_ACTIVE : ROW_IDLE} w-full cursor-pointer gap-2.5 px-2.5 py-2 text-[13px]`}
       >
         {anyChildActive && !isExpanded && <ActiveMarker />}
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+        <span className="kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center">
           <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} />
         </span>
         <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
@@ -669,7 +669,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate }: {
                 onClick={onNavigate}
                 className={`${ROW_BASE} ${childActive ? ROW_ACTIVE : ROW_IDLE} gap-2 px-2.5 py-1.5 text-[12.5px]`}
               >
-                <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                <span className="kbc-sidebar-icon-well kbc-sidebar-child-icon-well flex h-4 w-4 shrink-0 items-center justify-center">
                   <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={15} />
                 </span>
                 <span className="min-w-0 flex-1 truncate">{child.label}</span>
@@ -748,7 +748,7 @@ function useFlyout({ item, isActive, isOpen, onOpen, onClose, anchorRef }: {
   const flyout = isOpen && style ? createPortal(
     <div
       id={`dropdown-${item.id}`}
-      className="kbc-sb-flyout fixed z-[100] w-[252px] rounded-xl border border-foreground-100 bg-background-50 p-1.5 shadow-xl"
+      className="kbc-sb-flyout kbc-sidebar-flyout fixed z-[100] w-[252px] rounded-xl border border-foreground-100 bg-background-50 p-1.5 shadow-xl"
       style={{ top: style.top, left: style.left }}
       onMouseEnter={open}
       onMouseLeave={scheduleClose}
@@ -784,7 +784,7 @@ function useFlyout({ item, isActive, isOpen, onOpen, onClose, anchorRef }: {
               onClick={onClose}
               className={`${ROW_BASE} ${childActive ? ROW_ACTIVE : ROW_IDLE} gap-2.5 px-2.5 py-2 text-[12.5px]`}
             >
-              <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+              <span className="kbc-sidebar-icon-well kbc-sidebar-child-icon-well flex h-4 w-4 shrink-0 items-center justify-center">
                 <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={15} />
               </span>
               <span className="min-w-0 flex-1 truncate">{child.label}</span>

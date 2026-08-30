@@ -62,6 +62,13 @@ const STEP_META: Record<StructureWizardStep, {
   skipLabel: string;
   /** What the step after this one is for, named in the brief. */
   nextIs: string;
+  /**
+   * The page that adds a *second* record of this kind to the same parent. One
+   * run writes one record per step, and nothing on screen used to say so — a
+   * reader who wanted two groups under a cohort had no way to know the wizard
+   * was not going to offer them a second one.
+   */
+  moreAt: string;
 }> = {
   programme: {
     label: 'Programme',
@@ -69,6 +76,7 @@ const STEP_META: Record<StructureWizardStep, {
     continueLabel: 'Create programme & continue',
     skipLabel: 'Use an existing programme',
     nextIs: 'its first cohort',
+    moreAt: 'Programmes',
   },
   cohort: {
     label: 'Cohort',
@@ -76,6 +84,7 @@ const STEP_META: Record<StructureWizardStep, {
     continueLabel: 'Create cohort & continue',
     skipLabel: 'Use an existing cohort',
     nextIs: 'the cohort’s first group',
+    moreAt: 'Cohorts',
   },
   group: {
     label: 'Group',
@@ -83,6 +92,7 @@ const STEP_META: Record<StructureWizardStep, {
     continueLabel: 'Create group & continue',
     skipLabel: 'Use an existing group',
     nextIs: 'the group’s first module',
+    moreAt: 'Groups',
   },
   module: {
     label: 'Module',
@@ -90,6 +100,7 @@ const STEP_META: Record<StructureWizardStep, {
     continueLabel: 'Create module & continue',
     skipLabel: 'Finish without a module',
     nextIs: 'where its weeks get their components',
+    moreAt: 'Modules',
   },
   outline: {
     label: 'Weeks',
@@ -99,6 +110,7 @@ const STEP_META: Record<StructureWizardStep, {
     continueLabel: 'Finish',
     skipLabel: '',
     nextIs: '',
+    moreAt: '',
   },
 };
 
@@ -295,6 +307,55 @@ function WizardStepBrief({
         {nextStep
           ? `Saved as you go — next is ${STEP_META[step].nextIs || STEP_META[nextStep].label.toLowerCase()}. You can stop at any step.`
           : 'Everything above is already saved. Finishing just closes the run.'}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Read once, before the run writes anything: what the chain is going to do, and
+ * the one thing about it that surprises people -- it creates a single record at
+ * each level. Someone who needs three groups under a cohort should know that
+ * before they fill the first form in, not after they have finished the run and
+ * gone looking for the button that adds the second one.
+ *
+ * Shown only on the run's opening step and only while nothing has been created,
+ * so it is a briefing rather than a banner that follows the reader down the
+ * chain. The per-record pages it names are the same ones the sidebar offers.
+ */
+function WizardIntroNote({ steps }: { steps: StructureWizardStep[] }) {
+  const records = steps.filter((candidate): candidate is StructureWizardRecordStep => (
+    RECORD_STEPS.includes(candidate as StructureWizardRecordStep)
+  ));
+  const chain = records.map(candidate => STEP_META[candidate].label.toLowerCase()).join(' → ');
+
+  return (
+    <div className="mt-2.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2">
+      <p className="flex items-center gap-1.5 text-[11px] font-bold leading-4 text-amber-900">
+        <AppIcon className="ri-information-line text-[12px]"></AppIcon>
+        Before you start — this run creates one of each
+      </p>
+      <p className="mt-1 text-[11px] leading-4 text-amber-800">
+        The guided setup walks {chain} and links each record to the one above it. It writes
+        <span className="font-bold"> exactly one record per step</span> and then moves on — there is no
+        “add another” inside the run. Plan the run around the first of each, and add the rest afterwards.
+      </p>
+      <ul className="mt-1.5 space-y-0.5">
+        {records.map(candidate => (
+          <li key={candidate} className="flex items-start gap-1.5 text-[11px] leading-4 text-amber-800">
+            <AppIcon className="ri-arrow-right-s-line mt-px shrink-0 text-[11px] text-amber-600"></AppIcon>
+            <span>
+              More than one {STEP_META[candidate].label.toLowerCase()}? Create the first here, then add the others on the{' '}
+              <span className="font-bold">{STEP_META[candidate].moreAt}</span> page.
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-1.5 text-[11px] leading-4 text-amber-800">
+        Any step can be passed over with <span className="font-bold">Use an existing…</span>, which attaches the next
+        record to something already stored instead of creating a new one. Each step saves as it is submitted, so stopping
+        part way keeps whatever has been created. The run ends at the module — the components inside its weeks are
+        authored in the Module Builder.
       </p>
     </div>
   );
@@ -546,6 +607,10 @@ export function CurriculumStructureWizard({
       <>
         <WizardRail steps={steps} step={step} created={created} resolved={chainNames} />
         <WizardStepBrief steps={steps} step={target} inherited={inheritedFor(target)} siblingCount={siblingCountFor(target)} />
+        {/* The briefing, on the opening step only and only while the run has
+            written nothing: once a record exists the reader has started, and a
+            note about what the run is going to do has become noise. */}
+        {target === steps[0] && !written && <WizardIntroNote steps={steps} />}
       </>
     ),
     // A record step with nothing after it keeps its form's own label ("Create

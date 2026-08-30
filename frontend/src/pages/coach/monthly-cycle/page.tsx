@@ -19,22 +19,27 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { CompactMetric } from '@/components/ui/MetricCard';
+import { MetricCard } from '@/components/ui/MetricCard';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { SearchInput } from '@/components/ui/FilterToolbar';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { cn } from '@/lib/cn';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 
+import { ActivityTimelinePanel } from './components/ActivityTimelinePanel';
 import { CoachingDeliveryPanel } from './components/CoachingDeliveryPanel';
+import { EngagementOverviewChart } from './components/EngagementOverviewChart';
 import { LearnerMonthCard } from './components/LearnerMonthCard';
 import { LearnerOverviewPanel } from './components/LearnerOverviewPanel';
+import { MonthHeroTiles } from './components/MonthHeroTiles';
 import { MonthNavigator } from './components/MonthNavigator';
-import { MonthSidebar } from './components/MonthSidebar';
 import { MonthlyCycleError, MonthlyCycleLoading, NoActiveLearners, NoLearnerMatches } from './components/MonthlyCycleStates';
+import { StatusBreakdownPanel } from './components/StatusBreakdownPanel';
+import { TopLearnerActionsPanel } from './components/TopLearnerActionsPanel';
 import { COACHING_DELIVERY_CONFIG, COACHING_DELIVERY_ORDER, EMPTY_LEARNERS, EMPTY_SUMMARY, LEARNERS_PER_PAGE } from './lib/constants';
 import {
   coachingDeliveryEventKey,
@@ -62,6 +67,7 @@ import type {
 } from './types';
 
 const coachNav = roleNavMap.coach;
+const MONTHLY_ACTIVITY_TIMEOUT_MS = 20000;
 
 export default function CoachMonthlyCycle() {
   const navigate = useNavigate();
@@ -89,12 +95,20 @@ export default function CoachMonthlyCycle() {
       return;
     }
     const controller = new AbortController();
+    let disposed = false;
+    let timedOut = false;
     setLoading(true);
     setError('');
+
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, MONTHLY_ACTIVITY_TIMEOUT_MS);
 
     coachFetch(monthlyActivityEndpoint(selectedMonth), { signal: controller.signal })
       .then(readJson<MonthlyActivityResponse>)
       .then((payload) => {
+        if (disposed) return;
         setData(payload);
         setSelectedLearnerId((current) => {
           if (current && payload.learners.some((learner) => learner.id === current)) return current;
@@ -106,26 +120,32 @@ export default function CoachMonthlyCycle() {
         });
       })
       .catch((requestError: unknown) => {
-        if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
+        if (disposed) return;
+        if (requestError instanceof DOMException && requestError.name === 'AbortError' && !timedOut) return;
         setData(null);
         setSelectedLearnerId(null);
         setExpandedLearnerId(null);
-        setError(requestError instanceof Error ? requestError.message : 'Unable to load monthly activity.');
+        setError(
+          timedOut
+            ? 'Monthly activity is taking too long to load. Please refresh or try a different month.'
+            : requestError instanceof Error ? requestError.message : 'Unable to load monthly activity.',
+        );
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        window.clearTimeout(timeoutId);
+        if (!disposed) setLoading(false);
       });
 
-    return () => controller.abort();
+    return () => {
+      disposed = true;
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
   }, [coach.email, coach.isInitialized, selectedMonth]);
 
   const summary = data?.summary || EMPTY_SUMMARY;
   const learners = data?.learners || EMPTY_LEARNERS;
   const monthLabel = data?.monthLabel || formatMonthLabel(selectedMonth);
-  const learnersNeedingAction = useMemo(
-    () => learners.filter((learner) => learner.needsAction.length > 0),
-    [learners],
-  );
   const filteredLearners = useMemo(() => {
     const query = normalizeSearch(learnerSearch);
     if (!query) return learners;
@@ -141,9 +161,18 @@ export default function CoachMonthlyCycle() {
   );
   const latestActivities = useMemo(
     () => learners
-      .flatMap((learner) => learner.activities.map((activity) => ({ ...activity, learnerName: learner.name })))
+      .flatMap((learner) => learner.activities.map((activity) => ({ ...activity, learnerId: learner.id, learnerName: learner.name })))
       .sort((a, b) => b.date.localeCompare(a.date))
       .slice(0, 6),
+    [learners],
+  );
+  const learnerActionCounts = useMemo(
+    () => learners.map((learner) => ({
+      id: learner.id,
+      name: learner.name,
+      initials: learner.initials,
+      actionCount: learner.activities.length,
+    })),
     [learners],
   );
   const coachingDelivery = useMemo<CoachingDeliverySummary>(() => {
@@ -198,11 +227,13 @@ export default function CoachMonthlyCycle() {
     setLearnerPage((page) => Math.min(page, totalLearnerPages));
   }, [totalLearnerPages]);
 
+  const coachName = data?.owner?.name || coach.name;
+
   const handleExportLearnerPdf = (learner: MonthlyLearnerActivity) => {
     setExportingLearnerId(learner.id);
     window.setTimeout(() => {
       try {
-        downloadLearnerMonthlyCyclePdf(learner, monthLabel, selectedMonth);
+        downloadLearnerMonthlyCyclePdf(learner, monthLabel, selectedMonth, coachName);
       } finally {
         setExportingLearnerId((current) => (current === learner.id ? null : current));
       }
@@ -267,20 +298,21 @@ export default function CoachMonthlyCycle() {
 
   return (
     <>
-      <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Monthly Cycle" pageSubtitle="See what each learner did this month" userName={data?.owner?.name || coach.name} userRole="Progress Coach">
+      <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Monthly Cycle" pageSubtitle="See what each learner did this month" userName={coachName} userRole="Progress Coach">
         <PageContainer>
           <PageHeader
             icon="ri-radar-line"
             title={`Monthly Cycle — ${monthLabel}`}
             description="Track every learner touchpoint this month: learning completions, coaching and reviews, evidence, KSBs, and OTJH logged."
             meta={(
-              <>
-                <CompactMetric label="Learners" value={formatNumber(summary.activeLearners)} />
-                <CompactMetric label="Activities" value={formatNumber(summary.timelineItems)} />
-                <span className="text-[12px] text-foreground-400">
-                  Source: learner progress log, activity feed, and coach calendar for {monthLabel}.
-                </span>
-              </>
+              <MonthHeroTiles
+                learners={summary.activeLearners}
+                completions={summary.learningActivities}
+                reviews={summary.coachingSessions}
+                evidence={summary.evidence}
+                ksbs={summary.ksbTouched}
+                otjhHours={summary.otjhHours}
+              />
             )}
             actions={(
               <MonthNavigator
@@ -290,6 +322,59 @@ export default function CoachMonthlyCycle() {
               />
             )}
           />
+
+          {!loading && !error && (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+              <MetricCard
+                label="Learning Completions"
+                value={formatNumber(summary.learningActivities)}
+                icon="ri-graduation-cap-line"
+                tone="brand"
+                note={summary.activeLearners > 0 ? `${(summary.learningActivities / summary.activeLearners).toFixed(1)} avg / learner` : undefined}
+              />
+              <MetricCard
+                label="Coaching Reviews"
+                value={formatNumber(summary.coachingSessions)}
+                icon="ri-star-line"
+                tone="info"
+                note={summary.activeLearners > 0 ? `${Math.round((summary.coachingSessions / summary.activeLearners) * 100)}% of learners` : undefined}
+              />
+              <MetricCard
+                label="Evidence Logged"
+                value={formatNumber(summary.evidence)}
+                icon="ri-file-text-line"
+                tone="positive"
+                note={summary.activeLearners > 0 ? `${Math.round((summary.evidence / summary.activeLearners) * 100)}% of learners` : undefined}
+              />
+              <MetricCard
+                label="KSBs Logged"
+                value={formatNumber(summary.ksbTouched)}
+                icon="ri-book-open-line"
+                tone="caution"
+                note={summary.activeLearners > 0 ? `${Math.round((summary.ksbTouched / summary.activeLearners) * 100)}% of learners` : undefined}
+              />
+              <MetricCard
+                label="OTJH Logged"
+                value={`${Math.round(summary.otjhHours)}h`}
+                icon="ri-time-line"
+                tone="neutral"
+                note={summary.activeLearners > 0 ? `${Math.round((summary.otjhHours / summary.activeLearners) * 100) / 100}h avg / learner` : undefined}
+              />
+            </div>
+          )}
+
+          {!loading && !error && (
+            <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+              <div className="space-y-5">
+                <EngagementOverviewChart learners={learners} monthKey={selectedMonth} />
+                <TopLearnerActionsPanel learners={learnerActionCounts} onOpenLearner={handleOpenLearnerOverview} />
+              </div>
+              <div className="space-y-5">
+                <ActivityTimelinePanel activities={latestActivities} onOpenLearner={handleOpenLearnerOverview} />
+                <StatusBreakdownPanel summary={summary} />
+              </div>
+            </div>
+          )}
 
           {!loading && !error && (
             <CoachingDeliveryPanel
@@ -303,7 +388,7 @@ export default function CoachMonthlyCycle() {
           {!loading && error && <MonthlyCycleError message={error} />}
 
           {!loading && !error && (
-            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-5">
+            <div className="grid grid-cols-1 gap-5">
               <section className="space-y-4">
                 <SectionHeader
                   title="Learner Month Log"
@@ -330,23 +415,27 @@ export default function CoachMonthlyCycle() {
                   <NoLearnerMatches monthLabel={monthLabel} onClear={() => setLearnerSearch('')} />
                 )}
 
-                {paginatedLearners.map((learner) => (
-                  <LearnerMonthCard
-                    key={learner.id}
-                    learner={learner}
-                    monthLabel={monthLabel}
-                    monthKey={selectedMonth}
-                    selected={selectedLearnerId === learner.id}
-                    expanded={expandedLearnerId === learner.id}
-                    inlineFilter={inlineFilter}
-                    inlineSearch={inlineSearch}
-                    onOpenOverview={() => handleOpenLearnerOverview(learner.id)}
-                    onOpenCaseFile={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(learner.id)}`)}
-                    onToggleTimeline={() => handleToggleLearnerTimeline(learner.id)}
-                    onInlineFilterChange={setInlineFilter}
-                    onInlineSearchChange={setInlineSearch}
-                  />
-                ))}
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                  {paginatedLearners.map((learner) => (
+                    <div key={learner.id} className={cn(expandedLearnerId === learner.id && 'xl:col-span-2')}>
+                      <LearnerMonthCard
+                        learner={learner}
+                        monthLabel={monthLabel}
+                        monthKey={selectedMonth}
+                        coachName={coachName}
+                        selected={selectedLearnerId === learner.id}
+                        expanded={expandedLearnerId === learner.id}
+                        inlineFilter={inlineFilter}
+                        inlineSearch={inlineSearch}
+                        onOpenOverview={() => handleOpenLearnerOverview(learner.id)}
+                        onOpenCaseFile={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(learner.id)}`)}
+                        onToggleTimeline={() => handleToggleLearnerTimeline(learner.id)}
+                        onInlineFilterChange={setInlineFilter}
+                        onInlineSearchChange={setInlineSearch}
+                      />
+                    </div>
+                  ))}
+                </div>
 
                 {filteredLearners.length > LEARNERS_PER_PAGE && (
                   <Pagination
@@ -360,14 +449,6 @@ export default function CoachMonthlyCycle() {
                   />
                 )}
               </section>
-
-              <MonthSidebar
-                summary={summary}
-                learnersNeedingAction={learnersNeedingAction}
-                latestActivities={latestActivities}
-                monthLabel={monthLabel}
-                onOpenLearner={handleOpenLearnerOverview}
-              />
             </div>
           )}
         </PageContainer>
@@ -384,6 +465,7 @@ export default function CoachMonthlyCycle() {
           <LearnerOverviewPanel
             learner={selectedLearner}
             monthLabel={monthLabel}
+            coachName={coachName}
             isExporting={exportingLearnerId === selectedLearner.id}
             onExport={() => handleExportLearnerPdf(selectedLearner)}
           />

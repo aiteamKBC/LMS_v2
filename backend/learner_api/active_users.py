@@ -544,8 +544,8 @@ def hydrate_training_plan(plan):
         return []
 
     selected = [item for item in plan if isinstance(item, dict)]
-    module_ids = [_s(item.get("moduleId")) for item in selected if _s(item.get("moduleId"))]
-    module_titles = [_s(item.get("moduleTitle")) for item in selected if _s(item.get("moduleTitle"))]
+    module_ids = [_s(item.get("moduleId") or item.get("module_id") or item.get("moduleCatalogueId") or item.get("module_catalogue_id")) for item in selected if _s(item.get("moduleId") or item.get("module_id") or item.get("moduleCatalogueId") or item.get("module_catalogue_id"))]
+    module_titles = [_s(item.get("moduleTitle") or item.get("module_title") or item.get("title")) for item in selected if _s(item.get("moduleTitle") or item.get("module_title") or item.get("title"))]
     if not module_ids and not module_titles:
         return selected
 
@@ -557,7 +557,7 @@ def hydrate_training_plan(plan):
                 """
                 SELECT m.module_catalogue_id, m.title,
                        w.id, w.title, w.week_number,
-                       c.id, c.title, c.type
+                       c.id, c.title, c.type, c.expected_otjh
                 FROM curriculum.modules m
                 LEFT JOIN curriculum.weeks w ON w.module_catalogue_id = m.module_catalogue_id
                 LEFT JOIN curriculum.components c ON c.week_id = w.id
@@ -576,7 +576,7 @@ def hydrate_training_plan(plan):
     ids_by_title = {}
     weeks_by_module = {}
     seen_weeks = set()
-    for module_id, module_title, week_id, week_title, week_number, component_id, component_title, component_type in rows:
+    for module_id, module_title, week_id, week_title, week_number, component_id, component_title, component_type, component_expected_otjh in rows:
         module_id = _s(module_id)
         titles[module_id] = _s(module_title) or module_id
         ids_by_title[titles[module_id]] = module_id
@@ -594,11 +594,12 @@ def hydrate_training_plan(plan):
             weeks_by_module[module_id][-1]["components"].append({
                 "componentId": str(component_id),
                 "componentTitle": _s(component_title) or _s(component_type) or "Activity",
+                "expectedOtjh": _decimal(component_expected_otjh),
             })
 
     expanded = []
     for item in selected:
-        module_id = _s(item.get("moduleId"))
+        module_id = _s(item.get("moduleId") or item.get("module_id") or item.get("moduleCatalogueId") or item.get("module_catalogue_id"))
         if module_id not in titles:
             module_id = ids_by_title.get(_s(item.get("moduleTitle")), module_id)
         # Keep orphaned/id-less entries intact: they cannot be resolved against

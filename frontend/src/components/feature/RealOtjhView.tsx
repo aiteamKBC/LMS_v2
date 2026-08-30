@@ -272,9 +272,9 @@ export function OtjhBody({
 
         {/* Stat strip */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 md:gap-4">
-          <StatCard icon="ri-flag-line" iconTint="bg-primary-100 text-primary-600" label="Completed" value={formatHoursMinutes(completed)} sub={`${plannedPercent}% of plan`} />
-          <StatCard icon="ri-focus-3-line" iconTint="bg-violet-100 text-violet-600" label="Current target" value={formatHoursMinutes(target)} sub="up to this week" />
-          <StatCard icon="ri-calendar-todo-line" iconTint="bg-background-200 text-foreground-500" label="Programme plan" value={formatHoursMinutes(planned)} sub="total planned hours" />
+          <StatCard icon="ri-flag-line" iconTint="bg-gradient-to-br from-[#d8c9ff] via-[#8b5cf6] to-[#5420a8] text-white shadow-sm shadow-primary-500/25" label="Completed" value={formatHoursMinutes(completed)} sub={`${plannedPercent}% of plan`} />
+          <StatCard icon="ri-focus-3-line" iconTint="bg-gradient-to-br from-[#ddd6fe] via-[#a78bfa] to-[#6d28d9] text-white shadow-sm shadow-violet-500/25" label="Current target" value={formatHoursMinutes(target)} sub="up to this week" />
+          <StatCard icon="ri-calendar-todo-line" iconTint="bg-gradient-to-br from-[#e5e7eb] via-[#9ca3af] to-[#4b5563] text-white shadow-sm shadow-foreground-400/25" label="Programme plan" value={formatHoursMinutes(planned)} sub="total planned hours" />
         </div>
 
         {/* Progress vs target */}
@@ -393,7 +393,7 @@ function StatCard({ icon, iconTint, label, value, sub }: { icon: string; iconTin
   return (
     <div className="group rounded-2xl border border-foreground-100 bg-background-50 p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
       <div className="mb-3 flex items-center justify-between">
-        <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${iconTint}`}><AppIcon className={`${icon} text-sm`} /></span>
+        <span className={`flex h-10 w-10 items-center justify-center rounded-xl ring-1 ring-black/5 ${iconTint}`}><AppIcon className={`${icon} text-base`} /></span>
         <AppIcon className="ri-more-line text-sm text-foreground-200" />
       </div>
       <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p>

@@ -30,7 +30,7 @@ export function SectionHeader({
   className?: string;
 }) {
   return (
-    <div className={cn('flex flex-wrap items-center justify-between gap-3', className)}>
+    <div className={cn('section-header flex flex-wrap items-center justify-between gap-3', className)}>
       <div className="min-w-0">
         <h2 className="flex items-center gap-2 text-[15px] font-semibold text-foreground-900">
           {icon ? <AppIcon className={cn(icon, 'text-[16px] text-foreground-400')}></AppIcon> : null}

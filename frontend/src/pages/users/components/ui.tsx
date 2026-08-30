@@ -3,6 +3,8 @@ import { useState, type ReactNode } from 'react';
 // ---- Button / input class strings (match app conventions) ----
 export const btnPrimary =
   'px-4 py-2.5 bg-primary-500 text-white rounded-xl text-[13px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5';
+export const btnGold =
+  'px-4 py-2.5 bg-[#b27715] text-white rounded-xl text-[13px] font-semibold shadow-sm shadow-[#b27715]/25 hover:bg-[#965f0f] transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5';
 export const btnSecondary =
   'px-4 py-2.5 bg-background-100 border border-background-200 rounded-xl text-[13px] font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer inline-flex items-center gap-1.5';
 export const btnDestructive =

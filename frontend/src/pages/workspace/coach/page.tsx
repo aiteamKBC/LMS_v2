@@ -42,7 +42,6 @@ import {
 
 const coachNav = roleNavMap.coach;
 
-type OtjhFilter = 'all' | 'at-risk' | 'need-attention' | 'on-track';
 type DashboardKpi = 'caseload' | 'active' | 'on-break' | 'on-track' | 'at-risk' | 'need-attention' | 'gateway' | 'epa' | 'evidence' | 'reviews';
 type OtjhStatusKey = 'at-risk' | 'need-attention' | 'on-track' | 'unknown';
 type PerformanceStatus = 'on-track' | 'at-risk' | 'high' | 'new-starter';
@@ -622,27 +621,25 @@ function eventStatusClasses(event: CoachCalendarEvent) {
    Priority model
    ───────────────────────────────────────────────────────────
    One ordered list decides who a coach opens first:
-     At Risk → Overdue Review → Low OTJH → Poor Attendance → Missing Evidence
+     At Risk → Overdue Review → Poor Attendance → Missing Evidence
    Every reason is derived from a field the dashboard API already returns, so
    the badge on a row and the count on a tab can never disagree, and the answer
    to "why?" travels with the verdict instead of being re-guessed per panel.
    ═══════════════════════════════════════════════════════════ */
-type PriorityKey = 'at-risk' | 'overdue-review' | 'low-otjh' | 'poor-attendance' | 'missing-evidence';
+type PriorityKey = 'at-risk' | 'overdue-review' | 'poor-attendance' | 'missing-evidence';
 
-const PRIORITY_ORDER: PriorityKey[] = ['at-risk', 'overdue-review', 'low-otjh', 'poor-attendance', 'missing-evidence'];
+const PRIORITY_ORDER: PriorityKey[] = ['at-risk', 'overdue-review', 'poor-attendance', 'missing-evidence'];
 
 const PRIORITY_RANK: Record<PriorityKey, number> = {
   'at-risk': 0,
   'overdue-review': 1,
-  'low-otjh': 2,
-  'poor-attendance': 3,
-  'missing-evidence': 4,
+  'poor-attendance': 2,
+  'missing-evidence': 3,
 };
 
 const PRIORITY_META: Record<PriorityKey, { label: string; icon: string }> = {
   'at-risk': { label: 'At Risk', icon: 'ri-alarm-warning-line' },
   'overdue-review': { label: 'Overdue Review', icon: 'ri-calendar-close-line' },
-  'low-otjh': { label: 'Low OTJH', icon: 'ri-time-line' },
   'poor-attendance': { label: 'Poor Attendance', icon: 'ri-calendar-check-line' },
   'missing-evidence': { label: 'Missing Evidence', icon: 'ri-file-list-3-line' },
 };
@@ -654,13 +651,9 @@ const PRIORITY_META: Record<PriorityKey, { label: string; icon: string }> = {
 const PRIORITY_TONE: Record<PriorityKey, StatusTone> = {
   'at-risk': 'critical',
   'overdue-review': 'critical',
-  'low-otjh': 'caution',
   'poor-attendance': 'upcoming',
   'missing-evidence': 'brand',
 };
-
-/** Below this share of expected off-the-job hours a learner reads as behind. */
-const LOW_OTJH_PERCENT = 75;
 
 interface PriorityReason {
   key: PriorityKey;
@@ -744,17 +737,6 @@ function buildLearnerPriority(learner: CoachLearner, overdue?: OverdueSignal): L
       key: 'overdue-review',
       label: 'Coaching session overdue',
       detail: overdue.label !== EMPTY_VALUE ? `Was due ${overdue.label}` : undefined,
-    });
-  }
-
-  // A learner already flagged at risk is not counted twice for the same hours.
-  if (otjhStatus !== 'at-risk' && (otjhStatus === 'need-attention' || (otjhPercent !== null && otjhPercent < LOW_OTJH_PERCENT))) {
-    reasons.push({
-      key: 'low-otjh',
-      label: 'Off-the-job hours behind target',
-      detail: learner.otjhTarget > 0
-        ? `${formatHours(learner.otjhCompleted)} of ${formatHours(learner.otjhTarget)} hrs recorded`
-        : undefined,
     });
   }
 
@@ -954,9 +936,8 @@ export default function CoachDashboard() {
   const authenticatedCoachEmail = coach.email;
   const authenticatedCoachName = coach.name;
   const adminEmail = auth.account?.email || '';
-  // A KPI card does two jobs: the card body filters the learner list below it,
-  // the corner control opens the full drill-down. Two pieces of state so one
-  // never blocks the other.
+  // KPI cards open a quick drill-down first. The modal can still apply the
+  // same filter to the caseload list when the coach wants to keep working there.
   const [kpiFilter, setKpiFilter] = useState<DashboardKpi | null>(null);
   const [selectedKpi, setSelectedKpi] = useState<DashboardKpi | null>(null);
   const [priorityFilter, setPriorityFilter] = useState<PriorityKey | null>(null);
@@ -1145,27 +1126,11 @@ export default function CoachDashboard() {
       return Boolean(date && toIsoDate(date) === todayIso);
     });
   }, [upcomingScheduleEvents]);
-  const overdueReviewEvents = useMemo(
-    () => activeCalendarEvents.filter(event => event.source === 'progress-review' && isOverdueEvent(event)),
-    [activeCalendarEvents],
-  );
-  const overdueCoachingEvents = useMemo(
-    () => activeCalendarEvents.filter(event => event.source === 'mcr' && isOverdueEvent(event)),
-    [activeCalendarEvents],
-  );
-  const unscheduledSoonEvents = useMemo(
-    () => activeCalendarEvents.filter(event => needsScheduling(event) && !isOverdueEvent(event) && isWithinNextDays(event, 14)),
-    [activeCalendarEvents],
-  );
-
   /* ── This Week ── */
   const weekEvents = useMemo(
     () => [...activeCalendarEvents, ...liveSessionEvents].filter(event => isEventThisWeek(event)),
     [activeCalendarEvents, liveSessionEvents],
   );
-  const weekReviewCount = weekEvents.filter(event => event.source === 'progress-review').length;
-  const weekCoachingCount = weekEvents.filter(event => event.source === 'mcr').length;
-  const weekLiveCount = weekEvents.filter(event => event.source === 'live-session').length;
 
   /* ── Learners Requiring Attention (Risk Alert + At Risk Learners, merged) ── */
   const overdueMap = useMemo(
@@ -1221,7 +1186,7 @@ export default function CoachDashboard() {
   const attentionPanelTitle = kpiFilter ? KPI_FILTER_LABEL[kpiFilter] : 'Learners Requiring Attention';
   const attentionPanelSubtitle = kpiFilter
     ? 'Filtered from the KPI cards above, ordered by priority'
-    : 'At Risk → Overdue Review → Low OTJH → Poor Attendance → Missing Evidence';
+    : 'At Risk → Overdue Review → Poor Attendance → Missing Evidence';
   const attentionHasOverflow = attentionRows.length > AT_RISK_SCROLL_THRESHOLD;
 
   const schedulePanelLoading = (calendarLoading || liveSessionsLoading) && !upcomingScheduleEvents.length;
@@ -1233,16 +1198,11 @@ export default function CoachDashboard() {
   };
 
   const scrollToAttention = () => scrollToSection('learner-caseload');
-  const scrollToToday = () => scrollToSection('today-actions');
 
-  const openCaseloadFilter = (_filter: OtjhFilter) => {
-    scrollToAttention();
-  };
-
-  const applyKpiFilter = (kpi: DashboardKpi) => {
+  const openCaseloadFilter = (filter: DashboardKpi) => {
     setPriorityFilter(null);
-    setKpiFilter(current => (current === kpi ? null : kpi));
-    if (kpiFilter !== kpi) scrollToAttention();
+    setKpiFilter(filter);
+    scrollToAttention();
   };
 
   const applyPriorityFilter = (key: PriorityKey) => {
@@ -1252,49 +1212,19 @@ export default function CoachDashboard() {
 
   const allActionItems: ActionItem[] = [
     {
-      id: 'overdue-reviews',
-      label: 'Progress reviews overdue',
-      hint: 'Past their target date',
-      count: overdueReviewEvents.length,
-      icon: 'ri-calendar-close-line',
-      tone: 'danger',
-      to: '/coach/progress-reviews',
-    },
-    {
-      id: 'overdue-coaching',
-      label: 'Coaching sessions overdue',
-      hint: 'Monthly coaching not held',
-      count: overdueCoachingEvents.length,
-      icon: 'ri-user-voice-line',
-      tone: 'danger',
-      to: '/coach/meetings',
-    },
-    {
-      id: 'at-risk',
-      label: 'Learners at risk',
-      hint: 'Need immediate coaching action',
-      count: atRiskCount,
-      icon: 'ri-alarm-warning-line',
-      tone: 'danger',
-      onClick: () => applyKpiFilter('at-risk'),
-    },
-    {
-      id: 'evidence',
-      label: 'Evidence awaiting review',
-      hint: `${evidenceLearners.length} ${evidenceLearners.length === 1 ? 'learner' : 'learners'} waiting`,
-      count: pendingEvidence,
-      icon: 'ri-file-search-line',
-      tone: 'warning',
-      onClick: () => setSelectedKpi('evidence'),
-    },
-    {
-      id: 'unscheduled',
-      label: 'Sessions needing a date',
-      hint: 'Due within 14 days',
-      count: unscheduledSoonEvents.length,
+      id: 'today-sessions',
+      label: "Today's schedule",
+      hint: todayEvents.length === 1 ? '1 session or review today' : `${todayEvents.length} sessions or reviews today`,
+      count: todayEvents.length,
       icon: 'ri-calendar-schedule-line',
       tone: 'warning',
-      to: '/coach/timetable',
+      onClick: () => navigate('/coach/timetable', {
+        state: {
+          focusEvent: {
+            date: toIsoDate(new Date()),
+          },
+        },
+      }),
     },
   ];
   const actionItems = allActionItems.filter(item => item.count > 0);
@@ -1387,17 +1317,16 @@ export default function CoachDashboard() {
                 tone="brand"
                 icon="ri-group-line"
                 active={kpiFilter === 'caseload'}
-                onFilter={() => applyKpiFilter('caseload')}
-                onExpand={() => setSelectedKpi('caseload')}
+                onFilter={() => setSelectedKpi('caseload')}
               />
               <FilterMetricCard
-                label="Needs action today"
-                value={needsActionCount}
-                note={actionItems.length ? `${actionItems.length} item${actionItems.length === 1 ? '' : 's'} to review` : 'Nothing overdue'}
-                tone={needsActionCount > 0 ? 'critical' : 'positive'}
-                icon="ri-alarm-warning-line"
-                active={false}
-                onFilter={scrollToToday}
+                label="On track"
+                value={onTrackCount}
+                note={OTJH_STATUS_META['on-track'].sub}
+                tone="positive"
+                icon="ri-checkbox-circle-line"
+                active={kpiFilter === 'on-track'}
+                onFilter={() => setSelectedKpi('on-track')}
               />
               <FilterMetricCard
                 label="At risk"
@@ -1406,8 +1335,7 @@ export default function CoachDashboard() {
                 tone="critical"
                 icon="ri-alarm-warning-line"
                 active={kpiFilter === 'at-risk'}
-                onFilter={() => applyKpiFilter('at-risk')}
-                onExpand={() => setSelectedKpi('at-risk')}
+                onFilter={() => setSelectedKpi('at-risk')}
               />
               <FilterMetricCard
                 label="Need attention"
@@ -1416,24 +1344,14 @@ export default function CoachDashboard() {
                 tone="caution"
                 icon="ri-error-warning-line"
                 active={kpiFilter === 'need-attention'}
-                onFilter={() => applyKpiFilter('need-attention')}
-                onExpand={() => setSelectedKpi('need-attention')}
+                onFilter={() => setSelectedKpi('need-attention')}
               />
             </div>
-            <MetricRow>
-              <FilterCompactMetric label="On track" value={onTrackCount} note={OTJH_STATUS_META['on-track'].sub} tone="positive" active={kpiFilter === 'on-track'} onFilter={() => applyKpiFilter('on-track')} />
-              <FilterCompactMetric label="Active" value={activeLearners.length} note="Currently active" tone="positive" active={kpiFilter === 'active'} onFilter={() => applyKpiFilter('active')} />
-              <FilterCompactMetric label="On break" value={onBreakLearners.length} note="Programme paused" tone="caution" active={kpiFilter === 'on-break'} onFilter={() => applyKpiFilter('on-break')} />
-              <FilterCompactMetric label="Gateway" value={gatewayLearners.length} note="At gateway stage" tone="upcoming" active={kpiFilter === 'gateway'} onFilter={() => applyKpiFilter('gateway')} />
-              <FilterCompactMetric label="EPA" value={epaLearners.length} note="At EPA stage" tone="info" active={kpiFilter === 'epa'} onFilter={() => applyKpiFilter('epa')} />
-              <button type="button" onClick={() => setSelectedKpi('evidence')} className="rounded-lg p-1 text-left transition-colors hover:bg-background-100/70">
-                <CompactMetric
-                  label="Evidence pending"
-                  value={pendingEvidence}
-                  note={`${evidenceLearners.length} learner${evidenceLearners.length === 1 ? '' : 's'} waiting`}
-                  tone={pendingEvidence > 0 ? 'caution' : 'neutral'}
-                />
-              </button>
+            <MetricRow className="sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4">
+              <FilterCompactMetric label="Active" value={activeLearners.length} note="Currently active" tone="positive" active={kpiFilter === 'active'} onFilter={() => setSelectedKpi('active')} />
+              <FilterCompactMetric label="On break" value={onBreakLearners.length} note="Programme paused" tone="caution" active={kpiFilter === 'on-break'} onFilter={() => setSelectedKpi('on-break')} />
+              <FilterCompactMetric label="Gateway" value={gatewayLearners.length} note="At gateway stage" tone="upcoming" active={kpiFilter === 'gateway'} onFilter={() => setSelectedKpi('gateway')} />
+              <FilterCompactMetric label="EPA" value={epaLearners.length} note="At EPA stage" tone="info" active={kpiFilter === 'epa'} onFilter={() => setSelectedKpi('epa')} />
             </MetricRow>
           </div>
         </SectionReveal>
@@ -1452,13 +1370,22 @@ export default function CoachDashboard() {
           <div id="today-actions" className="scroll-mt-4">
           <Panel padding="lg">
             <SectionHeader
-              icon="ri-focus-3-line"
-              title="Today &amp; needs action"
-              description="Overdue reviews, at-risk learners and urgent tasks"
+              icon="ri-calendar-schedule-line"
+              title="Today's schedule"
+              description="Sessions and reviews scheduled for today"
               actions={<StatusBadge tone="info" dot={false} label={`${todayEvents.length} today`} />}
             />
 
-            <div className="mt-4 grid gap-2.5 sm:grid-cols-2">
+            <div className={cn(
+              'mt-4 grid gap-2.5',
+              actionItems.length <= 1
+                ? 'sm:grid-cols-1'
+                : actionItems.length === 2
+                  ? 'sm:grid-cols-2'
+                  : actionItems.length === 3
+                    ? 'sm:grid-cols-3'
+                    : 'sm:grid-cols-2 lg:grid-cols-4',
+            )}>
               {actionItems.map(item => (
                 <ActionRow
                   key={item.id}
@@ -1486,8 +1413,8 @@ export default function CoachDashboard() {
               <EmptyState
                 size="sm"
                 icon="ri-check-double-line"
-                title="Nothing overdue"
-                description="No reviews, sessions or evidence are waiting on you."
+                title="Nothing scheduled today"
+                description="No live sessions, reviews or coaching sessions are scheduled for today."
               />
             )}
 
@@ -1525,8 +1452,8 @@ export default function CoachDashboard() {
         <SectionReveal delay={100}>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
 
-            <div id="learner-caseload" className="scroll-mt-4 lg:col-span-2">
-            <Panel padding="lg">
+            <div id="learner-caseload" className="h-full scroll-mt-4 lg:col-span-2">
+            <Panel className="flex h-full flex-col" padding="lg">
               <SectionHeader
                 icon="ri-user-search-line"
                 title={attentionPanelTitle}
@@ -1557,7 +1484,7 @@ export default function CoachDashboard() {
                 )}
               </div>
 
-              <div className={cn('mt-3.5 space-y-2.5', attentionHasOverflow && 'max-h-[36rem] overflow-y-auto pr-1.5')}>
+              <div className={cn('mt-3.5 min-h-0 space-y-2.5', attentionHasOverflow && 'max-h-[36rem] overflow-y-auto pr-1.5')}>
                 {loading && !attentionRows.length && <AttentionSkeleton />}
                 {!loading && attentionRows.map((entry, index) => (
                   <AttentionLearnerRow
@@ -1585,7 +1512,7 @@ export default function CoachDashboard() {
             </div>
 
             {/* ── Upcoming Schedule (live sessions + calendar, merged) ── */}
-            <Panel className="flex flex-col" padding="lg">
+            <Panel className="flex h-full flex-col" padding="lg">
               <SectionHeader
                 icon="ri-calendar-schedule-line"
                 title="Upcoming schedule"
@@ -1650,22 +1577,6 @@ export default function CoachDashboard() {
           </div>
         </SectionReveal>
 
-        {/* ═══════════════════════════════════════════════════
-            5. THIS WEEK — weekly activity summary, lowest priority.
-            ═══════════════════════════════════════════════════ */}
-        <SectionReveal delay={130}>
-          <div className="space-y-3">
-            <SectionHeader icon="ri-calendar-2-line" title="This week" description={formatWeekRangeLabel()} />
-            <MetricRow>
-              <CompactMetric label="Sessions" value={weekEvents.length} />
-              <CompactMetric label="Progress reviews" value={weekReviewCount} />
-              <CompactMetric label="Coaching sessions" value={weekCoachingCount} />
-              <CompactMetric label="Live sessions" value={weekLiveCount} />
-              <CompactMetric label="Evidence to mark" value={pendingEvidence} tone={pendingEvidence > 0 ? 'caution' : 'neutral'} />
-              <CompactMetric label="Need attention" value={attentionQueue.length} tone={attentionQueue.length > 0 ? 'critical' : 'positive'} />
-            </MetricRow>
-          </div>
-        </SectionReveal>
       </PageContainer>
 
       {selectedKpi && (
@@ -1694,7 +1605,7 @@ export default function CoachDashboard() {
    for this page: a corner control that opens the KPI drill-down
    modal without turning the whole card into a nested button.
    ═══════════════════════════════════════════════════════════ */
-function FilterMetricCard({ label, value, note, tone, icon, active, onFilter, onExpand }: {
+function FilterMetricCard({ label, value, note, tone, icon, active, onFilter }: {
   label: string;
   value: number;
   note?: string;
@@ -1702,30 +1613,32 @@ function FilterMetricCard({ label, value, note, tone, icon, active, onFilter, on
   icon: string;
   active: boolean;
   onFilter: () => void;
-  onExpand?: () => void;
 }) {
   return (
     <div className="relative">
-      <MetricCard label={label} value={value} note={note} tone={tone} icon={icon} active={active} />
+      <MetricCard
+        label={label}
+        value={value}
+        note={note}
+        tone={tone}
+        icon={icon}
+        active={active}
+        className={cn(
+          'border border-transparent transition-all',
+          active ? 'border-primary-300 bg-primary-50/60 shadow-md ring-2 ring-primary-300/70' : '',
+        )}
+      />
       <button
         type="button"
         onClick={onFilter}
         aria-pressed={active}
-        aria-label={`Filter by ${label}`}
-        title={`${label}${note ? ` — ${note}` : ''}. Filters the learner list below.`}
+        aria-label={`Open ${label} details`}
+        title={`Open ${label} details`}
         className="absolute inset-0 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
       />
-      {onExpand ? (
-        <button
-          type="button"
-          onClick={onExpand}
-          aria-label={`Open ${label} details`}
-          title={`Open ${label} details`}
-          className="absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-lg text-foreground-300 transition-colors hover:bg-background-100 hover:text-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-        >
-          <AppIcon className="ri-arrow-right-up-line text-[13px]"></AppIcon>
-        </button>
-      ) : null}
+      <span className="pointer-events-none absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-lg text-foreground-300">
+        <AppIcon className="ri-arrow-right-up-line text-[13px]"></AppIcon>
+      </span>
     </div>
   );
 }
@@ -1743,7 +1656,12 @@ function FilterCompactMetric({ label, value, note, tone, active, onFilter }: {
       type="button"
       onClick={onFilter}
       aria-pressed={active}
-      className={cn('rounded-lg p-1 text-left transition-colors', active ? 'bg-primary-50/70' : 'hover:bg-background-100/70')}
+      className={cn(
+        'rounded-lg border p-2 text-left transition-all',
+        active
+          ? 'border-primary-300 bg-primary-50/70 shadow-sm ring-2 ring-primary-300/60'
+          : 'border-transparent hover:bg-background-100/70',
+      )}
     >
       <CompactMetric label={label} value={value} note={note} tone={tone} />
     </button>
@@ -1831,7 +1749,7 @@ function AttentionLearnerRow({ rank, learner, priority, onOpen }: {
       meta={
         <div className="grid grid-cols-2 gap-x-5 gap-y-2 sm:grid-cols-4">
           <CompactMetric label="Progress" value={progressLabel} tone={percentTone(learner.overallProgressAvailable ? learner.overallProgress : null, 40, 75)} />
-          <CompactMetric label="OTJH" value={otjhLabel} tone={percentTone(otjhPercent, 45, LOW_OTJH_PERCENT)} />
+          <CompactMetric label="OTJH" value={otjhLabel} tone={percentTone(otjhPercent, 45, 75)} />
           <CompactMetric label="Attendance" value={attendanceLabel} tone={percentTone(learner.attendanceRateAvailable ? learner.attendanceRate : null, ATTENDANCE_MINIMUM_RATE, ATTENDANCE_EXPECTED_RATE)} />
           <CompactMetric label="Next review" value={review.value} tone={review.tone} />
         </div>
@@ -1863,7 +1781,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
   pendingEvidence: number;
   completedEvidence: number;
   onClose: () => void;
-  onFilter: (filter: OtjhFilter) => void;
+  onFilter: (filter: DashboardKpi) => void;
 }) {
   const navigate = useNavigate();
   const meta: Record<DashboardKpi, { title: string; subtitle: string; icon: string; iconStyle: string }> = {
@@ -1879,7 +1797,16 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
     reviews: { title: 'Upcoming reviews', subtitle: 'Progress reviews scheduled in the next 14 days', icon: 'ri-file-chart-line', iconStyle: 'bg-primary-100 text-primary-600' },
   };
   const current = meta[type];
-  const filterForType: Partial<Record<DashboardKpi, OtjhFilter>> = { 'at-risk': 'at-risk' };
+  const filterForType: Partial<Record<DashboardKpi, DashboardKpi>> = {
+    caseload: 'caseload',
+    active: 'active',
+    'on-break': 'on-break',
+    'on-track': 'on-track',
+    'at-risk': 'at-risk',
+    'need-attention': 'need-attention',
+    gateway: 'gateway',
+    epa: 'epa',
+  };
   const modalLearners = type === 'caseload'
     ? learners
     : type === 'active'
@@ -2042,7 +1969,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
 
         <footer className="flex flex-wrap items-center justify-end gap-2.5 border-t border-foreground-100 bg-background-100/60 px-5 py-4 sm:px-7">
           <button type="button" onClick={onClose} className="rounded-xl border border-foreground-200 bg-background-50 px-4 py-2.5 text-xs font-semibold text-foreground-700 shadow-sm transition-colors hover:bg-background-100 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Close</button>
-          {filterForType[type] && <button type="button" onClick={() => onFilter(filterForType[type]!)} className="rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Jump to at-risk list</button>}
+          {filterForType[type] && <button type="button" onClick={() => onFilter(filterForType[type]!)} className="rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">View in caseload list</button>}
           {type === 'evidence' && <Link to="/coach/marking-queue" onClick={onClose} className="rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open marking queue</Link>}
           {type === 'reviews' && <Link to="/coach/progress-reviews" onClick={onClose} className="rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open reviews</Link>}
         </footer>

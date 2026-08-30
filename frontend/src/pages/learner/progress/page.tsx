@@ -68,9 +68,6 @@ export default function ProgressPage() {
 
   const tabs: PageTabItem[] = [
     { value: 'overview', label: 'Overview' },
-    { value: 'evidence', label: 'Evidence' },
-    { value: 'otjh', label: 'OTJ Hours' },
-    { value: 'ksbs', label: 'KSBs' },
   ];
 
   return (
