@@ -167,9 +167,9 @@ const EMPTY_SUMMARY: TimetableSummary = {
 };
 const UPCOMING_WINDOW_DAYS = 7;
 const LEARNER_UNAVAILABLE_MESSAGE = 'This learner is busy at that time. Choose another time.';
-const TEAMS_SYNC_PERMISSION_MESSAGE = 'Teams calendar sync needs updated Microsoft permissions. The event was saved locally only; reconnect Microsoft Calendar or ask an admin to refresh access.';
-const TEAMS_SYNC_NOT_CONFIGURED_MESSAGE = 'Teams calendar sync is not configured. The event was saved locally only.';
-const TEAMS_SYNC_TEMPORARY_MESSAGE = 'Teams calendar sync could not be completed. The event was saved locally only; try again later or ask an admin to check Microsoft permissions.';
+const TEAMS_SYNC_PERMISSION_MESSAGE = 'Saved locally. Microsoft Calendar needs updated permissions before this can sync to Teams.';
+const TEAMS_SYNC_NOT_CONFIGURED_MESSAGE = 'Saved locally. Microsoft Calendar sync is not configured yet.';
+const TEAMS_SYNC_TEMPORARY_MESSAGE = 'Saved locally. Microsoft Calendar sync is temporarily unavailable; try again later or ask an admin to check Microsoft permissions.';
 const TEAMS_SYNC_LINK_MISSING_MESSAGE = 'Teams did not return a meeting link, so this event was moved back to Needs Schedule. Try scheduling again after Microsoft sync is available.';
 
 async function readApiJson<T>(response: Response): Promise<T> {
@@ -272,8 +272,8 @@ const HOURS = Array.from({ length: 14 }, (_, i) => i + 7); // 07:00 â€“ 20:
 
 function typeConfig(type: TimetableEvent['type']) {
   const map: Record<TimetableEvent['type'], { label: string; bg: string; border: string; text: string; icon: string; dot: string; barBg: string }> = {
-    coaching: { label: 'Coaching', bg: 'bg-primary-100', border: 'border-primary-300', text: 'text-primary-800', icon: 'ri-chat-smile-2-line', dot: 'bg-primary-500', barBg: 'bg-primary-500' },
-    'live-session': { label: 'Live Session', bg: 'bg-primary-50', border: 'border-primary-300', text: 'text-primary-800', icon: 'ri-live-line', dot: 'bg-primary-500', barBg: 'bg-primary-500' },
+    coaching: { label: 'Coaching', bg: 'bg-pink-100', border: 'border-pink-300', text: 'text-pink-800', icon: 'ri-chat-smile-2-line', dot: 'bg-pink-500', barBg: 'bg-pink-500' },
+    'live-session': { label: 'Live Session', bg: 'bg-violet-50', border: 'border-violet-300', text: 'text-violet-800', icon: 'ri-live-line', dot: 'bg-violet-500', barBg: 'bg-violet-500' },
     review: { label: 'Review', bg: 'bg-secondary-100', border: 'border-secondary-300', text: 'text-secondary-800', icon: 'ri-file-chart-line', dot: 'bg-secondary-500', barBg: 'bg-secondary-500' },
     'employer-meeting': { label: 'Employer', bg: 'bg-rose-100', border: 'border-rose-300', text: 'text-rose-800', icon: 'ri-building-2-line', dot: 'bg-rose-500', barBg: 'bg-rose-500' },
     welfare: { label: 'Welfare', bg: 'bg-red-100', border: 'border-red-300', text: 'text-red-800', icon: 'ri-heart-pulse-line', dot: 'bg-red-500', barBg: 'bg-red-500' },
@@ -286,12 +286,12 @@ function typeConfig(type: TimetableEvent['type']) {
 function eventConfig(event: TimetableEvent) {
   const mcrTheme = {
     label: 'MCR',
-    bg: 'bg-rose-50',
-    border: 'border-rose-300',
-    text: 'text-rose-800',
+    bg: 'bg-orange-50',
+    border: 'border-orange-300',
+    text: 'text-orange-800',
     icon: 'ri-chat-smile-2-line',
-    dot: 'bg-rose-500',
-    barBg: 'bg-rose-500',
+    dot: 'bg-orange-500',
+    barBg: 'bg-orange-500',
   };
   const progressReviewTheme = {
     label: 'PR',
@@ -304,21 +304,21 @@ function eventConfig(event: TimetableEvent) {
   };
   const supportTheme = {
     label: 'Support',
-    bg: 'bg-indigo-50',
-    border: 'border-indigo-300',
-    text: 'text-indigo-800',
+    bg: 'bg-blue-50',
+    border: 'border-blue-300',
+    text: 'text-blue-800',
     icon: 'ri-heart-2-line',
-    dot: 'bg-indigo-500',
-    barBg: 'bg-indigo-500',
+    dot: 'bg-blue-500',
+    barBg: 'bg-blue-500',
   };
   const catchUpTheme = {
     label: 'Catch-up',
-    bg: 'bg-rose-50',
-    border: 'border-rose-300',
-    text: 'text-rose-800',
+    bg: 'bg-red-50',
+    border: 'border-red-300',
+    text: 'text-red-800',
     icon: 'ri-timer-line',
-    dot: 'bg-rose-500',
-    barBg: 'bg-rose-500',
+    dot: 'bg-red-500',
+    barBg: 'bg-red-500',
   };
   const sourceTheme = event.source === 'mcr'
     ? mcrTheme
@@ -591,11 +591,11 @@ const SOURCE_FILTER_CHIP_LABELS: Record<SourceFilter, string> = {
 
 const SOURCE_FILTER_DOTS: Record<SourceFilter, string> = {
   all: 'bg-foreground-400',
-  'live-session': 'bg-primary-500',
-  mcr: 'bg-rose-500',
+  'live-session': 'bg-violet-500',
+  mcr: 'bg-orange-500',
   'progress-review': 'bg-teal-500',
-  'catch-up': 'bg-rose-500',
-  'student-support': 'bg-indigo-500',
+  'catch-up': 'bg-red-500',
+  'student-support': 'bg-blue-500',
 };
 
 const SCHEDULABLE_SOURCE_ORDER: SchedulableSource[] = ['mcr', 'progress-review', 'catch-up'];
@@ -879,6 +879,7 @@ export default function CoachTimetablePage() {
   const currentHour = now.getHours();
   const todayWeekdayLabel = DAYS_OF_WEEK[now.getDay() === 0 ? 6 : now.getDay() - 1].toUpperCase();
   const todayMonthLabel = MONTH_NAMES[todayMonth].slice(0, 3).toUpperCase();
+  const coachWorkspaceReadOnly = coach.isViewingAsCoach;
 
   const isToday = useCallback((day: number, month: number, year: number) => {
     return day === todayDay && month === todayMonth && year === todayYear;
@@ -1353,6 +1354,15 @@ export default function CoachTimetablePage() {
   };
 
   const openCreateSessionModal = useCallback(() => {
+    if (coachWorkspaceReadOnly) {
+      void Swal.fire({
+        icon: 'info',
+        title: 'Read-only coach workspace',
+        text: 'You are viewing another coach workspace. Switch to the coach account to create sessions.',
+        confirmButtonColor: '#6d28d9',
+      });
+      return;
+    }
     const preferredLearnerId = selectedEvent?.learnerId && createSessionLearnerOptions.some(option => option.value === selectedEvent.learnerId)
       ? selectedEvent.learnerId
       : (createSessionLearnerOptions[0]?.value || '');
@@ -1370,7 +1380,7 @@ export default function CoachTimetablePage() {
     setCreateSessionLearnerSearch('');
     setCreateSessionLearnerPickerOpen(false);
     setCreateSessionOpen(true);
-  }, [createSessionLearnerOptions, getDefaultCreateSessionDate, selectedEvent]);
+  }, [coachWorkspaceReadOnly, createSessionLearnerOptions, getDefaultCreateSessionDate, selectedEvent]);
 
   const closeCreateSessionModal = useCallback(() => {
     if (createSessionBusy) return;
@@ -1738,6 +1748,8 @@ export default function CoachTimetablePage() {
                 <span className="calendar-hero-art__ring calendar-hero-art__ring--five" />
                 <span className="calendar-hero-art__calendar-top" />
                 <span className="calendar-hero-art__calendar-grid" />
+                <span className="calendar-hero-art__today-month">{todayMonthLabel}</span>
+                <span className="calendar-hero-art__today-day">{String(todayDay).padStart(2, '0')}</span>
               </div>
             </div>
           )}
@@ -1757,7 +1769,12 @@ export default function CoachTimetablePage() {
             <button
               type="button"
               onClick={openCreateSessionModal}
-              className="inline-flex items-center gap-2 rounded-lg bg-white px-3.5 py-2 text-[13px] font-semibold text-primary-700 shadow-sm transition-smooth hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-primary-200 cursor-pointer"
+              title={coachWorkspaceReadOnly ? 'Read-only while viewing another coach workspace' : 'Create session'}
+              className={`inline-flex items-center gap-2 rounded-lg bg-white px-3.5 py-2 text-[13px] font-semibold shadow-sm transition-smooth focus:outline-none focus:ring-2 focus:ring-primary-200 ${
+                coachWorkspaceReadOnly
+                  ? 'cursor-not-allowed text-foreground-400'
+                  : 'cursor-pointer text-primary-700 hover:bg-primary-50'
+              }`}
             >
               <AppIcon className="ri-add-circle-line text-base"></AppIcon>
               Create session
@@ -2446,7 +2463,7 @@ export default function CoachTimetablePage() {
                     )}
                   </div>
                   {selectedEventFeedback && (
-                    <div className={`mt-4 rounded-lg border px-3 py-2 text-[12px] ${eventActionError ? 'border-red-200 bg-red-50 text-red-700' : 'border-rose-200 bg-rose-50 text-rose-800'}`}>
+                    <div className={`mt-4 rounded-lg border px-3 py-2 text-[12px] ${eventActionError ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
                       {selectedEventFeedback}
                     </div>
                   )}
@@ -2592,7 +2609,7 @@ export default function CoachTimetablePage() {
                       Event Details
                     </h3>
                     <span className="rounded-full bg-background-100 px-2.5 py-1 text-[12px] font-semibold text-foreground-500">
-                      {selectedDayEvents.length} today
+                      {selectedDayEvents.length} selected
                     </span>
                   </div>
                   <EmptyState
@@ -2624,7 +2641,7 @@ export default function CoachTimetablePage() {
                   <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-600 text-white">
                     <AppIcon className="ri-calendar-todo-line"></AppIcon>
                   </span>
-                  Upcoming Sessions
+                  Upcoming events
                 </h3>
                 <span className="rounded-full bg-white px-2.5 py-1 text-[12px] font-semibold text-foreground-500 shadow-sm">
                   {upcomingEvents.length}
@@ -3177,7 +3194,7 @@ export default function CoachTimetablePage() {
                 <div className={`rounded-2xl border px-4 py-3 text-sm ${
                   scheduleModalError
                     ? 'border-red-200 bg-red-50 text-red-700'
-                    : 'border-rose-200 bg-rose-50 text-rose-800'
+                    : 'border-amber-200 bg-amber-50 text-amber-800'
                 }`}>
                   {scheduleModalFeedback}
                 </div>

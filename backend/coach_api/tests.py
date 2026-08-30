@@ -649,6 +649,46 @@ class MonthlyActivityTests(SimpleTestCase):
             ],
         )
 
+    def test_monthly_activity_log_excludes_unscheduled_calendar_events(self):
+        row = SimpleNamespace(
+            programme="Marketing",
+            training_plan_progress=[],
+            activity_feed=[],
+        )
+        learner = {
+            "id": "42",
+            "name": "Test Learner",
+            "initials": "TL",
+            "email": "learner@example.com",
+            "cohortName": "Cohort A",
+            "group": "Group 1",
+            "otjhStatus": "On Track",
+            "otjhTarget": 120,
+            "otjhCompleted": 40,
+        }
+        events = [{
+            "id": "event-1",
+            "eventKey": "event-1",
+            "learnerId": "42",
+            "email": "learner@example.com",
+            "source": "mcr",
+            "title": "Monthly Coaching",
+            "status": "needs-schedule",
+            "targetDate": "2026-08-31",
+        }]
+
+        result = build_monthly_activity_learner(
+            row,
+            learner,
+            events=events,
+            start_date=date(2026, 8, 1),
+            end_date=date(2026, 8, 31),
+        )
+
+        self.assertEqual(result["activities"], [])
+        self.assertEqual(result["coaching"]["needsSchedule"], 1)
+        self.assertIn("1 session need schedule", result["needsAction"])
+
     @patch("coach_api.views.curriculum_expected_otjh_by_component_id", return_value={"component-1": 1.5})
     def test_build_otjh_completed_entries_prefers_curriculum_expected_otjh(self, expected_lookup):
         entries = build_otjh_completed_entries(
@@ -678,6 +718,7 @@ class MonthlyActivityTests(SimpleTestCase):
         self.assertEqual(entries[0]["hours"], 1.5)
         self.assertEqual(entries[0]["reportedTime"], "120")
 
+    @patch("coach_api.views.fetch_verified_teams_attendance_rows", return_value=[])
     @patch("coach_api.views.build_monthly_activity_learner")
     @patch("coach_api.views.serialize_caseload_learner")
     @patch("coach_api.views.collect_generated_timetable", return_value={"events": [], "owner_name": "Med Maher"})
@@ -688,6 +729,7 @@ class MonthlyActivityTests(SimpleTestCase):
         collect_generated_timetable,
         serialize_learner,
         build_monthly_activity_learner,
+        fetch_attendance,
     ):
         row = SimpleNamespace(id=2, coach_name="Med Maher")
         fetch_rows.return_value = [row]
@@ -712,7 +754,20 @@ class MonthlyActivityTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 200)
         serialize_learner.assert_called_once_with(row, refresh_live_snapshots=False)
+        fetch_attendance.assert_called_once_with(
+            [2],
+            start_date=date(2026, 8, 1),
+            end_date=date(2026, 8, 31),
+        )
+        collect_generated_timetable.assert_called_once_with(
+            "coach@example.com",
+            start_date=date(2026, 8, 1),
+            end_date=date(2026, 8, 31),
+            include_live_sessions=False,
+            include_scheduler_queues=False,
+        )
 
+    @patch("coach_api.views.fetch_verified_teams_attendance_rows", return_value=[])
     @patch("coach_api.views.build_monthly_activity_learner")
     @patch("coach_api.views.serialize_caseload_learner")
     @patch("coach_api.views.collect_generated_timetable", return_value={"events": [], "owner_name": "Med Maher"})
@@ -723,6 +778,7 @@ class MonthlyActivityTests(SimpleTestCase):
         collect_generated_timetable,
         serialize_learner,
         build_monthly_activity_learner,
+        fetch_attendance,
     ):
         row = SimpleNamespace(id=2, coach_name="Med Maher")
         fetch_rows.return_value = [row]
@@ -747,6 +803,7 @@ class MonthlyActivityTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 200)
         serialize_learner.assert_called_once_with(row, refresh_live_snapshots=True)
+        fetch_attendance.assert_called_once()
 
 
 class EvidenceQueueSnapshotTests(SimpleTestCase):
