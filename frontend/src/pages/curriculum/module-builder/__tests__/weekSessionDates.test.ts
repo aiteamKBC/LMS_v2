@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyModuleWeekSessionPlan,
+  createEmptyComponent,
   createEmptyWeek,
   createLocalModuleDraft,
   recalculateModule,
@@ -70,6 +71,40 @@ function withSeventhWeek(module: ModuleCatalogueItem) {
 }
 
 describe('dating a week added in the builder', () => {
+  it('gives two live sessions in one week their distinct delivery dates', () => {
+    const draft = createLocalModuleDraft({
+      programme: 'Split Programme',
+      title: 'Monday and Wednesday module',
+      description: '',
+      weeks: 2,
+      sessionsNumber: 4,
+      status: 'draft',
+      catalogueId: 'MOD-TWICE-WEEKLY',
+      startDate: '2026-09-07',
+    });
+    const module = {
+      ...draft,
+      weekStructure: draft.weekStructure.map(week => ({
+        ...week,
+        components: [
+          createEmptyComponent(week.id, 'live-session', 1),
+          createEmptyComponent(week.id, 'live-session', 2),
+        ],
+      })),
+    };
+
+    const dated = applyModuleWeekSessionPlan(module, planFor([
+      '2026-09-07', '2026-09-09', '2026-09-14', '2026-09-16',
+    ]));
+    const visibleDates = dated.weekStructure.flatMap(week => (
+      week.components.map(component => String(component.settings.sessionDate || week.sessionDate || ''))
+    ));
+
+    expect(visibleDates).toEqual([
+      '2026-09-07', '2026-09-09', '2026-09-14', '2026-09-16',
+    ]);
+  });
+
   it('gives the added week the next planned date and leaves the others put', () => {
     const added = withSeventhWeek(sixWeekModule());
 

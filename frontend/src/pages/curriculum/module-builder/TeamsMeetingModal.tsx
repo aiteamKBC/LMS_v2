@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { fetchCurriculumSessions, type CurriculumSession } from '@/lib/curriculumApi';
-import { ReadOnlyInput, SelectInput, TextArea, TextInput } from './formInputs';
+import { FormField, SelectControl, TextAreaControl, TextControl } from '../shared/entities/ui';
 import { EmailChipsInput, emailList } from './EmailChipsInput';
 import {
   createTeamsMeeting,
@@ -41,6 +41,35 @@ function sessionMinutes(session: CurriculumSession, fallback: number) {
   return minutes > 0 ? minutes : fallback;
 }
 
+/** "1 hour 30 minutes" for a duration in minutes, matching the tab's labels. */
+function durationLabel(minutes: number) {
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  const parts = [];
+  if (hours) parts.push(`${hours} hour${hours === 1 ? '' : 's'}`);
+  if (rest || !hours) parts.push(`${rest} minute${rest === 1 ? '' : 's'}`);
+  return parts.join(' ');
+}
+
+const LOBBY_OPTIONS = [
+  { value: 'invited', label: 'People invited to this meeting' },
+  { value: 'organization', label: 'People in my organization' },
+  { value: 'organization-excluding-guests', label: 'Organization, excluding guests' },
+  { value: 'everyone', label: 'Everyone' },
+  { value: 'organizer', label: 'Only organizers' },
+];
+const RECORDING_OPTIONS = [
+  { value: 'none', label: 'Do not start automatically' },
+  { value: 'record', label: 'Record automatically' },
+  { value: 'record-transcribe', label: 'Record and transcribe' },
+];
+const LANGUAGE_OPTIONS = [
+  { value: 'en-GB', label: 'English (UK)' },
+  { value: 'en-US', label: 'English (US)' },
+  { value: 'ar-EG', label: 'Arabic (Egypt)' },
+  { value: 'fr-FR', label: 'French' },
+];
+
 export function TeamsMeetingModal({
   component,
   module,
@@ -62,6 +91,12 @@ export function TeamsMeetingModal({
   // attendee who cannot share.
   const [presenters, setPresenters] = useState(storedEmails('teamsPresenters'));
   const [durationMinutes, setDurationMinutes] = useState(Number(component.settings.durationMinutes || 60));
+  // The Duration defaults to the length the group was created with — the gap
+  // between its session start and end — so the meeting matches the schedule
+  // without anyone re-picking it. Any duration already stored on the component is
+  // just an earlier default (usually 60) and is meant to be overwritten; only a
+  // duration the tutor changes here, in this modal, is kept.
+  const durationTouchedRef = useRef(false);
   const [lobbyBypass, setLobbyBypass] = useState(meetingSettingString(component, 'teamsLobbyBypass', 'invited'));
   const [recording, setRecording] = useState(meetingSettingString(component, 'teamsRecording', 'record-transcribe'));
   const [spokenLanguage, setSpokenLanguage] = useState(meetingSettingString(component, 'teamsSpokenLanguage', 'en-GB'));
@@ -95,14 +130,31 @@ export function TeamsMeetingModal({
     fetchCurriculumSessions(undefined, { skipCache: true })
       .then(all => {
         if (!active) return;
-        setPlannedSessions(all
+        const filtered = all
           .filter(session => String(session.moduleCatalogueId || session.moduleId || '').trim().toLowerCase() === wanted)
-          .sort((left, right) => sessionWallClock(left).localeCompare(sessionWallClock(right))));
+          .sort((left, right) => sessionWallClock(left).localeCompare(sessionWallClock(right)));
+        setPlannedSessions(filtered);
+        // Default the duration to the group's own session length, once, unless
+        // the component already carried one or the tutor has picked another.
+        if (!durationTouchedRef.current && filtered.length) {
+          const groupMinutes = sessionMinutes(filtered[0], 0);
+          if (groupMinutes > 0) setDurationMinutes(groupMinutes);
+          durationTouchedRef.current = true;
+        }
       })
       .catch(() => { if (active) setPlannedSessions([]); })
       .finally(() => { if (active) setSessionsLoading(false); });
     return () => { active = false; };
   }, [module.catalogueId]);
+
+  // The standard lengths plus whatever the group was actually created with, so
+  // a non-standard session duration still shows its own value rather than blank.
+  const durationOptions = useMemo(() => {
+    const minutes = Array.from(new Set([30, 45, 60, 90, 120, 180, durationMinutes]))
+      .filter(value => value > 0)
+      .sort((left, right) => left - right);
+    return minutes.map(value => ({ value: String(value), label: durationLabel(value) }));
+  }, [durationMinutes]);
 
   const plannedOccurrences = useMemo(() => plannedSessions.map((session, index) => ({
     sessionNumber: index + 1,
@@ -218,7 +270,7 @@ export function TeamsMeetingModal({
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-3 backdrop-blur-sm sm:p-5" onClick={submitting ? undefined : onClose}>
-      <div role="dialog" aria-modal="true" aria-labelledby="teams-meeting-title" className="flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-labelledby="teams-meeting-title" className="flex max-h-[94vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
         <div className="flex shrink-0 items-start justify-between gap-4 bg-primary-950 px-5 py-4 text-white">
           <div className="flex min-w-0 items-start gap-3">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10 text-cyan-300">
@@ -272,21 +324,92 @@ export function TeamsMeetingModal({
               )}
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(300px,0.8fr)]">
-              <section className="space-y-4 rounded-2xl border border-background-200 bg-background-50 p-4">
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-primary-600">Meeting details</p>
-                  <h4 className="mt-1 text-[13px] font-heading font-bold text-foreground-900">Calendar invitation</h4>
+            <div className="mx-auto max-w-3xl space-y-4">
+              <div className="flex items-start gap-3 rounded-xl border border-primary-100 bg-primary-50/60 px-4 py-3">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-600 text-white">
+                  <AppIcon className="ri-microsoft-teams-line text-base"></AppIcon>
+                </span>
+                <p className="text-[12px] text-foreground-600">
+                  {plannedOccurrences.length
+                    ? `Create puts one Teams meeting on each of the ${plannedOccurrences.length} session date${plannedOccurrences.length === 1 ? '' : 's'} below and writes the join link into this module’s live-session components. The dates come from the module, not from this form.`
+                    : 'This module has no stored session dates yet, so there is nothing to put on a calendar. Save its schedule first — those dates are what the calendar is built from.'}
+                </p>
+              </div>
+
+              {sessionsLoading ? (
+                <div className="rounded-xl border border-background-200 bg-background-100/60 p-3">
+                  <p className="flex items-center gap-1.5 text-[11px] font-semibold text-foreground-500">
+                    <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
+                    Loading this module's session dates…
+                  </p>
                 </div>
-                {organizerLocked ? (
-                  <div>
-                    <ReadOnlyInput label="Organizer Microsoft 365 email" value={organizerEmail} />
-                    <p className="mt-1 text-[10px] font-semibold text-foreground-400">Set for this deployment. Recording and transcription only turn on for this mailbox, so the series is always created here; tutors are invited as presenters below.</p>
+              ) : plannedOccurrences.length ? (
+                <div className="overflow-hidden rounded-xl border border-background-200 bg-background-50">
+                  <div className="flex items-center justify-between gap-2 border-b border-background-200 bg-background-100/50 px-3 py-2.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-primary-700">Dates the calendar will be created on</p>
+                    <span className="rounded-full border border-background-200 bg-background-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-foreground-600">
+                      {plannedOccurrences.length} session{plannedOccurrences.length === 1 ? '' : 's'}
+                    </span>
                   </div>
-                ) : (
-                  <TextInput label="Organizer Microsoft 365 email" value={organizerEmail} onChange={setOrganizerEmail} required />
-                )}
-                <div className="flex items-center justify-end">
+                  <ul className="max-h-44 divide-y divide-background-100 overflow-y-auto">
+                    {plannedOccurrences.map(occurrence => (
+                      <li key={occurrence.sessionNumber} className="flex items-center justify-between gap-2 px-3 py-2 text-[12px]">
+                        <span className="flex items-center font-semibold text-foreground-700">
+                          <span className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-background-100 text-[10px] font-bold text-foreground-500">{occurrence.sessionNumber}</span>
+                          {new Date(occurrence.startDateTimeUtc).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        <span className="shrink-0 text-[11px] font-semibold text-foreground-400">{occurrence.durationMinutes} min</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="border-t border-background-100 bg-background-100/40 px-3 py-2 text-[10px] font-semibold text-foreground-500">
+                    One Teams meeting per stored session date, holiday shifts included. Change the dates on the module schedule, not here.
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                  <p className="text-[11px] font-semibold text-amber-800">
+                    <AppIcon className="ri-error-warning-line mr-1"></AppIcon>
+                    This module has no stored session dates yet, so there is nothing to put on a calendar. Save its schedule first — those dates are what the calendar is built from.
+                  </p>
+                </div>
+              )}
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <FormField
+                  label="Organizer Microsoft 365 email"
+                  required={!organizerLocked}
+                  hint={organizerLocked
+                    ? 'Set for this deployment. Recording and transcription only turn on for this mailbox, so tutors are invited as presenters instead.'
+                    : 'The calendar this series is created in.'}
+                >
+                  <TextControl value={organizerEmail} onChange={setOrganizerEmail} disabled={organizerLocked} />
+                </FormField>
+                <FormField
+                  label="Duration"
+                  hint={plannedOccurrences.length
+                    ? `First session ${new Date(plannedOccurrences[0].startDateTimeUtc).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}.`
+                    : 'Defaults to the group session length.'}
+                >
+                  <SelectControl
+                    value={String(durationMinutes)}
+                    onChange={value => { durationTouchedRef.current = true; setDurationMinutes(Number(value)); }}
+                    options={durationOptions}
+                  />
+                </FormField>
+                <FormField label="Who can bypass the lobby?">
+                  <SelectControl value={lobbyBypass} onChange={setLobbyBypass} options={LOBBY_OPTIONS} />
+                </FormField>
+                <FormField label="Recording">
+                  <SelectControl value={recording} onChange={setRecording} options={RECORDING_OPTIONS} />
+                </FormField>
+                <FormField label="Spoken language">
+                  <SelectControl value={spokenLanguage} onChange={setSpokenLanguage} options={LANGUAGE_OPTIONS} />
+                </FormField>
+                <FormField label="Details" hint="Optional. Included in the calendar invitation.">
+                  <TextAreaControl value={details} onChange={setDetails} rows={2} />
+                </FormField>
+                <div className="sm:col-span-2 -mb-2 flex items-center justify-end">
                   <button
                     type="button"
                     disabled={invitedPrefilling || !module.catalogueId}
@@ -297,55 +420,14 @@ export function TeamsMeetingModal({
                     {invitedPrefilling ? 'Loading…' : "Prefill from the module's tutor and learner plans"}
                   </button>
                 </div>
-                <div>
-                  <p className="text-[10px] font-semibold uppercase text-foreground-400">Presenters</p>
+                <FormField label="Presenters" hint="These people can share and record. They are invited too, so there is no need to repeat them below.">
                   <EmailChipsInput value={presenters} onChange={setPresenters} />
-                  <p className="mt-1 text-[10px] font-semibold text-foreground-400">These people can share and record. They are invited too, so there is no need to repeat them below.</p>
-                </div>
-                <div>
-                  <p className="text-[10px] font-semibold uppercase text-foreground-400">Attendees</p>
+                </FormField>
+                <FormField label="Attendees" hint="Presenters are invited automatically.">
                   <EmailChipsInput value={attendees} onChange={setAttendees} />
-                  <p className="mt-1 text-[10px] font-semibold text-foreground-400">Presenters are invited automatically.</p>
-                </div>
-                {sessionsLoading ? (
-                  <div className="rounded-xl border border-background-200 bg-background-100/60 p-3">
-                    <p className="flex items-center gap-1.5 text-[11px] font-semibold text-foreground-500">
-                      <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
-                      Loading this module's session dates…
-                    </p>
-                  </div>
-                ) : plannedOccurrences.length ? (
-                  <div className="rounded-xl border border-primary-100 bg-primary-50/60 p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-primary-700">Dates come from this module</p>
-                    <p className="mt-1 text-[11px] font-semibold text-foreground-700">
-                      {plannedOccurrences.length} session{plannedOccurrences.length === 1 ? '' : 's'}, first on {new Date(plannedOccurrences[0].startDateTimeUtc).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}.
-                    </p>
-                    <p className="mt-1 text-[10px] font-semibold text-foreground-500">
-                      One Teams meeting per stored session date, holiday shifts included. Change the dates on the module schedule, not here.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-                    <p className="text-[11px] font-semibold text-amber-800">
-                      <AppIcon className="ri-error-warning-line mr-1"></AppIcon>
-                      This module has no stored session dates yet, so there is nothing to put on a calendar. Save its schedule first — those dates are what the calendar is built from.
-                    </p>
-                  </div>
-                )}
-                <TextArea label="Details" value={details} onChange={setDetails} rows={5} />
-              </section>
-
-              <section className="space-y-4 rounded-2xl border border-primary-100 bg-primary-50/40 p-4">
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-primary-600">Advanced options</p>
-                  <p className="mt-1 text-[11px] font-semibold text-foreground-500">Saved with the component. Microsoft 365 policy can override some options.</p>
-                </div>
-                <SelectInput label="Duration" value={String(durationMinutes)} options={['30', '45', '60', '90', '120', '180']} labels={{ '30': '30 minutes', '45': '45 minutes', '60': '1 hour', '90': '1 hour 30 minutes', '120': '2 hours', '180': '3 hours' }} onChange={value => setDurationMinutes(Number(value))} />
-                <SelectInput label="Who can bypass the lobby?" value={lobbyBypass} options={['invited', 'organization', 'organization-excluding-guests', 'everyone', 'organizer']} labels={{ invited: 'People invited to this meeting', organization: 'People in my organization', 'organization-excluding-guests': 'Organization, excluding guests', everyone: 'Everyone', organizer: 'Only organizers' }} onChange={setLobbyBypass} />
-                <SelectInput label="Recording" value={recording} options={['none', 'record', 'record-transcribe']} labels={{ none: 'Do not start automatically', record: 'Record automatically', 'record-transcribe': 'Record and transcribe' }} onChange={setRecording} />
-                <SelectInput label="Spoken language" value={spokenLanguage} options={['en-GB', 'en-US', 'ar-EG', 'fr-FR']} labels={{ 'en-GB': 'English (UK)', 'en-US': 'English (US)', 'ar-EG': 'Arabic (Egypt)', 'fr-FR': 'French' }} onChange={setSpokenLanguage} />
-                {graphTimeZone && <p className="text-[10px] font-semibold text-foreground-400"><AppIcon className="ri-time-line mr-1"></AppIcon>Microsoft calendar time zone: {graphTimeZone}</p>}
-              </section>
+                </FormField>
+              </div>
+              {graphTimeZone && <p className="text-[10px] font-semibold text-foreground-400"><AppIcon className="ri-time-line mr-1"></AppIcon>Microsoft calendar time zone: {graphTimeZone}</p>}
             </div>
           )}
 

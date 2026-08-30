@@ -51,8 +51,9 @@ import { MEDIA_SOURCE_TYPES, normaliseVideoSourceType, providerForVideoSourceTyp
 import { buildKsbMappingPrompt, describeKsbImport, exportWeekKsbWorkbook, importWeekKsbWorkbook } from '@/pages/curriculum/module-builder/ksbExcel';
 import { KsbExcelPanel } from '@/pages/curriculum/module-builder/KsbExcelPanel';
 import { GroupPlacementPanel, type PlacementResult } from './PlaceComponentDrawer';
-import { loadModuleStructure, saveModuleStructure } from '@/pages/curriculum/module-builder/moduleAuthoringData';
+import { loadModuleStructure, saveModuleStructure, utcIsoToCalendarParts } from '@/pages/curriculum/module-builder/moduleAuthoringData';
 import { TeamsMeetingModal, type TeamsMeetingModuleContext } from '@/pages/curriculum/module-builder/TeamsMeetingModal';
+import { LiveSessionScheduleEditor } from '@/pages/curriculum/module-builder/LiveSessionScheduleEditor';
 import { RichTextDraft } from '@/pages/curriculum/module-builder/RichTextEditor';
 import { formatDateLabel } from '@/pages/curriculum/shared/entities/model';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '@/pages/curriculum/shared/componentUploadPolicy';
@@ -1426,6 +1427,10 @@ export interface ComponentBodyProps {
   // a reusable template) -- lets a live session default to when its week
   // actually runs instead of asking the date to be typed in again.
   weekSessionDate?: string;
+  // The parent week's group-creation start time, from the module's session plan.
+  // Lets a live session's start time default to when the group actually meets
+  // instead of reading blank until someone types it in.
+  weekSessionTime?: string;
   // Injected file uploader so the same bodies work in both the week builder
   // (posts to week-components/) and the module builder (module-scoped upload).
   uploadResource?: WeekComponentUploader;
@@ -1439,12 +1444,12 @@ export interface ComponentBodyProps {
   liveSessionModule?: TeamsMeetingModuleContext;
 }
 
-export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting = false, liveSessionModule }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; uploadResource?: WeekComponentUploader; restoreTeamsMeeting?: () => Promise<void>; restoringTeamsMeeting?: boolean; liveSessionModule?: TeamsMeetingModuleContext }) {
+export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting = false, liveSessionModule }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; restoreTeamsMeeting?: () => Promise<void>; restoringTeamsMeeting?: boolean; liveSessionModule?: TeamsMeetingModuleContext }) {
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const issues = validateWeekComponent(component);
   const setSetting = (key: string, value: ComponentSettingValue) => onChange({ settings: { ...component.settings, [key]: value } });
-  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting, liveSessionModule };
+  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting, liveSessionModule };
 
   return (
     <div className="rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
@@ -1524,14 +1529,16 @@ function GenericComponentBody({ component, onChange, setSetting, rulePoints }: C
 
 // Bespoke Live Teams Session editor. (Group assignment is rendered once for
 // every component type by ComponentEditor, so it isn't repeated here.)
-function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSessionDate, restoreTeamsMeeting, restoringTeamsMeeting, liveSessionModule }: ComponentBodyProps) {
+function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSessionDate, weekSessionTime, restoreTeamsMeeting, restoringTeamsMeeting, liveSessionModule }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   const [teamsMeetingOpen, setTeamsMeetingOpen] = useState(false);
-  // An explicit edit always wins; otherwise default to the date the week is
-  // actually scheduled on, so the field reads correctly before anyone types
-  // into it rather than sitting blank until someone repeats what the session
-  // plan already worked out.
+  // An explicit edit always wins; otherwise default to the date/time the week is
+  // actually scheduled on (the group-creation clock), so the fields read
+  // correctly before anyone types into them rather than sitting blank until
+  // someone repeats what the session plan already worked out.
   const sessionDate = s('sessionDate') || weekSessionDate || '';
+  const sessionTime = s('sessionTime') || String(weekSessionTime || '').slice(0, 5) || '';
+  const hasMeeting = Boolean(s('liveSessionUrl') || s('teamsMeetingUrl'));
 
   return (
     <>
@@ -1539,11 +1546,22 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
         <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
         <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this session is about…" className={`${inputClass} resize-none`} /></Field>
 
-        <div className="mt-4 grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
-          <Field label="Microsoft Teams link"><input value={s('liveSessionUrl')} onChange={e => setSetting('liveSessionUrl', e.target.value)} placeholder="https://teams.microsoft.com/…" className={inputClass} /></Field>
-          <Field label="Session date"><input type="date" value={sessionDate} onChange={e => setSetting('sessionDate', e.target.value)} className={`${inputClass} tabular-nums`} /></Field>
-          <Field label="Start time"><input type="time" value={s('sessionTime')} onChange={e => setSetting('sessionTime', e.target.value)} className={`${inputClass} tabular-nums`} /></Field>
-        </div>
+        {hasMeeting ? (
+          // Meeting created: the join link is read-only (copy/open only) and the
+          // date/time move this one session in Teams behind a red warning.
+          <LiveSessionScheduleEditor
+            component={component}
+            onSettingChange={setSetting}
+            fallbackDate={weekSessionDate}
+            fallbackTime={weekSessionTime}
+          />
+        ) : (
+          <div className="mt-4 grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
+            <Field label="Microsoft Teams link"><input value={s('liveSessionUrl')} onChange={e => setSetting('liveSessionUrl', e.target.value)} placeholder="https://teams.microsoft.com/…" className={inputClass} /></Field>
+            <Field label="Session date"><input type="date" value={sessionDate} onChange={e => setSetting('sessionDate', e.target.value)} className={`${inputClass} tabular-nums`} /></Field>
+            <Field label="Start time"><input type="time" value={sessionTime} onChange={e => setSetting('sessionTime', e.target.value)} className={`${inputClass} tabular-nums`} /></Field>
+          </div>
+        )}
         {(liveSessionModule || restoreTeamsMeeting) && (
           <div className="mt-3 flex flex-wrap justify-end gap-2">
             {liveSessionModule && (
@@ -1604,10 +1622,20 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
           onClose={() => setTeamsMeetingOpen(false)}
           onCreated={(result, input) => {
             const meeting = result.meeting;
+            const componentDate = String(component.settings.sessionDate || '');
+            const scheduled = input.scheduledOccurrences?.find(occurrence => (
+              utcIsoToCalendarParts(occurrence.startDateTimeUtc).date === componentDate
+            ));
+            const scheduledParts = scheduled ? utcIsoToCalendarParts(scheduled.startDateTimeUtc) : { date: '', time: '' };
+            const hasExplicitSchedule = Boolean(
+              component.settings.sessionDate
+              || component.settings.sessionDateTimeUtc
+              || (component.settings.teamsLiveSessionId && Number(component.settings.teamsSessionNumber || 0) > 0),
+            );
             // One merged write so the whole meeting lands atomically (and the
             // Module Builder's onChange can mirror the join link across the
-            // week's other live sessions). The visible date/time fields are
-            // filled from the calendar wall clock the meeting was booked on.
+            // week's other live sessions). Match this component's own occurrence;
+            // the series start belongs only to session one.
             onChange({
               settings: {
                 ...component.settings,
@@ -1618,9 +1646,13 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
                 teamsOrganizerEmail: meeting.organizerEmail,
                 teamsAttendees: meeting.attendees,
                 teamsPresenters: meeting.presenters,
-                sessionDateTimeUtc: meeting.startDateTimeUtc,
-                sessionDate: input.localStartDateTime.slice(0, 10),
-                sessionTime: input.localStartDateTime.slice(11, 16),
+                ...(scheduled ? { teamsSessionNumber: scheduled.sessionNumber } : {}),
+                ...(scheduled && !hasExplicitSchedule ? {
+                  sessionDateTimeUtc: scheduled.startDateTimeUtc,
+                  teamsStartDateTimeUtc: scheduled.startDateTimeUtc,
+                  sessionDate: scheduledParts.date,
+                  sessionTime: scheduledParts.time,
+                } : {}),
                 durationMinutes: meeting.durationMinutes,
                 teamsProvider: meeting.provider,
                 teamsRepeat: meeting.repeat,
