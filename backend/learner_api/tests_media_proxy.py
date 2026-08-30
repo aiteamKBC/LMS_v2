@@ -1,9 +1,30 @@
+from unittest.mock import patch
+
 from django.test import SimpleTestCase
 
-from .media_proxy import _embedded_kbc_media_url, _raw_http_urls
+from .media_proxy import (
+    _embedded_kbc_media_url,
+    _programme_audit_database_aliases,
+    _raw_http_urls,
+)
 
 
 class ProgrammeAuditMediaFallbackTests(SimpleTestCase):
+    @patch('learner_api.media_proxy.connections')
+    def test_prefers_dedicated_audit_database_with_legacy_fallbacks(self, mocked_connections):
+        mocked_connections.databases = {'audit': {}, 'enrolment': {}, 'default': {}}
+
+        self.assertEqual(
+            _programme_audit_database_aliases(),
+            ('audit', 'enrolment', 'default'),
+        )
+
+    @patch('learner_api.media_proxy.connections')
+    def test_skips_database_aliases_that_are_not_configured(self, mocked_connections):
+        mocked_connections.databases = {'default': {}}
+
+        self.assertEqual(_programme_audit_database_aliases(), ('default',))
+
     def test_extracts_original_kbc_file_from_new_material_table_payload(self):
         raw = {
             'settings': {
