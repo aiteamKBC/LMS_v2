@@ -58,6 +58,10 @@ export function LiveSessionScheduleEditor({
   const [rescheduling, setRescheduling] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  // A move Teams accepted reads green; a move it could only honour with a caveat
+  // (e.g. recreated on its own event) reads amber, so a warning never looks like
+  // a clean success; the local-save hint is neutral.
+  const [noticeKind, setNoticeKind] = useState<'success' | 'warning' | 'info'>('success');
 
   useEffect(() => {
     setDate(saved.date);
@@ -81,13 +85,14 @@ export function LiveSessionScheduleEditor({
     setError('');
     setNotice('');
     const startDateTimeUtc = zonedNaiveToUtcIso(`${date}T${time}`);
-    // Keep the plain wall clock in step with the instant, so the schedule keys
-    // stay right whether or not a tracked occurrence exists to move.
-    onSettingChange('sessionDate', date);
-    onSettingChange('sessionTime', time);
     if (!canReschedule) {
+      // No tracked occurrence to move: store the new wall clock locally and let
+      // the next module save carry it to Teams.
+      onSettingChange('sessionDate', date);
+      onSettingChange('sessionTime', time);
       onSettingChange('sessionDateTimeUtc', startDateTimeUtc);
       onSettingChange('teamsStartDateTimeUtc', startDateTimeUtc);
+      setNoticeKind('info');
       setNotice('Saved on this session. Save the module to send the new time to Teams.');
       return;
     }
@@ -95,6 +100,11 @@ export function LiveSessionScheduleEditor({
     try {
       const result = await rescheduleTeamsOccurrence(liveSessionId, sessionNumber, { startDateTimeUtc, durationMinutes });
       const occurrence = result.occurrence;
+      // Only now that Teams has accepted the move do we change the stored
+      // schedule. A failed request throws to the catch below, so a rejected
+      // reschedule leaves the session's date and time exactly as they were.
+      onSettingChange('sessionDate', date);
+      onSettingChange('sessionTime', time);
       onSettingChange('sessionDateTimeUtc', occurrence.startDateTimeUtc);
       onSettingChange('teamsStartDateTimeUtc', occurrence.startDateTimeUtc);
       if (occurrence.joinUrl) {
@@ -102,7 +112,9 @@ export function LiveSessionScheduleEditor({
         onSettingChange('teamsMeetingUrl', occurrence.joinUrl);
       }
       if (occurrence.eventId) onSettingChange('teamsEventId', occurrence.eventId);
-      setNotice(result.warnings?.[0]?.message || 'This session was moved in Teams. The other sessions are unchanged.');
+      const warning = result.warnings?.[0]?.message;
+      setNoticeKind(warning ? 'warning' : 'success');
+      setNotice(warning || 'This session was moved in Teams. The other sessions are unchanged.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Microsoft Teams could not move this session.');
     } finally {
@@ -162,7 +174,12 @@ export function LiveSessionScheduleEditor({
           </div>
         </div>
         {error && <p className="mt-2 text-[11px] font-semibold text-red-700"><AppIcon className="ri-error-warning-line mr-1"></AppIcon>{error}</p>}
-        {notice && !error && <p className="mt-2 text-[11px] font-semibold text-emerald-700"><AppIcon className="ri-check-line mr-1"></AppIcon>{notice}</p>}
+        {notice && !error && (
+          <p className={`mt-2 text-[11px] font-semibold ${noticeKind === 'warning' ? 'text-amber-700' : noticeKind === 'info' ? 'text-foreground-600' : 'text-emerald-700'}`}>
+            <AppIcon className={`mr-1 ${noticeKind === 'warning' ? 'ri-error-warning-line' : noticeKind === 'info' ? 'ri-information-line' : 'ri-check-line'}`}></AppIcon>
+            {notice}
+          </p>
+        )}
       </div>
     </div>
   );

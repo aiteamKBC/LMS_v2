@@ -631,6 +631,17 @@ export default function ModuleBuilder() {
         loadModuleWeekSessionPlan(module.catalogueId, module.weekStructure.length),
       ]);
       const meetingSettings = result.meeting as ModuleComponent['settings'];
+      // What a live-session component can inherit from the series before it has a
+      // stored twin — everything except the per-session schedule. The date keys
+      // are stripped so the series' first-session date can never overwrite a
+      // session's own; applyModuleWeekSessionPlan dates each session below. This
+      // is the frontend mirror of the backend's shared_series_settings, and it is
+      // what keeps the join link on an unsaved or freshly generated session
+      // instead of leaving it blank until the next restore pairs it by id.
+      const seriesDateKeys = new Set(['sessionDate', 'sessionDay', 'sessionTime', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc']);
+      const seriesLinkSettings = Object.fromEntries(
+        Object.entries(meetingSettings || {}).filter(([key]) => !seriesDateKeys.has(key)),
+      ) as ModuleComponent['settings'];
       // The endpoint answers with the module as it now stands, and each week's
       // live-session component carries that week's own session — so the stored
       // component is what is merged in, not one set of series settings applied
@@ -654,12 +665,20 @@ export default function ModuleBuilder() {
               sessionDate: restored?.sessionDate ?? week.sessionDate,
               sessionDay: restored?.sessionDay ?? week.sessionDay,
               components: [
-                ...week.components.map(component => (
-                  component.type === 'live-session'
-                    && restoredById.get(component.id)
-                    ? { ...component, settings: { ...component.settings, ...restoredById.get(component.id)!.settings } }
-                    : component
-                )),
+                ...week.components.map(component => {
+                  if (component.type !== 'live-session') return component;
+                  const restoredComponent = restoredById.get(component.id);
+                  if (restoredComponent) {
+                    // The stored twin carries this session's own date and link.
+                    return { ...component, settings: { ...component.settings, ...restoredComponent.settings } };
+                  }
+                  // No stored twin yet (unsaved or freshly generated). Give it the
+                  // series' join link now — but not the series' date — so it stops
+                  // reading as "no meeting" the moment re-attach succeeds, rather
+                  // than only after a later restore pairs it by id.
+                  if (component.settings.liveSessionUrl || component.settings.teamsMeetingUrl) return component;
+                  return { ...component, settings: { ...component.settings, ...seriesLinkSettings } };
+                }),
                 // A week that had no live session now has the one the re-attach
                 // created for it; without this the module would only show it
                 // after a reload.

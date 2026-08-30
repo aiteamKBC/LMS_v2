@@ -2392,6 +2392,25 @@ def curriculum_teams_meeting_occurrence_schedule(request, live_session_id, sessi
         series, occurrence, new_start, duration,
     )
 
+    # Only persist a time Teams actually adopted. The helper either moves the
+    # instance, recreates it on its own event (a real move, new join link), or
+    # reports one of the hard-failure codes below -- in which case Teams still
+    # runs the session at the old time, so writing the new one here would make
+    # the LMS claim a slot that does not exist and read as a success.
+    warning_codes = {clean_str(item.get('code')) for item in warnings}
+    recreated = 'teams_shifted_occurrence_recreated' in warning_codes
+    hard_failures = warning_codes & {
+        'teams_occurrence_not_moved',
+        'teams_occurrence_missing_event',
+        'teams_occurrence_not_found',
+    }
+    if hard_failures and not recreated:
+        message = next(
+            (clean_str(item.get('message')) for item in warnings if clean_str(item.get('code')) in hard_failures),
+            'Microsoft Teams could not move this session.',
+        )
+        return json_error(message, status=502, warnings=warnings, updated=False)
+
     now = datetime.utcnow()
     update = {
         'scheduled_start': new_start,
