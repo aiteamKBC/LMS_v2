@@ -1396,6 +1396,19 @@ export default function CurriculumProgrammes() {
           defaults={wizardRun?.programmeId ? { programmeId: wizardRun.programmeId } : undefined}
           onClose={() => setWizardRun(null)}
           onStepSaved={() => refreshProgrammeCards()}
+          // A discarded run's records are already gone (or archived) server-side,
+          // so the card comes off the list now rather than after the rebuild the
+          // refresh above waits on — the same reason a save paints its card now.
+          onRunDiscarded={(discarded: StructureWizardCreated, { deletedForGood }: { deletedForGood: boolean }) => {
+            const programmeId = discarded.programme
+              ? discarded.programme.sourceId || discarded.programme.id
+              : '';
+            if (!programmeId) return;
+            // Archived is not deleted: the row has to reach the archive rather
+            // than vanish, or the reader has no way back to it.
+            if (deletedForGood) removeProgramme(String(programmeId));
+            else markProgrammeArchived(String(programmeId));
+          }}
           onFinished={(created: StructureWizardCreated) => {
             if (created.programme) {
               upsertProgramme(created.programme);
