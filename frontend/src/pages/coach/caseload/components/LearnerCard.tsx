@@ -2,8 +2,8 @@
 // Coach caseload — learner card.
 //
 // Reading order is the point: who, what state, how far along, the four numbers,
-// then why they need attention, then the way in. Hierarchy comes from type size
-// and one hairline rule per band rather than from a box around every group.
+// then the key dates and the way in. Hierarchy comes from type size and one
+// hairline rule per band rather than from a box around every group.
 //
 // Every value is conditional. A learner with no attendance history shows a dash,
 // not a zero, because 0% attendance and "no sessions recorded yet" are different
@@ -13,6 +13,7 @@ import { memo } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import {
   EMPTY_VALUE,
+  clampPercent,
   displayValue,
   formatHours,
   formatHoursRatio,
@@ -21,9 +22,8 @@ import {
   hasValue,
   learnerProgramme,
 } from '../lib/format';
-import { REASON_TAB, type LearnerInsight } from '../lib/attention';
+import type { LearnerInsight } from '../lib/attention';
 import {
-  AttentionReasonLine,
   DateStatus,
   LearnerAvatar,
   Metric,
@@ -33,8 +33,6 @@ import {
   StatusPill,
 } from './primitives';
 import type { Learner, QuickViewTab } from '../types';
-
-const MAX_REASONS_SHOWN = 2;
 
 function attendanceNote(learner: Learner): { note: string | null; tone: 'muted' | 'warning' | 'critical' | 'positive' } {
   if (!learner.liveAttendanceRateAvailable) return { note: 'No sessions recorded', tone: 'muted' };
@@ -77,9 +75,14 @@ export const LearnerCard = memo(function LearnerCard({
   const programme = learnerProgramme(learner);
   const attendance = attendanceNote(learner);
   const otjh = otjhNote(insight);
-  const progress = learner.overallProgressAvailable ? learner.overallProgress : null;
-  const visibleReasons = insight.reasons.slice(0, MAX_REASONS_SHOWN);
-  const hiddenReasonCount = insight.reasons.length - visibleReasons.length;
+  const otjhProgress = learner.overallProgressAvailable ? learner.overallProgress : null;
+  const otjhProgrammeTarget = learner.otjhPlanned || learner.otjhMinimum || learner.otjhTarget;
+  const componentProgrammeProgress = learner.attendanceRateAvailable ? learner.attendanceRate : null;
+  // Against components expected by now (same pacing as otjhTarget), not
+  // componentsPlanned's whole-plan total -- see OTJH's own to-date tile above.
+  const componentsProgress = learner.componentsTargetToDate && learner.componentsTargetToDate > 0
+    ? clampPercent(((learner.componentsCompleted ?? 0) / learner.componentsTargetToDate) * 100)
+    : null;
 
   return (
     <article
@@ -88,7 +91,7 @@ export const LearnerCard = memo(function LearnerCard({
       }`}
     >
       {/* Identity */}
-      <div className="flex items-start gap-2.5 p-3.5 pb-3">
+      <div className="flex items-start gap-3 p-3.5 pb-3">
         {selectionMode ? (
           <input
             type="checkbox"
@@ -106,27 +109,31 @@ export const LearnerCard = memo(function LearnerCard({
           title={`Quick view: ${learner.name}`}
         />
 
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1 pt-0.5">
+          <div className="flex min-w-0 items-start justify-between gap-3">
             <button
               type="button"
               onClick={() => onQuickView(learner)}
-              className="min-w-0 truncate text-left text-[13.5px] font-bold leading-tight text-foreground-950 transition hover:text-primary-700"
+              className="min-w-0 truncate text-left text-[14px] font-bold leading-5 text-foreground-950 transition hover:text-primary-700"
             >
               {learner.name}
             </button>
-            <RiskBadge tier={insight.tier} label={insight.riskLabel} size="xs" />
+            <span className="shrink-0 pt-0.5">
+              <RiskBadge tier={insight.tier} label={insight.riskLabel} size="xs" />
+            </span>
           </div>
 
-          <p className="mt-1 truncate text-[12px] font-medium text-foreground-700" title={programme}>
-            {programme}
-          </p>
-          <p className="mt-0.5 truncate text-[12px] text-foreground-400">
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[12px]">
             <StatusPill value={learner.rawProgramStatus} />
-            {hasValue(learner.group) ? <span className="ml-1.5">{displayValue(learner.group)}</span> : null}
-          </p>
+            <span className="min-w-0 truncate font-medium text-foreground-700" title={programme}>{programme}</span>
+            {hasValue(learner.group) ? (
+              <span className="min-w-0 truncate text-foreground-400" title={displayValue(learner.group)}>
+                {displayValue(learner.group)}
+              </span>
+            ) : null}
+          </div>
           {hasValue(learner.employer) ? (
-            <p className="mt-1 truncate text-[12px] text-foreground-500">
+            <p className="mt-1.5 truncate text-[12px] text-foreground-500">
               <AppIcon className="ri-building-4-line mr-1 text-foreground-300"></AppIcon>
               {displayValue(learner.employer)}
             </p>
@@ -134,22 +141,33 @@ export const LearnerCard = memo(function LearnerCard({
         </div>
       </div>
 
-      {/* Progress */}
-      <div className="px-3.5 pb-3">
-        <div className="mb-1 flex items-baseline justify-between gap-2">
-          <SectionLabel>OTJH progress</SectionLabel>
-          <span className="text-[12px] font-bold tabular-nums text-foreground-900">
-            {progress === null ? EMPTY_VALUE : `${progress}%`}
-          </span>
+      {/* Progress to current target */}
+      <div className="space-y-3 px-3.5 pb-3">
+        <div>
+          <div className="mb-1 flex items-baseline justify-between gap-2">
+            <SectionLabel>OTJH target progress</SectionLabel>
+            <span className="text-[12px] font-bold tabular-nums text-foreground-900">
+              {otjhProgress === null ? EMPTY_VALUE : `${otjhProgress}% - ${formatHoursRatio(learner.otjhCompleted, learner.otjhTarget)}`}
+            </span>
+          </div>
+          <ProgressBar percent={otjhProgress} />
         </div>
-        <ProgressBar percent={progress} />
+        <div>
+          <div className="mb-1 flex items-baseline justify-between gap-2">
+            <SectionLabel>Components target progress</SectionLabel>
+            <span className="text-[12px] font-bold tabular-nums text-foreground-900">
+              {componentsProgress === null ? EMPTY_VALUE : `${componentsProgress}% - ${formatRatio(learner.componentsCompleted, learner.componentsTargetToDate)}`}
+            </span>
+          </div>
+          <ProgressBar percent={componentsProgress} />
+        </div>
       </div>
 
-      {/* Key metrics */}
+      {/* Whole programme metrics */}
       <div className="grid grid-cols-2 gap-x-3 gap-y-2.5 border-t border-foreground-100 px-3.5 py-3 sm:grid-cols-4">
         <Metric
           label="OTJH"
-          value={learner.overallProgressAvailable ? formatHoursRatio(learner.otjhCompleted, learner.otjhTarget) : EMPTY_VALUE}
+          value={learner.overallProgressAvailable ? formatHoursRatio(learner.otjhCompleted, otjhProgrammeTarget) : EMPTY_VALUE}
           note={otjh.note}
           noteTone={otjh.tone}
         />
@@ -162,7 +180,7 @@ export const LearnerCard = memo(function LearnerCard({
         <Metric
           label="Components"
           value={formatRatio(learner.componentsCompleted, learner.componentsPlanned)}
-          note={learner.attendanceRateAvailable ? `${learner.attendanceRate}% complete` : null}
+          note={componentProgrammeProgress === null ? null : `${componentProgrammeProgress}% complete`}
         />
         <Metric
           label="KSB"
@@ -171,79 +189,27 @@ export const LearnerCard = memo(function LearnerCard({
         />
       </div>
 
-      {/* Why */}
-      {visibleReasons.length > 0 ? (
-        <div
-          className={`space-y-1.5 border-t px-3.5 py-3 ${
-            insight.tier === 'critical'
-              ? 'border-red-100 bg-red-50/40'
-              : insight.tier === 'attention'
-                ? 'border-amber-100 bg-amber-50/40'
-                : 'border-accent-100 bg-accent-50/30'
-          }`}
-        >
-          <SectionLabel>
-            {insight.reasons.length === 1 ? '1 action required' : `${insight.reasons.length} actions required`}
-          </SectionLabel>
-          {visibleReasons.map((reason) => (
-            <AttentionReasonLine
-              key={reason.id}
-              reason={reason}
-              onClick={() => onQuickView(learner, REASON_TAB[reason.metric])}
-            />
-          ))}
-          {hiddenReasonCount > 0 ? (
-            <button
-              type="button"
-              onClick={() => onQuickView(learner)}
-              className="text-[12px] font-semibold text-primary-600 transition hover:text-primary-800"
-            >
-              +{hiddenReasonCount} more reason{hiddenReasonCount === 1 ? '' : 's'}
-            </button>
-          ) : null}
-        </div>
-      ) : (
-        <div className="flex items-center gap-1.5 border-t border-foreground-100 px-3.5 py-3 text-[12px] text-foreground-400">
-          <AppIcon className="ri-check-line text-[12px] text-emerald-500"></AppIcon>
-          {insight.tier === 'inactive'
-            ? `Not currently active — ${displayValue(learner.rawProgramStatus)}`
-            : 'No flags against hours, attendance, KSBs or gateway'}
-        </div>
-      )}
-
       {/* Footer */}
       <footer className="mt-auto flex items-end justify-between gap-3 border-t border-foreground-100 bg-background-50/60 px-3.5 py-2.5">
-        <div className="flex min-w-0 items-end gap-4">
+        <div className="grid min-w-0 flex-1 grid-cols-2 gap-4 sm:grid-cols-3">
+          {hasValue(learner.startDate) ? (
+            <DateStatus label="Start date" date={learner.startDate} daysAway={null} />
+          ) : null}
           {insight.gatewayDate ? (
             <DateStatus label="Gateway" date={learner.gatewayReviewDate} daysAway={insight.gatewayDaysAway} />
           ) : null}
-          {insight.lastActivityDaysAgo !== null ? (
-            <span className="min-w-0">
-              <span className="block text-[12px] font-medium uppercase tracking-[0.06em] text-foreground-400">
-                Last session
-              </span>
-              <span className="block text-[12px] font-semibold text-foreground-700">
-                {insight.lastActivityDaysAgo === 0 ? 'Today' : `${insight.lastActivityDaysAgo}d ago`}
-              </span>
-            </span>
+          {hasValue(learner.plannedEndDate) ? (
+            <DateStatus label="End date" date={learner.plannedEndDate} daysAway={null} />
           ) : null}
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
           <button
             type="button"
-            onClick={() => onQuickView(learner)}
-            className="inline-flex h-7 items-center gap-1 rounded border border-foreground-200 bg-white px-2 text-[12px] font-semibold text-foreground-600 transition hover:border-primary-300 hover:text-primary-700"
-          >
-            <AppIcon className="ri-eye-line text-[12px]"></AppIcon>
-            Quick view
-          </button>
-          <button
-            type="button"
             onClick={() => onOpenProfile(learner)}
             className="inline-flex h-7 items-center gap-1 rounded bg-primary-600 px-2 text-[12px] font-semibold text-white transition hover:bg-primary-700"
           >
-            Open
+            Open profile
             <AppIcon className="ri-arrow-right-line text-[12px]"></AppIcon>
           </button>
         </div>

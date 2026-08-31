@@ -856,12 +856,15 @@ export default function CurriculumProgrammes() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Programmes" pageSubtitle={pageSubtitle} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="programmes-page min-h-full bg-background-50 p-4 sm:p-6 space-y-5">
-        <section className="overflow-hidden rounded-2xl border border-white/10 bg-primary-950 text-white shadow-xl">
-          <div className="relative p-5 sm:p-7">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(255,255,255,0.18),transparent_34%),linear-gradient(135deg,rgba(109,40,217,0.35),rgba(15,23,42,0))]" />
-            <div className="relative flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-              <div className="max-w-3xl">
+      <div className="programmes-page min-h-full bg-background-50 p-4 sm:p-6 space-y-3">
+        <section className="curriculum-department-hero overflow-hidden rounded-2xl border border-white/10 bg-primary-950 text-white shadow-xl">
+          <div className="curriculum-programme-hero-body relative p-5 sm:p-7">
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(255,255,255,0.18),transparent_34%),linear-gradient(135deg,rgba(109,40,217,0.35),rgba(15,23,42,0))]" />
+            <div className="curriculum-programme-hero-content relative z-10 flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+              <span className="curriculum-programme-hero-icon flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/20 ring-1 ring-white/30 backdrop-blur-sm">
+                <AppIcon className="ri-stack-line text-2xl text-white" />
+              </span>
+              <div className="curriculum-programme-hero-copy max-w-3xl">
                 <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-white/60">Curriculum Studio</p>
                 <h2 className="mt-2 text-2xl font-heading font-bold text-white sm:text-3xl">Programme planning workspace</h2>
                 <p className="mt-2 max-w-2xl text-[13px] leading-6 text-white/75">
@@ -869,7 +872,7 @@ export default function CurriculumProgrammes() {
                 </p>
                 <p className="mt-2 text-[12px] font-semibold text-white/70">{loading ? 'Loading live LMS programmes...' : heroSummary}</p>
               </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="curriculum-programme-hero-actions flex flex-col gap-2 sm:flex-row sm:items-center">
                 {/* A programme is independently saveable: this creates one from
                     programme-level details alone. Its cohorts, groups and modules
                     are then added from their own pages, each through the one form
@@ -877,7 +880,7 @@ export default function CurriculumProgrammes() {
                 <button
                   type="button"
                   onClick={() => { setProgrammeDrawerTarget(null); setProgrammeDrawerOpen(true); }}
-                  className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 text-[12px] font-bold text-primary-900 shadow-lg shadow-black/10 transition-smooth hover:bg-primary-50"
+                  className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl bg-white px-4 text-[12px] font-bold text-primary-900 shadow-lg shadow-black/10 transition-smooth hover:bg-primary-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2"
                 >
                   <AppIcon className="ri-add-line text-base"></AppIcon>
                   Add Programme
@@ -889,7 +892,7 @@ export default function CurriculumProgrammes() {
                 <button
                   type="button"
                   onClick={() => setWizardRun({ from: 'programme' })}
-                  className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-white/15"
+                  className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border border-white bg-white px-4 text-[12px] font-bold text-foreground-950 shadow-lg shadow-black/10 transition-smooth hover:bg-primary-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2"
                 >
                   <AppIcon className="ri-route-line text-base"></AppIcon>
                   Guided setup
@@ -897,14 +900,14 @@ export default function CurriculumProgrammes() {
                 <button
                   type="button"
                   onClick={() => reload()}
-                  className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-white/15"
+                  className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border border-white bg-white px-4 text-[12px] font-bold text-foreground-950 shadow-lg shadow-black/10 transition-smooth hover:bg-primary-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2"
                 >
                   <AppIcon className="ri-refresh-line text-base"></AppIcon>
                   Refresh
                 </button>
               </div>
             </div>
-            <div className="relative mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <div className="curriculum-programme-hero-stats relative mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
               <DashboardStat icon="ri-layout-masonry-line" label="Actual programmes" value={String(totalProgrammes)} detail={`${totalModules} modules connected`} />
               <DashboardStat icon="ri-calendar-event-line" label="Cohorts" value={String(totalCohorts)} detail={`${totalLearners} learners allocated`} />
               <DashboardStat icon="ri-stack-line" label="Modules" value={String(totalModules)} detail={`${totalWeeks} planned weeks`} />
@@ -980,7 +983,9 @@ export default function CurriculumProgrammes() {
         {!loading && programmesMissingKsbSource.length > 0 && (
           <div className="flex flex-col gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex items-start gap-2.5">
-              <AppIcon className="ri-error-warning-fill mt-0.5 shrink-0 text-base text-amber-600"></AppIcon>
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-200 text-amber-700 shadow-sm shadow-amber-900/10">
+                <AppIcon className="ri-error-warning-fill text-lg"></AppIcon>
+              </span>
               <div className="min-w-0">
                 <p className="text-[13px] font-bold text-amber-900">
                   {programmesMissingKsbSource.length === 1
@@ -1018,7 +1023,7 @@ export default function CurriculumProgrammes() {
                       disabled={Boolean(parkingKsbProfileFor)}
                       title={`Park ${programme.name} on the shared "${SHARED_EMPTY_KSB_PROFILE_NAME}" until its real standard is authored.`}
                       onClick={() => void assignSharedEmptyKsbProfile(programme)}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-amber-500 px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-[#9D6912] px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-[#80550E] disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <AppIcon className={parkingKsbProfileFor === (programme.sourceId || programme.id)
                         ? 'ri-loader-4-line animate-spin text-sm'
@@ -2263,13 +2268,13 @@ function ProgrammeKsbEmptyState({ icon, title, message }: { icon: string; title:
 
 function DashboardStat({ icon, label, value, detail }: { icon: string; label: string; value: string; detail: string }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/10 p-3 backdrop-blur-sm">
-      <div className="flex items-center gap-2 text-white/70">
+    <div className="rounded-xl border border-white/55 bg-white/75 p-3 shadow-sm backdrop-blur-sm">
+      <div className="flex items-center gap-2 text-primary-900/70">
         <AppIcon className={`${icon} text-sm`}></AppIcon>
         <span className="truncate text-[10px] font-bold uppercase tracking-wide">{label}</span>
       </div>
-      <p className="mt-2 text-2xl font-heading font-bold text-white">{value}</p>
-      <p className="mt-0.5 truncate text-[11px] font-semibold text-white/60">{detail}</p>
+      <p className="mt-2 text-2xl font-heading font-bold text-foreground-950">{value}</p>
+      <p className="mt-0.5 truncate text-[11px] font-semibold text-foreground-600">{detail}</p>
     </div>
   );
 }

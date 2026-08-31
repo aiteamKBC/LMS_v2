@@ -830,16 +830,6 @@ export default function ComponentViewPage() {
                     const clickable = contentAvailable && isNavigableComponent(c) && !isCurrent;
                     const attempts = c.isQuiz ? (c.quizAttempts || []) : [];
                     const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
-                    const completed = isComponentComplete(c, completedIds);
-                    const timeKey = c.componentId
-                      ? demoTimeKey({ isQuiz: c.isQuiz, quizId: c.quizMeta?.quizId, componentId: c.componentId })
-                      : '';
-                    const overrideMinutes = timeKey ? demoTimeOverrides[timeKey] : null;
-                    const completionTime = completed
-                      ? overrideMinutes != null
-                        ? formatClock(Math.round(overrideMinutes * 60))
-                        : completionTimeFor(c, detail)
-                      : null;
                     return (
                       <li key={c.componentId || c.title}>
                         <button

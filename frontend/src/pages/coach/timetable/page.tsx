@@ -166,6 +166,8 @@ const EMPTY_SUMMARY: TimetableSummary = {
   },
 };
 const UPCOMING_WINDOW_DAYS = 7;
+const TIMETABLE_LOAD_TIMEOUT_MS = 20000;
+const TIMETABLE_LOAD_TIMEOUT_MESSAGE = 'Timetable is taking too long to load. Please refresh or try again.';
 const LEARNER_UNAVAILABLE_MESSAGE = 'This learner is busy at that time. Choose another time.';
 const TEAMS_SYNC_PERMISSION_MESSAGE = 'Saved locally. Microsoft Calendar needs updated permissions before this can sync to Teams.';
 const TEAMS_SYNC_NOT_CONFIGURED_MESSAGE = 'Saved locally. Microsoft Calendar sync is not configured yet.';
@@ -923,67 +925,66 @@ export default function CoachTimetablePage() {
     return nextSelectedEvent || updatedEvent;
   }, [applyEventsUpdate, events]);
 
-  const loadTimetable = useCallback(async () => {
-    let cancelled = false;
+  const loadTimetable = useCallback(async (staleGuard: { cancelled: boolean }, signal: AbortSignal, onTimeout: () => boolean) => {
+    if (!coach.isInitialized) return;
 
-    if (!coach.isInitialized) {
-      return () => { cancelled = true; };
+    setLoading(true);
+    setError(null);
+    if (!coach.email) {
+      setError('Coach access is required to load timetable data.');
+      setEvents([]);
+      setSchedulerCatchUpEvents([]);
+      setSummary(EMPTY_SUMMARY);
+      setLoading(false);
+      return;
     }
+    try {
+      const response = await coachFetch(API_ENDPOINT, { signal });
+      if (!response.ok) throw new Error(`Request failed with ${response.status}`);
 
-    const run = async () => {
-      setLoading(true);
-      setError(null);
-      if (!coach.email) {
-        setError('Coach access is required to load timetable data.');
-        setEvents([]);
-        setSchedulerCatchUpEvents([]);
-        setSummary(EMPTY_SUMMARY);
-        setLoading(false);
-        return;
-      }
-      try {
-        const response = await coachFetch(API_ENDPOINT);
-        if (!response.ok) throw new Error(`Request failed with ${response.status}`);
+      const data: TimetableResponse = await response.json();
+      if (staleGuard.cancelled) return;
 
-        const data: TimetableResponse = await response.json();
-        if (cancelled) return;
+      const nextEvents = data.events || [];
+      const nextSummary = data.summary ? normalizeSummary(data.summary, nextEvents) : buildFallbackSummary(nextEvents);
 
-        const nextEvents = data.events || [];
-        const nextSummary = data.summary ? normalizeSummary(data.summary, nextEvents) : buildFallbackSummary(nextEvents);
+      setEvents(nextEvents);
+      setSchedulerCatchUpEvents(data.schedulerQueues?.catchUp || []);
+      setSummary(nextSummary);
+      setSelectedEvent(currentSelectedEvent => {
+        if (!currentSelectedEvent) return null;
+        return nextEvents.find(event => event.id === currentSelectedEvent.id) || null;
+      });
+    } catch (err) {
+      if (staleGuard.cancelled) return;
+      const timedOut = onTimeout();
+      if (err instanceof DOMException && err.name === 'AbortError' && !timedOut) return;
 
-        setEvents(nextEvents);
-        setSchedulerCatchUpEvents(data.schedulerQueues?.catchUp || []);
-        setSummary(nextSummary);
-        setSelectedEvent(currentSelectedEvent => {
-          if (!currentSelectedEvent) return null;
-          return nextEvents.find(event => event.id === currentSelectedEvent.id) || null;
-        });
-      } catch (err) {
-        if (cancelled) return;
-
-        setError(err instanceof Error ? err.message : 'Unable to load timetable data');
-        setEvents([]);
-        setSchedulerCatchUpEvents([]);
-        setSummary(EMPTY_SUMMARY);
-        setSelectedEvent(null);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    await run();
-    return () => {
-      cancelled = true;
-    };
+      setError(timedOut ? TIMETABLE_LOAD_TIMEOUT_MESSAGE : err instanceof Error ? err.message : 'Unable to load timetable data');
+      setEvents([]);
+      setSchedulerCatchUpEvents([]);
+      setSummary(EMPTY_SUMMARY);
+      setSelectedEvent(null);
+    } finally {
+      if (!staleGuard.cancelled) setLoading(false);
+    }
   }, [coach.email, coach.isInitialized]);
 
   useEffect(() => {
-    let cleanup: (() => void) | undefined;
-    loadTimetable().then(result => {
-      cleanup = result;
-    });
+    const staleGuard = { cancelled: false };
+    const controller = new AbortController();
+    let timedOut = false;
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, TIMETABLE_LOAD_TIMEOUT_MS);
+
+    loadTimetable(staleGuard, controller.signal, () => timedOut);
+
     return () => {
-      if (cleanup) cleanup();
+      staleGuard.cancelled = true;
+      window.clearTimeout(timeoutId);
+      controller.abort();
     };
   }, [loadTimetable]);
 

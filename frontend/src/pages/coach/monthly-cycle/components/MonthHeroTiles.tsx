@@ -1,6 +1,5 @@
 // ============================================================================
-// Monthly Cycle — the six icon tiles inside the purple hero header, one per
-// headline count for the selected month.
+// Monthly Cycle — the key headline tiles inside the purple hero header.
 // ============================================================================
 import { AppIcon } from '@/components/feature/AppIcon';
 import { formatNumber } from '../lib/monthly';
@@ -21,27 +20,15 @@ function HeroTile({ icon, label, value }: { icon: string; label: string; value: 
 
 export function MonthHeroTiles({
   learners,
-  completions,
   reviews,
-  evidence,
-  ksbs,
-  otjhHours,
 }: {
   learners: number;
-  completions: number;
   reviews: number;
-  evidence: number;
-  ksbs: number;
-  otjhHours: number;
 }) {
   return (
-    <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-6">
+    <div className="grid grid-cols-2 gap-x-6 gap-y-3">
       <HeroTile icon="ri-group-line" label="Learners" value={learners} />
-      <HeroTile icon="ri-checkbox-circle-line" label="Completions" value={completions} />
       <HeroTile icon="ri-star-line" label="Reviews" value={reviews} />
-      <HeroTile icon="ri-file-text-line" label="Evidence Logged" value={evidence} />
-      <HeroTile icon="ri-book-open-line" label="KSBs Logged" value={ksbs} />
-      <HeroTile icon="ri-time-line" label="OTJH Logged" value={Math.round(otjhHours)} />
     </div>
   );
 }

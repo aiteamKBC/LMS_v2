@@ -136,6 +136,9 @@ export interface LearnerDetail {
   progressHours?: string;     // completed - target (Progress_Hours)
   progressVariance?: string;  // (completed - target) / target, decimal (Progress_variance); '' if target=0
   otjhStatus?: string;        // "On track" | "Need attention" | "At risk" (OTJHoursStatus)
+  currentModule?: string | null;  // module targetHours' cumulative-target week currently falls in
+  currentWeek?: string | null;    // that week's own label, e.g. "Week 4"
+  componentsTargetToDate?: number | null;  // components expected by now, same pacing as targetHours
 }
 
 /** A completed non-quiz, non-video component (podcast/reading/slides/reflection/…). */

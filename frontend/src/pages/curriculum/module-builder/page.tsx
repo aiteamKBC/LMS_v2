@@ -1051,16 +1051,26 @@ export default function ModuleBuilder() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const requestedModule = params.get('module') || params.get('moduleId') || params.get('catalogueId') || params.get('moduleTitle') || '';
+    const requestedModule = params.get('module') || params.get('moduleId') || params.get('catalogueId') || '';
     const requestedKey = requestedModule.trim();
-    if (!requestedKey || loading || error || workingModule || deepLinkedModuleRef.current === requestedKey) return;
+    // Read separately from the id, rather than only as the last resort when no
+    // id-shaped param is present: the delivery side and the catalogue
+    // sometimes disagree on which id is canonical for the same module, so a
+    // guessed id that matches nothing here still deserves a second try by name
+    // before the link is declared dead.
+    const requestedTitle = (params.get('moduleTitle') || '').trim();
+    const dedupeKey = requestedKey || requestedTitle;
+    if (!dedupeKey || loading || error || workingModule || deepLinkedModuleRef.current === dedupeKey) return;
 
     const requestedNormalised = normaliseDeepLinkValue(requestedKey);
+    const requestedTitleNormalised = normaliseDeepLinkValue(requestedTitle);
     const target = catalogueModules.find(module => {
       const identifiers = moduleDeepLinkIdentifiers(module);
       const titles = [module.title, module.sourceModule?.name];
-      return identifiers.some(value => value === requestedKey)
-        || titles.some(value => normaliseDeepLinkValue(value) === requestedNormalised);
+      return (!!requestedKey && (
+        identifiers.some(value => value === requestedKey)
+        || titles.some(value => normaliseDeepLinkValue(value) === requestedNormalised)
+      )) || (!!requestedTitleNormalised && titles.some(value => normaliseDeepLinkValue(value) === requestedTitleNormalised));
     });
 
     // A deep link only ever *opens* a module. It used to fall through to creating
@@ -1068,13 +1078,13 @@ export default function ModuleBuilder() {
     // that had been renamed or deleted silently wrote a new record instead.
     if (!target) {
       if (catalogueModules.length) {
-        deepLinkedModuleRef.current = requestedKey;
-        setActionMessage(`Unable to find module "${requestedKey}" in Module Builder.`);
+        deepLinkedModuleRef.current = dedupeKey;
+        setActionMessage(`Unable to find module "${requestedKey || requestedTitle}" in Module Builder.`);
       }
       return;
     }
 
-    deepLinkedModuleRef.current = requestedKey;
+    deepLinkedModuleRef.current = dedupeKey;
     openModule(target);
   }, [catalogueModules, error, loading, openModule, workingModule]);
 

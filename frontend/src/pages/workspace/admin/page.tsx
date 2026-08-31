@@ -205,20 +205,17 @@ export default function AdminDashboard() {
             <p className="mt-1 text-[11px] text-foreground-500 md:text-xs">Monitor platform health, user engagement and system performance in real time.</p>
           </div>
           <div className="flex items-center gap-2">
-            <button type="button" className="inline-flex h-9 items-center gap-2 rounded-lg border border-foreground-200/70 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700 shadow-sm transition-smooth hover:border-primary-300 hover:bg-primary-50/40">
-              <AppIcon className="ri-calendar-line text-sm text-foreground-500"></AppIcon>
-              <span>May 13 - May 19, 2024</span>
-              <AppIcon className="ri-arrow-down-s-line super-admin-arrow-icon text-xs text-foreground-400"></AppIcon>
-            </button>
             <div className="super-admin-filters-anchor relative">
               <button
                 type="button"
                 onClick={() => setAlertsOpen(open => !open)}
                 aria-expanded={alertsOpen}
                 aria-controls="super-admin-alerts"
-                className={`super-admin-filters-button inline-flex h-10 items-center gap-2 rounded-xl px-3.5 text-xs font-extrabold shadow-sm transition-smooth ${hasVisibleWarning ? 'super-admin-filters-button--has-warning' : ''}`}
+                className={`super-admin-filters-button inline-flex h-10 cursor-pointer items-center gap-2 rounded-xl px-3.5 text-xs font-extrabold shadow-sm transition-smooth focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b27715] focus-visible:ring-offset-2 ${hasVisibleWarning ? 'super-admin-filters-button--has-warning' : ''}`}
               >
-                <AppIcon className="ri-alert-line text-sm text-foreground-500"></AppIcon>
+                <span className="super-admin-filters-icon" aria-hidden="true">
+                  <AppIcon className="ri-alert-line text-base"></AppIcon>
+                </span>
                 <span>Platform issues</span>
                 {visibleAttention.length > 0 && (
                   <span className="super-admin-filters-count" aria-label={`${visibleAttention.length} active alert${visibleAttention.length === 1 ? '' : 's'}`}>

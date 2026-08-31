@@ -41,6 +41,7 @@ assert connections['enrolment'] is connections['default']
 
 from curriculum_api import views  # noqa: E402
 from learner_api import components as learner_components  # noqa: E402
+from learner_api import time_tracking as learner_time_tracking  # noqa: E402
 from learner_api import videos as learner_videos  # noqa: E402
 from learner_api.active_users import save_progress_record, sync_active_user  # noqa: E402
 from learner_api.models import (  # noqa: E402
@@ -86,19 +87,46 @@ class LearnerAccount:
         self.subject_id = subject_id
 
 
-def learner_post(view, path, component_id, learner_id, body=None):
+def learner_request(path, learner_id, body):
     request = rf.post(
         f'{path}?kind=apprenticeship&learnerId={learner_id}',
         data=json.dumps(body or {}),
         content_type='application/json',
     )
+    # `authenticate_request` returns `request.login_account` when it is already
+    # set -- the same handoff the login middleware makes -- so this runs the
+    # @learner_self_only gate as the learner rather than around it.
     request.login_account = LearnerAccount(learner_id)
     request.login_session = None
-    response = view(request, component_id)
+    return request
+
+
+def read_json(response, path):
     payload = json.loads(response.content.decode('utf-8'))
     if response.status_code >= 400:
         raise AssertionError(f'{path} -> {response.status_code}: {payload}')
     return payload
+
+
+def start_timing(activity_kind, component_id, learner_id, seconds):
+    """The server-issued timing session every completion now has to carry.
+
+    Persisted OTJ time is the smaller of the browser's active counter and this
+    signed session's own duration, so the scenario opens a real session and
+    claims a plausible number of seconds against it."""
+    counting_mode = 'active_playback' if activity_kind == 'video' else 'visible_page'
+    response = learner_time_tracking.start_time_tracking(learner_request(
+        '/time-tracking/start/', learner_id,
+        {'activityKind': activity_kind, 'activityId': component_id, 'countingMode': counting_mode},
+    ))
+    session = read_json(response, '/time-tracking/start/')
+    return {'trackingToken': session['trackingToken'], 'timeTakenSeconds': seconds}
+
+
+def learner_post(view, path, component_id, learner_id, body=None):
+    activity_kind = 'video' if '/videos/' in path else 'component'
+    payload = {**(body or {}), **start_timing(activity_kind, component_id, learner_id, 60)}
+    return read_json(view(learner_request(path, learner_id, payload), component_id), path)
 
 
 def check(label, actual, expected):
@@ -169,31 +197,137 @@ def family(payload, letter):
     raise AssertionError(f'no {letter} family')
 
 
-BASELINE_SQL = {
-    'programmes': 'select count(*) from curriculum.programmes',
-    'cohorts': 'select count(*) from curriculum.cohorts',
-    'groups': 'select count(*) from curriculum.groups',
-    'modules': 'select count(*) from curriculum.modules',
-    'components': 'select count(*) from curriculum.components',
-    'ksb_mappings': 'select count(*) from curriculum.ksb_mappings',
-    'created_users': 'select count(*) from enrolment."Created_users"',
-    'learners': 'select count(*) from "Learner".learners',
-    'progress_entries': 'select count(*) from "Learner".learner_progress_entries',
-    'progress_ksbs': 'select count(*) from "Learner".learner_progress_ksbs',
-}
+def all_tables():
+    """Every table the scenario could possibly touch, discovered rather than listed."""
+    with connections['default'].cursor() as cursor:
+        cursor.execute(
+            """
+            select table_schema, table_name
+            from information_schema.tables
+            where table_type = 'BASE TABLE'
+              and (table_schema in ('curriculum', 'Learner')
+                   or (table_schema = 'enrolment' and table_name = 'Created_users'))
+            order by 1, 2
+            """
+        )
+        return [(schema, name) for schema, name in cursor.fetchall()]
+
+
+TABLES = all_tables()
 
 
 def counts():
     out = {}
     with connections['default'].cursor() as cursor:
-        for name, sql in BASELINE_SQL.items():
-            cursor.execute(sql)
-            out[name] = cursor.fetchone()[0]
+        for schema, name in TABLES:
+            cursor.execute(f'select count(*) from "{schema}"."{name}"')
+            out[f'{schema}.{name}'] = cursor.fetchone()[0]
     return out
 
 
+def diff(start, end):
+    return {key: (start[key], end[key]) for key in start if start[key] != end[key]}
+
+
+COMMIT = '--commit' in sys.argv
+
+# Every table the scenario writes, in the order they have to be emptied. Taken
+# from the footprint the rolled-back run reports, so this list and what the
+# scenario actually creates cannot drift apart silently.
+CLEANUP_SQL = [
+    ('Learner.learner_progress_ksbs',
+     'delete from "Learner".learner_progress_ksbs where progress_id in'
+     ' (select id from "Learner".learner_progress_entries where learner_id = any(%(learners)s))'),
+    ('Learner.learner_progress_entries',
+     'delete from "Learner".learner_progress_entries where learner_id = any(%(learners)s)'),
+    ('Learner.learner_ksb_assignments',
+     'delete from "Learner".learner_ksb_assignments where learner_id = any(%(learners)s)'),
+    ('Learner.learner_training_plan_components',
+     'delete from "Learner".learner_training_plan_components where learner_id = any(%(learners)s)'),
+    ('Learner.learner_training_plan_weeks',
+     'delete from "Learner".learner_training_plan_weeks where learner_id = any(%(learners)s)'),
+    ('Learner.learner_training_plan_modules',
+     'delete from "Learner".learner_training_plan_modules where learner_id = any(%(learners)s)'),
+    ('Learner.learners',
+     'delete from "Learner".learners where id = any(%(learners)s)'),
+    ('enrolment.Created_users',
+     'delete from enrolment."Created_users" where id = any(%(sources)s)'),
+    ('curriculum.ksb_mappings',
+     'delete from curriculum.ksb_mappings where module_catalogue_id = any(%(modules)s)'),
+    ('curriculum.components',
+     'delete from curriculum.components where module_catalogue_id = any(%(modules)s)'),
+    ('curriculum.weeks',
+     'delete from curriculum.weeks where module_catalogue_id = any(%(modules)s)'),
+    ('curriculum.module_details',
+     'delete from curriculum.module_details where module_catalogue_id = any(%(modules)s)'),
+    ('curriculum.module_completion_criteria',
+     'delete from curriculum.module_completion_criteria where module_catalogue_id = any(%(modules)s)'),
+    ('curriculum.modules',
+     'delete from curriculum.modules where programme_id = any(%(programmes)s)'),
+    ('curriculum.groups',
+     'delete from curriculum.groups where programme_id = any(%(programmes)s)'),
+    ('curriculum.cohorts',
+     'delete from curriculum.cohorts where programme_id = any(%(programmes)s)'),
+    ('curriculum.programmes',
+     'delete from curriculum.programmes where programme_id = any(%(programmes)s)'),
+]
+
+
+def cleanup():
+    """Remove everything a --commit run left behind, and nothing else.
+
+    Scoped by the scenario's own tag: the programme name prefix and the
+    reserved @example.invalid learner emails. It never touches a row it did
+    not create.
+    """
+    with connections['default'].cursor() as cursor:
+        cursor.execute(
+            "select programme_id from curriculum.programmes where name like %s", [f'{TAG}%'],
+        )
+        programmes = [row[0] for row in cursor.fetchall()]
+        cursor.execute(
+            "select module_catalogue_id from curriculum.modules where programme_id = any(%s)",
+            [programmes],
+        )
+        modules = [row[0] for row in cursor.fetchall()]
+        cursor.execute(
+            'select id from "Learner".learners where email like %s', ['e2e-learner-%@example.invalid'],
+        )
+        learners = [row[0] for row in cursor.fetchall()]
+        cursor.execute(
+            'select id from enrolment."Created_users" where "Email" like %s',
+            ['e2e-learner-%@example.invalid'],
+        )
+        sources = [row[0] for row in cursor.fetchall()]
+
+    if not (programmes or learners or sources):
+        print('Nothing to clean up: no scenario data found.')
+        return 0
+
+    print(f'Removing {len(programmes)} programme(s), {len(modules)} module(s), {len(learners)} learner(s).')
+    params = {'programmes': programmes, 'modules': modules, 'learners': learners, 'sources': sources}
+    removed = 0
+    with transaction.atomic(using='default'):
+        with connections['default'].cursor() as cursor:
+            for label, sql in CLEANUP_SQL:
+                cursor.execute(sql, params)
+                if cursor.rowcount:
+                    print(f'   {label}: -{cursor.rowcount}')
+                removed += max(cursor.rowcount, 0)
+    print(f'Removed {removed} rows.')
+    return removed
+
+
+if '--cleanup' in sys.argv:
+    start = counts()
+    cleanup()
+    end = counts()
+    print('Change:', diff(start, end) or 'none')
+    sys.exit(0)
+
+
 before = counts()
-print('Row counts before:', before)
+print(f'Baseline snapshot: {len(before)} tables')
 print()
 
 try:
@@ -495,18 +629,60 @@ try:
                   f'OTJH {num(row["achievedOtjh"])}/{num(row["plannedOtjh"])}  '
                   f'activities {row["completedActivityCount"]}')
 
-        raise Rollback()
+        inside = counts()
+        print()
+        print('TABLES WRITTEN by this scenario:')
+        for key, (was, now) in sorted(diff(before, inside).items()):
+            print(f'   {key}: {was} -> {now}  (+{now - was})')
+
+        if not COMMIT:
+            raise Rollback()
+        print()
+        print('COMMITTED. This data is now in the database.')
+        print()
+        print('  Open the Achievement KSBs tab at:')
+        print(f'    /curriculum/programmes/{programme_id}?tab=achievement')
+        print()
+        print('  Remove it again with:')
+        print('    python scripts/e2e_ksb_otjh_scenario.py --cleanup')
 except Rollback:
     print()
     print('Transaction rolled back.')
 
 after = counts()
-print('Row counts after: ', after)
-drift = {name: (before[name], after[name]) for name in before if before[name] != after[name]}
-print('Drift:', drift or 'none - nothing was committed')
+drift = diff(before, after)
+if COMMIT:
+    print('Committed rows:', {key: value[1] - value[0] for key, value in drift.items()})
+elif drift:
+    # Raw counts also move when somebody is using the app while this runs, so
+    # they are reported but never judged. `leftovers` below is the real test:
+    # did any row THIS scenario created survive the rollback.
+    print('Concurrent activity during the run (not this scenario):', drift)
+
+leftovers = {}
+with connections['default'].cursor() as cursor:
+    for label, sql, params in (
+        ('curriculum.programmes', 'select count(*) from curriculum.programmes where name like %s', [f'{TAG}%']),
+        ('curriculum.modules', 'select count(*) from curriculum.modules where title like %s', [f'{TAG}%']),
+        ('curriculum.cohorts', 'select count(*) from curriculum.cohorts where cohort_name like %s', [f'{TAG}%']),
+        ('curriculum.groups', 'select count(*) from curriculum.groups where group_name like %s', [f'{TAG}%']),
+        ('curriculum.components', 'select count(*) from curriculum.components where title like %s', ['E2E %']),
+        ('Learner.learners', 'select count(*) from "Learner".learners where email like %s',
+         ['e2e-learner-%@example.invalid']),
+        ('enrolment.Created_users', 'select count(*) from enrolment."Created_users" where "Email" like %s',
+         ['e2e-learner-%@example.invalid']),
+    ):
+        cursor.execute(sql, params)
+        found = cursor.fetchone()[0]
+        if found:
+            leftovers[label] = found
+if COMMIT:
+    print('Scenario rows now in the database:', leftovers)
+else:
+    print('Scenario rows left behind:', leftovers or 'none')
 
 print()
 print(f'{checks - len(failures)}/{checks} checks passed')
 for failure in failures:
     print(f'  FAIL {failure}')
-sys.exit(1 if failures or drift else 0)
+sys.exit(1 if failures or (leftovers and not COMMIT) else 0)

@@ -55,7 +55,8 @@ export function ActionRow({
   return (
     <div
       className={cn(
-        'relative overflow-hidden rounded-xl border border-foreground-100/70 bg-background-50 shadow-sm',
+        'relative rounded-xl border border-foreground-100/70 bg-background-50 shadow-sm',
+        children ? 'overflow-visible' : 'overflow-hidden',
         className,
       )}
     >

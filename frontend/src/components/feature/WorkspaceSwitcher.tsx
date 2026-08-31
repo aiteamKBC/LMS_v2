@@ -99,16 +99,16 @@ export function WorkspaceSwitcher() {
             here" and not just as a menu. */}
         <span
           className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg transition-smooth ${
-            open ? 'bg-primary-500 text-white' : 'bg-primary-100 text-primary-600 group-hover:bg-primary-200'
+            open ? 'bg-primary-500 text-white' : 'bg-white/20 text-white group-hover:bg-white/30'
           }`}
         >
           <AppIcon className={`${current ? current.icon : 'ri-dashboard-line'} text-[11px]`} />
         </span>
-        <span className="hidden max-w-[9rem] truncate text-[12.5px] font-semibold text-foreground-700 sm:inline">
-          {current ? current.label : 'Workspaces'}
+        <span className="hidden max-w-[9rem] truncate text-[12.5px] font-semibold !text-white sm:inline">
+          Workspaces
         </span>
         <AppIcon
-          className={`ri-arrow-down-s-line text-[11px] text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`}
+          className={`ri-arrow-down-s-line text-[11px] !text-white transition-transform ${open ? 'rotate-180' : ''}`}
         />
       </button>
 
