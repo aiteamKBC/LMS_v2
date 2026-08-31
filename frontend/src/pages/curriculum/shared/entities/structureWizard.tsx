@@ -190,6 +190,52 @@ function moduleFormTarget(module: CurriculumModule | undefined): ModuleFormTarge
   };
 }
 
+/** Every id a module row may carry, so a discarded module is recognised however it is keyed. */
+function moduleIdentifiers(module: CurriculumModule): string[] {
+  return [module.moduleCatalogueId, module.catalogueId, module.moduleId, module.id].map(value => cleanText(value));
+}
+
+/**
+ * The four collections with a discarded run's records taken out, for a host page
+ * to hand straight to its `applyLocal`.
+ *
+ * Children go with their parent, because that is what the discard did to the
+ * database: archiving a cohort takes its groups down with it, and deleting a
+ * programme takes everything beneath it. Filtering only the exact rows the run
+ * wrote would leave the reader looking at a group whose cohort is gone.
+ */
+export function withoutDiscardedRecords<T extends {
+  programmes: CurriculumProgramme[];
+  cohorts: CurriculumCohort[];
+  groups: CurriculumGroup[];
+  modules: CurriculumModule[];
+}>(entities: T, discarded: StructureWizardCreated): T {
+  const programmeId = discarded.programme ? cleanText(programmeIdentity(discarded.programme)) : '';
+  const cohortId = cleanText(discarded.cohort?.id);
+  const groupId = cleanText(discarded.group?.id);
+  const moduleId = cleanText(discarded.module?.catalogueId);
+  if (!programmeId && !cohortId && !groupId && !moduleId) return entities;
+
+  const underProgramme = (value: unknown) => Boolean(programmeId) && sameIdentifier(value, programmeId);
+  const underCohort = (value: unknown) => Boolean(cohortId) && sameIdentifier(value, cohortId);
+  const underGroup = (value: unknown) => Boolean(groupId) && sameIdentifier(value, groupId);
+
+  return {
+    ...entities,
+    programmes: entities.programmes.filter(programme => !underProgramme(programmeIdentity(programme))),
+    cohorts: entities.cohorts.filter(cohort => !underProgramme(cohort.programmeId) && !underCohort(cohort.id)),
+    groups: entities.groups.filter(group => (
+      !underProgramme(group.programmeId) && !underCohort(group.cohortId) && !underGroup(group.id)
+    )),
+    modules: entities.modules.filter(module => (
+      !underProgramme(module.programmeId)
+      && !underCohort(module.cohortId)
+      && !underGroup(module.groupId)
+      && !(Boolean(moduleId) && moduleIdentifiers(module).some(value => sameIdentifier(value, moduleId)))
+    )),
+  };
+}
+
 /**
  * Where in the chain the reader is, and what the earlier steps produced. Held
  * above the form's own fields so it stays put while they scroll.
@@ -362,6 +408,7 @@ export function CurriculumStructureWizard({
   defaults,
   onClose,
   onStepSaved,
+  onRunDiscarded,
   onFinished,
 }: {
   open: boolean;
@@ -372,6 +419,21 @@ export function CurriculumStructureWizard({
   onClose: () => void;
   /** Called with each record as it is saved, so the host list can paint it. */
   onStepSaved?: (created: StructureWizardCreated) => unknown | Promise<unknown>;
+  /**
+   * Called with everything the discard took back out, so the host list can
+   * un-paint it — the mirror of `onStepSaved`, and for the same reason: the
+   * refresh that would notice rebuilds several tables and lands seconds later,
+   * which is long enough for rows still on screen to read as a discard that did
+   * nothing. `deletedForGood` separates records that are gone from records that
+   * were only archived — a dropped row from a row that moved to the archive.
+   *
+   * `withoutDiscardedRecords` does the filtering for a page that holds the four
+   * collections. The refresh still follows, through `onStepSaved({})`.
+   */
+  onRunDiscarded?: (
+    discarded: StructureWizardCreated,
+    outcome: { deletedForGood: boolean },
+  ) => unknown | Promise<unknown>;
   /** Called once, with everything the run wrote, as the wizard closes. */
   onFinished?: (created: StructureWizardCreated) => void;
 }) {
@@ -584,6 +646,9 @@ export function CurriculumStructureWizard({
    * than one still on screen.
    */
   const discardRun = async () => {
+    // Read before the deletes run: `created` is cleared on the way out, and the
+    // host still has to be told which rows to take off its list.
+    const discarded: StructureWizardCreated = { ...created };
     const programmeId = created.programme ? cleanText(programmeIdentity(created.programme)) : '';
     const names = [
       cleanText(created.programme?.name),
@@ -618,8 +683,10 @@ export function CurriculumStructureWizard({
     discardOutcomeRef.current = { names, deletedForGood };
     setCreated({});
     // The host painted a row for each step as it saved, and those rows are now
-    // for records that are gone. `onStepSaved` with nothing in it is how every
-    // host is already told to go and re-read its list rather than paint.
+    // for records that are gone. It is handed them back so it can take them off
+    // the list at once, then told to re-read: `onStepSaved` with nothing in it is
+    // how every host is already asked to go and refresh rather than paint.
+    void Promise.resolve(onRunDiscarded?.(discarded, { deletedForGood })).catch(() => undefined);
     void Promise.resolve(onStepSaved?.({})).catch(() => undefined);
     void reload({ silent: true });
   };
