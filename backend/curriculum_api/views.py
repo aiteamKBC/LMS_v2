@@ -9012,7 +9012,15 @@ def cohort_authoring_payload(cohort, rows=None, groups=None, holiday_rows=None, 
     return payload
 
 
-def persist_cohort_authoring_detail(cohort, rows=None, groups=None, holiday_rows=None, extra=None):
+def persist_cohort_authoring_detail(cohort, rows=None, groups=None, holiday_rows=None, extra=None, *, raise_on_error=False):
+    """Store one cohort's authoring row.
+
+    Failure is swallowed by default because most callers are sync/repair passes
+    rebuilding rows in bulk, where one bad row must not abandon the rest.
+    ``raise_on_error`` is for the create endpoints, where the caller is a person
+    waiting on an answer: they need the reason, not a warning in a log they
+    cannot read.
+    """
     payload = cohort_authoring_payload(cohort, rows, groups, holiday_rows, extra)
     if not payload.get('cohort_id'):
         return None
@@ -9027,7 +9035,12 @@ def persist_cohort_authoring_detail(cohort, rows=None, groups=None, holiday_rows
             allow_null_columns=('epa_months', 'apprenticeship_end_date', 'apprenticeship_end_override'),
         )
     except (Exception, AssertionError) as exc:
-        logger.warning('Could not persist cohort authoring details for %s: %s', payload.get('cohort_id'), exc)
+        logger.warning(
+            'Could not persist cohort authoring details for %s: %s',
+            payload.get('cohort_id'), exc, exc_info=True,
+        )
+        if raise_on_error:
+            raise
         return None
 
 
@@ -9169,14 +9182,21 @@ def group_authoring_payload(group, rows=None, module_rows=None, extra=None):
     return payload
 
 
-def persist_group_authoring_detail(group, rows=None, module_rows=None, extra=None):
+def persist_group_authoring_detail(group, rows=None, module_rows=None, extra=None, *, raise_on_error=False):
+    """Store one group's authoring row. See persist_cohort_authoring_detail
+    for why failure is swallowed by default and what ``raise_on_error`` is for."""
     payload = group_authoring_payload(group, rows, module_rows, extra)
     if not payload.get('group_id'):
         return None
     try:
         return authoring_upsert(GROUPS_TABLE, ['group_id'], payload)
     except (Exception, AssertionError) as exc:
-        logger.warning('Could not persist group authoring details for %s: %s', payload.get('group_id'), exc)
+        logger.warning(
+            'Could not persist group authoring details for %s: %s',
+            payload.get('group_id'), exc, exc_info=True,
+        )
+        if raise_on_error:
+            raise
         return None
 
 
@@ -21032,16 +21052,42 @@ def create_curriculum_cohort(payload):
         'groups': [],
         'modules': [],
     }
+    # The write is confirmed before this reports success, both ways it can fail
+    # quietly. persist_* swallowed its exception and returned None, so a failed
+    # insert used to answer 201 with a freshly minted id and no row behind it:
+    # the wizard put that phantom cohort in its rail and its picker, and the next
+    # step died on "Parent cohort not found" -- naming the step that could not
+    # see the cohort rather than the one that failed to store it.
+    try:
+        persist_cohort_authoring_detail(
+            cohort,
+            [],
+            [],
+            payload.get('holidays') or payload.get('holidayDetails') or payload.get('linkedHolidays') or get_holiday_rows(),
+            {'source_type': 'module_authoring', 'source_id': cohort_id},
+            raise_on_error=True,
+        )
+    except (Exception, AssertionError) as exc:
+        log_curriculum_decision(
+            'cohort.create', outcome='failed', entity_id=cohort_id,
+            parent_id=programme_id, reason='write-failed',
+        )
+        invalidate_curriculum_cache()
+        return json_error(f'The cohort could not be stored: {exc}', status=500)
+    # And read back, because a write can report success and still leave nothing
+    # the id lookup behind every child create can find.
+    if not fetch_cohort_row(cohort_id):
+        log_curriculum_decision(
+            'cohort.create', outcome='failed', entity_id=cohort_id,
+            parent_id=programme_id, reason='row-not-stored',
+        )
+        invalidate_curriculum_cache()
+        return json_error('The cohort could not be stored. Nothing was saved.', status=500)
+    # Logged here rather than before the write, so the decision log cannot claim
+    # a cohort was created and then report the same one failed.
     log_curriculum_decision(
         'cohort.create', outcome='created', entity_id=cohort_id, parent_id=programme_id,
         reason='archived-namesake-ignored' if archived_cohort_ids else '',
-    )
-    persist_cohort_authoring_detail(
-        cohort,
-        [],
-        [],
-        payload.get('holidays') or payload.get('holidayDetails') or payload.get('linkedHolidays') or get_holiday_rows(),
-        {'source_type': 'module_authoring', 'source_id': cohort_id},
     )
     invalidate_curriculum_cache()
     return JsonResponse({'created': True, 'cohort': curriculum_cohort_from_authoring_detail({
@@ -21214,7 +21260,10 @@ def create_curriculum_group(payload):
             'group.create', outcome='rejected', reason='parent-cohort-not-found',
             parent_id=payload.get('cohortId'),
         )
-        return json_error('Parent cohort not found.', status=404)
+        return json_error(
+            f'Parent cohort not found: {clean_str(payload.get("cohortId")) or "(blank)"}.',
+            status=404,
+        )
 
     cohort_id = clean_str(cohort_row.get('cohort_id'))
     cohort_name = clean_str(cohort_row.get('cohort_name'))
@@ -21318,13 +21367,36 @@ def create_curriculum_group(payload):
         'status': 'planned',
         'modules': [payload.get('moduleName')] if clean_str(payload.get('moduleName')) else [],
     }
+    # Confirmed before reporting success, and before the cohort is told to point
+    # at the group. See create_curriculum_cohort: a swallowed write here would
+    # otherwise leave the cohort's group_ids naming a group that does not exist.
+    try:
+        persist_group_authoring_detail(
+            group, [], safe_authoring_module_rows(),
+            {'source_type': 'module_authoring', 'source_id': group_id},
+            raise_on_error=True,
+        )
+    except (Exception, AssertionError) as exc:
+        log_curriculum_decision(
+            'group.create', outcome='failed', entity_id=group_id,
+            parent_id=cohort_id, reason='write-failed',
+        )
+        invalidate_curriculum_cache()
+        return json_error(f'The group could not be stored: {exc}', status=500)
+    if not fetch_group_row(group_id):
+        log_curriculum_decision(
+            'group.create', outcome='failed', entity_id=group_id,
+            parent_id=cohort_id, reason='row-not-stored',
+        )
+        invalidate_curriculum_cache()
+        return json_error('The group could not be stored. Nothing was saved.', status=500)
+    # Logged once the row is confirmed, for the reason given in the cohort create.
     log_curriculum_decision(
         'group.create', outcome='created', entity_id=group_id, parent_id=cohort_id,
         # Says out loud that an archived namesake was correctly stepped over,
         # which is the branch that used to silently swallow the create.
         reason='archived-namesake-ignored' if archived_group_ids else '',
     )
-    persist_group_authoring_detail(group, [], safe_authoring_module_rows(), {'source_type': 'module_authoring', 'source_id': group_id})
     # Link the group to its cohort by extending the cohort's group_ids array,
     # without touching any other cohort column.
     update_cohort_fields(cohort_id, {'group_ids': json_array_add(cohort_row.get('group_ids'), group_id)})

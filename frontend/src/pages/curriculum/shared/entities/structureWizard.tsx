@@ -27,6 +27,12 @@ import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
 import { useCurriculumStaffProfiles } from '@/hooks/useCurriculumStaffProfiles';
 import {
+  CurriculumApiError,
+  archiveCurriculumCohort,
+  archiveCurriculumGroup,
+  archiveCurriculumModule,
+  archiveCurriculumProgramme,
+  permanentlyDeleteCurriculumProgramme,
   type CurriculumCohort,
   type CurriculumGroup,
   type CurriculumModule,
@@ -142,6 +148,16 @@ function profileNames(profiles: Array<{ name?: string; email?: string }>, fallba
 function countUnder<T>(list: T[], parentId: string, parentOf: (item: T) => string): number {
   if (!parentId) return 0;
   return list.filter(item => sameIdentifier(parentOf(item), parentId)).length;
+}
+
+/**
+ * A permanent programme delete the backend refused — learner delivery under the
+ * programme, normally, which is never deleted with one. The archive that ran
+ * first still stands, so a discard that hits this has taken the run's records out
+ * of the active lists without removing them from the database.
+ */
+function isPermanentDeleteRefusal(error: unknown): boolean {
+  return error instanceof CurriculumApiError && error.status === 409;
 }
 
 /** The `CurriculumModule` the run just created, once a refresh has brought it back. */
@@ -373,12 +389,23 @@ export function CurriculumStructureWizard({
   // the open transition is tracked by hand: the body below is a no-op unless the
   // wizard has just been opened, however often the effect itself re-runs.
   const openedRef = useRef(false);
+  /**
+   * Set by `discardRun` on its way out. The drawer closes through `exit` after
+   * the discard has finished, and without this the host would be handed the
+   * records the discard has just removed — painting a row, and on the Programmes
+   * page opening a KSB picker, for a programme that is no longer there.
+   */
+  const discardedRef = useRef(false);
+  /** What the discard took out, held for the message that follows its dialog. */
+  const discardOutcomeRef = useRef<{ names: string[]; deletedForGood: boolean } | null>(null);
   useEffect(() => {
     if (!open) { openedRef.current = false; return; }
     if (openedRef.current) return;
     openedRef.current = true;
     setStep(from);
     setCreated({});
+    discardedRef.current = false;
+    discardOutcomeRef.current = null;
     void reload({ silent: true });
     reloadStaff({ silent: true });
   }, [from, open, reload, reloadStaff]);
@@ -530,7 +557,92 @@ export function CurriculumStructureWizard({
   };
 
   /** Cancel, Escape, the backdrop or the cross — the run stops where it is. */
-  const exit = () => finish(created, false);
+  const exit = () => {
+    const result = discardedRef.current ? {} : created;
+    discardedRef.current = false;
+    finish(result, false);
+  };
+
+  /**
+   * The third answer on the way out: take back out what the run wrote, rather
+   * than leaving it behind or staying in the form.
+   *
+   * It works from the top down and lets the parents cascade. Archiving a
+   * programme soft-deletes every curriculum row beneath it and the permanent
+   * delete then clears them from the database, so a run that created the
+   * programme is undone in two calls instead of five — and a programme is deleted
+   * for good rather than merely archived, because a programme still sitting in
+   * the Programmes archive is not what "discard" said would happen.
+   *
+   * Records under a programme this run did not create have no permanent delete of
+   * their own, so those are archived, deepest first — a cohort archive takes its
+   * groups with it. Which of the two happened is left in `discardOutcomeRef` for
+   * `discardMessage` to report, rather than claiming more than the API did.
+   *
+   * Throws when a delete fails, which leaves the confirm dialog and the form open
+   * with the reason on it: a half-undone run nobody has been told about is worse
+   * than one still on screen.
+   */
+  const discardRun = async () => {
+    const programmeId = created.programme ? cleanText(programmeIdentity(created.programme)) : '';
+    const names = [
+      cleanText(created.programme?.name),
+      cleanText(created.cohort?.name),
+      cleanText(created.group?.name),
+      cleanText(created.module?.name),
+    ].filter(Boolean);
+    let deletedForGood = false;
+
+    if (programmeId) {
+      await archiveCurriculumProgramme(programmeId);
+      try {
+        await permanentlyDeleteCurriculumProgramme(programmeId);
+        deletedForGood = true;
+      } catch (err) {
+        // A refusal is not a failure to report as one: the archive above has
+        // already taken the run's records out of every active list, so the run
+        // still ends discarded — the message below just stops short of saying
+        // they are gone from the database.
+        if (!isPermanentDeleteRefusal(err)) throw err;
+      }
+    } else {
+      const moduleId = cleanText(created.module?.catalogueId);
+      const groupId = cleanText(created.group?.id);
+      const cohortId = cleanText(created.cohort?.id);
+      if (moduleId) await archiveCurriculumModule(moduleId);
+      if (groupId) await archiveCurriculumGroup(groupId);
+      if (cohortId) await archiveCurriculumCohort(cohortId);
+    }
+
+    discardedRef.current = true;
+    discardOutcomeRef.current = { names, deletedForGood };
+    setCreated({});
+    // The host painted a row for each step as it saved, and those rows are now
+    // for records that are gone. `onStepSaved` with nothing in it is how every
+    // host is already told to go and re-read its list rather than paint.
+    void Promise.resolve(onStepSaved?.({})).catch(() => undefined);
+    void reload({ silent: true });
+  };
+
+  /**
+   * What the discard managed, said after its dialog has closed — the dialog is
+   * still up while `discardRun` works, so this cannot be said from in there.
+   */
+  const discardMessage = () => {
+    const outcome = discardOutcomeRef.current;
+    discardOutcomeRef.current = null;
+    if (!outcome?.names.length) return null;
+    const trail = outcome.names.join(' → ');
+    const were = outcome.names.length > 1 ? 'were' : 'was';
+    return {
+      title: 'Guided setup discarded',
+      text: outcome.deletedForGood
+        ? `${trail} ${were} deleted. The run left nothing behind.`
+        : `${trail} ${were} archived and ${outcome.names.length > 1 ? 'are' : 'is'} out of the active lists. Nothing was deleted from the database — that is done from the archive on each record's own page.`,
+      icon: outcome.deletedForGood ? ('success' as const) : ('info' as const),
+      timer: outcome.deletedForGood ? 3200 : undefined,
+    };
+  };
 
   // Nothing this run wrote is undone by leaving, so once a step has saved the
   // way out stops calling itself Cancel.
@@ -548,8 +660,13 @@ export function CurriculumStructureWizard({
   /**
    * The cross, Escape and the backdrop end the whole run, not just this form, so
    * a step asks before it goes — even with nothing typed, which a form on its own
-   * page would close silently. What the run already wrote is named, so "discard"
-   * is never read as undoing it.
+   * page would close silently.
+   *
+   * Once the run has written something there are three answers, not two: stay,
+   * stop and keep what it wrote, or discard it. Each is named for what it does to
+   * the records, which are listed either way — "stop" used to be the only way out
+   * and had to make clear it was not undoing anything, and now that a button
+   * beside it does undo them the two cannot be told apart by wording alone.
    */
   const closeConfirmFor = (target: StructureWizardStep): FormChainStep['closeConfirm'] => {
     if (target === 'outline') return undefined;
@@ -560,12 +677,27 @@ export function CurriculumStructureWizard({
       cleanText(created.module?.name),
     ].filter(Boolean);
     const step = STEP_META[target].label.toLowerCase();
+    const trail = saved.join(' → ');
+    const them = saved.length > 1 ? 'them' : 'it';
+    // What discarding actually does to these records, which is not the same in
+    // both cases: only a programme has a permanent delete, and the promise made
+    // here has to be the one the API can keep.
+    const undoing = created.programme
+      ? `deleting ${them} for good, which cannot be undone`
+      : `archiving ${them}, out of the active lists but not out of the database`;
     return {
       title: saved.length ? 'Stop the guided setup here?' : 'Leave the guided setup?',
       text: saved.length
-        ? `${saved.join(' → ')} ${saved.length > 1 ? 'stay' : 'stays'} saved. This ${step} has not been created yet, and closing now ends the run without it.`
+        ? `${trail} ${saved.length > 1 ? 'stay' : 'stays'} saved. This ${step} has not been created yet, and closing now ends the run without it. Discard changes instead to take ${them} back out — ${undoing}.`
         : `Nothing has been created yet. Closing now ends the run and this ${step} is not saved.`,
       confirmLabel: saved.length ? 'Stop here' : 'Discard',
+      // Only ever offered for records this run created: `created` holds nothing a
+      // step merely pointed itself at, so a discard can never reach a programme,
+      // cohort or group that was already there.
+      denyLabel: saved.length ? 'Discard changes' : undefined,
+      onDeny: saved.length ? discardRun : undefined,
+      denyTone: 'danger',
+      denySuccess: discardMessage,
     };
   };
 
