@@ -5,15 +5,14 @@
 // rendering a header shell of their own. The caseload shape is still stated as
 // one line of counts (`LearnersHeaderMeta`) rather than a row of KPI cards: it
 // reads faster, and it leaves the vertical space for the learners, which is
-// what the page is for. `LearnersHeaderActions` is the export menu, the
-// selection-mode controls and the card/table toggle — real interactive state
-// (the export menu's open/close and outside-click handling), so it stays a
-// component rather than being inlined into the page.
+// what the page is for. `LearnersHeaderActions` is the export menu and the
+// selection-mode controls — real interactive state (the export menu's
+// open/close and outside-click handling), so it stays a component rather
+// than being inlined into the page.
 // ============================================================================
 import { useEffect, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import type { CaseloadCounts } from '../lib/attention';
-import type { ViewMode } from '../types';
 
 function CountPart({ value, label, dot }: { value: number; label: string; dot: string }) {
   return (
@@ -39,8 +38,6 @@ export function LearnersHeaderMeta({ counts }: { counts: CaseloadCounts }) {
 }
 
 export function LearnersHeaderActions({
-  viewMode,
-  onViewModeChange,
   selectionMode,
   selectedCount,
   isExporting,
@@ -50,8 +47,6 @@ export function LearnersHeaderActions({
   onExportSelected,
   onCancelSelection,
 }: {
-  viewMode: ViewMode;
-  onViewModeChange: (mode: ViewMode) => void;
   selectionMode: boolean;
   selectedCount: number;
   isExporting: boolean;
@@ -158,26 +153,6 @@ export function LearnersHeaderActions({
           ) : null}
         </div>
       )}
-
-      <div className="inline-flex h-9 items-center rounded-md bg-white p-0.5">
-        {(['cards', 'table'] as const).map((mode) => (
-          <button
-            key={mode}
-            type="button"
-            onClick={() => onViewModeChange(mode)}
-            aria-pressed={viewMode === mode}
-            title={mode === 'cards' ? 'Card view' : 'Table view'}
-              className={`inline-flex h-8 items-center gap-1.5 rounded px-2.5 text-[12px] font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 ${
-                viewMode === mode
-                  ? 'bg-primary-600 !text-white'
-                  : 'text-foreground-950 hover:text-foreground-950'
-              }`}
-          >
-            <AppIcon className={mode === 'cards' ? 'ri-layout-grid-line' : 'ri-table-line'}></AppIcon>
-            <span className="hidden sm:inline">{mode === 'cards' ? 'Cards' : 'Table'}</span>
-          </button>
-        ))}
-      </div>
     </>
   );
 }

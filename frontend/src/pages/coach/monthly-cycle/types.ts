@@ -27,6 +27,15 @@ export interface MonthlyLearnerActivity {
   id: string;
   name: string;
   initials: string;
+  /** 'commercial' | 'apprenticeship' — which learner_detail table this id resolves against. */
+  learnerType?: 'commercial' | 'apprenticeship' | null;
+  /** enrolment."Created_users".id -- a different, disjoint pk space from `id`
+   *  above. /learner-detail/ needs this one, not the LearnerProfile id. */
+  enrolmentId?: string | null;
+  /** Which module/week otjhTarget's cumulative-to-date figure currently falls in. */
+  currentModule?: string | null;
+  currentWeek?: string | null;
+  componentsTargetToDate?: number | null;
   email?: string | null;
   cohortName: string;
   group: string;

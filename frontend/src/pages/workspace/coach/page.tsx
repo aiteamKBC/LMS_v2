@@ -66,6 +66,15 @@ interface CoachLearner {
   id: string;
   name: string;
   initials: string;
+  /** 'commercial' | 'apprenticeship' — which learner_detail table this id resolves against. */
+  learnerType?: 'commercial' | 'apprenticeship';
+  /** enrolment."Created_users".id -- a different, disjoint pk space from `id`
+   *  above. /learner-detail/ needs this one, not the LearnerProfile id. */
+  enrolmentId?: string | null;
+  /** Which module/week otjhTarget's cumulative-to-date figure currently falls in. */
+  currentModule?: string | null;
+  currentWeek?: string | null;
+  componentsTargetToDate?: number | null;
   programme: string;
   cohortName?: string | null;
   group: string;
@@ -243,6 +252,11 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     id: id === EMPTY_VALUE ? `learner-${index}` : id,
     name: fallbackName,
     initials: initials === EMPTY_VALUE ? fallbackName.slice(0, 2).toUpperCase() : initials,
+    learnerType: learner.learnerType,
+    enrolmentId: learner.enrolmentId,
+    currentModule: learner.currentModule,
+    currentWeek: learner.currentWeek,
+    componentsTargetToDate: learner.componentsTargetToDate,
     programme,
     cohortName: cohortName === EMPTY_VALUE ? null : cohortName,
     group: displayValue(learner.group),
@@ -1499,7 +1513,12 @@ export default function CoachDashboard() {
                     learner={entry.learner}
                     priority={entry.priority}
                     onOpen={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(entry.learner.id)}`, {
-                      state: { learnerId: entry.learner.id, learnerName: entry.learner.name },
+                      state: {
+                        learnerId: entry.learner.id,
+                        learnerName: entry.learner.name,
+                        ...(entry.learner.learnerType ? { kind: entry.learner.learnerType } : {}),
+                        ...(entry.learner.enrolmentId ? { enrolmentId: entry.learner.enrolmentId } : {}),
+                      },
                     })}
                   />
                 ))}
@@ -1846,7 +1865,12 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
 
   const openLearnerProfile = (learner: CoachLearner) => {
     navigate(`/coach/learner-case-file?id=${encodeURIComponent(learner.id)}`, {
-      state: { learnerId: learner.id, learnerName: learner.name },
+      state: {
+        learnerId: learner.id,
+        learnerName: learner.name,
+        ...(learner.learnerType ? { kind: learner.learnerType } : {}),
+        ...(learner.enrolmentId ? { enrolmentId: learner.enrolmentId } : {}),
+      },
     });
     onClose();
   };
@@ -1921,11 +1945,21 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
 
           {type === 'evidence' && (
             <div className="space-y-3">
-              {evidenceLearners.map(learner => (
+              {evidenceLearners.map(learner => {
+                // The marking queue has no learnerType of its own -- cross-reference the
+                // caseload list already loaded on this page instead of guessing.
+                const caseloadMatch = learners.find(candidate => candidate.id === learner.learnerId);
+                return (
                 <Link
                   key={learner.id}
                   to={`/coach/learner-case-file?id=${encodeURIComponent(learner.learnerId)}&tab=evidence`}
-                  state={{ learnerId: learner.learnerId, learnerName: learner.learner, tab: 'evidence' }}
+                  state={{
+                    learnerId: learner.learnerId,
+                    learnerName: learner.learner,
+                    tab: 'evidence',
+                    ...(caseloadMatch?.learnerType ? { kind: caseloadMatch.learnerType } : {}),
+                    ...(caseloadMatch?.enrolmentId ? { enrolmentId: caseloadMatch.enrolmentId } : {}),
+                  }}
                   onClick={onClose}
                   className="flex items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 px-4 py-3 shadow-sm transition-colors hover:border-secondary-200 hover:bg-secondary-50/30"
                 >
@@ -1941,7 +1975,8 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
                   </div>
                   <AppIcon className="ri-arrow-right-s-line text-foreground-300"></AppIcon>
                 </Link>
-              ))}
+                );
+              })}
               {!evidenceLearners.length && (
                 <EmptyState icon="ri-file-search-line" title="No evidence awaiting review" description="Learners will appear here when submitted evidence needs marking." />
               )}

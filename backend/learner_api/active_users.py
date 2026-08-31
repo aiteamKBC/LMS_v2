@@ -618,6 +618,95 @@ def hydrate_training_plan(plan):
     return expanded
 
 
+def flatten_plan_weeks(plan):
+    """(module title, week title) pairs in authored order, from either the
+    hydrated enrolment-side plan or LearnerProfile.training_plan -- both use
+    the same [{moduleTitle, weeks: [{weekTitle, ...}]}] shape."""
+    weeks = []
+    for module in plan or []:
+        if not isinstance(module, dict):
+            continue
+        module_title = _s(module.get("moduleTitle") or module.get("module"))
+        for week in module.get("weeks") or []:
+            if not isinstance(week, dict):
+                continue
+            week_title = _s(week.get("weekTitle") or week.get("week"))
+            if week_title:
+                weeks.append((module_title, week_title))
+    return weeks
+
+
+def week_by_elapsed_time(weeks, start_date, today=None):
+    """Index into an ordered (module, week) list by whole calendar weeks
+    elapsed since start_date -- the same no-real-schedule approximation
+    _sequential_week_target (learner_detail.py) falls back to for the OTJH
+    target itself, reused here so "current week" never disagrees with
+    whichever pace figure is displayed next to it.
+
+    None when there's no plan or no start date to anchor it to: a wrong
+    week label is worse than an absent one.
+    """
+    if not weeks or not start_date:
+        return None
+    today = today or timezone.localdate()
+    weeks_elapsed = max(0, (today - start_date).days // 7)
+    index = min(weeks_elapsed, len(weeks) - 1)
+    return weeks[index]
+
+
+def current_week_label(profile, today=None):
+    """{"module": ..., "week": ...} for wherever profile is in their plan
+    right now, or None. `profile` is anything get_training_plan() accepts
+    (LearnerProfile or an enrolment CommercialUser/EnrolmentUser row) with a
+    real `start_date` DateField -- LearnerProfile.start_date qualifies;
+    EnrolmentUser.start_date is legacy free text and does not."""
+    weeks = flatten_plan_weeks(get_training_plan(profile))
+    result = week_by_elapsed_time(weeks, getattr(profile, "start_date", None), today=today)
+    if result is None:
+        return None
+    module_title, week_title = result
+    return {"module": module_title, "week": week_title}
+
+
+def flatten_plan_component_counts(plan):
+    """Component count per week, in the same authored order flatten_plan_weeks
+    walks the plan -- kept as its own parallel list rather than changing that
+    function's (module, week) tuple shape, since current_week_label already
+    unpacks it."""
+    counts = []
+    for module in plan or []:
+        if not isinstance(module, dict):
+            continue
+        for week in module.get("weeks") or []:
+            if not isinstance(week, dict):
+                continue
+            week_title = _s(week.get("weekTitle") or week.get("week"))
+            if week_title:
+                counts.append(len(week.get("components") or []))
+    return counts
+
+
+def target_by_elapsed_time(per_week_values, start_date, today=None):
+    """Cumulative sum of per_week_values[0..index], where index is the same
+    elapsed-calendar-weeks-since-start_date index week_by_elapsed_time uses --
+    so a target built this way never disagrees with whichever week is shown
+    as current."""
+    if not per_week_values or not start_date:
+        return None
+    today = today or timezone.localdate()
+    weeks_elapsed = max(0, (today - start_date).days // 7)
+    index = min(weeks_elapsed, len(per_week_values) - 1)
+    return sum(per_week_values[: index + 1])
+
+
+def components_target_to_date(profile, today=None):
+    """How many components the learner should have reached by today, same
+    pacing assumption as current_week_label. None when there's no plan or
+    start date to anchor it to."""
+    counts = flatten_plan_component_counts(get_training_plan(profile))
+    return target_by_elapsed_time(counts, getattr(profile, "start_date", None), today=today)
+
+
 def hydrate_source_training_plan(source):
     """Persist an expanded plan on the enrolment source when it changed.
 
