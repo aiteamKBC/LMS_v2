@@ -1,7 +1,7 @@
 import Swal, { type SweetAlertIcon } from 'sweetalert2';
 import 'sweetalert2/dist/sweetalert2.min.css';
 
-type CurriculumAlertOptions = {
+export type CurriculumAlertOptions = {
   title: string;
   text?: string;
   icon?: SweetAlertIcon;
@@ -30,6 +30,22 @@ type CurriculumConfirmOptions = {
    */
   denyButtonText?: string;
   onDeny?: () => void | Promise<void>;
+  /**
+   * Which of the two non-cancel answers is the dangerous one. 'safe' — the
+   * default — is the third choice that keeps the reader's work, and is styled
+   * green against the confirm. 'danger' is the reverse: the third choice throws
+   * something away that the confirm would have kept, and must not be the green
+   * button sitting next to it.
+   */
+  denyButtonTone?: 'safe' | 'danger';
+  /**
+   * What to say once the dialog has closed on a completed deny — `successTitle`
+   * for the third answer. A function rather than a string because `onDeny` runs
+   * while this dialog is still up: nothing it does can raise a second dialog of
+   * its own without replacing the one it is standing in, and what it managed to
+   * do is only known after it has run.
+   */
+  denySuccess?: () => CurriculumAlertOptions | null | undefined;
 };
 
 const loadingPopupClass = 'kbc-standard-swal-loading';
@@ -93,6 +109,8 @@ export async function showCurriculumConfirm({
   onConfirm,
   denyButtonText,
   onDeny,
+  denyButtonTone = 'safe',
+  denySuccess,
 }: CurriculumConfirmOptions) {
   const result = await Swal.fire({
     title,
@@ -117,7 +135,7 @@ export async function showCurriculumConfirm({
       htmlContainer: 'kbc-standard-swal-text',
       actions: 'kbc-standard-swal-actions',
       confirmButton: 'kbc-standard-swal-confirm',
-      denyButton: 'kbc-standard-swal-deny',
+      denyButton: `kbc-standard-swal-deny${denyButtonTone === 'danger' ? ' kbc-standard-swal-deny-danger' : ''}`,
       cancelButton: 'kbc-standard-swal-cancel',
       loader: 'kbc-standard-swal-loader',
       validationMessage: 'kbc-standard-swal-validation',
@@ -150,6 +168,13 @@ export async function showCurriculumConfirm({
       timer: 1800,
       confirmButtonText: 'Done',
     });
+  }
+
+  // `isDenied` covers a deny whose `preDeny` came back clean; one that threw kept
+  // the dialog open and never resolved, so there is nothing to report here.
+  if (result.isDenied) {
+    const followUp = denySuccess?.();
+    if (followUp) await showCurriculumAlert({ icon: 'success', confirmButtonText: 'Done', ...followUp });
   }
 
   return result.isConfirmed;

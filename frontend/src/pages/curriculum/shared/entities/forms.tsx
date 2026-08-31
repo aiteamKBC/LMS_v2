@@ -24,7 +24,7 @@ import {
   type CurriculumHoliday,
   type CurriculumProgramme,
 } from '@/lib/curriculumApi';
-import { cleanText, cohortWeekCapacity, cohortsForProgramme, formatDateLabel, normaliseKey, programmeIdentity, sameFormValues, sameIdentifier, weekendDateNotice } from './model';
+import { cleanText, cohortWeekCapacity, cohortsForProgramme, formatDateLabel, normaliseKey, programmeIdentity, programmeSelectValue, sameFormValues, sameIdentifier, weekendDateNotice } from './model';
 import {
   ColorControl,
   EntityDrawer,
@@ -257,7 +257,7 @@ export function CohortFormDrawer({
       const storedPracticalEnd = cohort.practicalEndDate || cohort.endDate || '';
       const initial = {
         name: cohort.name || '',
-        programmeId: cleanText(cohort.programmeId) || cleanText(cohort.programme),
+        programmeId: programmeSelectValue(programmes, cleanText(cohort.programmeId) || cleanText(cohort.programme)),
         startDate: cohort.startDate || '',
         durationMonths: cohort.durationMonths == null ? '' : String(cohort.durationMonths),
         practicalEndDate: storedPracticalEnd,
@@ -281,7 +281,8 @@ export function CohortFormDrawer({
     }
     const initial = {
       name: '',
-      programmeId: defaults?.programmeId || (programmes.length === 1 ? programmeIdentity(programmes[0]) : ''),
+      programmeId: programmeSelectValue(programmes, defaults?.programmeId)
+        || (programmes.length === 1 ? programmeIdentity(programmes[0]) : ''),
       startDate: '',
       durationMonths: '12',
       practicalEndDate: '',
@@ -851,7 +852,10 @@ export function GroupFormDrawer({
       const parent = cohorts.find(cohort => normaliseKey(cohort.id) === normaliseKey(group.cohortId));
       const initial = {
         name: group.name || '',
-        programmeId: cleanText(parent?.programmeId) || cleanText(group.programmeId) || cleanText(group.programme),
+        programmeId: programmeSelectValue(
+          programmes,
+          cleanText(parent?.programmeId) || cleanText(group.programmeId) || cleanText(group.programme),
+        ),
         cohortId: cleanText(group.cohortId),
         coach: normaliseKey(group.coach) === 'unassigned' ? '' : cleanText(group.coach),
         weekDays: cleanText(group.weekDays),
@@ -873,7 +877,7 @@ export function GroupFormDrawer({
     const parent = cohorts.find(cohort => normaliseKey(cohort.id) === normaliseKey(defaults?.cohortId));
     const initial = {
       name: '',
-      programmeId: cleanText(parent?.programmeId) || defaults?.programmeId || '',
+      programmeId: programmeSelectValue(programmes, cleanText(parent?.programmeId) || defaults?.programmeId),
       cohortId: defaults?.cohortId || '',
       coach: '',
       weekDays: '',
@@ -890,7 +894,7 @@ export function GroupFormDrawer({
     setStartTime(initial.startTime);
     setEndTime(initial.endTime);
     setColor(initial.color);
-  }, [allowSeed, cohorts, defaults?.cohortId, defaults?.programmeId, group, open]);
+  }, [allowSeed, cohorts, defaults?.cohortId, defaults?.programmeId, group, open, programmes]);
 
   const programmeOptions = useMemo(
     () => programmes.map(programme => ({ value: programmeIdentity(programme), label: programme.name })),

@@ -1538,8 +1538,9 @@ table tbody td:last-child {
   transform: translateY(-1px);
 }
 
-/* The optional third choice. Green because where it appears it is the one button
-   that keeps the user's work — the confirm next to it is the destructive answer. */
+/* The optional third choice. Green by default because in that case it is the one
+   button that keeps the user's work — the confirm next to it is the destructive
+   answer. */
 .kbc-standard-swal-deny {
   background: #059669;
   color: #fff;
@@ -1549,6 +1550,18 @@ table tbody td:last-child {
 .kbc-standard-swal-deny:hover {
   background: #047857;
   transform: translateY(-1px);
+}
+
+/* The reverse case: the third choice is the one that throws work away, and the
+   confirm beside it is the safe answer. Red, so the destructive button is never
+   the reassuring green one. */
+.kbc-standard-swal-deny-danger {
+  background: #dc2626;
+  box-shadow: 0 10px 20px rgba(220, 38, 38, 0.22);
+}
+
+.kbc-standard-swal-deny-danger:hover {
+  background: #b91c1c;
 }
 
 .kbc-standard-swal-cancel,

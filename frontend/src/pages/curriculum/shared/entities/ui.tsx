@@ -12,7 +12,7 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
-import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
+import { showCurriculumConfirm, type CurriculumAlertOptions } from '@/components/feature/CurriculumSweetAlert';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { SelectMenu, type SelectOption } from '@/components/feature/SelectField';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
@@ -809,6 +809,18 @@ export interface DrawerCloseConfirm {
   text: string;
   /** The button that goes through with the close. Cancel always keeps editing. */
   confirmLabel: string;
+  /**
+   * A third answer, for when closing is not the only alternative to staying —
+   * a chain that has written records can also take them back out. Runs before
+   * the drawer closes; throwing from `onDeny` leaves both the dialog and the
+   * drawer open, with the thrown message shown in the dialog.
+   */
+  denyLabel?: string;
+  onDeny?: () => void | Promise<void>;
+  /** 'danger' when the third answer is the destructive one. See `denyButtonTone`. */
+  denyTone?: 'safe' | 'danger';
+  /** What to say once the third answer has run and this dialog has closed. */
+  denySuccess?: () => CurriculumAlertOptions | null | undefined;
 }
 
 /**
@@ -913,13 +925,23 @@ export function EntityDrawer({
     if (!dirty && !closeConfirm) { onClose(); return; }
     if (confirmingDiscard.current) return;
     confirmingDiscard.current = true;
-    // Unsaved answers are the more urgent question, so they are asked about even
-    // when the caller supplied its own; a clean form gets the caller's wording.
-    const ask = dirty
+    // Unsaved answers are the more urgent question, so they lead the wording even
+    // when the caller supplied its own; a clean form gets the caller's wording on
+    // its own. The caller's third answer rides along either way — a chain that
+    // wrote records can still take them back out with a form full of answers —
+    // and where there is one the caller's own confirm label is kept, so "throw
+    // this form away" and "throw the run away" never read as the same button.
+    const ask: DrawerCloseConfirm = dirty
       ? {
         title: 'Discard unsaved changes?',
-        text: 'This form has answers that have not been saved. Closing it now throws them away.',
-        confirmLabel: 'Discard changes',
+        text: closeConfirm
+          ? `This form has answers that have not been saved, and closing it now throws them away. ${closeConfirm.text}`
+          : 'This form has answers that have not been saved. Closing it now throws them away.',
+        confirmLabel: closeConfirm?.confirmLabel || 'Discard changes',
+        denyLabel: closeConfirm?.denyLabel,
+        onDeny: closeConfirm?.onDeny,
+        denyTone: closeConfirm?.denyTone,
+        denySuccess: closeConfirm?.denySuccess,
       }
       : closeConfirm!;
     void showCurriculumConfirm({
@@ -928,6 +950,12 @@ export function EntityDrawer({
       icon: 'warning',
       confirmButtonText: ask.confirmLabel,
       cancelButtonText: 'Keep editing',
+      denyButtonText: ask.denyLabel,
+      denyButtonTone: ask.denyTone,
+      denySuccess: ask.denySuccess,
+      // The third answer does its own work first and only then closes, so a
+      // failure it throws keeps the drawer open with the answers still in it.
+      onDeny: ask.denyLabel ? async () => { await ask.onDeny?.(); onClose(); } : undefined,
       onConfirm: () => { onClose(); },
     }).finally(() => { confirmingDiscard.current = false; });
   };
