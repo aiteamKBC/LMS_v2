@@ -235,6 +235,7 @@ function ActiveMarker() {
    ═══════════════════════════════════════════════════════ */
 
 export function Sidebar({
+  role,
   roleLabel,
   navItems,
   pinned = false,
@@ -250,8 +251,9 @@ export function Sidebar({
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
     try {
       const stored = localStorage.getItem('kbc_sidebar_expanded');
-      return stored ? new Set(JSON.parse(stored)) : new Set();
+      if (stored) return new Set(JSON.parse(stored));
     } catch { return new Set(); }
+    return new Set(navItems.filter(item => item.children?.length).map(item => item.id));
   });
 
   useEffect(() => {
@@ -475,6 +477,7 @@ export function Sidebar({
           the pinned width is reserved by WorkspaceShell. */}
       <div
         className="fixed left-0 top-0 z-40 hidden h-screen overflow-hidden shadow-sm transition-[width] duration-300 ease-out lg:block"
+        data-workspace-role={role}
         style={{ width: desktopExpanded ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH }}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
