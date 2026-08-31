@@ -20,7 +20,7 @@ const HUB_COPY: Record<HubKind, { eyebrow: string; title: string; description: s
   library: {
     eyebrow: 'Reusable curriculum',
     title: 'Library',
-    description: 'Create and reuse modules, KSB sources and assessments without mixing authoring work with delivery setup.',
+    description: 'Create and reuse modules, KSB standards and frameworks, and assessments without mixing authoring work with delivery setup.',
   },
   delivery: {
     eyebrow: 'Run the curriculum',
@@ -42,8 +42,85 @@ export function CurriculumDeliveryHub() {
   return <CurriculumHub kind="delivery" />;
 }
 
+/**
+ * Quality is not built yet. The hub body below still knows how to render the
+ * quality checks, so re-enabling it is a one-line change back to
+ * `<CurriculumHub kind="quality" />` once the real checks land.
+ */
 export function CurriculumQualityHub() {
-  return <CurriculumHub kind="quality" />;
+  const copy = HUB_COPY.quality;
+  return (
+    <WorkspaceShell
+      role="curriculum"
+      roleLabel="Curriculum Designer"
+      navItems={curriculumNavItems}
+      workspaceLabel="Curriculum Studio"
+      pageTitle={copy.title}
+      pageSubtitle="Coming soon"
+      userName="Rachel Myers"
+      userRole="Curriculum Designer"
+    >
+      <main className="min-h-full bg-background-100 p-4 sm:p-6">
+        <div className="mx-auto max-w-[1480px] space-y-5">
+          <section className="overflow-hidden rounded-2xl border border-primary-100 bg-background-50 shadow-sm">
+            <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:p-7">
+              <div className="min-w-0">
+                <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-primary-600">{copy.eyebrow}</p>
+                <h1 className="mt-2 font-heading text-3xl font-bold tracking-tight text-foreground-950">{copy.title}</h1>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-foreground-500">{copy.description}</p>
+              </div>
+              <span className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full bg-amber-50 px-4 text-[11px] font-extrabold uppercase tracking-wide text-amber-700">
+                <AppIcon className="ri-time-line" />
+                Coming soon
+              </span>
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-foreground-200 bg-background-50 px-5 py-6 shadow-sm sm:px-6">
+            <div className="flex flex-col items-center gap-3 text-center">
+              <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-50 text-primary-500">
+                <AppIcon className="ri-time-line text-2xl" />
+              </span>
+              <p className="font-heading text-base font-bold text-foreground-800">Coming Soon</p>
+              <p className="max-w-xl text-[12px] leading-5 text-foreground-500">
+                Everything Quality will own is listed below. None of it is available yet — until it is, curriculum gaps
+                are fixed in the records that own them.
+              </p>
+            </div>
+
+            <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {QUALITY_ROADMAP.map(item => <ComingSoonCard key={item.title} {...item} />)}
+            </div>
+          </section>
+        </div>
+      </main>
+    </WorkspaceShell>
+  );
+}
+
+/** What the Quality destination will contain. Nothing here is live yet. */
+const QUALITY_ROADMAP: Array<{ title: string; description: string; icon: string }> = [
+  { title: 'Quality Assurance', description: 'Sampling, IQA checks and sign-off against live curriculum records.', icon: 'ri-shield-check-line' },
+  { title: 'Version Control', description: 'Track curriculum revisions and see exactly what changed between versions.', icon: 'ri-git-branch-line' },
+  { title: 'Reporting', description: 'Curriculum coverage and readiness reports you can export or share.', icon: 'ri-bar-chart-box-line' },
+  { title: 'KSB Coverage', description: 'Trace missing mappings back to their modules and components.', icon: 'ri-node-tree' },
+  { title: 'Published Content', description: 'Review what is live, what is draft and what is awaiting approval.', icon: 'ri-checkbox-multiple-line' },
+  { title: 'Audit Trail', description: 'Who changed what, when, across programmes, modules and assessments.', icon: 'ri-history-line' },
+];
+
+function ComingSoonCard({ title, description, icon }: { title: string; description: string; icon: string }) {
+  return (
+    <div className="flex min-h-32 flex-col rounded-2xl border border-dashed border-foreground-200 bg-background-100/50 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-background-50 text-foreground-400">
+          <AppIcon className={`${icon} text-lg`} />
+        </span>
+        <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide text-amber-700">Soon</span>
+      </div>
+      <h3 className="mt-3 font-heading text-[13px] font-bold text-foreground-700">{title}</h3>
+      <p className="mt-1 flex-1 text-[12px] leading-5 text-foreground-400">{description}</p>
+    </div>
+  );
 }
 
 function CurriculumHub({ kind }: { kind: HubKind }) {
@@ -181,7 +258,8 @@ function hubCards(kind: HubKind, counts: {
   if (kind === 'library') {
     return [
       { title: 'Module Library', description: 'Build reusable module content with weeks and components.', href: '/curriculum/module-builder', icon: 'ri-layout-4-line', meta: `${counts.modules} modules`, tone: 'primary' },
-      { title: 'KSB Sources', description: 'Manage standards and reusable KSB profiles.', href: '/curriculum/standards', icon: 'ri-node-tree', meta: `${counts.frameworks} profiles`, tone: 'sky' },
+      { title: 'KSB Standards', description: 'Browse the published Skills England standards and their KSBs.', href: '/curriculum/standards', icon: 'ri-node-tree', tone: 'sky' },
+      { title: 'KSB Frameworks', description: 'Create and edit the reusable KSB profiles programmes are mapped to.', href: '/curriculum/ksb-frameworks', icon: 'ri-git-branch-line', meta: `${counts.frameworks} profiles`, tone: 'emerald' },
       { title: 'Week Templates', description: 'Prepare reusable week structures for faster authoring.', href: '/curriculum/week-builder', icon: 'ri-calendar-line', tone: 'emerald' },
       { title: 'Quiz Workspace', description: 'Create and edit quizzes connected to curriculum components.', href: '/curriculum/quiz-xml', icon: 'ri-question-answer-line', tone: 'amber' },
       { title: 'Question Bank', description: 'Reuse assessment questions across quizzes and modules.', href: '/curriculum/question-bank', icon: 'ri-questionnaire-line', tone: 'sky' },

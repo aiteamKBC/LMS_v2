@@ -36,6 +36,7 @@ import {
   type CurriculumLearnerKsbConsumptionItem,
   type CurriculumLearnerScope,
   type CurriculumScopeKsbAchievementRow,
+  type CurriculumScopeKsbTypeSummary,
   type CurriculumScopeLearnerKsbImpactResponse,
   type CurriculumScopeOtjhLearner,
 } from '@/lib/curriculumApi';
@@ -89,6 +90,21 @@ function heatClass(percentage: number, planned: number) {
   if (percentage >= 40) return 'bg-amber-300/90 text-amber-950';
   if (percentage > 0) return 'bg-amber-200/70 text-amber-900';
   return 'bg-background-200 text-foreground-500';
+}
+
+/**
+ * Which of K/S/B a row belongs to. The backend sends `ksbTypeCode` for exactly
+ * this, but `ksbType` is a word whose spelling varies by import ('Skill',
+ * 'Skills', 'skill') and a row with neither still has a code — `S4` is a skill
+ * whatever the metadata says. Same fallback chain as the server's.
+ */
+function ksbTypeCode(row: Pick<CurriculumScopeKsbAchievementRow, 'ksbTypeCode' | 'ksbType' | 'code'>) {
+  const candidates = [row.ksbTypeCode, row.ksbType, row.code];
+  for (const candidate of candidates) {
+    const letter = String(candidate ?? '').trim().toUpperCase().slice(0, 1);
+    if (letter === 'K' || letter === 'S' || letter === 'B') return letter;
+  }
+  return 'K';
 }
 
 function ksbTypeLabel(value: string) {
@@ -160,6 +176,80 @@ function CountStat({ label, value, note }: { label: string; value: string | numb
       <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">{label}</p>
       <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{value}</p>
       {note && <p className="mt-1 text-[11px] text-foreground-500">{note}</p>}
+    </div>
+  );
+}
+
+/**
+ * Knowledge, Skills and Behaviours as three tiles.
+ *
+ * The standard states a programme's KSBs as three families and a coach reads
+ * them that way — "the skills are untouched" is a different conversation from
+ * "S4 is at 40%". A 70-row table cannot be read for that, and the single
+ * "12/71 started" figure above hides which family the 59 sit in.
+ *
+ * Each tile is a filter, because the answer to "why are the behaviours at zero"
+ * is the eleven rows behind the tile.
+ */
+function KsbFamilyStrip({
+  byType,
+  selectedType,
+  onSelectType,
+}: {
+  byType: CurriculumScopeKsbTypeSummary[];
+  selectedType: string;
+  onSelectType: (letter: string) => void;
+}) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-3">
+      {byType.map(family => {
+        const selected = String(family.letter).toUpperCase() === selectedType;
+        const required = family.requiredCount || 0;
+        return (
+          <button
+            key={family.letter}
+            type="button"
+            onClick={() => onSelectType(selected ? '' : String(family.letter).toUpperCase())}
+            title={`Show only the ${family.label.toLowerCase()} in the tables below`}
+            className={`rounded-xl border p-3 text-left transition-smooth ${
+              selected
+                ? 'border-primary-400 bg-primary-50'
+                : 'border-background-200 bg-background-100/60 hover:bg-background-100'
+            }`}
+          >
+            <p className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">
+                {family.label}
+              </span>
+              <span className="rounded-md bg-background-200 px-1.5 py-0.5 text-[10px] font-bold text-foreground-600">
+                {family.letter}
+              </span>
+            </p>
+            <p className="mt-1 flex items-baseline gap-1.5">
+              <span className="text-lg font-heading font-bold text-foreground-950">
+                {family.startedCount}
+              </span>
+              <span className="text-[12px] text-foreground-400">of {required} started</span>
+            </p>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-background-200">
+              <div
+                className="h-full rounded-full bg-emerald-500"
+                style={{ width: `${Math.min(Math.max(family.progressPercentage, 0), 100)}%` }}
+              />
+            </div>
+            {/* Two different gaps, never merged into one "missing" number: the
+                first is fixed in the Module Builder, the second by delivery. */}
+            <p className="mt-1 text-[11px] leading-snug text-foreground-500">
+              {weight(family.cappedAchievedWeightTotal)}/{weight(family.expectedWeightTotal)} weight ·{' '}
+              <span className={family.missingCount ? 'font-bold text-amber-700' : ''}>
+                {family.missingCount} missing
+              </span>
+              {family.unmappedCount ? ` (${family.unmappedCount} taught nowhere)` : ''}
+              {family.completeCount ? ` · ${family.completeCount} complete` : ''}
+            </p>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -467,7 +557,7 @@ function LearnerAchievementTable({
               which. */}
           {([
             { label: 'Learner', hint: 'Who is placed here by enrolment. Curriculum only reads this roster.' },
-            { label: 'Group', hint: 'The delivery group they are placed in — the group whose modules they are measured against.' },
+            { label: 'Cohort / group', hint: 'Where enrolment placed them inside this programme. The group is what matters to the figures: a module belongs to one group, so a learner is measured against their own group’s modules.' },
             { label: 'OTJH achieved', hint: 'Credited off-the-job hours against what this learner’s own group is assigned in this scope.' },
             { label: 'KSB weight earned', hint: 'Capped KSB weight earned against the weight expected of this learner in this scope.' },
             { label: 'Done', hint: 'How many components this learner has completed in this scope.', align: 'center' },
@@ -505,16 +595,23 @@ function LearnerAchievementTable({
                     </span>
                     <span className="block truncate pl-4 text-[10px] text-foreground-400">{learner.email}</span>
                   </span>
-                  <span className="min-w-0 truncate text-[12px] text-foreground-600">
-                    {learner.group || learner.cohort || '—'}
-                    {learner.plannedBasis === 'none' && (
-                      <span
-                        className="ml-1 text-[10px] font-bold uppercase text-amber-600"
-                        title="No module in this scope is delivered to this learner's group"
-                      >
-                        not delivered
-                      </span>
-                    )}
+                  {/* Group above cohort: the group is the denominator, the
+                      cohort is the context it sits in. */}
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-1 truncate text-[12px] text-foreground-600">
+                      {learner.group || '—'}
+                      {learner.plannedBasis === 'none' && (
+                        <span
+                          className="shrink-0 text-[10px] font-bold uppercase text-amber-600"
+                          title="No module in this scope is delivered to this learner's group"
+                        >
+                          not delivered
+                        </span>
+                      )}
+                    </span>
+                    <span className="block truncate text-[10px] text-foreground-400">
+                      {learner.cohort || 'No cohort'}
+                    </span>
                   </span>
                   <span className="flex items-center gap-2">
                     <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-background-200">
@@ -668,8 +765,23 @@ function ActivityTable({
             const counted = outOfScope
               ? { label: 'Elsewhere', className: 'bg-foreground-100 text-foreground-500', hint: 'Completed in a part of this programme that this learner’s group is not delivered — reported here, excluded from the totals above.' }
               : activity.countsTowardAchievement === false
-                ? { label: 'Not counted', className: 'bg-amber-100 text-amber-700', hint: 'In this scope, but the activity itself does not count toward achievement.' }
-                : { label: 'Counted', className: 'bg-emerald-100 text-emerald-700', hint: 'Counts toward the OTJH and KSB weight reported above.' };
+                ? {
+                  label: activity.exclusionReason === 'repeat_completion' ? 'Repeat' : 'Not counted',
+                  className: 'bg-amber-100 text-amber-700',
+                  hint: activity.exclusionReason === 'repeat_completion'
+                    ? 'The learner has completed this component before. The hours and KSB weight were earned once, so only the first completion counts — this one is kept as history.'
+                    : 'In this scope, but the activity itself does not count toward achievement.',
+                }
+                : {
+                  label: 'Counted',
+                  className: 'bg-emerald-100 text-emerald-700',
+                  // A component that has since been deleted is not in the scope's
+                  // live content any more, so without saying this the row reads
+                  // as though it were counted by mistake.
+                  hint: activity.scopeBasis === 'lineage'
+                    ? 'Counts toward the OTJH and KSB weight reported above. The component is no longer part of this scope’s content, so it was placed here by the programme/cohort/group the learner’s progress row was stamped with when they completed it.'
+                    : 'Counts toward the OTJH and KSB weight reported above.',
+                };
             return (
               <div key={activity.progressId} className={`${ACTIVITY_GRID} gap-2 px-3 py-2`}>
                 <span className="min-w-0">
@@ -779,6 +891,8 @@ export function ScopeAchievementPanel({
   const [tab, setTab] = useState<PanelTab>('ksb');
   const [search, setSearch] = useState('');
   const [hideNotStarted, setHideNotStarted] = useState(false);
+  /** 'K' | 'S' | 'B' | '' — the family strip's filter. */
+  const [selectedType, setSelectedType] = useState('');
   const [selectedCode, setSelectedCode] = useState('');
   const [expandedLearner, setExpandedLearner] = useState('');
   // Which read owns the panel's state. An aborted read must not clear `loading`
@@ -864,11 +978,12 @@ export function ScopeAchievementPanel({
   const ksbRows = useMemo(() => {
     const query = normaliseText(search);
     return (ksb?.rows || []).filter(row => {
+      if (selectedType && ksbTypeCode(row) !== selectedType) return false;
       if (hideNotStarted && !row.learnersAchievedCount) return false;
       if (!query) return true;
       return [row.code, row.title, row.description, row.sourceLabel].some(value => normaliseText(value).includes(query));
     });
-  }, [hideNotStarted, ksb, search]);
+  }, [hideNotStarted, ksb, search, selectedType]);
 
   const learnerRows = useMemo(() => {
     const query = normaliseText(search);
@@ -958,12 +1073,22 @@ export function ScopeAchievementPanel({
                 label="KSBs started"
                 value={`${ksb?.startedCount || 0}/${ksb?.ksbCount || 0}`}
                 note={[
-                  `${data.structure?.componentCount || 0} components`,
+                  ksb?.missingCount ? `${ksb.missingCount} missing` : '',
                   `${otjh?.completedActivityCount || 0} completed activities`,
                   ksb?.unmappedCount ? `${ksb.unmappedCount} taught nowhere` : '',
                 ].filter(Boolean).join(' · ')}
               />
             </div>
+
+            {/* Knowledge / Skills / Behaviours, before the 70-row table that
+                cannot be read for them. */}
+            {!!ksb?.byType?.length && (
+              <KsbFamilyStrip
+                byType={ksb.byType}
+                selectedType={selectedType}
+                onSelectType={setSelectedType}
+              />
+            )}
 
             {/* Where the numbers came from, stated once. The alternative is a
                 reader assuming a scope subtotal is the learner's whole
@@ -1019,6 +1144,16 @@ export function ScopeAchievementPanel({
                   Started only
                 </button>
               )}
+              {selectedType && tab === 'ksb' && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedType('')}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary-300 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700"
+                >
+                  {ksb?.byType?.find(family => String(family.letter).toUpperCase() === selectedType)?.label || selectedType}
+                  <AppIcon className="ri-close-line"></AppIcon>
+                </button>
+              )}
               {selectedCode && (
                 <button
                   type="button"
@@ -1058,7 +1193,7 @@ export function ScopeAchievementPanel({
                   icon="ri-grid-line"
                   title={ksb?.ksbCount ? 'No KSB matches this filter' : 'No KSBs mapped in this scope yet'}
                   message={ksb?.ksbCount
-                    ? 'Clear the search or the started-only filter.'
+                    ? 'Clear the search, the KSB family or the started-only filter.'
                     : 'Map KSBs to this scope’s components in the Module Builder and learner consumption will roll up here.'}
                 />
               )

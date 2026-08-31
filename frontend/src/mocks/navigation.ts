@@ -277,6 +277,7 @@ export const curriculumNavItems: SidebarNavItem[] = [
     label: 'Quality',
     icon: 'ri-shield-check-line',
     href: '/curriculum/quality',
+    comingSoon: true,
     matchPaths: [
       '/curriculum/ksb-mapping',
       '/curriculum/qa',

@@ -18378,8 +18378,25 @@ def assigned_learners_for_scope(scope, identifier, lifecycle_status='', lineage=
     return learners
 
 
+# Which column of ``learner_progress_entries`` names each scope. The learner app
+# stamps the whole lineage on every progress row at the moment of completion, so
+# a row can still say which programme/cohort/group/module/week it happened in
+# after the component it pointed at has been deleted or re-authored. That is the
+# fallback ``learner_progress_ksb_consumption`` uses when the live component list
+# no longer contains the activity — see ``scopeBasis``.
+PROGRESS_LINEAGE_COLUMN_BY_SCOPE = {
+    'programme': 'programme_ref',
+    'cohort': 'cohort_ref',
+    'group': 'group_ref',
+    'module': 'module_ref',
+    'week': 'week_ref',
+    'component': 'component_ref',
+}
+
+
 def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component_ids=(),
-                                     include_unattributed=True, restrict_to_components=False):
+                                     include_unattributed=True, restrict_to_components=False,
+                                     scope='', scope_identifier=''):
     """Per-learner achieved KSB weight, and the rows that produced it.
 
     Returns ``(totals, achieved_rows, excluded_rows)``. Failed and unresolved
@@ -18410,6 +18427,21 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
     that has authored no components yet would be credited with everything its
     learners did anywhere on the programme — the exact over-attribution the scope
     filter exists to prevent. Pass it for every scope narrower than a programme.
+
+    ``scope``/``scope_identifier`` add the second way an activity can be placed.
+    A component that has since been deleted is not in ``component_ids`` any more,
+    but the progress row still carries the programme/cohort/group/module/week it
+    was completed in — so the hours and KSB weight a learner really earned here
+    are credited here instead of being reported as another scope's. ``scopeBasis``
+    says which of the two placed the row: ``component`` (it is in the scope's live
+    content) or ``lineage`` (the row's own stamped reference).
+
+    The join to ``learner_progress_ksbs`` is a LEFT join, and that is the point:
+    most completed components carry no KSB snapshot at all, and an inner join
+    made every one of them invisible — taking their off-the-job hours and their
+    place in the activity feed with them. A row with no KSB comes back with an
+    empty ``code`` and zero weight: it contributes nothing to ``totals``, and
+    everything to OTJH.
     """
     if not learner_ids or connection.vendor != 'postgresql':
         return {}, [], []
@@ -18428,6 +18460,8 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
                        p.component_title, p.component_type, p.quiz_ref,
                        p.module_title, p.week_title, p.submitted_at,
                        p.reported_time, p.feedback, p.passed,
+                       p.programme_ref, p.cohort_ref, p.group_ref,
+                       p.module_ref, p.week_ref,
                        max(p.expected_otjh) as progress_expected_otjh,
                        max(c.expected_otjh) as component_expected_otjh,
                        coalesce(max(nullif(c.title, '')), max(nullif(p.component_title, '')), '') as resolved_component_title,
@@ -18444,7 +18478,9 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
                        coalesce(max(k.weight), 0) as weight,
                        coalesce(max(nullif(k.weight_class, '')), 'soft') as weight_class
                 from "Learner"."learner_progress_entries" p
-                join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id
+                -- LEFT, not inner: a completed component with no KSB snapshot is
+                -- still off-the-job hours the learner did. See the docstring.
+                left join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id
                 left join curriculum.components c on c.id = p.component_ref
                 left join curriculum.weeks w on w.id = c.week_id
                 left join curriculum.modules m
@@ -18453,7 +18489,9 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
                 group by p.learner_id, p.id, p.kind, p.component_ref,
                          p.component_title, p.component_type, p.quiz_ref,
                          p.module_title, p.week_title, p.submitted_at,
-                         p.reported_time, p.feedback, p.passed, k.ksb_code
+                         p.reported_time, p.feedback, p.passed,
+                         p.programme_ref, p.cohort_ref, p.group_ref,
+                         p.module_ref, p.week_ref, k.ksb_code
                 order by p.submitted_at desc nulls last, p.id desc
                 ''',
                 [learner_ids],
@@ -18462,21 +18500,32 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
     except Exception as exc:
         logger.warning('Could not load learner progress KSB consumption: %s', exc)
         return {}, [], []
+    lineage_column = PROGRESS_LINEAGE_COLUMN_BY_SCOPE.get(clean_str(scope))
+    scope_ref = clean_str(scope_identifier)
     seen = set()
     for row in rows:
         code = coverage_normalise_code(row.get('ksb_code'))
-        if code_filter and code not in code_filter:
-            continue
+        # A code this scope never authored is not achievement *here*, but the
+        # activity that carried it still is. Blank the code rather than drop the
+        # row: the KSB totals ignore it, OTJH and the activity feed keep it.
+        if code and code_filter and code not in code_filter:
+            code = ''
         component_ref = clean_str(row.get('component_ref'))
+        lineage_ref = clean_str(row.get(lineage_column)) if lineage_column else ''
         if not (scope_filter or restrict_to_components):
-            scope_status = 'in_scope'
+            scope_status, scope_basis = 'in_scope', 'unfiltered'
         elif component_ref and component_ref in scope_filter:
-            scope_status = 'in_scope'
+            scope_status, scope_basis = 'in_scope', 'component'
+        elif scope_ref and lineage_ref and lineage_ref == scope_ref:
+            # The component is gone from this scope's live content — deleted, or
+            # re-authored — but the row was stamped with this scope when the
+            # learner completed it. Their work belongs here, not nowhere.
+            scope_status, scope_basis = 'in_scope', 'lineage'
         elif component_ref:
-            scope_status = 'out_of_scope'
+            scope_status, scope_basis = 'out_of_scope', 'component'
         else:
-            scope_status = 'unattributed'
-        weight = float_weight(row.get('weight') or 0)
+            scope_status, scope_basis = 'unattributed', 'none'
+        weight = float_weight(row.get('weight') or 0) if code else 0
         counts_as_achieved = progress_counts_as_achieved(
             kind=row.get('kind'), passed=row.get('passed'),
         )
@@ -18527,11 +18576,20 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
             'reflection': row.get('feedback') or '',
             'code': code,
             'weight': weight,
-            'weightClass': row.get('weight_class') or 'soft',
+            'weightClass': (row.get('weight_class') or 'soft') if code else '',
             'passed': row.get('passed'),
             'achievementStatus': achievement_status,
             'countsTowardAchievement': counts_as_achieved,
             'scopeStatus': scope_status,
+            'scopeBasis': scope_basis,
+            # The lineage the learner app stamped on the row at completion.
+            # Reported so a row placed by lineage can be checked against the
+            # scope it claims, rather than taken on trust.
+            'programmeRef': clean_str(row.get('programme_ref')),
+            'cohortRef': clean_str(row.get('cohort_ref')),
+            'groupRef': clean_str(row.get('group_ref')),
+            'moduleRef': clean_str(row.get('module_ref')),
+            'weekRef': clean_str(row.get('week_ref')),
         }
         if not counts_as_achieved:
             excluded_out.append(payload)
@@ -18544,9 +18602,18 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
             continue
         dedupe_key = (row.get('learner_id'), component_ref or row.get('progress_id'), code)
         if dedupe_key in seen:
+            # The same component completed twice. The hours and the weight were
+            # earned once, so only the first attempt counts — but the repeat is
+            # real history, so it is reported rather than swallowed.
+            excluded_out.append({
+                **payload,
+                'countsTowardAchievement': False,
+                'exclusionReason': 'repeat_completion',
+            })
             continue
         seen.add(dedupe_key)
-        totals[row.get('learner_id')][code] += float(weight or 0)
+        if code:
+            totals[row.get('learner_id')][code] += float(weight or 0)
         rows_out.append(payload)
     return (
         {learner_id: dict(code_totals) for learner_id, code_totals in totals.items()},
@@ -18973,6 +19040,13 @@ def learner_activity_trace(progress_rows, excluded_progress_rows, reflection_row
                 # See learner_progress_ksb_consumption(); an out-of-scope
                 # activity is real achievement that another scope owns.
                 'scopeStatus': 'in_scope',
+                # How it was placed there: 'component' (it is in this scope's
+                # live content) or 'lineage' (the component is gone, but the
+                # progress row was stamped with this scope when it completed).
+                'scopeBasis': '',
+                # Why an in-scope activity still does not count, when it does
+                # not: currently only 'repeat_completion'.
+                'exclusionReason': '',
             }
             activities[key] = entry
         if entry.get('learnerId') in (None, '') and learner_id not in (None, ''):
@@ -18999,9 +19073,19 @@ def learner_activity_trace(progress_rows, excluded_progress_rows, reflection_row
         fill(entry, 'submittedAt', row.get('submittedAt'))
         entry['progressStatus'] = row.get('achievementStatus') or entry['progressStatus']
         entry['passed'] = row.get('passed')
-        entry['countsTowardAchievement'] = row.get('countsTowardAchievement')
+        # One activity, several KSB rows. Whether it counts is a fact about the
+        # activity, not about each code — but a single code can arrive already
+        # marked False (its weight was credited on an earlier completion of the
+        # same component). Any counted row settles it, so that row cannot drag
+        # the whole activity, and its hours, out of the totals.
+        if row.get('countsTowardAchievement'):
+            entry['countsTowardAchievement'] = True
+        elif entry['countsTowardAchievement'] is None:
+            entry['countsTowardAchievement'] = row.get('countsTowardAchievement')
         if row.get('scopeStatus'):
             entry['scopeStatus'] = row.get('scopeStatus')
+        fill(entry, 'scopeBasis', row.get('scopeBasis'))
+        fill(entry, 'exclusionReason', row.get('exclusionReason'))
         if entry['expectedOtjh'] is None and row.get('plannedOtjh') is not None:
             entry['expectedOtjh'] = row.get('plannedOtjh')
             entry['expectedOtjhSource'] = row.get('plannedOtjhSource') or 'not_returned'
@@ -19431,6 +19515,107 @@ def scope_otjh_summary(plan, learner_plans, learners, activities):
     }
 
 
+# The three families a KSB belongs to, in the order the standard states them.
+KSB_TYPE_FAMILIES = (
+    ('knowledge', 'K', 'Knowledge'),
+    ('skill', 'S', 'Skills'),
+    ('behaviour', 'B', 'Behaviours'),
+)
+
+
+def ksb_type_family(ksb_type, code=''):
+    """Which of K/S/B a row belongs to, from whichever field survived.
+
+    Coverage carries the type as a word ('Knowledge', 'Skills', 'behaviour', …)
+    and the standards import writes it in more than one of those spellings, so
+    the first letter is what is actually reliable. A row with no type at all
+    still has a code, and ``S4`` is a skill whatever the metadata says.
+    """
+    letter = str(ksb_type or '').strip().upper()[:1]
+    if letter not in {'K', 'S', 'B'}:
+        letter = str(code or '').strip().upper()[:1]
+    return {'S': 'skill', 'B': 'behaviour'}.get(letter, 'knowledge')
+
+
+def ksb_achievement_by_type(rows):
+    """One K/S/B family per entry: how many are achieved, and how many missing.
+
+    The per-KSB table answers "how is S4 going". This answers the question asked
+    before that one — "how are the skills going, and which families are we not
+    touching at all" — which a 71-row table cannot be read for.
+
+    ``missingCount`` is the count a reader is really after: KSBs this scope is
+    responsible for that no learner has earned any of yet, whether that is
+    because nothing teaches them (``unmappedCount``, a curriculum gap) or
+    because nobody has got there (``notStartedCount``, a delivery gap). The two
+    are kept apart because they are fixed by different people.
+    """
+    buckets = {
+        family: {
+            'type': family,
+            'letter': letter,
+            'label': label,
+            'ksbCount': 0,
+            'requiredCount': 0,
+            'mappedCount': 0,
+            'unmappedCount': 0,
+            'unplannedCount': 0,
+            'startedCount': 0,
+            'completeCount': 0,
+            'notStartedCount': 0,
+            'missingCount': 0,
+            'learnersAchievedTotal': 0,
+            'plannedWeightTotal': 0.0,
+            'expectedWeightTotal': 0.0,
+            'achievedWeightTotal': 0.0,
+            'cappedAchievedWeightTotal': 0.0,
+        }
+        for family, letter, label in KSB_TYPE_FAMILIES
+    }
+    for row in rows or []:
+        bucket = buckets[ksb_type_family(row.get('ksbType'), row.get('code'))]
+        bucket['ksbCount'] += 1
+        bucket['plannedWeightTotal'] += float(row.get('plannedWeight') or 0)
+        bucket['expectedWeightTotal'] += float(row.get('expectedWeightTotal') or 0)
+        bucket['achievedWeightTotal'] += float(row.get('achievedWeightTotal') or 0)
+        bucket['cappedAchievedWeightTotal'] += float(row.get('cappedAchievedWeightTotal') or 0)
+        bucket['learnersAchievedTotal'] += int(row.get('learnersAchievedCount') or 0)
+        status = row.get('status')
+        if status == 'unplanned':
+            # Earned by a learner but authored nowhere here, so it is not one of
+            # this scope's KSBs and cannot be one of its gaps either.
+            bucket['unplannedCount'] += 1
+            if row.get('learnersAchievedCount'):
+                bucket['startedCount'] += 1
+            continue
+        bucket['requiredCount'] += 1
+        if status == 'unmapped':
+            bucket['unmappedCount'] += 1
+        else:
+            bucket['mappedCount'] += 1
+        if status == 'complete':
+            bucket['completeCount'] += 1
+        if row.get('learnersAchievedCount'):
+            bucket['startedCount'] += 1
+        else:
+            bucket['notStartedCount'] += 1
+            bucket['missingCount'] += 1
+    out = []
+    for family, _letter, _label in KSB_TYPE_FAMILIES:
+        bucket = buckets[family]
+        expected = float_weight(bucket['expectedWeightTotal'])
+        capped = float_weight(bucket['cappedAchievedWeightTotal'])
+        bucket.update({
+            'plannedWeightTotal': float_weight(bucket['plannedWeightTotal']),
+            'expectedWeightTotal': expected,
+            'achievedWeightTotal': float_weight(bucket['achievedWeightTotal']),
+            'cappedAchievedWeightTotal': capped,
+            'progressPercentage': round(min(capped / expected, 1) * 100, 1) if expected else 0,
+        })
+        out.append(bucket)
+    return out
+
+
 def scope_ksb_achievement(coverage_items, learner_consumption, learners, plan, learner_plans):
     """Per-KSB achieved weight for one scope — the heatmap's achieved layer.
 
@@ -19524,6 +19709,9 @@ def scope_ksb_achievement(coverage_items, learner_consumption, learners, plan, l
             'title': definition.get('title') or code,
             'description': definition.get('description') or '',
             'ksbType': definition.get('ksbType') or '',
+            # 'K' | 'S' | 'B'. `ksbType` is a word whose spelling varies by
+            # import, so anything grouping or filtering by family uses this.
+            'ksbTypeCode': ksb_type_family(definition.get('ksbType'), code)[0].upper(),
             'sourceType': definition.get('sourceType') or '',
             'sourceId': definition.get('sourceId') or '',
             'sourceLabel': definition.get('sourceLabel') or '',
@@ -19553,6 +19741,13 @@ def scope_ksb_achievement(coverage_items, learner_consumption, learners, plan, l
         'unplannedCount': len([row for row in rows if row['status'] == 'unplanned']),
         'startedCount': len([row for row in rows if row['learnersAchievedCount']]),
         'notStartedCount': len([row for row in rows if not row['learnersAchievedCount']]),
+        # This scope's own KSBs that no learner has earned any of yet — the
+        # 'missing' count. Excludes 'unplanned', which is not one of its KSBs.
+        'missingCount': len([
+            row for row in rows
+            if row['status'] != 'unplanned' and not row['learnersAchievedCount']
+        ]),
+        'completeCount': len([row for row in rows if row['status'] == 'complete']),
         'plannedWeightTotal': float_weight(sum(row['plannedWeight'] for row in rows)),
         'expectedWeightTotal': expected_total,
         'achievedWeightTotal': float_weight(sum(row['achievedWeightTotal'] for row in rows)),
@@ -19566,6 +19761,10 @@ def scope_ksb_achievement(coverage_items, learner_consumption, learners, plan, l
             if float(row.get('consumedWeightTotal') or 0) > 0
         }),
         'rows': rows,
+        # Knowledge / Skills / Behaviours, each with its own achieved and missing
+        # counts. The standard states them as three families and a coach reads
+        # them that way; the row table alone cannot be read for it.
+        'byType': ksb_achievement_by_type(rows),
         'sources': {
             'plannedWeight': 'curriculum.ksb_mappings.weight (whole scope)',
             'expectedWeight': 'curriculum.ksb_mappings.weight (of each learner\'s group)',
@@ -19639,6 +19838,8 @@ def _scope_learner_ksb_impact_payload(request, scope, identifier):
     progress_totals, progress_rows, excluded_progress_rows = learner_progress_ksb_consumption(
         learner_ids, scope_codes, component_ids, include_unattributed,
         restrict_to_components=not include_unattributed,
+        scope=scope,
+        scope_identifier=identifier,
     )
     (
         reflection_declared_totals,
