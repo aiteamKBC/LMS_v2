@@ -186,11 +186,46 @@ describe('ScopeAchievementPanel', () => {
     expect(screen.getByText(/10h per learner · 20h authored here/)).toBeInTheDocument();
   });
 
-  it('splits declared hours from hours credited by component expectation', async () => {
+  it('leads with achieved against missing, not with a progress band', async () => {
     await renderPanel();
 
-    expect(screen.getByText(/declared hours where a reflection exists\s*\(7h\)/)).toBeInTheDocument();
-    expect(screen.getByText(/completed without one \(5h\)/)).toBeInTheDocument();
+    // K1 is evidenced, K9 is not; B7 is a learner's extra credit and belongs to
+    // neither count, so the denominator is 2 rather than the 3 rows on screen.
+    expect(screen.getByText('KSBs achieved')).toBeInTheDocument();
+    expect(screen.getByText('of 2 KSBs')).toBeInTheDocument();
+    expect(screen.getByText('1 still missing')).toBeInTheDocument();
+
+    // The bands the redesign removed. A reader comparing "40-74%" against
+    // "75-99%" was reading a scale nobody acts on.
+    expect(screen.queryByText('40–74%')).not.toBeInTheDocument();
+    expect(screen.queryByText('75–99%')).not.toBeInTheDocument();
+    expect(screen.queryByText('Not started')).not.toBeInTheDocument();
+  });
+
+  it('counts how many times a KSB was achieved and names who achieved it', async () => {
+    await renderPanel();
+
+    // One completed activity credited K1, so K1 was achieved once.
+    expect(screen.getByText('1×')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /K1/ }));
+
+    expect(screen.getByText('Who achieved it')).toBeInTheDocument();
+    // Named twice once expanded: once in the row's own "Achieved by" roll,
+    // once in the "Who achieved it" detail below it.
+    expect(screen.getAllByText('Amelia Hart').length).toBeGreaterThanOrEqual(2);
+    // The weight she earned, against the weight expected of her.
+    expect(screen.getByText('50 of 50')).toBeInTheDocument();
+    // And where it came from.
+    expect(screen.getByText('Intro assignment')).toBeInTheDocument();
+  });
+
+  it('filters the register down to the KSBs nobody has achieved', async () => {
+    await renderPanel();
+    await userEvent.click(screen.getByRole('button', { name: /^Missing/ }));
+
+    expect(screen.getByRole('button', { name: /K9/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /K1 /})).not.toBeInTheDocument();
   });
 
   it('says out loud that a multi-group scope measures each learner against their own group', async () => {

@@ -36,7 +36,6 @@ import {
   type CurriculumLearnerKsbConsumptionItem,
   type CurriculumLearnerScope,
   type CurriculumScopeKsbAchievementRow,
-  type CurriculumScopeKsbTypeSummary,
   type CurriculumScopeLearnerKsbImpactResponse,
   type CurriculumScopeOtjhLearner,
 } from '@/lib/curriculumApi';
@@ -45,7 +44,7 @@ import { EntityEmptyState, InlineError } from './ui';
 type PanelTab = 'ksb' | 'learners' | 'activity';
 
 const TABS: Array<{ key: PanelTab; label: string; icon: string }> = [
-  { key: 'ksb', label: 'KSB heatmap', icon: 'ri-grid-line' },
+  { key: 'ksb', label: 'KSBs', icon: 'ri-list-check-3' },
   { key: 'learners', label: 'Learners', icon: 'ri-graduation-cap-line' },
   { key: 'activity', label: 'Activity', icon: 'ri-history-line' },
 ];
@@ -80,16 +79,75 @@ function normaliseText(value: unknown) {
 }
 
 /**
- * The achieved-weight cell tint. Five steps, not a continuous gradient: a
- * reader compares bands, and a per-row unique shade reads as noise.
+ * Achieved, or not. Two tones and no bands.
+ *
+ * The tab used to paint five shades and name them "Not started", "Under 40%",
+ * "40-74%", "75-99%", "Complete" — a scale nobody acts on, and one that made a
+ * KSB nobody has touched look like a milder version of a KSB half-earned. The
+ * question this tab exists to answer is binary: is this KSB evidenced in this
+ * programme, and by whom. Partial credit still shows as its own tone, because a
+ * KSB one learner has half-earned is not the same as one nobody has started.
  */
-function heatClass(percentage: number, planned: number) {
-  if (!planned) return 'bg-background-100 text-foreground-400';
-  if (percentage >= 100) return 'bg-emerald-600 text-white';
-  if (percentage >= 75) return 'bg-emerald-400/90 text-emerald-950';
-  if (percentage >= 40) return 'bg-amber-300/90 text-amber-950';
-  if (percentage > 0) return 'bg-amber-200/70 text-amber-900';
-  return 'bg-background-200 text-foreground-500';
+function achievedTone(earned: number, expected: number) {
+  if (earned <= 0) return 'bg-background-200 text-foreground-500';
+  if (!expected || earned >= expected) return 'bg-emerald-600 text-white';
+  return 'bg-emerald-100 text-emerald-800';
+}
+
+/**
+ * One learner's standing on one KSB, rendered the same way everywhere it
+ * appears.
+ *
+ * Three different facts compete for this one slot:
+ *
+ *  - the scope never asks this KSB of this learner, so there is nothing to be
+ *    behind on;
+ *  - the learner earned weight for a KSB the scope never asked them for — real,
+ *    and worth seeing, but not progress toward anything here;
+ *  - genuine earned weight against an expected weight.
+ */
+type KsbCellState = {
+  /** The badge: "Achieved", "Part", "Extra", or an em dash. */
+  text: string;
+  /** The number pair spelled out, for the wider chip. */
+  amount: string;
+  /** The matrix square, where a word does not fit: "72%", "Extra" or an em dash. */
+  short: string;
+  className: string;
+  title: string;
+};
+
+function ksbCellState(
+  item: Pick<CurriculumLearnerKsbConsumptionItem, 'expectedWeight' | 'cappedConsumedWeight' | 'progressPercentage'> | null | undefined,
+  context: string,
+): KsbCellState {
+  const expected = Number(item?.expectedWeight || 0);
+  const earned = Number(item?.cappedConsumedWeight || 0);
+  const notExpected = {
+    text: '—',
+    amount: 'not expected here',
+    short: '—',
+    className: 'bg-background-100 text-foreground-400',
+    title: `${context}: this scope does not ask this learner for this KSB, so there is nothing for them to achieve.`,
+  };
+  if (!item) return notExpected;
+  if (!expected) {
+    if (earned <= 0) return notExpected;
+    return {
+      text: 'Extra',
+      amount: `${weight(earned)} earned`,
+      short: 'Extra',
+      className: 'bg-sky-100 text-sky-800',
+      title: `${context}: the learner earned ${weight(earned)} KSB weight, but this scope does not ask them for this KSB. It is reported as extra, not counted here.`,
+    };
+  }
+  return {
+    text: earned <= 0 ? 'Not achieved' : earned >= expected ? 'Achieved' : 'Part',
+    amount: `${weight(earned)} of ${weight(expected)}`,
+    short: `${Math.min(100, Math.round((earned / expected) * 100))}%`,
+    className: achievedTone(earned, expected),
+    title: `${context}: ${weight(earned)} of the ${weight(expected)} KSB weight expected of this learner earned.`,
+  };
 }
 
 /**
@@ -107,11 +165,11 @@ function ksbTypeCode(row: Pick<CurriculumScopeKsbAchievementRow, 'ksbTypeCode' |
   return 'K';
 }
 
-function ksbTypeLabel(value: string) {
-  if (value === 'skill') return 'Skill';
-  if (value === 'behaviour') return 'Behaviour';
-  return 'Knowledge';
-}
+const KSB_TYPE_META: Record<string, { label: string; plural: string; chip: string }> = {
+  K: { label: 'Knowledge', plural: 'Knowledge', chip: 'bg-sky-100 text-sky-800' },
+  S: { label: 'Skill', plural: 'Skills', chip: 'bg-violet-100 text-violet-800' },
+  B: { label: 'Behaviour', plural: 'Behaviours', chip: 'bg-amber-100 text-amber-800' },
+};
 
 /**
  * Two ways a KSB can carry no weight, and they mean opposite things: `unmapped`
@@ -131,6 +189,94 @@ const STATUS_MARK: Record<string, { icon: string; className: string; title: stri
   },
 };
 
+// ------------------------------------------------------------- derived shape
+
+/**
+ * Where a KSB stands in one scope. Three outcomes, not a percentage:
+ *
+ *  - `achieved` — at least one learner has earned weight for it here;
+ *  - `missing`  — this scope asks for it and no learner has earned any yet;
+ *  - `extra`    — a learner earned it, but this scope never authored it, so it
+ *                 is neither achieved *here* nor a gap in this scope's design.
+ */
+type KsbStanding = 'achieved' | 'missing' | 'extra';
+
+function ksbStanding(row: CurriculumScopeKsbAchievementRow): KsbStanding {
+  if (row.status === 'unplanned') return 'extra';
+  return row.learnersAchievedCount > 0 ? 'achieved' : 'missing';
+}
+
+const STANDING_BADGE: Record<KsbStanding, { label: string; className: string; title: string }> = {
+  achieved: {
+    label: 'Achieved',
+    className: 'bg-emerald-600 text-white',
+    title: 'At least one learner here has earned weight for this KSB.',
+  },
+  missing: {
+    label: 'Missing',
+    className: 'bg-amber-100 text-amber-800',
+    title: 'This scope asks for this KSB and no learner has earned any of it yet.',
+  },
+  extra: {
+    label: 'Extra',
+    className: 'bg-sky-100 text-sky-800',
+    title: 'A learner earned this KSB somewhere this scope never authored it. Reported, not counted here.',
+  },
+};
+
+/** One learner who has earned weight for one KSB. */
+type KsbAchiever = {
+  learnerId: string;
+  name: string;
+  cohort: string;
+  group: string;
+  earned: number;
+  expected: number;
+};
+
+/** One completed activity that credited one KSB. */
+export type KsbCredit = {
+  key: string;
+  learnerName: string;
+  component: string;
+  module: string;
+  week: string;
+  weight: number;
+  /** Whether the module behind this credit still exists in the catalogue.
+   *  'deleted' or 'unknown' means a caller that can open a live preview
+   *  should not offer to — there is nothing left to open. */
+  moduleStatus?: string;
+};
+
+/** K / S / B rolled up, counted exactly the way the table below counts. */
+type KsbFamily = {
+  letter: string;
+  label: string;
+  achieved: number;
+  missing: number;
+  required: number;
+  earnedWeight: number;
+  expectedWeight: number;
+};
+
+function ksbFamilies(rows: CurriculumScopeKsbAchievementRow[]): KsbFamily[] {
+  return ['K', 'S', 'B'].map(letter => {
+    const family = rows.filter(row => ksbTypeCode(row) === letter);
+    // 'unplanned' rows are a learner's extra credit, not one of this scope's
+    // own KSBs — they can neither be achieved here nor missing from here.
+    const own = family.filter(row => row.status !== 'unplanned');
+    return {
+      letter,
+      label: KSB_TYPE_META[letter].plural,
+      achieved: own.filter(row => row.learnersAchievedCount > 0).length,
+      missing: own.filter(row => !row.learnersAchievedCount).length,
+      required: own.length,
+      earnedWeight: family.reduce((total, row) => total + Number(row.cappedAchievedWeightTotal || 0), 0),
+      expectedWeight: own.reduce((total, row) => total + Number(row.expectedWeightTotal || 0), 0),
+    };
+  });
+}
+
 // ------------------------------------------------------------------- pieces
 
 /** Achieved against planned, as one line. The bar is the comparison. */
@@ -141,6 +287,7 @@ function AchievementMeter({
   percentage,
   tone = 'primary',
   note,
+  hint,
 }: {
   label: string;
   achievedLabel: string;
@@ -148,13 +295,19 @@ function AchievementMeter({
   percentage: number;
   tone?: 'primary' | 'emerald' | 'amber';
   note?: string;
+  hint?: string;
 }) {
   const barColor = tone === 'emerald'
     ? 'bg-emerald-500'
     : tone === 'amber' ? 'bg-amber-500' : 'bg-primary-600';
   return (
     <div className="rounded-xl border border-background-200 bg-background-100/60 p-3">
-      <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">{label}</p>
+      <p
+        title={hint}
+        className={`text-[10px] font-bold uppercase tracking-wider text-foreground-400 ${hint ? 'cursor-help decoration-dotted underline-offset-4 hover:underline' : ''}`}
+      >
+        {label}
+      </p>
       <p className="mt-1 flex items-baseline gap-1.5">
         <span className="text-lg font-heading font-bold text-foreground-950">{achievedLabel}</span>
         <span className="text-[12px] text-foreground-400">of {plannedLabel}</span>
@@ -162,18 +315,20 @@ function AchievementMeter({
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-background-200">
         <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.min(Math.max(percentage, 0), 100)}%` }} />
       </div>
-      <p className="mt-1 text-[11px] text-foreground-500">
-        {percent(percentage)}
-        {note ? ` · ${note}` : ''}
-      </p>
+      {note && <p className="mt-1 text-[11px] text-foreground-500">{note}</p>}
     </div>
   );
 }
 
-function CountStat({ label, value, note }: { label: string; value: string | number; note?: string }) {
+function CountStat({ label, value, note, hint }: { label: string; value: string | number; note?: string; hint?: string }) {
   return (
     <div className="rounded-xl border border-background-200 bg-background-100/60 p-3">
-      <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">{label}</p>
+      <p
+        title={hint}
+        className={`text-[10px] font-bold uppercase tracking-wider text-foreground-400 ${hint ? 'cursor-help decoration-dotted underline-offset-4 hover:underline' : ''}`}
+      >
+        {label}
+      </p>
       <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{value}</p>
       {note && <p className="mt-1 text-[11px] text-foreground-500">{note}</p>}
     </div>
@@ -181,39 +336,38 @@ function CountStat({ label, value, note }: { label: string; value: string | numb
 }
 
 /**
- * Knowledge, Skills and Behaviours as three tiles.
+ * Knowledge, Skills and Behaviours as three tiles: achieved against missing.
  *
  * The standard states a programme's KSBs as three families and a coach reads
- * them that way — "the skills are untouched" is a different conversation from
- * "S4 is at 40%". A 70-row table cannot be read for that, and the single
- * "12/71 started" figure above hides which family the 59 sit in.
+ * them that way — "the behaviours are untouched" is a different conversation
+ * from "B3 is short". A 70-row table cannot be read for that.
  *
  * Each tile is a filter, because the answer to "why are the behaviours at zero"
  * is the eleven rows behind the tile.
  */
 function KsbFamilyStrip({
-  byType,
+  families,
   selectedType,
   onSelectType,
 }: {
-  byType: CurriculumScopeKsbTypeSummary[];
+  families: KsbFamily[];
   selectedType: string;
   onSelectType: (letter: string) => void;
 }) {
   return (
     <div className="grid gap-3 sm:grid-cols-3">
-      {byType.map(family => {
-        const selected = String(family.letter).toUpperCase() === selectedType;
-        const required = family.requiredCount || 0;
+      {families.map(family => {
+        const selected = family.letter === selectedType;
+        const share = family.required ? (family.achieved / family.required) * 100 : 0;
         return (
           <button
             key={family.letter}
             type="button"
-            onClick={() => onSelectType(selected ? '' : String(family.letter).toUpperCase())}
-            title={`Show only the ${family.label.toLowerCase()} in the tables below`}
+            onClick={() => onSelectType(selected ? '' : family.letter)}
+            title={`Show only the ${family.label.toLowerCase()} in the table below`}
             className={`rounded-xl border p-3 text-left transition-smooth ${
               selected
-                ? 'border-primary-400 bg-primary-50'
+                ? 'border-primary-400 bg-primary-50 ring-1 ring-primary-200'
                 : 'border-background-200 bg-background-100/60 hover:bg-background-100'
             }`}
           >
@@ -221,31 +375,24 @@ function KsbFamilyStrip({
               <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">
                 {family.label}
               </span>
-              <span className="rounded-md bg-background-200 px-1.5 py-0.5 text-[10px] font-bold text-foreground-600">
+              <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${KSB_TYPE_META[family.letter].chip}`}>
                 {family.letter}
               </span>
             </p>
             <p className="mt-1 flex items-baseline gap-1.5">
-              <span className="text-lg font-heading font-bold text-foreground-950">
-                {family.startedCount}
-              </span>
-              <span className="text-[12px] text-foreground-400">of {required} started</span>
+              <span className="text-lg font-heading font-bold text-emerald-700">{family.achieved}</span>
+              <span className="text-[12px] text-foreground-400">achieved of {family.required}</span>
             </p>
-            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-background-200">
-              <div
-                className="h-full rounded-full bg-emerald-500"
-                style={{ width: `${Math.min(Math.max(family.progressPercentage, 0), 100)}%` }}
-              />
+            {/* One bar, split: achieved fills from the left and the amber
+                remainder is the gap. Nothing shaded in between — there are two
+                outcomes here, not a gradient. */}
+            <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-amber-200">
+              <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(Math.max(share, 0), 100)}%` }} />
             </div>
-            {/* Two different gaps, never merged into one "missing" number: the
-                first is fixed in the Module Builder, the second by delivery. */}
             <p className="mt-1 text-[11px] leading-snug text-foreground-500">
-              {weight(family.cappedAchievedWeightTotal)}/{weight(family.expectedWeightTotal)} weight ·{' '}
-              <span className={family.missingCount ? 'font-bold text-amber-700' : ''}>
-                {family.missingCount} missing
-              </span>
-              {family.unmappedCount ? ` (${family.unmappedCount} taught nowhere)` : ''}
-              {family.completeCount ? ` · ${family.completeCount} complete` : ''}
+              <span className={family.missing ? 'font-bold text-amber-700' : ''}>{family.missing} missing</span>
+              {' · '}
+              {weight(family.earnedWeight)} of {weight(family.expectedWeight)} weight
             </p>
           </button>
         );
@@ -253,8 +400,6 @@ function KsbFamilyStrip({
     </div>
   );
 }
-
-const KSB_GRID = 'grid grid-cols-[minmax(220px,2.4fr)_86px_96px_minmax(120px,1fr)_96px]';
 
 // The standard's wording for a KSB. Coverage stores the outcome text in either
 // field depending on how the source was authored, and both fall back to the code
@@ -264,74 +409,219 @@ function ksbDescription(row: CurriculumScopeKsbAchievementRow) {
   return normaliseText(text) === normaliseText(row.code) ? '' : text;
 }
 
+/**
+ * The achievers spelled out one per line, for the cell's tooltip: the cell
+ * truncates at whatever the column is wide enough for, and a reader who wants
+ * the third name should not have to open the row to learn there is one.
+ */
+function achieverRoll(achievers: KsbAchiever[]) {
+  return achievers
+    .map(person => `${person.name} — ${person.expected
+      ? `${weight(person.earned)} of ${weight(person.expected)}`
+      : `${weight(person.earned)} extra`}`)
+    .join('\n');
+}
+
+const KSB_GRID = 'grid grid-cols-[minmax(230px,2.6fr)_84px_104px_minmax(150px,1.1fr)_104px]';
+
+const KSB_COLUMNS: Array<{ label: string; hint: string; align?: 'center' }> = [
+  { label: 'KSB', hint: 'The outcome as the standard words it, and which of Knowledge / Skills / Behaviours it belongs to.' },
+  { label: 'Total weight', hint: 'Every weight placed on this KSB by the components in this scope, added up. The size of the KSB here — not a mark.', align: 'center' },
+  { label: 'Times achieved', hint: 'How many completed activities have credited this KSB here. One learner finishing two components that both carry it counts twice. Open the row to see who earned it and where.', align: 'center' },
+  { label: 'Achieved by', hint: 'How many of the learners this KSB is authored for here have earned any of it, and which ones. Hover the names for how much each earned, or open the row for the full picture.' },
+  { label: 'Status', hint: 'Achieved means at least one learner has evidenced it. Missing means this scope asks for it and nobody has yet.', align: 'center' },
+];
+
+/**
+ * The KSB register: achieved against missing, who achieved it, and how often.
+ *
+ * This replaces a KSB × learner matrix. The matrix answered "how far along is
+ * every learner on every KSB" with a wall of tinted percentages — a question
+ * nobody was asking, in a grid nobody could read past forty columns. The three
+ * facts actually wanted are a row each, and the names live one click down rather
+ * than in a column that only ever fitted eight of them.
+ */
 function KsbAchievementTable({
   rows,
+  achieversByCode,
+  creditsByCode,
   onSelectCode,
   selectedCode,
+  onPreviewCredit,
 }: {
   rows: CurriculumScopeKsbAchievementRow[];
+  achieversByCode: Map<string, KsbAchiever[]>;
+  creditsByCode: Map<string, KsbCredit[]>;
   onSelectCode: (code: string) => void;
   selectedCode: string;
+  /** Mirrors coverage's "preview this placement": clicking where a KSB was
+   *  earned opens the same component, rather than the two lists behaving
+   *  differently for what is the same underlying question. Omitted by callers
+   *  that have no catalogue to resolve a component against. */
+  onPreviewCredit?: (credit: KsbCredit, ksbCode: string) => void;
 }) {
   return (
     <div className="max-h-[70vh] overflow-auto rounded-xl border border-background-200">
-      <div className="min-w-[720px]">
+      <div className="min-w-[760px]">
         <div className={`${KSB_GRID} sticky top-0 z-20 gap-2 border-b border-background-200 bg-background-100 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-foreground-400`}>
-          <span>KSB</span>
-          <span className="text-center">Weight</span>
-          <span className="text-center">Learners</span>
-          <span>Achieved of expected</span>
-          <span className="text-center">Achieved</span>
+          {KSB_COLUMNS.map(column => (
+            <span
+              key={column.label}
+              title={column.hint}
+              className={`cursor-help decoration-dotted underline-offset-4 hover:underline ${column.align === 'center' ? 'text-center' : ''}`}
+            >
+              {column.label}
+            </span>
+          ))}
         </div>
         <div className="divide-y divide-background-200/70">
           {rows.map(row => {
-            const selected = normaliseText(row.code) === normaliseText(selectedCode);
+            const code = normaliseText(row.code);
+            const expanded = code === normaliseText(selectedCode);
+            const badge = STANDING_BADGE[ksbStanding(row)];
+            const letter = ksbTypeCode(row);
+            const achievers = achieversByCode.get(code) || [];
+            const credits = creditsByCode.get(code) || [];
             return (
-              <button
-                key={`${row.code}-${row.sourceId}`}
-                type="button"
-                onClick={() => onSelectCode(selected ? '' : row.code)}
-                className={`${KSB_GRID} w-full gap-2 px-3 py-2 text-left transition-smooth hover:bg-background-100 ${selected ? 'bg-primary-50' : ''}`}
-              >
-                <span className="min-w-0">
-                  <span className="flex items-center gap-1.5 text-[12px] font-bold text-foreground-900">
-                    {row.code}
-                    {STATUS_MARK[row.status] && (
-                      <span title={STATUS_MARK[row.status].title} className={STATUS_MARK[row.status].className}>
-                        <AppIcon className={`${STATUS_MARK[row.status].icon} text-[12px]`}></AppIcon>
+              <div key={`${row.code}-${row.sourceId}`} className={expanded ? 'bg-primary-50/40' : ''}>
+                <button
+                  type="button"
+                  onClick={() => onSelectCode(expanded ? '' : row.code)}
+                  className={`${KSB_GRID} w-full gap-2 px-3 py-2 text-left transition-smooth hover:bg-background-100`}
+                >
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-1.5 text-[12px] font-bold text-foreground-900">
+                      <AppIcon className={`${expanded ? 'ri-subtract-line' : 'ri-add-line'} text-[12px] text-foreground-400`}></AppIcon>
+                      {row.code}
+                      <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${KSB_TYPE_META[letter].chip}`}>
+                        {KSB_TYPE_META[letter].label}
+                      </span>
+                      {STATUS_MARK[row.status] && (
+                        <span title={STATUS_MARK[row.status].title} className={STATUS_MARK[row.status].className}>
+                          <AppIcon className={`${STATUS_MARK[row.status].icon} text-[12px]`}></AppIcon>
+                        </span>
+                      )}
+                    </span>
+                    {ksbDescription(row) && (
+                      <span className="mt-0.5 block pl-4 text-[11px] leading-snug text-foreground-600 line-clamp-2">{ksbDescription(row)}</span>
+                    )}
+                  </span>
+                  <span className="text-center text-[12px] tabular-nums text-foreground-700">{weight(row.plannedWeight)}</span>
+                  {/* The count this tab was asked for: how often the KSB has
+                      actually been evidenced here, not how far along it is. */}
+                  <span className="text-center">
+                    <span className={`block text-[13px] font-bold tabular-nums ${credits.length ? 'text-foreground-900' : 'text-foreground-300'}`}>
+                      {credits.length ? `${credits.length}×` : '—'}
+                    </span>
+                    {(credits.length > 0 || achievers.length > 0) && (
+                      <span className="mt-0.5 block text-[9px] font-bold uppercase tracking-wider text-primary-600">
+                        {expanded ? 'Hide who' : 'See who'}
                       </span>
                     )}
                   </span>
-                  {ksbDescription(row) && (
-                    <span className="mt-0.5 block text-[11px] leading-snug text-foreground-600 line-clamp-2">{ksbDescription(row)}</span>
-                  )}
-                  <span className="mt-0.5 block truncate text-[10px] uppercase tracking-wider text-foreground-400">
-                    {ksbTypeLabel(row.ksbType)}
-                    {row.sourceLabel ? ` · ${row.sourceLabel}` : ''}
+                  <span className="min-w-0">
+                    <span className="block truncate text-[12px] tabular-nums text-foreground-700">
+                      {row.learnersAchievedCount} of {row.learnerCount} learners
+                    </span>
+                    {/* The names, not only the count. "2 of 14 learners" answers
+                        how many and then makes every reader open the row to ask
+                        which two — so the two are here, and how much each of
+                        them earned stays one click down. */}
+                    {achievers.length > 0 && (
+                      <span className="block truncate text-[11px] text-foreground-600" title={achieverRoll(achievers)}>
+                        {achievers.map(person => person.name).join(' · ')}
+                      </span>
+                    )}
+                    <span className="block truncate text-[10px] text-foreground-400">
+                      {weight(row.cappedAchievedWeightTotal)} of {weight(row.expectedWeightTotal)} weight earned
+                    </span>
                   </span>
-                </span>
-                <span className="text-center text-[12px] tabular-nums text-foreground-700">{weight(row.plannedWeight)}</span>
-                <span
-                  className="text-center text-[12px] tabular-nums text-foreground-700"
-                  title="Learners who have earned any of this KSB, out of the learners it is authored for in this scope"
-                >
-                  {row.learnersAchievedCount}/{row.learnerCount}
-                </span>
-                <span className="flex items-center gap-2">
-                  <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-background-200">
-                    <span
-                      className="block h-full rounded-full bg-emerald-500"
-                      style={{ width: `${Math.min(row.achievementPercentage, 100)}%` }}
-                    />
+                  <span className={`self-start rounded-md px-1.5 py-1 text-center text-[11px] font-bold ${badge.className}`} title={badge.title}>
+                    {badge.label}
                   </span>
-                  <span className="shrink-0 text-[11px] tabular-nums text-foreground-500">
-                    {weight(row.cappedAchievedWeightTotal)}/{weight(row.expectedWeightTotal)}
-                  </span>
-                </span>
-                <span className={`rounded-md px-1.5 py-1 text-center text-[11px] font-bold tabular-nums ${heatClass(row.achievementPercentage, row.plannedWeight)}`}>
-                  {percent(row.achievementPercentage)}
-                </span>
-              </button>
+                </button>
+
+                {expanded && (
+                  <div className="grid gap-3 border-t border-background-200 bg-background-100/50 px-3 py-3 lg:grid-cols-2">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">
+                        Who achieved it
+                      </p>
+                      {achievers.length === 0 ? (
+                        <p className="mt-1 text-[11px] text-foreground-500">
+                          No learner in this scope has earned any of {row.code} yet.
+                        </p>
+                      ) : (
+                        <div className="mt-1.5 space-y-1">
+                          {achievers.map(person => (
+                            <div
+                              key={person.learnerId}
+                              className="flex items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-50 px-2 py-1.5"
+                            >
+                              <span className="min-w-0">
+                                <span className="block truncate text-[11px] font-semibold text-foreground-900">{person.name}</span>
+                                <span className="block truncate text-[10px] text-foreground-400">
+                                  {[person.group, person.cohort].filter(Boolean).join(' · ') || 'No group'}
+                                </span>
+                              </span>
+                              <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${achievedTone(person.earned, person.expected)}`}>
+                                {person.expected
+                                  ? `${weight(person.earned)} of ${weight(person.expected)}`
+                                  : `${weight(person.earned)} extra`}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">
+                        Where it was earned
+                      </p>
+                      {credits.length === 0 ? (
+                        <p className="mt-1 text-[11px] text-foreground-500">
+                          No completed activity has credited {row.code} in this scope yet.
+                        </p>
+                      ) : (
+                        <div className="mt-1.5 space-y-1">
+                          {credits.map(credit => {
+                            const Tag = onPreviewCredit ? 'button' : 'div';
+                            return (
+                              <Tag
+                                key={credit.key}
+                                type={onPreviewCredit ? 'button' : undefined}
+                                onClick={onPreviewCredit ? () => onPreviewCredit(credit, row.code) : undefined}
+                                title={onPreviewCredit ? `Preview ${credit.component} — what it asks of the learner, and every KSB it carries` : undefined}
+                                className={`group flex w-full items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-50 px-2 py-1.5 text-left transition-smooth ${
+                                  onPreviewCredit ? 'hover:border-primary-300 hover:bg-primary-50/50' : ''
+                                }`}
+                              >
+                                <span className="min-w-0">
+                                  <span className="block truncate text-[11px] font-semibold text-foreground-900">{credit.component}</span>
+                                  <span className="block truncate text-[10px] text-foreground-400">
+                                    {[credit.module, credit.week, credit.learnerName].filter(Boolean).join(' · ')}
+                                  </span>
+                                </span>
+                                <span className="flex shrink-0 items-center gap-1.5">
+                                  <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-emerald-800">
+                                    +{weight(credit.weight)}
+                                  </span>
+                                  {onPreviewCredit && (
+                                    <span className="flex items-center gap-0.5 text-[9px] font-bold uppercase tracking-wider text-foreground-300 transition-smooth group-hover:text-primary-600">
+                                      <AppIcon className="ri-eye-line text-[11px]"></AppIcon>
+                                      Preview
+                                    </span>
+                                  )}
+                                </span>
+                              </Tag>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>
@@ -341,186 +631,244 @@ function KsbAchievementTable({
 }
 
 /**
- * The bands `heatClass` paints, named. A heatmap is unreadable without them: a
- * grid of tinted numbers otherwise leaves the reader to guess whether amber is
- * "behind" or "not planned for this learner at all", which are opposite facts.
+ * The KSB x learner grid, restored as a second reading of the same rows.
+ *
+ * The register above answers "is this KSB evidenced here, and by whom" one row
+ * at a time, which is the question that gets asked. This answers the other one:
+ * where a whole class stands across every KSB at once - which learner has
+ * nothing on B2, which KSB has one achiever out of twelve. Every square is one
+ * learner on one KSB and reads from ksbCellState, the same function the learner
+ * chips use, so the two views cannot disagree.
  */
-/** How many learner columns the matrix will draw before it says it stopped. */
-const MAX_HEATMAP_LEARNER_COLUMNS = 40;
-
-const ACHIEVEMENT_HEAT_LEGEND: Array<{ label: string; className: string }> = [
-  { label: 'Not planned', className: 'bg-background-100 text-foreground-400' },
-  { label: 'Not started', className: 'bg-background-200 text-foreground-500' },
-  { label: 'Under 40%', className: 'bg-amber-200/70 text-amber-900' },
-  { label: '40–74%', className: 'bg-amber-300/90 text-amber-950' },
-  { label: '75–99%', className: 'bg-emerald-400/90 text-emerald-950' },
-  { label: 'Complete', className: 'bg-emerald-600 text-white' },
+const KSB_MATRIX_BANDS: Array<{ label: string; className: string; title: string }> = [
+  { label: '\u2014', className: 'bg-background-100 text-foreground-400', title: 'Not expected: this scope does not ask this learner for this KSB.' },
+  { label: '0%', className: 'bg-background-200 text-foreground-500', title: 'Not started: expected of this learner, nothing earned yet.' },
+  { label: '1\u201399%', className: 'bg-emerald-100 text-emerald-800', title: 'Part earned: some of the expected weight evidenced.' },
+  { label: '100%', className: 'bg-emerald-600 text-white', title: 'Achieved: all of the weight expected of this learner earned.' },
+  { label: 'Extra', className: 'bg-sky-100 text-sky-800', title: 'Earned somewhere this scope never asked them for it. Reported, not counted here.' },
 ];
 
-/**
- * Achievement as a KSB × learner matrix, the same shape the KSB coverage tab
- * uses for KSB × module.
- *
- * The aggregate table this replaces could say "3/12 learners have started S4",
- * which is the one thing a coach cannot act on: it names a shortfall without
- * naming who has it. A row of per-learner cells answers both questions at once —
- * which KSBs the cohort is behind on (read across) and which learner is behind
- * (read down) — and the tint makes the outliers findable without reading a
- * single number.
- */
-function KsbAchievementHeatmap({
-  rows,
-  learners: allLearners,
-  onSelectCode,
-  selectedCode,
-  onSelectLearner,
-  selectedLearner,
-}: {
-  rows: CurriculumScopeKsbAchievementRow[];
-  learners: CurriculumLearnerKsbConsumption[];
-  onSelectCode: (code: string) => void;
-  selectedCode: string;
-  onSelectLearner: (learnerId: string) => void;
-  selectedLearner: string;
-}) {
-  // A programme-wide scope can hold hundreds of learners, and a cell per learner
-  // per KSB is a cell count that janks the tab and a matrix nobody can read
-  // across anyway. The cap is stated on screen rather than applied quietly, and
-  // it names the way out: the scope picker directly above this panel.
-  const learners = allLearners.slice(0, MAX_HEATMAP_LEARNER_COLUMNS);
-  const hiddenLearnerCount = allLearners.length - learners.length;
-
-  const consumptionByLearnerCode = useMemo(() => {
-    const map = new Map<string, Map<string, CurriculumLearnerKsbConsumptionItem>>();
-    for (const learner of learners) {
-      const byCode = new Map<string, CurriculumLearnerKsbConsumptionItem>();
-      for (const item of learner.ksbs || []) byCode.set(normaliseText(item.code), item);
-      map.set(String(learner.learnerId), byCode);
-    }
-    return map;
-  }, [learners]);
-
-  // Learner columns are narrow on purpose: a name is a label here, not the
-  // subject. The scope total keeps its own column so the row still reads as a
-  // roll-up when the learner columns run off the side.
-  const gridTemplateColumns = `minmax(240px, 1.5fr) 74px 92px repeat(${learners.length}, minmax(104px, 1fr))`;
-  const minWidth = 240 + 74 + 92 + learners.length * 104 + 48;
-
+function KsbMatrixLegend({ learnerCount, ksbCount }: { learnerCount: number; ksbCount: number }) {
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-background-200 bg-background-100/60 px-3 py-2">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Achieved of expected</span>
-        {ACHIEVEMENT_HEAT_LEGEND.map(band => (
-          <span key={band.label} className={`rounded-md px-2 py-0.5 text-[10px] font-bold ${band.className}`}>
+    <div className="mb-3 flex flex-col gap-3 rounded-2xl border border-background-200 bg-background-50 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+      <p className="max-w-2xl text-[11px] leading-snug text-foreground-600">
+        One square is <span className="font-semibold text-foreground-800">one learner on one KSB</span>: the share of
+        the weight expected of them that they have earned. Read across a row for how one KSB is going across the class,
+        down a column for one learner&apos;s standing. {ksbCount} {ksbCount === 1 ? 'KSB' : 'KSBs'} &times;{' '}
+        {learnerCount} {learnerCount === 1 ? 'learner' : 'learners'}.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        {KSB_MATRIX_BANDS.map(band => (
+          <span
+            key={band.label}
+            title={band.title}
+            className={`inline-flex cursor-help items-center rounded-full border border-transparent px-2.5 py-1 text-[10px] font-bold ${band.className}`}
+          >
             {band.label}
           </span>
         ))}
-        <span className="text-[10px] text-foreground-400">
-          Click a KSB or a learner to filter the Learners and Activity tabs.
-        </span>
       </div>
+    </div>
+  );
+}
 
-      {hiddenLearnerCount > 0 && (
-        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
-          Showing the first {learners.length} of {allLearners.length} learners, by name. Pick a cohort or a group
-          in the scope above to see the rest as a matrix — the totals column and the Learners tab still cover
-          everyone.
+/**
+ * Pick a learner or two, rather than reading the whole class's columns.
+ *
+ * Checkbox list rather than a live text filter, same reasoning as coverage's
+ * component picker: the reader already knows which one or two learners they
+ * want to sit with, side by side — not a box to narrow by typing.
+ */
+function LearnerPickerPanel({
+  learners,
+  pickedIds,
+  onToggle,
+  onClear,
+  onClose,
+}: {
+  learners: CurriculumScopeOtjhLearner[];
+  pickedIds: string[];
+  onToggle: (id: string) => void;
+  onClear: () => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const filtered = useMemo(() => {
+    const normalisedQuery = normaliseText(query);
+    if (!normalisedQuery) return learners;
+    return learners.filter(learner => [learner.learnerName, learner.email, learner.group, learner.cohort]
+      .some(value => normaliseText(value).includes(normalisedQuery)));
+  }, [learners, query]);
+
+  return (
+    <div className="mb-3 rounded-xl border border-primary-200 bg-primary-50/40 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold text-foreground-700">
+          Tick the learners to show. Leave none ticked to see every learner in the class.
         </p>
-      )}
+        <div className="flex items-center gap-2">
+          {pickedIds.length > 0 && (
+            <button
+              type="button"
+              onClick={onClear}
+              className="text-[10px] font-bold text-foreground-500 underline decoration-dotted hover:text-foreground-800"
+            >
+              Clear {pickedIds.length} picked
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-7 items-center gap-1 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+      <label className="relative mt-2 block">
+        <AppIcon className="ri-search-line pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[13px] text-foreground-400"></AppIcon>
+        <input
+          value={query}
+          onChange={event => setQuery(event.target.value)}
+          placeholder="Find a learner to tick..."
+          className="h-8 w-full rounded-lg border border-background-200 bg-background-50 pl-8 pr-2 text-[12px] text-foreground-900 outline-none transition-smooth focus:border-primary-300"
+        />
+      </label>
+      <div className="mt-2 max-h-64 space-y-0.5 overflow-y-auto">
+        {filtered.length === 0 ? (
+          <p className="px-1 py-2 text-[11px] text-foreground-400">No learner matches this search.</p>
+        ) : filtered.map(learner => {
+          const id = String(learner.learnerId);
+          const checked = pickedIds.includes(id);
+          return (
+            <label
+              key={id}
+              className={`flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 transition-smooth ${checked ? 'bg-primary-100/70' : 'hover:bg-background-50'}`}
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => onToggle(id)}
+                className="h-3.5 w-3.5 shrink-0 rounded border-background-300 text-primary-600 focus:ring-primary-400"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[11px] font-semibold text-foreground-900">
+                  {learner.learnerName || learner.email || `Learner ${id}`}
+                </span>
+                <span className="block truncate text-[10px] text-foreground-400">
+                  {[learner.group, learner.cohort].filter(Boolean).join(' · ')}
+                </span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
-      {/* Its own scroll box on both axes: one column per learner outgrows the
-          viewport long before the rows do, and a horizontal bar parked below the
-          last KSB cannot be reached until the reader has scrolled past every
-          one of them. */}
-      <div className="max-h-[70vh] overflow-auto rounded-2xl border border-background-200 bg-background-50">
-        <div style={{ minWidth }}>
+function KsbAchievementMatrix({
+  rows,
+  learners,
+  consumptionByLearner,
+}: {
+  rows: CurriculumScopeKsbAchievementRow[];
+  learners: CurriculumScopeOtjhLearner[];
+  consumptionByLearner: Map<string, CurriculumLearnerKsbConsumption>;
+}) {
+  // code -> item, per learner, built once: looking a cell up inside the render
+  // would be a scan of every KSB that learner holds, for every square in the
+  // grid.
+  const itemsByLearner = useMemo(() => {
+    const map = new Map<string, Map<string, CurriculumLearnerKsbConsumptionItem>>();
+    for (const learner of learners) {
+      const key = String(learner.learnerId);
+      const byCode = new Map<string, CurriculumLearnerKsbConsumptionItem>();
+      for (const item of consumptionByLearner.get(key)?.ksbs || []) {
+        const code = normaliseText(item.code);
+        if (code) byCode.set(code, item);
+      }
+      map.set(key, byCode);
+    }
+    return map;
+  }, [consumptionByLearner, learners]);
+
+  const gridTemplateColumns = `minmax(200px, 1.4fr) repeat(${Math.max(learners.length, 1)}, minmax(78px, .4fr))`;
+
+  if (!learners.length) {
+    return (
+      <EntityEmptyState
+        icon="ri-graduation-cap-line"
+        title="No learners to plot"
+        message="The grid is one column per learner, and enrolment has nobody placed in this scope yet."
+      />
+    );
+  }
+
+  return (
+    <>
+      <KsbMatrixLegend learnerCount={learners.length} ksbCount={rows.length} />
+      {/* Bounded in both directions and scrolling inside its own box: one column
+          per learner outgrows the viewport sideways long before the page does,
+          and with the page scrolling instead the horizontal bar sits below the
+          last KSB - unreachable until you have scrolled past every row. */}
+      <div className="max-h-[70vh] overflow-auto rounded-2xl border border-background-200 bg-background-50 shadow-sm">
+        <div style={{ minWidth: `${240 + learners.length * 78}px` }}>
           <div
-            className="sticky top-0 z-30 grid items-end gap-2 border-b border-background-200 bg-background-100 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-foreground-400"
+            className="sticky top-0 z-30 grid items-center gap-1 border-b border-background-200 bg-background-100 px-4 py-3"
             style={{ gridTemplateColumns }}
           >
-            {/* Frozen both ways. Scrolling down must keep the learner names, and
-                scrolling right must keep the KSB the cells belong to. */}
-            <span className="sticky left-0 z-10 -ml-3 bg-background-100 pl-3 shadow-[6px_0_8px_-8px_rgba(15,23,42,0.35)]">KSB</span>
-            <span className="text-center">Weight</span>
-            <span className="text-center">Scope</span>
-            {learners.map(learner => {
-              const learnerId = String(learner.learnerId);
-              const isSelected = learnerId === selectedLearner;
-              return (
-                <button
-                  key={learnerId}
-                  type="button"
-                  onClick={() => onSelectLearner(isSelected ? '' : learnerId)}
-                  title={`${learner.learnerName}${learner.group ? ` · ${learner.group}` : ''} — ${percent(learner.progressPercentage)} of their expected weight`}
-                  className={`truncate rounded-md px-1 py-0.5 text-center normal-case transition-smooth hover:bg-primary-100 hover:text-primary-800 ${
-                    isSelected ? 'bg-primary-600 text-white' : ''
-                  }`}
-                >
-                  {learner.learnerName || learnerId}
-                </button>
-              );
-            })}
+            {/* Frozen both ways: the learner names have to survive scrolling
+                down, and "KSB" has to survive scrolling right, or a square
+                loses the row it belongs to. */}
+            <span className="sticky left-0 z-10 -ml-4 bg-background-100 pl-4 text-[10px] font-bold uppercase tracking-wider text-foreground-400 shadow-[6px_0_8px_-8px_rgba(15,23,42,0.35)]">
+              KSB
+            </span>
+            {learners.map(learner => (
+              <span
+                key={String(learner.learnerId)}
+                title={[learner.learnerName || learner.email, learner.group, learner.cohort].filter(Boolean).join(' \u00b7 ')}
+                className="cursor-help truncate text-center text-[9px] font-bold uppercase tracking-wide text-foreground-500"
+              >
+                {(learner.learnerName || learner.email || `#${learner.learnerId}`).split(' ')[0]}
+              </span>
+            ))}
           </div>
-
-          <div className="divide-y divide-background-200/70">
+          <div className="divide-y divide-background-200">
             {rows.map(row => {
-              const codeKey = normaliseText(row.code);
-              const isSelectedRow = codeKey === normaliseText(selectedCode);
+              const code = normaliseText(row.code);
+              const letter = ksbTypeCode(row);
               return (
                 <div
                   key={`${row.code}-${row.sourceId}`}
-                  // Opaque, because the frozen first cell inherits this
-                  // background to hide the cells travelling under it.
-                  className={`grid items-stretch gap-2 px-3 py-1.5 transition-smooth ${
-                    isSelectedRow ? 'bg-primary-50' : 'bg-background-50 hover:bg-background-100'
-                  }`}
+                  className="grid items-center gap-1 bg-background-50 px-4 py-2 transition-smooth hover:bg-background-100"
                   style={{ gridTemplateColumns }}
                 >
-                  <button
-                    type="button"
-                    onClick={() => onSelectCode(isSelectedRow ? '' : row.code)}
-                    className="sticky left-0 z-10 -ml-3 min-w-0 bg-inherit pl-3 pr-1 text-left shadow-[6px_0_8px_-8px_rgba(15,23,42,0.35)]"
-                  >
-                    <span className="flex items-center gap-1.5 text-[12px] font-bold text-foreground-900">
-                      {row.code}
-                      {STATUS_MARK[row.status] && (
-                        <span title={STATUS_MARK[row.status].title} className={STATUS_MARK[row.status].className}>
-                          <AppIcon className={`${STATUS_MARK[row.status].icon} text-[12px]`}></AppIcon>
-                        </span>
-                      )}
+                  {/* Opaque, and inheriting the row tint: the frozen column has
+                      to hide the squares passing beneath it. */}
+                  <span className="sticky left-0 z-10 -ml-4 min-w-0 bg-inherit pl-4 shadow-[6px_0_8px_-8px_rgba(15,23,42,0.35)]">
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-[12px] font-bold text-foreground-900">{row.code}</span>
+                      <span className={`rounded px-1 py-0.5 text-[9px] font-bold uppercase ${KSB_TYPE_META[letter].chip}`}>
+                        {letter}
+                      </span>
                     </span>
-                    <span className="block truncate text-[10px] uppercase tracking-wider text-foreground-400">
-                      {ksbTypeLabel(row.ksbType)}
-                      {ksbDescription(row) ? ` · ${ksbDescription(row)}` : ''}
-                    </span>
-                  </button>
-                  <span className="self-center text-center text-[11px] tabular-nums text-foreground-600">{weight(row.plannedWeight)}</span>
-                  <span
-                    className={`self-center rounded-md px-1 py-1 text-center text-[11px] font-bold tabular-nums ${heatClass(row.achievementPercentage, row.plannedWeight)}`}
-                    title={`${row.learnersAchievedCount} of ${row.learnerCount} learners started · ${weight(row.cappedAchievedWeightTotal)} of ${weight(row.expectedWeightTotal)} earned`}
-                  >
-                    {percent(row.achievementPercentage)}
+                    {ksbDescription(row) && (
+                      <span className="block truncate text-[10px] text-foreground-500">{ksbDescription(row)}</span>
+                    )}
                   </span>
                   {learners.map(learner => {
-                    const learnerId = String(learner.learnerId);
-                    const cell = consumptionByLearnerCode.get(learnerId)?.get(codeKey);
-                    const expected = Number(cell?.expectedWeight || 0);
-                    const achieved = Number(cell?.progressPercentage || 0);
-                    const isSelectedColumn = learnerId === selectedLearner;
+                    const learnerKey = String(learner.learnerId);
+                    const item = itemsByLearner.get(learnerKey)?.get(code);
+                    const state = ksbCellState(item, `${row.code} \u00b7 ${learner.learnerName || learnerKey}`);
                     return (
-                      <button
-                        key={`${row.code}-${learnerId}`}
-                        type="button"
-                        onClick={() => { onSelectCode(row.code); onSelectLearner(learnerId); }}
-                        title={cell
-                          ? `${learner.learnerName} · ${row.code}: ${weight(cell.cappedConsumedWeight)} of ${weight(cell.expectedWeight)} earned (${percent(achieved)})`
-                          : `${learner.learnerName} is not assigned ${row.code} anywhere in this scope`}
-                        className={`self-center rounded-md px-1 py-1 text-center text-[11px] font-bold tabular-nums transition-smooth hover:ring-2 hover:ring-primary-400 ${heatClass(achieved, expected)} ${
-                          isSelectedColumn ? 'ring-1 ring-primary-400' : ''
-                        }`}
+                      <span
+                        key={`${row.code}-${learnerKey}`}
+                        title={state.title}
+                        className={`flex h-7 cursor-help items-center justify-center rounded text-[10px] font-bold tabular-nums ${state.className}`}
                       >
-                        {expected ? percent(achieved) : '—'}
-                      </button>
+                        {state.short}
+                      </span>
                     );
                   })}
                 </div>
@@ -529,7 +877,7 @@ function KsbAchievementHeatmap({
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -558,8 +906,8 @@ function LearnerAchievementTable({
           {([
             { label: 'Learner', hint: 'Who is placed here by enrolment. Curriculum only reads this roster.' },
             { label: 'Cohort / group', hint: 'Where enrolment placed them inside this programme. The group is what matters to the figures: a module belongs to one group, so a learner is measured against their own group’s modules.' },
-            { label: 'OTJH achieved', hint: 'Credited off-the-job hours against what this learner’s own group is assigned in this scope.' },
-            { label: 'KSB weight earned', hint: 'Capped KSB weight earned against the weight expected of this learner in this scope.' },
+            { label: 'OTJH achieved', hint: 'Off-the-job hours credited to this learner, out of the hours their own group is assigned in this scope. Reads as "credited of assigned".' },
+            { label: 'KSB weight earned', hint: 'KSB weight this learner has earned, out of the weight expected of them in this scope. Reads as "earned of expected"; it is curriculum weight, not a mark or a percentage.' },
             { label: 'Done', hint: 'How many components this learner has completed in this scope.', align: 'center' },
             { label: 'Logs', hint: 'How many reflections this learner has submitted for those components.', align: 'center' },
           ] as Array<{ label: string; hint: string; align?: 'center' }>).map(column => (
@@ -617,16 +965,24 @@ function LearnerAchievementTable({
                     <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-background-200">
                       <span className="block h-full rounded-full bg-primary-600" style={{ width: `${Math.min(learner.progressPercentage, 100)}%` }} />
                     </span>
-                    <span className="shrink-0 text-[11px] tabular-nums text-foreground-500">
-                      {hours(learner.achievedOtjh)}/{hours(learner.plannedOtjh)}
+                    {/* "6h/38h" was read as a date, a ratio and a range in
+                        turn. The word is three characters and settles it. */}
+                    <span
+                      className="shrink-0 text-[11px] tabular-nums text-foreground-500"
+                      title={`${hours(learner.achievedOtjh)} of the ${hours(learner.plannedOtjh)} off-the-job hours assigned to this learner here have been credited.`}
+                    >
+                      {hours(learner.achievedOtjh)} of {hours(learner.plannedOtjh)}
                     </span>
                   </span>
                   <span className="flex items-center gap-2">
                     <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-background-200">
                       <span className="block h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(ksbPercentage, 100)}%` }} />
                     </span>
-                    <span className="shrink-0 text-[11px] tabular-nums text-foreground-500">
-                      {weight(consumption?.cappedConsumedWeightTotal)}/{weight(consumption?.expectedWeightTotal)}
+                    <span
+                      className="shrink-0 text-[11px] tabular-nums text-foreground-500"
+                      title={`${weight(consumption?.cappedConsumedWeightTotal)} of the ${weight(consumption?.expectedWeightTotal)} KSB weight expected of this learner here has been earned (${percent(ksbPercentage)}).`}
+                    >
+                      {weight(consumption?.cappedConsumedWeightTotal)} of {weight(consumption?.expectedWeightTotal)}
                     </span>
                   </span>
                   <span className="text-center text-[12px] tabular-nums text-foreground-700">{learner.completedActivityCount}</span>
@@ -640,25 +996,47 @@ function LearnerAchievementTable({
                         No KSB weight recorded for this learner in this scope yet.
                       </p>
                     ) : (
-                      <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
-                        {ksbRows.map(row => (
-                          <div key={row.code} className="flex items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-50 px-2 py-1.5">
-                            <span className="truncate text-[11px] font-bold text-foreground-800">{row.code}</span>
-                            <span className="shrink-0 text-[11px] tabular-nums text-foreground-500">
-                              {weight(row.cappedConsumedWeight)}/{weight(row.expectedWeight)}
-                            </span>
-                            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${heatClass(row.progressPercentage, row.expectedWeight)}`}>
-                              {percent(row.progressPercentage)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
+                      <>
+                        {/* A key on the chips, not a tooltip: this grid is the
+                            first thing a reader meets after expanding a learner,
+                            and "50/0 — 100%" is where they stopped. */}
+                        <p className="mb-1.5 text-[10px] leading-snug text-foreground-500">
+                          Each tile is one KSB: its code, the{' '}
+                          <span className="font-semibold text-foreground-700">weight earned of the weight expected</span>{' '}
+                          of this learner here, then how complete that is.{' '}
+                          <span className="font-semibold text-sky-700">Extra</span> means they earned it somewhere this
+                          scope never asked them for it, so it is not counted as progress here.
+                        </p>
+                        <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
+                          {ksbRows.map(row => {
+                            const state = ksbCellState(row, row.code);
+                            return (
+                              <div
+                                key={row.code}
+                                title={state.title}
+                                className="flex cursor-help items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-50 px-2 py-1.5"
+                              >
+                                <span className="truncate text-[11px] font-bold text-foreground-800">{row.code}</span>
+                                <span className="shrink-0 text-[11px] tabular-nums text-foreground-500">{state.amount}</span>
+                                <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${state.className}`}>
+                                  {state.text}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
                     )}
                     {/* The learner's own declared hours, next to the credited
                         figure rather than inside it. */}
-                    <p className="mt-2 text-[11px] text-foreground-500">
-                      Declared in reflections: {hours(learner.declaredOtjh)} · credited from component
-                      expectations: {hours(Number(learner.achievedOtjh || 0) - Number(learner.declaredOtjh || 0))}
+                    <p className="mt-2 text-[11px] leading-relaxed text-foreground-500">
+                      Where their {hours(learner.achievedOtjh)} of credited hours came from:{' '}
+                      <span className="font-semibold text-foreground-700">{hours(learner.declaredOtjh)}</span> the learner
+                      wrote in their own reflections, and{' '}
+                      <span className="font-semibold text-foreground-700">
+                        {hours(Number(learner.achievedOtjh || 0) - Number(learner.declaredOtjh || 0))}
+                      </span>{' '}
+                      credited at the component’s planned hours, where they finished the work without writing one.
                     </p>
                   </div>
                 )}
@@ -875,6 +1253,7 @@ export function ScopeAchievementPanel({
   description,
   learnerStatus,
   active = true,
+  onPreviewCredit,
 }: {
   scope: CurriculumLearnerScope;
   identifier: string;
@@ -884,17 +1263,28 @@ export function ScopeAchievementPanel({
   learnerStatus?: string;
   /** False while the panel's tab is closed, so the read is not paid for. */
   active?: boolean;
+  /** Lets a caller that holds the module catalogue open the same placement
+   *  preview coverage uses, from "Where it was earned" here too. */
+  onPreviewCredit?: (credit: KsbCredit, ksbCode: string) => void;
 }) {
   const [data, setData] = useState<CurriculumScopeLearnerKsbImpactResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<PanelTab>('ksb');
   const [search, setSearch] = useState('');
-  const [hideNotStarted, setHideNotStarted] = useState(false);
+  /** '' | 'achieved' | 'missing' — the segmented control above the table. */
+  const [standing, setStanding] = useState<'' | KsbStanding>('');
   /** 'K' | 'S' | 'B' | '' — the family strip's filter. */
   const [selectedType, setSelectedType] = useState('');
   const [selectedCode, setSelectedCode] = useState('');
   const [expandedLearner, setExpandedLearner] = useState('');
+  /** 'list' | 'matrix' — the KSB tab's two readings of the same filtered rows. */
+  const [ksbView, setKsbView] = useState<'list' | 'matrix'>('list');
+  /** Empty means "every learner in the class" — picking narrows the matrix to
+   *  a learner or two, the same way coverage's "By component" picker narrows
+   *  to a component or two rather than showing everyone at once. */
+  const [pickedLearnerIds, setPickedLearnerIds] = useState<string[]>([]);
+  const [learnerPickerOpen, setLearnerPickerOpen] = useState(false);
   // Which read owns the panel's state. An aborted read must not clear `loading`
   // that a newer one has since set, and it must not report its own abort as an
   // error — but the read that is still current always gets to finish the
@@ -965,25 +1355,92 @@ export function ScopeAchievementPanel({
     return map;
   }, [data]);
 
-  // Columns for the KSB heatmap: every learner placed in this scope, in a stable
-  // order. Deliberately not `learnerRows` — that list is narrowed by the selected
-  // KSB, so the matrix would drop the very columns that explain the selection.
-  const heatmapLearners = useMemo(
-    () => [...(data?.learnerKsbConsumption || [])].sort((left, right) => (
-      String(left.learnerName || '').localeCompare(String(right.learnerName || ''))
-    )),
-    [data],
+  /**
+   * Who has earned each KSB, and how much. The per-KSB rows carry a count of
+   * learners; the names behind that count only exist per learner, so the join
+   * is made once here rather than inside a row that re-runs on every render.
+   */
+  const achieversByCode = useMemo(() => {
+    const map = new Map<string, KsbAchiever[]>();
+    for (const learner of data?.learnerKsbConsumption || []) {
+      for (const item of learner.ksbs || []) {
+        const earned = Number(item.cappedConsumedWeight || item.consumedWeight || 0);
+        if (earned <= 0) continue;
+        const key = normaliseText(item.code);
+        if (!key) continue;
+        const list = map.get(key) || [];
+        list.push({
+          learnerId: String(learner.learnerId),
+          name: learner.learnerName || learner.email || `Learner ${learner.learnerId}`,
+          cohort: learner.cohort || '',
+          group: learner.group || '',
+          earned,
+          expected: Number(item.expectedWeight || 0),
+        });
+        map.set(key, list);
+      }
+    }
+    for (const list of map.values()) list.sort((left, right) => right.earned - left.earned);
+    return map;
+  }, [data]);
+
+  /**
+   * Every completed activity that credited each KSB — the "how many times" the
+   * table reports. One learner finishing two components that both carry K1
+   * counts twice, because K1 was evidenced twice; a repeat completion of the
+   * same component does not, because the backend already marked it as earned
+   * once (`exclusionReason: 'repeat_completion'`).
+   */
+  const creditsByCode = useMemo(() => {
+    const map = new Map<string, KsbCredit[]>();
+    for (const row of data?.learnerActivities || []) {
+      if (row.countsTowardAchievement === false) continue;
+      if (row.scopeStatus && row.scopeStatus === 'out_of_scope') continue;
+      const learnerName = learnerNames.get(String(row.learnerId))?.name
+        || (row.learnerId == null ? '' : `Learner ${row.learnerId}`);
+      for (const item of row.ksbSnapshot || []) {
+        if (item.countsTowardAchievement === false) continue;
+        const key = normaliseText(item.code);
+        if (!key) continue;
+        const list = map.get(key) || [];
+        list.push({
+          key: `${row.progressId}-${item.code}-${list.length}`,
+          learnerName,
+          component: row.componentTitle || row.componentType || 'Activity',
+          module: row.module || '',
+          week: row.week || '',
+          weight: Number(item.weight || 0),
+          moduleStatus: row.moduleStatus,
+        });
+        map.set(key, list);
+      }
+    }
+    return map;
+  }, [data, learnerNames]);
+
+  const families = useMemo(() => ksbFamilies(ksb?.rows || []), [ksb]);
+
+  // Achieved and missing counted here rather than read off the summary, so the
+  // headline and the table can never disagree about what "missing" means.
+  const achievedCount = useMemo(
+    () => (ksb?.rows || []).filter(row => ksbStanding(row) === 'achieved').length,
+    [ksb],
   );
+  const missingCount = useMemo(
+    () => (ksb?.rows || []).filter(row => ksbStanding(row) === 'missing').length,
+    [ksb],
+  );
+  const ownKsbCount = achievedCount + missingCount;
 
   const ksbRows = useMemo(() => {
     const query = normaliseText(search);
     return (ksb?.rows || []).filter(row => {
       if (selectedType && ksbTypeCode(row) !== selectedType) return false;
-      if (hideNotStarted && !row.learnersAchievedCount) return false;
+      if (standing && ksbStanding(row) !== standing) return false;
       if (!query) return true;
       return [row.code, row.title, row.description, row.sourceLabel].some(value => normaliseText(value).includes(query));
     });
-  }, [hideNotStarted, ksb, search, selectedType]);
+  }, [ksb, search, selectedType, standing]);
 
   const learnerRows = useMemo(() => {
     const query = normaliseText(search);
@@ -997,6 +1454,24 @@ export function ScopeAchievementPanel({
     return byCode.filter(row => [row.learnerName, row.email, row.group, row.cohort]
       .some(value => normaliseText(value).includes(query)));
   }, [consumptionByLearner, otjh, search, selectedCode]);
+
+  /** The matrix's own learner columns — picked ids narrow it independently of
+   *  the search box, which stays about finding a KSB in that view. */
+  const matrixLearners = useMemo(() => {
+    const all = otjh?.learners || [];
+    if (!pickedLearnerIds.length) return all;
+    return all.filter(learner => pickedLearnerIds.includes(String(learner.learnerId)));
+  }, [otjh, pickedLearnerIds]);
+
+  // A pick surviving a cohort/group change that dropped that learner would sit
+  // invisibly in the count while the matrix shows nothing — dropped instead,
+  // the moment they leave the roster.
+  useEffect(() => {
+    if (!pickedLearnerIds.length) return;
+    const roster = otjh?.learners || [];
+    const stillThere = pickedLearnerIds.filter(id => roster.some(learner => String(learner.learnerId) === id));
+    if (stillThere.length !== pickedLearnerIds.length) setPickedLearnerIds(stillThere);
+  }, [otjh, pickedLearnerIds]);
 
   const activities = useMemo(() => {
     const query = normaliseText(search);
@@ -1014,6 +1489,12 @@ export function ScopeAchievementPanel({
 
   const outOfScopeCount = data?.consumptionSources?.outOfScopeProgress?.length || 0;
 
+  const standingFilters: Array<{ key: '' | KsbStanding; label: string; count: number }> = [
+    { key: '', label: 'All KSBs', count: ksb?.rows?.length || 0 },
+    { key: 'achieved', label: 'Achieved', count: achievedCount },
+    { key: 'missing', label: 'Missing', count: missingCount },
+  ];
+
   return (
     <section className="rounded-2xl border border-foreground-200/60 bg-background-50">
       <div className="flex flex-col gap-2 border-b border-background-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1022,7 +1503,7 @@ export function ScopeAchievementPanel({
             {title || 'Learner achievement'}
           </h3>
           <p className="mt-0.5 text-[12px] text-foreground-500">
-            {description || `What the learners assigned to this ${noun} have actually achieved against its own components. Planned figures come from curriculum; achieved figures come from learner activity.`}
+            {description || `Which KSBs the learners in this ${noun} have actually achieved, who achieved them, and which are still missing.`}
           </p>
         </div>
         <button
@@ -1042,24 +1523,20 @@ export function ScopeAchievementPanel({
 
         {!error && data && (
           <>
-            {/* The three figures this panel exists to give. Achieved against
-                planned, each naming its own denominator. */}
+            {/* Achieved against missing first, because that is the question.
+                Hours and weight are the two supporting figures, each naming its
+                own denominator. */}
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <CountStat
-                label="Learners assigned"
-                value={data.assignedLearnerCount}
-                note={
-                  data.placementBasis && data.placementBasis !== data.scope
-                    ? `Placed by enrolment into the ${data.placementBasis} that delivers this ${noun}`
-                    : 'Placed by enrolment; curriculum only reads them'
-                }
-              />
               <AchievementMeter
-                label="OTJH achieved"
-                achievedLabel={hours(otjh?.achievedTotal)}
-                plannedLabel={hours(otjh?.plannedTotal)}
-                percentage={otjh?.progressPercentage || 0}
-                note={`${hours(otjh?.plannedPerLearner)} per learner · ${hours(otjh?.authoredTotal)} authored here`}
+                label="KSBs achieved"
+                achievedLabel={String(achievedCount)}
+                plannedLabel={`${ownKsbCount} KSBs`}
+                percentage={ownKsbCount ? (achievedCount / ownKsbCount) * 100 : 0}
+                tone="emerald"
+                hint={`How many of this ${noun}'s KSBs at least one learner has evidenced. The rest are missing until somebody earns weight for them.`}
+                note={missingCount
+                  ? `${missingCount} still missing`
+                  : ownKsbCount ? 'Every KSB here has been evidenced' : 'No KSBs mapped here yet'}
               />
               <AchievementMeter
                 label="KSB weight earned"
@@ -1067,43 +1544,56 @@ export function ScopeAchievementPanel({
                 plannedLabel={weight(ksb?.expectedWeightTotal)}
                 percentage={ksb?.progressPercentage || 0}
                 tone="emerald"
+                hint={`KSB weight earned across every learner here, out of the weight expected of them. Weight is how much of a KSB this ${noun}'s components carry — not a mark.`}
                 note={`${weight(ksb?.plannedWeightTotal)} authored across this ${noun}`}
               />
+              <AchievementMeter
+                label="OTJH achieved"
+                achievedLabel={hours(otjh?.achievedTotal)}
+                plannedLabel={hours(otjh?.plannedTotal)}
+                percentage={otjh?.progressPercentage || 0}
+                hint={`Off-the-job hours credited across every learner here, out of the hours assigned to them. Not the hours authored in the ${noun} — that figure is on the second line.`}
+                note={`${hours(otjh?.plannedPerLearner)} per learner · ${hours(otjh?.authoredTotal)} authored here`}
+              />
               <CountStat
-                label="KSBs started"
-                value={`${ksb?.startedCount || 0}/${ksb?.ksbCount || 0}`}
-                note={[
-                  ksb?.missingCount ? `${ksb.missingCount} missing` : '',
-                  `${otjh?.completedActivityCount || 0} completed activities`,
-                  ksb?.unmappedCount ? `${ksb.unmappedCount} taught nowhere` : '',
-                ].filter(Boolean).join(' · ')}
+                label="Learners assigned"
+                hint="Everyone the enrolment team has placed here. Curriculum reads this roster and never edits it."
+                value={data.assignedLearnerCount}
+                note={`${otjh?.completedActivityCount || 0} completed activities`}
               />
             </div>
 
-            {/* Knowledge / Skills / Behaviours, before the 70-row table that
+            {/* Knowledge / Skills / Behaviours, before the long table that
                 cannot be read for them. */}
-            {!!ksb?.byType?.length && (
+            {!!families.length && (
               <KsbFamilyStrip
-                byType={ksb.byType}
+                families={families}
                 selectedType={selectedType}
                 onSelectType={setSelectedType}
               />
             )}
 
-            {/* Where the numbers came from, stated once. The alternative is a
-                reader assuming a scope subtotal is the learner's whole
-                programme figure, which is the mistake this replaced. */}
-            <p className="rounded-lg border border-background-200 bg-background-100/60 px-3 py-2 text-[11px] leading-relaxed text-foreground-500">
-              Achieved OTJH credits the learner&apos;s declared hours where a reflection exists
-              ({hours(otjh?.declaredTotal)}) and the component&apos;s expected hours where the activity
-              completed without one ({hours(otjh?.creditedFromExpectedTotal)}). Achieved KSB weight comes
-              from the component progress snapshot; a reflection&apos;s KSB declaration is evidence about
-              the same activity and is never added in.
-              {outOfScopeCount ? ` ${outOfScopeCount} completed activities belong to another part of this programme and are not counted here.` : ''}
-              {(data.structure?.groupCount || 0) > 1
-                ? ` This ${noun} is delivered by ${data.structure.groupCount} groups, and a module belongs to one group — so each learner is measured against their own group's modules, not against everything authored here.`
-                : ''}
-            </p>
+            {/* One line of method, and only the caveats that apply to the scope
+                being read. The five-paragraph explainer that used to sit here
+                was read as decoration and skipped. */}
+            {(outOfScopeCount > 0 || (data.structure?.groupCount || 0) > 1) && (
+              <div className="space-y-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">
+                {(data.structure?.groupCount || 0) > 1 && (
+                  <p>
+                    This {noun} is delivered by {data.structure.groupCount} groups, and a module belongs to one group —
+                    each learner is measured against their own group&apos;s modules. Pick a group above to read one
+                    class on its own.
+                  </p>
+                )}
+                {outOfScopeCount > 0 && (
+                  <p>
+                    {outOfScopeCount} completed {outOfScopeCount === 1 ? 'activity belongs' : 'activities belong'} to
+                    another part of this programme, so {outOfScopeCount === 1 ? 'it is' : 'they are'} left out of these
+                    figures and listed in Activity as <span className="font-bold">Elsewhere</span>.
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex items-center gap-1.5 rounded-xl border border-background-200 bg-background-100/60 p-1">
@@ -1121,27 +1611,75 @@ export function ScopeAchievementPanel({
                   </button>
                 ))}
               </div>
+              {tab === 'ksb' && (
+                <div className="flex items-center gap-1 rounded-xl border border-background-200 bg-background-100/60 p-1">
+                  {standingFilters.map(item => (
+                    <button
+                      key={item.key || 'all'}
+                      type="button"
+                      onClick={() => setStanding(item.key)}
+                      className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-bold transition-smooth ${
+                        standing === item.key
+                          ? item.key === 'missing'
+                            ? 'bg-amber-500 text-white'
+                            : item.key === 'achieved'
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-foreground-800 text-white'
+                          : 'text-foreground-600 hover:bg-background-50'
+                      }`}
+                    >
+                      {item.label}
+                      <span className="rounded bg-black/10 px-1 text-[10px] tabular-nums">{item.count}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
               <label className="relative min-w-[180px] flex-1">
                 <AppIcon className="ri-search-line pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[13px] text-foreground-400"></AppIcon>
                 <input
                   value={search}
                   onChange={event => setSearch(event.target.value)}
-                  placeholder={tab === 'ksb' ? 'Search KSB code or title' : tab === 'learners' ? 'Search learner' : 'Search component, module or week'}
+                  placeholder={tab === 'ksb' ? 'Search KSB code or outcome' : tab === 'learners' ? 'Search learner' : 'Search component, module or week'}
                   className="h-8 w-full rounded-lg border border-background-200 bg-background-50 pl-8 pr-2 text-[12px] text-foreground-900 outline-none transition-smooth focus:border-primary-400"
                 />
               </label>
               {tab === 'ksb' && (
+                // Named for the view it switches to, the same toggle the KSB
+                // coverage tab carries.
                 <button
                   type="button"
-                  onClick={() => setHideNotStarted(value => !value)}
+                  onClick={() => setKsbView(value => (value === 'matrix' ? 'list' : 'matrix'))}
+                  aria-pressed={ksbView === 'matrix'}
+                  title={ksbView === 'matrix'
+                    ? 'Back to the KSB register, where opening a row lists who earned it and where.'
+                    : 'The KSB by learner grid: one column per learner, for a read across the whole class at once.'}
                   className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-bold transition-smooth ${
-                    hideNotStarted
+                    ksbView === 'matrix'
+                      ? 'border-primary-300 bg-primary-600 text-white hover:bg-primary-700'
+                      : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'
+                  }`}
+                >
+                  <AppIcon className={ksbView === 'matrix' ? 'ri-list-check-3' : 'ri-grid-line'}></AppIcon>
+                  {ksbView === 'matrix' ? 'List view' : 'Matrix view'}
+                </button>
+              )}
+              {tab === 'ksb' && ksbView === 'matrix' && (
+                <button
+                  type="button"
+                  onClick={() => setLearnerPickerOpen(value => !value)}
+                  aria-pressed={learnerPickerOpen}
+                  title="Show only a learner or two you pick, instead of every one in the class."
+                  className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-bold transition-smooth ${
+                    pickedLearnerIds.length || learnerPickerOpen
                       ? 'border-primary-300 bg-primary-50 text-primary-700'
                       : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'
                   }`}
                 >
-                  <AppIcon className="ri-filter-3-line"></AppIcon>
-                  Started only
+                  <AppIcon className="ri-checkbox-multiple-line"></AppIcon>
+                  Pick learners
+                  {pickedLearnerIds.length > 0 && (
+                    <span className="rounded-full bg-primary-600 px-1.5 text-[10px] font-bold text-white">{pickedLearnerIds.length}</span>
+                  )}
                 </button>
               )}
               {selectedType && tab === 'ksb' && (
@@ -1150,11 +1688,11 @@ export function ScopeAchievementPanel({
                   onClick={() => setSelectedType('')}
                   className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary-300 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700"
                 >
-                  {ksb?.byType?.find(family => String(family.letter).toUpperCase() === selectedType)?.label || selectedType}
+                  {KSB_TYPE_META[selectedType]?.plural || selectedType}
                   <AppIcon className="ri-close-line"></AppIcon>
                 </button>
               )}
-              {selectedCode && (
+              {selectedCode && tab !== 'ksb' && (
                 <button
                   type="button"
                   onClick={() => setSelectedCode('')}
@@ -1166,35 +1704,76 @@ export function ScopeAchievementPanel({
               )}
             </div>
 
+            {tab === 'ksb' && ksbView === 'matrix' && learnerPickerOpen && (
+              <LearnerPickerPanel
+                learners={otjh?.learners || []}
+                pickedIds={pickedLearnerIds}
+                onToggle={id => setPickedLearnerIds(ids => (
+                  ids.includes(id) ? ids.filter(existing => existing !== id) : [...ids, id]
+                ))}
+                onClear={() => setPickedLearnerIds([])}
+                onClose={() => setLearnerPickerOpen(false)}
+              />
+            )}
+
+            {tab === 'ksb' && ksbView === 'matrix' && !learnerPickerOpen && pickedLearnerIds.length > 0 && (
+              <div className="mb-3 flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Showing only:</span>
+                {pickedLearnerIds.map(id => {
+                  const learner = (otjh?.learners || []).find(item => String(item.learnerId) === id);
+                  if (!learner) return null;
+                  return (
+                    <span
+                      key={id}
+                      className="inline-flex items-center gap-1 rounded-full border border-primary-200 bg-primary-50 py-0.5 pl-2.5 pr-1.5 text-[10px] font-bold text-primary-700"
+                    >
+                      {learner.learnerName || learner.email || `Learner ${id}`}
+                      <button
+                        type="button"
+                        onClick={() => setPickedLearnerIds(ids => ids.filter(existing => existing !== id))}
+                        title={`Stop showing ${learner.learnerName || 'this learner'} on their own`}
+                        className="flex h-4 w-4 items-center justify-center rounded-full hover:bg-primary-200"
+                      >
+                        <AppIcon className="ri-close-line text-[11px]"></AppIcon>
+                      </button>
+                    </span>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => setPickedLearnerIds([])}
+                  className="text-[10px] font-bold text-foreground-400 underline decoration-dotted hover:text-foreground-700"
+                >
+                  Show all {(otjh?.learners || []).length}
+                </button>
+              </div>
+            )}
+
             {tab === 'ksb' && (
               ksbRows.length ? (
-                // The matrix needs learner columns to be a matrix. With no
-                // learners placed here yet there is nothing to read across, so
-                // the aggregate table carries the same rows instead of an empty
-                // grid claiming a shortfall nobody has.
-                heatmapLearners.length ? (
-                  <KsbAchievementHeatmap
+                ksbView === 'matrix' ? (
+                  <KsbAchievementMatrix
                     rows={ksbRows}
-                    learners={heatmapLearners}
-                    selectedCode={selectedCode}
-                    onSelectCode={setSelectedCode}
-                    selectedLearner={expandedLearner}
-                    onSelectLearner={setExpandedLearner}
+                    learners={matrixLearners}
+                    consumptionByLearner={consumptionByLearner}
                   />
                 ) : (
                   <KsbAchievementTable
                     rows={ksbRows}
+                    achieversByCode={achieversByCode}
+                    creditsByCode={creditsByCode}
                     selectedCode={selectedCode}
                     onSelectCode={setSelectedCode}
+                    onPreviewCredit={onPreviewCredit}
                   />
                 )
               ) : (
                 <EntityEmptyState
-                  icon="ri-grid-line"
+                  icon="ri-list-check-3"
                   title={ksb?.ksbCount ? 'No KSB matches this filter' : 'No KSBs mapped in this scope yet'}
                   message={ksb?.ksbCount
-                    ? 'Clear the search, the KSB family or the started-only filter.'
-                    : 'Map KSBs to this scope’s components in the Module Builder and learner consumption will roll up here.'}
+                    ? 'Clear the search, the KSB family, or switch back to All KSBs.'
+                    : 'Map KSBs to this scope’s components in the Module Builder and learner achievement will roll up here.'}
                 />
               )
             )}
