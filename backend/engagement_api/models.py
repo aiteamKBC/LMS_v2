@@ -211,6 +211,119 @@ class ClubMeeting(models.Model):
         return f'{self.title} ({self.club.name})'
 
 
+class ClubMembership(models.Model):
+    """A learner's assignment to a Club. Staff assign learners — there is no
+    learner-facing join/leave action. `status='removed'` is a soft delete
+    (kept for history), matching PointsGrant/VoucherClaim never being
+    hard-deleted."""
+
+    STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('removed', 'Removed'),
+    ]
+
+    club = models.ForeignKey(Club, on_delete=models.CASCADE, related_name='memberships', db_column='club_id')
+    learner_id = models.CharField(max_length=100)
+    learner_name = models.CharField(max_length=255)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
+    assigned_by = models.CharField(max_length=255, null=True, blank=True)
+    assigned_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Engagement"."club_memberships'
+        constraints = [
+            # Partial in the DB (WHERE status = 'active') so a removed-then
+            # reassigned learner doesn't collide with their own old row.
+            models.UniqueConstraint(fields=['club', 'learner_id'], name='engagement_club_membership_active_unique'),
+        ]
+
+    def __str__(self):
+        return f'{self.learner_name} @ {self.club.name} ({self.status})'
+
+
+class ClubMeetingAttendance(models.Model):
+    """A learner's attendance mark for a single ClubMeeting, set by staff.
+
+    One row per (meeting, learner) — re-marking updates status in place
+    (current state, not an append-only log), matching ClubMembership.
+    """
+
+    STATUS_CHOICES = [
+        ('present', 'Present'),
+        ('absent', 'Absent'),
+    ]
+
+    meeting = models.ForeignKey(ClubMeeting, on_delete=models.CASCADE, related_name='attendance', db_column='meeting_id')
+    learner_id = models.CharField(max_length=100)
+    learner_name = models.CharField(max_length=255)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+    marked_by = models.CharField(max_length=255, null=True, blank=True)
+    marked_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Engagement"."club_meeting_attendance'
+        constraints = [
+            models.UniqueConstraint(fields=['meeting', 'learner_id'], name='engagement_club_meeting_attendance_unique'),
+        ]
+
+    def __str__(self):
+        return f'{self.learner_name} @ meeting {self.meeting_id} ({self.status})'
+
+
+class EventAttendance(models.Model):
+    """A learner's attendance mark for an Event, set by staff.
+
+    Distinct from EventBooking (an RSVP/intent-to-attend): this is whether
+    they actually showed up. One row per (event, learner).
+    """
+
+    STATUS_CHOICES = [
+        ('present', 'Present'),
+        ('absent', 'Absent'),
+    ]
+
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='attendance', db_column='event_id')
+    learner_id = models.CharField(max_length=100)
+    learner_name = models.CharField(max_length=255)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+    marked_by = models.CharField(max_length=255, null=True, blank=True)
+    marked_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Engagement"."event_attendance'
+        constraints = [
+            models.UniqueConstraint(fields=['event', 'learner_id'], name='engagement_event_attendance_unique'),
+        ]
+
+    def __str__(self):
+        return f'{self.learner_name} @ event {self.event_id} ({self.status})'
+
+
+class AttendanceIntervention(models.Model):
+    """A staff-logged follow-up action for a learner's attendance risk —
+    what the attendance-risk page's "Take Action" button writes to."""
+
+    learner_id = models.CharField(max_length=100)
+    learner_name = models.CharField(max_length=255)
+    action = models.TextField()
+    employer_notified = models.BooleanField(default=False)
+    intervention_date = models.DateField(null=True, blank=True)
+    created_by = models.CharField(max_length=255, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    resolved = models.BooleanField(default=False)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Engagement"."attendance_interventions'
+
+    def __str__(self):
+        return f'{self.learner_name}: {self.action[:40]}'
+
+
 class PointsRule(models.Model):
     """A configured rule for how learners earn engagement points."""
 
@@ -224,7 +337,10 @@ class PointsRule(models.Model):
     # Stable identifier other apps use to call services.grant_points() —
     # e.g. 'session_attendance' — instead of matching on the editable
     # display name. Optional: manual-only rules (a human clicks "award")
-    # don't need one.
+    # don't need one. Immutable once set — see points_rule_detail in views.py,
+    # which deliberately excludes 'key' from the editable fields; automated
+    # hooks (services.grant_points) depend on it staying stable. Unique among
+    # active rules — enforced by points_rules_key_active_uniq (see sql/).
     key = models.CharField(max_length=100, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -247,8 +363,11 @@ class PointsGrant(models.Model):
     """
 
     rule = models.ForeignKey(PointsRule, on_delete=models.CASCADE, related_name='grants', db_column='rule_id')
-    # Learner records live in another team's app (not in scope here yet), so
-    # we just store the id/name the frontend sends rather than a real FK.
+    # learner_id is the engagement-space learner identifier: it holds
+    # str(enrolment."Created_users".id), i.e. the same integer LoginAccount
+    # exposes as account.subject_id for a signed-in learner. Kept as
+    # CharField (not a real FK) because Engagement is its own unmanaged
+    # schema and learner records live in enrolment's tables.
     learner_id = models.CharField(max_length=100)
     learner_name = models.CharField(max_length=255)
     points = models.IntegerField()
@@ -258,7 +377,15 @@ class PointsGrant(models.Model):
     # services.grant_points() recognise a repeat call for the same
     # occurrence and return the existing grant instead of double-granting.
     # NULL for manual grants, which are allowed to repeat freely.
+    # Enforced by points_grants_rule_ref_uniq (partial unique index, see sql/).
     event_reference = models.CharField(max_length=255, null=True, blank=True)
+    # Provenance — who/what/why. Populated from session identity (staff
+    # display_name) or a source label; NULL on pre-existing history rows.
+    awarded_by = models.CharField(max_length=255, null=True, blank=True)
+    # 'hook' | 'manual' | 'recognition' | 'flashcard' | 'attendance' | 'evidence' | 'adjustment'
+    source_type = models.CharField(max_length=20, null=True, blank=True)
+    source_id = models.CharField(max_length=255, null=True, blank=True)
+    reason = models.CharField(max_length=255, null=True, blank=True)
 
     class Meta:
         managed = False

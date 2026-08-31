@@ -5,7 +5,8 @@ import { fetchDeckCards, flipFlashCard, type FlashCardDifficulty } from '@/api/e
 interface FlashCardGameProps {
   deckId: number;
   deckTitle?: string;
-  learnerId: string;
+  /** Display only — the server always derives the acting learner from the
+   *  signed-in session, never from a prop. */
   learnerName: string;
   /** Manager preview: read-only simulation — flips reveal locally and record
    *  nothing against the learner. Omit/false for the real learner flow. */
@@ -33,7 +34,7 @@ const DIFFICULTY: Record<FlashCardDifficulty, { label: string; hex: string }> = 
 
 const CONFETTI_COLORS = ['#541EA0', '#7C3AED', '#F59E0B', '#10B981', '#EC4899', '#38BDF8'];
 
-export function FlashCardGame({ deckId, deckTitle, learnerId, learnerName, preview = false, onClose }: FlashCardGameProps) {
+export function FlashCardGame({ deckId, deckTitle, learnerName, preview = false, onClose }: FlashCardGameProps) {
   const { warning } = useToast();
   const [phase, setPhase] = useState<Phase>('loading');
   const [errorMsg, setErrorMsg] = useState('');
@@ -97,7 +98,7 @@ export function FlashCardGame({ deckId, deckTitle, learnerId, learnerName, previ
     setBusy(true);
     setCards(prev => prev.map(c => (c.id === cardId ? { ...c, flipped: true } : c)));
     try {
-      const res = await flipFlashCard(cardId, learnerId, learnerName);
+      const res = await flipFlashCard(cardId);
       const earned = res.alreadyFlipped ? 0 : res.pointsAwarded;
       setCards(prev => prev.map(c => (c.id === cardId ? { ...c, flipped: true, answer: res.answer } : c)));
       setAwarded(a => ({ ...a, [cardId]: earned }));

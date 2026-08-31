@@ -111,7 +111,7 @@ export default function LearnerEventsPage() {
     if (!learner) return;
     setBusyEventId(event.id); setError(''); setNotice('');
     try {
-      const result = await createEventBooking({ eventId: event.id, learnerId: myLearner.id, learnerName: learner.name, learnerEmail: learner.email });
+      const result = await createEventBooking({ eventId: event.id, learnerEmail: learner.email });
       setBookings((current) => [result.booking, ...current.filter((booking) => booking.eventId !== event.id)]);
       setEvents((current) => current.map((item) => item.id === event.id ? result.event : item));
       setNotice(`Your place at “${event.title}” is booked.`);

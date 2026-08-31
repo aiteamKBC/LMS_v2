@@ -99,6 +99,7 @@ const EngagementDashboard = lazy(() => import("../pages/workspace/engagement/pag
 const EngagementReportsPage = lazy(() => import("../pages/engagement/reports/page"));
 const EventDetailPage = lazy(() => import("../pages/learner/clubs/events/detail/page"));
 const EventsPage = lazy(() => import("../pages/engagement/events/page"));
+const LearnerFlashCardsPage = lazy(() => import("../pages/learner/flash-cards/page"));
 const FinanceReportsPage = lazy(() => import("../pages/finance/reports/page"));
 const FinanceWorkspace = lazy(() => import("../pages/workspace/finance/page"));
 const FlashCardsPage = lazy(() => import("../pages/engagement/flash-cards/page"));
@@ -543,6 +544,10 @@ const routes: RouteObject[] = [
   {
     path: "/learner/rewards",
     element: <RewardsPage />,
+  },
+  {
+    path: "/learner/flash-cards",
+    element: <LearnerFlashCardsPage />,
   },
   {
     path: "/learner/clubs/badge/:badgeId",

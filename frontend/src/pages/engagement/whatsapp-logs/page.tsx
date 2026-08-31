@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { roleNavMap } from '@/mocks/navigation';
+import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 
 const engagementNav = roleNavMap.engagement;
 
@@ -34,6 +35,7 @@ const WHATSAPP_LOGS: WhatsAppLog[] = [
 
 export default function WhatsAppLogsPage() {
   const navigate = useNavigate();
+  const operator = useOperatorIdentity();
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const filtered = WHATSAPP_LOGS.filter(w => {
@@ -46,7 +48,7 @@ export default function WhatsAppLogsPage() {
     <WorkspaceShell
       role="engagement" roleLabel={engagementNav.label} navItems={engagementNav.items} workspaceLabel={engagementNav.workspaceLabel}
       pageTitle="WhatsApp Logs" pageSubtitle="View WhatsApp message logs with learners for engagement tracking"
-      userName="Tom Harrington" userRole="Engagement Manager"
+      userName={operator.name} userRole={operator.role}
     >
       <div className="p-6 space-y-6">
         <WorkspaceHeroBanner
@@ -103,8 +105,8 @@ export default function WhatsAppLogsPage() {
                     {msg.hasMedia && <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-accent-100 text-accent-700"><AppIcon className="ri-attachment-2 mr-0.5"></AppIcon>Media</span>}
                   </div>
                 </div>
-                <button className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap shrink-0">
-                  <AppIcon className="ri-reply-line mr-1"></AppIcon> Reply
+                <button className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap shrink-0">
+                  <AppIcon className="ri-reply-line"></AppIcon> Reply
                 </button>
               </div>
             ))}

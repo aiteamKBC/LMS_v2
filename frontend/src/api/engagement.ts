@@ -30,10 +30,46 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+// ---- Session cookie + CSRF -------------------------------------------------
+// Every engagement mutation now requires the kbc_session cookie (server derives
+// identity from it — see engagement_api/permissions.py) and, since the views
+// dropped @csrf_exempt, Django's own CSRF check on unsafe methods. The token
+// endpoint is shared, app-agnostic Django CSRF bootstrap (see
+// backend/coach_api/csrf.py) — reused here rather than duplicated.
+const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const CSRF_ENDPOINT = '/coach_api/csrf';
+
+let csrfTokenPromise: Promise<string> | null = null;
+
+async function requestCsrfToken(): Promise<string> {
+  const response = await fetch(CSRF_ENDPOINT, { credentials: 'include' });
+  const payload = (await response.json().catch(() => ({}))) as { csrfToken?: string };
+  if (!response.ok || !payload.csrfToken) {
+    throw new Error('Unable to initialise request verification.');
+  }
+  return payload.csrfToken;
+}
+
+function csrfToken(): Promise<string> {
+  if (!csrfTokenPromise) {
+    csrfTokenPromise = requestCsrfToken().catch(error => {
+      csrfTokenPromise = null;
+      throw error;
+    });
+  }
+  return csrfTokenPromise;
+}
+
 async function request<T>(url: string, options?: { method?: string; body?: string }): Promise<T> {
+  const method = (options?.method || 'GET').toUpperCase();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (UNSAFE_METHODS.has(method)) {
+    headers['X-CSRFToken'] = await csrfToken();
+  }
+
   let res: Response;
   try {
-    res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...options });
+    res = await fetch(url, { credentials: 'include', headers, ...options });
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
@@ -50,7 +86,9 @@ export interface RewardInput {
   description: string;
   points: number;
   category: string;
-  deliveryType: 'physical' | 'digital';
+  // No physical vouchers — every reward is fulfilled digitally to the
+  // learner's own on-file email. The server always stores 'digital'
+  // regardless of what's sent, so there is nothing to set here.
   stock: number;
   image: string;
   popular: boolean;
@@ -112,14 +150,15 @@ function toClaim(c: any): VoucherClaim {
 }
 
 export interface VoucherClaimInput {
-  learnerId: string;
-  learnerName: string;
+  // The claimant is derived from the signed-in session server-side — the
+  // backend ignores any learnerId/learnerName sent here, so there is
+  // deliberately nothing to pass for identity.
   rewardId: string;
 }
 
 export interface VoucherClaimPatch {
   status?: 'pending' | 'approved' | 'rejected' | 'fulfilled';
-  reviewedBy?: string;
+  // The reviewer is derived from the signed-in session server-side.
   deliveryDetail?: string;
   deliveryInstructions?: string | null;
 }
@@ -171,7 +210,7 @@ export interface RecognitionInput {
   type: Recognition['type'];
   title: string;
   description: string;
-  awardedBy: string;
+  // The awarder is derived from the signed-in session server-side.
   category: string;
   points: number;
   public: boolean;
@@ -279,7 +318,9 @@ export async function fetchEventBookings(learnerId: string): Promise<EventBookin
   return data.bookings.map(toEventBooking);
 }
 
-export async function createEventBooking(input: { eventId: string; learnerId: string; learnerName: string; learnerEmail?: string }): Promise<{ booking: EventBooking; event: EngagementEvent }> {
+// The booking learner is derived from the signed-in session server-side —
+// the backend ignores any learnerId/learnerName sent here.
+export async function createEventBooking(input: { eventId: string; learnerEmail?: string }): Promise<{ booking: EventBooking; event: EngagementEvent }> {
   const data = await request<{ booking: any; event: any }>(`${BASE}/event-bookings/`, { method: 'POST', body: JSON.stringify(input) });
   return { booking: toEventBooking(data.booking), event: toEvent(data.event) };
 }
@@ -409,6 +450,179 @@ export async function deleteClubMeeting(clubId: string, meetingId: string): Prom
   await request(`${BASE}/clubs/${clubId}/meetings/${meetingId}/`, { method: 'DELETE' });
 }
 
+// ---- Club membership (staff-assigned — learners never join themselves) ---
+
+export interface ClubMember {
+  id: string;
+  learnerId: string;
+  learnerName: string;
+  assignedBy: string | null;
+  assignedAt: string;
+}
+
+function toMember(m: any): ClubMember {
+  return { id: String(m.id), learnerId: m.learnerId, learnerName: m.learnerName, assignedBy: m.assignedBy ?? null, assignedAt: m.assignedAt };
+}
+
+export async function fetchClubMembers(clubId: string): Promise<ClubMember[]> {
+  const data = await request<{ members: any[] }>(`${BASE}/clubs/${clubId}/members/`);
+  return data.members.map(toMember);
+}
+
+export async function assignClubMember(clubId: string, input: { learnerId: string; learnerName: string }): Promise<ClubMember> {
+  const data = await request<{ member: any }>(`${BASE}/clubs/${clubId}/members/`, { method: 'POST', body: JSON.stringify(input) });
+  return toMember(data.member);
+}
+
+export async function removeClubMember(clubId: string, learnerId: string): Promise<void> {
+  await request(`${BASE}/clubs/${clubId}/members/${encodeURIComponent(learnerId)}/`, { method: 'DELETE' });
+}
+
+// ---- Attendance (club meetings + events) ----------------------------------
+// Distinct from EventBooking (an RSVP/intent-to-attend): this is whether a
+// learner actually showed up, marked by staff. Marking someone 'present'
+// awards engagement points (club_meeting_attended / event_attended) — once
+// per learner per occurrence, enforced server-side.
+
+export interface AttendanceRosterEntry {
+  learnerId: string;
+  learnerName: string;
+  status: 'present' | 'absent' | null;
+  markedBy: string | null;
+  markedAt: string | null;
+  // Only present on the event roster — false marks a walk-in who wasn't booked.
+  booked?: boolean;
+}
+
+export interface AttendanceMarkInput {
+  learnerId: string;
+  learnerName: string;
+  status: 'present' | 'absent';
+}
+
+function toRosterEntry(r: any): AttendanceRosterEntry {
+  return {
+    learnerId: r.learnerId,
+    learnerName: r.learnerName,
+    status: r.status ?? null,
+    markedBy: r.markedBy ?? null,
+    markedAt: r.markedAt ?? null,
+    ...(r.booked !== undefined ? { booked: r.booked } : {}),
+  };
+}
+
+export async function fetchClubMeetingAttendance(clubId: string, meetingId: string): Promise<AttendanceRosterEntry[]> {
+  const data = await request<{ roster: any[] }>(`${BASE}/clubs/${clubId}/meetings/${meetingId}/attendance/`);
+  return data.roster.map(toRosterEntry);
+}
+
+export async function saveClubMeetingAttendance(
+  clubId: string, meetingId: string, records: AttendanceMarkInput[],
+): Promise<{ meeting: EngagementClubMeeting; roster: AttendanceRosterEntry[] }> {
+  const data = await request<{ meeting: any; roster: any[] }>(`${BASE}/clubs/${clubId}/meetings/${meetingId}/attendance/`, {
+    method: 'POST',
+    body: JSON.stringify({ records }),
+  });
+  return { meeting: toMeeting(data.meeting), roster: data.roster.map(toRosterEntry) };
+}
+
+export async function fetchEventAttendance(eventId: string): Promise<AttendanceRosterEntry[]> {
+  const data = await request<{ roster: any[] }>(`${BASE}/events/${eventId}/attendance/`);
+  return data.roster.map(toRosterEntry);
+}
+
+export async function saveEventAttendance(eventId: string, records: AttendanceMarkInput[]): Promise<AttendanceRosterEntry[]> {
+  const data = await request<{ roster: any[] }>(`${BASE}/events/${eventId}/attendance/`, {
+    method: 'POST',
+    body: JSON.stringify({ records }),
+  });
+  return data.roster.map(toRosterEntry);
+}
+
+// ---- Reports ---------------------------------------------------------------
+// Live data behind the 4 kept engagement reports. The Engagement Scoreboard
+// report reuses fetchLearnerAnalytics directly (already real per-learner
+// data) rather than a dedicated endpoint.
+
+export interface PointsRewardsReport {
+  totalPointsAwarded: number;
+  pointsAwardedThisMonth: number;
+  pointsCommittedToClaims: number;
+  byCategory: { category: string; points: number; learners: number }[];
+  claimsByStatus: Record<'pending' | 'approved' | 'rejected' | 'fulfilled', number>;
+  topRewards: { name: string; claims: number; points: number }[];
+}
+
+export interface ClubActivityReport {
+  clubs: { clubId: number; name: string; location: string; members: number; meetings: number; meetingsScheduled: number; totalAttendanceMarked: number }[];
+  totalClubs: number;
+  totalMembers: number;
+  totalMeetings: number;
+  pointsAwardedForAttendance: number;
+}
+
+export interface EventAttendanceReport {
+  events: { eventId: number; title: string; date: string; type: string; booked: number; present: number; absent: number; attendanceRate: number | null }[];
+  totalEvents: number;
+  totalBooked: number;
+  totalPresent: number;
+  pointsAwardedForAttendance: number;
+}
+
+export async function fetchReportData(reportId: 'points-rewards'): Promise<PointsRewardsReport>;
+export async function fetchReportData(reportId: 'club-activity'): Promise<ClubActivityReport>;
+export async function fetchReportData(reportId: 'event-attendance'): Promise<EventAttendanceReport>;
+export async function fetchReportData(reportId: string): Promise<any> {
+  return request(`${BASE}/reports/${reportId}/`);
+}
+
+// ---- Attendance interventions ---------------------------------------------
+
+export interface AttendanceInterventionRecord {
+  id: string;
+  learnerId: string;
+  learnerName: string;
+  action: string;
+  employerNotified: boolean;
+  interventionDate: string | null;
+  createdBy: string | null;
+  createdAt: string;
+  resolved: boolean;
+  resolvedAt: string | null;
+}
+
+export interface AttendanceInterventionInput {
+  learnerId: string;
+  learnerName: string;
+  action: string;
+  employerNotified?: boolean;
+  interventionDate?: string | null;
+}
+
+function toIntervention(i: any): AttendanceInterventionRecord {
+  return {
+    id: String(i.id), learnerId: i.learnerId, learnerName: i.learnerName, action: i.action,
+    employerNotified: i.employerNotified, interventionDate: i.interventionDate ?? null,
+    createdBy: i.createdBy ?? null, createdAt: i.createdAt, resolved: i.resolved, resolvedAt: i.resolvedAt ?? null,
+  };
+}
+
+export async function fetchAttendanceInterventions(learnerId?: string): Promise<AttendanceInterventionRecord[]> {
+  const query = learnerId ? `?learnerId=${encodeURIComponent(learnerId)}` : '';
+  const data = await request<{ interventions: any[] }>(`${BASE}/attendance-interventions/${query}`);
+  return data.interventions.map(toIntervention);
+}
+
+export async function createAttendanceIntervention(input: AttendanceInterventionInput): Promise<AttendanceInterventionRecord> {
+  const data = await request<{ intervention: any }>(`${BASE}/attendance-interventions/`, { method: 'POST', body: JSON.stringify(input) });
+  return toIntervention(data.intervention);
+}
+
+export async function resolveAttendanceIntervention(id: string): Promise<AttendanceInterventionRecord> {
+  const data = await request<{ intervention: any }>(`${BASE}/attendance-interventions/${id}/`, { method: 'PATCH', body: JSON.stringify({ resolved: true }) });
+  return toIntervention(data.intervention);
+}
+
 // ---- Points rules + grants -----------------------------------------------
 
 export interface EngagementPointsRule {
@@ -437,6 +651,19 @@ export interface EngagementPointsGrant {
   learner: string;
   points: number;
   awardedAt: string;
+  awardedBy: string | null;
+  sourceType: string | null;
+  reason: string | null;
+}
+
+// The signed-in learner's own authoritative balance — the single source every
+// balance display should read from, rather than re-deriving it from grants
+// and claims client-side.
+export interface EngagementPointsSummary {
+  learnerId: string;
+  earned: number;
+  committed: number;
+  balance: number;
 }
 
 export interface PointsRuleInput {
@@ -464,13 +691,108 @@ function toRule(r: any): EngagementPointsRule {
 }
 
 function toGrant(g: any): EngagementPointsGrant {
-  return { id: String(g.id), ruleId: String(g.ruleId), rule: g.rule ?? 'Points award', category: g.category ?? '', learnerId: g.learnerId, learner: g.learner, points: g.points, awardedAt: formatDate(g.awardedAt) };
+  return {
+    id: String(g.id), ruleId: String(g.ruleId), rule: g.rule ?? 'Points award', category: g.category ?? '',
+    learnerId: g.learnerId, learner: g.learner, points: g.points, awardedAt: formatDate(g.awardedAt),
+    awardedBy: g.awardedBy ?? null, sourceType: g.sourceType ?? null, reason: g.reason ?? null,
+  };
 }
 
 export async function fetchPointsGrants(learnerId?: string): Promise<EngagementPointsGrant[]> {
   const query = learnerId ? `?learnerId=${encodeURIComponent(learnerId)}` : '';
   const data = await request<{ grants: any[] }>(`${BASE}/points-grants/${query}`);
   return data.grants.map(toGrant);
+}
+
+// The signed-in learner's own balance — reads the single authoritative
+// source (engagement_api.services.points_summary) rather than re-deriving
+// earned-minus-committed client-side from separately fetched grants/claims.
+export async function fetchMyPoints(): Promise<EngagementPointsSummary> {
+  return request<EngagementPointsSummary>(`${BASE}/points/me/`);
+}
+
+// ---- Leaderboard -----------------------------------------------------------
+
+export interface LeaderboardEntry {
+  rank: number;
+  learnerId: string;
+  learner: string;
+  points: number;
+  cohort: string | null;
+}
+
+export interface LeaderboardResult {
+  scope: 'monthly' | 'all-time';
+  cohort: string | null;
+  entries: LeaderboardEntry[];
+}
+
+// Real earned-points ranking — spend never affects rank. `cohort` narrows to
+// a single real cohort (e.g. the viewer's own); omit for the full ranking.
+export async function fetchLeaderboard(scope: 'monthly' | 'all-time', cohort?: string): Promise<LeaderboardResult> {
+  const params = new URLSearchParams({ scope });
+  if (cohort) params.set('cohort', cohort);
+  return request<LeaderboardResult>(`${BASE}/leaderboard/?${params.toString()}`);
+}
+
+// Staff-only aggregate counts for the Engagement Command Centre overview —
+// live COUNT/SUM over grants, voucher claims and event bookings.
+export interface EngagementOverviewStats {
+  pointsAwarded: number;
+  pointsAwardedThisMonth: number;
+  vouchersClaimed: number;
+  vouchersClaimedThisMonth: number;
+  activeLearners: number;
+  eventSeatsBooked: number;
+}
+
+export async function fetchOverviewStats(): Promise<EngagementOverviewStats> {
+  return request<EngagementOverviewStats>(`${BASE}/stats/overview/`);
+}
+
+// ---- Learner analytics (real — see /engagement_api/learner-analytics/) ---
+// Every field here is computed from real backend data (attendance, KSB,
+// OTJH, quiz scores, evidence, points, club assignment, message response) —
+// not a mock roster. Null means "no data yet for this learner", not zero.
+export interface LearnerAnalyticsRow {
+  id: string;
+  name: string;
+  programme: string;
+  cohort: string;
+  coach: string | null;
+  engagementScore: number | null;
+  riskLevel: 'red' | 'amber' | 'green' | null;
+  overallStatus: string | null;
+  flags: string[];
+  attendanceRate: number | null;
+  sessionsAttended: number | null;
+  totalSessions: number | null;
+  sessionsMissed: number | null;
+  consecutiveMissed: number | null;
+  lastAttendance: string | null;
+  otjhHours: number;
+  otjhTarget: number;
+  ksbProgress: number | null;
+  evidenceSubmitted: number;
+  evidenceTarget: number;
+  quizAverage: number | null;
+  messageResponse: number | null;
+  clubActivity: number;
+  lastActive: string | null;
+  points: number;
+  pointsThisMonth: number;
+  attendanceAction: string | null;
+  employerNotified: boolean;
+  interventionDate: string | null;
+}
+
+export async function fetchLearnerAnalytics(programme?: string, cohort?: string): Promise<LearnerAnalyticsRow[]> {
+  const params = new URLSearchParams();
+  if (programme) params.set('programme', programme);
+  if (cohort) params.set('cohort', cohort);
+  const query = params.toString();
+  const data = await request<{ learners: LearnerAnalyticsRow[] }>(`${BASE}/learner-analytics/${query ? `?${query}` : ''}`);
+  return data.learners;
 }
 
 export async function fetchPointsRules(): Promise<EngagementPointsRule[]> {
@@ -648,12 +970,14 @@ export async function generateFlashCards(input: GenerateFlashCardsInput | FormDa
   const isForm = typeof FormData !== 'undefined' && input instanceof FormData;
   let res: Response;
   try {
+    const token = await csrfToken();
     res = await fetch(`${BASE}/flash-cards/ai/generate/`, {
       method: 'POST',
+      credentials: 'include',
       // For FormData, let the browser set the multipart Content-Type + boundary.
       ...(isForm
-        ? { body: input }
-        : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }),
+        ? { headers: { 'X-CSRFToken': token }, body: input }
+        : { headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token }, body: JSON.stringify(input) }),
     });
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
@@ -664,11 +988,12 @@ export async function generateFlashCards(input: GenerateFlashCardsInput | FormDa
   return data as GenerateFlashCardsResult;
 }
 
-// -- Learner (used now by the manager "preview deck"; the real learner flow is
-//    a later round). Awards points once per (card, learner). --
-export async function flipFlashCard(cardId: number, learnerId: string, learnerName: string): Promise<FlipResult> {
+// -- Learner: flip a card in the real (non-preview) game. The learner is
+//    always derived from the signed-in session server-side. Awards points
+//    once per (card, learner). --
+export async function flipFlashCard(cardId: number): Promise<FlipResult> {
   return request<FlipResult>(`${BASE}/flash-cards/${cardId}/flip/`, {
     method: 'POST',
-    body: JSON.stringify({ learnerId, learnerName }),
+    body: JSON.stringify({}),
   });
 }

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { useToast } from '@/hooks/useToast';
+import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import { type RewardItem, type VoucherClaim } from '@/mocks/engagement-data';
 import { fetchRewards, fetchVoucherClaims, createReward, updateReward } from '@/api/engagement';
@@ -42,7 +43,7 @@ function RewardImage({ src, alt }: { src: string; alt: string }) {
 // image upload flow yet, so new items share a generic catalogue image.
 const DEFAULT_REWARD_IMAGE = 'https://readdy.ai/api/search-image?query=generic%20gift%20reward%20box%20modern%20minimalist%20design&width=200&height=200&seq=reward-default&orientation=squarish';
 
-const blankRewardForm: RewardFormData = { name: '', description: '', points: 100, category: '', deliveryType: 'digital', stock: 10, image: '', popular: false, active: true };
+const blankRewardForm: RewardFormData = { name: '', description: '', points: 100, category: '', stock: 10, image: '', popular: false, active: true };
 
 type SortKey = 'points' | 'stock' | 'claimed' | 'name';
 
@@ -51,7 +52,6 @@ interface RewardFormData {
   description: string;
   points: number;
   category: string;
-  deliveryType: 'physical' | 'digital';
   stock: number;
   image: string;
   popular: boolean;
@@ -121,24 +121,9 @@ function RewardForm({
           {errors.stock && <p className="text-[10px] text-red-500 mt-1">{errors.stock}</p>}
         </div>
       </div>
-      <div>
-        <label className="block text-[11px] font-semibold text-foreground-700 mb-1.5">Delivery Type <span className="text-red-500">*</span></label>
-        <div className="grid grid-cols-2 gap-2">
-          <button type="button" onClick={() => field('deliveryType', 'digital')} className={`flex items-start gap-2 p-3 rounded-lg border text-left transition-smooth cursor-pointer ${form.deliveryType === 'digital' ? 'border-primary-400 bg-primary-50' : 'border-foreground-200/60 bg-background-50 hover:border-foreground-300'}`}>
-            <AppIcon className={`ri-mail-send-line text-base mt-0.5 ${form.deliveryType === 'digital' ? 'text-primary-600' : 'text-foreground-400'}`}></AppIcon>
-            <span>
-              <span className={`block text-[12px] font-semibold ${form.deliveryType === 'digital' ? 'text-primary-700' : 'text-foreground-700'}`}>Digital</span>
-              <span className="block text-[10px] text-foreground-400">Sent by email automatically</span>
-            </span>
-          </button>
-          <button type="button" onClick={() => field('deliveryType', 'physical')} className={`flex items-start gap-2 p-3 rounded-lg border text-left transition-smooth cursor-pointer ${form.deliveryType === 'physical' ? 'border-primary-400 bg-primary-50' : 'border-foreground-200/60 bg-background-50 hover:border-foreground-300'}`}>
-            <AppIcon className={`ri-box-3-line text-base mt-0.5 ${form.deliveryType === 'physical' ? 'text-primary-600' : 'text-foreground-400'}`}></AppIcon>
-            <span>
-              <span className={`block text-[12px] font-semibold ${form.deliveryType === 'physical' ? 'text-primary-700' : 'text-foreground-700'}`}>Physical</span>
-              <span className="block text-[10px] text-foreground-400">Fulfilled to the learner's address</span>
-            </span>
-          </button>
-        </div>
+      <div className="flex items-center gap-2 rounded-lg border border-foreground-200/60 bg-background-100/40 p-3">
+        <AppIcon className="ri-mail-send-line text-base text-primary-600"></AppIcon>
+        <span className="text-[11px] text-foreground-600"><span className="font-semibold text-foreground-700">Digital delivery</span> — every reward is sent by email to the learner's own on-file address. There is no physical fulfilment option.</span>
       </div>
       <div>
         <label className="block text-[11px] font-semibold text-foreground-700 mb-1.5">Image URL</label>
@@ -162,6 +147,7 @@ function RewardForm({
 export default function RewardsShopPage() {
   const navigate = useNavigate();
   const { success, warning } = useToast();
+  const operator = useOperatorIdentity();
   const [rewards, setRewards] = useState<RewardItem[]>([]);
   // Claims are read-only here — used only to populate the per-reward Stats
   // modal's "Recent Claims" list. The Voucher Claims page owns the workflow.
@@ -245,7 +231,7 @@ export default function RewardsShopPage() {
     try {
       const created = await createReward({
         name, description: addForm.description.trim(), points,
-        category, deliveryType: addForm.deliveryType, stock: addForm.stock,
+        category, stock: addForm.stock,
         image: addForm.image.trim() || DEFAULT_REWARD_IMAGE, popular: addForm.popular, active: addForm.active,
       });
       setRewards(prev => [created, ...prev]);
@@ -257,7 +243,7 @@ export default function RewardsShopPage() {
   }
 
   function openEditModal(reward: RewardItem) {
-    setEditForm({ name: reward.name, description: reward.description, points: reward.points, category: reward.category, deliveryType: reward.deliveryType, stock: reward.stock, image: reward.image === DEFAULT_REWARD_IMAGE ? '' : reward.image, popular: reward.popular, active: reward.active });
+    setEditForm({ name: reward.name, description: reward.description, points: reward.points, category: reward.category, stock: reward.stock, image: reward.image === DEFAULT_REWARD_IMAGE ? '' : reward.image, popular: reward.popular, active: reward.active });
     setEditErrors({});
     setEditRewardId(reward.id);
   }
@@ -269,7 +255,7 @@ export default function RewardsShopPage() {
     try {
       const updated = await updateReward(editRewardId, {
         name: editForm.name.trim(), description: editForm.description.trim(), points: editForm.points,
-        category: editForm.category.trim(), deliveryType: editForm.deliveryType, stock: editForm.stock,
+        category: editForm.category.trim(), stock: editForm.stock,
         image: editForm.image.trim() || DEFAULT_REWARD_IMAGE, popular: editForm.popular, active: editForm.active,
       });
       setRewards(prev => prev.map(r => r.id === editRewardId ? updated : r));
@@ -298,7 +284,7 @@ export default function RewardsShopPage() {
     <WorkspaceShell
       role="engagement" roleLabel={engagementNav.label} navItems={engagementNav.items} workspaceLabel={engagementNav.workspaceLabel}
       pageTitle="Rewards Shop" pageSubtitle="Manage the learner rewards catalogue with vouchers and merchandise"
-      userName="Tom Harrington" userRole="Engagement Manager"
+      userName={operator.name} userRole={operator.role}
     >
       <div className="p-6 space-y-6">
         <WorkspaceHeroBanner
