@@ -56,7 +56,7 @@ from learner_api.models import (
     learner_ksbs_relation_exists,
 )
 from learner_api.constants import ACCESS_COACH, ACCESS_SUPER_ADMIN
-from learner_api.active_users import dedupe_otjh_progress_records, hydrate_source_training_plan, refresh_learner_ksb_snapshot
+from learner_api.active_users import components_target_to_date, current_week_label, dedupe_otjh_progress_records, hydrate_source_training_plan, refresh_learner_ksb_snapshot
 from learner_api.calendar_connections import (
     booking_conflicts as personal_calendar_booking_conflicts,
 )
@@ -1236,7 +1236,13 @@ def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
             "start_date",
             "end_date",
             "gateway_review_date",
+            "learner_type",
+            "enrolment_id",
         )
+        # For current_week_label(): a few extra batched queries (one per
+        # related table, not one per learner) rather than a lazy per-row
+        # fetch the first time each learner's .training_plan is touched.
+        .prefetch_related("plan_modules__weeks__components")
         .order_by("full_name", "id")
     )
     return [row for row in queryset if clean_text(row.username)]
@@ -1262,7 +1268,11 @@ def fetch_attendance_caseload_rows(owner_email: str) -> list[LearnerProfile]:
             "lifecycle_status",
             "coach_name",
             "coach_email",
+            "learner_type",
+            "enrolment_id",
+            "start_date",
         )
+        .prefetch_related("plan_modules__weeks__components")
         .order_by("full_name", "id")
     )
     rows: list[LearnerProfile] = []
@@ -1543,11 +1553,28 @@ def serialize_caseload_learner(
     cohort_name = clean_text(row.cohort) or "--"
     group_name = clean_text(row.group) or "--"
     cohort_id = re.sub(r"[^a-z0-9]+", "-", cohort_name.lower()).strip("-") or "unassigned"
+    # Same 'commercial'/'apprenticeship' discriminator learner_detail.py keys its
+    # lookup on (see learner_calendar_source_identity above) — surfaced here so
+    # the coach case file can request the learner's real detail record directly
+    # instead of racing both kinds and silently rendering whichever answers first.
+    learner_type = "commercial" if clean_text(getattr(row, "learner_type", "")).casefold() == "commercial" else "apprenticeship"
+    # row.id is this LearnerProfile's own pk -- a different, disjoint sequence
+    # from enrolment."Created_users".id (see LearnerProfile.enrolment_id's
+    # docstring). /learner_api/learner-detail/<kind>/<pk>/ queries the latter
+    # table directly, so callers that only had row.id would 404 against it.
+    enrolment_id = str(row.enrolment_id) if getattr(row, "enrolment_id", None) else None
+    current_week = current_week_label(row)
+    components_target = components_target_to_date(row)
 
     return {
         "id": str(row.id),
         "name": clean_text(row.username) or "Unknown learner",
         "initials": build_initials(row.username),
+        "learnerType": learner_type,
+        "enrolmentId": enrolment_id,
+        "currentModule": current_week["module"] if current_week else None,
+        "currentWeek": current_week["week"] if current_week else None,
+        "componentsTargetToDate": components_target,
         "employer": "--",
         "cohortId": cohort_id,
         "cohortName": cohort_name,
@@ -1649,11 +1676,20 @@ def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) 
     group_name = clean_text(getattr(row, "group", None)) or "--"
     programme_name = clean_text(getattr(row, "programme", None)) or cohort_name
     cohort_id = re.sub(r"[^a-z0-9]+", "-", cohort_name.lower()).strip("-") or "unassigned"
+    learner_type = "commercial" if clean_text(getattr(row, "learner_type", "")).casefold() == "commercial" else "apprenticeship"
+    enrolment_id = str(row.enrolment_id) if getattr(row, "enrolment_id", None) else None
+    current_week = current_week_label(row)
+    components_target = components_target_to_date(row)
 
     return {
         "id": str(row.id),
         "name": clean_text(row.username) or "Unknown learner",
         "initials": build_initials(row.username),
+        "learnerType": learner_type,
+        "enrolmentId": enrolment_id,
+        "currentModule": current_week["module"] if current_week else None,
+        "currentWeek": current_week["week"] if current_week else None,
+        "componentsTargetToDate": components_target,
         "employer": "--",
         "cohortId": cohort_id,
         "cohortName": cohort_name,
@@ -1718,11 +1754,20 @@ def serialize_attendance_source_learner(row: LearnerProfile) -> dict:
     cohort_name = clean_text(getattr(row, "cohort", None)) or "--"
     group_name = clean_text(getattr(row, "group", None)) or "--"
     program_status = get_lms_row_program_status(row)
+    learner_type = "commercial" if clean_text(getattr(row, "learner_type", "")).casefold() == "commercial" else "apprenticeship"
+    enrolment_id = str(row.enrolment_id) if getattr(row, "enrolment_id", None) else None
+    current_week = current_week_label(row)
+    components_target = components_target_to_date(row)
 
     return {
         "id": str(row.id),
         "name": clean_text(row.username) or "Unknown learner",
         "initials": build_initials(row.username),
+        "learnerType": learner_type,
+        "enrolmentId": enrolment_id,
+        "currentModule": current_week["module"] if current_week else None,
+        "currentWeek": current_week["week"] if current_week else None,
+        "componentsTargetToDate": components_target,
         "email": clean_text(row.email) or None,
         "employer": "--",
         "programmeName": programme_name,
@@ -2588,6 +2633,11 @@ def build_monthly_activity_learner(
         "id": learner["id"],
         "name": learner["name"],
         "initials": learner["initials"],
+        "learnerType": learner.get("learnerType"),
+        "enrolmentId": learner.get("enrolmentId"),
+        "currentModule": learner.get("currentModule"),
+        "currentWeek": learner.get("currentWeek"),
+        "componentsTargetToDate": learner.get("componentsTargetToDate"),
         "email": learner.get("email"),
         "cohortName": learner.get("cohortName") or "--",
         "group": learner.get("group") or "--",
@@ -5950,6 +6000,11 @@ def serialize_attendance_learner(
         "id": learner["id"],
         "learner": learner["name"],
         "initials": learner["initials"],
+        "learnerType": learner.get("learnerType"),
+        "enrolmentId": learner.get("enrolmentId"),
+        "currentModule": learner.get("currentModule"),
+        "currentWeek": learner.get("currentWeek"),
+        "componentsTargetToDate": learner.get("componentsTargetToDate"),
         "email": learner.get("email"),
         "programme": learner.get("programmeName") or learner["cohortName"],
         "cohort": learner["cohortName"],

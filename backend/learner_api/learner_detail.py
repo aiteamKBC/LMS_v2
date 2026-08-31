@@ -24,7 +24,7 @@ from django.db.models import prefetch_related_objects
 from django.http import JsonResponse
 from django.utils import timezone
 
-from .active_users import completed_hours_from_progress, fmt_hours, hydrate_source_training_plan
+from .active_users import completed_hours_from_progress, fmt_hours, hydrate_source_training_plan, target_by_elapsed_time, week_by_elapsed_time
 from .identity import learner_profile_for_source
 from .learner_progression import advance_learner
 from .mappers import _s, to_learner_detail
@@ -739,6 +739,43 @@ def _week_target_rows(detail):
     ]
 
 
+def _week_component_count_rows(detail):
+    """Same shape as _week_target_rows, but counting components per week
+    instead of summing their expected_otjh."""
+    weeks = detail.get("week") or []
+    if not weeks:
+        return []
+
+    counts_by_week = {}
+    for component in detail.get("components", []):
+        key = (
+            component.get("module"),
+            component.get("week"),
+            component.get("moduleId"),
+            component.get("weekId"),
+        )
+        counts_by_week[key] = counts_by_week.get(key, 0) + 1
+
+    return [
+        {
+            "module": week.get("module"),
+            "week": week.get("week"),
+            "moduleId": week.get("moduleId"),
+            "weekId": week.get("weekId"),
+            "components": counts_by_week.get(
+                (
+                    week.get("module"),
+                    week.get("week"),
+                    week.get("moduleId"),
+                    week.get("weekId"),
+                ),
+                0,
+            ),
+        }
+        for week in weeks
+    ]
+
+
 def _sequential_week_target(week_rows, learner_start_date=None, today=None):
     if not week_rows:
         return 0.0
@@ -835,10 +872,23 @@ def _live_otjh_snapshot(detail, learner_profile=None):
         else "0"
     )
 
-    target_num = _cumulative_week_target(
-        detail,
-        learner_start_date=getattr(learner_profile, "start_date", None),
-    )
+    learner_start_date = getattr(learner_profile, "start_date", None)
+    target_num = _cumulative_week_target(detail, learner_start_date=learner_start_date)
+    # Same elapsed-weeks approximation as the OTJH target's own sequential
+    # fallback -- reused here (active_users.week_by_elapsed_time) so the coach
+    # caseload card/table and this page never disagree on what "current week"
+    # means for the same learner.
+    flat_weeks = [
+        (row.get("module"), row.get("week"))
+        for row in _week_target_rows(detail)
+        if row.get("week")
+    ]
+    current_week = week_by_elapsed_time(flat_weeks, learner_start_date)
+    # Same elapsed-weeks pacing, applied to component counts instead of hours,
+    # so "Components: 4/7" reads the way "OTJH: 12/20 hrs" does -- against
+    # what's expected by now, not the whole plan.
+    component_counts = [row.get("components", 0) for row in _week_component_count_rows(detail)]
+    components_target = target_by_elapsed_time(component_counts, learner_start_date)
     completed_num = float(completed) if completed else 0.0
     progress_hours_num = round(completed_num - target_num, 2)
     variance = round((completed_num - target_num) / target_num, 2) if target_num else None
@@ -862,6 +912,9 @@ def _live_otjh_snapshot(detail, learner_profile=None):
         "progressHours": progress_hours_str,
         "progressVariance": variance_str,
         "otjhStatus": otjh_status,
+        "currentModule": current_week[0] if current_week else None,
+        "currentWeek": current_week[1] if current_week else None,
+        "componentsTargetToDate": components_target,
     }
 
 
@@ -872,6 +925,9 @@ def _apply_live_otjh_snapshot(detail, snapshot):
     detail["progressHours"] = snapshot["progressHours"]
     detail["progressVariance"] = snapshot["progressVariance"]
     detail["otjhStatus"] = snapshot["otjhStatus"]
+    detail["currentModule"] = snapshot["currentModule"]
+    detail["currentWeek"] = snapshot["currentWeek"]
+    detail["componentsTargetToDate"] = snapshot["componentsTargetToDate"]
     return detail
 
 

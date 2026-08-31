@@ -66,6 +66,15 @@ interface CoachLearner {
   id: string;
   name: string;
   initials: string;
+  /** 'commercial' | 'apprenticeship' — which learner_detail table this id resolves against. */
+  learnerType?: 'commercial' | 'apprenticeship';
+  /** enrolment."Created_users".id -- a different, disjoint pk space from `id`
+   *  above. /learner-detail/ needs this one, not the LearnerProfile id. */
+  enrolmentId?: string | null;
+  /** Which module/week otjhTarget's cumulative-to-date figure currently falls in. */
+  currentModule?: string | null;
+  currentWeek?: string | null;
+  componentsTargetToDate?: number | null;
   programme: string;
   cohortName?: string | null;
   group: string;
@@ -243,6 +252,11 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     id: id === EMPTY_VALUE ? `learner-${index}` : id,
     name: fallbackName,
     initials: initials === EMPTY_VALUE ? fallbackName.slice(0, 2).toUpperCase() : initials,
+    learnerType: learner.learnerType,
+    enrolmentId: learner.enrolmentId,
+    currentModule: learner.currentModule,
+    currentWeek: learner.currentWeek,
+    componentsTargetToDate: learner.componentsTargetToDate,
     programme,
     cohortName: cohortName === EMPTY_VALUE ? null : cohortName,
     group: displayValue(learner.group),
@@ -1396,8 +1410,8 @@ export default function CoachDashboard() {
             ═══════════════════════════════════════════════════ */}
         <SectionReveal delay={70}>
           <div className="space-y-3">
-            <SectionHeader icon="ri-pulse-line" title="Caseload health" />
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <SectionHeader icon="ri-heart-pulse-line" title="Caseload health" />
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
               <FilterMetricCard
                 label="Caseload"
                 value={totalCaseload}
@@ -1408,39 +1422,47 @@ export default function CoachDashboard() {
                 onFilter={() => setSelectedKpi('caseload')}
               />
               <FilterMetricCard
-                label="On track"
-                value={onTrackCount}
-                note={OTJH_STATUS_META['on-track'].sub}
+                label="Active"
+                value={activeLearners.length}
+                note="Currently active"
                 tone="positive"
-                icon="ri-checkbox-circle-line"
-                active={kpiFilter === 'on-track'}
-                onFilter={() => setSelectedKpi('on-track')}
+                icon="ri-user-follow-line"
+                active={kpiFilter === 'active'}
+                onFilter={() => setSelectedKpi('active')}
               />
               <FilterMetricCard
-                label="At risk"
-                value={atRiskCount}
-                note={OTJH_STATUS_META['at-risk'].sub}
-                tone="critical"
-                icon="ri-alarm-warning-line"
-                active={kpiFilter === 'at-risk'}
-                onFilter={() => setSelectedKpi('at-risk')}
-              />
-              <FilterMetricCard
-                label="Need attention"
-                value={needAttentionCount}
-                note={OTJH_STATUS_META['need-attention'].sub}
+                label="On break"
+                value={onBreakLearners.length}
+                note="Programme paused"
                 tone="caution"
-                icon="ri-error-warning-line"
-                active={kpiFilter === 'need-attention'}
-                onFilter={() => setSelectedKpi('need-attention')}
+                icon="ri-pause-circle-line"
+                active={kpiFilter === 'on-break'}
+                onFilter={() => setSelectedKpi('on-break')}
+              />
+              <FilterMetricCard
+                label="Gateway"
+                value={gatewayLearners.length}
+                note="At gateway stage"
+                tone="upcoming"
+                icon="ri-door-open-line"
+                active={kpiFilter === 'gateway'}
+                onFilter={() => setSelectedKpi('gateway')}
+              />
+              <FilterMetricCard
+                label="EPA"
+                value={epaLearners.length}
+                note="At EPA stage"
+                tone="info"
+                icon="ri-medal-line"
+                active={kpiFilter === 'epa'}
+                onFilter={() => setSelectedKpi('epa')}
               />
             </div>
-            <MetricRow className="sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4">
-              <FilterCompactMetric label="Active" value={activeLearners.length} note="Currently active" tone="positive" active={kpiFilter === 'active'} onFilter={() => setSelectedKpi('active')} />
-              <FilterCompactMetric label="On break" value={onBreakLearners.length} note="Programme paused" tone="caution" active={kpiFilter === 'on-break'} onFilter={() => setSelectedKpi('on-break')} />
-              <FilterCompactMetric label="Gateway" value={gatewayLearners.length} note="At gateway stage" tone="upcoming" active={kpiFilter === 'gateway'} onFilter={() => setSelectedKpi('gateway')} />
-              <FilterCompactMetric label="EPA" value={epaLearners.length} note="At EPA stage" tone="info" active={kpiFilter === 'epa'} onFilter={() => setSelectedKpi('epa')} />
-            </MetricRow>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <FilterCompactMetric label="On track" value={onTrackCount} note={OTJH_STATUS_META['on-track'].sub} tone="positive" active={kpiFilter === 'on-track'} onFilter={() => setSelectedKpi('on-track')} />
+              <FilterCompactMetric label="Need attention" value={needAttentionCount} note={OTJH_STATUS_META['need-attention'].sub} tone="caution" active={kpiFilter === 'need-attention'} onFilter={() => setSelectedKpi('need-attention')} />
+              <FilterCompactMetric label="At risk" value={atRiskCount} note={OTJH_STATUS_META['at-risk'].sub} tone="critical" active={kpiFilter === 'at-risk'} onFilter={() => setSelectedKpi('at-risk')} />
+            </div>
           </div>
         </SectionReveal>
 
@@ -1491,7 +1513,12 @@ export default function CoachDashboard() {
                     learner={entry.learner}
                     priority={entry.priority}
                     onOpen={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(entry.learner.id)}`, {
-                      state: { learnerId: entry.learner.id, learnerName: entry.learner.name },
+                      state: {
+                        learnerId: entry.learner.id,
+                        learnerName: entry.learner.name,
+                        ...(entry.learner.learnerType ? { kind: entry.learner.learnerType } : {}),
+                        ...(entry.learner.enrolmentId ? { enrolmentId: entry.learner.enrolmentId } : {}),
+                      },
                     })}
                   />
                 ))}
@@ -1634,8 +1661,8 @@ function FilterMetricCard({ label, value, note, tone, icon, active, onFilter }: 
         title={`Open ${label} details`}
         className="absolute inset-0 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
       />
-      <span className="pointer-events-none absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-lg text-foreground-300">
-        <AppIcon className="ri-arrow-right-up-line text-[13px]"></AppIcon>
+      <span className="pointer-events-none absolute right-2.5 top-2.5 z-10 flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-100 bg-background-50/90 text-foreground-400 shadow-sm transition-colors">
+        <AppIcon className="ri-arrow-right-up-line text-[14px]"></AppIcon>
       </span>
     </div>
   );
@@ -1655,10 +1682,10 @@ function FilterCompactMetric({ label, value, note, tone, active, onFilter }: {
       onClick={onFilter}
       aria-pressed={active}
       className={cn(
-        'rounded-lg border p-2 text-left transition-all',
+        'rounded-lg border bg-background-50 p-3 text-left shadow-sm transition-all hover:shadow-md',
         active
           ? 'border-primary-300 bg-primary-50/70 shadow-sm ring-2 ring-primary-300/60'
-          : 'border-transparent hover:bg-background-100/70',
+          : 'border-foreground-100 hover:border-primary-100 hover:bg-background-50',
       )}
     >
       <CompactMetric label={label} value={value} note={note} tone={tone} />
@@ -1838,7 +1865,12 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
 
   const openLearnerProfile = (learner: CoachLearner) => {
     navigate(`/coach/learner-case-file?id=${encodeURIComponent(learner.id)}`, {
-      state: { learnerId: learner.id, learnerName: learner.name },
+      state: {
+        learnerId: learner.id,
+        learnerName: learner.name,
+        ...(learner.learnerType ? { kind: learner.learnerType } : {}),
+        ...(learner.enrolmentId ? { enrolmentId: learner.enrolmentId } : {}),
+      },
     });
     onClose();
   };
@@ -1913,11 +1945,21 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
 
           {type === 'evidence' && (
             <div className="space-y-3">
-              {evidenceLearners.map(learner => (
+              {evidenceLearners.map(learner => {
+                // The marking queue has no learnerType of its own -- cross-reference the
+                // caseload list already loaded on this page instead of guessing.
+                const caseloadMatch = learners.find(candidate => candidate.id === learner.learnerId);
+                return (
                 <Link
                   key={learner.id}
                   to={`/coach/learner-case-file?id=${encodeURIComponent(learner.learnerId)}&tab=evidence`}
-                  state={{ learnerId: learner.learnerId, learnerName: learner.learner, tab: 'evidence' }}
+                  state={{
+                    learnerId: learner.learnerId,
+                    learnerName: learner.learner,
+                    tab: 'evidence',
+                    ...(caseloadMatch?.learnerType ? { kind: caseloadMatch.learnerType } : {}),
+                    ...(caseloadMatch?.enrolmentId ? { enrolmentId: caseloadMatch.enrolmentId } : {}),
+                  }}
                   onClick={onClose}
                   className="flex items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 px-4 py-3 shadow-sm transition-colors hover:border-secondary-200 hover:bg-secondary-50/30"
                 >
@@ -1933,7 +1975,8 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
                   </div>
                   <AppIcon className="ri-arrow-right-s-line text-foreground-300"></AppIcon>
                 </Link>
-              ))}
+                );
+              })}
               {!evidenceLearners.length && (
                 <EmptyState icon="ri-file-search-line" title="No evidence awaiting review" description="Learners will appear here when submitted evidence needs marking." />
               )}

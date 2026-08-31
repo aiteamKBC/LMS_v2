@@ -17,8 +17,6 @@ export type PerformanceStatus = 'at-risk' | 'on-track' | 'high' | 'new-starter';
 export type EnrollmentStatus = 'all' | 'active' | 'break' | 'withdrawn' | 'ready-to-enrol' | 'unknown';
 export type AttendanceRisk = 'green' | 'amber' | 'red';
 
-export type ViewMode = 'cards' | 'table';
-
 /** Which slice of the caseload the status pills are showing. */
 export type StatusFilter =
   | 'all'
@@ -48,6 +46,16 @@ export interface Learner {
   id: string;
   name: string;
   initials: string;
+  /** 'commercial' | 'apprenticeship' — which learner_detail table this id resolves against. */
+  learnerType?: 'commercial' | 'apprenticeship';
+  /** enrolment."Created_users".id -- a different, disjoint pk space from `id`
+   *  above (which is this LearnerProfile's own id). /learner-detail/ needs this one. */
+  enrolmentId?: string | null;
+  /** Which module/week otjhTarget's cumulative-to-date figure currently falls in. */
+  currentModule?: string | null;
+  currentWeek?: string | null;
+  /** Components expected by now, same pacing as otjhTarget -- not componentsPlanned's whole-plan total. */
+  componentsTargetToDate?: number | null;
   employer: string;
   cohortId: string;
   cohortName: string;

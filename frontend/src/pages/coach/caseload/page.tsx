@@ -30,7 +30,6 @@ import { CaseloadEmpty, CaseloadError, CaseloadLoading, CaseloadNoMatches } from
 import { LearnerCardGrid } from './components/LearnerCardGrid';
 import { LearnerQuickViewDrawer } from './components/LearnerQuickViewDrawer';
 import { LearnerStatusTabs } from './components/LearnerStatusTabs';
-import { LearnerTable } from './components/LearnerTable';
 import { LearnerToolbar, type CaseloadFilterState } from './components/LearnerToolbar';
 import { LearnersHeaderActions } from './components/LearnersHeader';
 import { Pagination } from './components/Pagination';
@@ -56,7 +55,6 @@ import type {
   SortDirection,
   SortKey,
   StatusFilter,
-  ViewMode,
 } from './types';
 
 const coachNav = roleNavMap.coach;
@@ -65,8 +63,7 @@ const CASELOAD_ENDPOINT = '/coach_api/coach/caseload';
 const ATTENDANCE_ENDPOINT = '/coach_api/coach/attendance';
 const coachRagEndpoint = (learnerId: string) => `/coach_api/coach/caseload/${learnerId}/coach-rag`;
 
-/** Cards breathe at a dozen; the table is for working through a long list. */
-const DEFAULT_PAGE_SIZE: Record<ViewMode, number> = { cards: 12, table: 50 };
+const PAGE_SIZE = 12;
 
 const INITIAL_FILTERS: CaseloadFilterState = {
   search: '',
@@ -123,8 +120,7 @@ export default function CoachCaseload() {
   const [sortKey, setSortKey] = useState<SortKey>('risk');
   const [sortDir, setSortDir] = useState<SortDirection>('desc');
 
-  const [viewMode, setViewMode] = useState<ViewMode>('cards');
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE.cards);
+  const [pageSize, setPageSize] = useState(PAGE_SIZE);
   const [currentPage, setCurrentPage] = useState(1);
 
   const [quickView, setQuickView] = useState<{ learnerId: string; tab: QuickViewTab } | null>(null);
@@ -274,7 +270,11 @@ export default function CoachCaseload() {
         case 'progress': return learner.overallProgressAvailable ? learner.overallProgress : -1;
         case 'attendance': return learner.liveAttendanceRateAvailable ? learner.liveAttendanceRate ?? -1 : -1;
         case 'otjh': return learner.otjhCompleted;
-        case 'components': return learner.attendanceRateAvailable ? learner.attendanceRate : -1;
+        // Matches the table's own Components column: against components
+        // expected by now, not learner.attendanceRate's whole-plan total.
+        case 'components': return learner.componentsTargetToDate && learner.componentsTargetToDate > 0
+          ? ((learner.componentsCompleted ?? 0) / learner.componentsTargetToDate) * 100
+          : -1;
         case 'ksb': return learner.ksbProgressAvailable ? learner.ksbProgress : -1;
         case 'gateway': return gatewayTime(learner);
         default: return 0;
@@ -351,24 +351,6 @@ export default function CoachCaseload() {
     setCurrentPage(1);
   }, []);
 
-  const handleColumnSort = useCallback((key: SortKey) => {
-    setSortKey((currentKey) => {
-      if (currentKey === key) {
-        setSortDir((currentDir) => (currentDir === 'asc' ? 'desc' : 'asc'));
-        return currentKey;
-      }
-      setSortDir(key === 'name' ? 'asc' : 'desc');
-      return key;
-    });
-    setCurrentPage(1);
-  }, []);
-
-  const handleViewModeChange = useCallback((mode: ViewMode) => {
-    setViewMode(mode);
-    setPageSize(DEFAULT_PAGE_SIZE[mode]);
-    setCurrentPage(1);
-  }, []);
-
   const handlePageSizeChange = useCallback((size: number) => {
     setPageSize(size);
     setCurrentPage(1);
@@ -391,7 +373,13 @@ export default function CoachCaseload() {
 
   const openProfile = useCallback((learner: Learner, tab?: string) => {
     navigate('/coach/learner-case-file', {
-      state: { learnerId: learner.id, learnerName: learner.name, ...(tab ? { tab } : {}) },
+      state: {
+        learnerId: learner.id,
+        learnerName: learner.name,
+        ...(learner.learnerType ? { kind: learner.learnerType } : {}),
+        ...(learner.enrolmentId ? { enrolmentId: learner.enrolmentId } : {}),
+        ...(tab ? { tab } : {}),
+      },
     });
   }, [navigate]);
 
@@ -505,8 +493,6 @@ export default function CoachCaseload() {
           description="Monitor learner progress, identify risks and take action."
           actions={(
             <LearnersHeaderActions
-              viewMode={viewMode}
-              onViewModeChange={handleViewModeChange}
               selectionMode={selectionMode}
               selectedCount={selectedLearners.length}
               isExporting={isExportingPdf}
@@ -590,7 +576,7 @@ export default function CoachCaseload() {
           ) : null}
 
           {loading ? (
-            <CaseloadLoading viewMode={viewMode} />
+            <CaseloadLoading />
           ) : error ? (
             <CaseloadError
               message={error}
@@ -601,7 +587,7 @@ export default function CoachCaseload() {
             <CaseloadEmpty />
           ) : sorted.length === 0 ? (
             <CaseloadNoMatches onClearFilters={handleClearAll} />
-          ) : viewMode === 'cards' ? (
+          ) : (
             <div className="p-3.5">
               <LearnerCardGrid
                 learners={paginated}
@@ -613,21 +599,6 @@ export default function CoachCaseload() {
                 onOpenProfile={handleOpenProfile}
               />
             </div>
-          ) : (
-            <LearnerTable
-              learners={paginated}
-              insights={insights}
-              selectedLearnerIds={selectedLearnerIds}
-              selectionMode={selectionMode}
-              sortKey={sortKey}
-              sortDir={sortDir}
-              savingCoachRagId={savingCoachRagId}
-              onSort={handleColumnSort}
-              onToggleSelect={handleToggleSelect}
-              onQuickView={handleQuickView}
-              onOpenProfile={handleOpenProfile}
-              onCoachRagChange={handleCoachRagChange}
-            />
           )}
 
           {!loading && !error && sorted.length > 0 ? (

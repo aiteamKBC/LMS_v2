@@ -76,7 +76,7 @@ export function CalendarEventRow({
     <ActionRow
       tone={rowTone(event)}
       onClick={onToggle}
-      className={cn(isOpen && 'border-primary-300 ring-1 ring-primary-100 xl:col-span-2', className)}
+      className={cn(isOpen && 'z-20 border-primary-300 ring-1 ring-primary-100 xl:col-span-2', className)}
       leading={<LearnerAvatar name={event.learner} tone={avatarTone(event)} />}
       title={event.learner || 'Unknown learner'}
       subtitle={subtitle}
