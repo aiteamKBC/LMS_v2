@@ -4675,7 +4675,15 @@ def collect_live_session_events(
         if module_catalogue_id:
             weeks_by_module.setdefault(module_catalogue_id, []).append(week)
     component_links_by_week: dict[str, str] = {}
-    for component in authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, ensure_tables=False):
+    # columns= is load-bearing, not an optimisation: curriculum.components is
+    # ~18k rows / 39MB (mostly settings_json) on a remote database -- a plain
+    # select * here alone accounts for the "Timetable is taking too long to
+    # load" timeout coaches were hitting (~23s vs ~0.5s narrowed).
+    for component in authoring_fetch_all(
+        AUTHORING_COMPONENTS_TABLE,
+        ensure_tables=False,
+        columns=["type", "week_id", "live_sessions_link"],
+    ):
         if clean_text(component.get("type")).lower() != "live_session":
             continue
         week_id = clean_text(component.get("week_id"))
@@ -7065,13 +7073,18 @@ def coach_marking_queue(request, submission_id=None):
     """List and review complete reflections, scoped and paged in PostgreSQL."""
     owner_email = authenticated_coach_email(request)
     requested_owner = normalize_email(owner_email)
+    # learning_reflection_submissions.learner_id is populated from
+    # enrolment."Created_users".id (see LearnerProfile.enrolment_id), not from
+    # LearnerProfile.id -- the two are disjoint pk spaces, so this must filter
+    # on enrolment_id or it never matches a real submission.
     allowed_learner_ids = [
         str(learner_id)
         for learner_id in (
             LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
             .filter(coach_email_key=requested_owner)
-            .values_list("id", flat=True)
+            .values_list("enrolment_id", flat=True)
         )
+        if learner_id is not None
     ]
 
     if submission_id is not None:

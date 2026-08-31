@@ -841,6 +841,12 @@ function scheduleEventTime(event: CoachCalendarEvent) {
   return 'TBC';
 }
 
+/** Just the start, for the fixed-size "Next" badge -- a live session's
+ * "09:00 - 11:00" wraps and overflows a box sized for a single time. */
+function scheduleEventStartTime(event: CoachCalendarEvent) {
+  return scheduleEventTime(event).split(' - ')[0];
+}
+
 /** "12 Sep 2025" -> "12 Sep", so a quick-stat cell stays one line. */
 function shortDateLabel(value?: string | null) {
   const label = displayValue(value);
@@ -1141,7 +1147,7 @@ export default function CoachDashboard() {
     });
   }, [upcomingScheduleEvents]);
   const nextTodayEvent = todayEvents[0];
-  const remainingTodayEvents = todayEvents.slice(1, 4);
+  const remainingTodayEvents = todayEvents.slice(1);
   /* ── This Week ── */
   const weekEvents = useMemo(
     () => [...activeCalendarEvents, ...liveSessionEvents].filter(event => isEventThisWeek(event)),
@@ -1358,7 +1364,7 @@ export default function CoachDashboard() {
                 >
                   <span className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-xl bg-background-50 text-center shadow-sm ring-1 ring-primary-100">
                     <span className="text-[10px] font-semibold uppercase text-primary-500">Next</span>
-                    <span className="text-sm font-bold tabular-nums text-primary-800">{scheduleEventTime(nextTodayEvent)}</span>
+                    <span className="whitespace-nowrap text-sm font-bold tabular-nums text-primary-800">{scheduleEventStartTime(nextTodayEvent)}</span>
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-semibold text-foreground-950">{scheduleEventTitle(nextTodayEvent)}</span>
@@ -1375,23 +1381,27 @@ export default function CoachDashboard() {
             {remainingTodayEvents.length > 0 && (
               <div className="mt-3 border-t border-foreground-100 pt-3">
                 <SectionLabel>Later today</SectionLabel>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {remainingTodayEvents.map(event => (
-                    <Link
-                      key={`today-${event.eventKey || event.id}`}
-                      to="/coach/timetable"
-                      state={buildTimetableFocusState(event)}
-                      className="flex min-w-0 items-center gap-2 rounded-lg border border-foreground-100 bg-background-50 px-3 py-2 text-[12px] text-foreground-700 transition-colors hover:border-primary-200 hover:bg-primary-50/50"
-                    >
-                      <span className="shrink-0 font-semibold tabular-nums text-primary-700">{scheduleEventTime(event)}</span>
-                      <span className="truncate">{scheduleEventTitle(event)}</span>
-                    </Link>
-                  ))}
-                  {todayEvents.length > 4 && (
-                    <span className="inline-flex items-center rounded-lg border border-foreground-200 bg-background-100 px-2.5 py-1.5 text-[12px] text-foreground-500">
-                      +{todayEvents.length - 4} more
-                    </span>
-                  )}
+                <div className="mt-2 grid max-h-48 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
+                  {remainingTodayEvents.map(event => {
+                    const classes = eventStatusClasses(event);
+                    return (
+                      <Link
+                        key={`today-${event.eventKey || event.id}`}
+                        to="/coach/timetable"
+                        state={buildTimetableFocusState(event)}
+                        className="group flex min-w-0 items-center gap-2.5 rounded-lg border border-foreground-100 bg-background-50 px-3 py-2 transition-colors hover:border-primary-200 hover:bg-primary-50/50"
+                      >
+                        <span className={cn('shrink-0 rounded-md px-2 py-1 text-center text-[12px] font-bold tabular-nums', classes.badge)}>
+                          {scheduleEventTime(event)}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[12px] font-semibold text-foreground-900">{scheduleEventTitle(event)}</span>
+                          <span className="block truncate text-[11px] text-foreground-400">{scheduleEventMeta(event)}</span>
+                        </span>
+                        <AppIcon className={cn('shrink-0 text-[13px] transition-transform group-hover:translate-x-0.5', classes.icon)}></AppIcon>
+                      </Link>
+                    );
+                  })}
                 </div>
               </div>
             )}
