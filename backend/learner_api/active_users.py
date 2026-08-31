@@ -14,10 +14,13 @@ from decimal import Decimal, InvalidOperation
 
 from django.db import DatabaseError, connections, transaction
 from django.db.models import Max
+from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from .identity import learner_profile_for_source
 from .mappers import get_training_plan
 from .models import (
+    EnrolmentUser,
     KsbDefinition,
     KsbProfileVersion,
     LearnerKsbAssignment,
@@ -541,8 +544,8 @@ def hydrate_training_plan(plan):
         return []
 
     selected = [item for item in plan if isinstance(item, dict)]
-    module_ids = [_s(item.get("moduleId")) for item in selected if _s(item.get("moduleId"))]
-    module_titles = [_s(item.get("moduleTitle")) for item in selected if _s(item.get("moduleTitle"))]
+    module_ids = [_s(item.get("moduleId") or item.get("module_id") or item.get("moduleCatalogueId") or item.get("module_catalogue_id")) for item in selected if _s(item.get("moduleId") or item.get("module_id") or item.get("moduleCatalogueId") or item.get("module_catalogue_id"))]
+    module_titles = [_s(item.get("moduleTitle") or item.get("module_title") or item.get("title")) for item in selected if _s(item.get("moduleTitle") or item.get("module_title") or item.get("title"))]
     if not module_ids and not module_titles:
         return selected
 
@@ -554,7 +557,7 @@ def hydrate_training_plan(plan):
                 """
                 SELECT m.module_catalogue_id, m.title,
                        w.id, w.title, w.week_number,
-                       c.id, c.title, c.type
+                       c.id, c.title, c.type, c.expected_otjh
                 FROM curriculum.modules m
                 LEFT JOIN curriculum.weeks w ON w.module_catalogue_id = m.module_catalogue_id
                 LEFT JOIN curriculum.components c ON c.week_id = w.id
@@ -573,7 +576,7 @@ def hydrate_training_plan(plan):
     ids_by_title = {}
     weeks_by_module = {}
     seen_weeks = set()
-    for module_id, module_title, week_id, week_title, week_number, component_id, component_title, component_type in rows:
+    for module_id, module_title, week_id, week_title, week_number, component_id, component_title, component_type, component_expected_otjh in rows:
         module_id = _s(module_id)
         titles[module_id] = _s(module_title) or module_id
         ids_by_title[titles[module_id]] = module_id
@@ -591,11 +594,14 @@ def hydrate_training_plan(plan):
             weeks_by_module[module_id][-1]["components"].append({
                 "componentId": str(component_id),
                 "componentTitle": _s(component_title) or _s(component_type) or "Activity",
+                # This tree is persisted in a JSONField. psycopg returns NUMERIC
+                # as Decimal, which Python's standard JSON encoder cannot write.
+                "expectedOtjh": _number(component_expected_otjh),
             })
 
     expanded = []
     for item in selected:
-        module_id = _s(item.get("moduleId"))
+        module_id = _s(item.get("moduleId") or item.get("module_id") or item.get("moduleCatalogueId") or item.get("module_catalogue_id"))
         if module_id not in titles:
             module_id = ids_by_title.get(_s(item.get("moduleTitle")), module_id)
         # Keep orphaned/id-less entries intact: they cannot be resolved against
@@ -1312,6 +1318,165 @@ def refresh_learner_ksb_snapshot(learner, source, training_plan=None):
             source_profile_id=profile_source_id or programme_id or _s(programme),
         )
     return items
+
+
+#: The learner-record fields that decide where a learner sits. A change to any
+#: of them has to reach the "Learner"."learners" mirror, which the workspace,
+#: coach tools and every report read instead of the enrolment row.
+PLACEMENT_SOURCE_FIELDS = ("programme", "cohort", "group")
+
+
+def stamp_cohort_window(source):
+    """Give a learner the delivery window of the cohort they are now in.
+
+    Enrolment stamps this at create time (see views.enrolment_users), but a
+    learner created without a cohort has nothing to stamp, and placing them
+    afterwards left the dates empty. That is not cosmetic: progression reads the
+    start date to decide when a learner becomes Active, so a placed learner with
+    a saved plan sat in Delivery for ever, and their own workspace said their
+    "programme start date has not been set yet".
+
+    Only empty columns are filled. A date already on the learner was either
+    stamped from a cohort or set deliberately for this learner, and neither is
+    this function's to overwrite. Returns the fields written. Never raises.
+    """
+    programme = _s(getattr(source, "programme", ""))
+    cohort = _s(getattr(source, "cohort", ""))
+    if not programme or not cohort:
+        return {}
+
+    try:
+        start, practical_end, apprenticeship_end = cohort_delivery_window(programme, cohort)
+        fields = {}
+        if start is not None and not source.start_date:
+            fields["start_date"] = start
+        if practical_end is not None and not source.end_date:
+            fields["end_date"] = practical_end
+        # Text columns on this table, so ISO strings — the same shape enrolment
+        # writes. apprenticeship_end_date doubles as a per-learner override.
+        if practical_end is not None and not _s(source.practical_period_end_date):
+            fields["practical_period_end_date"] = practical_end.isoformat()
+        if apprenticeship_end is not None and not _s(source.apprenticeship_end_date):
+            fields["apprenticeship_end_date"] = apprenticeship_end.isoformat()
+        if not fields:
+            return {}
+        for field, value in fields.items():
+            setattr(source, field, value)
+        source.save(update_fields=list(fields))
+        return fields
+    except DatabaseError:
+        logger.warning(
+            "Could not stamp the cohort delivery window onto learner %s",
+            getattr(source, "pk", "?"),
+            exc_info=True,
+        )
+        return {}
+
+
+def mirror_learner_placement(source):
+    """Copy a learner's programme/cohort/group onto their permanent profile.
+
+    sync_active_user does this too, but only runs when a learner *becomes*
+    active. Placement is edited long before and long after that moment — a
+    learner put on a programme while still in Delivery, or moved between groups
+    once Active — and without this the mirror kept whatever it was created with,
+    so the learner's own workspace and every report read a placement the
+    enrolment record had already moved on from.
+
+    Only an existing profile is updated: a learner who has never been activated
+    has no mirror to keep, and activation will create it from the record as it
+    stands then. Returns the profile when something changed, else None. Never
+    raises — a mirror that fails must not fail the edit that triggered it.
+    """
+    try:
+        profile = learner_profile_for_source(source)
+        if profile is None:
+            return None
+
+        programme = _s(getattr(source, "programme", ""))
+        cohort = _s(getattr(source, "cohort", ""))
+        start_date, end_date = cohort_dates(programme, cohort)
+        updates = {
+            "programme": programme,
+            "cohort": cohort,
+            "group_name": _s(getattr(source, "group", "")),
+            # The window belongs to the cohort, so it moves with the placement.
+            "start_date": start_date,
+            "end_date": end_date,
+            "gateway_review_date": end_date - timedelta(days=90) if end_date else None,
+        }
+        # Only when the name resolves to exactly one programme; see
+        # _resolve_linkable_programme_id. An ambiguous name leaves the link as it
+        # was rather than attaching the learner to the wrong programme.
+        programme_id = _resolve_linkable_programme_id(programme)
+        if programme_id:
+            updates["programme_id"] = programme_id
+
+        changed = [
+            field for field, value in updates.items()
+            if getattr(profile, field, None) != value
+        ]
+        if not changed:
+            return None
+        for field in changed:
+            setattr(profile, field, updates[field])
+        profile.updated_at = timezone.now()
+        profile.save(update_fields=[*changed, "updated_at"])
+        return profile
+    except DatabaseError:
+        logger.warning(
+            "Could not mirror placement onto the learner profile for %s",
+            getattr(source, "pk", "?"),
+            exc_info=True,
+        )
+        return None
+
+
+def mirror_placement_to_enrolment(profile):
+    """Copy a profile's placement back onto the enrolment row it belongs to.
+
+    The commercial delivery screens edit the profile directly, so a learner moved
+    to another programme or cohort there left "Created_users" — the record every
+    enrolment view, document and progression check reads — saying where they used
+    to be, and with no delivery window for where they are now.
+
+    The window is stamped in the same breath (see stamp_cohort_window), because a
+    placement that reaches the enrolment row without its dates is the state that
+    leaves a learner waiting in Delivery for ever. Returns the row when something
+    changed, else None. Never raises.
+    """
+    enrolment_id = getattr(profile, "enrolment_id", None)
+    if not enrolment_id:
+        # A profile created straight from a delivery payload has no enrolment
+        # row behind it; there is nothing to keep in step.
+        return None
+    try:
+        user = EnrolmentUser.all_learners.filter(pk=enrolment_id).first()
+        if user is None:
+            return None
+
+        updates = {
+            "programme": _s(getattr(profile, "programme", "")),
+            "cohort": _s(getattr(profile, "cohort", "")),
+            "group": _s(getattr(profile, "group_name", "")),
+        }
+        changed = [
+            field for field, value in updates.items()
+            if _s(getattr(user, field, "")) != value
+        ]
+        if changed:
+            for field in changed:
+                setattr(user, field, updates[field])
+            user.save(update_fields=changed)
+        stamped = stamp_cohort_window(user)
+        return user if changed or stamped else None
+    except DatabaseError:
+        logger.warning(
+            "Could not mirror placement back onto the enrolment row for profile %s",
+            getattr(profile, "pk", "?"),
+            exc_info=True,
+        )
+        return None
 
 
 def sync_active_user(source):

@@ -13,6 +13,7 @@ from django.core.serializers.json import DjangoJSONEncoder
 from django.db import connection, transaction
 from django.http import JsonResponse
 from django.utils import timezone
+from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
@@ -25,6 +26,27 @@ PROGRAMME_AUDIT_TABLE = 'assets'
 UPLOAD_URL_PREFIX = '/curriculum_api/curriculum/uploads/'
 
 JSON_COLUMNS = {'ksb_mappings', 'settings', 'raw_component', 'raw_payload'}
+
+UI_MATERIAL_TABLES = {
+    'impact-planning': {'table': 'impact_planning', 'name': 'Impact Planning', 'programme': 'ME'},
+    'social-media': {'table': 'social_media', 'name': 'Social Media', 'programme': 'ME'},
+    'marketing-technology': {'table': 'marketing_technology', 'name': 'Marketing Technology', 'programme': 'ME'},
+    'strategy-planning': {'table': 'strategy_planning', 'name': 'Strategy Planning', 'programme': 'MM'},
+    'customer-journey': {'table': 'customer_journey', 'name': 'Customer Journey', 'programme': 'MM'},
+    'commercial-intelligence': {'table': 'commercial_intelligence', 'name': 'Commercial Intelligence', 'programme': 'MM'},
+    'ai-in-marketing': {'table': 'ai_in_marketing', 'name': 'AI in Marketing', 'programme': 'MM'},
+    'project-management-professional': {'table': 'project_management_professional', 'name': 'Project Management Professional', 'programme': 'PCP'},
+    'msp-scheduling-professional': {'table': 'managing_successful_programmes_scheduling_professional', 'name': 'Managing Successful Programmes / Scheduling Professional', 'programme': 'PCP'},
+    'risk-management': {'table': 'risk_management', 'name': 'Risk Management', 'programme': 'PCP'},
+    'evm-portfolio-management': {'table': 'earned_value_management_portfolio_management', 'name': 'Earned Value Management / Portfolio Management', 'programme': 'PCP'},
+    'ppc-pmo': {'table': 'project_planning_control_project_management_office', 'name': 'Project Planning Control / Project Management Office', 'programme': 'PCP'},
+}
+
+DEMO_PROGRAMME_BY_EMAIL = {
+    'learner-me@learner.local': 'ME',
+    'learner-mm@learner.local': 'MM',
+    'learner-pcp@learner.local': 'PCP',
+}
 
 
 class ProgrammeAuditNotFound(ValueError):
@@ -76,6 +98,31 @@ def normalise(value):
     return clean(value).lower().replace('_', '-').strip()
 
 
+def scope_assets_to_ui_material(material, source_assets):
+    """Label authored-module assets with their learner-facing material name."""
+    assets = []
+    for source_asset in source_assets:
+        asset = dict(source_asset)
+        settings = dict(read_json_value(asset.get('settings'), {}))
+        settings.setdefault('sourceModuleTitle', clean(asset.get('module_title')))
+        asset['programme_source_id'] = clean(
+            source_asset.get('programme_source_id'),
+            clean(source_asset.get('programme_id')),
+        )
+        asset['programme_id'] = clean(material.get('programme_id'))
+        asset['programme_name'] = clean(material.get('programme_name'))
+        asset['module_title'] = clean(material.get('name'))
+        asset['settings'] = settings
+        asset['raw_payload'] = {
+            'uiMaterialKey': clean(material.get('key')),
+            'uiMaterialName': clean(material.get('name')),
+            'sourceModuleId': clean(asset.get('module_catalogue_id')),
+            'sourceModuleTitle': settings.get('sourceModuleTitle', ''),
+        }
+        assets.append(asset)
+    return assets
+
+
 def quote_ident(value):
     return '"' + str(value).replace('"', '""') + '"'
 
@@ -107,6 +154,72 @@ def read_json_value(value, fallback):
 def rows_as_dicts(cursor):
     columns = [column[0] for column in cursor.description]
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+def ui_material_table_exists(table):
+    if connection.vendor != 'postgresql':
+        return False
+    with connection.cursor() as cursor:
+        cursor.execute(
+            'SELECT 1 FROM information_schema.tables '
+            'WHERE table_schema = %s AND table_name = %s LIMIT 1',
+            [PROGRAMME_AUDIT_SCHEMA, table],
+        )
+        return cursor.fetchone() is not None
+
+
+def fetch_ui_material(key, include_results=False):
+    definition = UI_MATERIAL_TABLES.get(clean(key))
+    if not definition:
+        raise ProgrammeAuditNotFound('Material not found.')
+    table_ident = definition['table']
+    if not ui_material_table_exists(table_ident):
+        return {**definition, 'key': key, 'ready': False, 'count': 0, 'expectedMinutes': 0, 'firstWeekTitle': '', 'results': []}
+
+    table = f'{quote_ident(PROGRAMME_AUDIT_SCHEMA)}.{quote_ident(table_ident)}'
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f'''SELECT count(*),
+                       coalesce(sum(
+                           CASE WHEN expected_otjh IS NOT NULL AND expected_otjh > 0
+                                THEN expected_otjh * 60
+                                ELSE coalesce(duration_minutes, 0) END
+                       ), 0)
+                FROM {table}'''
+        )
+        count, expected_minutes = cursor.fetchone()
+        cursor.execute(
+            f'''SELECT week_title FROM {table}
+                WHERE coalesce(week_title, '') <> ''
+                ORDER BY week_number NULLS LAST, week_title, title LIMIT 1'''
+        )
+        first_week = cursor.fetchone()
+        results = []
+        if include_results:
+            columns = (
+                'id', 'module_catalogue_id', 'module_title', 'week_id', 'week_number',
+                'week_title', 'component_id', 'component_type', 'content_kind',
+                'title', 'description', 'source_url', 'embed_url', 'render_mode',
+                'duration_minutes', 'expected_otjh', 'points', 'status',
+            )
+            cursor.execute(
+                f'''SELECT {", ".join(quote_ident(column) for column in columns)}
+                    FROM {table}
+                    ORDER BY week_number NULLS LAST, week_title, title, id'''
+            )
+            results = rows_as_dicts(cursor)
+            for row in results:
+                if row.get('expected_otjh') is not None:
+                    row['expected_otjh'] = float(row['expected_otjh'])
+    return {
+        **definition,
+        'key': key,
+        'ready': True,
+        'count': int(count),
+        'expectedMinutes': int(round(float(expected_minutes or 0))),
+        'firstWeekTitle': first_week[0] if first_week else '',
+        'results': results,
+    }
 
 
 def table_exists():
@@ -1015,3 +1128,38 @@ def programme_audit_status(request):
         'table': PROGRAMME_AUDIT_TABLE,
         'ready': exists,
     })
+
+
+@require_GET
+@never_cache
+def programme_audit_materials(request):
+    programme = clean(request.GET.get('programme')).upper()
+    account = getattr(request, 'login_account', None)
+    if account is not None and clean(getattr(account, 'role', '')).lower() == 'learner':
+        programme = DEMO_PROGRAMME_BY_EMAIL.get(clean(getattr(account, 'email', '')).lower(), '')
+        if not programme:
+            return JsonResponse({'error': 'Material access is not configured for this learner.'}, status=403)
+    keys = [
+        key for key, definition in UI_MATERIAL_TABLES.items()
+        if not programme or definition['programme'] == programme
+    ]
+    results = [fetch_ui_material(key, include_results=False) for key in keys]
+    return JsonResponse({'programme': programme, 'count': len(results), 'results': results})
+
+
+@require_GET
+@never_cache
+def programme_audit_material(request, material_key):
+    account = getattr(request, 'login_account', None)
+    if account is not None and clean(getattr(account, 'role', '')).lower() == 'learner':
+        programme = DEMO_PROGRAMME_BY_EMAIL.get(clean(getattr(account, 'email', '')).lower(), '')
+        definition = UI_MATERIAL_TABLES.get(clean(material_key))
+        if not programme or not definition or definition['programme'] != programme:
+            return JsonResponse({'error': 'You do not have access to this material.'}, status=403)
+    try:
+        material = fetch_ui_material(material_key, include_results=True)
+    except ProgrammeAuditNotFound as exc:
+        return JsonResponse({'error': str(exc)}, status=404)
+    if not material['ready']:
+        return JsonResponse({'error': 'Material table is not available.'}, status=404)
+    return JsonResponse(material)

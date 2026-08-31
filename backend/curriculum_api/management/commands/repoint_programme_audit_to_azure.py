@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections import Counter
 import json
+import re
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -28,17 +29,23 @@ from learner_api import evidence_storage
 
 
 SCHEMA = 'programme_audit'
+# ``assets`` was the old canonical table. Material delivery now reads the
+# learner-facing tables directly, so the command treats it as an optional
+# backwards-compatibility target instead of requiring it to exist.
 MASTER_TABLE = 'assets'
 PROGRAMME_TABLES = (
-    'july_2025_level_4_marketing_executive',
-    'level_4_marketing_executive_may_25',
-    'level_6_project_controls_professional_oct_25',
-    'level_6_project_controls_professional_pcp_may_25',
-    'marketing_executive_level_4_feb_2026',
-    'marketing_manager_level_6_feb_2026',
-    'new_level_6_marketing_manager_oct_25',
-    'new_level_6_project_controls_professional_pcp_july_25',
-    'project_controls_professional_level_6_feb_2026',
+    'ai_in_marketing',
+    'commercial_intelligence',
+    'customer_journey',
+    'earned_value_management_portfolio_management',
+    'impact_planning',
+    'managing_successful_programmes_scheduling_professional',
+    'marketing_technology',
+    'project_management_professional',
+    'project_planning_control_project_management_office',
+    'risk_management',
+    'social_media',
+    'strategy_planning',
 )
 OFFICE_EXTENSIONS = {'.doc', '.docx', '.docm', '.xls', '.xlsx', '.ppt', '.pptx', '.pptm'}
 
@@ -48,6 +55,9 @@ def attachment_id_from_url(value) -> str:
     text = str(value or '').strip()
     if not text:
         return ''
+    stable = re.search(r'/_legacy_files/([0-9]{1,20})/', text)
+    if stable:
+        return stable.group(1)
     parsed = urlparse(text)
     wrapped = unquote(parse_qs(parsed.query).get('src', [''])[0])
     target = urlparse(wrapped or text)
@@ -82,7 +92,7 @@ def stable_urls(blob_name: str) -> tuple[str, str]:
 
 
 class Command(BaseCommand):
-    help = 'Re-point the nine programme_audit tables and their assets rows to Azure.'
+    help = 'Re-point the learner-facing programme_audit material tables to Azure.'
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -227,6 +237,9 @@ class Command(BaseCommand):
         if not canonical_updates:
             return []
         with connection.cursor() as cursor:
+            cursor.execute('SELECT to_regclass(%s)', [f'{SCHEMA}.{MASTER_TABLE}'])
+            if not cursor.fetchone()[0]:
+                return []
             cursor.execute(
                 f'''SELECT id, source_url, embed_url, render_mode, file_name, content_type, file_size
                     FROM "{SCHEMA}"."{MASTER_TABLE}" WHERE id = ANY(%s)''',

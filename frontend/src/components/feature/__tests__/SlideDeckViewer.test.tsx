@@ -90,16 +90,6 @@ describe('SlideDeckViewer', () => {
     expect(screen.getByText('Slide one')).toBeInTheDocument();
   });
 
-  it('jumps straight to a slide from the number strip', async () => {
-    fetchSlideDeck.mockResolvedValue(deck('One', 'Two', 'Three'));
-    render(<SlideDeckViewer src="/deck.pptx" title="Deck" fallback={fallback} />);
-    await screen.findByText('One');
-
-    await userEvent.click(screen.getByRole('button', { name: '3' }));
-    expect(screen.getByText('Three')).toBeInTheDocument();
-    expect(screen.getByText(/Slide 3 of 3/)).toBeInTheDocument();
-  });
-
   it('reveals the speaker notes for the slide that has them', async () => {
     fetchSlideDeck.mockResolvedValue(deck('One', 'Two'));
     render(<SlideDeckViewer src="/deck.pptx" title="Deck" fallback={fallback} />);

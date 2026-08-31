@@ -64,13 +64,16 @@ export function formatSourceLabel(source: string) {
     .join(' ');
 }
 
-export function inlineActivityCategory(type: string): InlineActivityFilter {
+export function inlineActivityCategory(type: string): InlineActivityFilter | null {
   const normalized = type.toLowerCase();
+  if (normalized.includes('attendance')) return 'attendance';
+  if (normalized.includes('assignment')) return 'assignment';
   if (normalized.includes('quiz')) return 'quiz';
   if (normalized.includes('video')) return 'video';
-  if (normalized.includes('evidence')) return 'evidence';
-  if (normalized.includes('mcm') || normalized.includes('mcr') || normalized.includes('catch') || normalized.includes('pr') || normalized.includes('support') || normalized.includes('welfare') || normalized.includes('coaching') || normalized.includes('review')) return 'coaching';
-  return 'learning';
+  if (normalized.includes('audio')) return 'audio';
+  if (normalized.includes('reading')) return 'reading';
+  if (['mcm', 'mcr', 'pr'].includes(normalized) || normalized.includes('catch-up') || normalized.includes('catch up') || normalized.includes('support') || normalized.includes('review')) return 'meeting';
+  return null;
 }
 
 export function coachingDeliveryKind(activity: MonthlyActivityItem): CoachingDeliveryKind | null {

@@ -43,11 +43,13 @@ export const MONTHLY_STATUS_LABEL: Record<MonthlyStatus, string> = {
 
 export const INLINE_FILTERS: { key: InlineActivityFilter; label: string; icon: string }[] = [
   { key: 'all', label: 'All', icon: 'ri-pulse-line' },
-  { key: 'learning', label: 'Learning', icon: 'ri-checkbox-circle-line' },
-  { key: 'video', label: 'Videos', icon: 'ri-play-circle-line' },
+  { key: 'assignment', label: 'Assignment', icon: 'ri-file-list-3-line' },
+  { key: 'attendance', label: 'Attendance', icon: 'ri-calendar-check-line' },
   { key: 'quiz', label: 'Quizzes', icon: 'ri-question-answer-line' },
-  { key: 'coaching', label: 'Coaching', icon: 'ri-calendar-check-line' },
-  { key: 'evidence', label: 'Evidence', icon: 'ri-folder-upload-line' },
+  { key: 'video', label: 'Videos', icon: 'ri-play-circle-line' },
+  { key: 'audio', label: 'Audio', icon: 'ri-headphone-line' },
+  { key: 'reading', label: 'Reading', icon: 'ri-book-open-line' },
+  { key: 'meeting', label: 'Meetings', icon: 'ri-user-voice-line' },
 ];
 
 export const COACHING_DELIVERY_CONFIG: Record<CoachingDeliveryKind, { label: string; shortLabel: string; icon: string; tone: 'primary' | 'emerald' | 'amber' | 'red' }> = {

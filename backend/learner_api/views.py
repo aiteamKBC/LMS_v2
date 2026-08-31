@@ -30,7 +30,15 @@ from login.permissions import staff_only
 from login.permissions import require_access
 from login.models import Invitation, LoginAccount, LoginSession, PasswordReset
 
-from .active_users import cohort_delivery_window, replace_training_plan, sync_active_user
+from .active_users import (
+    PLACEMENT_SOURCE_FIELDS,
+    cohort_delivery_window,
+    mirror_learner_placement,
+    mirror_placement_to_enrolment,
+    replace_training_plan,
+    stamp_cohort_window,
+    sync_active_user,
+)
 from .identity import learner_profile_for_source
 from .learner_progression import ACTIVE_STATUS, advance_learner
 from .constants import (
@@ -497,6 +505,17 @@ def _update_profile_from_delivery_payload(profile, payload):
         profile.updated_at = timezone.now()
         update_fields.append("updated_at")
         profile.save(update_fields=update_fields)
+        # This screen edits the profile, but the enrolment row is what enrolment
+        # views, the compliance documents and progression read. A placement
+        # changed here has to reach it, with the cohort's dates.
+        if any(field in update_fields for field in ("programme", "cohort", "group_name")):
+            learner = mirror_placement_to_enrolment(profile)
+            # And the same check the enrolment screens run after a placement: a
+            # learner given their dates here is otherwise fully eligible with
+            # nothing left to re-run it for them. advance_learner enforces each
+            # kind's own gates, so this cannot skip an apprentice's documents.
+            if learner is not None:
+                advance_learner(learner)
     if "trainingPlan" in payload:
         plan = payload.get("trainingPlan")
         if not isinstance(plan, list):
@@ -783,6 +802,16 @@ def enrolment_user_detail(request, pk):
                 setattr(user, attr, value)
             if fields:
                 user.save(update_fields=list(fields.keys()))
+                if any(field in fields for field in PLACEMENT_SOURCE_FIELDS):
+                    # A learner placed after they were created has none of the
+                    # cohort's dates, and progression cannot start them without
+                    # one. Stamped before advance_learner runs, so a learner who
+                    # is already past their start date activates on this save.
+                    stamp_cohort_window(user)
+                    # Where a learner sits is read from their permanent profile
+                    # by the workspace, the coach tools and the reports, so the
+                    # change has to reach that row too.
+                    mirror_learner_placement(user)
                 advance_learner(user)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)

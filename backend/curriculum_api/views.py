@@ -9,6 +9,7 @@ import calendar
 import os
 import re
 import threading
+import tempfile
 import uuid
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -1616,6 +1617,118 @@ def apply_teams_occurrence_shifts(
     return warnings, recreated_details
 
 
+def reschedule_single_live_session_occurrence(series, occurrence, new_start_utc, duration):
+    """Move one session of a live-session series to a new instant via Graph.
+
+    The module schedule sets every session's time; this is the escape hatch for
+    the single session that has to differ. A plain recurring series shares one
+    event, so the session is one of its instances and Graph is asked to move that
+    instance -- it becomes an exception, leaving every other session, and the
+    module's default time, exactly where they were. A session that already had to
+    be recreated on its own event (a holiday shift) is moved directly. Mirrors
+    ``apply_teams_occurrence_shifts`` for the one-instance case, including its
+    fall back to recreating the occurrence when Graph refuses to move it across
+    the recurrence boundary. Returns ``(join_url, online_meeting_id, event_id,
+    warnings)``.
+    """
+    from coach_api.views import microsoft_graph_request
+
+    warnings = []
+    organizer = clean_str(series.get('organizer_email')) or teams_meeting_default_organizer()
+    owner_key = urllib_parse.quote(organizer, safe='')
+    series_event_id = clean_str(series.get('graph_event_id'))
+    occ_event_id = clean_str(occurrence.get('graph_event_id'))
+    new_end_utc = new_start_utc + timedelta(minutes=duration)
+    title = clean_str(series.get('module_title') or 'Live session')
+    join_url = clean_str(occurrence.get('join_url')) or clean_str(series.get('join_url'))
+    online_meeting_id = clean_str(occurrence.get('online_meeting_id'))
+    result_event_id = occ_event_id or series_event_id
+    patch_body = {
+        'start': {'dateTime': new_start_utc.replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
+        'end': {'dateTime': new_end_utc.replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
+    }
+
+    # Already its own event: move it directly, no series instance to resolve.
+    if occ_event_id and occ_event_id != series_event_id:
+        try:
+            microsoft_graph_request('PATCH', f'users/{owner_key}/events/{urllib_parse.quote(occ_event_id, safe="")}', payload=patch_body)
+        except RuntimeError as exc:
+            logger.warning('Unable to reschedule a standalone Teams occurrence: %s', exc)
+            warnings.append({'code': 'teams_occurrence_not_moved', 'message': 'Microsoft Teams could not move this session.', 'detail': str(exc)})
+        return join_url, online_meeting_id, result_event_id, warnings
+
+    if not series_event_id:
+        warnings.append({'code': 'teams_occurrence_missing_event', 'message': 'This session has no calendar event to move.', 'detail': ''})
+        return join_url, online_meeting_id, result_event_id, warnings
+
+    # One of the recurring series' instances: find the one sitting on the current
+    # start and move it. Widen the window enough to survive a DST shift of the
+    # stored instant either side of the day.
+    current_start = parse_graph_datetime(occurrence.get('scheduled_start'))
+    pivot = current_start or new_start_utc
+    instance_query = urllib_parse.urlencode({
+        'startDateTime': (pivot - timedelta(days=2)).isoformat(),
+        'endDateTime': (pivot + timedelta(days=2)).isoformat(),
+        '$top': 50,
+    })
+    event_key = urllib_parse.quote(series_event_id, safe='')
+    try:
+        response = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}/instances?{instance_query}')
+        instances = response.get('value') if isinstance(response, dict) else []
+    except RuntimeError as exc:
+        logger.warning('Unable to list Teams series instances to reschedule one session: %s', exc)
+        warnings.append({'code': 'teams_occurrence_not_moved', 'message': 'Microsoft Teams could not find this session to move.', 'detail': str(exc)})
+        return join_url, online_meeting_id, result_event_id, warnings
+
+    current_key = teams_calendar_minute_key(current_start) if current_start else ''
+    instance = next(
+        (item for item in instances if current_key and teams_calendar_minute_key((item.get('start') or {}).get('dateTime')) == current_key),
+        None,
+    )
+    # A single-instance window that returned exactly one candidate is that
+    # session even when the stored minute drifted (DST); anything ambiguous is
+    # left untouched rather than guessed.
+    if instance is None and len(instances) == 1:
+        instance = instances[0]
+    instance_id = clean_str((instance or {}).get('id'))
+    if not instance_id:
+        warnings.append({'code': 'teams_occurrence_not_found', 'message': 'Microsoft Teams did not list this session, so it was not moved.', 'detail': ''})
+        return join_url, online_meeting_id, result_event_id, warnings
+
+    instance_key = urllib_parse.quote(instance_id, safe='')
+    try:
+        microsoft_graph_request('PATCH', f'users/{owner_key}/events/{instance_key}', payload=patch_body)
+    except RuntimeError as exc:
+        # Graph refuses a move outside the recurrence range, exactly as the bulk
+        # shift does: recreate the session on its own event and drop the instance.
+        target = {'session_number': parse_int(occurrence.get('session_number'), 0), 'start': new_start_utc, 'end': new_end_utc}
+        invited_people = teams_series_email_list(series.get('presenters'), series.get('attendees'))
+        meeting_options = {
+            'organizer': organizer,
+            'recording': clean_str(series.get('recording')).lower() or 'none',
+            'lobby_bypass': clean_str(series.get('lobby_bypass')).lower() or 'invited',
+            'spoken_language': clean_str(series.get('spoken_language')) or 'en-GB',
+            'presenters': teams_series_email_list(series.get('presenters')),
+        }
+        recreated = microsoft_graph_request('POST', f'users/{owner_key}/events', payload=teams_single_occurrence_payload(title, target, invited_people))
+        if isinstance(recreated, dict):
+            standalone = teams_standalone_occurrence_meeting(owner_key, recreated, target, invited_people, meeting_options)
+            warnings.extend(standalone.get('warnings') or [])
+            result_event_id = clean_str(standalone.get('graph_event_id')) or result_event_id
+            join_url = clean_str(standalone.get('join_url')) or join_url
+            online_meeting_id = clean_str(standalone.get('online_meeting_id')) or online_meeting_id
+            try:
+                microsoft_graph_request('DELETE', f'users/{owner_key}/events/{instance_key}')
+            except RuntimeError:
+                pass
+        warnings.append({
+            'code': 'teams_shifted_occurrence_recreated',
+            'message': 'Microsoft Teams could not move this session within the series, so it was recreated on the new date.',
+            'detail': str(exc),
+        })
+    return join_url, online_meeting_id, result_event_id, warnings
+
+
 def teams_meeting_base_path(organizer, meeting_id, join_url=''):
     """Graph path of one onlineMeeting, resolved for the organizer that owns it."""
     owner_key = urllib_parse.quote(teams_online_meeting_owner_id(organizer, join_url), safe='')
@@ -2219,6 +2332,113 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             'trackedOccurrences': len(occurrence_rows),
             'attendees': attendees,
             'presenters': presenters,
+        },
+        'warnings': warnings,
+    })
+
+
+@csrf_exempt
+def curriculum_teams_meeting_occurrence_schedule(request, live_session_id, session_number):
+    """Move one session of a live-session series to a date/time of its own.
+
+    Only that occurrence moves; the rest of the series and the module's default
+    time are left exactly as they are. The tracked occurrence row is the source
+    of truth for which instant and duration to move, so the caller sends only the
+    new start (and an optional duration override).
+    """
+    from coach_api.views import has_graph_credentials
+
+    ensure_live_session_tracking_tables()
+    if request.method != 'PATCH':
+        return json_error('Method not allowed.', status=405)
+    series_rows = authoring_fetch_all(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])
+    if not series_rows:
+        return json_error('Live session series not found.', status=404)
+    try:
+        session_number = int(session_number)
+    except (TypeError, ValueError):
+        return json_error('A valid session number is required.', status=400)
+    occurrence_rows = authoring_fetch_all(
+        LIVE_SESSION_OCCURRENCES_TABLE,
+        'live_session_id = %s and session_number = %s',
+        [live_session_id, session_number],
+    )
+    if not occurrence_rows:
+        return json_error('That session is not tracked for this series.', status=404)
+    if not has_graph_credentials():
+        return json_error('Microsoft Graph credentials are not configured.', status=503)
+
+    payload = json_body(request)
+    if not isinstance(payload, dict):
+        return json_error('A valid JSON body is required.')
+    new_start = parse_graph_datetime(payload.get('startDateTimeUtc'))
+    if not new_start:
+        return json_error('A valid meeting start date and time is required.', status=400)
+    if new_start.tzinfo is not None:
+        new_start = new_start.astimezone(timezone.utc).replace(tzinfo=None)
+
+    series = series_rows[0]
+    occurrence = occurrence_rows[0]
+    # Keep the session's own length by default: only a caller that means to change
+    # it sends a duration, so nudging the time never quietly reshapes the meeting.
+    start_at = parse_graph_datetime(occurrence.get('scheduled_start'))
+    end_at = parse_graph_datetime(occurrence.get('scheduled_end'))
+    if start_at and end_at and end_at > start_at:
+        default_duration = int((end_at - start_at).total_seconds() // 60) or 60
+    else:
+        default_duration = parse_int(series.get('duration_minutes'), 60) or 60
+    duration = max(15, min(1440, parse_int(payload.get('durationMinutes'), default_duration) or default_duration))
+
+    join_url, online_meeting_id, event_id, warnings = reschedule_single_live_session_occurrence(
+        series, occurrence, new_start, duration,
+    )
+
+    # Only persist a time Teams actually adopted. The helper either moves the
+    # instance, recreates it on its own event (a real move, new join link), or
+    # reports one of the hard-failure codes below -- in which case Teams still
+    # runs the session at the old time, so writing the new one here would make
+    # the LMS claim a slot that does not exist and read as a success.
+    warning_codes = {clean_str(item.get('code')) for item in warnings}
+    recreated = 'teams_shifted_occurrence_recreated' in warning_codes
+    hard_failures = warning_codes & {
+        'teams_occurrence_not_moved',
+        'teams_occurrence_missing_event',
+        'teams_occurrence_not_found',
+    }
+    if hard_failures and not recreated:
+        message = next(
+            (clean_str(item.get('message')) for item in warnings if clean_str(item.get('code')) in hard_failures),
+            'Microsoft Teams could not move this session.',
+        )
+        return json_error(message, status=502, warnings=warnings, updated=False)
+
+    now = datetime.utcnow()
+    update = {
+        'scheduled_start': new_start,
+        'scheduled_end': new_start + timedelta(minutes=duration),
+        'updated_at': now,
+    }
+    if event_id:
+        update['graph_event_id'] = event_id
+    if join_url:
+        update['join_url'] = join_url
+    if online_meeting_id:
+        update['online_meeting_id'] = online_meeting_id
+    update_authoring_rows(
+        LIVE_SESSION_OCCURRENCES_TABLE,
+        'live_session_id = %s and session_number = %s',
+        [live_session_id, session_number],
+        update,
+    )
+    return JsonResponse({
+        'updated': True,
+        'occurrence': {
+            'liveSessionId': live_session_id,
+            'sessionNumber': session_number,
+            'startDateTimeUtc': utc_iso_value(new_start),
+            'durationMinutes': duration,
+            'joinUrl': join_url,
+            'eventId': event_id,
         },
         'warnings': warnings,
     })
@@ -12706,9 +12926,9 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
     link, when Graph would only accept a holiday-shifted session as an event of
     its own -- rather than the whole series' first one.
 
-    Walking the weeks is what makes ``create_missing`` possible: a week with no
-    live-session component of its own is given one, taking the next session in
-    the list. That is what makes re-attaching enough to put a whole created
+    Walking the weeks is what makes ``create_missing`` possible: each week is
+    topped up to the module's delivery-day count, taking consecutive sessions
+    from the list. That is what makes re-attaching enough to put a whole created
     series in front of the learner, instead of only the weeks somebody had
     already authored a session into. Returns ``(updated, created)``.
 
@@ -12746,14 +12966,27 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
     created = 0
     handled_component_ids = set()
 
-    def settings_for_session(session_index):
+    def settings_for_session(session_index, existing_settings=None):
         """Everything that belongs to session ``session_index`` (0-based)."""
+        existing_settings = existing_settings if isinstance(existing_settings, dict) else {}
         occurrence = occurrence_rows[session_index] if session_index < len(occurrence_rows) else None
         session_settings = live_occurrence_component_settings(occurrence, series_settings)
+        shared_series_settings = {
+            key: value
+            for key, value in series_settings.items()
+            if key not in {'sessionDate', 'sessionDay', 'sessionTime', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc'}
+        }
         planned = session_plan[session_index] if session_index < len(session_plan) else {}
         session_date = format_date(planned.get('date'))
         planned_settings = {}
-        if session_date:
+        tracked_occurrence = (
+            clean_str(existing_settings.get('sessionDateTimeUtc'))
+            or (
+                clean_str(existing_settings.get('teamsLiveSessionId'))
+                and parse_int(existing_settings.get('teamsSessionNumber'), 0) > 0
+            )
+        )
+        if session_date and not (clean_str(existing_settings.get('sessionDate')) or tracked_occurrence):
             planned_settings['sessionDate'] = session_date
             planned_settings['sessionTime'] = session_start_time
             planned_settings['durationMinutes'] = session_duration
@@ -12765,71 +12998,74 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                 if planned_instant:
                     planned_settings['sessionDateTimeUtc'] = planned_instant
                     planned_settings['teamsStartDateTimeUtc'] = planned_instant
-        return {**series_settings, **planned_settings, **session_settings}
+        return {**shared_series_settings, **planned_settings, **session_settings}
 
     session_index = 0
+    sessions_per_week = delivery_days_per_week(module_row)
     for week_row in week_rows:
         week_id = clean_str(week_row.get('id'))
         live_rows = [row for row in components_by_week.get(week_id, []) if frontend_component_type(row.get('type')) == 'live-session']
-        if live_rows:
-            for row in live_rows:
-                settings_for_week = settings_for_session(session_index)
-                session_index += 1
-                handled_component_ids.add(clean_str(row.get('id')))
-                if not dry_run:
-                    update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [row.get('id')], {
-                        'settings_json': json_db_value({**component_builder_settings(row), **settings_for_week}),
-                        'live_sessions_link': clean_str(settings_for_week.get('liveSessionUrl') or settings_for_week.get('teamsMeetingUrl')),
-                        'updated_at': now,
-                    })
-                updated += 1
-            continue
-        if not create_missing:
-            # The session this week would have run is still spoken for: skipping
-            # it here would hand week 4's date to week 5's component.
+        for row in live_rows:
+            existing_settings = component_builder_settings(row)
+            settings_for_week = settings_for_session(session_index, existing_settings)
             session_index += 1
+            handled_component_ids.add(clean_str(row.get('id')))
+            if not dry_run:
+                update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [row.get('id')], {
+                    'settings_json': json_db_value({**existing_settings, **settings_for_week}),
+                    'live_sessions_link': clean_str(settings_for_week.get('liveSessionUrl') or settings_for_week.get('teamsMeetingUrl')),
+                    'updated_at': now,
+                })
+            updated += 1
+        if not create_missing:
+            if not live_rows:
+                # A content-only week still occupies one dated slot, matching the
+                # structure payload's backward-compatible week-header walk.
+                session_index += 1
             continue
-        settings_for_week = settings_for_session(session_index)
-        session_index += 1
-        join_url = clean_str(settings_for_week.get('liveSessionUrl') or settings_for_week.get('teamsMeetingUrl'))
-        position = len(components_by_week.get(week_id, []))
-        duration = parse_int(settings_for_week.get('durationMinutes'), session_duration) or session_duration
-        if dry_run:
+        missing_count = max(0, sessions_per_week - len(live_rows))
+        for offset in range(missing_count):
+            settings_for_week = settings_for_session(session_index)
+            session_index += 1
+            join_url = clean_str(settings_for_week.get('liveSessionUrl') or settings_for_week.get('teamsMeetingUrl'))
+            position = len(components_by_week.get(week_id, [])) + offset
+            duration = parse_int(settings_for_week.get('durationMinutes'), session_duration) or session_duration
+            if dry_run:
+                created += 1
+                continue
+            authoring_upsert(AUTHORING_COMPONENTS_TABLE, ['id'], {
+                'id': f'COMP-{uuid.uuid4().hex.upper()}',
+                'week_id': week_id,
+                'module_catalogue_id': module_catalogue_id,
+                'type': 'live_session',
+                # Never the week's own name: a live-session component titled after
+                # its week reads as a generated placeholder and is filtered out of
+                # the authoring model (isGeneratedWeekPlaceholderComponent).
+                'title': f'Live Teams Session {position + 1}',
+                'description': '',
+                'expected_otjh': round(max(15, duration) / 60, 2),
+                'points': default_points,
+                'ksb_mappings': json_db_value([]),
+                'reflection_required': False,
+                'workplace_evidence_required': False,
+                'tutor_validation_required': False,
+                'display_order': position,
+                'settings_json': json_db_value({
+                    'completionRule': 'Attend or watch recording',
+                    'evidenceRequired': 'Attendance or recording completion',
+                    'contentStatus': 'Draft',
+                    'version': '0.1',
+                    'attendanceRequired': True,
+                    'recordingExpected': True,
+                    **settings_for_week,
+                }),
+                'live_sessions_link': join_url,
+                'deleted_at': None,
+                'deleted_by': None,
+                'deleted_via_parent': None,
+                'is_programme_deleted': False,
+            })
             created += 1
-            continue
-        authoring_upsert(AUTHORING_COMPONENTS_TABLE, ['id'], {
-            'id': f'COMP-{uuid.uuid4().hex.upper()}',
-            'week_id': week_id,
-            'module_catalogue_id': module_catalogue_id,
-            'type': 'live_session',
-            # Never the week's own name: a live-session component titled after
-            # its week reads as a generated placeholder and is filtered out of
-            # the authoring model (isGeneratedWeekPlaceholderComponent).
-            'title': f'Live Teams Session {position + 1}',
-            'description': '',
-            'expected_otjh': round(max(15, duration) / 60, 2),
-            'points': default_points,
-            'ksb_mappings': json_db_value([]),
-            'reflection_required': False,
-            'workplace_evidence_required': False,
-            'tutor_validation_required': False,
-            'display_order': position,
-            'settings_json': json_db_value({
-                'completionRule': 'Attend or watch recording',
-                'evidenceRequired': 'Attendance or recording completion',
-                'contentStatus': 'Draft',
-                'version': '0.1',
-                'attendanceRequired': True,
-                'recordingExpected': True,
-                **settings_for_week,
-            }),
-            'live_sessions_link': join_url,
-            'deleted_at': None,
-            'deleted_by': None,
-            'deleted_via_parent': None,
-            'is_programme_deleted': False,
-        })
-        created += 1
 
     # A live-session component whose week is gone still holds a join link, and
     # what this endpoint promises is that every one of them points at the
@@ -13228,16 +13464,60 @@ def get_authoring_structure_payload(module_catalogue_id):
             'ksbMappings': mappings_by_week.get(week_id, []),
         })
 
-    # When each week runs. Week N is session N of the module's own dated plan --
-    # holiday shifts included -- so the week list can be read as a timetable and
-    # grouped by the month it falls in without inventing a second schedule.
-    session_plan = module_week_session_plan(module, len(weeks))
+    # Live components consume the module's flat plan in display order. A week may
+    # therefore consume several dates; its header uses the first one. Content-only
+    # weeks retain the legacy one-week/one-session behavior.
+    required_plan_entries = sum(
+        max(1, len([component for component in week.get('components') or [] if component.get('type') == 'live-session']))
+        for week in weeks
+    )
+    session_plan = module_session_plan_for_count(
+        module,
+        max(module_stored_session_count(module, len(weeks)), required_plan_entries),
+    ).get('sessions') or []
     session_start_time, _session_end_time, session_duration = module_session_clock(module, group_row)
-    for index, week in enumerate(weeks):
-        planned = session_plan[index] if index < len(session_plan) else {}
-        session_date = format_date(planned.get('date'))
+    session_index = 0
+    for week in weeks:
+        live_components = [component for component in week.get('components') or [] if component.get('type') == 'live-session']
+        first_planned = {}
+        if live_components:
+            for component in live_components:
+                planned = session_plan[session_index] if session_index < len(session_plan) else {}
+                session_index += 1
+                if not first_planned:
+                    first_planned = planned
+                settings = component.get('settings') if isinstance(component.get('settings'), dict) else {}
+                tracked_occurrence = (
+                    clean_str(settings.get('sessionDateTimeUtc'))
+                    or (
+                        clean_str(settings.get('teamsLiveSessionId'))
+                        and parse_int(settings.get('teamsSessionNumber'), 0) > 0
+                    )
+                )
+                if clean_str(settings.get('sessionDate')) or tracked_occurrence:
+                    continue
+                session_date = format_date(planned.get('date'))
+                if not session_date:
+                    continue
+                planned_settings = {
+                    **settings,
+                    'sessionDate': session_date,
+                    'sessionDay': clean_str(planned.get('day')),
+                    'sessionTime': session_start_time,
+                    'durationMinutes': session_duration,
+                    'teamsDurationMinutes': session_duration,
+                }
+                planned_instant = calendar_clock_to_utc_iso(session_date, session_start_time)
+                if planned_instant:
+                    planned_settings['sessionDateTimeUtc'] = planned_instant
+                    planned_settings['teamsStartDateTimeUtc'] = planned_instant
+                component['settings'] = planned_settings
+        else:
+            first_planned = session_plan[session_index] if session_index < len(session_plan) else {}
+            session_index += 1
+        session_date = format_date(first_planned.get('date'))
         week['sessionDate'] = session_date
-        week['sessionDay'] = clean_str(planned.get('day'))
+        week['sessionDay'] = clean_str(first_planned.get('day'))
         week['sessionStartTime'] = session_start_time if session_date else ''
         week['sessionDurationMinutes'] = session_duration if session_date else 0
 
@@ -16987,7 +17267,7 @@ def curriculum_module_settings(request, module_catalogue_id):
 
 @csrf_exempt
 def curriculum_module_session_plan(request, module_catalogue_id):
-    """The dates a module's weeks run on, for a week count that is not saved yet.
+    """The flat session dates for a module week count that is not saved yet.
 
     Module Builder adds and removes weeks before anything is written, and week N
     is session N of the module's own dated plan -- so a seventh week added to a
@@ -16997,7 +17277,8 @@ def curriculum_module_session_plan(request, module_catalogue_id):
     the save, instead of the browser deriving a schedule of its own that then
     disagrees with the calendar and the Teams series.
 
-    ``?weeks=`` is the count to plan for. Omit it for the module's stored count.
+    ``?weeks=`` is the authored week count; each delivery day contributes one
+    flat session. ``?sessions=`` remains available for callers with a raw count.
     """
     if request.method != 'GET':
         return json_error('Method not allowed.', status=405)
@@ -17011,7 +17292,11 @@ def curriculum_module_session_plan(request, module_catalogue_id):
             # with an empty plan would read as "these weeks have no dates".
             return json_error('Module not found.', status=404)
         module_row = module_rows[0]
-        requested = max(0, parse_int(request.GET.get('weeks') or request.GET.get('sessions'), 0))
+        requested_sessions = max(0, parse_int(request.GET.get('sessions'), 0))
+        requested_weeks = max(0, parse_int(request.GET.get('weeks'), 0))
+        requested = requested_sessions or (
+            requested_weeks * delivery_days_per_week(module_row) if requested_weeks else 0
+        )
         plan = module_session_plan_for_count(
             module_row,
             requested or module_stored_session_count(module_row),
@@ -17022,7 +17307,7 @@ def curriculum_module_session_plan(request, module_catalogue_id):
     return JsonResponse({
         **plan,
         'moduleCatalogueId': catalogue_id,
-        'weeks': len(plan.get('sessions') or []),
+        'weeks': requested_weeks or module_stored_week_count(module_row),
         'startDate': format_date(module_row.get('start_date')),
         'weekDays': clean_str(module_row.get('session_week_day')),
     })
@@ -17242,7 +17527,38 @@ def curriculum_presentation_slides(request):
     preview at all. This renders the deck in-house instead — see
     curriculum_api.pptx_slides for what the model does and does not carry.
     """
-    relative_path = uploads_relative_path(request.GET.get('src'))
+    source = clean_str(request.GET.get('src'))
+    relative_path = uploads_relative_path(source)
+    legacy_match = re.search(r'/learner_api/media/legacy-attachment/([0-9]{1,20})/', urlparse(source).path)
+    if not relative_path and legacy_match:
+        attachment_id = legacy_match.group(1)
+        cache_key = f'legacy-attachment/{attachment_id}.pptx'
+        stamp = f'legacy-attachment:{attachment_id}'
+        cached = pptx_slides.deck_model_for_stamp(cache_key, stamp)
+        if cached is not None:
+            return JsonResponse(cached)
+
+        # Imported LMS decks are served by the authenticated same-origin media
+        # proxy, not by the normal component-upload store. Pull one temporary
+        # copy for python-pptx, then keep only the rendered slide-model cache.
+        from learner_api.media_proxy import _load_legacy_attachment_bytes
+
+        data, error = _load_legacy_attachment_bytes(attachment_id)
+        if error:
+            return json_error('The legacy slide deck could not be loaded.', status=error.status_code)
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.pptx', delete=False) as temporary:
+                temporary.write(data)
+                temporary_path = temporary.name
+            deck = pptx_slides.render_uploaded_deck(cache_key, temporary_path, stamp=stamp)
+        except pptx_slides.UnsupportedDeck as render_error:
+            return json_error(str(render_error), status=415)
+        finally:
+            if temporary_path:
+                Path(temporary_path).unlink(missing_ok=True)
+        return JsonResponse(deck)
+
     if not relative_path:
         return json_error('A slide deck upload path is required.', status=400)
     # The deck may live in blob storage, and python-pptx needs a real file, so a

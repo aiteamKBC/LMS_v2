@@ -40,6 +40,7 @@ import { ProgressBar } from '@/components/ui/ProgressMetric';
 import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
 import { toneStyle, statusTone, type StatusTone } from '@/lib/statusTone';
 import { displayValue, EMPTY_VALUE, ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
+import { fetchDemoMaterialSummaries, type DemoMaterialTable } from '@/api/demoMaterials';
 
 /* ─────────────────────────────────────────────
    Real-learner component progress + current-week UI
@@ -421,6 +422,18 @@ export default function LearnerOverview() {
   const [demoSignOutOpen, setDemoSignOutOpen] = useState(false);
   const demoProgramme = useMemo(() => demoProgrammeFor(auth.account?.email), [auth.account?.email]);
   const isDemoAccount = isRealMode && isInspectionDemoAccount(auth.account?.email) && demoProgramme != null;
+  const [demoMaterialTables, setDemoMaterialTables] = useState<DemoMaterialTable[]>([]);
+  useEffect(() => {
+    if (!isDemoAccount || !demoProgramme) {
+      setDemoMaterialTables([]);
+      return;
+    }
+    let cancelled = false;
+    fetchDemoMaterialSummaries(demoProgramme.accountLabel)
+      .then((tables) => { if (!cancelled) setDemoMaterialTables(tables); })
+      .catch(() => { if (!cancelled) setDemoMaterialTables([]); });
+    return () => { cancelled = true; };
+  }, [demoProgramme, isDemoAccount]);
   const demoScopeKey = kind && id ? `${kind}:${id}` : '';
   const demoOverrides = useDemoTimeOverrides(demoScopeKey);
   const allJourneyComponents = useMemo(() => journey.flatMap((m) => m.weeks.flatMap((w) => w.components)), [journey]);
@@ -440,41 +453,67 @@ export default function LearnerOverview() {
       const modules = journey.filter((m) => m.weeks.some((w) => w.components.some((c) => materialForModuleId(demoProgramme, c.moduleId)?.key === materialDef.key)));
       const timings = timingsForModuleIds(demoTimings, materialDef.moduleIds);
       const weekStatus = currentWeekStatus(modules, demoCompletedIds);
+      const table = demoMaterialTables.find((item) => item.key === materialDef.key) || null;
+      const journeySummary = summariseDemoTimings(timings);
+      const tableSummary = table && table.ready ? {
+        expectedMinutes: table.expectedMinutes,
+        completedMinutes: 0,
+        remainingMinutes: table.expectedMinutes,
+        materialsCompleted: 0,
+        materialsTotal: table.count,
+        completionPct: 0,
+        quizzesPassed: 0,
+        quizzesTotal: 0,
+      } : null;
       return {
         def: materialDef,
         modules,
-        summary: summariseDemoTimings(timings),
-        weekStatus,
-        available: materialDef.moduleIds.length > 0 && modules.length > 0,
+        table,
+        summary: journeySummary.materialsTotal > 0 ? journeySummary : (tableSummary || journeySummary),
+        weekStatus: journeySummary.materialsTotal > 0
+          ? weekStatus
+          : { label: table?.firstWeekTitle || null, complete: false },
+        available: (table?.ready && table.count > 0) || (materialDef.moduleIds.length > 0 && modules.length > 0),
       };
     });
-  }, [demoProgramme, journey, demoTimings, demoCompletedIds]);
+  }, [demoProgramme, journey, demoTimings, demoCompletedIds, demoMaterialTables]);
   /** Jump straight into a material's first unfinished activity. A fully
    * completed material reopens from its first activity for review. */
   const openDemoMaterial = useCallback((material: (typeof demoMaterialCards)[number]) => {
-    if (!kind || !id || !canProgress) return;
+    if (kind && id && canProgress) {
+      const activities = material.modules.flatMap((module) =>
+        module.weeks.flatMap((week) =>
+          week.components.map((component) => {
+            const query = `?module=${encodeURIComponent(module.module)}&week=${encodeURIComponent(week.week)}`;
+            let href: string | null = null;
+            if (component.isQuiz && hasComponentContent(component)) {
+              href = `/learner/quiz/${kind}/${id}/${component.quizMeta!.quizId}${query}`;
+            } else if (component.type === 'video' && component.videoUrl && component.componentId) {
+              href = `/learner/video/${kind}/${id}/${component.componentId}${query}`;
+            } else if (isOpenableComponent(component)) {
+              href = `/learner/component/${kind}/${id}/${component.componentId}${query}`;
+            }
+            const state = componentProgress(component, real?.videoProgress ?? [], real?.componentProgress ?? []).state;
+            const complete = state === 'passed' || state === 'watched' || state === 'completed';
+            return { href, complete };
+          }),
+        ),
+      ).filter((activity): activity is { href: string; complete: boolean } => activity.href !== null);
 
-    const activities = material.modules.flatMap((module) =>
-      module.weeks.flatMap((week) =>
-        week.components.map((component) => {
-          const query = `?module=${encodeURIComponent(module.module)}&week=${encodeURIComponent(week.week)}`;
-          let href: string | null = null;
-          if (component.isQuiz && hasComponentContent(component)) {
-            href = `/learner/quiz/${kind}/${id}/${component.quizMeta!.quizId}${query}`;
-          } else if (component.type === 'video' && component.videoUrl && component.componentId) {
-            href = `/learner/video/${kind}/${id}/${component.componentId}${query}`;
-          } else if (isOpenableComponent(component)) {
-            href = `/learner/component/${kind}/${id}/${component.componentId}${query}`;
-          }
-          const state = componentProgress(component, real?.videoProgress ?? [], real?.componentProgress ?? []).state;
-          const complete = state === 'passed' || state === 'watched' || state === 'completed';
-          return { href, complete };
-        }),
-      ),
-    ).filter((activity): activity is { href: string; complete: boolean } => activity.href !== null);
+      const next = activities.find((activity) => !activity.complete) || activities[0];
+      if (next) {
+        navigate(next.href);
+        return;
+      }
+    }
 
-    const next = activities.find((activity) => !activity.complete) || activities[0];
-    if (next) navigate(next.href);
+    // A table-only material (currently AI in Marketing) has no authored journey
+    // component to hand to the legacy runner, so retain the table reader as a
+    // fallback instead of making the card unavailable.
+    if (material.table?.ready && material.table.count > 0) {
+      const materialPath = `/learner/material/${encodeURIComponent(material.def.key)}`;
+      navigate(kind && id ? `${materialPath}/${kind}/${id}` : materialPath);
+    }
   }, [canProgress, id, kind, navigate, real?.componentProgress, real?.videoProgress]);
   // OTJ hours: completed + planned come from the backend (stored in
   // Active_users.Completed_hours / planned_hours). "activities" counts every
@@ -865,9 +904,19 @@ export default function LearnerOverview() {
                     <p className="mt-1 text-[13px] text-white/75">{demoProgramme?.programmeName}</p>
                   </div>
                 </div>
-                <div className="rounded-2xl bg-white/10 px-5 py-3 text-right ring-1 ring-white/15">
-                  <p className="text-2xl font-bold tabular-nums">{demoMaterialCards.length}</p>
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-white/65">Materials</p>
+                <div className="flex items-center gap-3">
+                  <div className="rounded-2xl bg-white/10 px-5 py-3 text-right ring-1 ring-white/15">
+                    <p className="text-2xl font-bold tabular-nums">{demoMaterialCards.length}</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-white/65">Materials</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDemoSignOutOpen(true)}
+                    className="inline-flex h-12 items-center gap-2 rounded-2xl bg-white/10 px-4 text-[12px] font-semibold text-white ring-1 ring-white/20 transition hover:bg-white/20"
+                  >
+                    <AppIcon className="ri-logout-box-r-line text-base" />
+                    Logout
+                  </button>
                 </div>
               </div>
             </div>

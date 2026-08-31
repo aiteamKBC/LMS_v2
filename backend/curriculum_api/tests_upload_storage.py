@@ -115,6 +115,14 @@ class BlobNameTests(SimpleTestCase):
 
 
 class ProgrammeAuditAzureMappingTests(SimpleTestCase):
+    def test_reads_attachment_id_from_a_stable_azure_upload_path(self):
+        self.assertEqual(
+            attachment_id_from_url(
+                '/curriculum_api/curriculum/uploads/_legacy_files/137315/handout.pdf'
+            ),
+            '137315',
+        )
+
     def test_reads_attachment_id_from_an_office_wrapped_wordpress_url(self):
         wrapped = (
             'https://view.officeapps.live.com/op/embed.aspx?src='
