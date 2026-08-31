@@ -1118,6 +1118,41 @@ class CaseloadOtjhSnapshotTests(SimpleTestCase):
     @patch("coach_api.views.learner_activity_feed_entries", return_value=[])
     @patch("coach_api.views.refresh_learner_ksb_snapshot")
     @patch("coach_api.views.refresh_learner_otjh_snapshot", return_value={})
+    def test_already_assigned_learner_skips_the_ksb_snapshot_refresh(
+        self,
+        refresh_otjh_snapshot,
+        refresh_ksb_snapshot,
+        learner_activity_feed_entries,
+    ):
+        # Regression: a learner who already has a KsbProfileVersion pinned at
+        # enrolment can never get a different one from
+        # refresh_learner_ksb_snapshot (see replace_learner_ksbs — "an
+        # existing learner stays pinned"), so calling it is a guaranteed
+        # no-op that still opens a transaction + two get_or_create round
+        # trips per learner on every `?live=1` caseload read. It must be
+        # skipped once ksb_assignment already exists.
+        row = SimpleNamespace(
+            id=5, username="mahmopud fouda", full_name="mahmopud fouda", email="learner@example.com",
+            coach_name="Med Maher", coach_email="Med.Maher@kentbusinesscollege.com",
+            programme="Project Management", programme_status="Active", lifecycle_status="active",
+            cohort="Cohort A", group="Group 1", start_date=None, end_date=None, gateway_review_date=None,
+            coach_rag="", minimum_hours=Decimal("0"), planned_hours=Decimal("111"), completed_hours=Decimal("29"),
+            target_hours=Decimal("41.5"), progress_hours=Decimal("-12.5"), progress_variance=Decimal("-0.30"),
+            otjh_status="At risk", training_plan=[{"moduleId": "mod-1"}],
+            training_plan_progress=[{"ksbs": [{"code": "K1"}]}],
+            ksbs=[{"code": "K1"}],
+            ksb_assignment=SimpleNamespace(profile_version=SimpleNamespace(version_hash="abc123")),
+            _caseload_source=SimpleNamespace(id=5, programme="Project Management"),
+            save=lambda **kwargs: None,
+        )
+
+        serialize_caseload_learner(row)
+
+        refresh_ksb_snapshot.assert_not_called()
+
+    @patch("coach_api.views.learner_activity_feed_entries", return_value=[])
+    @patch("coach_api.views.refresh_learner_ksb_snapshot")
+    @patch("coach_api.views.refresh_learner_otjh_snapshot", return_value={})
     @patch("coach_api.views.curriculum_expected_otjh_by_component_id", return_value={})
     def test_serialize_caseload_learner_rolls_subcodes_up_to_parent_ksbs(
         self,

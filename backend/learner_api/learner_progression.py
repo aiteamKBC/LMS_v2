@@ -164,10 +164,18 @@ def advance_learner(learner):
                     learner.programme_status = target
                     learner.save(update_fields=["programme_status"])
                     changed = target
-                if target == ACTIVE_STATUS:
-                    from .active_users import sync_active_user
+                    if target == ACTIVE_STATUS:
+                        # Only on the actual transition — becoming Active
+                        # creates/refreshes the permanent learner profile.
+                        # Re-syncing an already-active learner on every read
+                        # (this ran unconditionally before) is the N+1 cost
+                        # that made GET /learner_api/enrolment-users/ take
+                        # ~2 minutes: a full atomic upsert per commercial
+                        # learner, every single list read, whether or not
+                        # anything changed.
+                        from .active_users import sync_active_user
 
-                    sync_active_user(learner)
+                        sync_active_user(learner)
                 return changed
             return None
 

@@ -182,15 +182,9 @@ def submit_video_progress(request, component_id):
             return _error(f"Database error saving progress: {exc}", 502)
         except DatabaseError as exc:
             return _error(f"Database error saving progress: {exc}", 502)
-
-        # Engagement points: award synchronously the instant the watch is saved.
-        # Guarded so a points failure can never break the learner's video save; all
-        # point logic (which rule, first-watch gate, etc.) lives in engagement_api.
-        try:
-            from engagement_api.hooks import record_progress_points
-            record_progress_points(learner_id, active.username, record)
-        except Exception:  # noqa: BLE001 — engagement points must never break the video save
-            pass
+        # Engagement points award themselves: save_progress_record registers a
+        # post-commit hook (engagement_api.hooks.award_for_progress) that fires
+        # once this save actually commits — see active_users.save_progress_record.
 
     # Echo the display title/week/module in the RESPONSE (not stored) so the
     # results screen can render immediately without resolving componentId.

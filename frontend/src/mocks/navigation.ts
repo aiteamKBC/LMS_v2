@@ -63,6 +63,7 @@ export const learnerNavItems: SidebarNavItem[] = [
       { id: 'learner-clubs', label: 'Clubs', icon: 'ri-team-line', href: '/learner/clubs' },
       { id: 'learner-events', label: 'Events', icon: 'ri-calendar-event-line', href: '/learner/clubs/events', statusDot: 'green' },
       { id: 'learner-rewards', label: 'Rewards', icon: 'ri-trophy-line', href: '/learner/rewards', badge: 4 },
+      { id: 'learner-flash-cards', label: 'Flash Cards', icon: 'ri-flashlight-line', href: '/learner/flash-cards' },
     ],
   },
 

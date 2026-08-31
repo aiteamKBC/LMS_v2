@@ -1,69 +1,75 @@
-import { useState } from 'react';
-import {
-  LeaderboardEntry,
-  LEADERBOARD_ALL_TIME,
-  LEADERBOARD_MONTHLY,
-  LEADERBOARD_CLUB,
-  POINTS_HISTORY,
-  POINT_RULES,
-  COMMUNITY_IMPACT,
-} from '../data';
+import { useEffect, useMemo, useState } from 'react';
+import { fetchLeaderboard, type LeaderboardEntry as RankedEntry } from '@/api/engagement';
+import { fetchLearnerDetail } from '@/api/learnerDetail';
+import { useMyLearner } from '@/hooks/useMyLearner';
+import { POINT_RULES, POINTS_HISTORY, COMMUNITY_IMPACT } from '../data';
 
+// 'club' maps to a cohort-scoped ranking (the viewer's own cohort) — true
+// club-membership ranking is deferred until clubs have per-learner membership
+// rows (today Engagement.club_meetings only tracks an integer attendee
+// counter). See engagement_api.views.leaderboard.
 type RankingType = 'monthly' | 'all-time' | 'club';
 
-const movementIcon = (m: string) => {
-  if (m === 'up') return { icon: 'ri-arrow-up-s-line', cls: 'text-emerald-600 bg-emerald-100' };
-  if (m === 'down') return { icon: 'ri-arrow-down-s-line', cls: 'text-red-500 bg-red-100' };
-  if (m === 'new') return { icon: 'ri-sparkling-2-line', cls: 'text-primary-600 bg-primary-100' };
-  return { icon: 'ri-subtract-line', cls: 'text-foreground-400 bg-foreground-100' };
-};
+function initials(name: string): string {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase() || '?';
+}
 
 const rankingTabs: { key: RankingType; label: string; icon: string }[] = [
   { key: 'monthly', label: 'Monthly Rankings', icon: 'ri-calendar-line' },
   { key: 'all-time', label: 'All-Time Rankings', icon: 'ri-trophy-line' },
-  { key: 'club', label: 'Club Rankings', icon: 'ri-community-line' },
+  { key: 'club', label: 'Cohort Rankings', icon: 'ri-community-line' },
 ];
 
 export function LeaderboardTab() {
+  const myLearner = useMyLearner();
   const [rankingType, setRankingType] = useState<RankingType>('monthly');
+  const [myCohort, setMyCohort] = useState<string | null>(null);
+  const [entries, setEntries] = useState<RankedEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  const dataMap: Record<RankingType, LeaderboardEntry[]> = {
-    monthly: LEADERBOARD_MONTHLY,
-    'all-time': LEADERBOARD_ALL_TIME,
-    club: LEADERBOARD_CLUB,
-  };
-  const leaderboardData = dataMap[rankingType];
-  const userEntry = leaderboardData.find((e) => e.highlight);
+  useEffect(() => {
+    let cancelled = false;
+    fetchLearnerDetail(myLearner.kind, myLearner.id)
+      .then(detail => { if (!cancelled) setMyCohort(detail.cohort || null); })
+      .catch(() => { /* leaderboard still works without cohort scoping */ });
+    return () => { cancelled = true; };
+  }, [myLearner.id, myLearner.kind]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    const scope = rankingType === 'monthly' ? 'monthly' : 'all-time';
+    const cohort = rankingType === 'club' ? myCohort || undefined : undefined;
+    if (rankingType === 'club' && !myCohort) { setEntries([]); setLoading(false); return; }
+    fetchLeaderboard(scope, cohort)
+      .then(result => { if (!cancelled) { setEntries(result.entries); setError(''); } })
+      .catch((reason: unknown) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : 'Could not load the leaderboard.');
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [rankingType, myCohort]);
+
+  const myEntry = useMemo(() => entries.find(e => e.learnerId === myLearner.id) ?? null, [entries, myLearner.id]);
+  const podium = entries.slice(0, 3);
 
   return (
     <section>
       <div className="flex items-center justify-between mb-4">
         <div>
           <h3 className="text-sm font-heading font-semibold text-foreground-900">Community Leaderboard</h3>
-          <p className="text-xs text-foreground-400 mt-0.5">Top contributors recognised for their impact across all clubs — updated weekly</p>
+          <p className="text-xs text-foreground-400 mt-0.5">Ranked by real points earned — spending points doesn't affect your rank</p>
         </div>
-        <span className="text-xs text-foreground-400 bg-background-100 px-2 py-1 rounded-full">Points reset monthly</span>
       </div>
 
       {/* User Rank Banner */}
-      {userEntry && (
-        <div className="bg-primary-50/40 rounded-xl border border-primary-200/50 p-4 mb-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center shrink-0 text-sm font-bold">SW</div>
-            <div>
-              <p className="text-sm font-semibold text-foreground-900">You are Rank #{userEntry.rank}</p>
-              <p className="text-xs text-foreground-400 mt-0.5">
-                {userEntry.rank > 1 ? (
-                  <><strong className="text-accent-600">{leaderboardData[userEntry.rank - 2].points - userEntry.points}</strong> Points Needed To Reach Rank #{userEntry.rank - 1}</>
-                ) : (
-                  'You are at the top — keep it up!'
-                )}
-              </p>
-            </div>
-          </div>
-          <div className="sm:ml-auto flex items-center gap-2 text-xs text-foreground-400 flex-wrap">
-            <span className="bg-accent-50 text-accent-600 px-2 py-0.5 rounded-full font-medium">Top Club Contributor</span>
-            <span className="bg-secondary-50 text-secondary-600 px-2 py-0.5 rounded-full font-medium">Most Improved</span>
+      {myEntry && (
+        <div className="bg-primary-50/40 rounded-xl border border-primary-200/50 p-4 mb-5 flex items-center gap-4">
+          <div className="w-12 h-12 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center shrink-0 text-sm font-bold">{initials(myEntry.learner)}</div>
+          <div>
+            <p className="text-sm font-semibold text-foreground-900">You are Rank #{myEntry.rank}</p>
+            <p className="text-xs text-foreground-400 mt-0.5">{myEntry.points.toLocaleString()} points earned</p>
           </div>
         </div>
       )}
@@ -86,81 +92,88 @@ export function LeaderboardTab() {
         ))}
       </div>
 
-      {/* Top 3 Podium */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        {leaderboardData.slice(0, 3).map((entry, i) => {
-          const podiumStyles = [
-            'bg-gradient-to-b from-amber-50 to-amber-100 border-amber-200/60',
-            'bg-gradient-to-b from-slate-50 to-slate-100 border-slate-200/60',
-            'bg-gradient-to-b from-orange-50 to-orange-100 border-orange-200/60',
-          ];
-          const rankIcons = ['ri-medal-fill text-amber-500 text-xl', 'ri-medal-fill text-slate-400 text-lg', 'ri-medal-fill text-orange-400 text-lg'];
-          return (
-            <div key={entry.rank} className={`rounded-xl border p-5 text-center ${podiumStyles[i]}`}>
-              <AppIcon className={rankIcons[i]}></AppIcon>
-              <div className="w-14 h-14 rounded-full bg-white border-2 border-white shadow-sm flex items-center justify-center mx-auto mt-3 text-sm font-bold text-foreground-800">
-                {entry.avatar}
-              </div>
-              <p className="text-sm font-semibold text-foreground-900 mt-3">{entry.name}</p>
-              <p className="text-xs text-foreground-400 mt-0.5">{entry.club}</p>
-              <div className="flex items-center justify-center gap-2 mt-2">
-                <span className="text-lg font-bold text-foreground-900">{entry.points.toLocaleString()}</span>
-                <span className="text-[9px] text-foreground-400">pts</span>
-              </div>
-              <span className="inline-block mt-2 text-[9px] font-semibold px-2 py-0.5 rounded-full bg-white/70 text-foreground-600 border border-foreground-100/30">
-                {entry.badge}
-              </span>
-            </div>
-          );
-        })}
-      </div>
+      {loading && <p className="text-xs text-foreground-400 py-6 text-center">Loading rankings…</p>}
 
-      {/* Full Leaderboard */}
-      <div className="bg-background-50 rounded-xl border border-background-200/50 overflow-hidden mb-6">
-        <div className="divide-y divide-background-200/30">
-          {leaderboardData.map((entry) => {
-            const mv = movementIcon(entry.movement);
-            return (
-              <div
-                key={`${entry.category}-${entry.rank}`}
-                className={`p-4 flex items-center gap-4 ${entry.highlight ? 'bg-primary-50/40 border-l-2 border-l-primary-400' : ''}`}
-              >
-                <div className="w-8 text-center shrink-0">
-                  {entry.rank <= 3 ? (
-                    <span className="text-lg">{entry.rank === 1 ? '🥇' : entry.rank === 2 ? '🥈' : '🥉'}</span>
-                  ) : (
-                    <span className="text-sm font-bold text-foreground-400">#{entry.rank}</span>
-                  )}
-                </div>
-                <div className="w-9 h-9 rounded-full bg-background-100 flex items-center justify-center shrink-0 text-xs font-bold text-foreground-600">
-                  {entry.avatar}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-foreground-900">{entry.name}</span>
-                    {entry.highlight && (
-                      <span className="text-[9px] font-semibold text-primary-600 bg-primary-100 px-1.5 py-0.5 rounded-full">You</span>
-                    )}
+      {!loading && error && <p className="text-xs text-red-500 py-6 text-center">{error}</p>}
+
+      {!loading && !error && rankingType === 'club' && !myCohort && (
+        <p className="text-xs text-foreground-400 py-6 text-center">Your cohort isn't set yet, so a cohort ranking isn't available.</p>
+      )}
+
+      {!loading && !error && entries.length === 0 && !(rankingType === 'club' && !myCohort) && (
+        <p className="text-xs text-foreground-400 py-6 text-center">No points earned in this ranking yet.</p>
+      )}
+
+      {!loading && !error && entries.length > 0 && (
+        <>
+          {/* Top 3 Podium */}
+          <div className="grid grid-cols-3 gap-4 mb-6">
+            {podium.map((entry, i) => {
+              const podiumStyles = [
+                'bg-gradient-to-b from-amber-50 to-amber-100 border-amber-200/60',
+                'bg-gradient-to-b from-slate-50 to-slate-100 border-slate-200/60',
+                'bg-gradient-to-b from-orange-50 to-orange-100 border-orange-200/60',
+              ];
+              const rankIcons = ['ri-medal-fill text-amber-500 text-xl', 'ri-medal-fill text-slate-400 text-lg', 'ri-medal-fill text-orange-400 text-lg'];
+              return (
+                <div key={entry.learnerId} className={`rounded-xl border p-5 text-center ${podiumStyles[i]}`}>
+                  <AppIcon className={rankIcons[i]}></AppIcon>
+                  <div className="w-14 h-14 rounded-full bg-white border-2 border-white shadow-sm flex items-center justify-center mx-auto mt-3 text-sm font-bold text-foreground-800">
+                    {initials(entry.learner)}
                   </div>
-                  <span className="text-xs text-foreground-400">{entry.club}</span>
+                  <p className="text-sm font-semibold text-foreground-900 mt-3">{entry.learner}</p>
+                  <p className="text-xs text-foreground-400 mt-0.5">{entry.cohort || '—'}</p>
+                  <div className="flex items-center justify-center gap-2 mt-2">
+                    <span className="text-lg font-bold text-foreground-900">{entry.points.toLocaleString()}</span>
+                    <span className="text-[9px] text-foreground-400">pts</span>
+                  </div>
                 </div>
-                <div className="text-right shrink-0">
-                  <p className="text-sm font-bold text-foreground-900">{entry.points.toLocaleString()}</p>
-                  <p className="text-[9px] text-foreground-400">{entry.contributions} contributions</p>
-                </div>
-                <span className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${mv.cls}`}>
-                  <AppIcon className={`${mv.icon} text-xs`}></AppIcon>
-                </span>
-                <span className="text-[9px] font-medium px-2 py-0.5 rounded-full bg-background-100 text-foreground-500 shrink-0 hidden sm:block">
-                  {entry.badge}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+              );
+            })}
+          </div>
 
-      {/* Points System + History + Impact (3-col layout) */}
+          {/* Full Leaderboard */}
+          <div className="bg-background-50 rounded-xl border border-background-200/50 overflow-hidden mb-6">
+            <div className="divide-y divide-background-200/30">
+              {entries.map((entry) => {
+                const highlight = entry.learnerId === myLearner.id;
+                return (
+                  <div
+                    key={entry.learnerId}
+                    className={`p-4 flex items-center gap-4 ${highlight ? 'bg-primary-50/40 border-l-2 border-l-primary-400' : ''}`}
+                  >
+                    <div className="w-8 text-center shrink-0">
+                      {entry.rank <= 3 ? (
+                        <span className="text-lg">{entry.rank === 1 ? '🥇' : entry.rank === 2 ? '🥈' : '🥉'}</span>
+                      ) : (
+                        <span className="text-sm font-bold text-foreground-400">#{entry.rank}</span>
+                      )}
+                    </div>
+                    <div className="w-9 h-9 rounded-full bg-background-100 flex items-center justify-center shrink-0 text-xs font-bold text-foreground-600">
+                      {initials(entry.learner)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-foreground-900">{entry.learner}</span>
+                        {highlight && (
+                          <span className="text-[9px] font-semibold text-primary-600 bg-primary-100 px-1.5 py-0.5 rounded-full">You</span>
+                        )}
+                      </div>
+                      <span className="text-xs text-foreground-400">{entry.cohort || '—'}</span>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-sm font-bold text-foreground-900">{entry.points.toLocaleString()}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Points System + History + Impact (3-col layout) — still illustrative
+          content, not per-learner data; unaffected by the ranking fix above. */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Points System */}
         <div className="bg-background-50 rounded-xl border border-background-200/50 p-5 card-premium">
