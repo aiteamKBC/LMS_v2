@@ -8,7 +8,7 @@ import { ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
 import { WEEKEND_DAYS, WEEKEND_HINT } from '@/pages/curriculum/shared/entities/ui';
 import { CurriculumStructureWizard, type StructureWizardCreated, type StructureWizardRecordStep } from '@/pages/curriculum/shared/entities/structureWizard';
 import { ensureSharedEmptyKsbProfile, SHARED_EMPTY_KSB_PROFILE_NAME } from '@/pages/curriculum/shared/entities/programmeKsbProfile';
-import { visibleNotes } from '@/pages/curriculum/shared/entities/model';
+import { formatProgrammeLevel, visibleNotes } from '@/pages/curriculum/shared/entities/model';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
@@ -1108,7 +1108,7 @@ export default function CurriculumProgrammes() {
                     </span>
                     <div className="min-w-0">
                       <p className="truncate text-[15px] font-heading font-bold text-foreground-950">{prog.name}</p>
-                      <p className="text-[11px] text-foreground-400">{prog.level || 'Not set'}</p>
+                      <p className="text-[11px] text-foreground-400">{formatProgrammeLevel(prog.level)}</p>
                       <div className="mt-1 flex flex-wrap items-center gap-1.5">
                         <span className="programme-type-badge inline-flex items-center gap-1 rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-primary-700 ring-1 ring-primary-100">
                           <AppIcon className="ri-calendar-event-line text-[10px]"></AppIcon>
@@ -3291,7 +3291,7 @@ function ProgrammeEditorForm({ programme, onSaved }: { programme: CurriculumProg
           onChange={value => setForm(prev => ({ ...prev, level: value.replace(/\D/g, '') }))}
           placeholder="e.g. 4"
           inputMode="numeric"
-          hint={form.level ? `Will be saved as LVL-${form.level}` : 'Numbers only, e.g. 4'}
+          hint={form.level ? `Will show as Level ${form.level}` : 'Numbers only, e.g. 4'}
         />
         <div>
           <ColorField label="Colour" value={form.color} onChange={value => setForm(prev => ({ ...prev, color: value }))} />

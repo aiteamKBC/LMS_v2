@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
-import { namedCurriculumWorkspacePath, programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entities/model';
+import { formatProgrammeLevel, namedCurriculumWorkspacePath, programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entities/model';
 // Editing the programme, or adding a cohort or group from this page,
 // opens the same drawer that record's own page opens. One form per record type in
 // the whole studio, so nothing behaves differently depending on the door taken.
@@ -245,6 +245,14 @@ interface Programme {
   color: string;
   description: string;
   duration: string;
+  /**
+   * The two windows the apprenticeship model distinguishes, read across every
+   * cohort on the programme. Both open on the earliest cohort start; the
+   * practical period closes on the latest practical end, and the apprenticeship
+   * runs on past it by the EPA window.
+   */
+  practicalWindow: string;
+  apprenticeshipWindow: string;
   cohorts: Cohort[];
   modules: Module[];
   ksbHeatmap: KsbHeatmapRow[];
@@ -319,6 +327,8 @@ const EMPTY_PROGRAMME: Programme = {
   color: '#6941c6',
   description: '',
   duration: 'Live curriculum',
+  practicalWindow: '',
+  apprenticeshipWindow: '',
   cohorts: [],
   modules: [],
   ksbHeatmap: [],
@@ -1209,10 +1219,19 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
   // problem it is, on the Overview tab, and the count stays honest.
   const deliveryStart = programmeCohorts.map(cohort => clean(cohort.startDate)).filter(Boolean).sort()[0] || '';
   const deliveryEnd = programmeCohorts.map(cohort => clean(cohort.endDate)).filter(Boolean).sort().at(-1) || '';
-  const deliveryWindow = [
-    deliveryStart ? formatDateLabel(deliveryStart) : '',
-    deliveryEnd ? formatDateLabel(deliveryEnd) : '',
+  // A cohort's endDate is its practical end; apprenticeshipEndDate carries the
+  // same date plus the EPA window. Falling back to the practical end keeps the
+  // apprenticeship window readable for cohorts with no EPA months recorded.
+  const apprenticeshipEnd = programmeCohorts
+    .map(cohort => clean(cohort.apprenticeshipEndDate) || clean(cohort.endDate))
+    .filter(Boolean).sort().at(-1) || '';
+  const dateWindow = (start: string, end: string) => [
+    start ? formatDateLabel(start) : '',
+    end ? formatDateLabel(end) : '',
   ].filter(Boolean).join(' – ');
+  const practicalWindow = dateWindow(deliveryStart, deliveryEnd);
+  const apprenticeshipWindow = dateWindow(deliveryStart, apprenticeshipEnd);
+  const deliveryWindow = practicalWindow;
 
   const programmeSourceIds = [source.id, source.sourceId, source.name].map(normalise).filter(Boolean);
   const ksbSet = data.ksbSets.find(set => {
@@ -1299,6 +1318,8 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       color: source.color || '#6941c6',
       description: repairMojibake(source.description || `${deliveryWindow || source.standard} curriculum plan.`),
       duration: deliveryWindow || 'Live curriculum',
+      practicalWindow,
+      apprenticeshipWindow,
       cohorts,
       modules,
       ksbHeatmap,
@@ -2298,7 +2319,7 @@ export default function ProgrammeDetailPage() {
           ]}
           eyebrow="Programme"
           title={PROGRAMME.name}
-          subtitle={[PROGRAMME.level, PROGRAMME.standard, PROGRAMME.duration].map(value => clean(value)).filter(Boolean).join(' · ')}
+          subtitle={[formatProgrammeLevel(PROGRAMME.level, ''), PROGRAMME.standard, PROGRAMME.duration].map(value => clean(value)).filter(Boolean).join(' · ')}
           accentColor={PROGRAMME.color}
           stats={[
             { icon: 'ri-group-line', label: 'Cohorts', value: liveCohortCount, detail: archivedCohortCount ? `${archivedCohortCount} archived` : undefined },
@@ -2367,16 +2388,15 @@ export default function ProgrammeDetailPage() {
           <div className="space-y-5">
             <div className="grid gap-5 xl:grid-cols-2">
               <WorkspacePanel title="Programme" description="The details the programme itself owns. Everything else belongs to a record beneath it.">
-                <DetailRow label="Level" value={clean(PROGRAMME.level, 'Not set')} />
-                <DetailRow label="Standard" value={clean(PROGRAMME.standard, 'Not set')} />
-                <DetailRow label="Owner" value={clean(PROGRAMME.owner, 'Not set')} />
+                <DetailRow label="Level" value={formatProgrammeLevel(PROGRAMME.level)} />
                 <DetailRow
                   label="KSB source"
                   value={coverageKsbSource.sourceId
                     ? clean(coverageKsbSourceLabel) || coverageKsbSource.sourceId
                     : <span className="text-amber-700">No source applied</span>}
                 />
-                <DetailRow label="Delivery window" value={clean(PROGRAMME.duration, 'Not scheduled')} />
+                <DetailRow label="Practical period" value={clean(PROGRAMME.practicalWindow, 'Not scheduled')} />
+                <DetailRow label="Apprenticeship" value={clean(PROGRAMME.apprenticeshipWindow, 'Not scheduled')} />
                 <DetailRow label="Learners" value={totalLearners} />
                 <DetailRow label="Programme ID" value={<code className="text-[11px]">{clean(PROGRAMME.sourceId) || PROGRAMME.id || '—'}</code>} />
               </WorkspacePanel>

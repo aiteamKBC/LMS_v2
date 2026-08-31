@@ -336,6 +336,20 @@ export function countsForProgramme(
 
 // -------------------------------------------------------------- formatting
 
+/**
+ * Programme level, always read back as "Level 4".
+ *
+ * The programme drawer stores what was typed as `LVL-4`, but rows created
+ * before that convention carry a bare `4` or an already-worded `Level 6`, so
+ * the catalogue was showing all three spellings side by side. Only the number
+ * carries meaning; everything around it is formatting, so the display is
+ * derived from the digits rather than from however the row was saved.
+ */
+export function formatProgrammeLevel(value: unknown, fallback = 'Not set'): string {
+  const digits = cleanText(value).match(/\d+/);
+  return digits ? `Level ${digits[0]}` : fallback;
+}
+
 export function formatDateLabel(value: unknown): string {
   const text = cleanText(value);
   if (!text) return '—';
@@ -396,6 +410,25 @@ function dayNumber(value: unknown): number | null {
   // reader's timezone or by a daylight-saving boundary inside the period.
   const parsed = Date.parse(`${text}T00:00:00Z`);
   return Number.isNaN(parsed) ? null : Math.round(parsed / DAY_MS);
+}
+
+/** England's weekend, by the weekday numbering `Date.getDay` uses. */
+const WEEKEND_DAY_NAMES: Record<number, string> = { 0: 'Sunday', 6: 'Saturday' };
+
+/**
+ * The note a Saturday or Sunday date carries, or '' on any weekday.
+ *
+ * Not a refusal -- a weekend date is still saved as typed -- just a heads-up,
+ * since Saturday and Sunday are holidays in England and nothing normally
+ * delivers on them. Shared by the module drawer and the cohort drawer so the
+ * same date gets the same sentence wherever it is picked.
+ */
+export function weekendDateNotice(value: unknown): string {
+  const days = dayNumber(value);
+  if (days === null) return '';
+  // Day 0 of the epoch was a Thursday (getDay 4), so shifting by 4 lands Sunday on 0.
+  const name = WEEKEND_DAY_NAMES[(days + 4) % 7];
+  return name ? `${name} is a weekend — no delivery normally runs that day.` : '';
 }
 
 export interface CohortWeekCapacity {

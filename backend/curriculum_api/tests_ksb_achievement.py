@@ -56,7 +56,8 @@ class FakeConnection:
 PROGRESS_COLUMNS = (
     'learner_id', 'progress_id', 'kind', 'component_ref', 'component_title',
     'component_type', 'quiz_ref', 'module_title', 'week_title', 'submitted_at',
-    'reported_time', 'feedback', 'passed', 'progress_expected_otjh',
+    'reported_time', 'feedback', 'passed', 'programme_ref', 'cohort_ref',
+    'group_ref', 'module_ref', 'week_ref', 'progress_expected_otjh',
     'component_expected_otjh', 'resolved_component_title', 'ksb_code', 'weight',
     'weight_class',
 )
@@ -65,11 +66,14 @@ PROGRESS_COLUMNS = (
 def progress_row(*, learner_id=19, progress_id=1, kind='component',
                  component_ref='COMP-20260816E2E', passed=None, code='K1',
                  weight=50, weight_class='hard', progress_expected_otjh=3,
-                 component_expected_otjh=3):
+                 component_expected_otjh=3, programme_ref='PROG-1',
+                 cohort_ref='COHORT-1', group_ref='GROUP-1',
+                 module_ref='MOD-1', week_ref='WEEK-1'):
     return (
         learner_id, progress_id, kind, component_ref, 'E2E activity',
         'assignment', None, 'Module One', 'Week 1', None,
-        '2.5 hours', 'Reflection text', passed, progress_expected_otjh,
+        '2.5 hours', 'Reflection text', passed, programme_ref, cohort_ref,
+        group_ref, module_ref, week_ref, progress_expected_otjh,
         component_expected_otjh, 'E2E activity', code, weight, weight_class,
     )
 
@@ -355,3 +359,155 @@ class ReflectionProgressResolutionTests(SimpleTestCase):
         )
 
         self.assertEqual((declared, rows, excluded, unlinked), ({}, [], [], []))
+
+
+class LearnerProgressOtjhVisibilityTests(SimpleTestCase):
+    """A completed component must be visible whether or not it has KSBs.
+
+    The reader joined ``learner_progress_ksbs`` with an inner join, so an
+    activity with no KSB snapshot produced no row at all — and every scope's
+    achieved OTJH is summed from these rows. A programme whose components carry
+    no KSB mappings yet reported zero hours achieved while its learners had
+    completed the lot. The LEFT join is what makes the hours independent of the
+    mappings; these pin it.
+    """
+
+    def _run(self, rows, codes=('K1', 'S2', 'B1'), **kwargs):
+        cursor = FakeCursor(PROGRESS_COLUMNS, rows)
+        with patch.object(views, 'connection', FakeConnection(cursor)):
+            with patch.object(views, 'learner_schema_table_exists', return_value=True):
+                return views.learner_progress_ksb_consumption([19], list(codes), **kwargs)
+
+    def test_an_activity_with_no_ksb_snapshot_still_reports_its_hours(self):
+        totals, achieved, excluded = self._run([
+            progress_row(code=None, weight=None, weight_class=None),
+        ])
+
+        self.assertEqual(totals, {})
+        self.assertEqual(len(achieved), 1)
+        self.assertEqual(achieved[0]['code'], '')
+        self.assertEqual(achieved[0]['weight'], 0)
+        self.assertEqual(achieved[0]['expectedOtjh'], 3)
+        self.assertTrue(achieved[0]['countsTowardAchievement'])
+        self.assertEqual(excluded, [])
+
+    def test_the_reader_left_joins_the_ksb_snapshot(self):
+        cursor = FakeCursor(PROGRESS_COLUMNS, [progress_row()])
+        with patch.object(views, 'connection', FakeConnection(cursor)):
+            with patch.object(views, 'learner_schema_table_exists', return_value=True):
+                views.learner_progress_ksb_consumption([19], ['K1'])
+
+        sql = cursor.executed[0][0]
+        self.assertIn('left join "Learner"."learner_progress_ksbs"', sql)
+
+    def test_a_code_this_scope_never_authored_keeps_the_activity(self):
+        """Filtering a KSB out must not take the activity's hours with it."""
+        totals, achieved, _excluded = self._run([progress_row(code='K9')], codes=('K1',))
+
+        self.assertEqual(totals, {})
+        self.assertEqual([row['code'] for row in achieved], [''])
+        self.assertEqual(achieved[0]['expectedOtjh'], 3)
+
+    def test_a_deleted_component_is_still_credited_to_the_scope_it_ran_in(self):
+        """The component is gone from the scope; the learner's work is not.
+
+        ``component_ids`` is the scope's *live* content, so a module deleted
+        after a learner completed it drops out of it. The progress row still
+        carries the programme it was stamped with, which is what places it.
+        """
+        totals, achieved, _excluded = self._run(
+            [progress_row(component_ref='COMP-DELETED', programme_ref='PROG-1')],
+            component_ids=['COMP-STILL-THERE'],
+            restrict_to_components=True,
+            scope='programme',
+            scope_identifier='PROG-1',
+        )
+
+        self.assertEqual(totals, {19: {'K1': 50.0}})
+        self.assertEqual(achieved[0]['scopeStatus'], 'in_scope')
+        self.assertEqual(achieved[0]['scopeBasis'], 'lineage')
+
+    def test_a_component_from_another_programme_is_still_out_of_scope(self):
+        _totals, achieved, excluded = self._run(
+            [progress_row(component_ref='COMP-ELSEWHERE', programme_ref='PROG-2')],
+            component_ids=['COMP-STILL-THERE'],
+            restrict_to_components=True,
+            scope='programme',
+            scope_identifier='PROG-1',
+        )
+
+        self.assertEqual(achieved, [])
+        self.assertEqual(excluded[0]['scopeStatus'], 'out_of_scope')
+
+    def test_the_same_component_completed_twice_is_credited_once(self):
+        totals, achieved, excluded = self._run([
+            progress_row(progress_id=1),
+            progress_row(progress_id=2),
+        ])
+
+        self.assertEqual(totals, {19: {'K1': 50.0}})
+        self.assertEqual(len(achieved), 1)
+        # Kept as history rather than dropped, so the repeat is inspectable.
+        self.assertEqual(len(excluded), 1)
+        self.assertEqual(excluded[0]['exclusionReason'], 'repeat_completion')
+        self.assertFalse(excluded[0]['countsTowardAchievement'])
+
+
+class KsbAchievementByTypeTests(SimpleTestCase):
+    """Knowledge / Skills / Behaviours, each with its own achieved and missing."""
+
+    @staticmethod
+    def _row(code, ksb_type, status, learners_achieved=0, expected=10, capped=0):
+        return {
+            'code': code,
+            'ksbType': ksb_type,
+            'status': status,
+            'learnersAchievedCount': learners_achieved,
+            'plannedWeight': expected,
+            'expectedWeightTotal': expected,
+            'achievedWeightTotal': capped,
+            'cappedAchievedWeightTotal': capped,
+        }
+
+    def test_each_family_counts_its_own_achieved_and_missing(self):
+        by_type = {
+            family['letter']: family
+            for family in views.ksb_achievement_by_type([
+                self._row('K1', 'knowledge', 'in_progress', learners_achieved=2, capped=5),
+                self._row('K2', 'knowledge', 'not_started'),
+                self._row('S1', 'Skills', 'complete', learners_achieved=3, capped=10),
+                self._row('B1', 'Behaviours', 'unmapped', expected=0),
+            ])
+        }
+
+        self.assertEqual(by_type['K']['startedCount'], 1)
+        self.assertEqual(by_type['K']['missingCount'], 1)
+        self.assertEqual(by_type['K']['progressPercentage'], 25.0)
+        self.assertEqual(by_type['S']['completeCount'], 1)
+        self.assertEqual(by_type['S']['missingCount'], 0)
+        # Taught nowhere is a missing KSB too, and separately countable.
+        self.assertEqual(by_type['B']['missingCount'], 1)
+        self.assertEqual(by_type['B']['unmappedCount'], 1)
+
+    def test_the_family_comes_from_the_code_when_the_type_is_missing(self):
+        by_type = {
+            family['letter']: family
+            for family in views.ksb_achievement_by_type([
+                self._row('S4', '', 'in_progress', learners_achieved=1, capped=10),
+            ])
+        }
+
+        self.assertEqual(by_type['S']['ksbCount'], 1)
+        self.assertEqual(by_type['K']['ksbCount'], 0)
+
+    def test_an_unplanned_ksb_is_not_counted_as_one_of_the_scopes_gaps(self):
+        by_type = {
+            family['letter']: family
+            for family in views.ksb_achievement_by_type([
+                self._row('K5', 'knowledge', 'unplanned', learners_achieved=1, expected=0, capped=20),
+            ])
+        }
+
+        self.assertEqual(by_type['K']['unplannedCount'], 1)
+        self.assertEqual(by_type['K']['requiredCount'], 0)
+        self.assertEqual(by_type['K']['missingCount'], 0)
