@@ -26,7 +26,6 @@ import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import { coachFetch } from '@/lib/coachFetch';
 
-import { AttentionQueue } from './components/AttentionQueue';
 import { CaseloadEmpty, CaseloadError, CaseloadLoading, CaseloadNoMatches } from './components/CaseloadStates';
 import { LearnerCardGrid } from './components/LearnerCardGrid';
 import { LearnerQuickViewDrawer } from './components/LearnerQuickViewDrawer';
@@ -521,17 +520,7 @@ export default function CoachCaseload() {
         />
 
         {!loading && !error && learners.length > 0 ? (
-          <>
-            <LearnerStatusTabs value={statusFilter} counts={counts} onChange={handleStatusFilterChange} />
-            <AttentionQueue
-              learners={sorted}
-              insights={insights}
-              counts={counts}
-              activeFilter={statusFilter}
-              onFilterChange={handleStatusFilterChange}
-              onOpenLearner={handleQuickView}
-            />
-          </>
+          <LearnerStatusTabs value={statusFilter} counts={counts} onChange={handleStatusFilterChange} />
         ) : null}
 
         <section className="overflow-hidden rounded-2xl bg-white shadow-sm">

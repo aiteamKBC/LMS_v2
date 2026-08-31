@@ -1126,6 +1126,8 @@ export default function CoachDashboard() {
       return Boolean(date && toIsoDate(date) === todayIso);
     });
   }, [upcomingScheduleEvents]);
+  const nextTodayEvent = todayEvents[0];
+  const remainingTodayEvents = todayEvents.slice(1, 4);
   /* ── This Week ── */
   const weekEvents = useMemo(
     () => [...activeCalendarEvents, ...liveSessionEvents].filter(event => isEventThisWeek(event)),
@@ -1306,7 +1308,93 @@ export default function CoachDashboard() {
           ]}
         />
 
+        {/* ═══════════════════════════════════════════════════
+            2. TODAY & NEEDS ACTION — overdue reviews, at-risk
+               learners, evidence and unscheduled sessions.
+            ═══════════════════════════════════════════════════ */}
         <SectionReveal delay={40}>
+          <div id="today-actions" className="scroll-mt-4">
+          <Panel padding="lg">
+            <SectionHeader
+              icon="ri-calendar-schedule-line"
+              title="Today's schedule"
+              description="Your next session or review for today"
+              actions={<StatusBadge tone="info" dot={false} label={`${todayEvents.length} today`} />}
+            />
+
+            {loading && !nextTodayEvent && (
+              <LoadingBlock className="mt-4 h-[132px] rounded-2xl" />
+            )}
+
+            {!loading && !nextTodayEvent && (
+              <EmptyState
+                size="sm"
+                icon="ri-check-double-line"
+                title="Nothing scheduled today"
+                description="No live sessions, reviews or coaching sessions are scheduled for today."
+              />
+            )}
+
+            {nextTodayEvent && (
+              <div className="mt-4">
+                <Link
+                  to="/coach/timetable"
+                  state={buildTimetableFocusState(nextTodayEvent)}
+                  className="group flex min-w-0 items-center gap-4 rounded-xl border border-primary-100 bg-primary-50/50 px-4 py-3.5 transition-colors hover:border-primary-200 hover:bg-primary-50"
+                >
+                  <span className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-xl bg-background-50 text-center shadow-sm ring-1 ring-primary-100">
+                    <span className="text-[10px] font-semibold uppercase text-primary-500">Next</span>
+                    <span className="text-sm font-bold tabular-nums text-primary-800">{scheduleEventTime(nextTodayEvent)}</span>
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold text-foreground-950">{scheduleEventTitle(nextTodayEvent)}</span>
+                    <span className="mt-1 block truncate text-[12px] text-foreground-500">{scheduleEventMeta(nextTodayEvent)}</span>
+                  </span>
+                  <span className="hidden items-center gap-1 text-[12px] font-semibold text-primary-700 sm:inline-flex">
+                    Open timetable
+                    <AppIcon className="ri-arrow-right-line text-sm transition-transform group-hover:translate-x-0.5"></AppIcon>
+                  </span>
+                </Link>
+              </div>
+            )}
+
+            {remainingTodayEvents.length > 0 && (
+              <div className="mt-3 border-t border-foreground-100 pt-3">
+                <SectionLabel>Later today</SectionLabel>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {remainingTodayEvents.map(event => (
+                    <Link
+                      key={`today-${event.eventKey || event.id}`}
+                      to="/coach/timetable"
+                      state={buildTimetableFocusState(event)}
+                      className="flex min-w-0 items-center gap-2 rounded-lg border border-foreground-100 bg-background-50 px-3 py-2 text-[12px] text-foreground-700 transition-colors hover:border-primary-200 hover:bg-primary-50/50"
+                    >
+                      <span className="shrink-0 font-semibold tabular-nums text-primary-700">{scheduleEventTime(event)}</span>
+                      <span className="truncate">{scheduleEventTitle(event)}</span>
+                    </Link>
+                  ))}
+                  {todayEvents.length > 4 && (
+                    <span className="inline-flex items-center rounded-lg border border-foreground-200 bg-background-100 px-2.5 py-1.5 text-[12px] text-foreground-500">
+                      +{todayEvents.length - 4} more
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+          </Panel>
+          </div>
+        </SectionReveal>
+
+        {(loading || loadWarning) && (
+          <div className={`rounded-lg border px-3.5 py-2.5 text-[12.5px] ${loadWarning ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-foreground-200/60 bg-background-50 text-foreground-500'}`}>
+            {loading ? 'Loading live coach dashboard data...' : loadWarning}
+          </div>
+        )}
+
+        {/* ═══════════════════════════════════════════════════
+            CASELOAD HEALTH
+            ═══════════════════════════════════════════════════ */}
+        <SectionReveal delay={70}>
           <div className="space-y-3">
             <SectionHeader icon="ri-pulse-line" title="Caseload health" />
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -1353,96 +1441,6 @@ export default function CoachDashboard() {
               <FilterCompactMetric label="Gateway" value={gatewayLearners.length} note="At gateway stage" tone="upcoming" active={kpiFilter === 'gateway'} onFilter={() => setSelectedKpi('gateway')} />
               <FilterCompactMetric label="EPA" value={epaLearners.length} note="At EPA stage" tone="info" active={kpiFilter === 'epa'} onFilter={() => setSelectedKpi('epa')} />
             </MetricRow>
-          </div>
-        </SectionReveal>
-
-        {(loading || loadWarning) && (
-          <div className={`rounded-lg border px-3.5 py-2.5 text-[12.5px] ${loadWarning ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-foreground-200/60 bg-background-50 text-foreground-500'}`}>
-            {loading ? 'Loading live coach dashboard data...' : loadWarning}
-          </div>
-        )}
-
-        {/* ═══════════════════════════════════════════════════
-            2. TODAY & NEEDS ACTION — overdue reviews, at-risk
-               learners, evidence and unscheduled sessions.
-            ═══════════════════════════════════════════════════ */}
-        <SectionReveal delay={70}>
-          <div id="today-actions" className="scroll-mt-4">
-          <Panel padding="lg">
-            <SectionHeader
-              icon="ri-calendar-schedule-line"
-              title="Today's schedule"
-              description="Sessions and reviews scheduled for today"
-              actions={<StatusBadge tone="info" dot={false} label={`${todayEvents.length} today`} />}
-            />
-
-            <div className={cn(
-              'mt-4 grid gap-2.5',
-              actionItems.length <= 1
-                ? 'sm:grid-cols-1'
-                : actionItems.length === 2
-                  ? 'sm:grid-cols-2'
-                  : actionItems.length === 3
-                    ? 'sm:grid-cols-3'
-                    : 'sm:grid-cols-2 lg:grid-cols-4',
-            )}>
-              {actionItems.map(item => (
-                <ActionRow
-                  key={item.id}
-                  tone={ACTION_TONE[item.tone]}
-                  onClick={() => (item.to ? navigate(item.to) : item.onClick?.())}
-                  leading={
-                    <span className={cn('flex h-10 w-10 items-center justify-center rounded-lg', toneStyle(ACTION_TONE[item.tone]).bg, toneStyle(ACTION_TONE[item.tone]).text)}>
-                      <AppIcon className={cn(item.icon, 'text-[17px]')}></AppIcon>
-                    </span>
-                  }
-                  title={item.label}
-                  subtitle={item.hint}
-                  meta={<span className={cn('text-[20px] font-semibold tabular-nums', toneStyle(ACTION_TONE[item.tone]).text)}>{item.count}</span>}
-                  actions={<AppIcon className="ri-arrow-right-s-line text-[17px] text-foreground-300"></AppIcon>}
-                />
-              ))}
-              {loading && !actionItems.length && (
-                <>
-                  <LoadingBlock className="h-[76px] rounded-2xl" />
-                  <LoadingBlock className="h-[76px] rounded-2xl" />
-                </>
-              )}
-            </div>
-            {!loading && !actionItems.length && (
-              <EmptyState
-                size="sm"
-                icon="ri-check-double-line"
-                title="Nothing scheduled today"
-                description="No live sessions, reviews or coaching sessions are scheduled for today."
-              />
-            )}
-
-            {todayEvents.length > 0 && (
-              <div className="mt-4 border-t border-foreground-100 pt-3.5">
-                <SectionLabel>On today</SectionLabel>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {todayEvents.slice(0, 6).map(event => (
-                    <Link
-                      key={`today-${event.eventKey || event.id}`}
-                      to="/coach/timetable"
-                      state={buildTimetableFocusState(event)}
-                      className="inline-flex max-w-full items-center gap-2 rounded-lg border border-primary-100 bg-primary-50/60 px-2.5 py-1.5 text-[12px] text-primary-800 transition-colors hover:bg-primary-100"
-                    >
-                      <span className="font-semibold tabular-nums">{scheduleEventTime(event)}</span>
-                      <span className="text-primary-300">&middot;</span>
-                      <span className="truncate">{scheduleEventTitle(event)}</span>
-                    </Link>
-                  ))}
-                  {todayEvents.length > 6 && (
-                    <span className="inline-flex items-center rounded-lg border border-foreground-200 bg-background-100 px-2.5 py-1.5 text-[12px] text-foreground-500">
-                      +{todayEvents.length - 6} more
-                    </span>
-                  )}
-                </div>
-              </div>
-            )}
-          </Panel>
           </div>
         </SectionReveal>
 
