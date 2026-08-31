@@ -26,6 +26,7 @@ import {
   probeModuleTeamsAttachment,
   restoreModuleTeamsMeeting,
   saveTeamsRecordingEvents,
+  syncTeamsMeetingArtifacts,
   teamsMeetingArtifactPreviewUrl,
   updateTeamsMeetingSchedule,
   viewerZoneOffset,
@@ -100,6 +101,8 @@ const COLUMNS = [
 
 const DEFAULT_START_TIME = '09:00';
 const DEFAULT_DURATION_MINUTES = 60;
+const AUTO_SYNC_RETRY_MS = 5 * 60 * 1000;
+const AUTO_SYNC_RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 type CalendarState = 'in-sync' | 'out-of-sync' | 'not-created' | 'no-sessions';
 
@@ -293,6 +296,30 @@ function meetingRunState(startIso: string, durationMinutes: number, now: number)
   if (now >= end) return 'ended';
   if (now >= start - 15 * 60000) return 'live';
   return 'upcoming';
+}
+
+function endedOccurrenceCount(row: MeetingRow, now: number): number {
+  return row.teamsStarts.reduce((count, startIso, index) => {
+    const session = row.sessions[index];
+    const duration = Math.max(
+      15,
+      minutesBetween(session?.startTime || '', session?.endTime || '') || row.durationMinutes,
+    );
+    return count + (meetingRunState(startIso, duration, now) === 'ended' ? 1 : 0);
+  }, 0);
+}
+
+function mostRecentOccurrenceEnd(row: MeetingRow): number {
+  return row.teamsStarts.reduce((latest, startIso, index) => {
+    const start = parseUtcInstant(startIso).getTime();
+    if (Number.isNaN(start)) return latest;
+    const session = row.sessions[index];
+    const duration = Math.max(
+      15,
+      minutesBetween(session?.startTime || '', session?.endTime || '') || row.durationMinutes,
+    );
+    return Math.max(latest, start + duration * 60000);
+  }, 0);
 }
 
 /**
@@ -768,7 +795,6 @@ export default function CurriculumTeamsMeetingsPage() {
   const [teamsError, setTeamsError] = useState<string | null>(null);
   const [graphConfigured, setGraphConfigured] = useState(true);
   const [defaultOrganizer, setDefaultOrganizer] = useState('');
-  const [organizerLocked, setOrganizerLocked] = useState(false);
   const [timeZoneLabel, setTimeZoneLabel] = useState('');
 
   const [search, setSearch] = useState('');
@@ -782,6 +808,13 @@ export default function CurriculumTeamsMeetingsPage() {
   const [detail, setDetail] = useState<TeamsMeetingArtifactsResult | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [artifactSyncing, setArtifactSyncing] = useState<Set<string>>(() => new Set());
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.localStorage.getItem('curriculumTeamsAutoSync') !== 'off';
+  });
+  const artifactSyncInFlight = useRef<Set<string>>(new Set());
+  const artifactSyncAttempts = useRef<Map<string, number>>(new Map());
   const [preview, setPreview] = useState<{ liveSessionId: string; artifact: TeamsMeetingArtifact; title: string } | null>(null);
   /**
    * Weeks of the selected module still waiting for a live-session component,
@@ -797,6 +830,10 @@ export default function CurriculumTeamsMeetingsPage() {
     const timer = window.setInterval(() => setNow(Date.now()), 60000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem('curriculumTeamsAutoSync', autoSyncEnabled ? 'on' : 'off');
+  }, [autoSyncEnabled]);
 
   const peopleDrawer = useDrawerState<PeopleForm>({ attendees: '', presenters: '' });
   const createDrawer = useDrawerState<CreateForm>({
@@ -846,7 +883,6 @@ export default function CurriculumTeamsMeetingsPage() {
         if (!active) return;
         setGraphConfigured(configuration.configured);
         setDefaultOrganizer(configuration.defaultOrganizer || '');
-        setOrganizerLocked(Boolean(configuration.organizerLocked));
         setTimeZoneLabel(configuration.timeZone || configuration.timeZoneIana || '');
       })
       .catch(() => { if (active) setGraphConfigured(false); });
@@ -1067,6 +1103,88 @@ export default function CurriculumTeamsMeetingsPage() {
     void loadDetail(liveSessionId);
   }, [loadDetail, selected?.summary?.liveSessionId]);
 
+  const runArtifactSync = useCallback(async (
+    liveSessionId: string,
+    source: 'manual' | 'automatic',
+  ) => {
+    if (!liveSessionId || artifactSyncInFlight.current.has(liveSessionId)) return;
+    const attemptedAt = artifactSyncAttempts.current.get(liveSessionId) || 0;
+    if (source === 'automatic' && Date.now() - attemptedAt < AUTO_SYNC_RETRY_MS) return;
+
+    artifactSyncAttempts.current.set(liveSessionId, Date.now());
+    artifactSyncInFlight.current.add(liveSessionId);
+    setArtifactSyncing(current => new Set(current).add(liveSessionId));
+    if (source === 'manual') setNotice(null);
+
+    try {
+      const result = await syncTeamsMeetingArtifacts(liveSessionId);
+      const nextSummaries = await fetchCurriculumTeamsMeetingSummaries(undefined, {
+        occurrenceDates: true,
+        skipCache: true,
+      });
+      setSummaries(nextSummaries);
+      if (selected?.summary?.liveSessionId === liveSessionId) {
+        await loadDetail(liveSessionId);
+      }
+
+      if (source === 'manual') {
+        const counts = result.synced;
+        const summary = [
+          `${counts.attendanceRecords} attendance record${counts.attendanceRecords === 1 ? '' : 's'}`,
+          `${counts.transcripts} transcript${counts.transcripts === 1 ? '' : 's'}`,
+          `${counts.recordings} recording${counts.recordings === 1 ? '' : 's'}`,
+        ].join(', ');
+        setNotice({
+          tone: result.partial ? 'warning' : 'info',
+          text: result.partial
+            ? `Teams sync finished partially: ${summary}. ${result.errors.join(' ')}`
+            : `Teams sync complete: ${summary}.`,
+        });
+      }
+    } catch (error) {
+      if (source === 'manual') {
+        setNotice({
+          tone: 'error',
+          text: error instanceof Error ? error.message : 'Attendance, transcripts and recordings could not be synced.',
+        });
+      }
+    } finally {
+      artifactSyncInFlight.current.delete(liveSessionId);
+      setArtifactSyncing(current => {
+        const next = new Set(current);
+        next.delete(liveSessionId);
+        return next;
+      });
+    }
+  }, [loadDetail, selected?.summary?.liveSessionId]);
+
+  // Graph publishes attendance, transcripts and recordings after the meeting,
+  // sometimes several minutes apart. Try immediately once an occurrence ends,
+  // then retry recent meetings every five minutes while this page is open.
+  // Historical unsynced meetings get one recovery attempt per page load so a
+  // long-running deployment does not poll its entire archive forever.
+  useEffect(() => {
+    if (!autoSyncEnabled || !graphConfigured || teamsLoading) return undefined;
+    const candidates = rows.filter(row => {
+      if (!row.summary) return false;
+      const ended = endedOccurrenceCount(row, now);
+      if (!ended) return false;
+      const recent = mostRecentOccurrenceEnd(row) >= now - AUTO_SYNC_RECENT_WINDOW_MS;
+      const neverAttemptedHere = !artifactSyncAttempts.current.has(row.summary.liveSessionId);
+      return ended > (row.summary.syncedCount || 0) && (recent || neverAttemptedHere);
+    });
+    let cancelled = false;
+    void (async () => {
+      // Keep Graph pressure predictable: one series at a time rather than a
+      // burst across every module whose meeting ended on the same minute.
+      for (const row of candidates) {
+        if (cancelled || !row.summary) return;
+        await runArtifactSync(row.summary.liveSessionId, 'automatic');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [autoSyncEnabled, graphConfigured, now, rows, runArtifactSync, teamsLoading]);
+
   // --------------------------------------------------------------- actions
 
   /** The module's own session dates, in the shape the Teams endpoints take. */
@@ -1286,13 +1404,9 @@ export default function CurriculumTeamsMeetingsPage() {
     const row = target || drawerTarget;
     if (!row) return;
     const form = createDrawer.form;
-    // A locked organizer is the backend's to decide; this only catches the drawer
-    // being submitted before the configuration call has answered.
-    const organizer = (organizerLocked ? defaultOrganizer : form.organizerEmail).trim();
+    const organizer = form.organizerEmail.trim();
     if (!organizer) {
-      createDrawer.setError(organizerLocked
-        ? 'The Microsoft 365 organizer is still loading. Try again in a moment.'
-        : 'Enter the Microsoft 365 organizer email.');
+      createDrawer.setError('Enter the Microsoft 365 organizer email.');
       return;
     }
     if (!row.sessions.length) { createDrawer.setError('This module has no stored session dates yet.'); return; }
@@ -1355,7 +1469,7 @@ export default function CurriculumTeamsMeetingsPage() {
           ? 'Created, but NOT recording'
           : result.warnings.length ? 'Created with warnings' : 'Session dates sent to Teams',
         text: optionsRefused
-          ? `The invitations and join links are in place, but Microsoft Teams refused the recording, transcription and lobby options, so these sessions will record nothing. Grant the Teams application access policy to ${result.meeting.organizerEmail || 'the organizer'}, then re-apply the meeting options.`
+          ? `The invitations and join links are in place, but Microsoft Graph refused the recording, transcription and lobby options, so these sessions will record nothing. Organizer: ${result.meeting.organizerEmail || 'unknown'}. ${result.warnings[0] || 'Check the backend log for the exact Graph status, code and request-id.'}`
           : result.warnings.length
             ? result.warnings[0]
             : `${occurrences.length} session date${occurrences.length === 1 ? '' : 's'} sent to Teams${attached ? `, linked to ${attached} live-session component${attached === 1 ? '' : 's'}` : ''}.`,
@@ -1747,6 +1861,31 @@ export default function CurriculumTeamsMeetingsPage() {
                   )}
                   <button
                     type="button"
+                    onClick={() => void runArtifactSync(selected.summary!.liveSessionId, 'manual')}
+                    disabled={artifactSyncing.has(selected.summary.liveSessionId) || !graphConfigured}
+                    title="Ask Microsoft Graph now for attendance, transcripts and recordings from meetings that have ended."
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <AppIcon className={`${artifactSyncing.has(selected.summary.liveSessionId) ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} text-sm`}></AppIcon>
+                    {artifactSyncing.has(selected.summary.liveSessionId) ? 'Syncing…' : 'Sync attendance & files'}
+                  </button>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={autoSyncEnabled}
+                    onClick={() => setAutoSyncEnabled(enabled => !enabled)}
+                    title="When enabled, ended meetings are checked automatically while this page is open."
+                    className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-bold transition-smooth ${
+                      autoSyncEnabled
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                        : 'border-background-200 bg-background-50 text-foreground-500 hover:bg-background-100'
+                    }`}
+                  >
+                    <AppIcon className={`${autoSyncEnabled ? 'ri-checkbox-circle-line' : 'ri-close-circle-line'} text-sm`}></AppIcon>
+                    Auto-sync {autoSyncEnabled ? 'on' : 'off'}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => { setSelectedId(''); void openPeople(selected); }}
                     disabled={Boolean(busy) || !graphConfigured}
                     title="Edit who is invited and who can present, without moving any dates."
@@ -1888,7 +2027,7 @@ export default function CurriculumTeamsMeetingsPage() {
                 />
 
                 <p className="text-[11px] font-semibold text-foreground-400">
-                  Attendance, transcripts and recordings only exist once a meeting has run. Fetch them after the session.
+                  Attendance, transcripts and recordings only exist once a meeting has run. Use Sync attendance &amp; files now, or leave auto-sync on to retry recent meetings every five minutes while this page is open.
                 </p>
               </div>
             ) : (
@@ -1918,15 +2057,12 @@ export default function CurriculumTeamsMeetingsPage() {
                     <div className="grid gap-4 sm:grid-cols-2">
                       <FormField
                         label="Organizer Microsoft 365 email"
-                        required={!organizerLocked}
-                        hint={organizerLocked
-                          ? 'Set for this deployment. Recording and transcription only turn on for this mailbox, so tutors are invited as presenters instead.'
-                          : 'The calendar this series is created in.'}
+                        required
+                        hint="The calendar this series is created in. The selected account must allow this app to manage Teams meetings."
                       >
                         <TextControl
-                          value={organizerLocked ? defaultOrganizer : createDrawer.form.organizerEmail}
+                          value={createDrawer.form.organizerEmail}
                           onChange={value => createDrawer.patch({ organizerEmail: value })}
-                          disabled={organizerLocked}
                         />
                       </FormField>
                       <FormField

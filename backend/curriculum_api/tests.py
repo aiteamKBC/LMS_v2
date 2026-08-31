@@ -747,14 +747,12 @@ class CurriculumTeamsMeetingTests(TestCase):
         'base_url': 'https://graph.microsoft.com/v1.0',
         'timezone': 'GMT Standard Time',
     })
-    def test_configured_organizer_outranks_the_one_the_caller_asks_for(
+    def test_requested_organizer_outranks_the_configured_default(
         self, _settings, _credentials, graph_request,
     ):
-        # Recording and transcription are set on the online meeting behind the
-        # event, and that route is gated by a Teams application access policy
-        # granted to one mailbox. A meeting created on any other mailbox is
-        # refused with 403 and opens at the tenant defaults, recording nothing --
-        # so the configured organizer has to win, however the caller asks.
+        # Deployments may grant the application access policy to multiple users.
+        # The environment mailbox pre-fills the form but must not override the
+        # organizer explicitly chosen for this new meeting.
         def graph_side_effect(method, path, payload=None):
             if method == 'POST' and path.endswith('/events'):
                 return {
@@ -784,22 +782,43 @@ class CurriculumTeamsMeetingTests(TestCase):
             )
 
         self.assertEqual(response.status_code, 201, response.content)
-        self.assertEqual(response.json()['meeting']['organizerEmail'], 'organizer@example.com')
+        self.assertEqual(response.json()['meeting']['organizerEmail'], 'tutor@example.com')
         self.assertEqual(
             graph_request.call_args_list[0].args[:2],
-            ('POST', 'users/organizer%40example.com/events'),
+            ('POST', 'users/tutor%40example.com/events'),
         )
-        # The tutor is still on the meeting -- as a presenter, which is the role
-        # that lets them share and record. They just do not own the calendar.
+        # The selected tutor owns the calendar and remains explicitly listed as
+        # a presenter so the meeting participant roles are applied as requested.
         self.assertIn(
             'tutor@example.com',
             [entry['emailAddress']['address']
              for entry in graph_request.call_args_list[0].kwargs['payload']['attendees']],
         )
         self.assertTrue(
-            any(call.args[:2] == ('PATCH', 'users/organizer%40example.com/onlineMeetings/meeting-pinned')
+            any(call.args[:2] == ('PATCH', 'users/tutor%40example.com/onlineMeetings/meeting-pinned')
                 for call in graph_request.call_args_list)
         )
+
+    def test_configured_owner_id_does_not_override_another_organizer(self):
+        configured_id = '11111111-1111-1111-1111-111111111111'
+        selected_id = '22222222-2222-2222-2222-222222222222'
+        selected_join_url = (
+            'https://teams.microsoft.com/l/meetup-join/test/0?'
+            'context=%7B%22Oid%22%3A%22'
+            f'{selected_id}%22%7D'
+        )
+        with patch.dict(os.environ, {
+            'MICROSOFT_TEAMS_ORGANIZER_EMAIL': 'default@example.com',
+            'MICROSOFT_TEAMS_ORGANIZER_ID': configured_id,
+        }):
+            self.assertEqual(
+                views.teams_online_meeting_owner_id('default@example.com'),
+                configured_id,
+            )
+            self.assertEqual(
+                views.teams_online_meeting_owner_id('selected@example.com', selected_join_url),
+                selected_id,
+            )
 
     @patch('coach_api.views.microsoft_graph_request')
     @patch('coach_api.views.has_graph_credentials', return_value=True)

@@ -1154,21 +1154,12 @@ def teams_meeting_default_organizer():
 def teams_new_meeting_organizer(requested=''):
     """The mailbox a *new* Teams meeting is created on.
 
-    A configured organizer deliberately outranks whatever the caller asked for.
-    Recording, transcription and the lobby are not set on the calendar event --
-    they are set on the onlineMeeting behind it, and that route is gated by a
-    Teams application access policy granted *per user*. A meeting created on any
-    other mailbox is refused with `403 forbidden: No application access policy
-    found for this app ... on the user`, and opens at the tenant defaults:
-    nothing records, and there is no transcript afterwards.
-
-    Tutors belong on the meeting as presenters, which is what `presenters` is
-    for. They do not have to own it. Only when nothing is configured does the
-    caller's own value stand, which is what keeps a deployment that has not set
-    the organizer working exactly as it did before.
+    The configured organizer is a convenience default, not a lock. Deployments
+    that grant the Graph application access policy to multiple Microsoft 365
+    users can therefore choose the mailbox that should own each new meeting.
+    Existing meetings continue to use their persisted organizer.
     """
-    configured = teams_meeting_default_organizer()
-    return configured or clean_str(requested)
+    return clean_str(requested) or teams_meeting_default_organizer()
 
 
 def teams_attendee_emails(value):
@@ -1390,7 +1381,12 @@ def teams_series_email_list(*values):
 def teams_online_meeting_owner_id(organizer, join_url=''):
     """Return the organizer object ID required by onlineMeetings Graph routes."""
     configured_id = clean_str(os.environ.get('MICROSOFT_TEAMS_ORGANIZER_ID'))
-    if re.fullmatch(r'[0-9a-fA-F-]{36}', configured_id):
+    configured_organizer = teams_meeting_default_organizer()
+    organizer_matches_default = (
+        configured_organizer
+        and clean_str(organizer).lower() == configured_organizer.lower()
+    )
+    if re.fullmatch(r'[0-9a-fA-F-]{36}', configured_id) and organizer_matches_default:
         return configured_id
     try:
         decoded_url = urllib_parse.unquote(clean_str(join_url))
@@ -1820,19 +1816,33 @@ def apply_teams_meeting_options(
         }
     if presenter_emails:
         patch['allowedPresenters'] = 'roleIsPresenter'
+    meeting_path = teams_meeting_base_path(organizer, meeting_id, join_url)
+    organizer_object_id = teams_online_meeting_owner_id(organizer, join_url)
     try:
         microsoft_graph_request(
             'PATCH',
-            teams_meeting_base_path(organizer, meeting_id, join_url),
+            meeting_path,
             payload=patch,
         )
     except RuntimeError as exc:
-        logger.warning('Unable to apply Teams meeting options: %s', exc)
+        from coach_api.views import get_graph_settings
+        graph_settings = get_graph_settings()
+        logger.warning(
+            'Unable to apply Teams meeting options: organizer_upn=%s '
+            'organizer_object_id=%s graph_client_id=%s method=PATCH path=%s '
+            'online_meeting_id=%s error=%s',
+            organizer,
+            organizer_object_id,
+            graph_settings.get('client_id', ''),
+            meeting_path,
+            meeting_id,
+            exc,
+        )
         return False, resolved, [{
             'code': 'teams_meeting_options_not_applied',
             'message': (
-                'The Teams meeting exists, but its lobby, recording, transcription and presenter options were not '
-                'applied. Grant OnlineMeetings.ReadWrite.All and an application access policy to the organizer.'
+                'The Teams meeting exists, but Microsoft Graph did not apply its lobby, recording, transcription '
+                'and presenter options. Check the Graph error detail for the exact cause.'
             ),
             'detail': str(exc),
         }]
@@ -1968,12 +1978,10 @@ def curriculum_teams_meeting(request):
         return JsonResponse({
             'configured': has_graph_credentials(),
             'defaultOrganizer': default_organizer,
-            # The organizer is the one meeting field a user must not be able to
-            # change: the application access policy that lets the LMS turn on
-            # recording is granted to that one mailbox. The form renders it
-            # read-only when this is true rather than hiding it, because which
-            # calendar the series lands in is still worth seeing.
-            'organizerLocked': bool(default_organizer),
+            # Kept in the response for older frontends. A configured mailbox now
+            # supplies the initial value only; the organizer of a new meeting is
+            # always selectable by the caller.
+            'organizerLocked': False,
             'timeZone': graph_settings.get('timezone') or 'GMT Standard Time',
             'timeZoneIana': graph_timezone_iana(graph_settings),
         })
@@ -2765,7 +2773,10 @@ def curriculum_teams_meeting_artifact_content(request, live_session_id, artifact
     content = graph_response.read()
     graph_response.close()
     response = HttpResponse(content, content_type=content_type)
-    response['Content-Disposition'] = f'inline; filename="{filename}"'
+    as_attachment = clean_str(request.GET.get('preview')).lower() not in {'1', 'true', 'yes'}
+    response['Content-Disposition'] = (
+        f'{"attachment" if as_attachment else "inline"}; filename="{filename}"'
+    )
     return response
 
 

@@ -2246,6 +2246,12 @@ export function liveSessionArtifactContentUrl(liveSessionId: string, artifactId:
   return `${API_BASE_URL}/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/${encodeURIComponent(artifactId)}/content/`;
 }
 
+/** Inline media/text response. Without this flag the backend deliberately sends
+ * Content-Disposition: attachment so the same endpoint is a real download. */
+export function liveSessionArtifactPreviewUrl(liveSessionId: string, artifactId: string): string {
+  return `${liveSessionArtifactContentUrl(liveSessionId, artifactId)}?preview=1`;
+}
+
 export function fetchCurriculumSessions(
   signal?: AbortSignal,
   options: { skipCache?: boolean } = {},

@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { buildSessionTree, sessionMonthBucket } from '../SessionsTree';
+import {
+  attendanceSheetRows,
+  buildSessionTree,
+  parseTeamsTranscriptVtt,
+  sessionMonthBucket,
+} from '../SessionsTree';
 import type { DeliverySession } from '../page';
 
 function makeSession(overrides: Partial<DeliverySession>): DeliverySession {
@@ -96,5 +101,43 @@ describe('buildSessionTree', () => {
     ]);
     expect(tree[0].months[0].label).toBe('Unscheduled');
     expect(tree[0].months[0].weeks[0].week).toBe(2);
+  });
+});
+
+describe('completed session artifacts', () => {
+  it('turns Microsoft WEBVTT into readable speaker lines', () => {
+    const cues = parseTeamsTranscriptVtt(`WEBVTT
+
+00:01:28.033 --> 00:01:28.753
+<v Ahmed Lotfi>Cortana.</v>
+
+00:01:31.570 --> 00:01:33.450
+<v Ahmed Lotfi>Something &amp; something else.</v>`);
+
+    expect(cues).toEqual([
+      { start: '01:28', speaker: 'Ahmed Lotfi', text: 'Cortana.' },
+      { start: '01:31', speaker: 'Ahmed Lotfi', text: 'Something & something else.' },
+    ]);
+  });
+
+  it('builds an Excel-friendly attendance row with intervals and duration', () => {
+    const rows = attendanceSheetRows([{
+      id: 'ATT-1', occurrence_id: 'OCC-1', display_name: 'Ahmed Lotfi',
+      email: 'ahmed@example.com', role: 'presenter', total_attendance_seconds: 1140,
+      intervals: [{
+        joinDateTime: '2026-08-31T08:00:00Z',
+        leaveDateTime: '2026-08-31T08:19:00Z',
+      }],
+    }]);
+
+    expect(rows).toEqual([expect.objectContaining({
+      'Attendee name': 'Ahmed Lotfi',
+      Email: 'ahmed@example.com',
+      Role: 'presenter',
+      'Time in session': '19m',
+      'Attendance seconds': 1140,
+      'Joined at': '2026-08-31T08:00:00Z',
+      'Left at': '2026-08-31T08:19:00Z',
+    })]);
   });
 });

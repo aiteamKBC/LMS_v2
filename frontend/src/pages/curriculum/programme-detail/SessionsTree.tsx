@@ -6,11 +6,13 @@
 // Statuses shown here (scheduled / completed / cancelled) are authored by the
 // Graph artifact-sync service and read straight off the occurrence — this view
 // never decides a status from a date. See `deliverySessions` in page.tsx.
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import {
   fetchLiveSessionArtifacts,
   liveSessionArtifactContentUrl,
+  liveSessionArtifactPreviewUrl,
+  type LiveSessionAttendance,
   type LiveSessionArtifactOccurrence,
 } from '@/lib/curriculumApi';
 import { StatusBadge } from '../shared/entities/ui';
@@ -53,6 +55,79 @@ function formatSeconds(totalSeconds: number): string {
   if (hours) return `${hours}h ${String(minutes).padStart(2, '0')}m`;
   if (minutes) return `${minutes}m`;
   return `${seconds}s`;
+}
+
+export interface ReadableTranscriptCue {
+  start: string;
+  speaker: string;
+  text: string;
+}
+
+function formatTranscriptTimestamp(value: string): string {
+  const match = /^(\d+):(\d{2}):(\d{2})/.exec(value.trim());
+  if (!match) return value.trim();
+  const [, hours, minutes, seconds] = match;
+  return hours === '00' ? `${minutes}:${seconds}` : `${hours}:${minutes}:${seconds}`;
+}
+
+/** Turn Microsoft's WEBVTT response into lines a normal user can read. */
+export function parseTeamsTranscriptVtt(vtt: string): ReadableTranscriptCue[] {
+  return String(vtt || '')
+    .replace(/^\uFEFF/, '')
+    .replace(/\r/g, '')
+    .split(/\n\s*\n+/)
+    .map((block): ReadableTranscriptCue | null => {
+      const lines = block.split('\n').map(line => line.trim()).filter(Boolean);
+      const timeIndex = lines.findIndex(line => line.includes('-->'));
+      if (timeIndex === -1) return null;
+      const start = formatTranscriptTimestamp(lines[timeIndex].split('-->')[0]);
+      const rawText = lines.slice(timeIndex + 1).join(' ');
+      const speakerMatch = /<v\s+([^>]+)>/i.exec(rawText);
+      const text = rawText
+        .replace(/<\/?v[^>]*>/gi, '')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/\s+/g, ' ')
+        .trim();
+      return text ? { start, speaker: speakerMatch?.[1]?.trim() || 'Speaker', text } : null;
+    })
+    .filter((cue): cue is ReadableTranscriptCue => cue !== null);
+}
+
+export function attendanceSheetRows(attendance: LiveSessionAttendance[]) {
+  return attendance.map(person => {
+    const intervals = Array.isArray(person.intervals) ? person.intervals : [];
+    const joins = intervals.map(item => String(item.joinDateTime || '')).filter(Boolean).join('; ');
+    const leaves = intervals.map(item => String(item.leaveDateTime || '')).filter(Boolean).join('; ');
+    const seconds = Math.max(0, Number(person.total_attendance_seconds) || 0);
+    return {
+      'Attendee name': person.display_name || '',
+      Email: person.email || '',
+      Role: person.role || '',
+      'Time in session': formatSeconds(seconds),
+      'Attendance seconds': Math.round(seconds),
+      'Joined at': joins,
+      'Left at': leaves,
+    };
+  });
+}
+
+async function downloadAttendanceSheet(session: DeliverySession, attendance: LiveSessionAttendance[]) {
+  const XLSX = await import('xlsx');
+  const worksheet = XLSX.utils.json_to_sheet(attendanceSheetRows(attendance));
+  worksheet['!cols'] = [
+    { wch: 28 }, { wch: 36 }, { wch: 16 }, { wch: 18 },
+    { wch: 20 }, { wch: 32 }, { wch: 32 },
+  ];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Attendance');
+  const safeTitle = (session.title || 'teams-session').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '');
+  const date = (session.dateIso || session.date || '').slice(0, 10);
+  XLSX.writeFile(workbook, `${safeTitle || 'teams-session'}${date ? `-${date}` : ''}-attendance.xlsx`, { compression: true });
 }
 
 // ------------------------------------------------------------------- tree model
@@ -141,6 +216,38 @@ type ArtifactState =
   | { status: 'ready'; occurrence: LiveSessionArtifactOccurrence | null };
 
 function CompletedSessionPanel({ session, state }: { session: DeliverySession; state: ArtifactState | undefined }) {
+  const [recordingPreviewId, setRecordingPreviewId] = useState('');
+  const [transcriptPreviewId, setTranscriptPreviewId] = useState('');
+  const [transcriptState, setTranscriptState] = useState<
+    | { status: 'idle' | 'loading' }
+    | { status: 'error'; message: string }
+    | { status: 'ready'; cues: ReadableTranscriptCue[] }
+  >({ status: 'idle' });
+  const [sheetError, setSheetError] = useState('');
+
+  useEffect(() => {
+    if (!transcriptPreviewId) {
+      setTranscriptState({ status: 'idle' });
+      return undefined;
+    }
+    const controller = new AbortController();
+    setTranscriptState({ status: 'loading' });
+    fetch(liveSessionArtifactPreviewUrl(session.liveSessionId, transcriptPreviewId), { signal: controller.signal })
+      .then(response => {
+        if (!response.ok) throw new Error(`Transcript could not be loaded (${response.status}).`);
+        return response.text();
+      })
+      .then(text => setTranscriptState({ status: 'ready', cues: parseTeamsTranscriptVtt(text) }))
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setTranscriptState({
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Transcript could not be loaded.',
+        });
+      });
+    return () => controller.abort();
+  }, [session.liveSessionId, transcriptPreviewId]);
+
   if (!state || state.status === 'loading') {
     return <p className="px-4 py-3 text-[12px] text-foreground-500">Loading attendance and recordings…</p>;
   }
@@ -163,36 +270,119 @@ function CompletedSessionPanel({ session, state }: { session: DeliverySession; s
       </div>
 
       {(recordings.length > 0 || transcripts.length > 0) && (
-        <div className="flex flex-wrap gap-2">
-          {recordings.map(item => (
-            <a
-              key={item.id}
-              href={liveSessionArtifactContentUrl(session.liveSessionId, item.id)}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary-600 px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
-            >
-              <AppIcon className="ri-play-circle-line text-sm"></AppIcon>
-              Watch recording
-            </a>
-          ))}
-          {transcripts.map(item => (
-            <a
-              key={item.id}
-              href={liveSessionArtifactContentUrl(session.liveSessionId, item.id)}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-2.5 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100"
-            >
-              <AppIcon className="ri-file-text-line text-sm"></AppIcon>
-              View transcript
-            </a>
-          ))}
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            {recordings.map((item, index) => (
+              <div key={item.id} className="inline-flex overflow-hidden rounded-lg border border-primary-200 bg-background-50">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTranscriptPreviewId('');
+                    setRecordingPreviewId(current => current === item.id ? '' : item.id);
+                  }}
+                  className="inline-flex h-8 items-center gap-1.5 bg-primary-600 px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
+                >
+                  <AppIcon className="ri-play-circle-line text-sm"></AppIcon>
+                  Preview recording {recordings.length > 1 ? index + 1 : ''}
+                </button>
+                <a
+                  href={liveSessionArtifactContentUrl(session.liveSessionId, item.id)}
+                  download
+                  className="inline-flex h-8 items-center gap-1.5 border-l border-primary-200 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-50"
+                >
+                  <AppIcon className="ri-download-line text-sm"></AppIcon>
+                  Download
+                </a>
+              </div>
+            ))}
+            {transcripts.map((item, index) => (
+              <div key={item.id} className="inline-flex overflow-hidden rounded-lg border border-background-200 bg-background-50">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRecordingPreviewId('');
+                    setTranscriptPreviewId(current => current === item.id ? '' : item.id);
+                  }}
+                  className="inline-flex h-8 items-center gap-1.5 px-2.5 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100"
+                >
+                  <AppIcon className="ri-file-text-line text-sm"></AppIcon>
+                  Preview transcript {transcripts.length > 1 ? index + 1 : ''}
+                </button>
+                <a
+                  href={liveSessionArtifactContentUrl(session.liveSessionId, item.id)}
+                  download
+                  className="inline-flex h-8 items-center gap-1.5 border-l border-background-200 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-50"
+                >
+                  <AppIcon className="ri-download-line text-sm"></AppIcon>
+                  Download
+                </a>
+              </div>
+            ))}
+          </div>
+
+          {recordingPreviewId && (
+            <div className="rounded-xl border border-background-200 bg-black p-2">
+              <video
+                controls
+                preload="metadata"
+                className="max-h-[480px] w-full rounded-lg bg-black"
+                src={liveSessionArtifactPreviewUrl(session.liveSessionId, recordingPreviewId)}
+              />
+            </div>
+          )}
+
+          {transcriptPreviewId && (
+            <div className="max-h-[420px] overflow-y-auto rounded-xl border border-background-200 bg-background-50 p-3">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[12px] font-bold text-foreground-800">Meeting transcript</p>
+                  <p className="text-[10px] text-foreground-400">Speaker, timestamp and spoken text</p>
+                </div>
+                <button type="button" onClick={() => setTranscriptPreviewId('')} className="text-[11px] font-bold text-foreground-500 hover:text-foreground-800">
+                  Close preview
+                </button>
+              </div>
+              {transcriptState.status === 'loading' && <p className="text-[12px] text-foreground-500">Loading transcript…</p>}
+              {transcriptState.status === 'error' && <p className="text-[12px] text-red-600">{transcriptState.message}</p>}
+              {transcriptState.status === 'ready' && transcriptState.cues.length === 0 && (
+                <p className="text-[12px] text-foreground-500">The transcript file contains no readable speech.</p>
+              )}
+              {transcriptState.status === 'ready' && transcriptState.cues.length > 0 && (
+                <div className="space-y-2">
+                  {transcriptState.cues.map((cue, index) => (
+                    <div key={`${cue.start}-${index}`} className="grid grid-cols-[54px_minmax(110px,180px)_1fr] gap-3 rounded-lg bg-background-100 px-3 py-2 text-[12px]">
+                      <span className="font-mono text-[10px] text-foreground-400">{cue.start}</span>
+                      <span className="font-bold text-foreground-700">{cue.speaker}</span>
+                      <span className="leading-relaxed text-foreground-700">{cue.text}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
       <div>
-        <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-foreground-400">Attendance</p>
+        <div className="mb-1.5 flex items-center justify-between gap-3">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-400">Attendance</p>
+          {attendance.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setSheetError('');
+                void downloadAttendanceSheet(session, attendance).catch(error => {
+                  setSheetError(error instanceof Error ? error.message : 'Attendance sheet could not be downloaded.');
+                });
+              }}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 text-[11px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100"
+            >
+              <AppIcon className="ri-file-excel-2-line text-sm"></AppIcon>
+              Download attendance sheet
+            </button>
+          )}
+        </div>
+        {sheetError && <p className="mb-2 text-[11px] font-semibold text-red-600">{sheetError}</p>}
         {attendance.length === 0 ? (
           <p className="text-[12px] text-foreground-500">No attendance was captured for this session.</p>
         ) : (

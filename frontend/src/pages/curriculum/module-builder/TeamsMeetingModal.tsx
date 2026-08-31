@@ -102,7 +102,6 @@ export function TeamsMeetingModal({
   const [spokenLanguage, setSpokenLanguage] = useState(meetingSettingString(component, 'teamsSpokenLanguage', 'en-GB'));
   const [details, setDetails] = useState(meetingSettingString(component, 'sessionPurpose', component.description));
   const [configurationLoading, setConfigurationLoading] = useState(true);
-  const [organizerLocked, setOrganizerLocked] = useState(false);
   const [graphConfigured, setGraphConfigured] = useState(true);
   const [graphTimeZone, setGraphTimeZone] = useState('');
   const [invitedPrefilling, setInvitedPrefilling] = useState(false);
@@ -170,15 +169,9 @@ export function TeamsMeetingModal({
         if (!active) return;
         setGraphConfigured(configuration.configured);
         setGraphTimeZone(configuration.timeZone);
-        setOrganizerLocked(Boolean(configuration.organizerLocked));
-        // A pinned organizer overwrites whatever this component last saved. The
-        // stored value may name a tutor who owned an earlier series, and creating
-        // a new meeting on that mailbox is what silently loses the recording.
-        setOrganizerEmail(current => (
-          configuration.organizerLocked && configuration.defaultOrganizer
-            ? configuration.defaultOrganizer
-            : current || configuration.defaultOrganizer || ''
-        ));
+        // The deployment value is a starting point only. Keep a component's
+        // saved organizer when present and let the user choose another mailbox.
+        setOrganizerEmail(current => current || configuration.defaultOrganizer || '');
       })
       .catch(err => {
         if (active) setError(err instanceof Error ? err.message : 'Unable to check Microsoft Teams configuration.');
@@ -212,9 +205,7 @@ export function TeamsMeetingModal({
   const submit = async () => {
     setError('');
     if (!organizerEmail.trim()) {
-      return setError(organizerLocked
-        ? 'The Microsoft 365 organizer is still loading. Try again in a moment.'
-        : 'Enter the Microsoft 365 organizer email.');
+      return setError('Enter the Microsoft 365 organizer email.');
     }
     if (!plannedOccurrences.length) {
       return setError('This module has no stored session dates yet, so there is nothing to put on a calendar. Save its schedule first — those dates are what the calendar is built from.');
@@ -314,7 +305,7 @@ export function TeamsMeetingModal({
               {!created.meeting.settingsApplied && (
                 <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
                   <p className="text-[11px] font-bold text-red-800"><AppIcon className="ri-error-warning-line mr-1"></AppIcon>Recording and transcription are NOT switched on for this meeting.</p>
-                  <p className="mt-1 text-[11px] font-semibold text-red-700">The invitation and join link are fine, but Microsoft Graph refused the meeting options, so this session will record nothing. Grant the Teams application access policy to {created.meeting.organizerEmail || 'the organizer'}, then re-apply the meeting options.</p>
+                  <p className="mt-1 text-[11px] font-semibold text-red-700">The invitation and join link are fine, but Microsoft Graph refused the meeting options, so this session will record nothing. The exact Graph response is shown below and logged by the backend for {created.meeting.organizerEmail || 'the organizer'}.</p>
                 </div>
               )}
               {!!created.warnings.length && (
@@ -378,12 +369,10 @@ export function TeamsMeetingModal({
               <div className="grid gap-4 sm:grid-cols-2">
                 <FormField
                   label="Organizer Microsoft 365 email"
-                  required={!organizerLocked}
-                  hint={organizerLocked
-                    ? 'Set for this deployment. Recording and transcription only turn on for this mailbox, so tutors are invited as presenters instead.'
-                    : 'The calendar this series is created in.'}
+                  required
+                  hint="The calendar this series is created in. The selected account must allow this app to manage Teams meetings."
                 >
-                  <TextControl value={organizerEmail} onChange={setOrganizerEmail} disabled={organizerLocked} />
+                  <TextControl value={organizerEmail} onChange={setOrganizerEmail} />
                 </FormField>
                 <FormField
                   label="Duration"
