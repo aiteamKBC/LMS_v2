@@ -353,6 +353,10 @@ describe('Programme workspace', { timeout: 15000 }, () => {
         components: [],
       },
     });
+    // The page reads components from their own endpoint, not from the detail
+    // payload, so "no components have been authored" has to be said to both or
+    // the assertion is only ever winning a race with the second read.
+    vi.mocked(api.fetchCurriculumComponents).mockResolvedValueOnce([]);
 
     await renderWorkspace();
 
