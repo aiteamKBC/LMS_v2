@@ -297,7 +297,7 @@ function IntroScreen({ quiz, totalPoints, onStart, onBack }: {
 
 function StatTile({ icon, label, value }: { icon: string; label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-foreground-100 p-3">
+    <div className="coach-metric-card">
       <AppIcon className={`${icon} text-primary-500 text-base`} />
       <p className="text-sm font-semibold text-foreground-900 mt-1">{value}</p>
       <p className="text-[11px] text-foreground-400">{label}</p>
@@ -353,6 +353,7 @@ function QuizScreen({
           <button
             key={q.id}
             onClick={() => onJump(i)}
+            aria-current={i === current ? 'step' : undefined}
             className={`w-8 h-8 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
               i === current
                 ? 'bg-primary-600 text-white'

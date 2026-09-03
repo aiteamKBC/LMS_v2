@@ -1751,7 +1751,7 @@ export default function QuizXmlWorkspacePage() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel={curriculumNav.label} navItems={curriculumNav.items} workspaceLabel={curriculumNav.workspaceLabel} pageTitle={pageHeading} pageSubtitle={pageSubtitle} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="quiz-workspace-page w-full min-w-0 max-w-full p-4 sm:p-6 space-y-5 sm:space-y-6">
+      <div className="quiz-workspace-page w-full min-w-0 max-w-full p-4 sm:p-5 lg:p-6 space-y-4">
         <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
           <div className="relative p-5 sm:p-8 flex flex-col md:flex-row items-start md:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-code-box-line text-white text-2xl"></AppIcon></span>

@@ -143,7 +143,7 @@ export default function CurriculumStandards() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Skills England Standards" pageSubtitle={`${numberText(totals.standards)} standards from standard_ksbs`} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="p-5 sm:p-6 space-y-5">
+      <div className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
         <section
           className="relative overflow-hidden rounded-2xl border border-primary-900/20 bg-primary-950 text-white shadow-lg"
         >

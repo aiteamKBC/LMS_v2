@@ -391,7 +391,7 @@ export function OtjhBody({
 
 function StatCard({ icon, iconTint, label, value, sub }: { icon: string; iconTint: string; label: string; value: string; sub: string }) {
   return (
-    <div className="group rounded-2xl border border-foreground-100 bg-background-50 p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
+    <div className="coach-metric-card group transition-all hover:-translate-y-0.5 hover:shadow-md">
       <div className="mb-3 flex items-center justify-between">
         <span className={`flex h-10 w-10 items-center justify-center rounded-xl ring-1 ring-black/5 ${iconTint}`}><AppIcon className={`${icon} text-base`} /></span>
         <AppIcon className="ri-more-line text-sm text-foreground-200" />

@@ -556,10 +556,10 @@ export default function FreeCoursesPage() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <main className="min-h-[calc(100vh-150px)] bg-background-50 px-4 py-5 md:px-6">
+      <main className="min-h-[calc(100vh-150px)] bg-background-50 px-4 py-4 md:px-6">
         <section className="overflow-hidden rounded-lg border border-background-200 bg-white shadow-sm">
           <div className="bg-primary-950 px-5 py-5 text-white md:px-7">
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-white/80">
                   <AppIcon name="ri-graduation-cap-line" size={14} />
@@ -597,7 +597,7 @@ export default function FreeCoursesPage() {
               {savedCoursesLoading && <AppIcon name="ri-loader-4-line" className="animate-spin text-foreground-400" size={16} />}
             </div>
             {savedCourseCards.length > 0 ? (
-              <div className="grid max-w-7xl gap-6 xl:grid-cols-[repeat(2,minmax(520px,600px))] 2xl:grid-cols-[repeat(2,minmax(520px,600px))]">
+              <div className="grid max-w-7xl gap-4 xl:grid-cols-[repeat(2,minmax(520px,600px))] 2xl:grid-cols-[repeat(2,minmax(520px,600px))]">
                 {savedCourseCards.map(card => (
                   <SavedFreeCourseCardView
                     key={card.key}
@@ -654,7 +654,7 @@ export default function FreeCoursesPage() {
                 type="button"
                 disabled={!course.title.trim() || totals.weeks === 0 || savingCourse || savedCoursesLoading}
                 onClick={() => { void createFreeCourse(); }}
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-sm font-semibold text-white transition hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-40"
+                className="primary-action inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-sm font-semibold text-white transition hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {savingCourse ? <AppIcon name="ri-loader-4-line" className="animate-spin" size={16} /> : <AppIcon name="ri-check-line" size={16} />}
                 {savingCourse ? 'Saving...' : editingCourseKey ? 'Save changes' : 'Create free course'}
@@ -683,7 +683,7 @@ export default function FreeCoursesPage() {
                   </div>
                   <div className="flex min-w-0 flex-col justify-center gap-2">
                     <div className="flex flex-wrap gap-2">
-                      <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-sm font-bold text-white transition hover:bg-primary-600">
+                      <label className="primary-action inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-sm font-bold text-white transition hover:bg-primary-600">
                         <AppIcon name="ri-upload-cloud-2-line" size={16} />
                         Upload image
                         <input
@@ -716,7 +716,7 @@ export default function FreeCoursesPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-5 p-5 xl:grid-cols-[minmax(0,1fr)_540px] md:p-7">
+          <div className="grid grid-cols-1 gap-4 p-5 xl:grid-cols-[minmax(0,1fr)_540px] md:p-6">
             <div className="min-w-0">
               <section className="rounded-lg border border-background-200 bg-white shadow-sm">
                 <div className="border-b border-background-200 px-4 py-4">
@@ -894,7 +894,7 @@ export default function FreeCoursesPage() {
                               else void addWeekToCourse(template);
                             }}
                             className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-bold transition disabled:opacity-60 ${
-                              selected ? 'bg-white text-red-600 ring-1 ring-red-100 hover:bg-red-50' : 'bg-primary-700 text-white hover:bg-primary-600'
+                              selected ? 'bg-white text-red-600 ring-1 ring-red-100 hover:bg-red-50' : 'primary-action bg-primary-700 text-white hover:bg-primary-600'
                             }`}
                           >
                             {addingWeekId === template.id ? <AppIcon name="ri-loader-4-line" className="animate-spin" size={14} /> : <AppIcon name={selected ? 'ri-close-line' : 'ri-add-line'} size={14} />}
@@ -1064,7 +1064,7 @@ function SavedFreeCourseCardView({ card, onEdit, onDelete }: { card: SavedFreeCo
         </div>
 
         <div className="mt-auto grid grid-cols-[minmax(0,1fr)_44px] gap-3 pt-5">
-          <button type="button" onClick={onEdit} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-primary-700 px-3 text-sm font-bold text-white transition hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-200">
+          <button type="button" onClick={onEdit} className="primary-action inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-primary-700 px-3 text-sm font-bold text-white transition hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-200">
             <AppIcon name="ri-edit-2-line" size={15} />
             Edit
           </button>

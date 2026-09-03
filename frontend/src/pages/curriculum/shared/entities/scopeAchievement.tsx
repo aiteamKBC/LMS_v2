@@ -1602,6 +1602,7 @@ export function ScopeAchievementPanel({
                     key={item.key}
                     type="button"
                     onClick={() => setTab(item.key)}
+                    aria-pressed={tab === item.key}
                     className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-bold transition-smooth ${
                       tab === item.key ? 'bg-primary-600 text-white' : 'text-foreground-600 hover:bg-background-50'
                     }`}
@@ -1618,6 +1619,7 @@ export function ScopeAchievementPanel({
                       key={item.key || 'all'}
                       type="button"
                       onClick={() => setStanding(item.key)}
+                      aria-pressed={standing === item.key}
                       className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-bold transition-smooth ${
                         standing === item.key
                           ? item.key === 'missing'

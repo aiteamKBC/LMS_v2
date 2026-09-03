@@ -512,7 +512,7 @@ function TeamsSidebar({ currentDate, miniMonthDays, isToday, isCurrentMonth, hol
           <AppIcon className="ri-arrow-go-back-line"></AppIcon>
         </Link>
       </div>
-      <div className="space-y-5 bg-slate-50/70 p-4">
+      <div className="space-y-4 bg-slate-50/70 p-4">
         <div>
           <div className="mb-3 flex items-center justify-between">
             <button onClick={() => onMonthNavigate(-1)} className="grid h-7 w-7 place-items-center rounded-md text-slate-500 hover:bg-white" aria-label="Previous month"><AppIcon className="ri-arrow-up-s-line"></AppIcon></button>

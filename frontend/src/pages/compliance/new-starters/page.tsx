@@ -60,7 +60,7 @@ export default function NewStartersPage() {
             { label: 'Referral', count: STARTERS.filter(s => s.source === 'Referral').length, icon: 'ri-share-forward-line', color: 'bg-secondary-100 text-secondary-600' },
             { label: 'Manual', count: STARTERS.filter(s => s.source === 'Manual').length, icon: 'ri-user-add-line', color: 'bg-foreground-100 text-foreground-600' },
           ].map(stat => (
-            <div key={stat.label} className="bg-background-50 rounded-xl border border-background-200/50 p-4">
+            <div key={stat.label} className="coach-metric-card">
               <span className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${stat.color}`}><AppIcon className={`${stat.icon} text-xs`}></AppIcon></span>
               <p className="text-[11px] text-foreground-400">{stat.label}</p>
               <p className="text-xl font-heading font-semibold text-foreground-900">{stat.count}</p>

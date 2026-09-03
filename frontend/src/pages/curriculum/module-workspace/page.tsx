@@ -402,7 +402,7 @@ export default function ModuleWorkspacePage() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <div className="min-h-full space-y-5 bg-background-50 p-4 sm:p-6">
+      <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
         {error && <InlineError message={error} onRetry={() => void reload()} />}
 
         <WorkspaceHeader
@@ -875,7 +875,7 @@ export default function ModuleWorkspacePage() {
 
 function MiniStat({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="rounded-xl border border-background-200 bg-background-100/60 p-3">
+    <div className="coach-metric-card">
       <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">{label}</p>
       <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{value}</p>
     </div>

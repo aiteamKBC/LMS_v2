@@ -243,7 +243,7 @@ export default function GroupWorkspacePage() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <div className="min-h-full space-y-5 bg-background-50 p-4 sm:p-6">
+      <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
         {error && <InlineError message={error} onRetry={() => void reload()} />}
 
         <WorkspaceHeader
@@ -297,7 +297,7 @@ export default function GroupWorkspacePage() {
         <WorkspaceTabs tabs={tabs} active={tab} onChange={key => setTab(key as Tab)} />
 
         {tab === 'overview' && (
-          <div className="grid gap-5 xl:grid-cols-2">
+          <div className="grid gap-4 xl:grid-cols-2">
             <WorkspacePanel title="Delivery" description="When and how this group is taught.">
               <DetailRow label="Delivery days" value={cleanText(group?.weekDays, '—')} />
               <DetailRow label="Time" value={group?.startTime ? `${group.startTime} – ${cleanText(group.endTime, '—')}` : '—'} />

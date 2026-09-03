@@ -6,7 +6,7 @@ export function GatewayHeroSection() {
   return (
     <div className="space-y-4">
       {/* Hero Banner */}
-      <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
+      <div className="learner-super-admin-hero relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
           <div className="absolute animate-liquid-blob-1 opacity-25" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
           <div className="absolute animate-liquid-blob-2 opacity-15" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
@@ -24,7 +24,7 @@ export function GatewayHeroSection() {
           </div>
           {/* Readiness Score */}
           <div className="flex items-center gap-3 shrink-0">
-            <div className="bg-white/15 backdrop-blur-sm rounded-xl px-5 py-4 text-center min-w-[140px]">
+            <div className="learner-hero-kpi bg-white/15 backdrop-blur-sm rounded-xl px-5 py-4 text-center min-w-[140px]">
               <p className="text-3xl font-bold text-white">{GATEWAY_READINESS_SCORE}%</p>
               <p className="text-xs text-white/70 font-medium uppercase tracking-wide mt-1">Gateway Ready</p>
               <span className={`inline-block mt-2 text-[9px] font-bold px-2 py-0.5 rounded-full ${band.bg} ${band.text}`}>

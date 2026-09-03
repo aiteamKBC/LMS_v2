@@ -856,7 +856,7 @@ export default function CurriculumProgrammes() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Programmes" pageSubtitle={pageSubtitle} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="programmes-page min-h-full bg-background-50 p-4 sm:p-6 space-y-3">
+      <div className="programmes-page min-h-full bg-background-50 p-4 sm:p-5 lg:p-6 space-y-4">
         <section className="curriculum-department-hero overflow-hidden rounded-2xl border border-white/10 bg-primary-950 text-white shadow-xl">
           <div className="curriculum-programme-hero-body relative p-5 sm:p-7">
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(255,255,255,0.18),transparent_34%),linear-gradient(135deg,rgba(109,40,217,0.35),rgba(15,23,42,0))]" />
@@ -880,7 +880,7 @@ export default function CurriculumProgrammes() {
                 <button
                   type="button"
                   onClick={() => { setProgrammeDrawerTarget(null); setProgrammeDrawerOpen(true); }}
-                  className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl bg-white px-4 text-[12px] font-bold text-primary-900 shadow-lg shadow-black/10 transition-smooth hover:bg-primary-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2"
+                  className="primary-action inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl bg-white px-4 text-[12px] font-bold text-primary-900 shadow-lg shadow-black/10 transition-smooth hover:bg-primary-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2"
                 >
                   <AppIcon className="ri-add-line text-base"></AppIcon>
                   Add Programme
@@ -1302,7 +1302,7 @@ export default function CurriculumProgrammes() {
                       type="button"
                       onClick={e => { e.stopPropagation(); openCard(); }}
                       title={`Open ${prog.name} — cohorts, groups, modules, sessions, KSB coverage and achievement`}
-                      className="programme-action-button programme-action-open inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-2 py-1.5 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                      className="programme-action-button programme-action-open primary-action inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-2 py-1.5 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
                     >
                       <AppIcon className="ri-folder-open-line text-sm"></AppIcon>
                       Open programme
@@ -1782,7 +1782,7 @@ function learnerAchievementMap(data: CurriculumProgrammeLearnerKsbImpactResponse
 
 function ImpactStat({ icon, label, value, detail }: { icon: string; label: string; value: string; detail: string }) {
   return (
-    <div className="rounded-xl border border-background-200 bg-background-100 p-3">
+    <div className="coach-metric-card">
       <div className="flex items-center gap-2 text-foreground-500">
         <AppIcon className={`${icon} text-sm`}></AppIcon>
         <span className="truncate text-[10px] font-bold uppercase tracking-wide">{label}</span>
@@ -1795,7 +1795,7 @@ function ImpactStat({ icon, label, value, detail }: { icon: string; label: strin
 
 function LearnerMiniMetric({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
-    <div className="rounded-xl border border-background-200 bg-background-100 px-3 py-2">
+    <div className="coach-metric-card">
       <p className="text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</p>
       <p className="mt-1 text-base font-heading font-black text-foreground-950">{value}</p>
       <p className="truncate text-[10px] font-semibold text-foreground-500">{detail}</p>
@@ -2281,7 +2281,7 @@ function ProgrammeKsbEmptyState({ icon, title, message }: { icon: string; title:
 
 function DashboardStat({ icon, label, value, detail }: { icon: string; label: string; value: string; detail: string }) {
   return (
-    <div className="rounded-xl border border-white/55 bg-white/75 p-3 shadow-sm backdrop-blur-sm">
+    <div className="coach-metric-card">
       <div className="flex items-center gap-2 text-primary-900/70">
         <AppIcon className={`${icon} text-sm`}></AppIcon>
         <span className="truncate text-[10px] font-bold uppercase tracking-wide">{label}</span>

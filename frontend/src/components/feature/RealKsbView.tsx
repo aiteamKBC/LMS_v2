@@ -377,7 +377,7 @@ function StatCard({ icon, tint, label, value, total, barClass, hint }: {
       ? 'bg-gradient-to-br from-[#f8dda0] via-[#d49a38] to-[#b27715] text-white shadow-sm shadow-[#b27715]/25'
       : 'bg-gradient-to-br from-[#e5e7eb] via-[#9ca3af] to-[#4b5563] text-white shadow-sm shadow-foreground-400/25';
   return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
+    <div className="coach-metric-card">
       <div className="flex items-center gap-2 mb-2">
         <span className={`flex h-10 w-10 items-center justify-center rounded-xl ring-1 ring-black/5 ${iconGradient}`}><AppIcon className={`${icon} text-base`} /></span>
         <span className="text-xs text-foreground-400">{label}</span>

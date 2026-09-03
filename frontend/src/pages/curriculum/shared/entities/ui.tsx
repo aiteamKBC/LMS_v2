@@ -49,9 +49,9 @@ export function EntityHero({
 }) {
   return (
     <section className="overflow-hidden rounded-2xl border border-white/10 bg-primary-950 text-white shadow-xl">
-      <div className="relative p-5 sm:p-7">
+      <div className="relative p-5 sm:p-6">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(255,255,255,0.18),transparent_34%),linear-gradient(135deg,rgba(109,40,217,0.35),rgba(15,23,42,0))]" />
-        <div className="relative flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+        <div className="relative flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div className="max-w-3xl">
             <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-white/60">{eyebrow}</p>
             <h2 className="mt-2 text-2xl font-heading font-bold text-white sm:text-3xl">{title}</h2>
@@ -72,17 +72,17 @@ export function EntityHero({
             {secondaryActions}
           </div>
         </div>
-        <div className="relative mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="relative mt-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
           {stats.map(stat => (
-            <div key={stat.label} className="rounded-xl border border-white/10 bg-white/[0.07] p-3">
-              <div className="flex items-center gap-2 text-white/70">
-                <AppIcon className={`${stat.icon} text-sm`}></AppIcon>
-                <span className="text-[10px] font-bold uppercase tracking-wider">{stat.label}</span>
+            <div key={stat.label} className="coach-metric-card">
+              <div className="flex items-center gap-2 text-foreground-500">
+                <AppIcon className={`${stat.icon} text-sm text-primary-600`}></AppIcon>
+                <span className="truncate text-[10px] font-medium uppercase tracking-wider">{stat.label}</span>
               </div>
-              <p className="mt-1.5 text-xl font-heading font-bold text-white">
-                {loading ? <span className="inline-block h-5 w-10 animate-pulse rounded bg-white/20" /> : stat.value}
+              <p className="mt-1.5 text-[25px] font-semibold leading-none tabular-nums text-foreground-900">
+                {loading ? <span className="inline-block h-5 w-10 animate-pulse rounded bg-background-200" /> : stat.value}
               </p>
-              {stat.detail && <p className="mt-0.5 text-[11px] text-white/60">{stat.detail}</p>}
+              {stat.detail && <p className="mt-1 text-[11px] leading-snug text-foreground-500">{stat.detail}</p>}
             </div>
           ))}
         </div>
@@ -138,9 +138,9 @@ export function EntityFilterBar({
 }) {
   const dirty = !disabled && (isDirty ?? (Boolean(search) || selects.some(select => select.value)));
   return (
-    <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-        <div className="grid flex-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-3.5">
+      <div className="flex flex-col gap-2.5 xl:flex-row xl:items-end xl:justify-between">
+        <div className="grid flex-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
           <label className="block">
             <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-foreground-400">Search</span>
             <span className="relative block">
@@ -250,7 +250,7 @@ export function EntityTable<T>({
     <div className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50">
       <div className="overflow-x-auto">
         <div className="min-w-[860px]">
-          <div className={`${gridClass} gap-3 border-b border-background-200 px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-foreground-400`}>
+          <div className={`${gridClass} gap-3 border-b border-background-200 px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-foreground-400`}>
             {columns.map(column => (
               <span
                 key={column.label}
@@ -287,7 +287,7 @@ export function EntityTable<T>({
                       if (node) rowNodes.current.set(key, node);
                       else rowNodes.current.delete(key);
                     }}
-                    className={`${gridClass} gap-3 px-4 py-3 transition-smooth hover:bg-background-100/60${
+                    className={`${gridClass} gap-3 px-4 py-2.5 transition-smooth hover:bg-background-100/60${
                       flashKey === key ? (reduceMotion ? ' bg-primary-100/70' : ' animate-row-flash') : ''
                     }`}
                   >
@@ -406,7 +406,7 @@ export function NamedActions({ actions }: {
           onClick={event => { event.stopPropagation(); action.onClick(); }}
           className={`inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 text-[11px] font-bold transition-smooth disabled:cursor-not-allowed disabled:opacity-50 ${
             action.primary
-              ? 'border-primary-600 bg-primary-600 text-white hover:bg-primary-700'
+              ? 'primary-action border-primary-600 bg-primary-600 text-white hover:bg-primary-700'
               : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'
           }`}
         >
@@ -1166,13 +1166,13 @@ export function WorkspaceHeader({
         </div>
         <div className="mt-5 grid grid-cols-2 gap-3 border-t border-foreground-200/60 pt-4 sm:grid-cols-3 xl:grid-cols-6">
           {stats.map(stat => (
-            <div key={stat.label} className="rounded-xl border border-background-200 bg-background-100/60 p-3">
-              <div className="flex items-center gap-1.5 text-foreground-400">
-                <AppIcon className={`${stat.icon} text-sm`}></AppIcon>
-                <span className="text-[10px] font-bold uppercase tracking-wider">{stat.label}</span>
+            <div key={stat.label} className="coach-metric-card">
+              <div className="flex items-center gap-1.5 text-foreground-500">
+                <AppIcon className={`${stat.icon} text-sm text-primary-600`}></AppIcon>
+                <span className="truncate text-[10px] font-medium uppercase tracking-wider">{stat.label}</span>
               </div>
-              <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{stat.value}</p>
-              {stat.detail && <p className="text-[11px] text-foreground-400">{stat.detail}</p>}
+              <p className="mt-1 text-[25px] font-semibold leading-none tabular-nums text-foreground-900">{stat.value}</p>
+              {stat.detail && <p className="mt-1 text-[11px] leading-snug text-foreground-500">{stat.detail}</p>}
             </div>
           ))}
         </div>
@@ -1200,6 +1200,7 @@ export function WorkspaceTabs({
             key={tab.key}
             type="button"
             onClick={() => onChange(tab.key)}
+            aria-pressed={active === tab.key}
             className={`group inline-flex min-h-10 items-center gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-[12px] font-bold transition-smooth ${
               active === tab.key ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-100 hover:text-foreground-900'
             }`}

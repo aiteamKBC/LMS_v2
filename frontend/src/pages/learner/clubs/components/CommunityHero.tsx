@@ -11,7 +11,7 @@ export function CommunityHero() {
   ];
 
   return (
-    <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
+    <div className="learner-super-admin-hero relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
         <div className="absolute animate-liquid-blob-1 opacity-25" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
         <div className="absolute animate-liquid-blob-2 opacity-15" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
@@ -40,7 +40,7 @@ export function CommunityHero() {
             };
             const c = colorMap[stat.color];
             return (
-              <div key={stat.label} className="bg-white/10 backdrop-blur-sm rounded-xl px-4 py-3 text-center hover:bg-white/15 transition-smooth">
+              <div key={stat.label} className="learner-hero-kpi bg-white/10 backdrop-blur-sm rounded-xl px-4 py-3 text-center hover:bg-white/15 transition-smooth">
                 <span className={`w-8 h-8 rounded-lg flex items-center justify-center mx-auto mb-1.5 ${c.bg}`}>
                   <AppIcon className={`${stat.icon} text-base ${c.icon}`}></AppIcon>
                 </span>

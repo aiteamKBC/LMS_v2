@@ -38,7 +38,7 @@ function ProgressStat({
     <button
       type="button"
       onClick={onClick}
-      className="flex min-w-0 items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-4 text-left shadow-sm transition hover:border-primary-200 hover:shadow-md"
+      className="coach-metric-card flex min-w-0 items-center gap-3 text-left transition hover:border-primary-200 hover:shadow-md"
     >
       <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ring-1 ring-black/5 ${accentClasses}`}>
         <AppIcon className={`${icon} text-xl`} />

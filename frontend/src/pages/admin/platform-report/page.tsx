@@ -10,7 +10,7 @@
 // there is no report-generation service behind this, and pretending otherwise
 // is what got the old page into trouble.
 // ============================================================================
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { AdminPage, DataPanel, SourceNote } from '../_shared/AdminPage';
 import { useAdminData } from '../_shared/useAdminData';
 import { fetchPlatformOverview, type PlatformOverview } from '@/api/platformAdmin';
@@ -129,6 +129,8 @@ function downloadCsv(sections: Section[], generatedAt: string) {
 
 export default function PlatformReportPage() {
   const { data, loading, error, reload } = useAdminData(useCallback(() => fetchPlatformOverview(), []));
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
+  const [unavailableOpen, setUnavailableOpen] = useState(true);
   const sections = data ? buildSections(data) : [];
   const availableSections = sections.filter(s => s.available);
   const unavailable = sections.filter(s => !s.available);
@@ -146,7 +148,7 @@ export default function PlatformReportPage() {
       actions={data ? (
         <button
           onClick={() => downloadCsv(sections, data.generatedAt)}
-          className="px-4 py-2.5 bg-white/20 backdrop-blur-sm text-white rounded-xl text-[13px] font-semibold hover:bg-white/30 transition-smooth cursor-pointer whitespace-nowrap shrink-0"
+          className="platform-report-export-button px-4 py-2.5 rounded-xl text-[13px] font-semibold transition-smooth cursor-pointer whitespace-nowrap shrink-0"
         >
           <AppIcon className="ri-download-2-line mr-1.5"></AppIcon>Export CSV
         </button>
@@ -161,44 +163,74 @@ export default function PlatformReportPage() {
           </p>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-          {availableSections.map(section => (
-            <div key={section.title} className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-              <div className="px-4 py-3 border-b border-foreground-200/60 flex items-center gap-2.5">
-                <span className="w-8 h-8 rounded-lg bg-primary-100 text-primary-600 flex items-center justify-center shrink-0">
-                  <AppIcon className={`${section.icon} text-sm`}></AppIcon>
-                </span>
-                <h3 className="text-sm font-heading font-semibold text-foreground-900">{section.title}</h3>
-              </div>
-              {section.note && (
-                <p className="px-4 pt-3 text-[11px] text-foreground-400 leading-relaxed">{section.note}</p>
-              )}
-              <table className="w-full text-[13px]">
-                <tbody>
-                  {section.rows.map(row => (
-                    <tr key={row.label} className="border-b border-background-100/50 last:border-0">
-                      <td className="px-4 py-2.5 text-foreground-700">{row.label}</td>
-                      <td className="px-4 py-2.5 text-right font-heading font-semibold text-foreground-900 whitespace-nowrap">
-                        {typeof row.value === 'number' ? row.value.toLocaleString() : row.value}
-                      </td>
-                      <td className="px-4 py-2.5 text-[10px] text-foreground-300 font-mono text-right whitespace-nowrap max-w-[180px] truncate">
-                        {row.source}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ))}
+        <div className="mt-4 grid grid-cols-1 gap-3 md:gap-4 lg:grid-cols-2">
+          {availableSections.map((section, index) => {
+            const open = openSections[section.title] !== false;
+            const contentId = `platform-report-section-${index}`;
+            return (
+              <section key={section.title} className="admin-cool-table overflow-hidden rounded-xl border border-foreground-200/60">
+                <div className={`flex items-center gap-2.5 px-4 py-3 ${open ? 'border-b border-foreground-200/60' : ''}`}>
+                  <button
+                    type="button"
+                    onClick={() => setOpenSections(current => ({ ...current, [section.title]: !open }))}
+                    aria-expanded={open}
+                    aria-controls={contentId}
+                    className="group inline-flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 rounded-lg text-left transition-colors hover:text-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+                  >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-100 text-primary-600">
+                      <AppIcon className={`${section.icon} text-sm`}></AppIcon>
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-heading font-semibold text-foreground-900">{section.title}</span>
+                    <AppIcon className={`${open ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} shrink-0 text-sm text-foreground-400 transition-transform`} aria-hidden="true"></AppIcon>
+                  </button>
+                </div>
+                {open && (
+                  <div id={contentId}>
+                    {section.note && (
+                      <p className="px-4 pb-2 pt-3 text-[11px] leading-relaxed text-foreground-400">{section.note}</p>
+                    )}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[13px]">
+                        <tbody>
+                          {section.rows.map(row => (
+                            <tr key={row.label} className="border-b border-background-100/50 last:border-0">
+                              <td className="px-4 py-2.5 text-foreground-700">{row.label}</td>
+                              <td className="px-4 py-2.5 text-right font-heading font-semibold text-foreground-900 whitespace-nowrap">
+                                {typeof row.value === 'number' ? row.value.toLocaleString() : row.value}
+                              </td>
+                              <td className="max-w-[180px] truncate whitespace-nowrap px-4 py-2.5 text-right font-sans text-[11px] tracking-normal text-foreground-400">
+                                {row.source}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </section>
+            );
+          })}
         </div>
 
         {unavailable.length > 0 && (
-          <div className="mt-4 bg-background-100/60 border border-foreground-200/60 rounded-xl p-4">
-            <p className="text-[12px] font-semibold text-foreground-600 mb-1">Not reported</p>
-            <p className="text-[11px] text-foreground-500 leading-relaxed">
-              {unavailable.map(s => s.title).join(', ')} — the source tables are not present on this database.
-              These sections are omitted rather than shown as zero, because an absent table does not mean an empty one.
-            </p>
+          <div className="mt-3 overflow-hidden rounded-xl border border-foreground-200/60 bg-background-100/60 md:mt-4">
+            <button
+              type="button"
+              onClick={() => setUnavailableOpen(open => !open)}
+              aria-expanded={unavailableOpen}
+              aria-controls="platform-report-unavailable-content"
+              className="flex w-full cursor-pointer items-center gap-2 px-4 py-3 text-left transition-colors hover:text-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-inset"
+            >
+              <AppIcon className={`${unavailableOpen ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} shrink-0 text-sm text-foreground-400`} aria-hidden="true"></AppIcon>
+              <span className="text-[12px] font-semibold text-red-700">Not reported</span>
+            </button>
+            {unavailableOpen && (
+              <p id="platform-report-unavailable-content" className="border-t border-foreground-200/60 px-4 py-3 text-[11px] leading-relaxed text-foreground-500">
+                {unavailable.map(s => s.title).join(', ')} — the source tables are not present on this database.
+                These sections are omitted rather than shown as zero, because an absent table does not mean an empty one.
+              </p>
+            )}
           </div>
         )}
       </DataPanel>
