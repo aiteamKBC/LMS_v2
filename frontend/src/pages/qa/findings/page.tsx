@@ -89,7 +89,7 @@ export default function QAFindingsPage() {
             { label: 'Resolved', value: stats.resolved, icon: 'ri-check-line', color: 'emerald' },
             { label: 'Closed', value: stats.closed, icon: 'ri-folder-close-line', color: 'foreground' },
           ].map(s => (
-            <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium">
+            <div key={s.label} className="coach-metric-card">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${s.color === 'red' ? 'bg-red-100 text-red-700' : s.color === 'primary' ? 'bg-primary-100 text-primary-700' : s.color === 'emerald' ? 'bg-emerald-100 text-emerald-700' : 'bg-foreground-100 text-foreground-500'}`}>
                 <AppIcon className={`${s.icon} text-sm`}></AppIcon>
               </div>

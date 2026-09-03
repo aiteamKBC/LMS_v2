@@ -175,7 +175,7 @@ export function MockKsbBody({ showHero = true }: { showHero?: boolean }) {
           ═══════════════════════════════════════════════════ */}
       {showHero && (
       <SectionReveal delay={0}>
-        <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
+        <div className="learner-super-admin-hero relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute animate-liquid-blob-1 opacity-20" style={{ width: '55%', height: '28%', left: '-8%', top: '-8%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.25) 0%, transparent 70%)', filter: 'blur(55px)' }} />
             <div className="absolute animate-liquid-blob-2 opacity-12" style={{ width: '65%', height: '32%', right: '-12%', top: '12%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.18) 0%, transparent 70%)', filter: 'blur(50px)' }} />
@@ -677,7 +677,7 @@ function StatCard({ label, value, total, color, icon }: { label: string; value: 
   };
   const c = colorMap[color] || colorMap.primary;
   return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
+    <div className="coach-metric-card">
       <div className="flex items-center gap-2.5 mb-2">
         <span className={`w-10 h-10 rounded-xl flex items-center justify-center ring-1 ring-black/5 ${c.iconBg} ${c.iconText}`}>
           <AppIcon className={`${icon} text-base`}></AppIcon>

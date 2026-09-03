@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
-import { archiveCurriculumCohort, type CurriculumCohort } from '@/lib/curriculumApi';
+import { type CurriculumCohort } from '@/lib/curriculumApi';
 import {
   cohortsForProgramme,
   cohortYear,
@@ -17,6 +16,7 @@ import {
   upsertById,
 } from '../shared/entities/model';
 import { CohortFormDrawer } from '../shared/entities/forms';
+import { archiveCohortWithConfirm } from '../shared/entities/archive';
 import { CurriculumStructureWizard, withoutDiscardedRecords, type StructureWizardCreated } from '../shared/entities/structureWizard';
 import {
   EntityEmptyState,
@@ -115,22 +115,12 @@ export default function CurriculumCohortsPage() {
 
   const archive = async (cohort: CurriculumCohort) => {
     const groupCount = groupsByCohort.get(normaliseKey(cohort.id)) || 0;
-    await showCurriculumConfirm({
-      title: 'Archive cohort?',
-      text: groupCount
-        ? `${cohort.name} has ${groupCount} group${groupCount === 1 ? '' : 's'}. Archiving hides the cohort and its groups; nothing is deleted.`
-        : `${cohort.name} will be hidden from the active list. Nothing is deleted.`,
-      icon: 'warning',
-      confirmButtonText: 'Archive cohort',
-      onConfirm: async () => {
-        await archiveCurriculumCohort(cohort.id);
-        // Drop the row now, for the same reason a create paints one now: the
-        // refresh behind this takes seconds, and a cohort still sitting in the
-        // list after "Archive" reads as an archive that did not happen.
-        applyLocal(previous => ({ ...previous, cohorts: removeById(previous.cohorts, cohort.id) }));
-        await reload({ silent: true });
-      },
-      successTitle: 'Cohort archived',
+    await archiveCohortWithConfirm(cohort, groupCount, async () => {
+      // Drop the row now, for the same reason a create paints one now: the
+      // refresh behind this takes seconds, and a cohort still sitting in the
+      // list after "Archive" reads as an archive that did not happen.
+      applyLocal(previous => ({ ...previous, cohorts: removeById(previous.cohorts, cohort.id) }));
+      await reload({ silent: true });
     });
   };
 
@@ -182,7 +172,7 @@ export default function CurriculumCohortsPage() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <div className="min-h-full space-y-5 bg-background-50 p-4 sm:p-6">
+      <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
         <EntityHero
           eyebrow="Curriculum Studio"
           title="Cohorts"
@@ -238,6 +228,7 @@ export default function CurriculumCohortsPage() {
           gridClass={GRID}
           rows={visibleCohorts}
           rowKey={cohort => cohort.id}
+          getRowHref={cohort => `/curriculum/cohorts/${encodeURIComponent(cohort.id)}`}
           loading={loading && !loaded}
           refreshing={refreshing}
           highlightKey={highlightId}

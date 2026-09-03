@@ -40,7 +40,7 @@ export default function CatchUpPage() {
       <div className="p-4 md:p-6 space-y-5">
 
         {/* ── HERO — compact gradient + donut + stats + CTA ── */}
-        <section className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
+        <section className="learner-super-admin-hero relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute animate-liquid-blob-1 opacity-20" style={{ width: '55%', height: '30%', left: '-8%', top: '-12%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.25) 0%, transparent 70%)', filter: 'blur(60px)' }} />
             <div className="absolute animate-liquid-blob-2 opacity-12" style={{ width: '60%', height: '32%', right: '-12%', top: '18%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.18) 0%, transparent 70%)', filter: 'blur(55px)' }} />
@@ -79,15 +79,15 @@ export default function CatchUpPage() {
 
               {/* Right: Compact stats + CTA */}
               <div className="flex items-center gap-3 shrink-0 flex-wrap">
-                <div className="bg-white/12 backdrop-blur-sm rounded-xl px-3.5 py-2.5 text-center min-w-[68px]">
+                <div className="learner-hero-kpi bg-white/12 backdrop-blur-sm rounded-xl px-3.5 py-2.5 text-center min-w-[68px]">
                   <p className={`text-lg font-bold ${outstandingCount > 0 ? 'text-amber-300' : 'text-emerald-300'}`}>{outstandingCount}</p>
                   <p className="text-[10px] text-white/65 uppercase tracking-wide whitespace-nowrap">Outstanding</p>
                 </div>
-                <div className="bg-white/12 backdrop-blur-sm rounded-xl px-3.5 py-2.5 text-center min-w-[68px]">
+                <div className="learner-hero-kpi bg-white/12 backdrop-blur-sm rounded-xl px-3.5 py-2.5 text-center min-w-[68px]">
                   <p className="text-lg font-bold text-emerald-300">{completedCount}</p>
                   <p className="text-[10px] text-white/65 uppercase tracking-wide whitespace-nowrap">Completed</p>
                 </div>
-                <div className="bg-white/12 backdrop-blur-sm rounded-xl px-3.5 py-2.5 text-center min-w-[68px]">
+                <div className="learner-hero-kpi bg-white/12 backdrop-blur-sm rounded-xl px-3.5 py-2.5 text-center min-w-[68px]">
                   <p className="text-lg font-bold text-white">{s.currentRate}%</p>
                   <p className="text-[10px] text-white/65 uppercase tracking-wide whitespace-nowrap">Attendance</p>
                 </div>

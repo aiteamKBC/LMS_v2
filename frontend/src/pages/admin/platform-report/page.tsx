@@ -327,6 +327,8 @@ function downloadCsv(sections: Section[], generatedAt: string) {
 export default function PlatformReportPage() {
   const { data, loading, error, reload } = useAdminData(useCallback(() => fetchPlatformOverview(), []));
   const [drilling, setDrilling] = useState<{ metric: string; label: string } | null>(null);
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
+  const [unavailableOpen, setUnavailableOpen] = useState(true);
   const sections = data ? buildSections(data) : [];
   const availableSections = sections.filter(s => s.available);
   const unavailable = sections.filter(s => !s.available);
@@ -344,7 +346,7 @@ export default function PlatformReportPage() {
       actions={data ? (
         <button
           onClick={() => downloadCsv(sections, data.generatedAt)}
-          className="px-4 py-2.5 bg-white/20 backdrop-blur-sm text-white rounded-xl text-[13px] font-semibold hover:bg-white/30 transition-smooth cursor-pointer whitespace-nowrap shrink-0"
+          className="platform-report-export-button px-4 py-2.5 rounded-xl text-[13px] font-semibold transition-smooth cursor-pointer whitespace-nowrap shrink-0"
         >
           <AppIcon className="ri-download-2-line mr-1.5"></AppIcon>Export CSV
         </button>
@@ -405,12 +407,23 @@ export default function PlatformReportPage() {
         </div>
 
         {unavailable.length > 0 && (
-          <div className="mt-4 bg-background-100/60 border border-foreground-200/60 rounded-xl p-4">
-            <p className="text-[12px] font-semibold text-foreground-600 mb-1">Not reported</p>
-            <p className="text-[11px] text-foreground-500 leading-relaxed">
-              {unavailable.map(s => s.title).join(', ')} — the source tables are not present on this database.
-              These sections are omitted rather than shown as zero, because an absent table does not mean an empty one.
-            </p>
+          <div className="mt-3 overflow-hidden rounded-xl border border-foreground-200/60 bg-background-100/60 md:mt-4">
+            <button
+              type="button"
+              onClick={() => setUnavailableOpen(open => !open)}
+              aria-expanded={unavailableOpen}
+              aria-controls="platform-report-unavailable-content"
+              className="flex w-full cursor-pointer items-center gap-2 px-4 py-3 text-left transition-colors hover:text-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-inset"
+            >
+              <AppIcon className={`${unavailableOpen ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} shrink-0 text-sm text-foreground-400`} aria-hidden="true"></AppIcon>
+              <span className="text-[12px] font-semibold text-red-700">Not reported</span>
+            </button>
+            {unavailableOpen && (
+              <p id="platform-report-unavailable-content" className="border-t border-foreground-200/60 px-4 py-3 text-[11px] leading-relaxed text-foreground-500">
+                {unavailable.map(s => s.title).join(', ')} — the source tables are not present on this database.
+                These sections are omitted rather than shown as zero, because an absent table does not mean an empty one.
+              </p>
+            )}
           </div>
         )}
       </DataPanel>

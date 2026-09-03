@@ -78,7 +78,7 @@ export default function AdminProgrammesPage() {
                         : <span className="font-medium text-foreground-800">{p.learners}</span>}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <Link to={`/admin/cohorts?programme=${encodeURIComponent(p.name)}`} className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">
+                      <Link to={`/admin/cohorts?programme=${encodeURIComponent(p.name)}`} className="compact-action text-[11px] text-primary-600 hover:text-primary-700 font-medium cursor-pointer">
                         Cohorts <AppIcon className="ri-arrow-right-line text-[10px]"></AppIcon>
                       </Link>
                     </td>

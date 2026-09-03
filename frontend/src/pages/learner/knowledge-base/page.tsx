@@ -53,7 +53,7 @@ export default function LearnerKnowledgeBase() {
       <div className="p-3 md:p-6 space-y-5 md:space-y-7">
 
         {/* ── Hero ── */}
-        <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950) / 0.95) 0%, oklch(var(--primary-900) / 0.9) 35%, oklch(var(--accent-900) / 0.85) 100%)' }}>
+        <div className="learner-super-admin-hero relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950) / 0.95) 0%, oklch(var(--primary-900) / 0.9) 35%, oklch(var(--accent-900) / 0.85) 100%)' }}>
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute animate-liquid-blob-1 opacity-20" style={{ width: '55%', height: '28%', left: '-8%', top: '-8%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.35) 0%, transparent 70%)', filter: 'blur(50px)' }} />
             <div className="absolute animate-liquid-blob-2 opacity-10" style={{ width: '65%', height: '32%', right: '-12%', top: '12%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.25) 0%, transparent 70%)', filter: 'blur(45px)' }} />

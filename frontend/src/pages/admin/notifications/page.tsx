@@ -182,7 +182,7 @@ export default function AdminEmailDeliveryPage() {
         emptyMessage={status || kind ? 'No emails match these filters.' : 'No invitations or resets have been issued yet.'}
         onRetry={reload}
       >
-        <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+        <div className="admin-cool-table bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-[13px]">
               <thead>

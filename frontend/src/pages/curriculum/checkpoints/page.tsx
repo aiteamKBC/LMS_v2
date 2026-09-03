@@ -457,11 +457,11 @@ export default function CheckpointsPage() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel={curriculumNav.label} navItems={curriculumNav.items} workspaceLabel={curriculumNav.workspaceLabel} pageTitle="Checkpoint Assessments" pageSubtitle="Monthly checkpoint quizzes and learner KSB performance" userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="p-6 space-y-6">
+      <div className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
         <section className="relative overflow-hidden rounded-2xl shadow-sm" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 52%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
-          <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center gap-5">
+          <div className="relative p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center gap-4">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
               <AppIcon className="ri-check-double-line text-white" size={24}></AppIcon>
             </span>

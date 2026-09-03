@@ -261,7 +261,7 @@ export default function QuestionBankPage() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel={curriculumNav.label} navItems={curriculumNav.items} workspaceLabel={curriculumNav.workspaceLabel} pageTitle="Question Bank" pageSubtitle="Programme-scoped quiz questions" userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="min-h-screen bg-[#f7f6f4] p-6 space-y-5">
+      <div className="min-h-full bg-[#f7f6f4] p-4 sm:p-5 lg:p-6 space-y-4">
         <div className="relative rounded-2xl overflow-hidden shadow-sm" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 52%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />

@@ -249,7 +249,7 @@ function ImpactStat({ icon, value, label, color }: { icon: string; value: number
   };
   const c = colorMap[color];
   return (
-    <div className={`rounded-lg p-3 text-center ${c.bg}`}>
+    <div className={`coach-metric-card text-center ${c.bg}`}>
       <AppIcon className={`${icon} text-sm ${c.text} mb-1 block`}></AppIcon>
       <p className={`text-lg font-bold ${c.val}`}>{value}</p>
       <p className="text-[10px] text-foreground-400">{label}</p>

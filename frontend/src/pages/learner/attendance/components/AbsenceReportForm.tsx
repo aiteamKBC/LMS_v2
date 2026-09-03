@@ -411,7 +411,7 @@ export default function AbsenceReportForm({
 
       {showGuidance && (
         <div className="rounded-xl border border-amber-200/70 bg-amber-50 p-4">
-          <div className="flex gap-3"><AppIcon className="ri-information-line mt-0.5 text-amber-600" /><div><p className="text-[12px] font-semibold text-amber-900">Need urgent support?</p><p className="mt-1 text-[11px] leading-4 text-amber-700">Contact your coach directly if your absence relates to wellbeing or safeguarding.</p><Link to="/learner/messages" className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 hover:underline">Message my coach <AppIcon className="ri-arrow-right-s-line" /></Link></div></div>
+        <div className="flex gap-3"><AppIcon className="ri-information-line mt-0.5 text-amber-600" /><div><p className="text-[12px] font-semibold text-amber-900">Need urgent support?</p><p className="mt-1 text-[11px] leading-4 text-amber-700">Contact your coach directly if your absence relates to wellbeing or safeguarding.</p><Link to="/learner/messages" className="compact-action mt-2 text-[11px] font-bold text-amber-800 hover:underline">Message my coach <AppIcon className="ri-arrow-right-s-line" /></Link></div></div>
         </div>
       )}
 

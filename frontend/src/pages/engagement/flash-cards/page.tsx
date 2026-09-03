@@ -29,6 +29,14 @@ const STATUS_FILTERS: { value: DeckStatus | 'all'; label: string }[] = [
   { value: 'published', label: 'Published' },
 ];
 
+const DECK_TABLE_BUTTON_BASE = 'inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3 text-[13px] font-semibold transition-smooth cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 focus-visible:ring-offset-1';
+const DECK_TOP_BUTTON_BASE = 'inline-flex h-10 items-center justify-center gap-1.5 rounded-lg px-4 text-[13px] font-semibold transition-smooth cursor-pointer whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 focus-visible:ring-offset-1';
+const DECK_PRIMARY_BUTTON = 'bg-[#B27715] text-white shadow-sm hover:bg-[#986511] active:bg-[#80540E]';
+const DECK_SECONDARY_BUTTON = 'border border-[#E5E7EB] bg-white text-foreground-700 shadow-sm hover:border-[#D8C9F2] hover:bg-[#F5F0FF] hover:text-[#541EA0] active:bg-[#EDE4FC]';
+const DECK_SUCCESS_BUTTON = 'bg-[#10B981] text-white shadow-sm hover:bg-[#059669] active:bg-[#047857]';
+const DECK_WARNING_BUTTON = 'bg-[#F59E0B] text-white shadow-sm hover:bg-[#D97706] active:bg-[#B45309]';
+const DECK_DANGER_BUTTON = 'bg-[#EF4444] text-white shadow-sm hover:bg-[#DC2626] active:bg-[#B91C1C]';
+
 // The core prompt lives in the backend; this editable text is the author's
 // instructions, sent as `customInstructions` to augment (not override) it.
 const DEFAULT_AI_INSTRUCTIONS = `Create clear, standalone revision flash cards from the lesson content.
@@ -381,11 +389,11 @@ export default function FlashCardsPage() {
             <input type="text" placeholder="Search title, module, programme..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300" />
           </div>
           <div className="flex-1"></div>
-          <button onClick={openAI} className="px-4 py-2 bg-[#0f172a] text-white rounded-lg text-[12px] font-semibold hover:bg-[#111827] transition-smooth cursor-pointer whitespace-nowrap shrink-0">
-            <AppIcon className="ri-sparkling-2-line mr-1"></AppIcon> Generate with AI
+          <button onClick={openAI} className={`${DECK_TOP_BUTTON_BASE} ${DECK_PRIMARY_BUTTON} shrink-0`}>
+            <AppIcon className="ri-sparkling-2-line"></AppIcon> Generate with AI
           </button>
-          <button onClick={openCreateDeck} className="px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap shrink-0">
-            <AppIcon className="ri-add-line mr-1"></AppIcon> New Deck
+          <button onClick={openCreateDeck} className={`${DECK_TOP_BUTTON_BASE} ${DECK_PRIMARY_BUTTON} shrink-0`}>
+            <AppIcon className="ri-add-line"></AppIcon> New Deck
           </button>
         </div>
 
@@ -419,7 +427,7 @@ export default function FlashCardsPage() {
                     <tr key={deck.id} className="border-b border-foreground-200/40 hover:bg-background-100/40 transition-smooth">
                       <td className="px-4 py-3">
                         <p className="text-[13px] font-semibold text-foreground-900">{deck.title}</p>
-                        {deck.aiGenerated && <span className="text-[9px] font-bold uppercase tracking-wide text-accent-600"><AppIcon className="ri-sparkling-2-line mr-0.5"></AppIcon>AI</span>}
+                        {deck.aiGenerated && <span className="text-[9px] font-bold uppercase tracking-wide text-accent-600"><AppIcon className="ri-file-text-line mr-0.5"></AppIcon>AI</span>}
                       </td>
                       <td className="px-4 py-3">
                         <p className="text-[12px] text-foreground-700">{deck.programme || '—'}</p>
@@ -435,20 +443,20 @@ export default function FlashCardsPage() {
                       <td className="px-4 py-3 text-[11px] text-foreground-500">{formatDate(deck.updatedAt)}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1.5 justify-end flex-wrap">
-                          <button onClick={() => openCardEditor(deck)} title="Edit this deck's cards" className="h-8 px-2.5 rounded-lg bg-background-100 text-foreground-600 hover:bg-primary-100 hover:text-primary-600 transition-smooth cursor-pointer flex items-center gap-1.5 text-[11px] font-semibold whitespace-nowrap">
-                            <AppIcon className="ri-stack-line"></AppIcon> Cards
+                          <button onClick={() => openCardEditor(deck)} title="Edit this deck's cards" className={`${DECK_TABLE_BUTTON_BASE} ${DECK_SECONDARY_BUTTON}`}>
+                            <AppIcon className="ri-file-list-3-line text-sm"></AppIcon> Cards
                           </button>
-                          <button onClick={() => { setPreviewDeck(deck); setShowPicker(true); }} title="Preview the learner game" className="h-8 px-2.5 rounded-lg bg-background-100 text-foreground-600 hover:bg-primary-100 hover:text-primary-600 transition-smooth cursor-pointer flex items-center gap-1.5 text-[11px] font-semibold whitespace-nowrap">
-                            <AppIcon className="ri-gamepad-line"></AppIcon> Preview
+                          <button onClick={() => { setPreviewDeck(deck); setShowPicker(true); }} title="Preview the learner game" className={`${DECK_TABLE_BUTTON_BASE} ${DECK_SECONDARY_BUTTON}`}>
+                            <AppIcon className="ri-eye-line text-sm"></AppIcon> Preview
                           </button>
-                          <button onClick={() => openEditDeck(deck)} title="Edit title and targeting" className="h-8 px-2.5 rounded-lg bg-background-100 text-foreground-600 hover:bg-primary-100 hover:text-primary-600 transition-smooth cursor-pointer flex items-center gap-1.5 text-[11px] font-semibold whitespace-nowrap">
-                            <AppIcon className="ri-settings-3-line"></AppIcon> Edit
+                          <button onClick={() => openEditDeck(deck)} title="Edit title and targeting" className={`${DECK_TABLE_BUTTON_BASE} ${DECK_PRIMARY_BUTTON}`}>
+                            <AppIcon className="ri-edit-line text-sm"></AppIcon> Edit
                           </button>
-                          <button onClick={() => togglePublish(deck)} title={deck.status === 'published' ? 'Move back to draft' : 'Publish to learners'} className={`h-8 px-2.5 rounded-lg transition-smooth cursor-pointer flex items-center gap-1.5 text-[11px] font-semibold whitespace-nowrap ${deck.status === 'published' ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}`}>
-                            <AppIcon className={deck.status === 'published' ? 'ri-eye-off-line' : 'ri-send-plane-line'}></AppIcon> {deck.status === 'published' ? 'Unpublish' : 'Publish'}
+                          <button onClick={() => togglePublish(deck)} title={deck.status === 'published' ? 'Move back to draft' : 'Publish to learners'} className={`${DECK_TABLE_BUTTON_BASE} ${deck.status === 'published' ? DECK_WARNING_BUTTON : DECK_SUCCESS_BUTTON}`}>
+                            <AppIcon className={deck.status === 'published' ? 'ri-eye-off-line text-sm' : 'ri-upload-2-line text-sm'}></AppIcon> {deck.status === 'published' ? 'Unpublish' : 'Publish'}
                           </button>
-                          <button onClick={() => removeDeck(deck)} title="Delete deck" className="h-8 px-2.5 rounded-lg text-red-500 hover:bg-red-50 transition-smooth cursor-pointer flex items-center gap-1.5 text-[11px] font-semibold whitespace-nowrap">
-                            <AppIcon className="ri-delete-bin-line"></AppIcon> Delete
+                          <button onClick={() => removeDeck(deck)} title="Delete deck" className={`${DECK_TABLE_BUTTON_BASE} ${DECK_DANGER_BUTTON}`}>
+                            <AppIcon className="ri-delete-bin-line text-sm"></AppIcon> Delete
                           </button>
                         </div>
                       </td>

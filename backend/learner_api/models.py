@@ -515,7 +515,21 @@ class LearnerProfile(models.Model):
     programme_id = models.CharField(max_length=64, blank=True, null=True)
     programme_status = models.CharField(max_length=100, blank=True)
     cohort = models.TextField(blank=True)
+    # curriculum.cohorts.cohort_id for `cohort`, and curriculum.groups.group_id
+    # for `group_name` -- the same relationship programme_id has to `programme`,
+    # for the two levels below it. The names stay: they are what the enrolment
+    # screens capture and edit, and what every consumer that has not been moved
+    # over still reads. These are the stable keys those names resolve to, so a
+    # renamed cohort or group no longer drops its learners off the curriculum
+    # rosters that used to find them by comparing text.
+    #
+    # NULL means "not resolved" -- an unmatched or ambiguous name -- and every
+    # reader falls back to matching by name for those rows. Added out of band by
+    # sql/2026-09-02_learner_placement_ids.sql, like programme_id before them,
+    # so an environment that has not run it simply never sees them populated.
+    cohort_id = models.CharField(max_length=64, blank=True, null=True)
     group_name = models.TextField(blank=True)
+    group_id = models.CharField(max_length=64, blank=True, null=True)
     completed_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     target_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     minimum_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)

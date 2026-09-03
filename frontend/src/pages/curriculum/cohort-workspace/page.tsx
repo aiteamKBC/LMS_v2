@@ -154,7 +154,7 @@ export default function CohortWorkspacePage() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <div className="min-h-full space-y-5 bg-background-50 p-4 sm:p-6">
+      <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
         {error && <InlineError message={error} onRetry={() => void reload()} />}
 
         <WorkspaceHeader
@@ -165,8 +165,19 @@ export default function CohortWorkspacePage() {
           ]}
           eyebrow="Cohort"
           title={cohort?.name || 'Loading…'}
-          subtitle={programme ? `Part of ${programme.name}` : cleanText(cohort?.programme, 'Unassigned programme')}
+          subtitle={programme ? (
+            <span className="flex flex-wrap items-center gap-1.5">
+              <span className="text-foreground-400">Part of</span>
+              <Link
+                to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(programme))}?tab=cohorts`}
+                className="inline-flex items-center rounded-full border border-background-200 bg-background-100 px-2 py-0.5 text-[11px] font-semibold text-foreground-600 transition-smooth hover:bg-background-200"
+              >
+                {programme.name}
+              </Link>
+            </span>
+          ) : cleanText(cohort?.programme, 'Unassigned programme')}
           accentColor={cohort?.color}
+          dense
           stats={[
             { icon: 'ri-team-line', label: 'Groups', value: cohortGroups.length },
             { icon: 'ri-stack-line', label: 'Modules', value: cohortModules.length },
@@ -202,7 +213,7 @@ export default function CohortWorkspacePage() {
         <WorkspaceTabs tabs={tabs} active={tab} onChange={key => setTab(key as Tab)} />
 
         {tab === 'overview' && (
-          <div className="grid gap-5 xl:grid-cols-2">
+          <div className="grid gap-4 xl:grid-cols-2">
             <WorkspacePanel title="Dates" description="Contract dates stay fixed; selected holidays only affect clashing module sessions.">
               <DetailRow label="Start" value={formatDateLabel(cohort?.startDate)} />
               <DetailRow label="Duration" value={cohort?.durationMonths ? `${cohort.durationMonths} months` : '-'} />
@@ -250,6 +261,7 @@ export default function CohortWorkspacePage() {
             gridClass={GROUP_GRID}
             rows={cohortGroups}
             rowKey={group => group.id}
+            getRowHref={group => namedCurriculumWorkspacePath('groups', group.id, group.name)}
             loading={loading && !loaded}
             refreshing={refreshing}
             highlightKey={highlightId}
@@ -291,6 +303,7 @@ export default function CohortWorkspacePage() {
             gridClass={MODULE_GRID}
             rows={cohortModules}
             rowKey={module => moduleIdentity(module) || module.id}
+            getRowHref={module => namedCurriculumWorkspacePath('modules', moduleIdentity(module), module.name)}
             loading={loading && !loaded}
             empty={(
               <EntityEmptyState

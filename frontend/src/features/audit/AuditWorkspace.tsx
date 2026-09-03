@@ -1733,6 +1733,7 @@ if (!selectedMonth) return;
               <button
                 type="button"
                 onClick={() => setAuditView('monthly')}
+                aria-pressed={auditView === 'monthly'}
                 className={`inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-[12px] font-bold transition ${auditView === 'monthly' ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-100'}`}
               >
                 <AppIcon className="ri-file-search-line" />
@@ -1741,6 +1742,7 @@ if (!selectedMonth) return;
               <button
                 type="button"
                 onClick={() => setAuditView('activities')}
+                aria-pressed={auditView === 'activities'}
                 className={`inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-[12px] font-bold transition ${auditView === 'activities' ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-100'}`}
               >
                 <AppIcon className="ri-stack-line" />

@@ -161,6 +161,17 @@ function isProgrammeDeleteRefusal(error: unknown): error is CurriculumApiError &
   );
 }
 
+/**
+ * A programme the API cannot find. The list is built from a payload the server
+ * caches, so a programme deleted elsewhere - another tab, the guided setup, a
+ * second worker - can still have a card here after its row has gone. Its buttons
+ * then answered 404 and the card stayed put, with no way to clear it short of a
+ * browser reload. A 404 is the answer to "remove this", so it is treated as one.
+ */
+function isMissingProgrammeError(error: unknown): boolean {
+  return error instanceof CurriculumApiError && error.status === 404;
+}
+
 function isProgrammeDependencyError(error: unknown): error is CurriculumApiError & { data: CurriculumProgrammeDependencyError } {
   return isProgrammeDeleteRefusal(error) && error.data.reason === 'programme-has-dependencies';
 }
@@ -250,12 +261,21 @@ export default function CurriculumProgrammes() {
   const [ksbSourcesLoading, setKsbSourcesLoading] = useState(true);
   const [ksbSourcesError, setKsbSourcesError] = useState<string | null>(null);
   const [programmeSourceOverrides, setProgrammeSourceOverrides] = useState<Map<string, string>>(new Map());
-  // skipCache on this page: it *is* the list of programmes, so arriving on it
+  // revalidate on this page: it *is* the list of programmes, so arriving on it
   // must show what exists now. The 30s collection cache is there to spare other
   // pages a rebuild, and reading it here meant a programme created elsewhere —
   // another tab, the structure wizard, a programme's own page — was missing until
   // the entry aged out or the browser was reloaded by hand.
-  const { programmes, loading, error, reload, removeProgramme, markProgrammeArchived, markProgrammeRestored, upsertProgramme } = useCurriculumProgrammes({ visibility: 'all', skipCache: true });
+  //
+  // `revalidate` rather than `skipCache` keeps that guarantee — the request still
+  // goes to the network every mount, so anything written elsewhere is visible —
+  // without sending Cache-Control: no-cache, which made the backend rebuild the
+  // payload from Neon and cost this one request ~14s on arrival. Reading back our
+  // own writes still works: every curriculum write calls
+  // invalidate_curriculum_cache() server-side, so the reload has nothing stale to
+  // hit. The explicit skipCache on the reload calls below is left as belt and
+  // braces for the multi-worker case, where invalidation needs a shared cache.
+  const { programmes, loading, error, reload, removeProgramme, markProgrammeArchived, markProgrammeRestored, upsertProgramme } = useCurriculumProgrammes({ visibility: 'all', revalidate: true });
   const { data: curriculumData, reload: reloadCurriculumData } = useCurriculumData({ autoLoad: false, compact: true, includeHolidays: true, refreshModules: true, compactModules: true });
   const ksbDescriptions = useMemo(() => buildProgrammeKsbDescriptionLookup(ksbSets, standards), [ksbSets, standards]);
 
@@ -470,6 +490,7 @@ export default function CurriculumProgrammes() {
     const programmeId = programme.sourceId || programme.id;
     setActionError(null);
     let outcome: 'archived' | null = null;
+    let alreadyGone = false;
     let dependencyReport: CurriculumProgrammeDependencyReport | null = null;
     await showCurriculumConfirm({
       title: 'Archive programme?',
@@ -488,6 +509,11 @@ export default function CurriculumProgrammes() {
         } catch (err) {
           if (isProgrammeDependencyError(err)) {
             dependencyReport = err.data.dependencyReport || null;
+            return;
+          }
+          if (isMissingProgrammeError(err)) {
+            alreadyGone = true;
+            removeProgramme(programmeId);
             return;
           }
           setActionError(err instanceof Error ? err.message : 'Unable to archive programme.');
@@ -509,6 +535,12 @@ export default function CurriculumProgrammes() {
           navigate(`/curriculum/cohorts?programme=${encodeURIComponent(programmeId)}`);
         },
       });
+    } else if (alreadyGone) {
+      await showProgrammeSwalToast(
+        'Programme already gone',
+        `${programme.name} is no longer in the database, so its card has been taken off the list.`,
+      );
+      await refreshProgrammeCards();
     } else if (outcome === 'archived') {
       await showProgrammeSwalToast(
         'Programme archived',
@@ -521,6 +553,7 @@ export default function CurriculumProgrammes() {
     const programmeId = programme.sourceId || programme.id;
     setActionError(null);
     let removed: Record<string, number> | null = null;
+    let alreadyGone = false;
     let blockers: Record<string, number> | undefined;
     const contents = countSummary(
       { cohorts: programme.cohorts || 0, groups: programme.groups || 0, modules: programme.modules || 0 },
@@ -544,6 +577,11 @@ export default function CurriculumProgrammes() {
             setActionError(err.data.error || err.data.message || 'Unable to delete programme.');
             return;
           }
+          if (isMissingProgrammeError(err)) {
+            alreadyGone = true;
+            removeProgramme(programmeId);
+            return;
+          }
           setActionError(err instanceof Error ? err.message : 'Unable to delete programme.');
           throw err;
         } finally {
@@ -556,6 +594,12 @@ export default function CurriculumProgrammes() {
         'Learner records block this delete',
         `${programme.name} still supplies ${countSummary(blockers, LEARNER_DELIVERY_LABELS)}. Learner plans are never deleted with a programme.`,
       );
+    } else if (alreadyGone) {
+      await showProgrammeSwalToast(
+        'Programme already gone',
+        `${programme.name} is no longer in the database, so its card has been taken off the list.`,
+      );
+      await refreshProgrammeCards();
     } else if (removed) {
       // 'programmes' is the programme row itself, which the title already says.
       const { programmes: _programmeRow, ...children } = removed as Record<string, number>;
@@ -856,7 +900,7 @@ export default function CurriculumProgrammes() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Programmes" pageSubtitle={pageSubtitle} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="programmes-page min-h-full bg-background-50 p-4 sm:p-6 space-y-3">
+      <div className="programmes-page min-h-full bg-background-50 p-4 sm:p-5 lg:p-6 space-y-4">
         <section className="curriculum-department-hero overflow-hidden rounded-2xl border border-white/10 bg-primary-950 text-white shadow-xl">
           <div className="curriculum-programme-hero-body relative p-5 sm:p-7">
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(255,255,255,0.18),transparent_34%),linear-gradient(135deg,rgba(109,40,217,0.35),rgba(15,23,42,0))]" />
@@ -880,7 +924,7 @@ export default function CurriculumProgrammes() {
                 <button
                   type="button"
                   onClick={() => { setProgrammeDrawerTarget(null); setProgrammeDrawerOpen(true); }}
-                  className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl bg-white px-4 text-[12px] font-bold text-primary-900 shadow-lg shadow-black/10 transition-smooth hover:bg-primary-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2"
+                  className="primary-action inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl bg-white px-4 text-[12px] font-bold text-primary-900 shadow-lg shadow-black/10 transition-smooth hover:bg-primary-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2"
                 >
                   <AppIcon className="ri-add-line text-base"></AppIcon>
                   Add Programme
@@ -1302,7 +1346,7 @@ export default function CurriculumProgrammes() {
                       type="button"
                       onClick={e => { e.stopPropagation(); openCard(); }}
                       title={`Open ${prog.name} — cohorts, groups, modules, sessions, KSB coverage and achievement`}
-                      className="programme-action-button programme-action-open inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-2 py-1.5 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                      className="programme-action-button programme-action-open primary-action inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-2 py-1.5 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
                     >
                       <AppIcon className="ri-folder-open-line text-sm"></AppIcon>
                       Open programme
@@ -1782,7 +1826,7 @@ function learnerAchievementMap(data: CurriculumProgrammeLearnerKsbImpactResponse
 
 function ImpactStat({ icon, label, value, detail }: { icon: string; label: string; value: string; detail: string }) {
   return (
-    <div className="rounded-xl border border-background-200 bg-background-100 p-3">
+    <div className="coach-metric-card">
       <div className="flex items-center gap-2 text-foreground-500">
         <AppIcon className={`${icon} text-sm`}></AppIcon>
         <span className="truncate text-[10px] font-bold uppercase tracking-wide">{label}</span>
@@ -1795,7 +1839,7 @@ function ImpactStat({ icon, label, value, detail }: { icon: string; label: strin
 
 function LearnerMiniMetric({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
-    <div className="rounded-xl border border-background-200 bg-background-100 px-3 py-2">
+    <div className="coach-metric-card">
       <p className="text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</p>
       <p className="mt-1 text-base font-heading font-black text-foreground-950">{value}</p>
       <p className="truncate text-[10px] font-semibold text-foreground-500">{detail}</p>
@@ -2081,15 +2125,6 @@ function ApplyProgrammeKsbSourceModal({
   const appliedSelection = useMemo(() => (
     currentSource.value && options.some(option => option.value === currentSource.value) ? currentSource.value : ''
   ), [currentSource.value, options]);
-  const suggestedSource = useMemo(() => {
-    if (appliedSelection) return '';
-    const programmeKey = normalise(programme.name);
-    const standardKey = normalise(programme.standard);
-    return options.find(option => (
-      (standardKey && normalise(option.title) === standardKey)
-      || (programmeKey && (normalise(option.title) === programmeKey || normalise(option.subtitle).includes(programmeKey)))
-    ))?.value || '';
-  }, [appliedSelection, options, programme.name, programme.standard]);
   const [selectedSource, setSelectedSource] = useState(appliedSelection);
   useEffect(() => {
     setSelectedSource(appliedSelection);
@@ -2134,7 +2169,6 @@ function ApplyProgrammeKsbSourceModal({
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
                         <p className="text-sm font-heading font-black text-foreground-950">{option.title}</p>
                         {current && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-emerald-700">Currently applied</span>}
-                        {!currentSource.value && option.value === suggestedSource && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-700">Suggested</span>}
                       </div>
                       <p className="mt-1 text-[12px] font-semibold text-foreground-500">{option.subtitle}</p>
                     </div>
@@ -2281,7 +2315,7 @@ function ProgrammeKsbEmptyState({ icon, title, message }: { icon: string; title:
 
 function DashboardStat({ icon, label, value, detail }: { icon: string; label: string; value: string; detail: string }) {
   return (
-    <div className="rounded-xl border border-white/55 bg-white/75 p-3 shadow-sm backdrop-blur-sm">
+    <div className="coach-metric-card">
       <div className="flex items-center gap-2 text-primary-900/70">
         <AppIcon className={`${icon} text-sm`}></AppIcon>
         <span className="truncate text-[10px] font-bold uppercase tracking-wide">{label}</span>

@@ -124,7 +124,7 @@ export default function SafeguardingDashboard() {
                   Active Safeguarding Cases
                   <span className="ml-2 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200/50">RESTRICTED</span>
                 </h3>
-                <Link to="/safeguarding/open-cases" className="text-[11px] text-red-600 hover:text-red-700 font-medium whitespace-nowrap cursor-pointer">
+                <Link to="/safeguarding/open-cases" className="compact-action text-[11px] text-red-600 hover:text-red-700 font-medium cursor-pointer">
                   All Cases <AppIcon className="ri-arrow-right-line text-[10px] ml-0.5"></AppIcon>
                 </Link>
               </div>
@@ -174,7 +174,7 @@ export default function SafeguardingDashboard() {
             <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Recent Escalations</h3>
-                <Link to="/safeguarding/referrals" className="text-[11px] text-red-600 hover:text-red-700 font-medium whitespace-nowrap cursor-pointer">
+                <Link to="/safeguarding/referrals" className="compact-action text-[11px] text-red-600 hover:text-red-700 font-medium cursor-pointer">
                   View All <AppIcon className="ri-arrow-right-line text-[10px] ml-0.5"></AppIcon>
                 </Link>
               </div>
@@ -285,7 +285,7 @@ export default function SafeguardingDashboard() {
             <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Team Messages</h3>
-                <Link to="/safeguarding/communication" className="text-[11px] text-red-600 hover:text-red-700 font-medium whitespace-nowrap cursor-pointer">
+                <Link to="/safeguarding/communication" className="compact-action text-[11px] text-red-600 hover:text-red-700 font-medium cursor-pointer">
                   Inbox <AppIcon className="ri-arrow-right-line text-[10px] ml-0.5"></AppIcon>
                 </Link>
               </div>
@@ -313,7 +313,7 @@ export default function SafeguardingDashboard() {
           <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-heading font-semibold text-foreground-900">Safeguarding Audit Trail</h3>
-              <Link to="/safeguarding/qa-audit" className="text-[11px] text-red-600 hover:text-red-700 font-medium whitespace-nowrap cursor-pointer">
+              <Link to="/safeguarding/qa-audit" className="compact-action text-[11px] text-red-600 hover:text-red-700 font-medium cursor-pointer">
                 Full Audit <AppIcon className="ri-arrow-right-line text-[10px] ml-0.5"></AppIcon>
               </Link>
             </div>
@@ -399,7 +399,7 @@ function StatCard({ label, value, sub, icon, colour }: { label: string; value: n
     amber: 'bg-amber-50 text-amber-600',
   };
   return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4">
+    <div className="coach-metric-card">
       <span className={`w-7 md:w-8 h-7 md:h-8 rounded-lg flex items-center justify-center ${colourMap[colour]} mb-2 md:mb-3`}>
         <AppIcon className={`${icon} text-xs md:text-sm`}></AppIcon>
       </span>

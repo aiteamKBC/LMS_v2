@@ -24,7 +24,7 @@ export default function MonthlyReadinessHero({ month }: MonthlyReadinessHeroProp
   const offset = circumference - (d.progress / 100) * circumference;
 
   return (
-    <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-primary-950 via-primary-900 to-primary-800">
+    <div className="learner-super-admin-hero relative overflow-hidden rounded-xl bg-gradient-to-br from-primary-950 via-primary-900 to-primary-800">
       {/* Liquid blob overlays */}
       <div className="absolute -top-20 -left-20 w-72 h-72 rounded-full bg-accent-400/8 blur-3xl animate-spin-slow"></div>
       <div className="absolute -bottom-16 right-0 w-64 h-64 rounded-full bg-primary-400/10 blur-3xl animate-spin-slower"></div>

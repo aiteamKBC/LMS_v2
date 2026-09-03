@@ -17,12 +17,12 @@ export function MonthNavigator({
   onChange: (value: string) => void;
 }) {
   return (
-    <div className="flex items-center gap-1 rounded-lg border border-foreground-200 bg-background-50 p-1">
+    <div className="flex items-center gap-1">
       <button
         type="button"
         onClick={() => onShift(-1)}
         aria-label="Previous month"
-        className="flex h-8 w-8 items-center justify-center rounded-md text-foreground-500 transition hover:bg-background-100 hover:text-primary-700"
+        className="flex h-8 w-8 items-center justify-center rounded-md text-black transition hover:bg-background-100 hover:text-black"
       >
         <AppIcon className="ri-arrow-left-s-line text-[16px]"></AppIcon>
       </button>
@@ -37,7 +37,7 @@ export function MonthNavigator({
         type="button"
         onClick={() => onShift(1)}
         aria-label="Next month"
-        className="flex h-8 w-8 items-center justify-center rounded-md text-foreground-500 transition hover:bg-background-100 hover:text-primary-700"
+        className="flex h-8 w-8 items-center justify-center rounded-md text-black transition hover:bg-background-100 hover:text-black"
       >
         <AppIcon className="ri-arrow-right-s-line text-[16px]"></AppIcon>
       </button>

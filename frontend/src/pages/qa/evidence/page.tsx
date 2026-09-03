@@ -101,7 +101,7 @@ export default function QAEvidencePage() {
             { label: 'Validated', value: stats.validated, icon: 'ri-check-line', color: 'emerald' },
             { label: 'Escalated', value: stats.escalated, icon: 'ri-alert-line', color: 'red' },
           ].map(s => (
-            <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium">
+            <div key={s.label} className="coach-metric-card">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${s.color === 'amber' ? 'bg-amber-100 text-amber-700' : s.color === 'accent' ? 'bg-accent-100 text-accent-700' : s.color === 'emerald' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
                 <AppIcon className={`${s.icon} text-sm`}></AppIcon>
               </div>

@@ -8,6 +8,7 @@ import { useMyLearner } from '@/hooks/useMyLearner';
 import { monthlyCoachingAnswers } from '@/pages/shared/monthlyCoachingForm';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { MetricCard } from '@/components/ui/MetricCard';
 
 const learnerNav = roleNavMap.learner;
 
@@ -160,27 +161,28 @@ export function MonthlyCoachingListPage() {
   const scheduledCount = sessions.filter((session) => ['scheduled', 'in-progress'].includes(session.status)).length;
   const cancelledCount = sessions.filter((session) => session.status === 'cancelled').length;
   const coachName = sessions.find((session) => session.coachName)?.coachName || 'Your coach';
+  const summaryMetrics = [
+    { label: 'Total', value: sessions.length, icon: 'ri-stack-line', tone: 'brand' as const, iconClassName: 'bg-violet-100 text-violet-700' },
+    { label: 'Scheduled', value: scheduledCount, icon: 'ri-calendar-check-line', tone: 'info' as const, iconClassName: 'bg-blue-100 text-blue-700' },
+    { label: 'Completed', value: completedCount, icon: 'ri-checkbox-circle-line', tone: 'positive' as const, iconClassName: 'bg-emerald-100 text-emerald-700' },
+    { label: 'Cancelled', value: cancelledCount, icon: 'ri-close-circle-line', tone: 'neutral' as const, iconClassName: 'bg-rose-100 text-rose-700' },
+  ];
 
   return (
     <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel} pageTitle="Monthly Coaching" pageSubtitle="30-day coaching sessions with your coach" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
       <main className="w-full space-y-5 p-3 sm:p-4 md:p-6">
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}</div>}
-        <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-4 text-white shadow-xl shadow-primary-950/10 sm:rounded-3xl sm:p-6 md:p-7">
+        <section className="learner-super-admin-hero relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-4 text-white shadow-xl shadow-primary-950/10 sm:rounded-3xl sm:p-6 md:p-7">
           <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>
-          <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="relative">
             <div>
               <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-secondary-100"><AppIcon className="ri-user-voice-line text-secondary-300" />One-to-one support</span>
               <h1 className="mt-3 text-[22px] font-bold leading-tight text-white sm:text-2xl md:text-3xl">Monthly coaching</h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">Your 30-day coaching sessions with {coachName}. Review progress, learning evidence and agreed next steps.</p>
             </div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[520px]">
-              {[
-                ['Total', sessions.length, 'ri-stack-line', 'text-secondary-300'],
-                ['Scheduled', scheduledCount, 'ri-calendar-check-line', 'text-blue-300'],
-                ['Completed', completedCount, 'ri-checkbox-circle-line', 'text-emerald-300'],
-                ['Cancelled', cancelledCount, 'ri-close-circle-line', 'text-rose-300'],
-              ].map(([label, value, icon, colour]) => <div key={String(label)} className="rounded-xl border border-white/[0.08] bg-white/[0.07] p-3 backdrop-blur sm:rounded-2xl"><AppIcon className={`${icon} ${colour} text-sm`} /><p className="mt-1 text-xl font-bold">{value}</p><p className="text-[10px] text-white/55">{label}</p></div>)}
-            </div>
+          </div>
+          <div className="relative z-0 mt-5 grid grid-cols-2 gap-2 border-t border-white/10 pt-4 sm:mt-6 sm:grid-cols-2 sm:pt-5 md:gap-3 lg:grid-cols-4">
+            {summaryMetrics.map((metric) => <MetricCard key={metric.label} {...metric} className="progress-review-hero-metric" />)}
           </div>
         </section>
 
@@ -251,7 +253,7 @@ export function MonthlyCoachingListPage() {
                 </table>
               </div>
               <div className="flex flex-col gap-3 border-t border-background-200 bg-background-50 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-                <div className="flex items-center gap-1.5"><button type="button" onClick={() => setPage(1)} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-left-line" /></button><button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-left-s-line" /></button>{Array.from({ length: totalPages }, (_, index) => index + 1).slice(0, 5).map((number) => <button key={number} type="button" onClick={() => setPage(number)} className={`h-8 min-w-8 rounded-lg border px-2 text-xs font-bold ${page === number ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300 bg-white text-foreground-600'}`}>{number}</button>)}<button type="button" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-right-s-line" /></button><button type="button" onClick={() => setPage(totalPages)} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-right-line" /></button><span className="ml-2 hidden text-[10px] text-foreground-400 sm:inline">10 items per page</span></div>
+                <div className="flex items-center gap-1.5"><button type="button" onClick={() => setPage(1)} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-left-line" /></button><button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-left-s-line" /></button>{Array.from({ length: totalPages }, (_, index) => index + 1).slice(0, 5).map((number) => <button key={number} type="button" onClick={() => setPage(number)} aria-current={page === number ? 'page' : undefined} className={`h-8 min-w-8 rounded-lg border px-2 text-xs font-bold ${page === number ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300 bg-white text-foreground-600'}`}>{number}</button>)}<button type="button" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-right-s-line" /></button><button type="button" onClick={() => setPage(totalPages)} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-right-line" /></button><span className="ml-2 hidden text-[10px] text-foreground-400 sm:inline">10 items per page</span></div>
                 <p className="text-[10px] text-foreground-500">{(page - 1) * pageSize + 1} - {Math.min(page * pageSize, sessions.length)} of {sessions.length} items</p>
               </div>
             </>
@@ -306,7 +308,7 @@ export default function MonthlyCoachingPage() {
         {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : (
           <>
             <section className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm">
-              <div className="bg-gradient-to-r from-primary-950 to-primary-800 p-5 text-white sm:p-6"><span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[10px] font-bold text-white/80">{statusLabel(selected.status)}</span><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-accent-300">30-day coaching session</p><h1 className="mt-1 text-xl font-bold text-white">Monthly Coaching #{selected.sequence}</h1><p className="mt-1 text-sm text-white/60">{formatDate(dateOf(selected), true)} at {formatTime(selected.scheduledTime)}</p></div>{selected.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action rounded-lg px-4 py-2 text-xs font-bold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}</div></div>
+              <div className="learner-super-admin-hero bg-gradient-to-r from-primary-950 to-primary-800 p-5 text-white sm:p-6"><span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[10px] font-bold text-white/80">{statusLabel(selected.status)}</span><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-accent-300">30-day coaching session</p><h1 className="mt-1 text-xl font-bold text-white">Monthly Coaching #{selected.sequence}</h1><p className="mt-1 text-sm text-white/60">{formatDate(dateOf(selected), true)} at {formatTime(selected.scheduledTime)}</p></div>{selected.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action rounded-lg px-4 py-2 text-xs font-bold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}</div></div>
               <div className="space-y-5 p-5 sm:p-6">
                 <div><p className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-foreground-400">Session participants</p><div className="grid gap-3 sm:grid-cols-2"><div className="flex items-center gap-3 rounded-xl border border-background-200 p-3.5"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-100 text-xs font-bold text-primary-700">{initials(learner?.name)}</span><div><p className="text-[10px] font-semibold uppercase text-foreground-400">Learner</p><p className="text-sm font-bold text-foreground-900">{learner?.name || '-'}</p></div></div><div className="flex items-center gap-3 rounded-xl border border-background-200 p-3.5"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-accent-100 text-xs font-bold text-accent-700">{initials(selected.coachName)}</span><div><p className="text-[10px] font-semibold uppercase text-foreground-400">Coach</p><p className="text-sm font-bold text-foreground-900">{selected.coachName || '-'}</p></div></div></div></div>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{[['Duration', `${selected.durationMinutes || 60} minutes`], ['Meeting type', selected.meetingProvider || '-'], ['Scheduled time', formatTime(selected.scheduledTime)], ['Learning window', previous ? `Since session #${previous.sequence}` : 'First 30-day period']].map(([label, value]) => <div key={label} className="rounded-xl bg-background-100 p-3.5"><p className="text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p><p className="mt-1 text-xs font-bold text-foreground-800">{value}</p></div>)}</div>

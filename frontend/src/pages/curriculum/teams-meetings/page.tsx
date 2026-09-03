@@ -1490,7 +1490,7 @@ export default function CurriculumTeamsMeetingsPage() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <div className="min-h-full space-y-5 bg-background-50 p-4 sm:p-6">
+      <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
         <EntityHero
           eyebrow="Curriculum Studio · Modules"
           title="Teams Meetings"
@@ -1569,6 +1569,7 @@ export default function CurriculumTeamsMeetingsPage() {
           gridClass={GRID}
           rows={visibleRows}
           rowKey={row => row.catalogueId}
+          getRowHref={row => `${namedCurriculumWorkspacePath('modules', row.catalogueId, row.name)}&tab=schedule`}
           loading={listLoading}
           empty={(
             <EntityEmptyState
@@ -1582,7 +1583,7 @@ export default function CurriculumTeamsMeetingsPage() {
           renderRow={row => (
             <>
               <StackedCell
-                href={`${namedCurriculumWorkspacePath('modules', row.catalogueId, row.name)}&tab=teams`}
+                href={`${namedCurriculumWorkspacePath('modules', row.catalogueId, row.name)}&tab=schedule`}
                 primary={row.name}
                 secondary={row.programmeName}
               />

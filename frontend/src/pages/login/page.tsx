@@ -7,6 +7,8 @@ import { AuthError, apiAuthHealth, apiMicrosoftStart } from '@/api/auth';
 import { homeRouteFor } from '@/lib/routeAccess';
 import styles from './page.module.css';
 
+const CAMPUS_IMAGE_URL = '/kent-business-college-campus.png';
+
 export default function LoginPage() {
   const { login, auth, isInitialized } = useAuth();
   const navigate = useNavigate();
@@ -102,6 +104,7 @@ export default function LoginPage() {
   return (
     <main className={styles.page}>
       <section className={styles.card} aria-labelledby="login-heading">
+        <span className={styles.curveBand} aria-hidden="true" />
         <div className={styles.formPanel}>
           <div className={styles.formContent}>
             <img
@@ -260,16 +263,36 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <aside className={styles.visualPanel} aria-label="Kent Business College digital workspace">
-          <span className={styles.shapeRibbon} aria-hidden="true" />
-          <span className={styles.shapeOrb} aria-hidden="true" />
-          <span className={styles.shapeArc} aria-hidden="true" />
+        <aside className={styles.visualPanel} aria-label="Kent Business College campus">
+          <img
+            className={styles.campusImage}
+            src={CAMPUS_IMAGE_URL}
+            alt="Kent Business College campus building at dusk"
+          />
+          <div className={styles.visualShade} aria-hidden="true" />
 
-          <div className={styles.imageCard}>
-            <img
-              src="/login-workspace.png"
-              alt="Learning management system workspace illustration"
-            />
+          <div className={styles.visualTopCard}>
+            <span className={styles.visualIcon} aria-hidden="true">
+              <AppIcon className="ri-shield-check-line" />
+            </span>
+            <p>
+              <span>Empowering learners.</span>
+              <span>Building futures.</span>
+            </p>
+          </div>
+
+          <div className={styles.visualFooterCard}>
+            <span className={styles.footerBrand}>
+              <AppIcon className="ri-shield-check-line" aria-hidden="true" />
+              <span>
+                <strong>Kent Business College</strong>
+                <small>{'\u00a9'} 2026 All rights reserved.</small>
+              </span>
+            </span>
+            <span className={styles.supportLine}>
+              <span>Need help?</span>
+              <b>Contact support</b>
+            </span>
           </div>
         </aside>
       </section>

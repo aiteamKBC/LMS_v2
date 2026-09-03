@@ -63,9 +63,9 @@ export function AdminPage({
             {stats && stats.length > 0 && (
               <div className="flex items-center gap-3 shrink-0 flex-wrap">
                 {stats.map(s => (
-                  <div key={s.label} className="bg-white/50 border border-white/60 backdrop-blur-sm rounded-xl px-4 py-3 text-center min-w-[80px]">
-                    <p className="text-2xl font-bold text-primary-900">{s.value}</p>
-                    <p className="text-[10px] text-primary-800/75 uppercase tracking-wide whitespace-nowrap">{s.label}</p>
+                  <div key={s.label} className="coach-metric-card admin-hero-metric min-w-[80px]">
+                    <p className="whitespace-nowrap text-[10px] font-medium uppercase tracking-wide text-foreground-500">{s.label}</p>
+                    <p className="mt-1 text-[28px] font-semibold leading-none tabular-nums text-foreground-900">{s.value}</p>
                   </div>
                 ))}
               </div>

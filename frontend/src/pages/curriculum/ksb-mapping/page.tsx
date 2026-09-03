@@ -214,7 +214,7 @@ function SummaryStat({ icon, label, value, detail, tone = 'default' }: {
     warning: 'bg-amber-100 text-amber-700',
   };
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-foreground-200/70 bg-background-50 px-3.5 py-3 shadow-sm">
+    <div className="coach-metric-card flex items-center gap-3">
       <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${tones[tone]}`}>
         <AppIcon className={`${icon} text-base`} />
       </span>
@@ -365,7 +365,7 @@ export default function KSBMapping() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <div className="space-y-4 p-4 md:p-6">
+      <div className="min-h-full space-y-4 bg-background-100 p-4 sm:p-5 lg:p-6">
         {/* Filters */}
         <section className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">

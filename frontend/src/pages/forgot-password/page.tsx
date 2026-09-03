@@ -39,6 +39,7 @@ export default function ForgotPasswordPage() {
   return (
     <main className={loginStyles.page}>
       <section className={loginStyles.card} aria-labelledby="forgot-password-heading">
+        <span className={loginStyles.curveBand} aria-hidden="true" />
         <div className={loginStyles.formPanel}>
           <div className={loginStyles.formContent}>
             <img
@@ -125,15 +126,36 @@ export default function ForgotPasswordPage() {
           </div>
         </div>
 
-        <aside className={loginStyles.visualPanel} aria-label="Kent Business College digital workspace">
-          <span className={loginStyles.shapeRibbon} aria-hidden="true" />
-          <span className={loginStyles.shapeOrb} aria-hidden="true" />
-          <span className={loginStyles.shapeArc} aria-hidden="true" />
-          <div className={loginStyles.imageCard}>
-            <img
-              src="/login-workspace.png"
-              alt="Learning management system workspace illustration"
-            />
+        <aside className={loginStyles.visualPanel} aria-label="Kent Business College campus">
+          <img
+            className={loginStyles.campusImage}
+            src="/kent-business-college-campus.png"
+            alt="Kent Business College campus building at dusk"
+          />
+          <div className={loginStyles.visualShade} aria-hidden="true" />
+
+          <div className={loginStyles.visualTopCard}>
+            <span className={loginStyles.visualIcon} aria-hidden="true">
+              <AppIcon className="ri-shield-check-line" />
+            </span>
+            <p>
+              <span>Empowering learners.</span>
+              <span>Building futures.</span>
+            </p>
+          </div>
+
+          <div className={loginStyles.visualFooterCard}>
+            <span className={loginStyles.footerBrand}>
+              <AppIcon className="ri-shield-check-line" aria-hidden="true" />
+              <span>
+                <strong>Kent Business College</strong>
+                <small>{'\u00a9'} 2026 All rights reserved.</small>
+              </span>
+            </span>
+            <span className={loginStyles.supportLine}>
+              <span>Need help?</span>
+              <b>Contact support</b>
+            </span>
           </div>
         </aside>
       </section>

@@ -77,7 +77,7 @@ export default function QAReportsPage() {
             { label: 'Published', value: stats.published, icon: 'ri-check-line', color: 'emerald' },
             { label: 'Archived', value: stats.archived, icon: 'ri-folder-close-line', color: 'foreground' },
           ].map(s => (
-            <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium">
+            <div key={s.label} className="coach-metric-card">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${s.color === 'amber' ? 'bg-amber-100 text-amber-700' : s.color === 'emerald' ? 'bg-emerald-100 text-emerald-700' : 'bg-foreground-100 text-foreground-500'}`}>
                 <AppIcon className={`${s.icon} text-sm`}></AppIcon>
               </div>

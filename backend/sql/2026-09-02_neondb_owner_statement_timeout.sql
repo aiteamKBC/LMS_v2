@@ -1,0 +1,47 @@
+-- Set a default statement_timeout for the neondb_owner role.
+-- Written 2026-09-02. NOT YET RUN anywhere.
+--
+-- WHY
+--   Every request that touches the database (login/me, curriculum reads, the
+--   staff-role refresh on every authenticated request, everything) opens a
+--   Postgres session as neondb_owner. `connect_timeout` (already set client-side
+--   in backend/config/settings.py) only bounds how long it takes to OPEN a
+--   connection -- it does nothing once one is open. A query that then stalls,
+--   on a held lock or a Neon compute that is slow to wake, has nothing capping
+--   it, so the request just hangs forever: the socket sits ESTABLISHED, the
+--   frontend's fetch sits "(pending)", and the page never finishes loading.
+--   This is what was happening on /login_api/me/ -- see the two 4.5-minute
+--   `me/` requests that finally surfaced as a 502.
+--
+--   The client-side fix (a `SET statement_timeout` issued via Django's
+--   connection_created signal, in backend/config/settings.py) already covers
+--   requests that go through Django. This statement is the belt-and-braces
+--   version of the same thing at the database level, so it also protects any
+--   session that reaches Postgres another way -- a one-off script, `psql`,
+--   `manage.py dbshell`, a migration -- and survives regardless of how Neon's
+--   pooler happens to be reusing connections underneath.
+--
+--   It has to be `ALTER ROLE ... SET`, not a connection-string startup option:
+--   Neon's pooled endpoint (the "-pooler" host) rejects `options=-c
+--   statement_timeout=...` outright with "unsupported startup parameter in
+--   options" -- see https://neon.tech/docs/connect/connection-errors#unsupported-startup-parameter.
+--   A role-level default has no such restriction: Postgres applies it itself
+--   when a session for that role starts, independent of how the client
+--   connected to it.
+--
+-- WHAT
+--   15 seconds. Long enough for any real query this app runs (the slowest
+--   known one, the curriculum overview rebuild, is ~13s cold); short enough
+--   that a stuck request fails fast and visibly instead of hanging the UI.
+--
+-- HOW TO RUN
+--   Connect to the Neon project as an admin (a role that can ALTER the
+--   neondb_owner role -- the Neon console's SQL editor works) and run this
+--   once. It takes effect for every NEW session after that; sessions already
+--   open keep whatever timeout they started with.
+
+ALTER ROLE neondb_owner SET statement_timeout = '15s';
+
+-- Confirm it stuck (run in a fresh session/connection):
+--   SHOW statement_timeout;
+--   -- should read 15s

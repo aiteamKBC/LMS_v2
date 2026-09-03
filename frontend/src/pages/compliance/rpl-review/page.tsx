@@ -134,14 +134,14 @@ function StatsBanner() {
           : stat.color === 'accent' ? 'bg-accent-50 text-accent-700'
           : 'bg-secondary-100 text-secondary-600';
         return (
-          <div key={stat.label} className="bg-background-50 rounded-xl border border-background-200/50 p-3.5 card-premium cursor-pointer">
-            <div className="flex items-center gap-3">
-              <span className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${iconBg}`}>
+          <div key={stat.label} className="coach-metric-card cursor-pointer">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${iconBg}`}>
                 <AppIcon className={`${stat.icon} text-sm`}></AppIcon>
               </span>
               <div className="min-w-0">
-                <p className="text-2xl font-heading font-semibold text-foreground-900">{stat.value}</p>
-                <p className="text-[11px] text-foreground-400 truncate">{stat.label}</p>
+                <p className="truncate text-[11px] font-medium text-foreground-500">{stat.label}</p>
+                <p className="mt-1 text-[25px] font-semibold leading-none tabular-nums text-foreground-900">{stat.value}</p>
               </div>
             </div>
           </div>

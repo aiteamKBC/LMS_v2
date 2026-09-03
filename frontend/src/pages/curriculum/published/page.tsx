@@ -64,11 +64,11 @@ export default function CurriculumPublished() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel={curriculumNav.label} navItems={curriculumNav.items} workspaceLabel={curriculumNav.workspaceLabel} pageTitle="Published Curriculum" pageSubtitle="View and manage published curriculum versions available for cohort delivery" userName="Emma Walsh" userRole="Curriculum Lead">
-      <div className="p-6 space-y-6">
+      <div className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
         <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
-          <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
+          <div className="relative p-5 sm:p-6 flex flex-col sm:flex-row items-start sm:items-center gap-4">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-book-open-line text-white text-2xl"></AppIcon></span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Published Curriculum</h2>
@@ -166,7 +166,7 @@ export default function CurriculumPublished() {
 function StatCard({ label, value, sub, icon, color }: { label: string; value: string; sub: string; icon: string; color: string }) {
   const iconBg = color === 'emerald' ? 'bg-emerald-100 text-emerald-600' : color === 'primary' ? 'bg-primary-100 text-primary-600' : color === 'amber' ? 'bg-amber-100 text-amber-600' : 'bg-foreground-100 text-foreground-500';
   return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium cursor-pointer">
+    <div className="coach-metric-card cursor-pointer">
       <div className="flex items-start justify-between mb-3"><span className={`w-9 h-9 rounded-lg flex items-center justify-center ${iconBg}`}><AppIcon className={`${icon} text-sm`}></AppIcon></span></div>
       <p className="text-[11px] text-foreground-400 mb-1">{label}</p>
       <p className="text-2xl font-heading font-semibold text-foreground-900">{value}</p>

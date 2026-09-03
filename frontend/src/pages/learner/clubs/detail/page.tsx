@@ -840,7 +840,7 @@ export default function ClubDetailPage() {
               </div>
               <Link
                 to="/learner/clubs/events"
-                className="text-xs font-semibold text-primary-600 hover:text-primary-700 transition-smooth cursor-pointer flex items-center gap-1"
+                className="compact-action text-xs font-semibold text-primary-600 hover:text-primary-700 transition-smooth cursor-pointer"
               >
                 View All Events <AppIcon className="ri-arrow-right-line"></AppIcon>
               </Link>

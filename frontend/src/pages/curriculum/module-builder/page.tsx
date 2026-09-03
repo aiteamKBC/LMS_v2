@@ -304,8 +304,13 @@ export default function ModuleBuilder() {
   const savedModuleSnapshotRef = useRef('');
   const saveRequestRef = useRef(0);
   const ksbImportInputRef = useRef<HTMLInputElement>(null);
-  const { modules, loading, error, reload } = useCurriculumModules({ compact: true, skipCache: true });
-  const { programmes: curriculumProgrammes } = useCurriculumProgrammes({ skipCache: true, visibility: 'all' });
+  // Both revalidate rather than skipCache. The request still goes to the network
+  // every time, and every curriculum write calls invalidate_curriculum_cache() on
+  // the backend, so a reload after a save still rebuilds and returns our write.
+  // What it no longer does is send Cache-Control: no-cache on the *mount* read,
+  // which forced a rebuild from Neon and cost these two ~9s and ~14s.
+  const { modules, loading, error, reload } = useCurriculumModules({ compact: true, revalidate: true });
+  const { programmes: curriculumProgrammes } = useCurriculumProgrammes({ revalidate: true, visibility: 'all' });
   const programmeDesignUrl = useMemo(() => {
     const requested = (searchParams.get('programme') || searchParams.get('programmeId') || '').trim();
     if (!requested) return '';
@@ -362,15 +367,51 @@ export default function ModuleBuilder() {
       ));
   }, [modules, storageVersion, hiddenModuleIds, curriculumProgrammes]);
 
+  // Every programme identifier at least one catalogue module answers to. A
+  // programme with no modules only ever renders "no modules match", so it is
+  // not worth offering in the filter.
+  const programmeKeysWithModules = useMemo(() => new Set(
+    catalogueModules
+      .flatMap(module => [
+        module.programmeName,
+        module.programmeId,
+        module.sourceModule?.programme,
+        module.sourceModule?.programmeId,
+        ...(module.deliveryUsages || []).flatMap(usage => [usage.programme, usage.programmeId]),
+      ])
+      .map(normaliseDeepLinkValue)
+      .filter(Boolean),
+  ), [catalogueModules]);
+
   const programmeOptions = useMemo(() => {
+    // The programme the page was deep linked into, and whatever is currently
+    // selected, stay listed even if archived after the fact - so the <select>
+    // never holds a value with no matching option, and an explicit deep link
+    // is honoured rather than silently dropped.
+    const stickyKeys = [
+      requestedCreateScopeRef.current.programmeId,
+      requestedCreateScopeRef.current.programmeName,
+      programmeFilter === 'All' ? '' : programmeFilter,
+    ].map(normaliseDeepLinkValue).filter(Boolean);
     const byName = new Map<string, string>();
     curriculumProgrammes.forEach(programme => {
       const name = String(programme.name || programme.sourceId || programme.id || '').trim();
       if (!name) return;
+      const keys = [programme.name, programme.id, programme.sourceId, programme.standard]
+        .map(normaliseDeepLinkValue)
+        .filter(Boolean);
+      const isSticky = keys.some(key => stickyKeys.includes(key));
+      // curriculumProgrammes is fetched with visibility: 'all' so a module whose
+      // programme was archived can still resolve its identity. The picker itself
+      // is for choosing where to work next, so an archived programme is left out
+      // of it the same way the Programmes page hides it from the active list. An
+      // active programme is offered even with zero modules yet - the catalogue
+      // then says so plainly (see emptyProgrammeScope) instead of hiding it.
+      if (programmeIsArchived(programme) && !isSticky) return;
       byName.set(normaliseDeepLinkValue(name) || name.toLowerCase(), name);
     });
     return ['All', ...Array.from(byName.values()).sort((a, b) => a.localeCompare(b))];
-  }, [curriculumProgrammes]);
+  }, [curriculumProgrammes, programmeFilter]);
 
   const programmeLookup = useMemo(() => {
     const lookup = new Map<string, { id: string; name: string }>();
@@ -802,6 +843,14 @@ export default function ModuleBuilder() {
 
   const deliveryFiltersActive = Boolean(cohortFilter || groupFilter || tutorFilter);
 
+  // A programme scope that genuinely holds nothing - reached by deep link from
+  // its workspace, since the filter no longer offers empty programmes. The
+  // empty state should name it and offer a module, not blame the filters.
+  const emptyProgrammeScope = programmeFilter !== 'All'
+    && !search.trim()
+    && !deliveryFiltersActive
+    && !programmeFilterKeys(programmeFilter, curriculumProgrammes).some(key => programmeKeysWithModules.has(key));
+
   const filtered = catalogueModules.filter(module => {
     const text = `${module.title} ${module.catalogueId} ${module.programmeName} ${moduleIdentityText(module)} ${moduleDeliverySearchText(module)}`.toLowerCase();
     if (search && !text.includes(search.toLowerCase())) return false;
@@ -896,7 +945,14 @@ export default function ModuleBuilder() {
       const deepLinkTarget = moduleBuilderDeepLinkTarget(next, new URLSearchParams(window.location.search));
       savedModuleSnapshotRef.current = moduleSnapshot(next);
       setWorkingModule(next);
-      setSelection(deepLinkTarget.selection || (next.weekStructure[0] ? { kind: 'week', weekId: next.weekStructure[0].id } : null));
+      const firstWeek = next.weekStructure[0];
+      const firstComponent = firstWeek?.components[0];
+      const defaultSelection: Selection | null = firstComponent
+        ? { kind: 'component', weekId: firstWeek.id, componentId: firstComponent.id }
+        : firstWeek
+          ? { kind: 'week', weekId: firstWeek.id }
+          : null;
+      setSelection(deepLinkTarget.selection || defaultSelection);
       setSettingsOpen(openSettings || deepLinkTarget.openSettings);
       await finishLoadingProgress(setOpeningModuleComplete);
     } catch (err) {
@@ -1230,9 +1286,12 @@ export default function ModuleBuilder() {
       savedModuleSnapshotRef.current = moduleSnapshot(saved);
       setStorageVersion(version => version + 1);
       setActionMessage(null);
-      // No dialog on a successful save. The footer already reads "All changes
-      // saved" with a green Saved button, and a modal on every save is an
-      // interruption in a screen people save constantly.
+      // A brief, self-dismissing confirmation rather than a click-to-close modal:
+      // the footer already reads "All changes saved" with a green Saved button, and
+      // a dialog that waits on the reader is an interruption in a screen people save
+      // constantly. This only confirms the save landed — it is not a readiness
+      // check, so it shows the same "Saved" on a week that still has unmapped KSBs.
+      void showCurriculumAlert({ title: 'Saved', icon: 'success', timer: 1200 });
       reload();
       return saved;
     } catch (err) {
@@ -1890,7 +1949,7 @@ export default function ModuleBuilder() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Module Builder" pageSubtitle={`${catalogueModules.length} modules - ${published} published - ${draftCount} draft - ${totalComponents} components`} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="p-4 sm:p-5 space-y-4">
+      <div className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
         {catalogueHierarchy && <CurriculumHierarchyNav {...catalogueHierarchy} />}
         <div className="rounded-2xl border border-foreground-200/70 bg-background-50 px-5 py-4 shadow-sm">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -2039,6 +2098,35 @@ export default function ModuleBuilder() {
                     onDelete={() => confirmDeleteModule(module)}
                   />
                 ))}
+              </div>
+            ) : emptyProgrammeScope ? (
+              <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
+                <span className="grid h-14 w-14 place-items-center rounded-full bg-primary-50 text-primary-500">
+                  <AppIcon className="ri-book-open-line text-2xl"></AppIcon>
+                </span>
+                <div>
+                  <p className="text-[13px] font-semibold text-foreground-700">{programmeFilter} has no modules yet</p>
+                  <p className="mt-1 max-w-xs text-[12px] text-foreground-400">Create the first module for this programme to start mapping its delivery, weeks and KSBs.</p>
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCreateOpen(true)}
+                    disabled={saving}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:cursor-wait disabled:opacity-70"
+                  >
+                    <AppIcon className="ri-add-line text-sm"></AppIcon>
+                    New module
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => changeFilter(() => setProgrammeFilter('All'))}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
+                  >
+                    <AppIcon className="ri-apps-2-line text-sm"></AppIcon>
+                    Show all programmes
+                  </button>
+                </div>
               </div>
             ) : catalogueModules.length > 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
@@ -5489,7 +5577,7 @@ function ComponentResourceUpload({
               if (file) void onUpload(file);
             }}
           />
-          <label htmlFor={inputId} className={`inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold text-white transition-smooth ${uploading ? 'bg-foreground-300' : 'bg-primary-500 hover:bg-primary-600'}`}>
+          <label htmlFor={inputId} className={`primary-action inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold text-white transition-smooth ${uploading ? 'bg-foreground-300' : 'bg-primary-500 hover:bg-primary-600'}`}>
             <AppIcon className={uploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-cloud-2-line'}></AppIcon>
             {uploading ? 'Uploading...' : 'Upload from device'}
           </label>
@@ -6142,6 +6230,12 @@ function moduleDefinitionKey(module: ModuleCatalogueItem) {
   const programme = cleanModuleMeta(module.programmeName).toLowerCase();
   if (!module.sourceModule) return `local::${programme}::${title || module.catalogueId}`;
   return `${programme || 'programme'}::${title || module.catalogueId}`;
+}
+
+/** Same rule the Programmes page uses to split its active list from its archive. */
+function programmeIsArchived(programme: CurriculumProgramme) {
+  if (typeof programme.isArchived === 'boolean') return programme.isArchived;
+  return String(programme.status || 'active').trim().toLowerCase() === 'archived';
 }
 
 /** Every identifier the selected programme answers to: name, id, source id, standard. */
