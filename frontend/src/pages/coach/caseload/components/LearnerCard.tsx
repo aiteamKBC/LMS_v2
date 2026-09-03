@@ -47,11 +47,11 @@ function otjhNote(insight: LearnerInsight): { note: string | null; tone: 'muted'
   if (delta === null) return { note: null, tone: 'muted' };
   if (delta < -0.5) {
     return {
-      note: `${formatHours(Math.abs(delta))} hrs behind target`,
+      note: `${formatHours(Math.abs(delta))} behind target`,
       tone: insight.tier === 'critical' ? 'critical' : 'warning',
     };
   }
-  if (delta > 0.5) return { note: `${formatHours(delta)} hrs ahead`, tone: 'positive' };
+  if (delta > 0.5) return { note: `${formatHours(delta)} ahead`, tone: 'positive' };
   return { note: 'On target', tone: 'positive' };
 }
 

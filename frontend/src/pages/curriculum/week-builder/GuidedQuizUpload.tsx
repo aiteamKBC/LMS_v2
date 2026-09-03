@@ -158,12 +158,13 @@ const XML_RECORD_PINS: Pin[] = [
 ];
 
 const XML_QUESTION_PINS: Pin[] = [
-  { n: 1, title: '<question>', detail: 'One per question. The type attribute is optional — treated as single choice.' },
+  { n: 1, title: '<question type="...">', detail: 'One per question. Supports all 8 LMS question types.' },
   { n: 2, title: '<text>', detail: 'The question (you can also use <stem>).' },
-  { n: 3, title: '<option correct="true">', detail: 'Mark the right option(s) with correct="true".' },
-  { n: 4, title: '<feedback>', detail: 'Optional explanation.' },
+  { n: 3, title: '<option correct="true">', detail: 'For choice and True/False questions. Mark every correct option.' },
+  { n: 4, title: 'Type-specific answers', detail: 'Use <pairs>, <acceptedKeywords>, <acceptedAnswers>, or <items> for structured types.' },
+  { n: 5, title: '<feedback>', detail: 'Optional explanation.' },
   {
-    n: 5,
+    n: 6,
     title: '<module> / <programme>',
     detail: 'Ignored from <metadata> here — the week already sets programme / module.',
     warn: true,
@@ -201,7 +202,8 @@ const RULES: Record<string, string[]> = {
   ],
   'xml-question': [
     'Wrap every <question> in a single root element.',
-    'Mark correct options with correct="true".',
+    'Set type to one of: single_choice, multiple_choice, true_false, matching, image_matching, keywords, fill_gap, ordering.',
+    'Use correct="true" for choices and the type-specific answer structure shown in the template for other types.',
     'Programme / module come from this week — no need to set them in the file.',
   ],
   scorm: [
@@ -239,21 +241,70 @@ const XML_RECORD_TEMPLATE = `<records>
 </records>
 `;
 
-const XML_QUESTION_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
+export const XML_QUESTION_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
 <quiz>
   <metadata>
-    <title>Social Media Quiz</title>
-    <module>Organic vs Paid</module>
-    <programme>Marketing Exec L4</programme>
+    <title>All Question Types Quiz</title>
+    <module />
+    <programme />
   </metadata>
   <questions>
-    <question type="single_choice">
-      <text>What is paid social?</text>
-      <option correct="false">Organic post</option>
-      <option correct="true">Sponsored content</option>
-      <option correct="false">Employee post</option>
-      <option correct="false">Newsletter</option>
-      <feedback>Paid social uses advertising spend.</feedback>
+    <question type="single_choice" points="1">
+      <text>Which protocol secures web traffic?</text>
+      <option correct="false">HTTP</option>
+      <option correct="true">HTTPS</option>
+      <feedback>HTTPS encrypts browser traffic.</feedback>
+    </question>
+    <question type="multiple_choice" points="2">
+      <text>Select all authentication factors.</text>
+      <option correct="true">Something you know</option>
+      <option correct="true">Something you have</option>
+      <option correct="false">Screen brightness</option>
+    </question>
+    <question type="true_false" points="1">
+      <text>HTTPS encrypts web traffic.</text>
+      <option correct="true">True</option>
+      <option correct="false">False</option>
+    </question>
+    <question type="matching" points="2">
+      <text>Match each status code to its meaning.</text>
+      <pairs>
+        <pair><left>200</left><right>OK</right></pair>
+        <pair><left>404</left><right>Not Found</right></pair>
+      </pairs>
+    </question>
+    <question type="image_matching" points="2">
+      <text>Match each image to its label.</text>
+      <pairs>
+        <pair>
+          <image>https://your-domain.example/circle.png</image>
+          <display>Image A</display>
+          <right>Circle</right>
+        </pair>
+      </pairs>
+    </question>
+    <question type="keywords" points="2">
+      <text>Enter two RAG status colours.</text>
+      <acceptedKeywords>
+        <keyword>red</keyword>
+        <keyword>amber</keyword>
+      </acceptedKeywords>
+    </question>
+    <question type="fill_gap" points="1">
+      <text>Complete: HTTPS keeps traffic _____.</text>
+      <acceptedAnswers>
+        <answer>secure</answer>
+        <answer>encrypted</answer>
+      </acceptedAnswers>
+    </question>
+    <question type="ordering" points="2">
+      <text>Put the actions in the correct order.</text>
+      <items>
+        <item id="1">Open the quiz</item>
+        <item id="2">Answer the questions</item>
+        <item id="3">Submit the quiz</item>
+      </items>
+      <correctOrder>1,2,3</correctOrder>
     </question>
   </questions>
 </quiz>
@@ -462,7 +513,7 @@ function xmlResult(shapeLabel: string, shape: XmlShape, count: number, problems:
   return { level: 'ok', shape, title: `${shapeLabel} format — ${count} question${count === 1 ? '' : 's'}`, detail: 'Structure and answers look complete.', stats };
 }
 
-function validateXml(text: string): ValidationResult {
+export function validateXml(text: string): ValidationResult {
   const doc = new DOMParser().parseFromString(text, 'application/xml');
   const parseError = doc.querySelector('parsererror');
   if (parseError) {
@@ -506,15 +557,69 @@ function validateXml(text: string): ValidationResult {
     if (!withText.length) {
       return { level: 'error', title: 'Question format found, but no <text>', detail: 'Each <question> needs a <text> (or <stem>) element.' };
     }
-    let noOptions = 0;
+    const elements = (question: Element, ...tags: string[]) => {
+      const wanted = new Set(tags.map(tag => tag.toLowerCase()));
+      return Array.from(question.getElementsByTagName('*'))
+        .filter(child => wanted.has(child.tagName.toLowerCase()));
+    };
+    const normaliseType = (value: string) => {
+      const type = value.trim().toLowerCase().replace(/[\s-]+/g, '_');
+      const aliases: Record<string, string> = {
+        single: 'single_choice',
+        multiple: 'multiple_choice',
+        multi_choice: 'multiple_choice',
+        truefalse: 'true_false',
+        fill_blank: 'fill_gap',
+        fill_in_the_gap: 'fill_gap',
+        image: 'image_matching',
+        imagematching: 'image_matching',
+        match: 'matching',
+        keyword: 'keywords',
+        order: 'ordering',
+      };
+      return aliases[type] || type || 'single_choice';
+    };
+    const isCorrect = (option: Element) => {
+      if (['true', '1', 'yes'].includes((option.getAttribute('correct') || '').trim().toLowerCase())) return true;
+      return Number(option.getAttribute('fraction') || 0) > 0;
+    };
+    const choiceTypes = new Set(['single_choice', 'multiple_choice', 'true_false']);
+    const supportedTypes = new Set([...choiceTypes, 'matching', 'image_matching', 'keywords', 'fill_gap', 'ordering']);
+    let noAnswers = 0;
     let noCorrect = 0;
+    let unsupported = 0;
     for (const question of questions) {
-      const options = Array.from(question.getElementsByTagName('*')).filter(child => child.tagName.toLowerCase() === 'option');
-      if (!options.length) noOptions += 1;
-      else if (!options.some(option => (option.getAttribute('correct') || '').toLowerCase() === 'true')) noCorrect += 1;
+      const type = normaliseType(question.getAttribute('type') || '');
+      if (!supportedTypes.has(type)) {
+        unsupported += 1;
+        continue;
+      }
+      if (choiceTypes.has(type)) {
+        const options = elements(question, 'option').length
+          ? elements(question, 'option')
+          : elements(question, 'answer');
+        if (!options.length) noAnswers += 1;
+        else if (!options.some(isCorrect)) noCorrect += 1;
+      } else if (type === 'matching') {
+        const pairs = elements(question, 'pair');
+        if (!pairs.length || pairs.some(pair => !childValues(pair, 'left').some(Boolean) || !childValues(pair, 'right').some(Boolean))) noAnswers += 1;
+      } else if (type === 'image_matching') {
+        const pairs = elements(question, 'pair');
+        if (!pairs.length || pairs.some(pair => {
+          const hasPrompt = childValues(pair, 'image', 'image_url', 'imageurl', 'display', 'label', 'left').some(Boolean);
+          return !hasPrompt || !childValues(pair, 'right').some(Boolean);
+        })) noAnswers += 1;
+      } else if (type === 'keywords') {
+        if (!elements(question, 'keyword').some(keyword => (keyword.textContent || '').trim())) noAnswers += 1;
+      } else if (type === 'fill_gap') {
+        if (!elements(question, 'answer', 'option').some(answer => (answer.textContent || '').trim())) noAnswers += 1;
+      } else if (type === 'ordering') {
+        if (!elements(question, 'item').some(item => (item.textContent || '').trim())) noAnswers += 1;
+      }
     }
     const problems: string[] = [];
-    if (noOptions) problems.push(`${noOptions} question${noOptions === 1 ? '' : 's'} with no <option>s`);
+    if (unsupported) problems.push(`${unsupported} question${unsupported === 1 ? '' : 's'} with an unsupported type`);
+    if (noAnswers) problems.push(`${noAnswers} question${noAnswers === 1 ? '' : 's'} with missing or incomplete answer data`);
     if (noCorrect) problems.push(`${noCorrect} question${noCorrect === 1 ? '' : 's'} with no correct="true" option`);
     return xmlResult('Question', 'question', questions.length, problems);
   }
@@ -857,19 +962,32 @@ const XML_QUESTION_LINES: { code: string; pin?: number }[] = [
   { code: '<?xml version="1.0" encoding="UTF-8"?>' },
   { code: '<quiz>' },
   { code: '  <metadata>' },
-  { code: '    <title>Social Media Quiz</title>' },
-  { code: '    <module>Organic vs Paid</module>', pin: 5 },
-  { code: '    <programme>Marketing Exec L4</programme>', pin: 5 },
+  { code: '    <title>All Question Types Quiz</title>' },
+  { code: '    <module />', pin: 6 },
+  { code: '    <programme />', pin: 6 },
   { code: '  </metadata>' },
   { code: '  <questions>' },
   { code: '    <question type="single_choice">', pin: 1 },
-  { code: '      <text>What is paid social?</text>', pin: 2 },
-  { code: '      <option correct="false">Organic post</option>' },
-  { code: '      <option correct="true">Sponsored content</option>', pin: 3 },
-  { code: '      <option correct="false">Employee post</option>' },
-  { code: '      <option correct="false">Newsletter</option>' },
-  { code: '      <feedback>Paid social uses advertising spend.</feedback>', pin: 4 },
+  { code: '      <text>Which protocol secures web traffic?</text>', pin: 2 },
+  { code: '      <option correct="false">HTTP</option>' },
+  { code: '      <option correct="true">HTTPS</option>', pin: 3 },
+  { code: '      <feedback>HTTPS encrypts browser traffic.</feedback>', pin: 5 },
   { code: '    </question>' },
+  { code: '    <question type="matching">', pin: 1 },
+  { code: '      <text>Match each status code.</text>', pin: 2 },
+  { code: '      <pairs>', pin: 4 },
+  { code: '        <pair><left>200</left><right>OK</right></pair>' },
+  { code: '        <pair><left>404</left><right>Not Found</right></pair>' },
+  { code: '      </pairs>' },
+  { code: '    </question>' },
+  { code: '    <question type="fill_gap">', pin: 1 },
+  { code: '      <text>HTTPS keeps traffic _____.</text>', pin: 2 },
+  { code: '      <acceptedAnswers>', pin: 4 },
+  { code: '        <answer>secure</answer>' },
+  { code: '        <answer>encrypted</answer>' },
+  { code: '      </acceptedAnswers>' },
+  { code: '    </question>' },
+  { code: '    <!-- Download Template for examples of all 8 types. -->' },
   { code: '  </questions>' },
   { code: '</quiz>' },
 ];
@@ -992,6 +1110,7 @@ export function GuidedQuizUpload({ open, onClose, onUploaded, scope }: GuidedQui
 
   const [title, setTitle] = useState('');
   const [status, setStatus] = useState('draft');
+  const [durationMinutes, setDurationMinutes] = useState(60);
   const [saving, setSaving] = useState(false);
 
   const dropInputRef = useRef<HTMLInputElement | null>(null);
@@ -1075,6 +1194,8 @@ export function GuidedQuizUpload({ open, onClose, onUploaded, scope }: GuidedQui
       body.append('programmeId', scope.programmeId);
       body.append('version', 'v1.0');
       body.append('status', status);
+      body.append('duration', String(durationMinutes));
+      body.append('timeUnit', 'minutes');
       body.append('author', 'Curriculum Team');
       body.append('assessmentType', 'quiz');
 
@@ -1348,6 +1469,19 @@ export function GuidedQuizUpload({ open, onClose, onUploaded, scope }: GuidedQui
                 <label className="block">
                   <span className="mb-1 block text-xs font-semibold text-foreground-700">Status</span>
                   <ThemedSelect value={status} options={STATUS_OPTIONS} onChange={setStatus} />
+                </label>
+
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold text-foreground-700">Quiz duration (minutes)</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="1440"
+                    step="1"
+                    value={durationMinutes}
+                    onChange={event => setDurationMinutes(Math.min(1440, Math.max(1, Number(event.target.value))))}
+                    className="h-10 w-full rounded-lg border border-background-200 px-3 text-sm outline-none focus:border-primary-400"
+                  />
                 </label>
               </div>
 

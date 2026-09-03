@@ -144,6 +144,10 @@ const updateTeamsMeetingSchedule = vi.fn(async () => ({
 }));
 const createTeamsMeeting = vi.fn(async () => ({ created: true, meeting: {} as never, warnings: [] }));
 const saveTeamsRecordingEvents = vi.fn(async () => ({ saved: 1, previewSessionId: 'preview-1' }));
+const syncTeamsMeetingArtifacts = vi.fn(async () => ({
+  synced: { attendanceReports: 1, attendanceRecords: 3, transcripts: 1, recordings: 1 },
+  errors: [], partial: false,
+}));
 
 // One meeting that has already run, so its recording is there to be watched.
 const artifacts = {
@@ -166,10 +170,7 @@ vi.mock('../../module-builder/moduleAuthoringData', async importOriginal => ({
     timeZone: 'GMT Standard Time', timeZoneIana: 'Europe/London',
   })),
   loadTeamsMeetingArtifacts: vi.fn(async () => artifacts),
-  syncTeamsMeetingArtifacts: vi.fn(async () => ({
-    synced: { attendanceReports: 0, attendanceRecords: 0, transcripts: 0, recordings: 0 },
-    errors: [], partial: false,
-  })),
+  syncTeamsMeetingArtifacts: (...args: unknown[]) => syncTeamsMeetingArtifacts(...(args as [])),
   restoreModuleTeamsMeeting: vi.fn(async () => ({ restored: true, updatedComponents: 1, meeting: {}, module: {} })),
   probeModuleTeamsAttachment: (...args: unknown[]) => probeModuleTeamsAttachment(...(args as [])),
   updateTeamsMeetingSchedule: (...args: unknown[]) => updateTeamsMeetingSchedule(...(args as [])),
@@ -210,6 +211,7 @@ describe('Teams Meetings page', () => {
     updateTeamsMeetingSchedule.mockClear();
     createTeamsMeeting.mockClear();
     saveTeamsRecordingEvents.mockClear();
+    syncTeamsMeetingArtifacts.mockClear();
     fetchCurriculumTeamsMeetingSummaries.mockClear();
     fetchCurriculumTeamsMeetingSummaries.mockImplementation(async () => summaries);
     confirmMock.mockReset();
@@ -220,6 +222,7 @@ describe('Teams Meetings page', () => {
     // the file, so any test asserting on what a click confirmed counts every
     // earlier test's alerts too.
     alertMock.mockClear();
+    window.localStorage.removeItem('curriculumTeamsAutoSync');
   });
 
   it('reports a calendar that matches the module session plan as in sync', async () => {
@@ -367,7 +370,8 @@ describe('Teams Meetings page', () => {
       expect(dialog.getByRole('button', { name: 'Update Teams calendar' })).toBeInTheDocument();
       await waitFor(() => expect(probeModuleTeamsAttachment).toHaveBeenCalled());
       expect(dialog.queryByRole('button', { name: /missing live session/ })).not.toBeInTheDocument();
-      expect(dialog.queryByRole('button', { name: /Fetch attendance/ })).not.toBeInTheDocument();
+      expect(dialog.getByRole('button', { name: 'Sync attendance & files' })).toBeInTheDocument();
+      expect(dialog.getByRole('switch', { name: 'Auto-sync on' })).toHaveAttribute('aria-checked', 'true');
     });
 
     it('offers the missing live sessions, counted, when weeks are still without one', async () => {
@@ -381,9 +385,7 @@ describe('Teams Meetings page', () => {
       expect(await dialog.findByRole('button', { name: 'Add 3 missing live sessions' })).toBeInTheDocument();
     });
 
-    // Ended sessions used to add a third button. The dialog is for the dates, so
-    // the fetch is gone even in the one state that used to justify it.
-    it('never offers the attendance fetch, even once every session has ended', async () => {
+    it('keeps the manual artifact sync available once sessions have ended', async () => {
       const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-01T09:00:00Z'));
       try {
         await renderPage();
@@ -392,11 +394,35 @@ describe('Teams Meetings page', () => {
 
         const dialog = within(await screen.findByRole('dialog'));
         expect(dialog.getAllByText('Session ended').length).toBeGreaterThan(0);
-        expect(dialog.queryByRole('button', { name: /Fetch attendance/ })).not.toBeInTheDocument();
+        expect(dialog.getByRole('button', { name: 'Sync attendance & files' })).toBeInTheDocument();
       } finally {
         clock.mockRestore();
       }
     });
+  });
+
+  it('syncs attendance, transcripts and recordings when the manual button is pressed', async () => {
+    await renderPage();
+    expect(await screen.findByText('Data Foundations')).toBeInTheDocument();
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+
+    const dialog = within(await screen.findByRole('dialog'));
+    await userEvent.click(dialog.getByRole('button', { name: 'Sync attendance & files' }));
+
+    await waitFor(() => expect(syncTeamsMeetingArtifacts).toHaveBeenCalledWith('LIVE-1'));
+    expect(await screen.findByText('Teams sync complete: 3 attendance records, 1 transcript, 1 recording.'))
+      .toBeInTheDocument();
+  });
+
+  it('automatically syncs a tracked meeting after its end time', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-02T11:00:00Z'));
+    try {
+      await renderPage();
+      expect(await screen.findByText('Data Foundations')).toBeInTheDocument();
+      await waitFor(() => expect(syncTeamsMeetingArtifacts).toHaveBeenCalledWith('LIVE-1'));
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it('sends the module’s own holiday-shifted session dates to Teams', async () => {

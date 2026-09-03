@@ -655,7 +655,40 @@ def microsoft_graph_request(method: str, path: str, *, payload: dict | None = No
             latency_ms=round((perf_counter() - started) * 1000, 1),
         )
         detail = exc.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(f"Microsoft Graph {method.upper()} {path} failed: {exc.code} {detail}") from exc
+        graph_code = ""
+        graph_message = ""
+        request_id = ""
+        try:
+            parsed_detail = json.loads(detail) if detail else {}
+            graph_error = parsed_detail.get("error") if isinstance(parsed_detail, dict) else {}
+            if isinstance(graph_error, dict):
+                graph_code = str(graph_error.get("code") or "").strip()
+                graph_message = str(graph_error.get("message") or "").strip()
+                inner_error = graph_error.get("innerError") or graph_error.get("innererror") or {}
+                if isinstance(inner_error, dict):
+                    request_id = str(
+                        inner_error.get("request-id")
+                        or inner_error.get("requestId")
+                        or ""
+                    ).strip()
+        except (TypeError, ValueError, json.JSONDecodeError):
+            graph_message = detail[:1500].strip()
+        if not request_id and exc.headers:
+            request_id = str(
+                exc.headers.get("request-id")
+                or exc.headers.get("client-request-id")
+                or ""
+            ).strip()
+        diagnostics = [f"HTTP {exc.code}"]
+        if graph_code:
+            diagnostics.append(f"code={graph_code}")
+        if graph_message:
+            diagnostics.append(f"message={graph_message}")
+        if request_id:
+            diagnostics.append(f"request-id={request_id}")
+        raise RuntimeError(
+            f"Microsoft Graph {method.upper()} {path} failed: {'; '.join(diagnostics)}"
+        ) from exc
     except urllib_error.URLError as exc:
         metric_event(
             "graph_call",

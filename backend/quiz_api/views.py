@@ -2334,6 +2334,44 @@ def _parse_questions_from_text(text):
 
 
 def _parse_questions_from_xml(root):
+    def local_tag(node):
+        return str(node.tag or "").rsplit("}", 1)[-1].lower()
+
+    def descendants(node, *tags):
+        wanted = {str(tag).lower() for tag in tags}
+        return [child for child in node.iter() if child is not node and local_tag(child) in wanted]
+
+    def direct_child_text(node, *tags):
+        wanted = {str(tag).lower() for tag in tags}
+        for child in list(node):
+            if local_tag(child) in wanted:
+                value = "".join(child.itertext()).strip()
+                if value:
+                    return value
+        return ""
+
+    def nested_values(node, container_tags, value_tags):
+        containers = descendants(node, *container_tags)
+        values = []
+        for container in containers:
+            for child in descendants(container, *value_tags):
+                value = "".join(child.itertext()).strip()
+                if value:
+                    values.append((child, value))
+        return values
+
+    def marked_correct(node):
+        value = str(node.get("correct") or "").strip().lower()
+        if value in {"true", "1", "yes"}:
+            return True
+        try:
+            return float(node.get("fraction") or 0) > 0
+        except (TypeError, ValueError):
+            return False
+
+    def answer_letters(indexes):
+        return ", ".join(chr(65 + index) for index in indexes)
+
     parsed = []
     record_nodes = root.findall(".//record")
     if record_nodes:
@@ -2360,7 +2398,7 @@ def _parse_questions_from_xml(root):
             ))
         return parsed
 
-    for question_node in root.findall(".//question"):
+    for question_node in descendants(root, "question"):
         text = (
             question_node.findtext("stem")
             or question_node.findtext("text")
@@ -2368,15 +2406,101 @@ def _parse_questions_from_xml(root):
             or question_node.get("text")
             or ""
         )
+        question_type = _normalise_question_type(
+            question_node.get("type")
+            or direct_child_text(question_node, "question_type", "questionType")
+            or "single_choice"
+        )
         options = []
-        correct_answer = ""
-        for index, option_node in enumerate(question_node.findall(".//option")):
-            option_text = "".join(option_node.itertext()).strip()
-            options.append(option_text)
-            if option_node.get("correct", "").lower() == "true":
-                correct_answer = chr(65 + index)
+        correct_indexes = []
+
+        if question_type in {"single_choice", "multiple_choice", "true_false"}:
+            option_nodes = descendants(question_node, "option")
+            if not option_nodes:
+                option_nodes = [node for node, _value in nested_values(question_node, {"answers"}, {"answer"})]
+            for option_node in option_nodes:
+                option_text = "".join(option_node.itertext()).strip()
+                if not option_text:
+                    continue
+                option_index = len(options)
+                options.append(option_text)
+                if marked_correct(option_node):
+                    correct_indexes.append(option_index)
+        elif question_type in {"matching", "image_matching"}:
+            for pair_node in descendants(question_node, "pair"):
+                left = direct_child_text(pair_node, "left")
+                right = direct_child_text(pair_node, "right")
+                image_url = direct_child_text(pair_node, "image", "image_url", "imageUrl")
+                label = direct_child_text(pair_node, "display", "label") or left
+                if not right or not (left or image_url or label):
+                    continue
+                if question_type == "image_matching" and image_url:
+                    options.append(json.dumps({
+                        "kind": "image_matching_pair",
+                        "imageUrl": image_url,
+                        "label": label,
+                        "match": right,
+                    }, separators=(",", ":")))
+                else:
+                    options.append(f"{left or label} -> {right}")
+            correct_indexes = list(range(len(options)))
+        elif question_type == "keywords":
+            options = [value for _node, value in nested_values(
+                question_node,
+                {"acceptedkeywords", "accepted_keywords", "keywords"},
+                {"keyword"},
+            )]
+            correct_indexes = list(range(len(options)))
+        elif question_type == "fill_gap":
+            options = [value for _node, value in nested_values(
+                question_node,
+                {"acceptedanswers", "accepted_answers"},
+                {"answer"},
+            )]
+            if not options:
+                option_nodes = descendants(question_node, "option")
+                options = ["".join(node.itertext()).strip() for node in option_nodes if "".join(node.itertext()).strip()]
+            correct_indexes = list(range(len(options)))
+        elif question_type == "ordering":
+            item_nodes = descendants(question_node, "item")
+            items = [
+                (str(node.get("id") or index + 1).strip(), "".join(node.itertext()).strip())
+                for index, node in enumerate(item_nodes)
+                if "".join(node.itertext()).strip()
+            ]
+            correct_order = direct_child_text(question_node, "correctOrder", "correct_order")
+            order_ids = [value.strip() for value in re.split(r"[,;|]", correct_order) if value.strip()]
+            if order_ids:
+                by_id = {item_id: value for item_id, value in items}
+                options = [by_id[item_id] for item_id in order_ids if item_id in by_id]
+                options.extend(value for item_id, value in items if item_id not in order_ids)
+            else:
+                options = [value for _item_id, value in items]
+            correct_indexes = list(range(len(options)))
+        else:
+            option_nodes = descendants(question_node, "option")
+            for option_node in option_nodes:
+                option_text = "".join(option_node.itertext()).strip()
+                if not option_text:
+                    continue
+                option_index = len(options)
+                options.append(option_text)
+                if marked_correct(option_node):
+                    correct_indexes.append(option_index)
+
         if text:
-            parsed.append(_question_from_parts(text, options, correct_answer, question_node.findtext("feedback") or ""))
+            question = _question_from_parts(
+                text,
+                options,
+                answer_letters(correct_indexes),
+                question_node.findtext("feedback") or "",
+                question_type,
+            )
+            try:
+                question["points"] = max(int(question_node.get("points") or 1), 1)
+            except (TypeError, ValueError):
+                question["points"] = 1
+            parsed.append(question)
     return parsed
 
 
@@ -2851,6 +2975,7 @@ def _save_questions(quiz, questions):
             quiz=quiz,
             question_text=question["text"],
             question_type=question.get("question_type", quiz.default_question_type),
+            points=max(int(question.get("points") or 1), 1),
             explanation=question.get("explanation", ""),
             sort_order=index,
         )
@@ -3176,6 +3301,12 @@ def quizzes(request):
             valid = False
             message = message or "File uploaded, but no questions were detected. Use columns like Question Title, Option 1-5, and Answer."
         default_question_type = _default_question_type_from_questions(parsed_questions, request.POST.get("questionType") or "single_choice")
+        try:
+            duration = int(request.POST.get("duration") or 60)
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "Quiz duration must be a whole number of minutes."}, status=400)
+        if not 1 <= duration <= 1440:
+            return JsonResponse({"error": "Quiz duration must be between 1 and 1440 minutes."}, status=400)
 
         with transaction.atomic():
             quiz = QuizPackage.objects.create(
@@ -3198,6 +3329,8 @@ def quizzes(request):
                 mapped_components=int(request.POST.get("mappedComponents") or 0),
                 author=request.POST.get("author", "Curriculum Team"),
                 linked_courses=linked_courses,
+                duration=duration,
+                time_unit="minutes",
             )
             _save_questions(quiz, parsed_questions)
         return JsonResponse(_serialize_quiz(_sync_quiz_assignment_count(quiz)), status=201)

@@ -26,6 +26,7 @@ import { SearchInput } from '@/components/ui/FilterToolbar';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { cn } from '@/lib/cn';
+import { formatHoursMinutes } from '@/lib/format';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 
@@ -293,6 +294,59 @@ export default function CoachMonthlyCycle() {
               />
             )}
           />
+
+          {!loading && !error && (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+              <MetricCard
+                label="Learning Completions"
+                value={formatNumber(summary.learningActivities)}
+                icon="ri-graduation-cap-line"
+                tone="brand"
+                note={summary.activeLearners > 0 ? `${(summary.learningActivities / summary.activeLearners).toFixed(1)} avg / learner` : undefined}
+              />
+              <MetricCard
+                label="Coaching Reviews"
+                value={formatNumber(summary.coachingSessions)}
+                icon="ri-star-line"
+                tone="info"
+                note={summary.activeLearners > 0 ? `${Math.round((summary.coachingSessions / summary.activeLearners) * 100)}% of learners` : undefined}
+              />
+              <MetricCard
+                label="Evidence Logged"
+                value={formatNumber(summary.evidence)}
+                icon="ri-file-text-line"
+                tone="positive"
+                note={summary.activeLearners > 0 ? `${Math.round((summary.evidence / summary.activeLearners) * 100)}% of learners` : undefined}
+              />
+              <MetricCard
+                label="KSBs Logged"
+                value={formatNumber(summary.ksbTouched)}
+                icon="ri-book-open-line"
+                tone="caution"
+                note={summary.activeLearners > 0 ? `${Math.round((summary.ksbTouched / summary.activeLearners) * 100)}% of learners` : undefined}
+              />
+              <MetricCard
+                label="OTJH Logged"
+                value={formatHoursMinutes(summary.otjhHours)}
+                icon="ri-time-line"
+                tone="neutral"
+                note={summary.activeLearners > 0 ? `${formatHoursMinutes(summary.otjhHours / summary.activeLearners)} avg / learner` : undefined}
+              />
+            </div>
+          )}
+
+          {!loading && !error && (
+            <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+              <div className="space-y-5">
+                <EngagementOverviewChart learners={learners} monthKey={selectedMonth} />
+                <TopLearnerActionsPanel learners={learnerActionCounts} onOpenLearner={handleOpenLearnerOverview} />
+              </div>
+              <div className="space-y-5">
+                <ActivityTimelinePanel activities={latestActivities} onOpenLearner={handleOpenLearnerOverview} />
+                <StatusBreakdownPanel summary={summary} />
+              </div>
+            </div>
+          )}
 
           {!loading && !error && (
             <CoachingDeliveryPanel

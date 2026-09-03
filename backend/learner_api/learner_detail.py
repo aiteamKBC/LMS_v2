@@ -711,6 +711,12 @@ def _week_target_rows(detail):
 
     totals_by_week = {}
     for component in detail.get("components", []):
+        # A quiz has a duration/time limit for the learner, but that duration is
+        # actual activity time once an attempt is submitted; it is not authored
+        # planned OTJH. Keep it out of week targets while preserving the quiz's
+        # own expectedOtjh/quizMeta values for delivery and reporting.
+        if component.get("isQuiz") or _s(component.get("type")).strip().lower() == "quiz":
+            continue
         key = (
             component.get("module"),
             component.get("week"),
@@ -1610,7 +1616,8 @@ def _annotate_otjh(components):
         else:
             otjh = otjh_by_legacy_key.get((c.get("module"), c.get("week"), c.get("component")))
         c["expectedOtjh"] = otjh
-        if otjh:
+        is_quiz = c.get("isQuiz") or _s(c.get("type")).strip().lower() == "quiz"
+        if otjh and not is_quiz:
             total += otjh
     return components, round(total, 2)
 

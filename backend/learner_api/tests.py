@@ -46,12 +46,14 @@ from .evidence_storage import (
 from .identity import learner_profile_for_source
 from .learner_detail import (
     _active_profile_for_source,
+    _annotate_otjh,
     _append_week_quizzes,
     _display_quiz_title,
     _matching_module_ids_for_quiz_record,
     _resolve_from_master,
     _schedule_based_week_target,
     _sequential_week_target,
+    _week_target_rows,
 )
 from .learner_progression import ACTIVE_STATUS, READY_TO_ENROL_STATUS, _as_date, advance_learner
 from .mappers import to_learner_detail
@@ -70,6 +72,27 @@ class LearnerQuizReferenceTests(SimpleTestCase):
         self.assertEqual(_serialise_quiz_ref("42"), 42)
         self.assertEqual(_serialise_quiz_ref("quiz-42"), "quiz-42")
         self.assertIsNone(_serialise_quiz_ref(None))
+
+    @patch("learner_api.learner_detail._otjh_by_legacy_title", return_value={})
+    @patch(
+        "learner_api.learner_detail._otjh_by_component_id",
+        return_value={"video-1": 2.0, "quiz-1": 0.5},
+    )
+    def test_quiz_hours_are_not_included_in_planned_otjh(self, _by_id, _by_title):
+        components = [
+            {"componentId": "video-1", "module": "M1", "week": "W1", "type": "video"},
+            {"componentId": "quiz-1", "module": "M1", "week": "W1", "type": "quiz", "isQuiz": True},
+        ]
+
+        annotated, total = _annotate_otjh(components)
+        week_rows = _week_target_rows({
+            "week": [{"module": "M1", "week": "W1", "moduleId": None, "weekId": None}],
+            "components": annotated,
+        })
+
+        self.assertEqual(total, 2.0)
+        self.assertEqual(annotated[1]["expectedOtjh"], 0.5)
+        self.assertEqual(week_rows[0]["otjh"], 2.0)
 
 
 class LearnerDetailPrefetchTests(SimpleTestCase):
@@ -829,9 +852,12 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
 
         self.assertEqual(completed_hours_from_progress(progress), "6")
 
-    def test_completed_hours_falls_back_to_expected_otjh_without_tracked_time(self):
-        # Rows written before time tracking carry no verified seconds, so the
-        # authored hours are all there is to count.
+    def test_completed_hours_include_actual_quiz_time(self):
+        progress = [{"kind": "quiz", "quizId": "42", "reportedTime": "30 min"}]
+
+        self.assertEqual(completed_hours_from_progress(progress), "0.5")
+
+    def test_completed_hours_prefers_curriculum_expected_otjh_for_known_components(self):
         progress = [
             {"kind": "video", "componentId": "component-1", "reportedTime": "120"},
             {"kind": "component", "componentId": "component-2", "reportedTime": "5"},

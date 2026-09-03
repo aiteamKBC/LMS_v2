@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import type { ReadingContent } from '@/mocks/learner-profile';
+import { formatHoursMinutes } from '@/lib/format';
 
 interface ReadingModalProps {
   isOpen: boolean;
@@ -815,7 +816,7 @@ export function ReadingModal({
                     <div className="space-y-2">
                       {[
                         ['Duration', duration],
-                        ['OTJH', `${plannedOTJH}h`],
+                        ['OTJH', formatHoursMinutes(plannedOTJH)],
                         ['Points', `${points} pts`],
                         ['Sections', `${readingData.sections.length}`],
                       ].map(([label, value]) => (

@@ -1245,6 +1245,12 @@ export interface LiveSessionAttendance {
   total_attendance_seconds?: number;
   intervals?: Array<Record<string, unknown>>;
   raw_data?: Record<string, unknown>;
+  expected?: boolean;
+  attended?: boolean;
+  join_count?: number;
+  attendance_report_id?: string;
+  attendance_report_start?: string;
+  attendance_report_end?: string;
 }
 
 /** An occurrence enriched with its attendance + artifacts (from the per-series
@@ -2279,6 +2285,17 @@ export function fetchLiveSessionArtifacts(
  *  as an `href` / `download` / media `src`. */
 export function liveSessionArtifactContentUrl(liveSessionId: string, artifactId: string): string {
   return `${API_BASE_URL}/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/${encodeURIComponent(artifactId)}/content/`;
+}
+
+/** Same-origin redirect that records which Week/occurrence launched the shared Teams meeting. */
+export function liveSessionJoinUrl(liveSessionId: string, occurrenceId: string): string {
+  return `${API_BASE_URL}/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/occurrences/${encodeURIComponent(occurrenceId)}/join/`;
+}
+
+/** Inline media/text response. Without this flag the backend deliberately sends
+ * Content-Disposition: attachment so the same endpoint is a real download. */
+export function liveSessionArtifactPreviewUrl(liveSessionId: string, artifactId: string): string {
+  return `${liveSessionArtifactContentUrl(liveSessionId, artifactId)}?preview=1`;
 }
 
 export function fetchCurriculumSessions(

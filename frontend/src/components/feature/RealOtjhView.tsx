@@ -3,7 +3,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail } from '@/api/learnerDetail';
-import { formatHoursMinutes, parseHours } from '@/utils/learnerJourney';
+import { formatHoursMinutes, parseHours, trainingPlanWeekPosition } from '@/utils/learnerJourney';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 // Explicit, not auto-imported: vitest.config.ts leaves unplugin-auto-import out,
 // so a test that renders this view would crash on it (same reason as Modal.tsx).
@@ -142,6 +142,13 @@ export function OtjhBody({
   const rag = RAG(status);
   const plannedPercent = planned > 0 ? Math.round((completed / planned) * 100) : 0;
   const targetPercent = target > 0 ? Math.min(100, Math.round((completed / target) * 100)) : 0;
+  const planWeek = trainingPlanWeekPosition(real);
+  const targetWeekLabel = planWeek?.state === 'upcoming'
+    ? 'Plan has ' + planWeek.total + ' weeks'
+    : planWeek
+      ? 'Week ' + planWeek.current + ' of ' + planWeek.total
+        + (planWeek.state === 'complete' ? ' - plan complete' : '')
+      : 'Up to this week';
 
   // Every completion that put hours on the total, newest first: quizzes, videos,
   // and the readings, decks, podcasts and assignments finished through the
@@ -274,7 +281,7 @@ export function OtjhBody({
         {/* Stat strip */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 md:gap-4">
           <StatCard icon="ri-flag-line" iconTint="bg-gradient-to-br from-[#d8c9ff] via-[#8b5cf6] to-[#5420a8] text-white shadow-sm shadow-primary-500/25" label="Completed" value={formatHoursMinutes(completed)} sub={`${plannedPercent}% of plan`} />
-          <StatCard icon="ri-focus-3-line" iconTint="bg-gradient-to-br from-[#ddd6fe] via-[#a78bfa] to-[#6d28d9] text-white shadow-sm shadow-violet-500/25" label="Current target" value={formatHoursMinutes(target)} sub="up to this week" />
+          <StatCard icon="ri-focus-3-line" iconTint="bg-gradient-to-br from-[#ddd6fe] via-[#a78bfa] to-[#6d28d9] text-white shadow-sm shadow-violet-500/25" label="Current target" value={formatHoursMinutes(target)} sub={targetWeekLabel} />
           <StatCard icon="ri-calendar-todo-line" iconTint="bg-gradient-to-br from-[#e5e7eb] via-[#9ca3af] to-[#4b5563] text-white shadow-sm shadow-foreground-400/25" label="Programme plan" value={formatHoursMinutes(planned)} sub="total planned hours" />
         </div>
 

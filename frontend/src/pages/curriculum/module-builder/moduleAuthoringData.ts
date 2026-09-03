@@ -1172,14 +1172,8 @@ export interface TeamsMeetingResult {
 export interface TeamsMeetingConfiguration {
   configured: boolean;
   defaultOrganizer: string;
-  /**
-   * True when the deployment pins the organizer. Recording and transcription are
-   * set on the online meeting behind the event, and that route is granted to one
-   * mailbox by a Teams application access policy -- so a meeting organized by
-   * anyone else opens with nothing recording. The form shows the organizer
-   * read-only rather than hiding it: which calendar the series lands in still
-   * matters to whoever is creating it.
-   */
+  /** Legacy compatibility flag. Current backends return false because the
+   * configured organizer is a default and users may choose another mailbox. */
   organizerLocked: boolean;
   timeZone: string;
   timeZoneIana: string;
