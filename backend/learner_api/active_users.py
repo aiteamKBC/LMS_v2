@@ -952,6 +952,27 @@ def save_progress_record(learner, record, activity=None):
             completed_hours_from_progress(learner.training_plan_progress)
         )
         learner.save(update_fields=["completed_hours", "updated_at"])
+
+        # Engagement points: fire only once this transaction actually commits.
+        # Progress writes route to the "enrolment" DB alias while engagement
+        # models route to "default" (see learner_api.routers) — separate
+        # connections even though both currently point at the same Neon
+        # database — so an inline grant here could survive a later rollback
+        # of this very save. award_for_progress is best-effort and never
+        # raises, matching the try/except every caller used to wrap the old,
+        # per-caller record_progress_points call in.
+        enrolment_id = learner.enrolment_id
+        if enrolment_id is not None:
+            progress_snapshot = dict(record)
+            learner_username = learner.username
+
+            def _award_engagement_points():
+                from engagement_api.hooks import award_for_progress
+
+                award_for_progress(enrolment_id, learner_username, progress_snapshot)
+
+            transaction.on_commit(_award_engagement_points, using="enrolment")
+
         return progress
 
 

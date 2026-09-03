@@ -4,10 +4,10 @@ import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { useToast } from '@/hooks/useToast';
+import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 import { roleNavMap } from '@/mocks/navigation';
-import { ENGAGEMENT_LEARNERS } from '@/mocks/engagement-data';
 import {
-  fetchPointsRules, createPointsRule, updatePointsRule, fetchRuleGrants,
+  fetchPointsRules, updatePointsRule, fetchRuleGrants,
   type EngagementPointsRule as PointsRule, type EngagementPointsGrant,
 } from '@/api/engagement';
 import { RuleCardSkeletonGrid } from '@/pages/engagement/EngagementSkeletons';
@@ -52,8 +52,6 @@ function InfoTooltip({ label, text }: { label: string; text: string }) {
 // PointsRule / EngagementPointsGrant types come from the api module.
 // learnersImpacted + totalPointsAwarded are aggregates the backend computes
 // from the grants table, not stored columns.
-
-const LEARNER_BY_ID = new Map(ENGAGEMENT_LEARNERS.map(l => [l.id, l]));
 
 // Visual weight banding so a 100pt rule doesn't look the same as a 5pt one.
 function pointsBand(points: number) {
@@ -158,6 +156,7 @@ function RuleForm({
 export default function PointsRulesPage() {
   const navigate = useNavigate();
   const { success, warning } = useToast();
+  const operator = useOperatorIdentity();
   const [rules, setRules] = useState<PointsRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -165,10 +164,6 @@ export default function PointsRulesPage() {
   const [activeOnly, setActiveOnly] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>('points');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [addForm, setAddForm] = useState<RuleFormData>({ ...blankForm });
-  const [addErrors, setAddErrors] = useState<FormErrors>({});
 
   const [editRuleId, setEditRuleId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<RuleFormData>({ ...blankForm });
@@ -229,28 +224,6 @@ export default function PointsRulesPage() {
     else { setSortKey(key); setSortDir('desc'); }
   }
 
-  function openAddModal() {
-    setAddForm({ ...blankForm });
-    setAddErrors({});
-    setShowAddModal(true);
-  }
-
-  async function handleAdd() {
-    const errs = validateForm(addForm);
-    if (Object.keys(errs).length > 0) { setAddErrors(errs); return; }
-    try {
-      const created = await createPointsRule({
-        name: addForm.name.trim(), description: addForm.description.trim(), points: addForm.points,
-        category: addForm.category.trim(), frequency: addForm.frequency.trim(), trigger: addForm.trigger.trim(), active: addForm.active,
-      });
-      setRules(prev => [created, ...prev]);
-      setShowAddModal(false);
-      success(`Rule "${created.name}" created`);
-    } catch (err: any) {
-      warning('Could not create rule', err.message);
-    }
-  }
-
   function openEditModal(rule: PointsRule) {
     setEditForm({ name: rule.name, description: rule.description, points: rule.points, category: rule.category, frequency: rule.frequency, trigger: rule.trigger, active: rule.active });
     setEditErrors({});
@@ -287,25 +260,13 @@ export default function PointsRulesPage() {
 
   const statsRule = rules.find(r => r.id === statsRuleId) ?? null;
   const logsRule = rules.find(r => r.id === logsRuleId) ?? null;
-  // Enrich each grant with the mocked learner's avatar/programme (owned by
-  // another team); fall back to the name the grant itself stored.
-  const logsEntries = logsGrants.map(g => {
-    const learner = LEARNER_BY_ID.get(g.learnerId);
-    return {
-      id: g.id,
-      name: learner?.name ?? g.learner,
-      avatarImg: learner?.avatarImg,
-      programme: learner?.programme ?? '',
-      date: g.awardedAt,
-      points: g.points,
-    };
-  });
+  const logsEntries = logsGrants.map(g => ({ id: g.id, name: g.learner, date: g.awardedAt, points: g.points }));
 
   return (
     <WorkspaceShell
       role="engagement" roleLabel={engagementNav.label} navItems={engagementNav.items} workspaceLabel={engagementNav.workspaceLabel}
       pageTitle="Points Rules" pageSubtitle="Configure engagement point rules, thresholds, and reward triggers"
-      userName="Tom Harrington" userRole="Engagement Manager"
+      userName={operator.name} userRole={operator.role}
     >
       <div className="p-6 space-y-6">
         <WorkspaceHeroBanner
@@ -353,10 +314,6 @@ export default function PointsRulesPage() {
           >
             <AppIcon className={activeOnly ? 'ri-toggle-fill text-sm' : 'ri-toggle-line text-sm'}></AppIcon> Active only
           </button>
-          <div className="flex-1"></div>
-          <button onClick={openAddModal} className="px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap shrink-0">
-            <AppIcon className="ri-add-line mr-1"></AppIcon> Add Rule
-          </button>
         </div>
 
         {/* Sort Controls */}
@@ -385,7 +342,7 @@ export default function PointsRulesPage() {
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-10 flex flex-col items-center justify-center text-center gap-2">
             <AppIcon className="ri-search-line text-2xl text-foreground-300"></AppIcon>
             <p className="text-sm font-semibold text-foreground-700">No rules match this view</p>
-            <p className="text-[11px] text-foreground-400">Try clearing the search, switching the category filter, or add a rule.</p>
+            <p className="text-[11px] text-foreground-400">Try clearing the search or switching the category filter.</p>
           </div>
         )}
 
@@ -433,34 +390,6 @@ export default function PointsRulesPage() {
           })}
         </div>
       </div>
-
-      {/* ADD RULE MODAL */}
-      {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setShowAddModal(false)}>
-          <div className="absolute inset-0 bg-foreground-950/50 backdrop-blur-sm"></div>
-          <div className="relative bg-background-50 rounded-2xl border border-foreground-200/60 max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="p-5 border-b border-foreground-400/50 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><AppIcon className="ri-gift-2-line text-lg"></AppIcon></span>
-                <div>
-                  <h3 className="text-base font-heading font-semibold text-foreground-900">Add Rule</h3>
-                  <p className="text-[11px] text-foreground-400">Create a new way for learners to earn points</p>
-                </div>
-              </div>
-              <button onClick={() => setShowAddModal(false)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
-            </div>
-            <div className="p-5 overflow-y-auto">
-              <RuleForm form={addForm} errors={addErrors} setForm={setAddForm} setErrors={setAddErrors} categories={categories} />
-            </div>
-            <div className="p-5 border-t border-foreground-200/60 bg-background-100/30 flex items-center justify-between">
-              <button onClick={() => setShowAddModal(false)} className="px-4 py-2 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[12px] font-medium hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
-              <button onClick={handleAdd} className="px-5 py-2 rounded-lg text-[12px] font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 bg-primary-500 text-white hover:bg-primary-600">
-                <AppIcon className="ri-add-line"></AppIcon> Create Rule
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* EDIT RULE MODAL */}
       {editRuleId !== null && (
@@ -563,16 +492,12 @@ export default function PointsRulesPage() {
                 <div className="divide-y divide-background-200/30">
                   {logsEntries.map(entry => (
                     <div key={entry.id} className="p-3.5 flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full shrink-0 overflow-hidden bg-background-200">
-                        {entry.avatarImg ? (
-                          <img src={entry.avatarImg} alt={entry.name} className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-[11px] font-bold bg-primary-100 text-primary-600">{entry.name.charAt(0)}</div>
-                        )}
+                      <div className="w-8 h-8 rounded-full shrink-0 overflow-hidden bg-background-200 flex items-center justify-center text-[11px] font-bold bg-primary-100 text-primary-600">
+                        {entry.name.charAt(0)}
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="text-[12px] font-semibold text-foreground-900 truncate">{entry.name}</p>
-                        <p className="text-[10px] text-foreground-400 truncate">{entry.programme ? `${entry.programme} · ` : ''}{entry.date}</p>
+                        <p className="text-[10px] text-foreground-400 truncate">{entry.date}</p>
                       </div>
                       <span className="text-[11px] font-bold text-emerald-600 shrink-0">+{entry.points}</span>
                     </div>

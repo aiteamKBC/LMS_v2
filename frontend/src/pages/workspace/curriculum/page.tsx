@@ -152,11 +152,14 @@ export default function CurriculumStudio() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Curriculum Home" pageSubtitle="Your next curriculum actions, in priority order" userName="Rachel Myers" userRole="Curriculum Designer">
-      <main className="min-h-full bg-background-100 p-4 sm:p-6">
-        <div className="mx-auto max-w-[1480px] space-y-5">
-          <section className="relative overflow-hidden rounded-2xl border border-primary-100 bg-background-50 shadow-sm">
+      <main className="curriculum-home-page min-h-full bg-background-100 p-4 sm:p-6">
+        <div className="mx-auto max-w-[1600px] space-y-3">
+          <section className="relative overflow-hidden rounded-2xl border border-primary-100 bg-background-50 shadow-sm lg:min-h-[11.75rem]">
             <div className="absolute inset-y-0 right-0 hidden w-1/3 bg-gradient-to-l from-primary-100/70 to-transparent lg:block" />
-            <div className="relative grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:p-7">
+            <div aria-hidden="true" className="pointer-events-none absolute -bottom-10 right-5 hidden text-primary-100/60 lg:block">
+              <AppIcon className="ri-stack-line text-[10rem] drop-shadow-[0_12px_18px_rgba(91,33,182,0.1)]" />
+            </div>
+            <div className="relative grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,680px)] lg:items-center lg:p-7">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="rounded-full bg-primary-50 px-3 py-1 text-[10px] font-extrabold uppercase tracking-[0.14em] text-primary-700">Curriculum home</span>
@@ -165,10 +168,10 @@ export default function CurriculumStudio() {
                 <h1 className="mt-3 font-heading text-3xl font-bold tracking-tight text-foreground-950">What needs your attention?</h1>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-foreground-500">Start with a blocker, continue your latest module, or create a programme. Supporting reports stay out of the way until you need them.</p>
               </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap lg:max-w-[440px] lg:justify-end">
-                <Link to="/curriculum/programmes?create=programme" className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-primary-600 px-5 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2"><AppIcon className="ri-add-circle-line text-base" />Create programme</Link>
-                <Link to="/curriculum/module-builder" className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-5 text-[12px] font-bold text-foreground-700 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300"><AppIcon className="ri-edit-box-line text-base" />Continue authoring</Link>
-                <button type="button" onClick={() => setGuideOpen(true)} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-5 text-[12px] font-bold text-primary-700 transition-smooth hover:border-primary-300 hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-300"><AppIcon className="ri-road-map-line text-base" />How to build a programme</button>
+              <div className="grid w-full max-w-none grid-cols-1 gap-3 justify-self-end sm:grid-cols-2 lg:grid-cols-3">
+                <Link to="/curriculum/programmes?create=programme" className="inline-flex h-full min-h-12 w-full min-w-0 items-center justify-center gap-2 rounded-xl bg-[#b27715] px-4 py-2 text-center text-[13px] font-extrabold leading-4 text-white shadow-[0_8px_18px_rgba(178,119,21,0.3)] ring-1 ring-[#b27715]/30 transition-smooth hover:bg-[#965f0d] hover:shadow-[0_10px_24px_rgba(178,119,21,0.4)] focus:outline-none focus:ring-2 focus:ring-[#b27715] focus:ring-offset-2 lg:whitespace-nowrap"><AppIcon className="ri-add-circle-line shrink-0 text-lg" />Create programme</Link>
+                <Link to="/curriculum/module-builder" className="inline-flex h-full min-h-12 w-full min-w-0 items-center justify-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 py-2 text-center text-[13px] font-bold leading-4 text-foreground-700 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 lg:whitespace-nowrap"><AppIcon className="ri-edit-box-line shrink-0 text-lg" />Continue authoring</Link>
+                <button type="button" onClick={() => setGuideOpen(true)} className="inline-flex h-full min-h-12 w-full min-w-0 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 py-2 text-center text-[13px] font-bold leading-4 text-primary-700 transition-smooth hover:border-primary-300 hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-300 lg:whitespace-nowrap"><AppIcon className="ri-road-map-line shrink-0 text-lg" />How to build a programme</button>
               </div>
             </div>
           </section>
@@ -181,7 +184,7 @@ export default function CurriculumStudio() {
             <SummaryCard label="Needs attention" value={openIssueCount} detail={attentionIssues.length ? `${attentionIssues.length} types of action` : 'No blockers found'} href="/curriculum/quality" icon="ri-error-warning-line" loading={loading} warning={openIssueCount > 0} />
           </section>
 
-          <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,.65fr)]">
+          <section className="grid gap-3 xl:grid-cols-[minmax(0,1.04fr)_minmax(340px,1fr)]">
             <div className="rounded-2xl border border-foreground-200 bg-background-50 shadow-sm">
               <SectionHeader title="Needs attention" detail="Live gaps, ordered by impact. Each row opens where it can be fixed." href="/curriculum/quality" action="View Quality" />
               <div className="p-3">
@@ -190,8 +193,10 @@ export default function CurriculumStudio() {
             </div>
             <aside className="rounded-2xl border border-foreground-200 bg-background-50 shadow-sm">
               <SectionHeader title="Continue working" detail="Draft and recently updated modules." href="/curriculum/library" action="Open Library" />
-              <div className="divide-y divide-background-200 px-4">
-                {loading ? <LoadingRows count={4} /> : continueModules.length ? continueModules.map(module => <ContinueModuleRow key={moduleIdentity(module)} module={module} />) : <EmptyState icon="ri-layout-4-line" title="No modules yet" detail="Create your first reusable module from the Library." compact />}
+              <div className="p-3">
+                <div className="overflow-hidden rounded-xl border border-background-200 bg-background-100/35 divide-y divide-background-200">
+                  {loading ? <LoadingRows count={4} /> : continueModules.length ? continueModules.map(module => <ContinueModuleRow key={moduleIdentity(module)} module={module} />) : <EmptyState icon="ri-layout-4-line" title="No modules yet" detail="Create your first reusable module from the Library." compact />}
+                </div>
               </div>
             </aside>
           </section>
@@ -321,18 +326,18 @@ function CurriculumGuideModal({ open, onClose }: { open: boolean; onClose: () =>
 }
 
 function SummaryCard({ label, value, detail, href, icon, loading, warning = false }: { label: string; value: number; detail: string; href: string; icon: string; loading: boolean; warning?: boolean }) {
-  return <Link to={href} className="group flex items-center gap-3 rounded-xl border border-foreground-200 bg-background-50 p-4 shadow-sm transition-smooth hover:border-primary-200 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-300"><span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${warning ? 'bg-amber-50 text-amber-700' : 'bg-primary-50 text-primary-700'}`}><AppIcon className={`${icon} text-xl`} /></span><span className="min-w-0 flex-1"><span className="block text-[10px] font-extrabold uppercase tracking-wide text-foreground-400">{label}</span><span className="mt-0.5 block font-heading text-xl font-bold text-foreground-950">{loading ? '—' : value}</span><span className="mt-0.5 block truncate text-[11px] text-foreground-500">{detail}</span></span><AppIcon className="ri-arrow-right-s-line text-foreground-300 transition-transform group-hover:translate-x-0.5 group-hover:text-primary-600" /></Link>;
+  return <Link to={href} className="group flex items-center gap-3 rounded-xl border border-foreground-200 bg-background-50 p-4 shadow-sm transition-smooth hover:border-primary-200 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-300"><span className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl ${warning ? 'bg-amber-50 text-amber-700' : 'bg-primary-50 text-primary-700'}`}><AppIcon className={`${icon} text-xl`} /></span><span className="min-w-0 flex-1"><span className="block text-[10px] font-extrabold uppercase tracking-wide text-foreground-400">{label}</span><span className="mt-0.5 block font-heading text-xl font-bold text-foreground-950">{loading ? '—' : value}</span><span className="mt-0.5 block truncate text-[11px] text-foreground-500">{detail}</span></span><AppIcon className="ri-arrow-right-s-line text-foreground-300 transition-transform group-hover:translate-x-0.5 group-hover:text-primary-600" /></Link>;
 }
 
 function AttentionRow({ issue }: { issue: AttentionIssue }) {
-  const tones: Record<AttentionTone, string> = { rose: 'bg-rose-50 text-rose-700', amber: 'bg-amber-50 text-amber-700', sky: 'bg-sky-50 text-sky-700' };
-  return <Link to={issue.href} className="group grid gap-3 rounded-xl border border-background-200 bg-background-100/45 p-3 transition-smooth hover:border-primary-200 hover:bg-primary-50/35 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center"><span className={`flex h-10 w-10 items-center justify-center rounded-xl ${tones[issue.tone]}`}><AppIcon className={`${issue.icon} text-lg`} /></span><span className="min-w-0"><span className="flex flex-wrap items-center gap-2"><span className="text-[12px] font-bold text-foreground-900">{issue.title}</span><span className="rounded-full bg-background-50 px-2 py-0.5 text-[10px] font-extrabold text-foreground-700 shadow-sm">{issue.count}</span></span><span className="mt-1 block text-[11px] leading-5 text-foreground-500">{issue.detail}</span></span><span className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700">{issue.action}<AppIcon className="ri-arrow-right-line transition-transform group-hover:translate-x-0.5" /></span></Link>;
+  const tones: Record<AttentionTone, string> = { rose: 'bg-amber-50 text-amber-700', amber: 'bg-amber-50 text-amber-700', sky: 'bg-amber-50 text-amber-700' };
+  return <Link to={issue.href} className="group grid gap-3 rounded-xl border border-background-200 border-l-4 border-l-amber-300 bg-background-50 p-3 transition-smooth hover:border-primary-200 hover:border-l-amber-400 hover:bg-primary-50/35 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center"><span className={`flex h-10 w-10 items-center justify-center rounded-xl ${tones[issue.tone]}`}><AppIcon className={`${issue.icon} text-lg`} /></span><span className="min-w-0"><span className="flex flex-wrap items-center gap-2"><span className="text-[12px] font-bold text-foreground-900">{issue.title}</span><span className="rounded-full bg-background-50 px-2 py-0.5 text-[10px] font-extrabold text-foreground-700 shadow-sm">{issue.count}</span></span><span className="mt-1 block text-[11px] leading-5 text-foreground-500">{issue.detail}</span></span><span className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700">{issue.action}<AppIcon className="ri-arrow-right-line transition-transform group-hover:translate-x-0.5" /></span></Link>;
 }
 
 function ContinueModuleRow({ module }: { module: CurriculumModule }) {
   const href = `/curriculum/module-builder?module=${encodeURIComponent(moduleIdentity(module))}`;
   const published = normalise(module.status) === 'published';
-  return <Link to={href} className="group flex items-center gap-3 py-3.5"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-700"><AppIcon className="ri-layout-4-line" /></span><span className="min-w-0 flex-1"><span className="block truncate text-[12px] font-bold text-foreground-900">{clean(module.name) || 'Untitled module'}</span><span className="mt-0.5 block truncate text-[10px] text-foreground-500">{clean(module.programme) || 'Reusable module'} · {Number(module.weeks || 0)} weeks</span></span><span className={`rounded-full px-2 py-1 text-[9px] font-extrabold uppercase ${published ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{published ? 'Published' : 'Draft'}</span><AppIcon className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-600" /></Link>;
+  return <Link to={href} className="group flex items-center gap-3 px-3 py-3.5"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-700"><AppIcon className="ri-layout-4-line" /></span><span className="min-w-0 flex-1"><span className="block truncate text-[12px] font-bold text-foreground-900">{clean(module.name) || 'Untitled module'}</span><span className="mt-0.5 block truncate text-[10px] text-foreground-500">{clean(module.programme) || 'Reusable module'} · {Number(module.weeks || 0)} weeks</span></span><span className={`rounded-full px-2 py-1 text-[9px] font-extrabold uppercase ${published ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{published ? 'Published' : 'Draft'}</span><AppIcon className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-600" /></Link>;
 }
 
 function ProgrammeFocusCard({ item }: { item: ProgrammeFocus }) {

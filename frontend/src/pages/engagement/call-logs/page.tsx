@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { roleNavMap } from '@/mocks/navigation';
+import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 
 const engagementNav = roleNavMap.engagement;
 
@@ -36,6 +37,7 @@ const CALL_LOGS: CallLog[] = [
 
 export default function CallLogsPage() {
   const navigate = useNavigate();
+  const operator = useOperatorIdentity();
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
   const filtered = CALL_LOGS.filter(c => {
@@ -50,7 +52,7 @@ export default function CallLogsPage() {
     <WorkspaceShell
       role="engagement" roleLabel={engagementNav.label} navItems={engagementNav.items} workspaceLabel={engagementNav.workspaceLabel}
       pageTitle="Call Logs" pageSubtitle="Record and track phone calls with learners, employers, and stakeholders"
-      userName="Tom Harrington" userRole="Engagement Manager"
+      userName={operator.name} userRole={operator.role}
     >
       <div className="p-6 space-y-6">
         <WorkspaceHeroBanner
@@ -114,12 +116,12 @@ export default function CallLogsPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                    <AppIcon className="ri-file-list-line mr-1"></AppIcon> Notes
+                  <button className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                    <AppIcon className="ri-file-list-line"></AppIcon> Notes
                   </button>
                   {call.recordingAvailable && (
-                    <button className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap">
-                      <AppIcon className="ri-play-line mr-1"></AppIcon> Play
+                    <button className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap">
+                      <AppIcon className="ri-play-line"></AppIcon> Play
                     </button>
                   )}
                 </div>

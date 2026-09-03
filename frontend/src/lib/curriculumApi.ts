@@ -656,6 +656,12 @@ export interface CurriculumScopeKsbAchievementRow {
   /** The standard's wording, shown under the code in the achievement table. */
   description?: string;
   ksbType: string;
+  /**
+   * 'K' | 'S' | 'B'. `ksbType` is a word whose spelling varies by import
+   * ('Skill'/'Skills'/'skill'), so anything grouping or filtering by family
+   * uses this instead.
+   */
+  ksbTypeCode?: 'K' | 'S' | 'B' | string;
   sourceType: string;
   sourceId: string;
   sourceLabel: string;
@@ -684,6 +690,36 @@ export interface CurriculumScopeKsbAchievementRow {
   status: 'complete' | 'in_progress' | 'not_started' | 'unmapped' | 'unplanned' | string;
 }
 
+/**
+ * One of Knowledge / Skills / Behaviours, rolled up. The per-KSB table answers
+ * "how is S4 going"; this answers the question asked before it — how each
+ * family is going, and which of them nothing has touched.
+ */
+export interface CurriculumScopeKsbTypeSummary {
+  type: 'knowledge' | 'skill' | 'behaviour' | string;
+  letter: 'K' | 'S' | 'B' | string;
+  label: string;
+  ksbCount: number;
+  /** This scope's own KSBs of this family — excludes 'unplanned'. */
+  requiredCount: number;
+  mappedCount: number;
+  /** Required by the KSB source but taught nowhere here: a curriculum gap. */
+  unmappedCount: number;
+  /** Earned by a learner but authored nowhere here. */
+  unplannedCount: number;
+  startedCount: number;
+  completeCount: number;
+  notStartedCount: number;
+  /** Required here, and no learner has earned any of it yet. */
+  missingCount: number;
+  learnersAchievedTotal: number;
+  plannedWeightTotal: number;
+  expectedWeightTotal: number;
+  achievedWeightTotal: number;
+  cappedAchievedWeightTotal: number;
+  progressPercentage: number;
+}
+
 export interface CurriculumScopeKsbAchievement {
   learnerCount: number;
   requiredCount: number;
@@ -692,7 +728,12 @@ export interface CurriculumScopeKsbAchievement {
   unmappedCount: number;
   unplannedCount: number;
   startedCount: number;
+  completeCount: number;
   notStartedCount: number;
+  /** This scope's own KSBs that no learner has earned any of yet. */
+  missingCount: number;
+  /** Knowledge / Skills / Behaviours, always all three and always in that order. */
+  byType: CurriculumScopeKsbTypeSummary[];
   plannedWeightTotal: number;
   expectedWeightTotal: number;
   achievedWeightTotal: number;
@@ -828,6 +869,19 @@ export interface CurriculumLearnerActivity {
   week: string;
   /** Whether the activity belongs to the scope being reported on. */
   scopeStatus?: 'in_scope' | 'out_of_scope' | 'unattributed' | string;
+  /**
+   * How it was placed there. 'component' — it is in this scope's live content.
+   * 'lineage' — that component is gone (deleted or re-authored), but the
+   * progress row was stamped with this scope when the learner completed it, so
+   * the work is still credited here rather than nowhere.
+   */
+  scopeBasis?: 'component' | 'lineage' | 'unfiltered' | 'none' | string;
+  /**
+   * Why an in-scope, completed activity still does not count. Currently only
+   * 'repeat_completion': the same component was completed before, and its hours
+   * and KSB weight were earned once.
+   */
+  exclusionReason?: 'repeat_completion' | string;
   submittedAt: string;
   progressStatus: 'achieved' | 'failed' | 'incomplete' | string;
   passed: boolean | null;

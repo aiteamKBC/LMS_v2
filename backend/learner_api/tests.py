@@ -192,6 +192,23 @@ class LearnerProgressionTests(SimpleTestCase):
         self.assertEqual(learner.programme_status, "Active")
         sync.assert_called_once_with(learner)
 
+    @patch("learner_api.active_users.sync_active_user")
+    @patch("learner_api.learner_progression._has_assigned_learning_plan", return_value=True)
+    @patch("learner_api.learner_progression._programme_start_date", return_value=date(2026, 8, 8))
+    @patch("learner_api.learner_progression.timezone.localdate", return_value=date(2026, 8, 8))
+    def test_already_active_commercial_learner_is_not_resynced_on_every_read(self, _today, _start, _plan, sync):
+        # Regression: re-reading an already-active commercial learner (e.g.
+        # every GET /learner_api/enrolment-users/) used to call
+        # sync_active_user() unconditionally on every call, whether or not a
+        # transition happened — a full atomic LearnerProfile upsert per
+        # learner, per read. It must only fire on an actual status change.
+        learner = self._learner("Active", learner_type="commercial", plan=[{"moduleId": "mod-1"}])
+
+        self.assertIsNone(advance_learner(learner))
+        self.assertEqual(learner.programme_status, "Active")
+        learner.save.assert_not_called()
+        sync.assert_not_called()
+
 
 class TrainingPlanHydrationTests(SimpleTestCase):
     @patch("learner_api.active_users.connections")

@@ -3,20 +3,19 @@ import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { useToast } from '@/hooks/useToast';
+import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 import { roleNavMap } from '@/mocks/navigation';
-import { type EngagementLearner } from '@/mocks/engagement-data';
 import {
   fetchTrainingPlanOptions, fetchFlashCardDecks, createFlashCardDeck, updateFlashCardDeck,
   deleteFlashCardDeck, fetchDeckCards, saveDeckCards, generateFlashCards,
   type FlashCardDeck, type FlashCardDraft, type FlashCardDifficulty, type DeckStatus,
   type TrainingPlanOptions,
 } from '@/api/engagement';
-import { LearnerPickerModal } from '@/pages/engagement/LearnerPickerModal';
+import { LearnerPickerModal, type PickedLearner } from '@/pages/engagement/LearnerPickerModal';
 import { FlashCardGame } from '@/pages/engagement/flash-cards/FlashCardGame';
 import { FlashCardDeckSkeletonTable } from '@/pages/engagement/EngagementSkeletons';
 
 const engagementNav = roleNavMap.engagement;
-const AUTHOR = 'Tom Harrington';
 
 const DIFFICULTY_META: Record<FlashCardDifficulty, { label: string; chip: string }> = {
   easy: { label: 'Easy', chip: 'bg-emerald-100 text-emerald-700' },
@@ -60,6 +59,7 @@ function formatDate(iso: string): string {
 export default function FlashCardsPage() {
   const navigate = useNavigate();
   const { success, warning } = useToast();
+  const operator = useOperatorIdentity();
 
   const [decks, setDecks] = useState<FlashCardDeck[]>([]);
   const [loading, setLoading] = useState(true);
@@ -95,7 +95,7 @@ export default function FlashCardsPage() {
 
   // Preview
   const [showPicker, setShowPicker] = useState(false);
-  const [previewLearner, setPreviewLearner] = useState<EngagementLearner | null>(null);
+  const [previewLearner, setPreviewLearner] = useState<PickedLearner | null>(null);
   const [previewDeck, setPreviewDeck] = useState<FlashCardDeck | null>(null);
 
   useEffect(() => {
@@ -157,7 +157,7 @@ export default function FlashCardsPage() {
         setDecks(prev => prev.map(d => d.id === updated.id ? updated : d));
         success('Deck updated');
       } else {
-        const created = await createFlashCardDeck({ ...payload, status: 'draft', author: AUTHOR });
+        const created = await createFlashCardDeck({ ...payload, status: 'draft', author: operator.name });
         setDecks(prev => [created, ...prev]);
         success('Deck created', 'Add cards to it next.');
         setShowDeckForm(false);
@@ -325,7 +325,7 @@ export default function FlashCardsPage() {
         programmeId: aiTargeting.programmeId,
         week: aiTargeting.week,
         status: 'draft',
-        author: AUTHOR,
+        author: operator.name,
         aiGenerated: true,
       });
       const res = await saveDeckCards(deck.id, clean);
@@ -343,7 +343,7 @@ export default function FlashCardsPage() {
     <WorkspaceShell
       role="engagement" roleLabel={engagementNav.label} navItems={engagementNav.items} workspaceLabel={engagementNav.workspaceLabel}
       pageTitle="Flash Cards" pageSubtitle="Build weekly flash-card decks with AI and publish them to a programme's learners"
-      userName={AUTHOR} userRole="Engagement Manager"
+      userName={operator.name} userRole={operator.role}
     >
       <div className="p-6 space-y-6">
         <WorkspaceHeroBanner
@@ -655,7 +655,6 @@ export default function FlashCardsPage() {
               preview
               deckId={previewDeck.id}
               deckTitle={previewDeck.title}
-              learnerId={previewLearner.id}
               learnerName={previewLearner.name}
               onClose={() => setPreviewLearner(null)}
             />

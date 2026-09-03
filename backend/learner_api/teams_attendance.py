@@ -253,6 +253,10 @@ def fetch_verified_teams_attendance_rows(
                 {
                     "learner_id": learner.id,
                     "learner_profile_id": learner.id,
+                    # The engagement app's learner id space is Created_users.id
+                    # (enrolment_id), not this row's own learner_id/learner_profile_id
+                    # (LearnerProfile.id). Carried through Python-side only, for the
+                    # engagement award step below; not written to the reporting table.
                     "enrolment_id": learner.enrolment_id,
                     "learner_name": learner.full_name,
                     "learner_email": learner.email,
@@ -597,4 +601,36 @@ def sync_verified_teams_attendance_reporting(
                 )
             if params:
                 cursor.executemany(query, params)
+
+    _award_attendance_points(rows)
     return len(rows)
+
+
+def _award_attendance_points(rows):
+    """Grant `live_session_attended` for each verified 'present' row just synced.
+
+    Best-effort and safe to call on every sync, including re-syncs of rows
+    already upserted above: grant_points() de-dupes on
+    (rule, event_reference), so a session already awarded is a no-op here.
+    Skips any learner with no enrolment_id (their Created_users row has been
+    removed) — there is no engagement id to attribute the grant to.
+    """
+    try:
+        from engagement_api.services import grant_points
+    except Exception:  # noqa: BLE001 — engagement points must never break an attendance sync
+        return
+
+    for row in rows:
+        if row.get("attendance_status") != "present":
+            continue
+        enrolment_id = row.get("enrolment_id")
+        if enrolment_id is None:
+            continue
+        try:
+            grant_points(
+                "live_session_attended", str(enrolment_id), row.get("learner_name") or "",
+                event_reference=f"attendance:{row['session_id']}:learner:{enrolment_id}",
+                source_type="attendance", source_id=str(row["session_id"]),
+            )
+        except Exception:  # noqa: BLE001 — a dropped grant must never break the sync
+            continue

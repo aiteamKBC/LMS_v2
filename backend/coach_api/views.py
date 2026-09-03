@@ -1202,6 +1202,43 @@ def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | S
     return rows
 
 
+def fetch_all_learner_profiles(programme: str | None = None, cohort: str | None = None) -> list[LearnerProfile]:
+    """Every learner with a resolved enrolment id, prefetched exactly like
+    `fetch_caseload_learner_profiles` but WITHOUT the single-coach filter —
+    for the engagement app's roster-wide analytics (attendance-risk /
+    learner-engagement pages, the command-centre charts), which need every
+    learner, not one coach's caseload.
+
+    `enrolment_id` is the bridge to the engagement points economy's
+    `learner_id` (== `Created_users.id` == `account.subject_id`) — see
+    `LearnerProfile.enrolment_id` (models.py:500). A profile with no
+    enrolment_id can't be attributed to an engagement learner_id, so it's
+    excluded here (mirrors the same skip already applied in
+    `learner_api.active_users.save_progress_record`'s points-award hook).
+    """
+    learner_alias = get_learner_db_alias()
+    prefetches = [
+        "ksb_assignment__profile_version__definitions",
+        "plan_modules__weeks__components",
+        "progress_entries__ksb_links",
+        "progress_entries__quiz_answers__correct_answers",
+        "progress_entries__quiz_answers__chosen_answers",
+    ]
+    if learner_ksbs_relation_exists(learner_alias):
+        prefetches.insert(0, "assigned_ksbs")
+    if learner_activity_events_relation_exists(learner_alias):
+        prefetches.append("activity_events")
+
+    queryset = LearnerProfile.objects.exclude(enrolment_id__isnull=True).prefetch_related(*prefetches)
+    if programme:
+        queryset = queryset.filter(programme__iexact=programme)
+    if cohort:
+        queryset = queryset.filter(cohort__iexact=cohort)
+    queryset = queryset.order_by("full_name", "id")
+
+    return [row for row in queryset if clean_text(row.username)]
+
+
 def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
     """Return a lean learner snapshot for the coach dashboard first paint."""
     requested_owner = normalize_email(owner_email)
@@ -1410,6 +1447,15 @@ def coach_learner_personal_calendar_conflicts(
 
 def refresh_caseload_learner_ksb_snapshot(row: LearnerProfile | SimpleNamespace) -> None:
     if not callable(getattr(row, "save", None)):
+        return
+    # An existing learner stays pinned to the KSB profile version assigned at
+    # enrolment (see replace_learner_ksbs) — once `ksb_assignment` exists,
+    # refresh_learner_ksb_snapshot can only ever re-derive and no-op via its
+    # own get_or_create calls. Skipping it here avoids opening a transaction
+    # + two get_or_create round-trips per learner on every `?live=1` caseload
+    # read — the same "unconditional per-row DB work on a read" shape as the
+    # sync_active_user bug fixed in learner_progression.advance_learner.
+    if getattr(row, "ksb_assignment", None) is not None:
         return
     source = getattr(row, "_caseload_source", None) or resolve_caseload_source_row(row)
     if source is None:

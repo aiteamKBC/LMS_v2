@@ -17,7 +17,7 @@ import {
   upsertById,
 } from '../shared/entities/model';
 import { CohortFormDrawer } from '../shared/entities/forms';
-import { CurriculumStructureWizard, type StructureWizardCreated } from '../shared/entities/structureWizard';
+import { CurriculumStructureWizard, withoutDiscardedRecords, type StructureWizardCreated } from '../shared/entities/structureWizard';
 import {
   EntityEmptyState,
   EntityFilterBar,
@@ -309,6 +309,12 @@ export default function CurriculumCohortsPage() {
         onStepSaved={async (created: StructureWizardCreated) => {
           if (created.cohort) await handleSaved({ cohort: created.cohort });
           else await reload({ silent: true });
+        }}
+        // The rows the run wrote are gone (or archived) by the time the discard
+        // reports, and the refresh above lands seconds later. They come off the
+        // list now, for the same reason a save paints its row now.
+        onRunDiscarded={(discarded: StructureWizardCreated) => {
+          applyLocal(previous => withoutDiscardedRecords(previous, discarded));
         }}
       />
     </WorkspaceShell>

@@ -24,7 +24,7 @@ import {
   type CurriculumHoliday,
   type CurriculumProgramme,
 } from '@/lib/curriculumApi';
-import { cleanText, cohortWeekCapacity, cohortsForProgramme, formatDateLabel, normaliseKey, programmeIdentity, sameFormValues, sameIdentifier } from './model';
+import { cleanText, cohortWeekCapacity, cohortsForProgramme, formatDateLabel, normaliseKey, programmeIdentity, programmeSelectValue, sameFormValues, sameIdentifier, weekendDateNotice } from './model';
 import {
   ColorControl,
   EntityDrawer,
@@ -163,7 +163,7 @@ export function ProgrammeFormDrawer({
       <FormField label="Programme name" required>
         <TextControl value={name} onChange={setName} placeholder="e.g. Data Analyst" />
       </FormField>
-      <FormField label="Level" hint={level ? `Will be saved as LVL-${level}` : 'Numbers only, e.g. 4'}>
+      <FormField label="Level" hint={level ? `Will show as Level ${level}` : 'Numbers only, e.g. 4'}>
         <TextControl value={level} onChange={value => setLevel(value.replace(/\D/g, ''))} placeholder="e.g. 4" inputMode="numeric" />
       </FormField>
       <FormField label="Description">
@@ -257,7 +257,7 @@ export function CohortFormDrawer({
       const storedPracticalEnd = cohort.practicalEndDate || cohort.endDate || '';
       const initial = {
         name: cohort.name || '',
-        programmeId: cleanText(cohort.programmeId) || cleanText(cohort.programme),
+        programmeId: programmeSelectValue(programmes, cleanText(cohort.programmeId) || cleanText(cohort.programme)),
         startDate: cohort.startDate || '',
         durationMonths: cohort.durationMonths == null ? '' : String(cohort.durationMonths),
         practicalEndDate: storedPracticalEnd,
@@ -281,7 +281,8 @@ export function CohortFormDrawer({
     }
     const initial = {
       name: '',
-      programmeId: defaults?.programmeId || (programmes.length === 1 ? programmeIdentity(programmes[0]) : ''),
+      programmeId: programmeSelectValue(programmes, defaults?.programmeId)
+        || (programmes.length === 1 ? programmeIdentity(programmes[0]) : ''),
       startDate: '',
       durationMonths: '12',
       practicalEndDate: '',
@@ -338,6 +339,12 @@ export function CohortFormDrawer({
   const calculatedPracticalEnd = preview?.calculatedEndDate || '';
   const apprenticeshipEndDate = apprenticeshipEndOverride || preview?.apprenticeshipEndDate || '';
   const showPracticalEndReset = practicalEndIsManual && Boolean(calculatedPracticalEnd) && calculatedPracticalEnd !== practicalEndDate;
+
+  // Not a refusal -- a weekend start is still saved -- just the same heads-up the
+  // module drawer gives: Saturday and Sunday are holidays in England, so a cohort
+  // starting on one has no delivery on its own first day. Ticked holidays are not
+  // checked here on purpose: they move module sessions, never the cohort's dates.
+  const startDateNotice = useMemo(() => weekendDateNotice(startDate), [startDate]);
 
   // Changing what feeds the calculation hands the practical end date back to it.
   const changeStartDate = (value: string) => { setStartDate(value); setPracticalEndIsManual(false); };
@@ -478,7 +485,13 @@ export function CohortFormDrawer({
         <TextControl value={name} onChange={setName} placeholder="e.g. September 2026" />
       </FormField>
       <div className="grid gap-4 sm:grid-cols-2">
-        <DatePickerField label="Start date" required value={startDate} onChange={changeStartDate} />
+        <DatePickerField
+          label="Start date"
+          required
+          value={startDate}
+          onChange={changeStartDate}
+          warning={startDateNotice || undefined}
+        />
         <FormField label="Duration (months)">
           <TextControl type="number" min={1} max={72} value={durationMonths} onChange={changeDurationMonths} />
         </FormField>
@@ -839,7 +852,10 @@ export function GroupFormDrawer({
       const parent = cohorts.find(cohort => normaliseKey(cohort.id) === normaliseKey(group.cohortId));
       const initial = {
         name: group.name || '',
-        programmeId: cleanText(parent?.programmeId) || cleanText(group.programmeId) || cleanText(group.programme),
+        programmeId: programmeSelectValue(
+          programmes,
+          cleanText(parent?.programmeId) || cleanText(group.programmeId) || cleanText(group.programme),
+        ),
         cohortId: cleanText(group.cohortId),
         coach: normaliseKey(group.coach) === 'unassigned' ? '' : cleanText(group.coach),
         weekDays: cleanText(group.weekDays),
@@ -861,7 +877,7 @@ export function GroupFormDrawer({
     const parent = cohorts.find(cohort => normaliseKey(cohort.id) === normaliseKey(defaults?.cohortId));
     const initial = {
       name: '',
-      programmeId: cleanText(parent?.programmeId) || defaults?.programmeId || '',
+      programmeId: programmeSelectValue(programmes, cleanText(parent?.programmeId) || defaults?.programmeId),
       cohortId: defaults?.cohortId || '',
       coach: '',
       weekDays: '',
@@ -878,7 +894,7 @@ export function GroupFormDrawer({
     setStartTime(initial.startTime);
     setEndTime(initial.endTime);
     setColor(initial.color);
-  }, [allowSeed, cohorts, defaults?.cohortId, defaults?.programmeId, group, open]);
+  }, [allowSeed, cohorts, defaults?.cohortId, defaults?.programmeId, group, open, programmes]);
 
   const programmeOptions = useMemo(
     () => programmes.map(programme => ({ value: programmeIdentity(programme), label: programme.name })),

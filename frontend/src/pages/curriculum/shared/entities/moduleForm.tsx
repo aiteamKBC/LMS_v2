@@ -48,9 +48,11 @@ import {
   moduleCohortDateError,
   normaliseKey,
   programmeIdentity,
+  programmeSelectValue,
   sameFormValues,
   sameIdentifier,
   visibleNotes,
+  weekendDateNotice,
 } from './model';
 import {
   ColorControl,
@@ -298,14 +300,19 @@ export function ModuleFormDrawer({
       sameIdentifier(cohort.id, module?.cohortId || storedDelivery?.cohortId || parentGroup?.cohortId || defaults?.cohortId)
       || sameIdentifier(cohort.name, storedDelivery?.cohort)
     ));
-    const resolvedProgrammeId = cleanText(parentCohort?.programmeId)
-      || cleanText(parentGroup?.programmeId)
-      || cleanText(module?.programmeId)
-      || cleanText(storedDelivery?.programmeId)
-      || cleanText(module?.programme)
-      || cleanText(storedDelivery?.programme)
-      || defaults?.programmeId
-      || (selectableProgrammes.length === 1 ? programmeIdentity(selectableProgrammes[0]) : '');
+    // Snapped onto the option values with programmeSelectValue: every source
+    // below names the programme in whatever shape wrote it, and a <select>
+    // matches by exact string. See the helper for what that used to cost.
+    const resolvedProgrammeId = programmeSelectValue(
+      selectableProgrammes,
+      cleanText(parentCohort?.programmeId)
+        || cleanText(parentGroup?.programmeId)
+        || cleanText(module?.programmeId)
+        || cleanText(storedDelivery?.programmeId)
+        || cleanText(module?.programme)
+        || cleanText(storedDelivery?.programme)
+        || defaults?.programmeId,
+    ) || (selectableProgrammes.length === 1 ? programmeIdentity(selectableProgrammes[0]) : '');
 
     const directTutor = cleanText(module?.tutor);
     const storedTutor = normaliseKey(directTutor) === UNASSIGNED
@@ -1029,10 +1036,10 @@ export function ModuleFormDrawer({
 function describeNonDeliveryDate(dateValue: string, holidays: CurriculumHoliday[]): string {
   const date = dateFromYmd(dateValue);
   if (!date) return '';
-  const weekday = date.getDay();
-  if (weekday === 0 || weekday === 6) {
-    return `${date.toLocaleDateString('en-GB', { weekday: 'long' })} is a weekend — no delivery normally runs that day.`;
-  }
+  // The weekend half of this check is the cohort drawer's too, so the sentence
+  // lives in `model.ts` and both drawers read the one copy of it.
+  const weekend = weekendDateNotice(dateValue);
+  if (weekend) return weekend;
   const holiday = holidays.find(item => {
     const start = dateFromYmd(item.startDate);
     const end = dateFromYmd(item.endDate || item.startDate);

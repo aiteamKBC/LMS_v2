@@ -3,12 +3,12 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
-import { namedCurriculumWorkspacePath, programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entities/model';
+import { formatProgrammeLevel, namedCurriculumWorkspacePath, programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entities/model';
 // Editing the programme, or adding a cohort or group from this page,
 // opens the same drawer that record's own page opens. One form per record type in
 // the whole studio, so nothing behaves differently depending on the door taken.
 import { CohortFormDrawer, GroupFormDrawer, ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
-import { ScopeAchievementPanel } from '@/pages/curriculum/shared/entities/scopeAchievement';
+import { ScopeAchievementPanel, type KsbCredit } from '@/pages/curriculum/shared/entities/scopeAchievement';
 // The same rule applies to reading: the record tables, filter bars and workspace
 // chrome here are the shared ones the Cohort, Group and Module workspaces use, so
 // a programme is a lens on those records rather than a second rendering of them.
@@ -38,7 +38,6 @@ import type {
   CurriculumOverview,
   CurriculumProgramme,
   CurriculumProgrammeDetail,
-  CurriculumProgrammeLearnerKsbImpactResponse,
   CurriculumProgrammeLearnerRosterResponse,
   CurriculumSession,
   CurriculumStaffProfile,
@@ -54,7 +53,6 @@ import {
   fetchCurriculumProgrammes,
   fetchCurriculumProgrammeDetail,
   fetchCurriculumProgrammeKsbCoverage,
-  fetchCurriculumProgrammeLearnerKsbImpact,
   fetchCurriculumProgrammeLearnerRoster,
   fetchCurriculumKsbSets,
   fetchCurriculumKsbFrameworks,
@@ -65,6 +63,9 @@ import {
   tutorConflictMessage,
   updateCurriculumGroup,
 } from '@/lib/curriculumApi';
+import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
+import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
+import { resolveDocEmbed } from '@/lib/docEmbed';
 import { type KsbMapping } from '../module-builder/moduleAuthoringData';
 import { SessionsTree } from './SessionsTree';
 
@@ -179,14 +180,32 @@ function moduleBuilderIdentifier(module: Pick<Module, 'id' | 'sourceId' | 'modul
   return candidates.find(isCanonicalModuleBuilderId) || candidates[0] || '';
 }
 
-function moduleBuilderUrl(module: Pick<Module, 'id' | 'sourceId' | 'moduleId' | 'moduleCatalogueId' | 'catalogueId' | 'structureId'>, programme?: Pick<Programme, 'id' | 'sourceId' | 'name'>) {
+function moduleBuilderUrl(
+  module: Pick<Module, 'id' | 'sourceId' | 'moduleId' | 'moduleCatalogueId' | 'catalogueId' | 'structureId' | 'name'>,
+  programme?: Pick<Programme, 'id' | 'sourceId' | 'name'>,
+  /** Deep-links straight past the module's landing view into one week or
+   *  component's own editor — the same `week`/`component` params Module
+   *  Builder's own deep-link handler (`moduleBuilderDeepLinkTarget`) already
+   *  reads on load, so this is landing on a door it already opens for itself. */
+  target?: { weekId?: string; componentId?: string },
+) {
   const params = new URLSearchParams();
   const moduleId = moduleBuilderIdentifier(module);
   if (moduleId) params.set('module', moduleId);
+  // A genuine second attempt, not only the id's last resort: the delivery
+  // side and Module Builder's own catalogue sometimes disagree on which id is
+  // canonical for the same module, so a guessed id that Module Builder cannot
+  // match still gets found by name rather than reporting the module missing.
+  const moduleName = clean(module.name);
+  if (moduleName) params.set('moduleTitle', moduleName);
   const programmeId = clean(programme?.sourceId || programme?.id || programme?.name);
   if (programmeId) params.set('programme', programmeId);
   const programmeName = clean(programme?.name);
   if (programmeName) params.set('programmeName', programmeName);
+  const weekId = clean(target?.weekId);
+  if (weekId) params.set('week', weekId);
+  const componentId = clean(target?.componentId);
+  if (componentId) params.set('component', componentId);
   const query = params.toString();
   return `/curriculum/module-builder${query ? `?${query}` : ''}`;
 }
@@ -248,6 +267,14 @@ interface Programme {
   color: string;
   description: string;
   duration: string;
+  /**
+   * The two windows the apprenticeship model distinguishes, read across every
+   * cohort on the programme. Both open on the earliest cohort start; the
+   * practical period closes on the latest practical end, and the apprenticeship
+   * runs on past it by the EPA window.
+   */
+  practicalWindow: string;
+  apprenticeshipWindow: string;
   cohorts: Cohort[];
   modules: Module[];
   ksbHeatmap: KsbHeatmapRow[];
@@ -340,6 +367,8 @@ const EMPTY_PROGRAMME: Programme = {
   color: '#6941c6',
   description: '',
   duration: 'Live curriculum',
+  practicalWindow: '',
+  apprenticeshipWindow: '',
   cohorts: [],
   modules: [],
   ksbHeatmap: [],
@@ -1258,10 +1287,19 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
   // problem it is, on the Overview tab, and the count stays honest.
   const deliveryStart = programmeCohorts.map(cohort => clean(cohort.startDate)).filter(Boolean).sort()[0] || '';
   const deliveryEnd = programmeCohorts.map(cohort => clean(cohort.endDate)).filter(Boolean).sort().at(-1) || '';
-  const deliveryWindow = [
-    deliveryStart ? formatDateLabel(deliveryStart) : '',
-    deliveryEnd ? formatDateLabel(deliveryEnd) : '',
+  // A cohort's endDate is its practical end; apprenticeshipEndDate carries the
+  // same date plus the EPA window. Falling back to the practical end keeps the
+  // apprenticeship window readable for cohorts with no EPA months recorded.
+  const apprenticeshipEnd = programmeCohorts
+    .map(cohort => clean(cohort.apprenticeshipEndDate) || clean(cohort.endDate))
+    .filter(Boolean).sort().at(-1) || '';
+  const dateWindow = (start: string, end: string) => [
+    start ? formatDateLabel(start) : '',
+    end ? formatDateLabel(end) : '',
   ].filter(Boolean).join(' – ');
+  const practicalWindow = dateWindow(deliveryStart, deliveryEnd);
+  const apprenticeshipWindow = dateWindow(deliveryStart, apprenticeshipEnd);
+  const deliveryWindow = practicalWindow;
 
   const programmeSourceIds = [source.id, source.sourceId, source.name].map(normalise).filter(Boolean);
   const ksbSet = data.ksbSets.find(set => {
@@ -1348,6 +1386,8 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       color: source.color || '#6941c6',
       description: repairMojibake(source.description || `${deliveryWindow || source.standard} curriculum plan.`),
       duration: deliveryWindow || 'Live curriculum',
+      practicalWindow,
+      apprenticeshipWindow,
       cohorts,
       modules,
       ksbHeatmap,
@@ -1787,7 +1827,42 @@ export default function ProgrammeDetailPage() {
   const [occurrencesLoading, setOccurrencesLoading] = useState(false);
   const occurrencesRequestKeyRef = useRef('');
   const [ksbSearch, setKsbSearch] = useState('');
-  const [ksbTraceOpen, setKsbTraceOpen] = useState(false);
+  // Which class the KSB coverage tab is reporting on. A module belongs to one
+  // group, so the whole-programme matrix answers for a delivery nobody is
+  // enrolled on; these two narrow it to a real one.
+  const [coverageCohortId, setCoverageCohortId] = useState('');
+  const [coverageGroupId, setCoverageGroupId] = useState('');
+  const [coverageStanding, setCoverageStanding] = useState<'all' | 'taught' | 'missing'>('all');
+  const [coverageExpandedRow, setCoverageExpandedRow] = useState('');
+  // The placement whose component is being previewed, and the KSB the reader
+  // arrived from — so the preview can mark which of the component's mappings is
+  // the one they were reading about.
+  const [placementPreview, setPlacementPreview] = useState<{
+    placement: KsbPlacement;
+    ksb: string;
+    /** Known gone rather than merely unmatched: an achievement credit's own
+     *  activity record already says so, so the preview can say it plainly
+     *  instead of sending the reader to Module Builder to find out the hard
+     *  way. Coverage placements carry no such signal and leave this unset. */
+    moduleKnownDeleted?: boolean;
+  } | null>(null);
+  /**
+   * Which reading of the same scoped rows the coverage tab is showing.
+   *
+   *  - `list`       — KSB first: every KSB, and where it is placed.
+   *  - `components` — the inverse: every component, and which KSBs sit inside
+   *                   it. The list above cannot answer "what does this
+   *                   component carry" without opening 71 rows and reading
+   *                   every placement for the one name.
+   *  - `matrix`     — KSB by module, for a read across the programme at once.
+   */
+  const [coverageView, setCoverageView] = useState<'list' | 'components' | 'matrix'>('list');
+  const [coverageComponentId, setCoverageComponentId] = useState('');
+  /** Empty means "every component in view" — picking narrows the By-component
+   *  table to just these, for the reader who wants two or three specific
+   *  components side by side rather than the whole programme's worth. */
+  const [pickedComponentIds, setPickedComponentIds] = useState<string[]>([]);
+  const [componentPickerOpen, setComponentPickerOpen] = useState(false);
   const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false);
   const [cohortDrawerOpen, setCohortDrawerOpen] = useState(false);
   // The cohort the new group belongs to; '' when the user has not narrowed it.
@@ -1854,7 +1929,7 @@ export default function ProgrammeDetailPage() {
   // Overview reads the same coverage the KSB tab draws — its readiness figure and
   // the header's coverage stat are that heatmap counted, not a second calculation
   // — so landing on the page loads it once and both agree.
-  const needsCoverage = tab === 'overview' || tab === 'coverage' || tab === 'achievement' || tab === 'quality' || ksbTraceOpen;
+  const needsCoverage = tab === 'overview' || tab === 'coverage' || tab === 'achievement' || tab === 'quality';
 
   useEffect(() => {
     if (!needsCoverage) return;
@@ -2260,11 +2335,145 @@ export default function ProgrammeDetailPage() {
     ));
   }, [PROGRAMME.name, programmeScopeId]);
 
+  /**
+   * Where each module column sits in the delivery tree.
+   *
+   * `moduleNames[i]` is `liveProgramme.modules[i]`: `buildHeatmapModuleBindings`
+   * labels the programme's own modules first, in order, and only then appends a
+   * backend module that matched none of them — those trailing columns belong to
+   * no group here and drop out of a filtered view, which is correct, since
+   * nothing places them in one.
+   */
+  const moduleScopeByLabel = useMemo(() => {
+    const map = new Map<string, ModuleDeliveryScope>();
+    liveProgramme.modules.forEach((module, index) => {
+      const label = PROGRAMME.moduleNames[index];
+      if (!label) return;
+      const identity = moduleWorkspaceIdentity(module);
+      for (const cohort of PROGRAMME.cohorts) {
+        for (const group of cohort.groups) {
+          const belongs = group.modules.some(item => item === module
+            || (identity && moduleWorkspaceIdentity(item) === identity));
+          if (!belongs) continue;
+          map.set(label, {
+            cohortId: cohort.id,
+            cohortName: cohort.name,
+            groupId: group.id,
+            groupName: group.name,
+          });
+          return;
+        }
+      }
+      // No group claimed it, but the module row itself may still name one — a
+      // group the programme's own cohort list does not carry, which the Overview
+      // tab already reports as the data problem it is.
+      if (module.cohortId || module.groupId) {
+        map.set(label, {
+          cohortId: module.cohortId || '',
+          cohortName: module.cohort || '',
+          groupId: module.groupId || '',
+          groupName: module.group || '',
+        });
+      }
+    });
+    return map;
+  }, [PROGRAMME.cohorts, PROGRAMME.moduleNames, liveProgramme.modules]);
+
+  /**
+   * Which module each coverage column actually is, so a placement can be
+   * resolved back to the component the module holds. Same index alignment as
+   * `moduleScopeByLabel`, and for the same reason: coverage rows carry labels,
+   * never ids.
+   */
+  const moduleByLabel = useMemo(() => {
+    const map = new Map<string, Module>();
+    liveProgramme.modules.forEach((module, index) => {
+      const label = PROGRAMME.moduleNames[index];
+      if (label) map.set(label, module);
+    });
+    return map;
+  }, [PROGRAMME.moduleNames, liveProgramme.modules]);
+
+  const previewModule = placementPreview ? moduleByLabel.get(placementPreview.placement.moduleLabel) : undefined;
+  const previewMatch = useMemo(
+    () => (placementPreview ? findPlacementComponent(previewModule, placementPreview.placement) : null),
+    [placementPreview, previewModule],
+  );
+
+
+  // The module columns the coverage tab is reading. Everything below is
+  // recomputed from these, so a KSB taught only in another group reads as
+  // missing here rather than borrowing that group's weight.
+  const coverageModuleNames = useMemo(() => {
+    if (!coverageCohortId && !coverageGroupId) return PROGRAMME.moduleNames;
+    return PROGRAMME.moduleNames.filter(label => {
+      const meta = moduleScopeByLabel.get(label);
+      if (!meta) return false;
+      if (coverageGroupId) return meta.groupId === coverageGroupId;
+      return meta.cohortId === coverageCohortId;
+    });
+  }, [PROGRAMME.moduleNames, coverageCohortId, coverageGroupId, moduleScopeByLabel]);
+
+  const coverageScopedRows = useMemo(() => {
+    if (coverageModuleNames.length === PROGRAMME.moduleNames.length) return PROGRAMME.ksbHeatmap;
+    return PROGRAMME.ksbHeatmap.map(row => scopeHeatmapRowToModules(row, coverageModuleNames));
+  }, [PROGRAMME.ksbHeatmap, PROGRAMME.moduleNames.length, coverageModuleNames]);
+
+  /**
+   * Every component that carries a KSB in view, with the KSBs inside it.
+   *
+   * Built from the scoped rows rather than the searched ones, so the search box
+   * can match a component's own name here instead of only the KSB text the list
+   * view searches.
+   */
+  const coverageComponents = useMemo(
+    () => componentPlacementGroups(coverageScopedRows, coverageModuleNames, moduleScopeByLabel),
+    [coverageScopedRows, coverageModuleNames, moduleScopeByLabel],
+  );
+
+  const filteredCoverageComponents = useMemo(() => {
+    const query = normalise(ksbSearch);
+    const base = pickedComponentIds.length
+      ? coverageComponents.filter(group => pickedComponentIds.includes(group.id))
+      : coverageComponents;
+    if (!query) return base;
+    return base.filter(group => [
+      group.component,
+      group.componentType,
+      group.moduleLabel,
+      group.week,
+      group.groupName,
+      ...group.ksbs.flatMap(item => [formatKsbCode(item.ksb), item.ksb, item.title]),
+    ].some(value => normalise(value).includes(query)));
+  }, [coverageComponents, ksbSearch, pickedComponentIds]);
+
+  // A pick surviving a cohort/group change that dropped its component would
+  // sit invisibly in the count while showing nothing — dropped instead, the
+  // moment its component leaves view.
+  useEffect(() => {
+    if (!pickedComponentIds.length) return;
+    const stillThere = pickedComponentIds.filter(id => coverageComponents.some(group => group.id === id));
+    if (stillThere.length !== pickedComponentIds.length) setPickedComponentIds(stillThere);
+  }, [coverageComponents, pickedComponentIds]);
+
   const filteredKsbHeatmap = useMemo(() => {
     const query = normalise(ksbSearch);
-    return PROGRAMME.ksbHeatmap.filter(row => !query || [row.ksb, formatKsbCode(row.ksb), row.title, ksbSourceLabel(row)]
-      .some(value => normalise(value).includes(query)));
-  }, [PROGRAMME.ksbHeatmap, ksbSearch]);
+    return coverageScopedRows.filter(row => {
+      if (coverageStanding === 'taught' && !ksbRowIsMapped(row)) return false;
+      if (coverageStanding === 'missing' && ksbRowIsMapped(row)) return false;
+      return !query || [row.ksb, formatKsbCode(row.ksb), row.title, ksbSourceLabel(row)]
+        .some(value => normalise(value).includes(query));
+    });
+  }, [coverageScopedRows, coverageStanding, ksbSearch]);
+
+  // Coverage figures for the modules currently in view. The programme-wide
+  // counts below keep their own names: the Quality tab and the Overview card
+  // both ask "is anything taught nowhere on this programme", which no cohort
+  // filter should be able to answer for them.
+  const coverageTaughtCount = coverageScopedRows.filter(ksbRowIsMapped).length;
+  const coverageMissingCount = coverageScopedRows.length - coverageTaughtCount;
+  const coverageWeightTotal = coverageScopedRows.reduce((total, row) => total + ksbRowWeight(row), 0);
+  const coveragePlacementTotal = coverageScopedRows.reduce((total, row) => total + ksbRowOccurrences(row), 0);
   const mappedKsbCount = PROGRAMME.ksbHeatmap.filter(ksbRowIsMapped).length;
   const missingKsbCount = PROGRAMME.ksbHeatmap.length - mappedKsbCount;
   const totalKsbWeight = PROGRAMME.ksbHeatmap.reduce((total, row) => total + ksbRowWeight(row), 0);
@@ -2458,7 +2667,7 @@ export default function ProgrammeDetailPage() {
           ]}
           eyebrow="Programme"
           title={PROGRAMME.name}
-          subtitle={[PROGRAMME.level, PROGRAMME.standard, PROGRAMME.duration].map(value => clean(value)).filter(Boolean).join(' · ')}
+          subtitle={[formatProgrammeLevel(PROGRAMME.level, ''), PROGRAMME.standard, PROGRAMME.duration].map(value => clean(value)).filter(Boolean).join(' · ')}
           accentColor={PROGRAMME.color}
           stats={[
             { icon: 'ri-group-line', label: 'Cohorts', value: liveCohortCount, detail: archivedCohortCount ? `${archivedCohortCount} archived` : undefined },
@@ -2527,16 +2736,15 @@ export default function ProgrammeDetailPage() {
           <div className="space-y-5">
             <div className="grid gap-5 xl:grid-cols-2">
               <WorkspacePanel title="Programme" description="The details the programme itself owns. Everything else belongs to a record beneath it.">
-                <DetailRow label="Level" value={clean(PROGRAMME.level, 'Not set')} />
-                <DetailRow label="Standard" value={clean(PROGRAMME.standard, 'Not set')} />
-                <DetailRow label="Owner" value={clean(PROGRAMME.owner, 'Not set')} />
+                <DetailRow label="Level" value={formatProgrammeLevel(PROGRAMME.level)} />
                 <DetailRow
                   label="KSB source"
                   value={coverageKsbSource.sourceId
                     ? clean(coverageKsbSourceLabel) || coverageKsbSource.sourceId
                     : <span className="text-amber-700">No source applied</span>}
                 />
-                <DetailRow label="Delivery window" value={clean(PROGRAMME.duration, 'Not scheduled')} />
+                <DetailRow label="Practical period" value={clean(PROGRAMME.practicalWindow, 'Not scheduled')} />
+                <DetailRow label="Apprenticeship" value={clean(PROGRAMME.apprenticeshipWindow, 'Not scheduled')} />
                 <DetailRow label="Learners" value={totalLearners} />
                 <DetailRow label="Programme ID" value={<code className="text-[11px]">{clean(PROGRAMME.sourceId) || PROGRAMME.id || '—'}</code>} />
               </WorkspacePanel>
@@ -3177,41 +3385,44 @@ export default function ProgrammeDetailPage() {
           <WorkspacePanel
             title="KSB coverage heatmap"
             description="Component KSB mappings rolled up into weeks, modules and programme coverage. An empty cell means the KSB is not addressed in that module."
+            /* One action, because there is one thing to do from here: the
+               weights, the mappings and the authored durations all live in the
+               Module Builder. The detail drawer and the global worklist were
+               second and third readings of the table already on this page. */
             actions={(
-              <>
-                <button
-                  type="button"
-                  onClick={() => setKsbTraceOpen(true)}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700"
-                >
-                  <AppIcon className="ri-bar-chart-box-line text-sm"></AppIcon>
-                  Coverage details
-                </button>
-                <button
-                  type="button"
-                  onClick={() => navigate(moduleBuilderProgrammeUrl)}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100"
-                >
-                  <AppIcon className="ri-tools-line text-sm"></AppIcon>
-                  Edit weights
-                </button>
-                <Link
-                  to="/curriculum/ksb-mapping"
-                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100"
-                >
-                  <AppIcon className="ri-list-check-3 text-sm"></AppIcon>
-                  Global worklist
-                </Link>
-              </>
+              <button
+                type="button"
+                onClick={() => navigate(moduleBuilderProgrammeUrl)}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700"
+              >
+                <AppIcon className="ri-tools-line text-sm"></AppIcon>
+                Open module builder
+              </button>
             )}
           >
-            <div className="mb-4 flex flex-wrap items-center gap-2">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-1.5 text-[11px] font-bold text-primary-700">
                 <AppIcon className="ri-bookmark-3-line text-sm"></AppIcon>
                 {coverageKsbSource.sourceId
-                  ? `Showing KSBs from: ${coverageKsbSourceLabel || coverageKsbSource.sourceId}`
+                  ? `KSBs from: ${coverageKsbSourceLabel || coverageKsbSource.sourceId}`
                   : 'No KSB source applied to this programme'}
               </span>
+            </div>
+
+            {/* The filter comes before the numbers, because it decides what
+                they are numbers of. */}
+            <div className="mb-4">
+              <DeliveryScopeFilter
+                cohorts={PROGRAMME.cohorts}
+                cohortId={coverageCohortId}
+                groupId={coverageGroupId}
+                summary={`${coverageModuleNames.length} ${coverageModuleNames.length === 1 ? 'module' : 'modules'}`}
+                onChange={next => {
+                  setCoverageCohortId(next.cohortId);
+                  setCoverageGroupId(next.groupId);
+                  setCoverageExpandedRow('');
+                }}
+              />
             </div>
 
             {backendCoverageLoading ? (
@@ -3235,43 +3446,198 @@ export default function ProgrammeDetailPage() {
               <>
                 <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
                   {[
-                    { label: 'Mapped KSBs', value: mappedKsbCount, tone: 'border-emerald-100 bg-emerald-50 text-emerald-700' },
-                    { label: 'Not mapped', value: missingKsbCount, tone: 'border-amber-100 bg-amber-50 text-amber-700' },
-                    { label: 'Total weight', value: `${formatHours(totalKsbWeight)}%`, tone: 'border-sky-100 bg-sky-50 text-sky-700' },
-                    { label: 'Total occurrences', value: totalKsbOccurrences, tone: 'border-primary-100 bg-primary-50 text-primary-700' },
+                    { label: 'Taught', value: coverageTaughtCount, note: 'placed on at least one component', tone: 'border-emerald-100 bg-emerald-50 text-emerald-700' },
+                    { label: 'Missing', value: coverageMissingCount, note: 'nowhere to be taught here', tone: 'border-amber-100 bg-amber-50 text-amber-700' },
+                    { label: 'Total weight', value: `${formatHours(coverageWeightTotal)}%`, note: 'summed across every placement', tone: 'border-sky-100 bg-sky-50 text-sky-700' },
+                    { label: 'Placements', value: coveragePlacementTotal, note: 'components carrying a KSB', tone: 'border-primary-100 bg-primary-50 text-primary-700' },
                   ].map(stat => (
                     <div key={stat.label} className={`rounded-xl border px-4 py-3 ${stat.tone}`}>
                       <p className="text-[10px] font-bold uppercase tracking-wider">{stat.label}</p>
                       <p className="mt-1 text-lg font-heading font-bold">{stat.value}</p>
+                      <p className="mt-0.5 text-[10px] font-semibold opacity-70">{stat.note}</p>
                     </div>
                   ))}
                 </div>
 
-                <div className="mb-4 rounded-2xl border border-background-200/80 bg-background-100 p-4">
-                  <div className="grid items-center gap-3 md:grid-cols-[1fr_auto]">
-                    <span className="relative block">
-                      <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
-                      <input
-                        value={ksbSearch}
-                        onChange={event => setKsbSearch(event.target.value)}
-                        placeholder="Search KSB code or title..."
-                        className="h-10 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth focus:border-primary-300"
-                      />
-                    </span>
+                <div className="mb-4 flex flex-wrap items-center gap-2">
+                  {/* Taught / Missing is a fact about a KSB, so it stands down
+                      in the component view rather than sitting there filtering
+                      rows nobody is looking at. */}
+                  {coverageView !== 'components' && (
+                  <div className="flex items-center gap-1 rounded-xl border border-background-200 bg-background-100/70 p-1">
+                    {([
+                      { key: 'all', label: 'All KSBs', count: coverageScopedRows.length },
+                      { key: 'taught', label: 'Taught', count: coverageTaughtCount },
+                      { key: 'missing', label: 'Missing', count: coverageMissingCount },
+                    ] as Array<{ key: 'all' | 'taught' | 'missing'; label: string; count: number }>).map(item => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => setCoverageStanding(item.key)}
+                        className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-[12px] font-bold transition-smooth ${
+                          coverageStanding === item.key
+                            ? item.key === 'missing'
+                              ? 'bg-amber-500 text-white'
+                              : item.key === 'taught'
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-foreground-800 text-white'
+                            : 'text-foreground-600 hover:bg-background-50'
+                        }`}
+                      >
+                        {item.label}
+                        <span className="rounded bg-black/10 px-1 text-[10px] tabular-nums">{item.count}</span>
+                      </button>
+                    ))}
+                  </div>
+                  )}
+                  <span className="relative min-w-[200px] flex-1">
+                    <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
+                    <input
+                      value={ksbSearch}
+                      onChange={event => setKsbSearch(event.target.value)}
+                      placeholder={coverageView === 'components'
+                        ? 'Search component, module, week or KSB...'
+                        : 'Search KSB code or outcome...'}
+                      className="h-9 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition-smooth focus:border-primary-300"
+                    />
+                  </span>
+                  {/* Three readings of the same scoped rows. Lit is where you
+                      are, not where the button will take you \u2014 with three of
+                      them, naming the destination stops telling you which one
+                      you are looking at. */}
+                  <div className="flex items-center gap-1 rounded-xl border border-background-200 bg-background-100/70 p-1">
+                    {([
+                      { key: 'list', label: 'KSB list', icon: 'ri-list-check-3', hint: 'Every KSB, its total weight, and each component that carries it.' },
+                      { key: 'components', label: 'By component', icon: 'ri-stack-line', hint: 'The inverse: every component, and which KSBs are placed inside it.' },
+                      { key: 'matrix', label: 'Matrix', icon: 'ri-grid-line', hint: 'The KSB by module grid, for a read across the whole programme at once.' },
+                    ] as Array<{ key: 'list' | 'components' | 'matrix'; label: string; icon: string; hint: string }>).map(item => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => setCoverageView(item.key)}
+                        aria-pressed={coverageView === item.key}
+                        title={item.hint}
+                        className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-[12px] font-bold transition-smooth ${
+                          coverageView === item.key ? 'bg-primary-600 text-white' : 'text-foreground-600 hover:bg-background-50'
+                        }`}
+                      >
+                        <AppIcon className={item.icon}></AppIcon>
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                  {coverageView === 'components' && (
                     <button
                       type="button"
-                      onClick={() => setKsbSearch('')}
-                      disabled={!ksbSearch}
-                      className="h-10 whitespace-nowrap rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-semibold text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"
+                      onClick={() => setComponentPickerOpen(value => !value)}
+                      aria-pressed={componentPickerOpen}
+                      title="Show only a component or two you pick, instead of every one in view."
+                      className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold transition-smooth ${
+                        pickedComponentIds.length || componentPickerOpen
+                          ? 'border-primary-300 bg-primary-50 text-primary-700'
+                          : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'
+                      }`}
                     >
-                      Reset
+                      <AppIcon className="ri-checkbox-multiple-line"></AppIcon>
+                      Pick components
+                      {pickedComponentIds.length > 0 && (
+                        <span className="rounded-full bg-primary-600 px-1.5 text-[10px] font-bold text-white">{pickedComponentIds.length}</span>
+                      )}
                     </button>
-                  </div>
-                  <p className="mt-3 text-[11px] text-foreground-400">{filteredKsbHeatmap.length} of {PROGRAMME.ksbHeatmap.length} KSBs</p>
+                  )}
+                  <span className="text-[11px] font-semibold text-foreground-400">
+                    {coverageView === 'components'
+                      ? `${filteredCoverageComponents.length} of ${coverageComponents.length} components`
+                      : `${filteredKsbHeatmap.length} of ${coverageScopedRows.length} KSBs`}
+                  </span>
                 </div>
 
-                <KsbHeatmapLegend />
-                <KsbHeatmapMatrix rows={filteredKsbHeatmap} moduleNames={PROGRAMME.moduleNames} />
+                {coverageView === 'components' && componentPickerOpen && (
+                  <ComponentPickerPanel
+                    components={coverageComponents}
+                    pickedIds={pickedComponentIds}
+                    onToggle={id => setPickedComponentIds(ids => (
+                      ids.includes(id) ? ids.filter(existing => existing !== id) : [...ids, id]
+                    ))}
+                    onClear={() => setPickedComponentIds([])}
+                    onClose={() => setComponentPickerOpen(false)}
+                  />
+                )}
+
+                {coverageView === 'components' && !componentPickerOpen && pickedComponentIds.length > 0 && (
+                  <div className="mb-3 flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Showing only:</span>
+                    {pickedComponentIds.map(id => {
+                      const group = coverageComponents.find(item => item.id === id);
+                      if (!group) return null;
+                      return (
+                        <span
+                          key={id}
+                          className="inline-flex items-center gap-1 rounded-full border border-primary-200 bg-primary-50 py-0.5 pl-2.5 pr-1.5 text-[10px] font-bold text-primary-700"
+                        >
+                          {group.component}
+                          <button
+                            type="button"
+                            onClick={() => setPickedComponentIds(ids => ids.filter(existing => existing !== id))}
+                            title={`Stop showing ${group.component} on its own`}
+                            className="flex h-4 w-4 items-center justify-center rounded-full hover:bg-primary-200"
+                          >
+                            <AppIcon className="ri-close-line text-[11px]"></AppIcon>
+                          </button>
+                        </span>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => setPickedComponentIds([])}
+                      className="text-[10px] font-bold text-foreground-400 underline decoration-dotted hover:text-foreground-700"
+                    >
+                      Show all {coverageComponents.length}
+                    </button>
+                  </div>
+                )}
+
+                {coverageView === 'components' ? (
+                  filteredCoverageComponents.length === 0 ? (
+                    <EntityEmptyState
+                      icon="ri-stack-line"
+                      title={coverageComponents.length ? 'No component matches this search' : 'No component in view carries a KSB'}
+                      message={coverageComponents.length
+                        ? 'Clear the search, or widen the cohort and group above.'
+                        : 'Map KSBs onto components in the Module Builder and they will be listed here.'}
+                    />
+                  ) : (
+                    <KsbComponentTable
+                      groups={filteredCoverageComponents}
+                      expandedId={coverageComponentId}
+                      onToggle={setCoverageComponentId}
+                      onPreview={group => setPlacementPreview({ placement: group.placement, ksb: group.ksbs[0]?.ksb || '' })}
+                    />
+                  )
+                ) : filteredKsbHeatmap.length === 0 ? (
+                  <EntityEmptyState
+                    icon="ri-list-check-3"
+                    title="No KSB matches this filter"
+                    message="Clear the search, switch back to All KSBs, or widen the cohort and group above."
+                  />
+                ) : coverageView === 'matrix' ? (
+                  // In place of the list, not underneath it: appended, the grid
+                  // opened 71 rows below the button that opened it, so the
+                  // toggle looked like it had done nothing at all.
+                  <>
+                    <KsbHeatmapLegend />
+                    <KsbHeatmapMatrix rows={filteredKsbHeatmap} moduleNames={coverageModuleNames} />
+                  </>
+                ) : (
+                  <KsbCoverageTable
+                    rows={filteredKsbHeatmap}
+                    moduleNames={coverageModuleNames}
+                    scopeByLabel={moduleScopeByLabel}
+                    expandedRowId={coverageExpandedRow}
+                    onToggleRow={setCoverageExpandedRow}
+                    onPreviewPlacement={(placement, ksb) => setPlacementPreview({ placement, ksb })}
+                  />
+                )}
               </>
             )}
           </WorkspacePanel>
@@ -3282,16 +3648,13 @@ export default function ProgrammeDetailPage() {
         ═══════════════════════════════════════════════════════════════════ */}
         {tab === 'achievement' && (
           <div className="space-y-4">
-            <WorkspacePanel
-              title="Scope"
-              description="Achievement is asked at every level of Programme → Cohort → Group → Module, and every level answers it from its own components. Pick the level; the panel below reports only what belongs to it."
-            >
+            <div className="rounded-2xl border border-background-200 bg-background-100/70 p-3">
               <ScopePicker
                 programme={PROGRAMME}
                 value={achievementScope}
                 onChange={setAchievementScope}
               />
-            </WorkspacePanel>
+            </div>
 
             <ScopeAchievementPanel
               key={`${achievementScope.scope}:${achievementScope.identifier}`}
@@ -3301,6 +3664,20 @@ export default function ProgrammeDetailPage() {
               description={achievementScope.description}
               learnerStatus="all"
               active
+              onPreviewCredit={(credit: KsbCredit, ksbCode: string) => setPlacementPreview({
+                placement: {
+                  module: credit.module,
+                  moduleLabel: credit.module,
+                  scope: 'component',
+                  week: credit.week,
+                  component: credit.component,
+                  weight: credit.weight,
+                  cohortName: '',
+                  groupName: '',
+                },
+                ksb: ksbCode,
+                moduleKnownDeleted: credit.moduleStatus === 'deleted' || credit.moduleStatus === 'unknown',
+              })}
             />
           </div>
         )}
@@ -3402,11 +3779,17 @@ export default function ProgrammeDetailPage() {
         onClose={() => setGroupDrawerCohortId(null)}
         onSaved={() => reload({ silent: true })}
       />
-      {ksbTraceOpen && (
-        <KsbTraceModal
-          programme={PROGRAMME}
-          programmeId={coverageProgrammeIds[0] || PROGRAMME.sourceId || PROGRAMME.id}
-          onClose={() => setKsbTraceOpen(false)}
+      {placementPreview && (
+        <KsbPlacementPreviewModal
+          placement={placementPreview.placement}
+          ksb={placementPreview.ksb}
+          component={previewMatch?.component}
+          week={previewMatch?.week}
+          moduleKnownDeleted={placementPreview.moduleKnownDeleted}
+          builderHref={!placementPreview.moduleKnownDeleted && previewModule
+            ? moduleBuilderUrl(previewModule, PROGRAMME, { weekId: previewMatch?.week?.id, componentId: previewMatch?.component?.id })
+            : ''}
+          onClose={() => setPlacementPreview(null)}
         />
       )}
     </WorkspaceShell>
@@ -3590,10 +3973,12 @@ function ScopePicker({
         </select>
       </label>
 
-      <p className="ml-auto max-w-sm text-[11px] leading-relaxed text-foreground-400">
-        Reporting on <span className="font-bold text-foreground-700">{value.label || 'this programme'}</span>.
-        Each level below the programme has its own workspace for editing; this only reads.
-      </p>
+      {/* Said back in words. Three selects reading "Sept 2026 / Group B / -"
+          is a setting; "Showing Group B" is what the numbers below are of. */}
+      <span className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700">
+        <AppIcon className="ri-filter-3-line"></AppIcon>
+        Showing {value.label || 'the whole programme'}
+      </span>
     </div>
   );
 }
@@ -3833,6 +4218,1131 @@ function heatCellClass(value: number | null | undefined) {
   return 'border-primary-100 bg-primary-50 text-primary-700';
 }
 
+// ============================================================
+// KSB coverage, narrowed to a cohort or a group
+//
+// The matrix answers "which modules teach this KSB" across the whole programme,
+// which is the right question only while the programme runs one class. A module
+// belongs to exactly one group, so a programme with four groups draws four
+// columns of which any given learner ever sees one — and a curriculum lead
+// asking "is K7 taught in the September cohort" had to know which of the twenty
+// columns belonged to it.
+//
+// So the module set is filtered first and every figure is recomputed from what
+// survives: the weight, the number of placements, and whether the KSB is taught
+// at all. A KSB mapped only in Group B's module is genuinely missing from Group
+// A, and now says so.
+// ============================================================
+
+/** One placement of one KSB: the component, in the week, in the module. */
+type KsbPlacement = KsbEvidenceItem & {
+  moduleLabel: string;
+  cohortName: string;
+  groupName: string;
+};
+
+/** Where a module label sits in the delivery tree, for the coverage filter. */
+type ModuleDeliveryScope = { cohortId: string; cohortName: string; groupId: string; groupName: string };
+
+/**
+ * The same row, measured against a subset of the modules. Everything derived —
+ * weight, occurrences, whether it is mapped — is recomputed rather than carried
+ * over, or a KSB taught only in another group would keep the other group's
+ * weight and read as covered here.
+ */
+function scopeHeatmapRowToModules(row: KsbHeatmapRow, moduleNames: string[]): KsbHeatmapRow {
+  const coverage: Record<string, number | null> = {};
+  const counts: Record<string, number> = {};
+  const evidence: Record<string, KsbEvidenceItem[]> = {};
+  moduleNames.forEach(moduleName => {
+    coverage[moduleName] = row.coverage?.[moduleName] ?? null;
+    counts[moduleName] = row.counts?.[moduleName] || 0;
+    evidence[moduleName] = row.evidence?.[moduleName] || [];
+  });
+  const totalWeight = Object.values(coverage).reduce((total, value) => total + Number(value || 0), 0);
+  const totalOccurrences = Object.values(counts).reduce((total, value) => total + value, 0);
+  return {
+    ...row,
+    coverage,
+    counts,
+    evidence,
+    totalWeight,
+    totalOccurrences,
+    missing: totalWeight <= 0 && totalOccurrences === 0,
+  };
+}
+
+function ksbPlacements(
+  row: KsbHeatmapRow,
+  moduleNames: string[],
+  scopeByLabel: Map<string, ModuleDeliveryScope>,
+): KsbPlacement[] {
+  return moduleNames.flatMap(moduleLabel => (row.evidence?.[moduleLabel] || []).map(item => ({
+    ...item,
+    moduleLabel,
+    cohortName: scopeByLabel.get(moduleLabel)?.cohortName || '',
+    groupName: scopeByLabel.get(moduleLabel)?.groupName || '',
+  })));
+}
+
+/** A placement's address, shortest form that still identifies it uniquely. */
+// Four columns, not five. "Where it is applied" used to preview the placements
+// here, but opening a row lists them in full underneath — so the column was a
+// truncated second copy of the panel it sits above, and the outcome text was
+// squeezed into a third of the row to make space for it.
+const COVERAGE_GRID = 'grid grid-cols-[minmax(320px,4fr)_104px_120px_100px]';
+
+const COVERAGE_COLUMNS: Array<{ label: string; hint: string; align?: 'center' }> = [
+  { label: 'KSB', hint: 'The outcome as the standard words it, and which of Knowledge / Skills / Behaviours it belongs to.' },
+  { label: 'Total weight', hint: 'Every weight placed on this KSB across the modules currently in view, added up. Open the row to see which placement contributes what.', align: 'center' },
+  { label: 'Times applied', hint: 'How many components carry this KSB in the modules currently in view. Open the row to see exactly where — module, week and component, with each one’s weight, type and delivery group.', align: 'center' },
+  { label: 'Status', hint: 'Taught means at least one component in view carries it. Missing means none does.', align: 'center' },
+];
+
+/**
+ * The coverage register: every KSB, its total weight, how many components carry
+ * it, and exactly where each of them sits.
+ *
+ * The matrix that preceded this said "M4: 30%" in a cell and left the reader to
+ * hover for the component behind it — so the answer to "where is K1 actually
+ * taught" was a tooltip, one module at a time, across a grid twenty columns
+ * wide. Here each placement is a line of its own: module, week, component,
+ * weight.
+ */
+/**
+ * The authored component a placement points at, and the week holding it.
+ *
+ * Coverage rows carry labels rather than ids — module name, week label,
+ * component title — so matching them is the only way back to the component
+ * itself. The week label varies with how the module was authored ("Week 1",
+ * "Lec1", the week's own title), hence the candidate list, and a component whose
+ * week cannot be pinned down is still looked for across the module rather than
+ * given up on. A genuine miss returns null and the preview says so, instead of
+ * drawing an empty shell that looks like an unfinished component.
+ */
+/**
+ * The authored content of a component, resolved from its settings.
+ *
+ * Every component type stores its content under its own keys — a video's
+ * address, a deck's upload path, a reading's HTML, an assignment's brief — so
+ * this reads all of them and returns what is actually there, in the order a
+ * reader wants it: the thing itself first, the writing around it after.
+ *
+ * A component can hold more than one (a reading with both text and a file; a
+ * video with a lesson write-up), so this returns a list rather than picking one
+ * and quietly dropping the rest.
+ */
+type PlacementContentPart =
+  | { id: string; label: string; kind: 'video'; url: string }
+  | { id: string; label: string; kind: 'audio'; url: string }
+  | { id: string; label: string; kind: 'document'; url: string; fileName: string }
+  | { id: string; label: string; kind: 'link'; url: string }
+  | { id: string; label: string; kind: 'text'; body: string };
+
+/** A media length as a clock reading: 48:42, or 1:02:15 past the hour. */
+function clockDuration(totalSeconds: number) {
+  const seconds = Math.max(0, Math.round(totalSeconds));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const rest = seconds % 60;
+  return hours
+    ? `${hours}:${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`
+    : `${minutes}:${String(rest).padStart(2, '0')}`;
+}
+
+/** Authored HTML as readable text. Curriculum is a staff view of author-supplied
+ *  markup and has no sanitiser of its own, so the tags come out rather than
+ *  going into the DOM; the Module Builder is one click away for the real thing. */
+function authoredTextPreview(value: unknown) {
+  const html = clean(value);
+  if (!html) return '';
+  const withBreaks = html
+    .replace(/<\s*(br|\/p|\/div|\/li|\/h[1-6])\s*\/?>/gi, '\n')
+    .replace(/<\s*li[^>]*>/gi, '• ');
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = withBreaks.replace(/<[^>]+>/g, '');
+  return textarea.value.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function placementContentParts(component: ProgrammeWeekComponent): PlacementContentPart[] {
+  const settings = (component.settings || {}) as Record<string, unknown>;
+  const value = (key: string) => clean(settings[key]);
+  const parts: PlacementContentPart[] = [];
+  const seen = new Set<string>();
+
+  const addMedia = (kind: 'video' | 'audio' | 'document' | 'link', label: string, raw: unknown, fileName = '') => {
+    // Embed snippets store an <iframe>, not an address; watchableUrl pulls the
+    // src out and refuses anything that is not http(s).
+    const url = clean(raw).startsWith('/') ? clean(raw) : watchableUrl(raw);
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    parts.push(kind === 'document'
+      ? { id: `${kind}:${label}`, label, kind, url, fileName: clean(fileName) || url.split('/').pop() || 'file' }
+      : { id: `${kind}:${label}`, label, kind, url });
+  };
+  const addText = (label: string, raw: unknown) => {
+    const body = authoredTextPreview(raw);
+    if (body) parts.push({ id: `text:${label}`, label, kind: 'text', body });
+  };
+
+  addMedia('video', 'Video', settings.videoUrl || settings.embedCode);
+  addMedia('video', 'Recording', settings.recordingUrl);
+  addMedia('audio', 'Audio', settings.podcastUrl || settings.audioUrl);
+  addMedia('document', 'Slides', settings.presentationUrl, value('fileName'));
+  addMedia('document', 'Reading resource', settings.resourceUrl, value('uploadedFileName'));
+  addMedia('document', 'Assignment file', settings.assignmentFileUrl, value('assignmentFileName'));
+  addMedia('document', 'Uploaded file', settings.uploadedFileUrl, value('uploadedFileName'));
+  addMedia('link', 'Live session link', settings.liveSessionUrl);
+
+  addText('Reading content', settings.readingContent);
+  addText('Assignment brief', settings.assignmentBrief);
+  addText('Lesson content', settings.lessonContent);
+  addText('Speaker notes', settings.speakerNotes);
+  addText('Transcript', settings.transcript);
+  addText('Learner guidance', settings.learnerGuidance || settings.learnerInstruction);
+  return parts;
+}
+
+function PlacementContentSections({
+  component,
+  onMeasuredDuration,
+}: {
+  component: ProgrammeWeekComponent;
+  /** The media's real length, once the player knows it. */
+  onMeasuredDuration?: (seconds: number) => void;
+}) {
+  const parts = placementContentParts(component);
+  const linkedQuizId = clean((component.settings as Record<string, unknown> | undefined)?.linkedQuizId);
+
+  if (!parts.length && !linkedQuizId) {
+    return (
+      <p className="rounded-xl border border-dashed border-background-200 bg-background-100/50 px-3 py-4 text-center text-[11px] font-semibold text-foreground-400">
+        No content has been authored on this component yet — it carries its KSB weight and its settings only.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {parts.map(part => (
+        <PlacementContentPartView key={part.id} part={part} onMeasuredDuration={onMeasuredDuration} />
+      ))}
+      {linkedQuizId && (
+        <p className="rounded-xl border border-background-200 bg-background-100/60 px-3 py-2 text-[11px] text-foreground-600">
+          <span className="font-bold text-foreground-800">Linked quiz:</span> {linkedQuizId} · open it in the Quiz
+          Workspace to see its questions.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function PlacementContentPartView({
+  part,
+  onMeasuredDuration,
+}: {
+  part: PlacementContentPart;
+  onMeasuredDuration?: (seconds: number) => void;
+}) {
+  const heading = (
+    <p className="mb-1.5 flex items-center justify-between gap-2 text-[10px] font-bold uppercase tracking-wider text-foreground-400">
+      <span>{part.label}</span>
+      {part.kind !== 'text' && (
+        <a
+          href={part.url}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1 font-bold normal-case tracking-normal text-primary-700 hover:underline"
+        >
+          <AppIcon className="ri-external-link-line"></AppIcon>
+          Open in a new tab
+        </a>
+      )}
+    </p>
+  );
+
+  if (part.kind === 'video') {
+    const parsed = parseVideoUrl(part.url);
+    return (
+      <div>
+        {heading}
+        {/* The learner-side player, not a hand-rolled iframe: it already knows
+            how to read a real length out of both a hosted file and the YouTube
+            IFrame API, which is the only way the tile below can stop quoting the
+            authored guess. */}
+        <div className="relative aspect-video overflow-hidden rounded-xl border border-background-200 bg-black">
+          <VideoPlayer
+            parsed={parsed}
+            title={part.label}
+            onDuration={seconds => { if (seconds > 0) onMeasuredDuration?.(seconds); }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (part.kind === 'audio') {
+    return (
+      <div>
+        {heading}
+        <audio
+          src={part.url}
+          controls
+          preload="metadata"
+          className="w-full"
+          onLoadedMetadata={event => {
+            const seconds = (event.target as HTMLAudioElement).duration;
+            if (Number.isFinite(seconds) && seconds > 0) onMeasuredDuration?.(seconds);
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (part.kind === 'link') {
+    return (
+      <div>
+        {heading}
+        <p className="truncate rounded-xl border border-background-200 bg-background-100/60 px-3 py-2 text-[11px] text-foreground-600">
+          {part.url}
+        </p>
+      </div>
+    );
+  }
+
+  if (part.kind === 'text') {
+    return (
+      <details className="group rounded-xl border border-background-200 bg-background-100/60 px-3 py-2" open>
+        <summary className="flex cursor-pointer list-none items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-foreground-400 [&::-webkit-details-marker]:hidden">
+          <AppIcon className="ri-file-text-line text-[12px]"></AppIcon>
+          {part.label}
+        </summary>
+        <div className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap border-t border-background-200 pt-2 text-[12px] leading-relaxed text-foreground-700">
+          {part.body}
+        </div>
+      </details>
+    );
+  }
+
+  // A document: our own decks and PDFs render in-house, a public Office file
+  // goes to the Office viewer, and anything neither can show says why.
+  const embed = resolveDocEmbed(part.url);
+  return (
+    <div>
+      {heading}
+      {embed.mode === 'deck' ? (
+        <SlideDeckViewer
+          src={embed.src}
+          title={part.fileName}
+          fallback={reason => (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-[11px] leading-relaxed text-amber-800">
+              <p className="font-bold">{part.fileName}</p>
+              <p className="mt-1">{reason}</p>
+            </div>
+          )}
+        />
+      ) : embed.mode === 'unavailable' ? (
+        <div className="rounded-xl border border-background-200 bg-background-100/60 px-3 py-3 text-[11px] leading-relaxed text-foreground-600">
+          <p className="font-bold text-foreground-800">{part.fileName}</p>
+          <p className="mt-1">{embed.reason} Use the link above to open it.</p>
+        </div>
+      ) : (
+        <iframe
+          src={embed.src}
+          title={part.fileName}
+          className="h-[60vh] w-full rounded-xl border border-background-200 bg-background-50"
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * One placement, previewed.
+ *
+ * A coverage row can say a KSB is carried by "Recorded Session 1" at 50% and
+ * still leave the reader with no idea what that component asks of a learner —
+ * which was the only question left once the row named where it was applied. This
+ * shows the component as curriculum authored it: what it expects, what it
+ * demands back, and every KSB it carries, with the one the reader came from
+ * marked.
+ *
+ * It reports the component's setup, not the learner-facing page — curriculum
+ * holds a count of content sections, not their bodies — so it says as much and
+ * hands off to the Module Builder rather than implying it is showing the lesson.
+ */
+function KsbPlacementPreviewModal({
+  placement,
+  ksb,
+  component,
+  week,
+  builderHref,
+  moduleKnownDeleted,
+  onClose,
+}: {
+  placement: KsbPlacement;
+  ksb: string;
+  component?: ProgrammeWeekComponent;
+  week?: Week;
+  builderHref: string;
+  /** The credit's own activity record already says the module is gone, rather
+   *  than this preview merely failing to match it — so the honest-miss box
+   *  below says so plainly instead of guessing "renamed or removed", and no
+   *  "Open the module" link is offered to a module that cannot be opened. */
+  moduleKnownDeleted?: boolean;
+  onClose: () => void;
+}) {
+  // What the media itself reports, which is the figure a reader is asking for
+  // when they look at "Duration". The authored minutes are a planning input and
+  // are routinely a round default — 10 for a video — so the two are kept apart
+  // rather than one standing in for the other.
+  const [measuredSeconds, setMeasuredSeconds] = useState(0);
+  useEffect(() => { setMeasuredSeconds(0); }, [placement, component]);
+
+  const title = clean(component?.title, clean(placement.component, 'This placement'));
+  const type = clean(component?.type, clean(placement.componentType));
+  const status = clean(component?.status);
+  const weekLabel = clean(week?.title, clean(placement.week));
+  const mappings = component?.ksbMappings || [];
+  const codes = mappings.length
+    ? mappings.map(mapping => ({ code: clean(mapping.code), weight: Number(mapping.weight || 0) }))
+    : (component?.ksbRefs || []).map(code => ({ code: clean(code), weight: 0 }));
+
+  const authoredMinutes = Number(component?.duration || 0);
+  const facts: Array<{ label: string; value: string; note?: string; hint?: string }> = [];
+  if (component) {
+    if (measuredSeconds > 0) {
+      // A minute of slack: a 48:42 file authored as "49 min" is not a mismatch
+      // worth reporting, a 48:42 file authored as "10 min" is.
+      const drifted = authoredMinutes > 0 && Math.abs(authoredMinutes * 60 - measuredSeconds) > 60;
+      facts.push({
+        label: 'Duration',
+        value: clockDuration(measuredSeconds),
+        note: drifted ? `authored as ${authoredMinutes} min` : undefined,
+        hint: drifted
+          ? `Read from the media itself. Curriculum has it authored as ${authoredMinutes} minutes, which is what planning and OTJH use — worth correcting in the Module Builder.`
+          : 'Read from the media itself.',
+      });
+    } else if (authoredMinutes > 0) {
+      facts.push({ label: 'Duration', value: `${authoredMinutes} min`, hint: 'The authored length. The media’s real length replaces it here once the player has read its metadata.' });
+    }
+    if (Number(component.expectedOtjh || 0) > 0) facts.push({ label: 'Expected OTJH', value: `${formatHours(Number(component.expectedOtjh))}h`, hint: 'Off-the-job hours this component is planned to be worth.' });
+    if (Number(component.points || 0) > 0) facts.push({ label: 'Points', value: String(component.points) });
+    facts.push({ label: 'Content sections', value: String(component.contentSections ?? 0), hint: 'How many sections the component holds. Their content is edited in the Module Builder.' });
+    if (component.quizQuestions != null) facts.push({ label: 'Quiz questions', value: String(component.quizQuestions) });
+  }
+
+  const demands: Array<{ label: string; on: boolean; hint: string }> = component ? [
+    { label: 'Reflection required', on: !!component.reflectionRequired, hint: 'The learner must write a reflection for this component. Their declared hours come from it.' },
+    { label: 'Workplace evidence', on: !!component.workplaceEvidenceRequired, hint: 'The learner must upload evidence from work.' },
+    { label: 'Tutor validation', on: !!component.tutorValidationRequired, hint: 'A tutor must sign this off before it counts.' },
+    { label: 'Resources attached', on: !!component.hasResources, hint: 'The component carries files or links for the learner.' },
+  ] : [];
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="w-full max-w-4xl overflow-hidden rounded-2xl bg-background-50 shadow-2xl"
+        onClick={event => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 bg-primary-950 px-5 py-4 text-white">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/60">Placement preview</p>
+            <h3 className="mt-1 truncate font-heading text-base font-bold text-white">{title}</h3>
+            <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-white/70">
+              {type && <span className="rounded-full bg-white/15 px-2 py-0.5 font-bold uppercase tracking-wider">{type}</span>}
+              {status && <span className="rounded-full bg-white/15 px-2 py-0.5 font-bold uppercase tracking-wider">{status}</span>}
+              <span className="rounded-full bg-white/15 px-2 py-0.5 font-bold">
+                {formatKsbCode(ksb)} at {placement.weight > 0 ? `${formatHours(placement.weight)}%` : 'no weight'}
+              </span>
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10 hover:bg-white/20"
+          >
+            <AppIcon className="ri-close-line"></AppIcon>
+          </button>
+        </div>
+
+        <div className="max-h-[72vh] space-y-4 overflow-y-auto p-5">
+          {/* Same order and labels as the card that was clicked, so the reader
+              can see they landed on the placement they meant. */}
+          <p className="flex flex-wrap gap-x-3 gap-y-1 rounded-xl border border-background-200 bg-background-100/60 px-3 py-2 text-[11px] text-foreground-600">
+            {[
+              { label: 'Group', value: clean(placement.groupName) },
+              { label: 'Module', value: clean(placement.moduleLabel) },
+              { label: 'Week', value: weekLabel },
+            ].filter(part => part.value).map(part => (
+              <span key={part.label}>
+                <span className="font-semibold text-foreground-400">{part.label}:</span>{' '}
+                <span className="font-semibold text-foreground-800">{part.value}</span>
+              </span>
+            ))}
+          </p>
+
+          {!component ? (
+            // Honest miss. The row's labels are all coverage carries, and inventing
+            // a preview from them would read as a component with nothing in it.
+            // A credit that already knows its module is gone says so outright,
+            // rather than sending the reader to Module Builder to be told the same
+            // thing there — a guess-and-bounce that reads as broken rather than
+            // as a genuinely deleted record.
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-[11px] leading-relaxed text-amber-800">
+              <p className="font-bold">
+                {moduleKnownDeleted ? 'This module no longer exists.' : 'This component could not be opened from here.'}
+              </p>
+              <p className="mt-1">
+                {moduleKnownDeleted
+                  ? `${clean(placement.moduleLabel, 'The module')} was deleted from the catalogue after this was earned, so there is nothing left to open — the achievement itself still counts and stays on record here.`
+                  : (
+                    <>
+                      Coverage records the placement by name, and no component called &quot;{clean(placement.component, 'this one')}&quot;
+                      is in {clean(placement.moduleLabel, 'that module')}{weekLabel ? ` › ${weekLabel}` : ''} any more — it has most
+                      likely been renamed or removed since the mapping was made. Open the module to check.
+                    </>
+                  )}
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* The content itself, before the metadata about it. Knowing a
+                  component carries 50% of K1 is not the same as seeing what it
+                  actually teaches, and the second question is the one nobody
+                  could answer without leaving this page. */}
+              <PlacementContentSections component={component} onMeasuredDuration={setMeasuredSeconds} />
+
+              {clean(component.description) && (
+                <p className="text-[12px] leading-relaxed text-foreground-700">{component.description}</p>
+              )}
+
+              {facts.length > 0 && (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {facts.map(fact => (
+                    <div key={fact.label} title={fact.hint} className="cursor-help rounded-xl border border-background-200 bg-background-100/60 px-3 py-2">
+                      <p className="text-[9px] font-bold uppercase tracking-wider text-foreground-400">{fact.label}</p>
+                      <p className="mt-0.5 font-heading text-[15px] font-bold text-foreground-950">{fact.value}</p>
+                      {fact.note && <p className="mt-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-600">{fact.note}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {demands.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">What it asks of the learner</p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {demands.map(demand => (
+                      <span
+                        key={demand.label}
+                        title={demand.hint}
+                        className={`inline-flex cursor-help items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${
+                          demand.on ? 'bg-emerald-50 text-emerald-700' : 'bg-background-100 text-foreground-300'
+                        }`}
+                      >
+                        <AppIcon className={demand.on ? 'ri-check-line' : 'ri-close-line'}></AppIcon>
+                        {demand.label}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {codes.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">
+                    Every KSB this component carries
+                  </p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {codes.filter(item => item.code).map(item => {
+                      const isSubject = normalise(item.code) === normalise(ksb);
+                      return (
+                        <span
+                          key={item.code}
+                          title={isSubject ? 'The KSB you were reading about.' : undefined}
+                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${
+                            isSubject ? 'bg-primary-600 text-white' : 'bg-background-100 text-foreground-600'
+                          }`}
+                        >
+                          {formatKsbCode(item.code)}
+                          {item.weight > 0 && (
+                            <span className={`rounded-full px-1.5 text-[9px] ${isSubject ? 'bg-white/25' : 'bg-background-200'}`}>
+                              {formatHours(item.weight)}%
+                            </span>
+                          )}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <p className="text-[10px] leading-relaxed text-foreground-400">
+                Read-only — this is the component exactly as curriculum authored it. Change any of it in the Module
+                Builder.
+              </p>
+            </>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-background-200 bg-background-100/60 px-5 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-9 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
+          >
+            Close
+          </button>
+          {builderHref && (
+            <Link
+              to={builderHref}
+              title={component
+                ? "Opens this exact component's editor in the Module Builder — not just the module, this component."
+                : 'This component could not be resolved, so this opens the module itself.'}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
+            >
+              <AppIcon className="ri-tools-line"></AppIcon>
+              {component ? 'Edit this component' : 'Open the module'}
+            </Link>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function findPlacementComponent(module: Module | undefined, placement: KsbPlacement) {
+  if (!module) return null;
+  const componentKey = normalise(placement.component);
+  if (!componentKey) return null;
+  const weekKey = normalise(placement.week);
+  const weeks = module.weeksData || [];
+  const inWeek = weeks.filter(week => !weekKey || [week.title, `week ${week.number}`, String(week.number), week.id]
+    .some(candidate => normalise(candidate) === weekKey));
+  for (const week of (inWeek.length ? inWeek : weeks)) {
+    const component = (week.components || []).find(item => normalise(item.title) === componentKey);
+    if (component) return { component, week };
+  }
+  return null;
+}
+
+/**
+ * Coverage read the other way round: one row per component, with the KSBs
+ * placed inside it.
+ *
+ * The KSB list answers "where is K1 taught". It cannot answer "what does
+ * Recorded Session 1 carry" without opening all 71 rows and reading every
+ * placement for that one name, which is the question anyone editing a component
+ * actually has. Same placements, same weights, inverted - and the row opens the
+ * component itself, so its content is one click away rather than a trip to the
+ * Module Builder.
+ */
+type ComponentPlacementGroup = {
+  id: string;
+  component: string;
+  componentType: string;
+  moduleLabel: string;
+  week: string;
+  groupName: string;
+  totalWeight: number;
+  ksbs: Array<{ ksb: string; title: string; weight: number }>;
+  /** Any one of this component's placements, which is all the preview needs to
+   *  resolve the component itself. */
+  placement: KsbPlacement;
+};
+
+function componentPlacementGroups(
+  rows: KsbHeatmapRow[],
+  moduleNames: string[],
+  scopeByLabel: Map<string, ModuleDeliveryScope>,
+): ComponentPlacementGroup[] {
+  const map = new Map<string, ComponentPlacementGroup>();
+  rows.forEach(row => {
+    ksbPlacements(row, moduleNames, scopeByLabel).forEach(placement => {
+      const id = [placement.moduleLabel, placement.week, placement.component || placement.scope]
+        .map(normalise).join('|');
+      const group = map.get(id) || {
+        id,
+        component: clean(placement.component, clean(placement.week, 'Module level')),
+        componentType: clean(placement.componentType),
+        moduleLabel: clean(placement.moduleLabel),
+        week: clean(placement.week),
+        groupName: clean(placement.groupName),
+        totalWeight: 0,
+        ksbs: [],
+        placement,
+      };
+      const weight = Number(placement.weight || 0);
+      // The same KSB mapped twice on one component is one KSB carrying both
+      // weights, not two rows in its list.
+      const existing = group.ksbs.find(item => normalise(item.ksb) === normalise(row.ksb));
+      if (existing) existing.weight += weight;
+      else group.ksbs.push({ ksb: row.ksb, title: clean(row.title), weight });
+      group.totalWeight += weight;
+      map.set(id, group);
+    });
+  });
+  return [...map.values()].sort((left, right) => (
+    left.moduleLabel.localeCompare(right.moduleLabel)
+    || left.week.localeCompare(right.week, undefined, { numeric: true })
+    || left.component.localeCompare(right.component)
+  ));
+}
+
+// Widths rather than a grid template: the row is a toggle button plus a preview
+// button, and a button cannot be a grid cell of its parent without subgrid.
+const COMPONENT_COLUMNS: Array<{ label: string; hint: string; width: string }> = [
+  { label: 'Component', hint: 'The component as the Module Builder holds it, with the group, module and week it sits in.', width: 'min-w-0 flex-1' },
+  { label: 'Total weight', hint: 'Every KSB weight this component carries, added up.', width: 'w-[104px] text-center' },
+  { label: 'KSBs inside', hint: 'How many KSBs are placed on this component. Open the row to see which, and what each one weighs.', width: 'w-[120px] text-center' },
+  { label: 'Preview', hint: 'Opens the component itself \u2014 its content, what it asks of the learner, and every KSB it carries.', width: 'w-[104px] text-center' },
+];
+
+/**
+ * Pick a component or two, rather than reading the whole programme's list.
+ *
+ * Checkbox list rather than a live text filter: a search box narrows *the
+ * table* to what matches, but the reader is not asking to filter \u2014 they
+ * already know which two or three components they want side by side, and
+ * everything else should simply not be there while they keep looking. Its own
+ * search is a way to find a name in a long list, not a way to narrow the
+ * table itself.
+ */
+function ComponentPickerPanel({
+  components,
+  pickedIds,
+  onToggle,
+  onClear,
+  onClose,
+}: {
+  components: ComponentPlacementGroup[];
+  pickedIds: string[];
+  onToggle: (id: string) => void;
+  onClear: () => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const filtered = useMemo(() => {
+    const normalisedQuery = normalise(query);
+    if (!normalisedQuery) return components;
+    return components.filter(group => [group.component, group.moduleLabel, group.week, group.groupName]
+      .some(value => normalise(value).includes(normalisedQuery)));
+  }, [components, query]);
+
+  return (
+    <div className="mb-3 rounded-xl border border-primary-200 bg-primary-50/40 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold text-foreground-700">
+          Tick the components to show. Leave none ticked to see every component in view.
+        </p>
+        <div className="flex items-center gap-2">
+          {pickedIds.length > 0 && (
+            <button
+              type="button"
+              onClick={onClear}
+              className="text-[10px] font-bold text-foreground-500 underline decoration-dotted hover:text-foreground-800"
+            >
+              Clear {pickedIds.length} picked
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-7 items-center gap-1 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+      <label className="relative mt-2 block">
+        <AppIcon className="ri-search-line pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[13px] text-foreground-400"></AppIcon>
+        <input
+          value={query}
+          onChange={event => setQuery(event.target.value)}
+          placeholder="Find a component to tick..."
+          className="h-8 w-full rounded-lg border border-background-200 bg-background-50 pl-8 pr-2 text-[12px] text-foreground-900 outline-none transition-smooth focus:border-primary-300"
+        />
+      </label>
+      <div className="mt-2 max-h-64 space-y-0.5 overflow-y-auto">
+        {filtered.length === 0 ? (
+          <p className="px-1 py-2 text-[11px] text-foreground-400">No component matches this search.</p>
+        ) : filtered.map(group => {
+          const checked = pickedIds.includes(group.id);
+          return (
+            <label
+              key={group.id}
+              className={`flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 transition-smooth ${checked ? 'bg-primary-100/70' : 'hover:bg-background-50'}`}
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => onToggle(group.id)}
+                className="h-3.5 w-3.5 shrink-0 rounded border-background-300 text-primary-600 focus:ring-primary-400"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[11px] font-semibold text-foreground-900">{group.component}</span>
+                <span className="block truncate text-[10px] text-foreground-400">
+                  {[group.groupName, group.moduleLabel, group.week].filter(Boolean).join(' \u00b7 ')}
+                </span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function KsbComponentTable({
+  groups,
+  expandedId,
+  onToggle,
+  onPreview,
+}: {
+  groups: ComponentPlacementGroup[];
+  expandedId: string;
+  onToggle: (id: string) => void;
+  onPreview: (group: ComponentPlacementGroup) => void;
+}) {
+  return (
+    <div className="max-h-[70vh] overflow-auto rounded-2xl border border-background-200 bg-background-50">
+      <div className="min-w-[760px]">
+        <div className="sticky top-0 z-20 flex gap-2 border-b border-background-200 bg-background-100 px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-foreground-400">
+          {COMPONENT_COLUMNS.map(column => (
+            <span key={column.label} title={column.hint} className={`cursor-help decoration-dotted underline-offset-4 hover:underline ${column.width}`}>
+              {column.label}
+            </span>
+          ))}
+        </div>
+        <div className="divide-y divide-background-200">
+          {groups.map(group => {
+            const expanded = group.id === expandedId;
+            return (
+              <div key={group.id} className={expanded ? 'bg-primary-50/40' : ''}>
+                <div className="flex items-start gap-2 px-4 py-2.5">
+                  <button
+                    type="button"
+                    onClick={() => onToggle(expanded ? '' : group.id)}
+                    className="flex min-w-0 flex-1 items-start gap-2 rounded-lg text-left transition-smooth hover:bg-background-100"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <AppIcon className={`${expanded ? 'ri-subtract-line' : 'ri-add-line'} text-[12px] text-foreground-400`}></AppIcon>
+                        <span className="truncate text-[12px] font-bold text-foreground-900">{group.component}</span>
+                        {group.componentType && (
+                          <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-foreground-500">
+                            {group.componentType}
+                          </span>
+                        )}
+                      </span>
+                      {/* The same labelled address the placement cards carry, so
+                          a component reads the same wherever it appears. */}
+                      <span className="mt-0.5 block truncate pl-4 text-[10px] text-foreground-400">
+                        {[
+                          { label: 'Group', value: group.groupName },
+                          { label: 'Module', value: group.moduleLabel },
+                          { label: 'Week', value: group.week },
+                        ].filter(part => part.value).map((part, partIndex) => (
+                          <span key={part.label}>
+                            {partIndex > 0 && <span className="text-foreground-300"> · </span>}
+                            <span className="font-semibold text-foreground-500">{part.label}:</span>{' '}
+                            <span className="text-foreground-600">{part.value}</span>
+                          </span>
+                        ))}
+                      </span>
+                    </span>
+                    <span className="w-[104px] pt-1 text-center">
+                      <KsbWeightTotal weight={group.totalWeight} />
+                    </span>
+                    <span className="w-[120px] pt-1 text-center">
+                      <span className="block text-[13px] font-bold tabular-nums text-foreground-900">
+                        {group.ksbs.length}×
+                      </span>
+                      <span className="mt-0.5 block text-[9px] font-bold uppercase tracking-wider text-primary-600">
+                        {expanded ? 'Hide which' : 'See which'}
+                      </span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onPreview(group)}
+                    title={`Preview ${group.component} \u2014 its content, what it asks of the learner, and every KSB it carries`}
+                    className="flex w-[104px] shrink-0 flex-col items-center justify-center gap-0.5 rounded-lg border border-background-200 bg-background-50 py-1.5 text-[9px] font-bold uppercase tracking-wider text-foreground-500 transition-smooth hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700"
+                  >
+                    <AppIcon className="ri-eye-line text-[13px]"></AppIcon>
+                    Preview
+                  </button>
+                </div>
+
+                {expanded && (
+                  <div className="border-t border-background-200 bg-background-100/60 px-4 py-3">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">
+                      Every KSB placed on {group.component}
+                    </p>
+                    <div className="mt-1.5 grid gap-1 lg:grid-cols-2">
+                      {group.ksbs.map(item => (
+                        <div
+                          key={`${group.id}-${item.ksb}`}
+                          className="flex items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-50 px-2.5 py-1.5"
+                        >
+                          <span className="flex min-w-0 items-center gap-2">
+                            <KsbBadge code={item.ksb} />
+                            <span className="min-w-0 truncate text-[11px] text-foreground-600">{item.title}</span>
+                          </span>
+                          <span className="shrink-0 rounded bg-primary-100 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-primary-800">
+                            {item.weight > 0 ? `${formatHours(item.weight)}%` : 'no weight'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function KsbCoverageTable({
+  rows,
+  moduleNames,
+  scopeByLabel,
+  expandedRowId,
+  onToggleRow,
+  onPreviewPlacement,
+}: {
+  rows: KsbHeatmapRow[];
+  moduleNames: string[];
+  scopeByLabel: Map<string, ModuleDeliveryScope>;
+  expandedRowId: string;
+  onToggleRow: (rowId: string) => void;
+  onPreviewPlacement: (placement: KsbPlacement, ksb: string) => void;
+}) {
+  return (
+    <div className="max-h-[70vh] overflow-auto rounded-2xl border border-background-200 bg-background-50">
+      <div className="min-w-[860px]">
+        <div className={`${COVERAGE_GRID} sticky top-0 z-20 gap-3 border-b border-background-200 bg-background-100 px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-foreground-400`}>
+          {COVERAGE_COLUMNS.map(column => (
+            <span
+              key={column.label}
+              title={column.hint}
+              className={`cursor-help decoration-dotted underline-offset-4 hover:underline ${column.align === 'center' ? 'text-center' : ''}`}
+            >
+              {column.label}
+            </span>
+          ))}
+        </div>
+        <div className="divide-y divide-background-200">
+          {rows.map(row => {
+            const rowId = ksbRowId(row);
+            const expanded = rowId === expandedRowId;
+            const kind = ksbKind(row.ksb);
+            const mapped = ksbRowIsMapped(row);
+            const placements = ksbPlacements(row, moduleNames, scopeByLabel);
+            return (
+              <div key={rowId} className={expanded ? 'bg-primary-50/40' : ''}>
+                <button
+                  type="button"
+                  onClick={() => onToggleRow(expanded ? '' : rowId)}
+                  className={`${COVERAGE_GRID} w-full items-start gap-3 px-4 py-2.5 text-left transition-smooth hover:bg-background-100 ${mapped ? '' : 'bg-amber-50/70'}`}
+                >
+                  <span className="min-w-0">
+                    <span className="flex flex-wrap items-center gap-1.5">
+                      <AppIcon className={`${expanded ? 'ri-subtract-line' : 'ri-add-line'} text-[12px] text-foreground-400`}></AppIcon>
+                      <KsbBadge code={row.ksb} />
+                      <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold ${ksbTone(kind)}`}>{ksbKindLabel(kind)}</span>
+                    </span>
+                    <span className="mt-1 block pl-4 text-[11px] font-medium leading-snug text-foreground-700 line-clamp-2">{row.title}</span>
+                  </span>
+                  <span className="pt-1 text-center">
+                    <KsbWeightTotal weight={ksbRowWeight(row)} mapped={mapped} />
+                  </span>
+                  {/* The count is the way in to the placements now that they
+                      have no column of their own, so it says so rather than
+                      leaving the row's disclosure arrow to imply it. */}
+                  <span className="pt-1 text-center">
+                    <span className={`block text-[13px] font-bold tabular-nums ${placements.length ? 'text-foreground-900' : 'text-foreground-300'}`}>
+                      {placements.length ? `${placements.length}×` : '—'}
+                    </span>
+                    {placements.length > 0 && (
+                      <span className="mt-0.5 block text-[9px] font-bold uppercase tracking-wider text-primary-600">
+                        {expanded ? 'Hide where' : 'See where'}
+                      </span>
+                    )}
+                  </span>
+                  <span
+                    className={`self-start rounded-md px-2 py-1 text-center text-[10px] font-bold ${mapped ? 'bg-emerald-600 text-white' : 'bg-amber-100 text-amber-800'}`}
+                    title={mapped
+                      ? 'At least one component in view carries this KSB.'
+                      : 'No component in view carries this KSB, so nobody here can evidence it.'}
+                  >
+                    {mapped ? 'Taught' : 'Missing'}
+                  </span>
+                </button>
+
+                {expanded && (
+                  <div className="border-t border-background-200 bg-background-100/60 px-4 py-3">
+                    {placements.length === 0 ? (
+                      <p className="text-[11px] text-foreground-500">
+                        {formatKsbCode(row.ksb)} is required by the KSB source but is not mapped to any component in
+                        the modules currently in view. Map it in the Module Builder, or widen the cohort/group filter
+                        to see where else it is taught.
+                      </p>
+                    ) : (
+                      <>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">
+                          Every placement of {formatKsbCode(row.ksb)} in view
+                        </p>
+                        <div className="mt-1.5 grid gap-1 lg:grid-cols-2">
+                          {placements.map((placement, index) => (
+                            <button
+                              key={`${rowId}-placement-${index}`}
+                              type="button"
+                              onClick={() => onPreviewPlacement(placement, row.ksb)}
+                              title={`Preview ${clean(placement.component, 'this placement')} — what it asks of the learner, and every KSB it carries`}
+                              className="group flex w-full items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-50 px-2.5 py-1.5 text-left transition-smooth hover:border-primary-300 hover:bg-primary-50/50"
+                            >
+                              <span className="min-w-0">
+                                <span className="block truncate text-[11px] font-semibold text-foreground-900">
+                                  {clean(placement.component, clean(placement.week, 'Module level'))}
+                                </span>
+                                {/* Group first, and named: it is the fact that
+                                    decides who ever sees this placement, and as
+                                    a bare "G2 T" at the end of the line it read
+                                    as another piece of the module path. */}
+                                <span className="block truncate text-[10px] text-foreground-400">
+                                  {[
+                                    { label: 'Group', value: clean(placement.groupName) },
+                                    { label: 'Module', value: clean(placement.moduleLabel) },
+                                    { label: 'Week', value: clean(placement.week) },
+                                  ].filter(part => part.value).map((part, partIndex) => (
+                                    <span key={part.label}>
+                                      {partIndex > 0 && <span className="text-foreground-300"> · </span>}
+                                      <span className="font-semibold text-foreground-500">{part.label}:</span>{' '}
+                                      <span className="text-foreground-600">{part.value}</span>
+                                    </span>
+                                  ))}
+                                  {clean(placement.componentType) && (
+                                    <span className="text-foreground-400"> · {clean(placement.componentType)}</span>
+                                  )}
+                                </span>
+                              </span>
+                              <span className="flex shrink-0 items-center gap-1.5">
+                                <span className="rounded bg-primary-100 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-primary-800">
+                                  {placement.weight > 0 ? `${formatHours(placement.weight)}%` : 'no weight'}
+                                </span>
+                                {/* The card is the only clickable thing in this
+                                    panel, so it says what clicking does rather
+                                    than relying on the hover tint. */}
+                                <span className="flex items-center gap-0.5 text-[9px] font-bold uppercase tracking-wider text-foreground-300 transition-smooth group-hover:text-primary-600">
+                                  <AppIcon className="ri-eye-line text-[11px]"></AppIcon>
+                                  Preview
+                                </span>
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Cohort and group, as one bar, above whatever it narrows.
+ *
+ * Both the coverage matrix and the achievement panel are read one class at a
+ * time, and both used to bury that choice: coverage had no filter at all, and
+ * achievement hid a three-select row under a panel titled "Scope" with a
+ * paragraph of explanation above it. The chips say what is being shown in the
+ * words the reader would use — "Whole programme", or a cohort's name, or a
+ * group's — and the level currently in force is the one that is lit.
+ */
+function DeliveryScopeFilter({
+  cohorts,
+  cohortId,
+  groupId,
+  onChange,
+  summary,
+}: {
+  cohorts: Cohort[];
+  cohortId: string;
+  groupId: string;
+  onChange: (next: { cohortId: string; groupId: string }) => void;
+  summary?: string;
+}) {
+  const cohort = cohorts.find(item => item.id === cohortId);
+  const group = cohort?.groups.find(item => item.id === groupId);
+  const selectClass = 'h-9 min-w-[170px] rounded-lg border border-background-200 bg-background-50 px-2 text-[12px] font-semibold text-foreground-800 outline-none transition-smooth focus:border-primary-300 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-400';
+
+  return (
+    <div className="rounded-2xl border border-background-200 bg-background-100/70 p-3">
+      <div className="flex flex-wrap items-end gap-3">
+        <button
+          type="button"
+          onClick={() => onChange({ cohortId: '', groupId: '' })}
+          className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold transition-smooth ${
+            !cohortId
+              ? 'border-primary-300 bg-primary-50 text-primary-700'
+              : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'
+          }`}
+        >
+          <AppIcon className="ri-book-2-line"></AppIcon>
+          Whole programme
+        </button>
+
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Cohort</span>
+          <select
+            className={selectClass}
+            value={cohortId}
+            onChange={event => onChange({ cohortId: event.target.value, groupId: '' })}
+          >
+            <option value="">All cohorts</option>
+            {cohorts.map(item => (
+              <option key={item.id} value={item.id}>{item.name}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Group</span>
+          <select
+            className={selectClass}
+            disabled={!cohort}
+            value={groupId}
+            onChange={event => onChange({ cohortId, groupId: event.target.value })}
+          >
+            <option value="">{cohort ? 'All groups in this cohort' : 'Pick a cohort first'}</option>
+            {(cohort?.groups || []).map(item => (
+              <option key={item.id} value={item.id}>{item.name}</option>
+            ))}
+          </select>
+        </label>
+
+        {/* Said back in words. Two selects reading "Sept 2026 / Group B" is a
+            setting; "Showing Group B" is what the numbers below are about. */}
+        <span className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700">
+          <AppIcon className="ri-filter-3-line"></AppIcon>
+          Showing {group ? group.name : cohort ? cohort.name : 'every cohort and group'}
+          {summary ? <span className="font-semibold text-primary-600">· {summary}</span> : null}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function KsbHeatmapLegend() {
   return (
     <div className="mb-3 flex flex-col gap-3 rounded-2xl border border-background-200 bg-background-50 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
@@ -3856,6 +5366,8 @@ function KsbHeatmapLegend() {
 
 function KsbHeatmapMatrix({ rows, moduleNames }: { rows: KsbHeatmapRow[]; moduleNames: string[] }) {
   const gridTemplateColumns = `minmax(250px, 1.3fr) repeat(${Math.max(moduleNames.length, 1)}, minmax(220px, 0.9fr)) minmax(180px, 0.7fr) minmax(340px, 1.4fr)`;
+  // The banner above the table names the source when there is only one of them.
+  const showSourceLabels = ksbSourceLabelsOf(rows).length > 1;
 
   return (
     // The matrix scrolls in its own box on both axes rather than pushing the
@@ -3876,7 +5388,7 @@ function KsbHeatmapMatrix({ rows, moduleNames }: { rows: KsbHeatmapRow[]; module
           {moduleNames.map(moduleName => (
             <span key={moduleName} className="text-center text-[10px] font-bold uppercase text-foreground-400">{moduleName}</span>
           ))}
-          <span className="text-center text-[10px] font-bold uppercase text-foreground-400">Weight</span>
+          <span className="text-center text-[10px] font-bold uppercase text-foreground-400">Total weight</span>
           <span className="text-[10px] font-bold uppercase text-foreground-400">Evidence trail</span>
         </div>
         <div className="divide-y divide-background-200">
@@ -3893,7 +5405,9 @@ function KsbHeatmapMatrix({ rows, moduleNames }: { rows: KsbHeatmapRow[]; module
                   <div className="flex flex-wrap items-center gap-2">
                     <KsbBadge code={row.ksb} />
                     <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold ${ksbTone(kind)}`}>{ksbKindLabel(kind)}</span>
-                    {ksbSourceLabel(row) && <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{ksbSourceLabel(row)}</span>}
+                    {showSourceLabels && ksbSourceLabel(row) && (
+                      <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{ksbSourceLabel(row)}</span>
+                    )}
                   </div>
                   <p className="mt-1 line-clamp-2 text-[11px] font-medium leading-relaxed text-foreground-700">{row.title}</p>
                 </div>
@@ -3997,433 +5511,9 @@ function KsbEvidenceList({ evidence }: { evidence: Record<string, KsbEvidenceIte
   );
 }
 
-// Coverage is reported by weight, so the only filter left is whether a KSB is
-// placed in the curriculum at all.
-type KsbMappedFilter = 'all' | 'mapped' | 'unmapped';
-type KsbTraceEvidence = KsbEvidenceItem & { moduleLabel: string; groups: string[] };
-
-// Learner-side achievement for one KSB, aggregated across the programme's
-// assigned learners. This is a different question from the curriculum mapping
-// above: mapping says "the design places this KSB in these components", whereas
-// this says "this many learners have actually evidenced it".
-type KsbLearnerAchievement = {
-  learnersAchieved: number;
-  occurrences: number;
-  achievedWeight: number;
-};
-
-// Build a per-KSB learner rollup from the learner-ksb-impact payload. Achieved
-// weight comes from `consumptionSources.progress` only — a reflection's KSB
-// declaration is supplementary evidence about the same activity, so counting it
-// here would double-count one piece of work (see ksbAchievementPolicy).
-function buildKsbLearnerAchievement(impact: CurriculumProgrammeLearnerKsbImpactResponse | null) {
-  const byCode = new Map<string, KsbLearnerAchievement>();
-  if (!impact) return byCode;
-  const learnersByCode = new Map<string, Set<string>>();
-
-  (impact.consumptionSources?.progress || []).forEach(source => {
-    const meta = source as Record<string, unknown>;
-    const code = normalise(meta.code);
-    if (!code) return;
-    const learnerKey = String(meta.learnerId ?? '').trim();
-    const weight = Number(meta.weight || 0);
-    const row = byCode.get(code) || { learnersAchieved: 0, occurrences: 0, achievedWeight: 0 };
-    row.occurrences += 1;
-    row.achievedWeight += Number.isFinite(weight) ? weight : 0;
-    byCode.set(code, row);
-    if (learnerKey) {
-      const seen = learnersByCode.get(code) || new Set<string>();
-      seen.add(learnerKey);
-      learnersByCode.set(code, seen);
-    }
-  });
-
-  learnersByCode.forEach((learners, code) => {
-    const row = byCode.get(code);
-    if (row) row.learnersAchieved = learners.size;
-  });
-  return byCode;
-}
-
-function ksbLearnerAchievementFor(row: KsbHeatmapRow, achievement: Map<string, KsbLearnerAchievement>) {
-  return achievement.get(normalise(row.ksb)) || null;
-}
-
 
 function ksbRowId(row: Pick<KsbHeatmapRow, 'id' | 'ksb' | 'sourceType' | 'sourceId'>) {
   return clean(row.id) || [row.sourceType, row.sourceId, row.ksb].map(normalise).join('|') || row.ksb;
-}
-
-function KsbTraceModal({ programme, programmeId, onClose }: { programme: Programme; programmeId: string; onClose: () => void }) {
-  const [search, setSearch] = useState('');
-  // Learner achievement is a separate read from the curriculum mapping: the
-  // coverage payload has no learner join at all.
-  const [learnerImpact, setLearnerImpact] = useState<CurriculumProgrammeLearnerKsbImpactResponse | null>(null);
-  const [learnerImpactLoading, setLearnerImpactLoading] = useState(false);
-  const [learnerImpactError, setLearnerImpactError] = useState<string | null>(null);
-  const [kindFilter, setKindFilter] = useState<'all' | KsbKind>('all');
-  const [statusFilter, setStatusFilter] = useState<KsbMappedFilter>('all');
-  const [moduleFilter, setModuleFilter] = useState('all');
-  const [weekFilter, setWeekFilter] = useState('all');
-  const [componentFilter, setComponentFilter] = useState('all');
-  const [groupFilter, setGroupFilter] = useState('all');
-  const [filtersOpen, setFiltersOpen] = useState(false);
-
-  useEffect(() => {
-    const identifier = clean(programmeId);
-    if (!identifier) return;
-    let cancelled = false;
-    setLearnerImpactLoading(true);
-    setLearnerImpactError(null);
-    fetchCurriculumProgrammeLearnerKsbImpact(identifier, { learnerStatus: 'all' })
-      .then(response => { if (!cancelled) setLearnerImpact(response); })
-      .catch(fetchError => {
-        if (!cancelled) setLearnerImpactError(fetchError instanceof Error ? fetchError.message : 'Unable to load learner KSB achievement.');
-      })
-      .finally(() => { if (!cancelled) setLearnerImpactLoading(false); });
-    return () => { cancelled = true; };
-  }, [programmeId]);
-
-  const learnerAchievement = useMemo(() => buildKsbLearnerAchievement(learnerImpact), [learnerImpact]);
-  const assignedLearnerCount = learnerImpact?.assignedLearnerCount ?? 0;
-  const achievedKsbCount = useMemo(
-    () => programme.ksbHeatmap.filter(row => (ksbLearnerAchievementFor(row, learnerAchievement)?.learnersAchieved || 0) > 0).length,
-    [programme.ksbHeatmap, learnerAchievement],
-  );
-
-  const evidenceByCode = useMemo(() => {
-    const map = new Map<string, KsbTraceEvidence[]>();
-    programme.ksbHeatmap.forEach(row => map.set(ksbRowId(row), traceEvidenceForRow(row, programme)));
-    return map;
-  }, [programme]);
-  const allEvidence = useMemo(() => [...evidenceByCode.values()].flat(), [evidenceByCode]);
-  const moduleOptions = useMemo(() => uniqueCleanValues(programme.modules.map(module => module.name)), [programme.modules]);
-  const weekOptions = useMemo(() => uniqueCleanValues(allEvidence.map(item => item.week)), [allEvidence]);
-  const componentOptions = useMemo(() => uniqueCleanValues(allEvidence.map(item => item.component)), [allEvidence]);
-  const groupOptions = useMemo(() => uniqueCleanValues(allEvidence.flatMap(item => item.groups)), [allEvidence]);
-
-  const filteredRows = useMemo(() => {
-    const query = normalise(search);
-    return programme.ksbHeatmap.filter(row => {
-      const evidence = evidenceByCode.get(ksbRowId(row)) || [];
-      const isMapped = ksbRowIsMapped(row);
-      const matchesSearch = !query || [
-        row.ksb,
-        formatKsbCode(row.ksb),
-        row.title,
-        ksbSourceLabel(row),
-        ...evidence.flatMap(item => [item.module, item.week, item.component, item.componentType, ...item.groups]),
-      ].some(value => normalise(value).includes(query));
-      const matchesKind = kindFilter === 'all' || ksbKind(row.ksb) === kindFilter;
-      const matchesStatus = statusFilter === 'all' || (statusFilter === 'mapped' ? isMapped : !isMapped);
-      const matchesModule = moduleFilter === 'all' || evidence.some(item => normalise(item.module) === normalise(moduleFilter)) || Number(row.coverage[moduleFilter] || 0) > 0;
-      const matchesWeek = weekFilter === 'all' || evidence.some(item => normalise(item.week) === normalise(weekFilter));
-      const matchesComponent = componentFilter === 'all' || evidence.some(item => normalise(item.component) === normalise(componentFilter));
-      const matchesGroup = groupFilter === 'all' || evidence.some(item => item.groups.some(group => normalise(group) === normalise(groupFilter)));
-      return matchesSearch && matchesKind && matchesStatus && matchesModule && matchesWeek && matchesComponent && matchesGroup;
-    });
-  }, [programme.ksbHeatmap, evidenceByCode, search, kindFilter, statusFilter, moduleFilter, weekFilter, componentFilter, groupFilter]);
-
-  const summary = ksbTraceSummary(programme.ksbHeatmap);
-  const mappedCount = Math.max(0, summary.total - summary.missing);
-  const mappedPct = summary.total ? Math.round((mappedCount / summary.total) * 100) : 0;
-  const activeFilterCount = [
-    kindFilter !== 'all',
-    statusFilter !== 'all',
-    moduleFilter !== 'all',
-    weekFilter !== 'all',
-    componentFilter !== 'all',
-    groupFilter !== 'all',
-  ].filter(Boolean).length;
-  const resetFilters = () => {
-    setKindFilter('all');
-    setStatusFilter('all');
-    setModuleFilter('all');
-    setWeekFilter('all');
-    setComponentFilter('all');
-    setGroupFilter('all');
-    setSearch('');
-  };
-
-  return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="flex max-h-[90vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
-        <div className="flex items-start justify-between gap-3 border-b border-background-200 bg-background-50 px-5 py-4">
-          <div className="min-w-0">
-            <h3 className="truncate text-base font-heading font-bold text-foreground-950">KSB coverage</h3>
-            <p className="mt-0.5 truncate text-[12px] font-semibold text-foreground-500">
-              {programme.name}
-              {programme.standard ? ` · ${programme.standard}` : ''}
-            </p>
-          </div>
-          <button onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-600 transition-smooth hover:bg-background-200">
-            <AppIcon className="ri-close-line"></AppIcon>
-          </button>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto p-5">
-          {/* One headline answer instead of nine competing tiles: how much of the
-              profile the curriculum actually places. The breakdown behind it stays
-              available as chips that double as status filters. */}
-          <section className="mb-4 rounded-2xl border border-background-200 bg-background-100/50 p-4">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex items-center gap-4">
-                <CoverageDial percent={mappedPct} />
-                <div>
-                  <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-500">Mapped in the curriculum</p>
-                  <p className="mt-0.5 text-2xl font-heading font-black leading-none text-foreground-950">
-                    {mappedCount}<span className="text-base font-bold text-foreground-400">/{summary.total}</span>
-                  </p>
-                  {/* Scoped to the KSB profile resolved for this programme, which
-                      may be narrower than the full standard. The wording says
-                      "in scope" rather than claiming whole-profile coverage. */}
-                  <p className="mt-1 text-[11px] font-semibold text-foreground-500">
-                    {summary.missing
-                      ? `${summary.missing} KSB${summary.missing === 1 ? '' : 's'} still have nowhere to be taught`
-                      : `Every KSB in scope is placed (${summary.total} in this profile)`}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap gap-1.5">
-                <CoverageChip label="Mapped" value={summary.mapped} tone="emerald" active={statusFilter === 'mapped'} onClick={() => setStatusFilter(statusFilter === 'mapped' ? 'all' : 'mapped')} />
-                <CoverageChip label="Not mapped" value={summary.missing} tone="amber" active={statusFilter === 'unmapped'} onClick={() => setStatusFilter(statusFilter === 'unmapped' ? 'all' : 'unmapped')} />
-              </div>
-            </div>
-
-            {/* Learner achievement is a different question, so it stays one quiet
-                line here rather than a second wall of tiles competing with the
-                design figures above. */}
-            <div className="mt-4 border-t border-background-200 pt-3">
-              {learnerImpactLoading ? (
-                <p className="text-[11px] font-semibold text-foreground-500">
-                  <AppIcon className="ri-loader-4-line mr-1.5 animate-spin"></AppIcon>
-                  Loading learner achievement...
-                </p>
-              ) : learnerImpactError ? (
-                <p className="text-[11px] font-semibold text-red-700">{learnerImpactError}</p>
-              ) : assignedLearnerCount === 0 ? (
-                <p className="flex items-center gap-1.5 text-[11px] font-semibold text-foreground-500">
-                  <AppIcon className="ri-graduation-cap-line text-foreground-400"></AppIcon>
-                  No learners assigned yet — everything below is curriculum design only.
-                </p>
-              ) : (
-                <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-semibold text-foreground-600">
-                  <AppIcon className="ri-graduation-cap-line text-emerald-600"></AppIcon>
-                  <span><span className="font-black text-foreground-900">{assignedLearnerCount}</span> learner{assignedLearnerCount === 1 ? '' : 's'} assigned</span>
-                  <span className="text-foreground-300">·</span>
-                  <span><span className="font-black text-emerald-700">{achievedKsbCount}</span> of {summary.total} KSBs evidenced</span>
-                  <span className="text-foreground-300">·</span>
-                  <span><span className="font-black text-foreground-900">{learnerImpact?.learnerActivityCount ?? 0}</span> recorded activities</span>
-                </p>
-              )}
-            </div>
-          </section>
-
-          {/* Search stays visible; the five structural dropdowns are collapsed
-              behind a toggle because most visits never need them. */}
-          <div className="mb-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative min-w-0 flex-1">
-                <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
-                <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search KSB, module, week, component, group..." className="h-10 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[12px] text-foreground-900 outline-none focus:border-primary-300" />
-              </div>
-              <div className="flex items-center gap-1 rounded-lg border border-background-200 bg-background-50 p-0.5">
-                {(['all', 'knowledge', 'skill', 'behaviour'] as const).map(kind => (
-                  <button
-                    key={kind}
-                    type="button"
-                    onClick={() => setKindFilter(kind)}
-                    className={`rounded-md px-2.5 py-1.5 text-[11px] font-bold transition-smooth ${kindFilter === kind ? 'bg-primary-100 text-primary-700' : 'text-foreground-500 hover:bg-background-100'}`}
-                  >
-                    {kind === 'all' ? 'All' : ksbKindLabel(kind)}
-                  </button>
-                ))}
-              </div>
-              <button
-                type="button"
-                onClick={() => setFiltersOpen(open => !open)}
-                className={`flex h-10 items-center gap-1.5 rounded-lg border px-3 text-[11px] font-bold transition-smooth ${activeFilterCount ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
-              >
-                <AppIcon className="ri-equalizer-line"></AppIcon>
-                Filters
-                {activeFilterCount > 0 && <span className="rounded-full bg-primary-600 px-1.5 text-[9px] font-black text-white">{activeFilterCount}</span>}
-              </button>
-              {(activeFilterCount > 0 || search) && (
-                <button type="button" onClick={resetFilters} className="h-10 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-500 transition-smooth hover:bg-background-100">
-                  Reset
-                </button>
-              )}
-            </div>
-
-            {filtersOpen && (
-              <div className="mt-2 grid grid-cols-1 gap-2 rounded-xl border border-background-200 bg-background-100/60 p-3 sm:grid-cols-2 lg:grid-cols-5">
-                <KsbTraceSelect value={statusFilter} onChange={value => setStatusFilter(value as KsbMappedFilter)} options={['all', 'mapped', 'unmapped']} labels={{ all: 'All KSBs', mapped: 'Mapped', unmapped: 'Not mapped' }} />
-                <KsbTraceSelect value={moduleFilter} onChange={setModuleFilter} options={['all', ...moduleOptions]} labels={{ all: 'All modules' }} />
-                <KsbTraceSelect value={weekFilter} onChange={setWeekFilter} options={['all', ...weekOptions]} labels={{ all: 'All weeks' }} />
-                <KsbTraceSelect value={componentFilter} onChange={setComponentFilter} options={['all', ...componentOptions]} labels={{ all: 'All components' }} />
-                <KsbTraceSelect value={groupFilter} onChange={setGroupFilter} options={['all', ...groupOptions]} labels={{ all: 'All groups' }} />
-              </div>
-            )}
-
-            <p className="mt-2 text-[11px] font-semibold text-foreground-400">
-              Showing {filteredRows.length} of {programme.ksbHeatmap.length} KSBs
-            </p>
-          </div>
-
-          <KsbCoverageSummaryView rows={filteredRows} evidenceByCode={evidenceByCode} learnerAchievement={learnerAchievement} hasLearners={assignedLearnerCount > 0} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// A compact ring: the coverage number is the one thing worth seeing instantly.
-function CoverageDial({ percent }: { percent: number }) {
-  const safe = Math.max(0, Math.min(100, percent));
-  const tone = safe >= 80 ? 'var(--color-emerald-500, #10b981)' : safe >= 40 ? 'var(--color-primary-500, #6941c6)' : 'var(--color-amber-500, #f59e0b)';
-  return (
-    <div
-      className="relative flex h-16 w-16 shrink-0 items-center justify-center rounded-full"
-      style={{ background: `conic-gradient(${tone} ${safe * 3.6}deg, var(--color-background-200, #e5e5e5) 0deg)` }}
-      role="img"
-      aria-label={`${safe}% of KSBs mapped`}
-    >
-      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-background-50">
-        <span className="text-[13px] font-heading font-black text-foreground-950">{safe}%</span>
-      </div>
-    </div>
-  );
-}
-
-// The breakdown doubles as a filter, so reading a number and acting on it are
-// the same gesture rather than two separate controls.
-function CoverageChip({ label, value, tone, active, onClick }: { label: string; value: number; tone: 'emerald' | 'primary' | 'amber' | 'slate'; active: boolean; onClick: () => void }) {
-  const tones = {
-    emerald: 'border-emerald-200 bg-emerald-50 text-emerald-800',
-    primary: 'border-primary-200 bg-primary-50 text-primary-800',
-    amber: 'border-amber-200 bg-amber-50 text-amber-800',
-    slate: 'border-background-300 bg-background-100 text-foreground-700',
-  };
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={`rounded-xl border px-3 py-2 text-left transition-smooth hover:brightness-95 ${tones[tone]} ${active ? 'ring-2 ring-primary-400 ring-offset-1' : ''}`}
-    >
-      <span className="block text-lg font-heading font-black leading-none">{value}</span>
-      <span className="mt-1 block text-[9px] font-bold uppercase tracking-wide opacity-75">{label}</span>
-    </button>
-  );
-}
-
-function KsbTraceSelect({ value, onChange, options, labels = {} }: { value: string; onChange: (value: string) => void; options: string[]; labels?: Record<string, string> }) {
-  return (
-    <select value={value} onChange={event => onChange(event.target.value)} className="h-10 min-w-0 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-semibold text-foreground-700 outline-none focus:border-primary-300">
-      {options.map(option => <option key={option} value={option}>{labels[option] || option}</option>)}
-    </select>
-  );
-}
-
-function KsbCoverageSummaryView({ rows, evidenceByCode, learnerAchievement, hasLearners }: { rows: KsbHeatmapRow[]; evidenceByCode: Map<string, KsbTraceEvidence[]>; learnerAchievement: Map<string, KsbLearnerAchievement>; hasLearners: boolean }) {
-  if (!rows.length) return <EmptyPanel title="No KSB coverage" message="No KSBs match the current filters." />;
-  return (
-    <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-      {(['knowledge', 'skill', 'behaviour'] as KsbKind[]).map(kind => {
-        const kindRows = rows.filter(row => ksbKind(row.ksb) === kind);
-        return (
-          <section key={kind} className="rounded-2xl border border-background-200 bg-background-50 p-4">
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <h4 className="text-[12px] font-heading font-bold text-foreground-900">{ksbKindLabel(kind)} Points</h4>
-              <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500" title="KSBs mapped somewhere in the curriculum design">{kindRows.filter(ksbRowIsMapped).length}/{kindRows.length} mapped</span>
-            </div>
-            <div className="space-y-2">
-              {kindRows.map(row => {
-                const rowId = ksbRowId(row);
-                const evidence = evidenceByCode.get(rowId) || [];
-                const rowWeight = ksbRowWeight(row);
-                const rowMapped = ksbRowIsMapped(row);
-                const description = ksbDescriptionText(row);
-                const learnerRow = ksbLearnerAchievementFor(row, learnerAchievement);
-                return (
-                  <article key={rowId} className={`w-full rounded-xl border p-3 text-left ${rowMapped ? 'border-emerald-100 bg-emerald-50/35' : 'border-amber-100 bg-amber-50/35'}`}>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <KsbBadge code={row.ksb} />
-                          <KsbWeightTotal weight={rowWeight} mapped={rowMapped} />
-                          {ksbSourceLabel(row) && <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{ksbSourceLabel(row)}</span>}
-                        </div>
-                        <p className="mt-2 line-clamp-4 text-[11px] leading-relaxed text-foreground-700">{description}</p>
-                      </div>
-                      {/* Two separate facts, never merged into one number: how
-                          many places the design maps this KSB, and how many
-                          learners have evidenced it. */}
-                      <div className="flex shrink-0 flex-col gap-1">
-                        <span className="rounded-lg border border-background-200 bg-background-50 px-2 py-1 text-center text-[10px] font-bold text-foreground-700" title="Times this KSB is mapped across modules, weeks and components">
-                          <span className="block text-[9px] font-black uppercase leading-tight text-foreground-400">Mapped</span>
-                          {evidence.length}&times;
-                        </span>
-                        <span
-                          className={`rounded-lg border px-2 py-1 text-center text-[10px] font-bold ${learnerRow && learnerRow.learnersAchieved > 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-background-200 bg-background-100 text-foreground-400'}`}
-                          title={hasLearners ? 'Learners who have evidenced this KSB through completed activity' : 'No learners are assigned to this programme yet'}
-                        >
-                          <span className="block text-[9px] font-black uppercase leading-tight opacity-70">Learners</span>
-                          {hasLearners ? (learnerRow?.learnersAchieved || 0) : '\u2014'}
-                        </span>
-                      </div>
-                    </div>
-                    <KsbTraceMiniMeta evidence={evidence} learnerRow={learnerRow} hasLearners={hasLearners} />
-                  </article>
-                );
-              })}
-              {!kindRows.length && <p className="rounded-lg border border-dashed border-background-200 px-3 py-4 text-center text-[11px] font-semibold text-foreground-300">No {ksbKindLabel(kind).toLowerCase()} KSBs.</p>}
-            </div>
-          </section>
-        );
-      })}
-    </div>
-  );
-}
-
-function ksbDescriptionText(row: KsbHeatmapRow) {
-  const code = normalise(row.ksb);
-  const title = clean(row.title);
-  const description = clean(row.description);
-  if (description && normalise(description) !== code) return description;
-  if (title && normalise(title) !== code) return title;
-  return 'No KSB description supplied.';
-}
-
-function KsbTraceMiniMeta({ evidence, learnerRow, hasLearners }: { evidence: KsbTraceEvidence[]; learnerRow: KsbLearnerAchievement | null; hasLearners: boolean }) {
-  // Learner achievement is reported on its own line so it is never read as part
-  // of the curriculum placement list above it.
-  const learnerLine = !hasLearners
-    ? 'No learners assigned yet'
-    : learnerRow && learnerRow.learnersAchieved > 0
-      ? `${learnerRow.learnersAchieved} ${learnerRow.learnersAchieved === 1 ? 'learner has' : 'learners have'} evidenced this (${learnerRow.occurrences} ${learnerRow.occurrences === 1 ? 'activity' : 'activities'})`
-      : 'Not yet evidenced by any learner';
-
-  return (
-    <div className="mt-3 space-y-2">
-      {evidence.length === 0 ? (
-        <p className="text-[10px] font-semibold text-foreground-400">Not mapped to any module, week or component in the curriculum design.</p>
-      ) : (
-        <div className="space-y-1 text-[10px] font-semibold text-foreground-500">
-          <p className="text-[9px] font-black uppercase tracking-wide text-foreground-400">Mapped in design</p>
-          <p>Modules: {uniqueCleanValues(evidence.map(item => item.module)).slice(0, 3).join(', ') || 'None'}</p>
-          <p>Weeks: {uniqueCleanValues(evidence.map(item => item.week)).slice(0, 3).join(', ') || 'None'}</p>
-          <p>Components: {uniqueCleanValues(evidence.map(item => item.component)).slice(0, 3).join(', ') || 'None'}</p>
-          <p>Groups: {uniqueCleanValues(evidence.flatMap(item => item.groups)).slice(0, 3).join(', ') || 'None'}</p>
-        </div>
-      )}
-      <p className={`flex items-center gap-1.5 border-t border-background-200/70 pt-2 text-[10px] font-bold ${learnerRow && learnerRow.learnersAchieved > 0 ? 'text-emerald-700' : 'text-foreground-400'}`}>
-        <AppIcon className="ri-graduation-cap-line text-[11px]"></AppIcon>
-        {learnerLine}
-      </p>
-    </div>
-  );
 }
 
 // Reports the weight a KSB carries, with no verdict attached. A KSB with no
@@ -4438,15 +5528,6 @@ function KsbWeightTotal({ weight, mapped = true, size = 'sm' }: { weight: number
     <span className={`rounded-full font-bold bg-background-200/70 text-foreground-700 ${sizeClass}`}>
       {formatHours(weight)}%
     </span>
-  );
-}
-
-function EmptyPanel({ title, message, compact = false }: { title: string; message: string; compact?: boolean }) {
-  return (
-    <div className={`rounded-xl border border-dashed border-background-300 bg-background-100 text-center ${compact ? 'p-3' : 'p-8'}`}>
-      <p className="text-[12px] font-bold text-foreground-700">{title}</p>
-      <p className="mt-1 text-[11px] text-foreground-400">{message}</p>
-    </div>
   );
 }
 
@@ -4469,18 +5550,26 @@ function ksbRowIsMapped(row: KsbHeatmapRow): boolean {
   return ksbRowWeight(row) > 0 || ksbRowOccurrences(row) > 0;
 }
 
-function ksbTraceSummary(rows: KsbHeatmapRow[]) {
-  const mapped = rows.filter(ksbRowIsMapped).length;
-  const missing = rows.length - mapped;
-  const totalWeight = rows.reduce((total, row) => total + ksbRowWeight(row), 0);
-  return {
-    total: rows.length,
-    mapped,
-    missing,
-    totalWeight,
-    // Share of required KSBs placed somewhere, not a grading of their weights.
-    coveragePercent: rows.length ? Math.round((mapped / rows.length) * 100) : 0,
-  };
+/**
+ * The distinct KSB sources behind a list of rows.
+ *
+ * One source is a fact about the whole list, so it belongs above it once. The
+ * chip repeated it on every row: 71 copies of "Project controls professional
+ * (ST0845 v1.1)" in the narrowest column on the page, directly under a banner
+ * that had just said it, pushing the outcome text — the only part that differs
+ * between rows — down a line each time.
+ *
+ * It earns its place only when the rows actually mix sources, where it is the
+ * one thing separating two identically coded KSBs. So the callers ask this, and
+ * print the chip only when the answer is more than one.
+ */
+function ksbSourceLabelsOf(rows: Array<Pick<KsbHeatmapRow, 'sourceType' | 'sourceId' | 'sourceName' | 'sourceLabel'>>) {
+  const labels = new Map<string, string>();
+  for (const row of rows) {
+    const label = ksbSourceLabel(row);
+    if (label) labels.set(normalise(label), label);
+  }
+  return [...labels.values()];
 }
 
 function ksbSourceLabel(row: Pick<KsbHeatmapRow, 'sourceType' | 'sourceId' | 'sourceName' | 'sourceLabel'>) {
@@ -4492,21 +5581,4 @@ function ksbSourceLabel(row: Pick<KsbHeatmapRow, 'sourceType' | 'sourceId' | 'so
     return looksTechnical ? '' : explicitLabel;
   }
   return '';
-}
-
-function traceEvidenceForRow(row: KsbHeatmapRow, programme: Programme): KsbTraceEvidence[] {
-  const modulesByName = new Map(programme.modules.flatMap(module => [
-    [normalise(module.name), module],
-    [normalise(module.id), module],
-  ]));
-  return Object.entries(row.evidence || {}).flatMap(([moduleLabel, entries]) => entries.map(entry => {
-    const module = modulesByName.get(normalise(entry.module)) || modulesByName.get(normalise(moduleLabel));
-    const fallbackGroups = module ? [module.group, module.groupId] : [];
-    return {
-      ...entry,
-      moduleLabel,
-      module: clean(entry.module || module?.name || moduleLabel, moduleLabel),
-      groups: displayGroupValues([...(entry.groups || []), ...fallbackGroups]),
-    };
-  }));
 }

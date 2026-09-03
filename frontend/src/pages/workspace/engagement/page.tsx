@@ -2,136 +2,101 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
-import { ProgrammeFilter } from '@/components/feature/ProgrammeFilter';
 import { useToast } from '@/hooks/useToast';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
+import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 import { LearnerProfilePanel } from '@/pages/engagement/LearnerProfilePanel';
 import { roleNavMap } from '@/mocks/navigation';
 import {
-  ENGAGEMENT_LEARNERS as ROSTER,
-  countByProgramme, filterByProgramme, type ProgrammeCode, type ProgrammeFilterValue,
-} from '@/mocks/engagement-data';
-import { fetchVoucherClaims, updateVoucherClaim } from '@/api/engagement';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend, ScatterChart, Scatter, ZAxis, ReferenceLine } from 'recharts';
+  fetchVoucherClaims, updateVoucherClaim, fetchLeaderboard, fetchOverviewStats, fetchLearnerAnalytics,
+  type LeaderboardEntry, type EngagementOverviewStats, type LearnerAnalyticsRow,
+} from '@/api/engagement';
+import { type VoucherClaim } from '@/mocks/engagement-data';
 import { TableBodySkeleton } from '@/components/feature/Skeletons';
+import { EmptyState } from '@/components/feature/EmptyState';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend } from 'recharts';
 
 const engagementNav = roleNavMap.engagement;
 
-type TabKey = 'overview' | 'attendance' | 'engagement';
-
-interface EngagementLearner {
+// A leaderboard row plus its own monthly delta, joined client-side from the
+// two real /leaderboard/ calls (all-time + monthly) below.
+interface RankedLearner {
   id: string;
   name: string;
-  avatarImg?: string;
-  programmeCode: ProgrammeCode;
-  programme: string;
-  cohort: string;
-  engagementScore: number;
-  attendanceRate: number;
-  lastActive: string;
-  riskLevel: string;
-  trend: string;
-  flags: string[];
+  cohort: string | null;
   points: number;
   pointsThisMonth: number;
-  monthlyTrend: 'up' | 'down' | 'stable';
 }
 
-// All dashboard datasets derive from the shared engagement roster + event
-// arrays (single source of truth), so programmes stay consistent across pages.
-const ENGAGEMENT_LEARNERS: EngagementLearner[] = ROSTER.map(l => ({
-  id: l.id, name: l.name, avatarImg: l.avatarImg, programmeCode: l.programmeCode, programme: l.programme, cohort: l.cohort,
-  engagementScore: l.engagementScore, attendanceRate: l.attendanceRate, lastActive: l.lastActive,
-  riskLevel: l.riskLevel, trend: l.trend, flags: l.flags, points: l.overallPoints, pointsThisMonth: l.pointsThisMonth,
-  monthlyTrend: l.monthlyStatus === 'rising' ? 'up' : l.monthlyStatus === 'falling' ? 'down' : 'stable',
-}));
-
-const TOP_LEARNERS = [...ENGAGEMENT_LEARNERS].sort((a, b) => b.points - a.points);
-
-// Learners whose attendance is a concern (below 90% or a worsening trend).
-const ATTENDANCE_RISK = ROSTER
-  .filter(l => l.attendanceRate < 90 || l.attendanceTrend === 'deteriorating' || l.attendanceTrend === 'declining')
-  .map(l => ({ name: l.name, avatarImg: l.avatarImg, programmeCode: l.programmeCode, rate: l.attendanceRate, missed: l.sessionsMissed, trend: l.attendanceTrend, action: l.attendanceAction, lastSession: l.lastAttendance, coach: l.coach }));
-
-function PersonAvatar({ name, avatarImg, className, fallbackClassName }: { name: string; avatarImg?: string; className: string; fallbackClassName: string }) {
-  const initial = name.charAt(0);
+function PersonAvatar({ name, className, fallbackClassName }: { name: string; className: string; fallbackClassName: string }) {
   return (
     <div className={`${className} rounded-full shrink-0 overflow-hidden bg-background-200`}>
-      {avatarImg ? (
-        <img src={avatarImg} alt={name} className="w-full h-full object-cover" />
-      ) : (
-        <div className={`w-full h-full flex items-center justify-center font-bold ${fallbackClassName}`}>{initial}</div>
-      )}
+      <div className={`w-full h-full flex items-center justify-center font-bold ${fallbackClassName}`}>{name.charAt(0)}</div>
     </div>
   );
 }
 
-const ENGAGEMENT_STATS = {
-  totalLearners: 59,
-  activeThisWeek: 48,
-  activeLearnersThisMonth: 6,
-  averageEngagement: 72,
-  redRisk: 2,
-  amberRisk: 4,
-  pointsAwarded: 45200,
-  pointsAwardedThisMonth: 3800,
-  vouchersClaimed: 312,
-  vouchersClaimedThisMonth: 28,
-  eventSeats: 892,
-  eventSeatsThisMonth: 64,
-};
-
-const ATTENDANCE_TREND_DATA = [
-  { week: 'Wk 1', attendance: 88, target: 90 },
-  { week: 'Wk 2', attendance: 84, target: 90 },
-  { week: 'Wk 3', attendance: 86, target: 90 },
-  { week: 'Wk 4', attendance: 82, target: 90 },
-  { week: 'Wk 5', attendance: 79, target: 90 },
-  { week: 'Wk 6', attendance: 81, target: 90 },
-  { week: 'Wk 7', attendance: 85, target: 90 },
-  { week: 'Wk 8', attendance: 77, target: 90 },
-  { week: 'Wk 9', attendance: 80, target: 90 },
-  { week: 'Wk 10', attendance: 83, target: 90 },
-];
-
-const PROGRAMME_LABELS: Record<ProgrammeCode, string> = {
-  PCP: 'Project Control', APM: 'Acc. Project Manager', MM: 'Marketing Management', ME: 'Marketing Execution',
-};
-
-function average(values: number[]) {
-  return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0;
-}
-
-function scatterStatus(attendance: number, engagement: number) {
-  if (attendance < 75 || engagement < 40) return { label: 'Priority', color: '#ef4444' };
-  if (attendance < 90 || engagement < 70) return { label: 'Watch', color: '#f59e0b' };
-  return { label: 'On track', color: '#22c55e' };
-}
-
-function LearnerScatterDot({ cx, cy, payload }: any) {
-  if (typeof cx !== 'number' || typeof cy !== 'number') return null;
-  const status = payload?.status ?? scatterStatus(payload?.attendance ?? 0, payload?.engagement ?? 0);
+function LeaderboardSkeleton() {
   return (
-    <g>
-      <circle cx={cx} cy={cy} r={7} fill={status.color} fillOpacity={0.14} />
-      <circle cx={cx} cy={cy} r={4.5} fill={status.color} stroke="#ffffff" strokeWidth={2} />
-    </g>
+    <div className="p-4 space-y-3">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} className="flex items-center gap-4 animate-pulse">
+          <div className="w-8 h-8 rounded-full bg-background-200 shrink-0"></div>
+          <div className="w-9 h-9 rounded-full bg-background-200 shrink-0"></div>
+          <div className="flex-1 h-3 rounded bg-background-200"></div>
+          <div className="w-14 h-3 rounded bg-background-200 shrink-0"></div>
+        </div>
+      ))}
+    </div>
   );
 }
 
 export default function EngagementDashboard() {
   const navigate = useNavigate();
   const { success, warning } = useToast();
-  const [activeTab, setActiveTab] = useState<TabKey>('overview');
-  const [programmeFilter, setProgrammeFilter] = useState<ProgrammeFilterValue>('all');
+  const operator = useOperatorIdentity();
   const [selectedChampionId, setSelectedChampionId] = useState<string | null>(null);
+  const [championMeta, setChampionMeta] = useState<{ name: string; cohort: string | null } | null>(null);
 
-  // Voucher claims are real engagement_api data (unlike the learner-stats
-  // sections below, which stay mocked — per-learner stats are owned by
-  // another team). Loads on mount; the mock arrays already show what this
-  // table looks like once real claims exist.
-  const [voucherClaims, setVoucherClaims] = useState<Awaited<ReturnType<typeof fetchVoucherClaims>>>([]);
+  const [stats, setStats] = useState<EngagementOverviewStats | null>(null);
+
+  const [leaderboard, setLeaderboard] = useState<RankedLearner[]>([]);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(true);
+
+  const [voucherClaims, setVoucherClaims] = useState<VoucherClaim[]>([]);
   const [claimsLoading, setClaimsLoading] = useState(true);
+
+  const [learners, setLearners] = useState<LearnerAnalyticsRow[]>([]);
+  const [analyticsLoading, setAnalyticsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchLearnerAnalytics()
+      .then(data => { if (!cancelled) setLearners(data); })
+      .catch(err => { if (!cancelled) warning('Could not load learner analytics', err.message); })
+      .finally(() => { if (!cancelled) setAnalyticsLoading(false); });
+    return () => { cancelled = true; };
+  }, [warning]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchOverviewStats().catch(err => { if (!cancelled) warning('Could not load engagement stats', err.message); return null; })
+      .then(data => { if (!cancelled && data) setStats(data); });
+    return () => { cancelled = true; };
+  }, [warning]);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([fetchLeaderboard('all-time'), fetchLeaderboard('monthly')])
+      .then(([allTime, monthly]) => {
+        if (cancelled) return;
+        const monthlyByLearner = new Map(monthly.entries.map(e => [e.learnerId, e.points]));
+        setLeaderboard(allTime.entries.map(toRanked(monthlyByLearner)));
+      })
+      .catch(err => { if (!cancelled) warning('Could not load leaderboard', err.message); })
+      .finally(() => { if (!cancelled) setLeaderboardLoading(false); });
+    return () => { cancelled = true; };
+  }, [warning]);
 
   useEffect(() => {
     let cancelled = false;
@@ -144,7 +109,7 @@ export default function EngagementDashboard() {
 
   async function approveClaim(id: string, learner: string) {
     try {
-      const updated = await updateVoucherClaim(id, { status: 'approved', reviewedBy: 'Tom Harrington' });
+      const updated = await updateVoucherClaim(id, { status: 'approved' });
       setVoucherClaims(prev => prev.map(c => c.id === id ? updated : c));
       success(`Claim approved for ${learner}`);
     } catch (err: any) {
@@ -154,7 +119,7 @@ export default function EngagementDashboard() {
 
   async function rejectClaim(id: string, learner: string) {
     try {
-      const updated = await updateVoucherClaim(id, { status: 'rejected', reviewedBy: 'Tom Harrington' });
+      const updated = await updateVoucherClaim(id, { status: 'rejected' });
       setVoucherClaims(prev => prev.map(c => c.id === id ? updated : c));
       warning(`Claim rejected for ${learner}`);
     } catch (err: any) {
@@ -162,396 +127,263 @@ export default function EngagementDashboard() {
     }
   }
 
-  const programmeCounts = countByProgramme(ENGAGEMENT_LEARNERS);
-  const filteredLearners = filterByProgramme(ENGAGEMENT_LEARNERS, programmeFilter);
-  const filteredRoster = filterByProgramme(ROSTER, programmeFilter);
-  const filteredTopLearners = [...filteredLearners].sort((a, b) => b.points - a.points);
-  const filteredAttendanceRisk = filterByProgramme(ATTENDANCE_RISK, programmeFilter);
-  const pendingClaims = voucherClaims.filter(c => c.status === 'pending');
-  const filteredVoucherClaims = filterByProgramme(pendingClaims, programmeFilter);
+  function openChampionProfile(learnerId: string) {
+    const entry = leaderboard.find(l => l.id === learnerId);
+    setChampionMeta(entry ? { name: entry.name, cohort: entry.cohort } : null);
+    setSelectedChampionId(learnerId);
+  }
 
-  const redRiskCount = filteredLearners.filter(l => l.riskLevel === 'red').length;
-  const amberRiskCount = filteredLearners.filter(l => l.riskLevel === 'amber').length;
-  const greenRiskCount = filteredLearners.filter(l => l.riskLevel === 'green').length;
-  const avgEngagement = filteredLearners.length ? Math.round(filteredLearners.reduce((sum, l) => sum + l.engagementScore, 0) / filteredLearners.length) : 0;
-  const filteredEngagementDistribution = [
-    { range: '0–20%', count: filteredLearners.filter(l => l.engagementScore <= 20).length, fill: '#ef4444' },
-    { range: '21–40%', count: filteredLearners.filter(l => l.engagementScore > 20 && l.engagementScore <= 40).length, fill: '#f97316' },
-    { range: '41–60%', count: filteredLearners.filter(l => l.engagementScore > 40 && l.engagementScore <= 60).length, fill: '#eab308' },
-    { range: '61–80%', count: filteredLearners.filter(l => l.engagementScore > 60 && l.engagementScore <= 80).length, fill: '#22c55e' },
-    { range: '81–100%', count: filteredLearners.filter(l => l.engagementScore > 80).length, fill: '#10b981' },
+  const pendingClaims = voucherClaims.filter(c => c.status === 'pending');
+
+  // -- Chart data, derived from the real bulk learner-analytics fetch -------
+  const scoredLearners = learners.filter(l => l.engagementScore != null);
+  const engagementDistribution = [
+    { range: '0-20%', count: scoredLearners.filter(l => (l.engagementScore ?? 0) <= 20).length, fill: '#ef4444' },
+    { range: '21-40%', count: scoredLearners.filter(l => (l.engagementScore ?? 0) > 20 && (l.engagementScore ?? 0) <= 40).length, fill: '#f97316' },
+    { range: '41-60%', count: scoredLearners.filter(l => (l.engagementScore ?? 0) > 40 && (l.engagementScore ?? 0) <= 60).length, fill: '#eab308' },
+    { range: '61-80%', count: scoredLearners.filter(l => (l.engagementScore ?? 0) > 60 && (l.engagementScore ?? 0) <= 80).length, fill: '#22c55e' },
+    { range: '81-100%', count: scoredLearners.filter(l => (l.engagementScore ?? 0) > 80).length, fill: '#10b981' },
   ];
-  const filteredOtjhProgress = [
-    { name: 'On Track', value: filteredRoster.filter(l => l.otjhHours / l.otjhTarget >= 0.9).length, color: '#22c55e' },
-    { name: 'Slightly Behind', value: filteredRoster.filter(l => l.otjhHours / l.otjhTarget >= 0.75 && l.otjhHours / l.otjhTarget < 0.9).length, color: '#eab308' },
-    { name: 'Significantly Behind', value: filteredRoster.filter(l => l.otjhHours / l.otjhTarget >= 0.5 && l.otjhHours / l.otjhTarget < 0.75).length, color: '#f97316' },
-    { name: 'At Risk', value: filteredRoster.filter(l => l.otjhHours / l.otjhTarget < 0.5).length, color: '#ef4444' },
+  const otjhRatios = learners.map(l => l.otjhTarget ? l.otjhHours / l.otjhTarget : null).filter((v): v is number => v != null);
+  const otjhProgress = [
+    { name: 'On Track', value: otjhRatios.filter(v => v >= 0.9).length, color: '#22c55e' },
+    { name: 'Slightly Behind', value: otjhRatios.filter(v => v >= 0.75 && v < 0.9).length, color: '#eab308' },
+    { name: 'Significantly Behind', value: otjhRatios.filter(v => v >= 0.5 && v < 0.75).length, color: '#f97316' },
+    { name: 'At Risk', value: otjhRatios.filter(v => v < 0.5).length, color: '#ef4444' },
   ];
-  const otjhOnTrack = filteredOtjhProgress[0].value;
   const riskBreakdown = [
-    { name: 'On track', value: greenRiskCount, color: '#22c55e' },
-    { name: 'Amber risk', value: amberRiskCount, color: '#f59e0b' },
-    { name: 'Red risk', value: redRiskCount, color: '#ef4444' },
+    { name: 'On track', value: learners.filter(l => l.riskLevel === 'green').length, color: '#22c55e' },
+    { name: 'Monitor', value: learners.filter(l => l.riskLevel === 'amber').length, color: '#f59e0b' },
+    { name: 'At risk', value: learners.filter(l => l.riskLevel === 'red').length, color: '#ef4444' },
   ];
+  const avgOf = (values: (number | null)[]) => { const v = values.filter((x): x is number => x != null); return v.length ? Math.round(v.reduce((s, x) => s + x, 0) / v.length) : 0; };
   const engagementDrivers = [
-    { name: 'Attendance', value: average(filteredRoster.map(l => l.attendanceRate)) },
-    { name: 'Evidence', value: average(filteredRoster.map(l => l.evidenceTarget ? (l.evidenceSubmitted / l.evidenceTarget) * 100 : 0)) },
-    { name: 'OTJH', value: average(filteredRoster.map(l => l.otjhTarget ? (l.otjhHours / l.otjhTarget) * 100 : 0)) },
-    { name: 'Quiz', value: average(filteredRoster.map(l => l.quizAverage)) },
-    { name: 'KSB', value: average(filteredRoster.map(l => l.ksbProgress)) },
-    { name: 'Messages', value: average(filteredRoster.map(l => l.messageResponse)) },
+    { name: 'Attendance', value: avgOf(learners.map(l => l.attendanceRate)) },
+    { name: 'Evidence', value: avgOf(learners.map(l => l.evidenceTarget ? (l.evidenceSubmitted / l.evidenceTarget) * 100 : null)) },
+    { name: 'OTJH', value: avgOf(learners.map(l => l.otjhTarget ? (l.otjhHours / l.otjhTarget) * 100 : null)) },
+    { name: 'Quiz', value: avgOf(learners.map(l => l.quizAverage)) },
+    { name: 'KSB', value: avgOf(learners.map(l => l.ksbProgress)) },
+    { name: 'Messages', value: avgOf(learners.map(l => l.messageResponse)) },
   ];
-  const programmeComparison = (['PCP', 'APM', 'MM', 'ME'] as ProgrammeCode[]).map(code => {
-    const learners = filteredRoster.filter(l => l.programmeCode === code);
-    return { name: PROGRAMME_LABELS[code], engagement: average(learners.map(l => l.engagementScore)), attendance: average(learners.map(l => l.attendanceRate)), learnerCount: learners.length };
-  }).filter(programme => programme.learnerCount > 0);
-  const learnerScatter = filteredRoster.map(learner => ({ name: learner.name, attendance: learner.attendanceRate, engagement: learner.engagementScore, programme: learner.programme, status: scatterStatus(learner.attendanceRate, learner.engagementScore) }));
+  const programmeNames = Array.from(new Set(learners.map(l => l.programme).filter(Boolean)));
+  const programmeComparison = programmeNames.map(name => {
+    const group = learners.filter(l => l.programme === name);
+    return { name, engagement: avgOf(group.map(l => l.engagementScore)), attendance: avgOf(group.map(l => l.attendanceRate)), learnerCount: group.length };
+  });
 
   return (
     <WorkspaceShell
       role="engagement" roleLabel={engagementNav.label} navItems={engagementNav.items} workspaceLabel={engagementNav.workspaceLabel}
-      pageTitle="Engagement Command Centre" pageSubtitle="Learner engagement monitoring and attendance risk tracking"
-      userName="Tom Harrington" userRole="Engagement Manager"
+      pageTitle="Engagement Command Centre" pageSubtitle="Points economy overview — grants, leaderboard, and voucher claims"
+      userName={operator.name} userRole={operator.role}
     >
       <div className="engagement-command-page p-6 space-y-6">
         {/* Hero Banner */}
         <WorkspaceHeroBanner
           title="Engagement Command Centre"
-          description={`${filteredLearners.length} learners${programmeFilter === 'all' ? '' : ` in ${programmeFilter}`}. ${redRiskCount} red-risk, ${amberRiskCount} amber-risk. Average engagement: ${avgEngagement}%.`}
+          description={`${stats ? stats.activeLearners.toLocaleString() : '…'} learners earned points this month. ${pendingClaims.length} voucher claim${pendingClaims.length === 1 ? '' : 's'} awaiting review.`}
           icon="ri-heart-pulse-line"
           imageUrl="https://readdy.ai/api/search-image?query=UK%20learner%20engagement%20group%20collaboration%20team%20discussion%20apprenticeship%20purple%20gold%20accent%20editorial%20photography%20modern%20office%20warm%20welcoming%20atmosphere&width=400&height=160&seq=engagement-hero-01&orientation=landscape"
           imageAlt="Engagement Command Centre"
           stats={[
-            { label: 'Learners', value: String(filteredLearners.length) },
-            { label: 'Red Risk', value: String(redRiskCount), variant: 'danger' },
-            { label: 'Amber Risk', value: String(amberRiskCount) },
+            { label: 'Active Learners', value: stats ? String(stats.activeLearners) : '…' },
+            { label: 'Points This Month', value: stats ? stats.pointsAwardedThisMonth.toLocaleString() : '…' },
+            { label: 'Pending Claims', value: String(pendingClaims.length) },
           ]}
         />
 
-        {/* Stat Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <EngagementStatCard label="Engagement Score" value={`${avgEngagement}%`} sub={`${ENGAGEMENT_STATS.activeThisWeek}/${ENGAGEMENT_STATS.totalLearners} active`} icon="ri-heart-line" color="primary" />
-          <EngagementStatCard label="At Risk Learners" value={String(redRiskCount + amberRiskCount)} sub={`${redRiskCount} red · ${amberRiskCount} amber`} icon="ri-alert-line" color="accent" />
-          <EngagementStatCard label="Attendance Risk" value={String(filteredAttendanceRisk.length)} sub="deteriorating patterns" icon="ri-calendar-check-line" color="secondary" />
-          <EngagementStatCard label="Green Learners" value={String(greenRiskCount)} sub="on track" icon="ri-shield-check-line" color="primary" />
-        </div>
-
-        {/* Stat Cards — Rewards & Participation */}
+        {/* Stat Cards — real points-economy aggregates */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <EngagementStatCard
-            label="Active Learners" value={ENGAGEMENT_STATS.totalLearners.toLocaleString()}
-            trend={`+${ENGAGEMENT_STATS.activeLearnersThisMonth} this month`} trendUp
-            icon="ri-group-line" color="primary"
-          />
-          <EngagementStatCard
-            label="Points Awarded" value={`${(ENGAGEMENT_STATS.pointsAwarded / 1000).toFixed(1)}k`}
-            trend={`+${ENGAGEMENT_STATS.pointsAwardedThisMonth.toLocaleString()} this month`} trendUp
+            label="Points Awarded" value={stats ? `${(stats.pointsAwarded / 1000).toFixed(1)}k` : '…'}
+            trend={stats ? `+${stats.pointsAwardedThisMonth.toLocaleString()} this month` : undefined} trendUp
             icon="ri-award-line" color="accent"
           />
           <EngagementStatCard
-            label="Vouchers Claimed" value={String(ENGAGEMENT_STATS.vouchersClaimed)}
-            trend={`+${ENGAGEMENT_STATS.vouchersClaimedThisMonth} this month`} trendUp
+            label="Vouchers Claimed" value={stats ? String(stats.vouchersClaimed) : '…'}
+            trend={stats ? `+${stats.vouchersClaimedThisMonth} this month` : undefined} trendUp
             icon="ri-coupon-3-line" color="secondary"
           />
           <EngagementStatCard
-            label="Event Seats" value={String(ENGAGEMENT_STATS.eventSeats)}
-            trend={`+${ENGAGEMENT_STATS.eventSeatsThisMonth} this month`} trendUp
+            label="Active Learners" value={stats ? String(stats.activeLearners) : '…'}
+            sub="earned points this month" icon="ri-group-line" color="primary"
+          />
+          <EngagementStatCard
+            label="Event Seats Booked" value={stats ? String(stats.eventSeatsBooked) : '…'}
             icon="ri-calendar-event-line" color="primary"
           />
         </div>
 
-        {/* Programme Filter */}
-        <ProgrammeFilter value={programmeFilter} onChange={setProgrammeFilter} counts={programmeCounts} />
+        {/* Champions podium + Top Learners Leaderboard, side by side */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="lg:order-2">
+            {leaderboardLoading ? (
+              <div className="bg-background-50 rounded-2xl border border-foreground-200/60 shadow-sm p-6"><LeaderboardSkeleton /></div>
+            ) : leaderboard.length < 3 ? (
+              <div className="h-full flex items-center">
+                <EmptyState icon="ri-trophy-line" title="Not enough grants yet for a podium" subtitle="At least 3 learners need points on the board." />
+              </div>
+            ) : (
+              <CourseChampionsPodium champions={leaderboard.slice(0, 3)} onViewAll={() => navigate('/engagement/recognition')} onOpenProfile={openChampionProfile} />
+            )}
+          </div>
 
-        {/* Tabs */}
-        <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 overflow-x-auto">
-          {([
-            { key: 'overview' as TabKey, label: 'Engagement Overview', icon: 'ri-heart-line' },
-            { key: 'attendance' as TabKey, label: 'Attendance Risk', icon: 'ri-alert-line', badge: filteredAttendanceRisk.length },
-            { key: 'engagement' as TabKey, label: 'Learner Engagement', icon: 'ri-bar-chart-2-line' },
-          ]).map(tab => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-semibold transition-smooth whitespace-nowrap cursor-pointer border-b-2 ${
-                activeTab === tab.key ? 'bg-background-50 text-foreground-900 shadow-sm border-accent-400' : 'text-foreground-500 hover:text-foreground-700 border-transparent'
-              }`}
-            >
-              <AppIcon className={`${tab.icon} text-sm`}></AppIcon>
-              {tab.label}
-              {tab.badge != null && tab.badge > 0 && (
-                <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full leading-none">{tab.badge}</span>
-              )}
-            </button>
-          ))}
+          <section className="lg:order-1 h-full flex flex-col bg-background-50 rounded-2xl border border-foreground-200/60 shadow-sm overflow-hidden">
+            <div className="p-5 border-b border-foreground-200/60 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-heading font-semibold text-foreground-900">Top Learners Leaderboard</h3>
+                <p className="text-[11px] text-foreground-400 mt-0.5">Ranked by total points earned</p>
+              </div>
+              <button onClick={() => navigate('/engagement/recognition')} className="text-[11px] font-semibold text-primary-600 hover:text-primary-700 whitespace-nowrap">
+                View All
+              </button>
+            </div>
+            {leaderboardLoading ? (
+              <LeaderboardSkeleton />
+            ) : leaderboard.length === 0 ? (
+              <div className="flex-1 flex items-center p-4">
+                <EmptyState icon="ri-list-check" title="No points earned yet" />
+              </div>
+            ) : (
+              <div className="flex-1 flex flex-col divide-y divide-background-200/30">
+                {leaderboard.slice(0, 8).map((l, i) => (
+                  <button key={l.id} onClick={() => openChampionProfile(l.id)} className="flex-1 p-4 flex items-center gap-4 hover:bg-background-100/50 transition-smooth text-left cursor-pointer">
+                    <span className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                      i === 0 ? 'bg-accent-400 text-white' :
+                      i === 1 ? 'bg-foreground-300 text-white' :
+                      i === 2 ? 'bg-amber-700/70 text-white' :
+                      'bg-background-200 text-foreground-500 border border-foreground-200/60'
+                    }`}>{i + 1}</span>
+                    <PersonAvatar name={l.name} className="w-9 h-9" fallbackClassName="text-xs bg-primary-100 text-primary-700" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[13px] font-semibold text-foreground-900 truncate">{l.name}</p>
+                      <p className="text-[10px] text-foreground-400 truncate">{l.cohort || '—'}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-sm font-bold text-foreground-900">{l.points.toLocaleString()} <span className="text-[10px] font-normal text-foreground-400">pts</span></p>
+                      <p className="text-[10px] font-medium text-foreground-400">+{l.pointsThisMonth} this month</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
         </div>
 
-        {/* Engagement Overview */}
-        {activeTab === 'overview' && (
-          <div className="space-y-4">
-            {/* Champions podium + Top Learners Leaderboard, side by side */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* Course Champions Podium — right on desktop */}
-              <div className="lg:order-2">
-                <CourseChampionsPodium champions={filteredTopLearners.slice(0, 3)} onViewAll={() => navigate('/engagement/recognition')} onOpenProfile={setSelectedChampionId} />
-              </div>
-
-              {/* Top Learners Leaderboard — left on desktop */}
-              <section className="lg:order-1 h-full flex flex-col bg-background-50 rounded-2xl border border-foreground-200/60 shadow-sm overflow-hidden">
-                <div className="p-5 border-b border-foreground-200/60 flex items-center justify-between">
-                  <div>
-                    <h3 className="text-sm font-heading font-semibold text-foreground-900">Top Learners Leaderboard</h3>
-                    <p className="text-[11px] text-foreground-400 mt-0.5">Ranked by total points earned</p>
-                  </div>
-                  <button onClick={() => navigate('/engagement/recognition')} className="text-[11px] font-semibold text-primary-600 hover:text-primary-700 whitespace-nowrap">
-                    View All
-                  </button>
-                </div>
-                <div className="flex-1 flex flex-col divide-y divide-background-200/30">
-                  {filteredTopLearners.slice(0, 8).map((l, i) => (
-                    <div key={l.name} className="flex-1 p-4 flex items-center gap-4 hover:bg-background-100/50 transition-smooth">
-                      <span className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                        i === 0 ? 'bg-accent-400 text-white' :
-                        i === 1 ? 'bg-foreground-300 text-white' :
-                        i === 2 ? 'bg-amber-700/70 text-white' :
-                        'bg-background-200 text-foreground-500 border border-foreground-200/60'
-                      }`}>{i + 1}</span>
-                      <PersonAvatar name={l.name} avatarImg={l.avatarImg} className="w-9 h-9" fallbackClassName={`text-xs ${
-                        l.riskLevel === 'red' ? 'bg-red-100 text-red-700' :
-                        l.riskLevel === 'amber' ? 'bg-amber-100 text-amber-700' :
-                        'bg-emerald-100 text-emerald-700'
-                      }`} />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[13px] font-semibold text-foreground-900 truncate">{l.name}</p>
-                        <p className="text-[10px] text-foreground-400 truncate">{l.programme} · {l.cohort}</p>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <p className="text-sm font-bold text-foreground-900">{l.points.toLocaleString()} <span className="text-[10px] font-normal text-foreground-400">pts</span></p>
-                        <p className={`text-[10px] font-medium flex items-center justify-end gap-0.5 ${
-                          l.monthlyTrend === 'up' ? 'text-emerald-600' : l.monthlyTrend === 'down' ? 'text-red-600' : 'text-foreground-400'
-                        }`}>
-                          <AppIcon className={l.monthlyTrend === 'up' ? 'ri-arrow-up-line' : l.monthlyTrend === 'down' ? 'ri-arrow-down-line' : 'ri-subtract-line'}></AppIcon>
-                          +{l.pointsThisMonth} this month
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
+        {/* Vouchers Claimed — Need Approval */}
+        <section className="bg-background-50 rounded-2xl border border-foreground-200/60 shadow-sm overflow-hidden">
+          <div className="p-5 border-b border-foreground-200/60 flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-heading font-semibold text-foreground-900">Vouchers Claimed — Need Approval</h3>
+              <p className="text-[11px] text-foreground-400 mt-0.5">Voucher redemption requests awaiting review</p>
             </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {filteredLearners.map((l, i) => (
-                <div key={i} className={`bg-background-50 rounded-2xl border p-4 shadow-sm card-premium hover:-translate-y-0.5 ${
-                  l.riskLevel === 'red' ? 'border-red-200/50 bg-red-50/20' :
-                  l.riskLevel === 'amber' ? 'border-amber-200/50 bg-amber-50/20' :
-                  'border-foreground-200/60'
-                }`}>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <PersonAvatar name={l.name} avatarImg={l.avatarImg} className="w-9 h-9" fallbackClassName={`text-xs ${
-                        l.riskLevel === 'red' ? 'bg-red-100 text-red-700' :
-                        l.riskLevel === 'amber' ? 'bg-amber-100 text-amber-700' :
-                        'bg-emerald-100 text-emerald-700'
-                      }`} />
-                      <div>
-                        <p className="text-[13px] font-semibold text-foreground-900">{l.name}</p>
-                        <p className="text-[10px] text-foreground-400">{l.programme}</p>
-                      </div>
-                    </div>
-                    <span className={`w-2.5 h-2.5 rounded-full ${
-                      l.riskLevel === 'red' ? 'bg-red-500' :
-                      l.riskLevel === 'amber' ? 'bg-amber-500' :
-                      'bg-emerald-500'
-                    }`}></span>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-foreground-400">Engagement</span>
-                      <span className={`font-semibold ${l.engagementScore >= 70 ? 'text-emerald-600' : l.engagementScore >= 40 ? 'text-amber-600' : 'text-red-600'}`}>{l.engagementScore}%</span>
-                    </div>
-                    <div className="w-full bg-background-200 rounded-full h-1.5">
-                      <div className={`h-1.5 rounded-full ${l.engagementScore >= 70 ? 'bg-emerald-500' : l.engagementScore >= 40 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${l.engagementScore}%` }}></div>
-                    </div>
-                    <div className="flex items-center justify-between text-[10px] text-foreground-400">
-                      <span>Attendance: {l.attendanceRate}%</span>
-                      <span>Last active: {l.lastActive}</span>
-                    </div>
-                    <div className="flex items-center gap-1 text-[10px]">
-                      <span className="text-foreground-400">Trend:</span>
-                      <span className={`font-medium ${
-                        l.trend === 'up' ? 'text-emerald-600' : l.trend === 'down' ? 'text-red-600' : 'text-foreground-500'
-                      }`}>
-                        <AppIcon className={`${l.trend === 'up' ? 'ri-arrow-up-line' : l.trend === 'down' ? 'ri-arrow-down-line' : 'ri-subtract-line'} text-[9px] mr-0.5`}></AppIcon>
-                        {l.trend}
-                      </span>
-                    </div>
-                  </div>
-                  {l.flags.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-3">
-                      {l.flags.map(flag => (
-                        <span key={flag} className="text-[8px] font-medium px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-100">{flag}</span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-foreground-400 bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full">{pendingClaims.length} pending</span>
+              <button onClick={() => navigate('/engagement/voucher-claims')} className="text-[11px] font-semibold text-primary-600 hover:text-primary-700 whitespace-nowrap">
+                View All
+              </button>
             </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr>
+                  <th className="px-5 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-widest">Learner</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-widest">Reward</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-widest">Points</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-widest">Requested</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-widest">Delivery</th>
+                  <th className="px-5 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-widest">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {claimsLoading && <TableBodySkeleton rows={5} columns={6} />}
+                {!claimsLoading && pendingClaims.length === 0 && (
+                  <tr><td colSpan={6} className="px-5 py-6 text-center text-[11px] text-foreground-400">No voucher claims are pending review.</td></tr>
+                )}
+                {pendingClaims.map(claim => (
+                  <tr key={claim.id} className="hover:bg-background-100/50 transition-smooth">
+                    <td className="px-5 py-3">
+                      <div className="flex items-center gap-3">
+                        <PersonAvatar name={claim.learner} className="w-8 h-8" fallbackClassName="text-xs bg-accent-100 text-accent-600" />
+                        <div className="min-w-0">
+                          <p className="text-[13px] font-semibold text-foreground-900 truncate">{claim.learner}</p>
+                          <p className="text-[10px] text-foreground-400 truncate">{claim.programme}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-5 py-3 text-[12px] text-foreground-700">{claim.reward}</td>
+                    <td className="px-5 py-3 text-[12px] font-semibold text-foreground-900">{claim.points} pts</td>
+                    <td className="px-5 py-3 text-[11px] text-foreground-400">{claim.requestedAt}</td>
+                    <td className="px-5 py-3 text-[11px] text-foreground-400">{claim.deliveryMethod}</td>
+                    <td className="px-5 py-3">
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => approveClaim(claim.id, claim.learner)} className="px-3 py-1.5 bg-emerald-500/10 text-emerald-700 rounded-lg text-[10px] font-bold hover:bg-emerald-500/20 transition-smooth cursor-pointer whitespace-nowrap">Approve</button>
+                        <button onClick={() => rejectClaim(claim.id, claim.learner)} className="px-3 py-1.5 bg-red-500/10 text-red-700 rounded-lg text-[10px] font-bold hover:bg-red-500/20 transition-smooth cursor-pointer whitespace-nowrap">Reject</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
 
-            {/* Vouchers Claimed — Need Approval */}
-            <section className="bg-background-50 rounded-2xl border border-foreground-200/60 shadow-sm overflow-hidden">
-              <div className="p-5 border-b border-foreground-200/60 flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-heading font-semibold text-foreground-900">Vouchers Claimed — Need Approval</h3>
-                  <p className="text-[11px] text-foreground-400 mt-0.5">Voucher redemption requests awaiting review</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-foreground-400 bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full">{filteredVoucherClaims.length} pending</span>
-                  <button onClick={() => navigate('/engagement/voucher-claims')} className="text-[11px] font-semibold text-primary-600 hover:text-primary-700 whitespace-nowrap">
-                    View All
-                  </button>
-                </div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead>
-                    <tr>
-                      <th className="px-5 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-widest">Learner</th>
-                      <th className="px-5 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-widest">Reward</th>
-                      <th className="px-5 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-widest">Points</th>
-                      <th className="px-5 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-widest">Requested</th>
-                      <th className="px-5 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-widest">Delivery</th>
-                      <th className="px-5 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-widest">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {claimsLoading && <TableBodySkeleton rows={5} columns={6} />}
-                    {!claimsLoading && filteredVoucherClaims.length === 0 && (
-                      <tr><td colSpan={6} className="px-5 py-6 text-center text-[11px] text-foreground-400">No voucher claims for this programme.</td></tr>
-                    )}
-                    {filteredVoucherClaims.map(claim => (
-                      <tr key={claim.id} className="hover:bg-background-100/50 transition-smooth">
-                        <td className="px-5 py-3">
-                          <div className="flex items-center gap-3">
-                            <PersonAvatar name={claim.learner} avatarImg={claim.avatarImg} className="w-8 h-8" fallbackClassName="text-xs bg-accent-100 text-accent-600" />
-                            <div className="min-w-0">
-                              <p className="text-[13px] font-semibold text-foreground-900 truncate">{claim.learner}</p>
-                              <p className="text-[10px] text-foreground-400 truncate">{claim.programme}</p>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-5 py-3 text-[12px] text-foreground-700">{claim.reward}</td>
-                        <td className="px-5 py-3 text-[12px] font-semibold text-foreground-900">{claim.points} pts</td>
-                        <td className="px-5 py-3 text-[11px] text-foreground-400">{claim.requestedAt}</td>
-                        <td className="px-5 py-3 text-[11px] text-foreground-400">{claim.deliveryMethod}</td>
-                        <td className="px-5 py-3">
-                          <div className="flex items-center gap-2">
-                            <button onClick={() => approveClaim(claim.id, claim.learner)} className="px-3 py-1.5 bg-emerald-500/10 text-emerald-700 rounded-lg text-[10px] font-bold hover:bg-emerald-500/20 transition-smooth cursor-pointer whitespace-nowrap">Approve</button>
-                            <button onClick={() => rejectClaim(claim.id, claim.learner)} className="px-3 py-1.5 bg-red-500/10 text-red-700 rounded-lg text-[10px] font-bold hover:bg-red-500/20 transition-smooth cursor-pointer whitespace-nowrap">Reject</button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            {/* Charts Row 1 */}
+        {/* Analytics charts — real data from /engagement_api/learner-analytics/ */}
+        {!analyticsLoading && learners.length > 0 && (
+          <>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* Attendance Trends */}
-              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h3 className="text-sm font-heading font-semibold text-foreground-900">Attendance Trends</h3>
-                    <p className="text-[11px] text-foreground-400 mt-0.5">Weekly attendance rate vs 90% target</p>
-                  </div>
-                  <span className="text-[10px] text-foreground-500 bg-background-100 px-2 py-1 rounded-full">Last 10 weeks</span>
-                </div>
-                <ResponsiveContainer width="100%" height={220}>
-                  <LineChart data={ATTENDANCE_TREND_DATA} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--background-200)" />
-                    <XAxis dataKey="week" tick={{ fontSize: 11, fill: 'var(--foreground-400)' }} axisLine={{ stroke: 'var(--background-200)' }} tickLine={false} />
-                    <YAxis domain={[60, 100]} tick={{ fontSize: 11, fill: 'var(--foreground-400)' }} axisLine={false} tickLine={false} />
-                    <Tooltip content={<ChartSidePanel />} position={{ x: 8, y: 8 }} />
-                    <Line type="monotone" dataKey="target" stroke="var(--foreground-300)" strokeDasharray="5 5" strokeWidth={1.5} dot={false} name="Target 90%" />
-                    <Line type="monotone" dataKey="attendance" stroke="oklch(var(--primary-500))" strokeWidth={2.5} dot={{ r: 3, fill: 'oklch(var(--primary-500))' }} activeDot={{ r: 5 }} name="Attendance" />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-
-              {/* Engagement Score Distribution */}
               <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <h3 className="text-sm font-heading font-semibold text-foreground-900">Engagement Score Distribution</h3>
                     <p className="text-[11px] text-foreground-400 mt-0.5">Learners by engagement score range</p>
                   </div>
-                  <span className="text-[10px] text-foreground-500 bg-background-100 px-2 py-1 rounded-full">{filteredLearners.length} learners</span>
+                  <span className="text-[10px] text-foreground-500 bg-background-100 px-2 py-1 rounded-full">{scoredLearners.length} scored</span>
                 </div>
                 <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={filteredEngagementDistribution} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                  <BarChart data={engagementDistribution} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--background-200)" />
                     <XAxis dataKey="range" tick={{ fontSize: 11, fill: 'var(--foreground-400)' }} axisLine={{ stroke: 'var(--background-200)' }} tickLine={false} />
                     <YAxis tick={{ fontSize: 11, fill: 'var(--foreground-400)' }} axisLine={false} tickLine={false} allowDecimals={false} />
-                    <Tooltip content={<ChartSidePanel />} position={{ x: 8, y: 8 }} />
+                    <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid var(--background-200)', fontSize: '11px' }} />
                     <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Learners">
-                      {filteredEngagementDistribution.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.fill} />
-                      ))}
+                      {engagementDistribution.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.fill} />)}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
-            </div>
 
-            {/* OTJH progress */}
-            <div className="w-full">
-              {/* OTJH Progress Pie Chart */}
               <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <h3 className="text-sm font-heading font-semibold text-foreground-900">OTJH Progress</h3>
                     <p className="text-[11px] text-foreground-400 mt-0.5">Learners by off-the-job training progress status</p>
                   </div>
-                  <span className="text-[10px] text-foreground-500 bg-background-100 px-2 py-1 rounded-full">{otjhOnTrack} on track</span>
+                  <span className="text-[10px] text-foreground-500 bg-background-100 px-2 py-1 rounded-full">{otjhProgress[0].value} on track</span>
                 </div>
                 <ResponsiveContainer width="100%" height={240}>
                   <PieChart>
-                    <Pie
-                      data={filteredOtjhProgress}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={60}
-                      outerRadius={90}
-                      paddingAngle={4}
-                      dataKey="value"
-                      stroke="none"
-                    >
-                      {filteredOtjhProgress.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
+                    <Pie data={otjhProgress} cx="50%" cy="50%" innerRadius={60} outerRadius={90} paddingAngle={4} dataKey="value" stroke="none">
+                      {otjhProgress.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
                     </Pie>
-                    <text x="50%" y="47%" textAnchor="middle" dominantBaseline="middle" className="fill-foreground-900 text-2xl font-semibold">{filteredRoster.length}</text>
+                    <text x="50%" y="47%" textAnchor="middle" dominantBaseline="middle" className="fill-foreground-900 text-2xl font-semibold">{learners.length}</text>
                     <text x="50%" y="58%" textAnchor="middle" dominantBaseline="middle" className="fill-foreground-400 text-[10px]">learners</text>
-                    <Tooltip content={<ChartSidePanel />} position={{ x: 8, y: 8 }} />
+                    <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid var(--background-200)', fontSize: '11px' }} />
                     <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: '11px' }} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
-
             </div>
 
-            {/* Actionable insight charts */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-              {/* Risk breakdown */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
                 <div className="flex items-center justify-between mb-2">
                   <div>
                     <h3 className="text-sm font-heading font-semibold text-foreground-900">Attendance Risk Breakdown</h3>
                     <p className="text-[11px] text-foreground-400 mt-0.5">Current learner risk distribution</p>
                   </div>
-                  <span className="text-[10px] text-foreground-500 bg-background-100 px-2 py-1 rounded-full">{filteredRoster.length} learners</span>
+                  <span className="text-[10px] text-foreground-500 bg-background-100 px-2 py-1 rounded-full">{learners.length} learners</span>
                 </div>
                 <div className="flex items-center gap-5">
                   <ResponsiveContainer width="48%" height={190}>
@@ -559,7 +391,7 @@ export default function EngagementDashboard() {
                       <Pie data={riskBreakdown} dataKey="value" innerRadius={48} outerRadius={72} paddingAngle={3} stroke="none">
                         {riskBreakdown.map(entry => <Cell key={entry.name} fill={entry.color} />)}
                       </Pie>
-                      <text x="50%" y="47%" textAnchor="middle" dominantBaseline="middle" className="fill-foreground-900 text-xl font-semibold">{filteredRoster.length}</text>
+                      <text x="50%" y="47%" textAnchor="middle" dominantBaseline="middle" className="fill-foreground-900 text-xl font-semibold">{learners.length}</text>
                       <text x="50%" y="59%" textAnchor="middle" dominantBaseline="middle" className="fill-foreground-400 text-[9px]">learners</text>
                     </PieChart>
                   </ResponsiveContainer>
@@ -567,189 +399,55 @@ export default function EngagementDashboard() {
                     {riskBreakdown.map(entry => (
                       <div key={entry.name} className="flex items-center justify-between text-[11px]">
                         <span className="flex items-center gap-2 text-foreground-500"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: entry.color }}></span>{entry.name}</span>
-                        <span className="font-semibold text-foreground-800">{entry.value} <span className="font-normal text-foreground-400">({filteredRoster.length ? Math.round(entry.value / filteredRoster.length * 100) : 0}%)</span></span>
+                        <span className="font-semibold text-foreground-800">{entry.value} <span className="font-normal text-foreground-400">({learners.length ? Math.round(entry.value / learners.length * 100) : 0}%)</span></span>
                       </div>
                     ))}
                   </div>
                 </div>
               </div>
 
-              {/* Engagement drivers */}
               <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <h3 className="text-sm font-heading font-semibold text-foreground-900">Engagement Drivers</h3>
                     <p className="text-[11px] text-foreground-400 mt-0.5">Average performance across key signals</p>
                   </div>
-                  <span className="text-[10px] text-foreground-500 bg-background-100 px-2 py-1 rounded-full">0–100%</span>
+                  <span className="text-[10px] text-foreground-500 bg-background-100 px-2 py-1 rounded-full">0-100%</span>
                 </div>
                 <ResponsiveContainer width="100%" height={190}>
                   <BarChart data={engagementDrivers} layout="vertical" margin={{ top: 0, right: 10, left: 5, bottom: 0 }}>
                     <CartesianGrid horizontal={false} stroke="var(--background-200)" />
                     <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10, fill: 'var(--foreground-400)' }} axisLine={false} tickLine={false} />
                     <YAxis type="category" dataKey="name" width={62} tick={{ fontSize: 10, fill: 'var(--foreground-500)' }} axisLine={false} tickLine={false} />
-                    <Tooltip content={<ChartSidePanel />} position={{ x: 8, y: 8 }} />
+                    <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid var(--background-200)', fontSize: '11px' }} />
                     <Bar dataKey="value" fill="oklch(var(--primary-500))" radius={[0, 5, 5, 0]} barSize={14} name="Average" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
 
-              {/* Programme comparison */}
-              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h3 className="text-sm font-heading font-semibold text-foreground-900">Programme Comparison</h3>
-                    <p className="text-[11px] text-foreground-400 mt-0.5">Average engagement and attendance by programme</p>
-                  </div>
-                  <div className="flex items-center gap-3 text-[10px] text-foreground-400"><span><AppIcon className="ri-checkbox-blank-circle-fill text-primary-500 mr-1"></AppIcon>Engagement</span><span><AppIcon className="ri-checkbox-blank-circle-fill text-accent-500 mr-1"></AppIcon>Attendance</span></div>
-                </div>
-                <ResponsiveContainer width="100%" height={210}>
-                  <BarChart data={programmeComparison} layout="vertical" margin={{ top: 0, right: 10, left: 5, bottom: 0 }} barGap={3}>
-                    <CartesianGrid horizontal={false} stroke="var(--background-200)" />
-                    <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10, fill: 'var(--foreground-400)' }} axisLine={false} tickLine={false} />
-                    <YAxis type="category" dataKey="name" width={118} tick={{ fontSize: 9, fill: 'var(--foreground-500)' }} axisLine={false} tickLine={false} />
-                    <Tooltip content={<ChartSidePanel />} position={{ x: 8, y: 8 }} />
-                    <Bar dataKey="engagement" fill="oklch(var(--primary-500))" radius={[0, 4, 4, 0]} barSize={9} name="Engagement" />
-                    <Bar dataKey="attendance" fill="oklch(var(--accent-500))" radius={[0, 4, 4, 0]} barSize={9} name="Attendance" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-
-              {/* Attendance vs engagement */}
-              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h3 className="text-sm font-heading font-semibold text-foreground-900">Attendance vs Engagement</h3>
-                    <p className="text-[11px] text-foreground-400 mt-0.5">Each dot is a learner: attendance on X, engagement on Y</p>
-                  </div>
-                  <div className="flex items-center gap-2 text-[9px] font-medium text-foreground-500">
-                    <span><AppIcon className="ri-checkbox-blank-circle-fill text-emerald-500 mr-1"></AppIcon>On track</span>
-                    <span><AppIcon className="ri-checkbox-blank-circle-fill text-amber-500 mr-1"></AppIcon>Watch</span>
-                    <span><AppIcon className="ri-checkbox-blank-circle-fill text-red-500 mr-1"></AppIcon>Priority</span>
-                  </div>
-                </div>
-                <ResponsiveContainer width="100%" height={210}>
-                  <ScatterChart margin={{ top: 5, right: 10, bottom: 10, left: -8 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--background-200)" />
-                    <XAxis type="number" dataKey="attendance" domain={[50, 100]} name="Attendance" unit="%" tick={{ fontSize: 10, fill: 'var(--foreground-400)' }} axisLine={false} tickLine={false} />
-                    <YAxis type="number" dataKey="engagement" domain={[0, 100]} name="Engagement" unit="%" tick={{ fontSize: 10, fill: 'var(--foreground-400)' }} axisLine={false} tickLine={false} />
-                    <ZAxis range={[45, 45]} />
-                    <ReferenceLine x={90} stroke="var(--foreground-300)" strokeDasharray="4 4" />
-                    <ReferenceLine y={40} stroke="var(--foreground-300)" strokeDasharray="4 4" />
-                    <Tooltip cursor={{ strokeDasharray: '3 3' }} content={<ChartSidePanel />} position={{ x: 8, y: 8 }} />
-                    <Scatter data={learnerScatter} shape={<LearnerScatterDot />} name="Learner" />
-                  </ScatterChart>
-                </ResponsiveContainer>
-                <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[10px] text-foreground-400 mt-1">
-                  <span><AppIcon className="ri-error-warning-fill text-red-500 mr-1"></AppIcon>Bottom-left: priority follow-up</span>
-                  <span><AppIcon className="ri-checkbox-circle-fill text-emerald-500 mr-1"></AppIcon>Top-right: on track</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Attendance Risk */}
-        {activeTab === 'attendance' && (
-          <section>
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-sm font-heading font-semibold text-foreground-900">Attendance Risk Monitoring</h3>
-                <p className="text-[11px] text-foreground-400 mt-0.5">Learners with attendance below 90% or deteriorating patterns</p>
-              </div>
-              <span className="text-[10px] text-foreground-400 bg-red-50 text-red-600 px-2 py-0.5 rounded-full">{filteredAttendanceRisk.length} at risk</span>
-            </div>
-            <div className="space-y-3">
-              {filteredAttendanceRisk.length === 0 && <ProgrammeEmptyState message="No attendance risk records for this programme." />}
-              {filteredAttendanceRisk.map((l, i) => (
-                <div key={i} className="bg-background-50 rounded-2xl border border-foreground-200/60 p-4 shadow-sm card-premium hover:-translate-y-0.5">
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                    <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <PersonAvatar name={l.name} avatarImg={l.avatarImg} className="w-10 h-10" fallbackClassName={`text-sm ${
-                        l.rate < 70 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
-                      }`} />
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-foreground-900">{l.name}</p>
-                        <p className="text-[11px] text-foreground-400">Coach: {l.coach}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4 text-[11px] shrink-0 flex-wrap">
-                      <span className={`text-lg font-bold ${l.rate < 70 ? 'text-red-600' : 'text-amber-600'}`}>{l.rate}%</span>
-                      <span className="text-foreground-400">{l.missed} missed</span>
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                        l.trend === 'deteriorating' ? 'bg-red-100 text-red-700' :
-                        l.trend === 'declining' ? 'bg-amber-100 text-amber-700' :
-                        'bg-amber-100 text-amber-700'
-                      }`}>{l.trend}</span>
-                      <span className="text-foreground-400">{l.lastSession}</span>
-                    </div>
-                  </div>
-                  <div className="mt-3 bg-amber-50/50 rounded-lg p-3 flex items-start gap-2">
-                    <AppIcon className="ri-alert-line text-amber-600 text-sm mt-0.5"></AppIcon>
+              {programmeComparison.length > 1 && (
+                <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5 lg:col-span-2">
+                  <div className="flex items-center justify-between mb-4">
                     <div>
-                      <p className="text-[11px] font-medium text-amber-800">Recommended Action</p>
-                      <p className="text-[11px] text-amber-700">{l.action}</p>
+                      <h3 className="text-sm font-heading font-semibold text-foreground-900">Programme Comparison</h3>
+                      <p className="text-[11px] text-foreground-400 mt-0.5">Average engagement and attendance by programme</p>
                     </div>
-                    <button className="ml-auto px-3 py-1.5 bg-amber-600 text-white rounded-lg text-[10px] font-semibold shadow-lg shadow-amber-600/20 hover:bg-amber-700 hover:shadow-amber-600/30 transition-smooth cursor-pointer whitespace-nowrap shrink-0">
-                      Take Action
-                    </button>
+                    <div className="flex items-center gap-3 text-[10px] text-foreground-400"><span><AppIcon className="ri-checkbox-blank-circle-fill text-primary-500 mr-1"></AppIcon>Engagement</span><span><AppIcon className="ri-checkbox-blank-circle-fill text-accent-500 mr-1"></AppIcon>Attendance</span></div>
                   </div>
+                  <ResponsiveContainer width="100%" height={Math.max(120, programmeComparison.length * 46)}>
+                    <BarChart data={programmeComparison} layout="vertical" margin={{ top: 0, right: 10, left: 5, bottom: 0 }} barGap={3}>
+                      <CartesianGrid horizontal={false} stroke="var(--background-200)" />
+                      <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10, fill: 'var(--foreground-400)' }} axisLine={false} tickLine={false} />
+                      <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 9, fill: 'var(--foreground-500)' }} axisLine={false} tickLine={false} />
+                      <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid var(--background-200)', fontSize: '11px' }} />
+                      <Bar dataKey="engagement" fill="oklch(var(--primary-500))" radius={[0, 4, 4, 0]} barSize={9} name="Engagement" />
+                      <Bar dataKey="attendance" fill="oklch(var(--accent-500))" radius={[0, 4, 4, 0]} barSize={9} name="Attendance" />
+                    </BarChart>
+                  </ResponsiveContainer>
                 </div>
-              ))}
+              )}
             </div>
-          </section>
-        )}
-
-        {/* Learner Engagement Detail */}
-        {activeTab === 'engagement' && (
-          <section>
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-sm font-heading font-semibold text-foreground-900">Learner Engagement Detail</h3>
-                <p className="text-[11px] text-foreground-400 mt-0.5">Comprehensive engagement scores based on attendance, evidence, OTJH, and activity</p>
-              </div>
-              <button className="text-[12px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap">
-                <AppIcon className="ri-download-line mr-1"></AppIcon> Export Report
-              </button>
-            </div>
-            <div className="bg-background-50 rounded-2xl border border-foreground-200/60 shadow-sm overflow-hidden">
-              <div className="divide-y divide-background-200/30">
-                {filteredLearners.map((l, i) => (
-                  <div key={i} className={`p-4 flex flex-col sm:flex-row sm:items-center gap-4 hover:bg-background-100/50 transition-smooth ${l.riskLevel === 'red' ? 'bg-red-50/20' : l.riskLevel === 'amber' ? 'bg-amber-50/20' : ''}`}>
-                    <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <PersonAvatar name={l.name} avatarImg={l.avatarImg} className="w-10 h-10" fallbackClassName={`text-sm ${
-                        l.riskLevel === 'red' ? 'bg-red-100 text-red-700' :
-                        l.riskLevel === 'amber' ? 'bg-amber-100 text-amber-700' :
-                        'bg-emerald-100 text-emerald-700'
-                      }`} />
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-foreground-900">{l.name}</p>
-                        <p className="text-[11px] text-foreground-400">{l.programme} · {l.cohort}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4 text-[11px] shrink-0 flex-wrap">
-                      <div className="flex items-center gap-1">
-                        <span className="text-foreground-400">Score:</span>
-                        <span className={`font-bold text-sm ${l.engagementScore >= 70 ? 'text-emerald-600' : l.engagementScore >= 40 ? 'text-amber-600' : 'text-red-600'}`}>{l.engagementScore}%</span>
-                      </div>
-                      <span className="text-foreground-400">Att: {l.attendanceRate}%</span>
-                      <span className="text-foreground-400">{l.lastActive}</span>
-                      <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${
-                        l.riskLevel === 'red' ? 'bg-red-100 text-red-700' :
-                        l.riskLevel === 'amber' ? 'bg-amber-100 text-amber-700' :
-                        'bg-emerald-100 text-emerald-700'
-                      }`}>{l.riskLevel.toUpperCase()}</span>
-                      {l.flags.length > 0 && l.riskLevel !== 'green' && (
-                        <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold shadow-lg shadow-primary-500/20 hover:bg-primary-600 hover:shadow-primary-500/30 transition-smooth cursor-pointer whitespace-nowrap">
-                          <AppIcon className="ri-phone-line mr-1"></AppIcon> Contact
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
+          </>
         )}
 
         {/* Quick Actions */}
@@ -774,22 +472,26 @@ export default function EngagementDashboard() {
             </button>
           ))}
         </section>
-        <LearnerProfilePanel learnerId={selectedChampionId} onClose={() => setSelectedChampionId(null)} />
+
+        <LearnerProfilePanel
+          learnerId={selectedChampionId}
+          learnerName={championMeta?.name}
+          cohort={championMeta?.cohort ?? undefined}
+          onClose={() => setSelectedChampionId(null)}
+        />
       </div>
     </WorkspaceShell>
   );
 }
 
-function ProgrammeEmptyState({ message }: { message: string }) {
-  return (
-    <div className="p-6 text-center text-[11px] text-foreground-400">
-      <AppIcon className="ri-filter-off-line text-lg text-foreground-300 block mb-1"></AppIcon>
-      {message}
-    </div>
-  );
+function toRanked(monthlyByLearner: Map<string, number>) {
+  return (entry: LeaderboardEntry): RankedLearner => ({
+    id: entry.learnerId, name: entry.learner, cohort: entry.cohort,
+    points: entry.points, pointsThisMonth: monthlyByLearner.get(entry.learnerId) ?? 0,
+  });
 }
 
-function CourseChampionsPodium({ champions, onViewAll, onOpenProfile }: { champions: EngagementLearner[]; onViewAll: () => void; onOpenProfile: (learnerId: string) => void }) {
+function CourseChampionsPodium({ champions, onViewAll, onOpenProfile }: { champions: RankedLearner[]; onViewAll: () => void; onOpenProfile: (learnerId: string) => void }) {
   const [first, second, third] = champions;
   const reduceMotion = useReducedMotion();
   if (!first || !second || !third) return null;
@@ -848,7 +550,6 @@ const BRAND_PURPLE = '#5B18E3';
 const TEXT_DARK = '#1E124D';
 const TEXT_MUTED = '#6B5C99';
 const PODIUM_SURFACE = '#1A0940';
-const SUCCESS_GREEN = '#2F8F5B';
 // Heritage gold — the design system reserves accent-* gold for celebratory
 // focal points, so the #1 champion is accented with it. DOM elements use the
 // Tailwind accent-* tokens directly; this hex mirrors oklch(var(--accent-500))
@@ -923,7 +624,7 @@ const PODIUM_RANK_STYLES = {
   },
 } as const;
 
-function PodiumSpot({ learner, rank, revealDelay, gapLabel, reduceMotion, onOpenProfile }: { learner: EngagementLearner; rank: 1 | 2 | 3; revealDelay: number; gapLabel: string; reduceMotion: boolean; onOpenProfile: (learnerId: string) => void }) {
+function PodiumSpot({ learner, rank, revealDelay, gapLabel, reduceMotion, onOpenProfile }: { learner: RankedLearner; rank: 1 | 2 | 3; revealDelay: number; gapLabel: string; reduceMotion: boolean; onOpenProfile: (learnerId: string) => void }) {
   const isFirst = rank === 1;
   const initials = learner.name.split(' ').map(w => w[0]).join('').slice(0, 2);
   const styles = PODIUM_RANK_STYLES[rank];
@@ -944,13 +645,9 @@ function PodiumSpot({ learner, rank, revealDelay, gapLabel, reduceMotion, onOpen
           <AppIcon className="ri-vip-crown-fill absolute -top-8 left-1/2 -translate-x-1/2 text-3xl drop-shadow-lg" style={{ color: GOLD }}></AppIcon>
         )}
         <div className={`${styles.avatarSize} rounded-full border-4 border-white bg-primary-700 shrink-0 overflow-hidden`} style={styles.ringStyle}>
-          {learner.avatarImg ? (
-            <img src={learner.avatarImg} alt={learner.name} className="w-full h-full object-cover" />
-          ) : (
-            <div className={`w-full h-full flex items-center justify-center font-semibold text-white ${isFirst ? 'text-xl' : 'text-base'}`}>
-              {initials}
-            </div>
-          )}
+          <div className={`w-full h-full flex items-center justify-center font-semibold text-white ${isFirst ? 'text-xl' : 'text-base'}`}>
+            {initials}
+          </div>
         </div>
         <span
           className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold border-[3px]"
@@ -988,19 +685,13 @@ function PodiumSpot({ learner, rank, revealDelay, gapLabel, reduceMotion, onOpen
   );
 }
 
-function TopAchieverCard({ learner }: { learner: EngagementLearner }) {
+function TopAchieverCard({ learner }: { learner: RankedLearner }) {
   const initials = learner.name.split(' ').map(w => w[0]).join('').slice(0, 2);
-  const trendColor = learner.monthlyTrend === 'down' ? '#C0392B' : learner.monthlyTrend === 'up' ? SUCCESS_GREEN : TEXT_MUTED;
-  const trendIcon = learner.monthlyTrend === 'up' ? 'ri-arrow-up-line' : learner.monthlyTrend === 'down' ? 'ri-arrow-down-line' : 'ri-subtract-line';
   return (
     <div className="w-full rounded-xl bg-white p-4 flex items-center gap-4 border" style={{ borderColor: withAlpha(BRAND_PURPLE, 0.15) }}>
       {/* Avatar */}
       <div className="w-14 h-14 rounded-full border-4 border-white bg-primary-700 shrink-0 overflow-hidden" style={{ boxShadow: `0 0 0 2px ${GOLD}` }}>
-        {learner.avatarImg ? (
-          <img src={learner.avatarImg} alt={learner.name} className="w-full h-full object-cover" />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-base font-semibold text-white">{initials}</div>
-        )}
+        <div className="w-full h-full flex items-center justify-center text-base font-semibold text-white">{initials}</div>
       </div>
 
       {/* Name + role */}
@@ -1009,17 +700,17 @@ function TopAchieverCard({ learner }: { learner: EngagementLearner }) {
           <AppIcon className="ri-vip-crown-fill text-[10px]"></AppIcon> Top achiever
         </span>
         <p className="text-sm font-medium truncate" style={{ color: TEXT_DARK }}>{learner.name}</p>
-        <p className="text-[11px] truncate" style={{ color: TEXT_MUTED }}>{learner.programme}</p>
+        <p className="text-[11px] truncate" style={{ color: TEXT_MUTED }}>{learner.cohort || '—'}</p>
       </div>
 
-      {/* Points + trend, right-aligned */}
+      {/* Points + this-month delta, right-aligned */}
       <div className="text-right shrink-0">
         <p className="text-xl font-medium leading-tight" style={{ color: BRAND_PURPLE }}>
           {learner.points.toLocaleString()}
           <span className="text-[9px] font-medium ml-1" style={{ color: TEXT_MUTED }}>pts</span>
         </p>
-        <p className="mt-0.5 flex items-center justify-end gap-1 text-[11px] font-medium" style={{ color: trendColor }}>
-          <AppIcon className={trendIcon}></AppIcon> +{learner.pointsThisMonth} this month
+        <p className="mt-0.5 text-[11px] font-medium" style={{ color: TEXT_MUTED }}>
+          +{learner.pointsThisMonth} this month
         </p>
       </div>
     </div>
@@ -1157,42 +848,13 @@ function ConfettiBurst({ reducedMotion }: { reducedMotion: boolean }) {
   return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none z-10" aria-hidden="true"></canvas>;
 }
 
-// Recharts positions its default tooltip next to the pointer. This dashboard
-// uses a fixed panel instead so the graph remains readable while the hovered
-// values stay in one predictable place inside the card.
-function ChartSidePanel({ active, payload, label }: any) {
-  if (!active || !payload?.length) return null;
-
-  const firstPoint = payload[0]?.payload ?? {};
-  const title = firstPoint.name ?? firstPoint.subject ?? label ?? payload[0]?.name ?? 'Selected data';
-  const subtitle = firstPoint.programme;
-
-  return (
-    <div className="w-36 rounded-xl border border-primary-100 bg-background-50/95 p-3 shadow-xl backdrop-blur-sm pointer-events-none">
-      <p className="text-[10px] font-bold text-foreground-900 truncate">{title}</p>
-      {subtitle && <p className="text-[9px] text-foreground-400 truncate mt-0.5">{subtitle}</p>}
-      <div className="mt-2 space-y-1.5">
-        {payload.map((entry: any) => (
-          <div key={entry.dataKey ?? entry.name} className="flex items-center justify-between gap-2 text-[10px]">
-            <span className="flex items-center gap-1 min-w-0 text-foreground-500">
-              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: entry.color ?? 'oklch(var(--primary-500))' }}></span>
-              <span className="truncate">{entry.name ?? entry.dataKey}</span>
-            </span>
-            <span className="font-semibold text-foreground-800 shrink-0">{typeof entry.value === 'number' ? Math.round(entry.value) : entry.value}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function EngagementStatCard({ label, value, sub, trend, trendUp, icon, color }: { label: string; value: string; sub?: string; trend?: string; trendUp?: boolean; icon: string; color: string }) {
   const iconBg = color === 'primary' ? 'bg-primary-100 text-primary-600'
     : color === 'accent' ? 'bg-accent-50 text-accent-700'
     : 'bg-secondary-100 text-secondary-600';
 
   return (
-    <div className="bg-background-50 rounded-2xl border border-foreground-200/60 shadow-sm p-4 card-premium hover:-translate-y-0.5 cursor-pointer">
+    <div className="bg-background-50 rounded-2xl border border-foreground-200/60 shadow-sm p-4 card-premium hover:-translate-y-0.5">
       <div className="flex items-start justify-between mb-3">
         <span className={`w-11 h-11 rounded-lg flex items-center justify-center ${iconBg}`}>
           <AppIcon className={`${icon} text-base`}></AppIcon>
@@ -1205,9 +867,9 @@ function EngagementStatCard({ label, value, sub, trend, trendUp, icon, color }: 
           <AppIcon className={trendUp ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}></AppIcon>
           {trend}
         </p>
-      ) : (
+      ) : sub ? (
         <p className="text-[11px] text-foreground-400 mt-1">{sub}</p>
-      )}
+      ) : null}
     </div>
   );
 }

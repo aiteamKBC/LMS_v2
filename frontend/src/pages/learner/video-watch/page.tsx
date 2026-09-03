@@ -1108,14 +1108,9 @@ const AUDIO_FILE_RE = /\.(mp3|wav|ogg|m4a|aac|flac)(\?.*)?$/i;
 const IMAGE_FILE_RE = /\.(png|jpe?g|gif|webp|bmp|svg)(\?.*)?$/i;
 const VIDEO_FILE_RE = /\.(mp4|webm|ogg|mov|m4v)(\?.*)?$/i;
 const PDF_FILE_RE = /\.pdf(\?.*)?$/i;
-const POWERPOINT_FILE_RE = /\.(pptx|ppsx|pptm|ppsm)(\?.*)?$/i;
 const WORD_FILE_RE = /\.docx(\?.*)?$/i;
 const EXCEL_FILE_RE = /\.(xlsx|xls|csv)(\?.*)?$/i;
 const TEXT_FILE_RE = /\.(txt|md|rtf)(\?.*)?$/i;
-
-function matchesMaterialExtension(pattern: RegExp, url: string, fileName?: string | null): boolean {
-  return Boolean(fileName && pattern.test(fileName.trim())) || pattern.test(url.trim());
-}
 
 function googleDriveFileId(url: string): string | null {
   const match =
@@ -1126,18 +1121,7 @@ function googleDriveFileId(url: string): string | null {
 }
 
 function legacyAttachmentId(url: string): string | null {
-  let decoded = url;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      decoded = decodeURIComponent(decoded);
-    } catch {
-      break;
-    }
-  }
-  const match =
-    decoded.match(/\/media\/legacy-attachment\/([0-9]{1,20})\//) ||
-    decoded.match(/\/_legacy_files\/([0-9]{1,20})\//) ||
-    decoded.match(/[?&]attachment_id=([0-9]{1,20})/);
+  const match = url.match(/\/_legacy_files\/([0-9]{1,20})\//);
   return match?.[1] ?? null;
 }
 
@@ -1152,17 +1136,21 @@ function proxiedMaterialUrl(url: string): string {
 }
 
 function displayableMediaSource(url: string, fileName?: string | null): { kind: 'image' | 'video'; src: string } | null {
+  const probe = `${fileName || ''} ${url}`;
   const src = proxiedMaterialUrl(url);
-  if (matchesMaterialExtension(IMAGE_FILE_RE, url, fileName)) return { kind: 'image', src };
-  if (matchesMaterialExtension(VIDEO_FILE_RE, url, fileName)) return { kind: 'video', src };
+  if (IMAGE_FILE_RE.test(probe)) return { kind: 'image', src };
+  if (VIDEO_FILE_RE.test(probe)) return { kind: 'video', src };
   return null;
 }
 
 function directAudioSource(url: string, fileName?: string | null): string | null {
-  if (matchesMaterialExtension(AUDIO_FILE_RE, url, fileName) || googleDriveFileId(url) || legacyAttachmentId(url)) {
-    return proxiedMaterialUrl(url);
-  }
+  const probe = `${fileName || ''} ${url}`;
+  if (AUDIO_FILE_RE.test(probe) || googleDriveFileId(url)) return proxiedMaterialUrl(url);
   return null;
+}
+
+function fileProbe(url: string, fileName?: string | null): string {
+  return `${fileName || ''} ${url}`.split(/[?#]/)[0];
 }
 
 function fileLabelFrom(url: string, fileName?: string | null): string {
@@ -1239,11 +1227,11 @@ function InlineAttachmentPreview({ url, title, fileName }: { url: string; title:
   const media = displayableMediaSource(url, fileName);
   const previewUrl = proxiedMaterialUrl(url);
   const legacyId = legacyAttachmentId(url);
-  const isPdf = matchesMaterialExtension(PDF_FILE_RE, url, fileName);
-  const isPowerPoint = matchesMaterialExtension(POWERPOINT_FILE_RE, url, fileName);
-  const isWord = matchesMaterialExtension(WORD_FILE_RE, url, fileName);
-  const isExcel = matchesMaterialExtension(EXCEL_FILE_RE, url, fileName);
-  const isText = matchesMaterialExtension(TEXT_FILE_RE, url, fileName);
+  const probe = fileProbe(url, fileName);
+  const isPdf = PDF_FILE_RE.test(probe);
+  const isWord = WORD_FILE_RE.test(probe);
+  const isExcel = EXCEL_FILE_RE.test(probe);
+  const isText = TEXT_FILE_RE.test(probe);
   const canParseInline = isWord || isExcel || isText;
   const [preview, setPreview] = useState<AttachmentPreviewState | null>(canParseInline ? { status: 'loading' } : null);
 
@@ -1306,25 +1294,10 @@ function InlineAttachmentPreview({ url, title, fileName }: { url: string; title:
   if (media) return <InlineMediaPreview url={url} title={title} fileName={fileName} />;
 
   if (isPdf) {
-    if (legacyId) return <LegacyPdfImagePreview attachmentId={legacyId} sourceUrl={url} title={title} fileName={fileName} />;
+    if (legacyId) return <LegacyPdfImagePreview attachmentId={legacyId} title={title} fileName={fileName} />;
     const hostedPdfEmbed = resolveDocEmbed(previewUrl);
     if (hostedPdfEmbed.mode === 'deck') return <DocumentEmbed url={previewUrl} title={title} />;
     return <PdfCanvasPreview url={previewUrl} title={title} fileName={fileName} />;
-  }
-
-  if (isPowerPoint) {
-    return (
-      <SlideDeckViewer
-        src={previewUrl}
-        title={title}
-        fallback={(reason) => (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-            <p className="font-bold">Could not show this presentation inline.</p>
-            <p className="mt-1 text-xs">{reason}</p>
-          </div>
-        )}
-      />
-    );
   }
 
   if (preview?.status === 'loading') {
@@ -1373,14 +1346,13 @@ function InlineAttachmentPreview({ url, title, fileName }: { url: string; title:
   );
 }
 
-function LegacyPdfImagePreview({ attachmentId, sourceUrl, title, fileName }: { attachmentId: string; sourceUrl: string; title: string; fileName?: string | null }) {
+function LegacyPdfImagePreview({ attachmentId, title, fileName }: { attachmentId: string; title: string; fileName?: string | null }) {
   const [pageNumber, setPageNumber] = useState(1);
   const [pageCount, setPageCount] = useState(1);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
-  const sourceQuery = `?path=${encodeURIComponent(sourceUrl)}`;
-  const infoUrl = `/learner_api/media/legacy-attachment/${attachmentId}/pdf-info/${sourceQuery}`;
-  const pageUrl = `/learner_api/media/legacy-attachment/${attachmentId}/pdf-page/${pageNumber}/${sourceQuery}`;
+  const infoUrl = `/learner_api/media/legacy-attachment/${attachmentId}/pdf-info/`;
+  const pageUrl = `/learner_api/media/legacy-attachment/${attachmentId}/pdf-page/${pageNumber}/`;
 
   useEffect(() => {
     let cancelled = false;

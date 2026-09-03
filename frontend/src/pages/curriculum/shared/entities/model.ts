@@ -150,6 +150,33 @@ export function findProgramme(
   return programmes.find(programme => programmeKeys(programme).includes(key));
 }
 
+/**
+ * The value a programme `<select>` can actually show for `identifier`.
+ *
+ * A programme option's value is `programmeIdentity` -- the id as the programmes
+ * collection spells it -- and a `<select>` matches its value by exact string.
+ * Stored records name their programme in whatever shape wrote them: the cohort
+ * endpoint upper-cases the id it resolved ("PROG-Mon" -> "PROG-MON"), and older
+ * rows carry the programme *name* instead of an id. Either one refers to the
+ * right programme and neither equals the option value, so the field came up
+ * reading "Select a programme" over a parent that was demonstrably set -- and a
+ * save from there had to have it picked again by hand.
+ *
+ * So resolve the identifier to the programme it names, case- and shape-blind,
+ * and answer with that programme's identity. An identifier that matches nothing
+ * is handed back untouched: it is still what the record says, and blanking it
+ * would throw a parent away rather than fail to display it.
+ */
+export function programmeSelectValue(
+  programmes: CurriculumProgramme[],
+  identifier: unknown,
+): string {
+  const raw = cleanText(identifier);
+  if (!raw) return '';
+  const programme = findProgramme(programmes, raw);
+  return programme ? programmeIdentity(programme) : raw;
+}
+
 export function findCohort(cohorts: CurriculumCohort[], identifier: unknown): CurriculumCohort | undefined {
   const key = normaliseKey(identifier);
   if (!key) return undefined;
@@ -336,6 +363,20 @@ export function countsForProgramme(
 
 // -------------------------------------------------------------- formatting
 
+/**
+ * Programme level, always read back as "Level 4".
+ *
+ * The programme drawer stores what was typed as `LVL-4`, but rows created
+ * before that convention carry a bare `4` or an already-worded `Level 6`, so
+ * the catalogue was showing all three spellings side by side. Only the number
+ * carries meaning; everything around it is formatting, so the display is
+ * derived from the digits rather than from however the row was saved.
+ */
+export function formatProgrammeLevel(value: unknown, fallback = 'Not set'): string {
+  const digits = cleanText(value).match(/\d+/);
+  return digits ? `Level ${digits[0]}` : fallback;
+}
+
 export function formatDateLabel(value: unknown): string {
   const text = cleanText(value);
   if (!text) return '—';
@@ -396,6 +437,25 @@ function dayNumber(value: unknown): number | null {
   // reader's timezone or by a daylight-saving boundary inside the period.
   const parsed = Date.parse(`${text}T00:00:00Z`);
   return Number.isNaN(parsed) ? null : Math.round(parsed / DAY_MS);
+}
+
+/** England's weekend, by the weekday numbering `Date.getDay` uses. */
+const WEEKEND_DAY_NAMES: Record<number, string> = { 0: 'Sunday', 6: 'Saturday' };
+
+/**
+ * The note a Saturday or Sunday date carries, or '' on any weekday.
+ *
+ * Not a refusal -- a weekend date is still saved as typed -- just a heads-up,
+ * since Saturday and Sunday are holidays in England and nothing normally
+ * delivers on them. Shared by the module drawer and the cohort drawer so the
+ * same date gets the same sentence wherever it is picked.
+ */
+export function weekendDateNotice(value: unknown): string {
+  const days = dayNumber(value);
+  if (days === null) return '';
+  // Day 0 of the epoch was a Thursday (getDay 4), so shifting by 4 lands Sunday on 0.
+  const name = WEEKEND_DAY_NAMES[(days + 4) % 7];
+  return name ? `${name} is a weekend — no delivery normally runs that day.` : '';
 }
 
 export interface CohortWeekCapacity {

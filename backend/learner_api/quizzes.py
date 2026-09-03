@@ -542,15 +542,9 @@ def submit_quiz_attempt(request, quiz_id):
             return _error(f"Database error saving attempt: {exc}", 502)
         except DatabaseError as exc:
             return _error(f"Database error saving attempt: {exc}", 502)
-
-        # Engagement points: award synchronously the instant the attempt is saved.
-        # Guarded so a points failure can never break the learner's quiz save; all
-        # point logic (which rule, first-attempt gate, etc.) lives in engagement_api.
-        try:
-            from engagement_api.hooks import record_progress_points
-            record_progress_points(learner_id, active.username, attempt)
-        except Exception:  # noqa: BLE001 — engagement points must never break the quiz save
-            pass
+        # Engagement points award themselves: save_progress_record registers a
+        # post-commit hook (engagement_api.hooks.award_for_progress) that fires
+        # once this save actually commits — see active_users.save_progress_record.
 
     # The response carries the FULL-text breakdown + summary so the results
     # screen can render immediately without a second lookup.
