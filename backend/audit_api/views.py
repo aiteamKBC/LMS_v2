@@ -2647,7 +2647,24 @@ def audit_blob(request):
         return _error(f"Azure blob error: {exc}", 502)
 
 
+# Set once this process has provisioned the sign-off table. The dedup DELETE
+# below is a one-time migration, not a recurring repair: the table declares
+# `unique (learner_id, programme_key, report_month, signer_role)`, so once it
+# exists a duplicate cannot be inserted and that delete can never match a row.
+# It was running -- as a full self-join over the table -- on every audit read.
+_SIGNOFF_TABLE_READY = False
+
+
 def _ensure_signoff_table(cur):
+    """Provision the sign-off table, once per process.
+
+    The flag is set only after every statement below succeeds, so a partial
+    failure leaves it clear and the next caller retries. A schema changed by
+    hand underneath a running process is not picked up until it restarts.
+    """
+    global _SIGNOFF_TABLE_READY
+    if _SIGNOFF_TABLE_READY:
+        return
     cur.execute(
         f"""
         create table if not exists "{AUDIT_SCHEMA}"."{SIGNOFF_TABLE}" (
@@ -2691,6 +2708,7 @@ def _ensure_signoff_table(cur):
         (learner_id, programme_key, report_month, signer_role)
         """
     )
+    _SIGNOFF_TABLE_READY = True
 
 
 def _signoff_row(row, current_hash):

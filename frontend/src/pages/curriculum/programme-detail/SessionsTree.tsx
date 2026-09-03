@@ -13,13 +13,15 @@ import {
   liveSessionArtifactContentUrl,
   type LiveSessionArtifactOccurrence,
 } from '@/lib/curriculumApi';
+import { syncTeamsMeetingArtifacts } from '../module-builder/moduleAuthoringData';
 import { StatusBadge } from '../shared/entities/ui';
 import type { DeliverySession } from './page';
 
 // --------------------------------------------------------------- date helpers
 
-/** Month bucket for a session, from its best instant. Undated sessions collapse
- *  into one "Unscheduled" bucket that always sorts last. */
+/** Month bucket for a session, from its best instant. Sessions with no instant
+ *  at all collapse into one "Unscheduled" bucket that always sorts last. For a
+ *  recording that instant is its week's start date — see `buildSessionTree`. */
 export function sessionMonthBucket(dateIso: string): { key: string; label: string; order: number } {
   const trimmed = (dateIso || '').trim();
   const dateOnly = /^\d{4}-\d{2}-\d{2}/.test(trimmed);
@@ -77,14 +79,16 @@ export interface ModuleGroup {
   scheduled: number;
   completed: number;
   cancelled: number;
+  missing: number;
   months: MonthGroup[];
 }
 
-function statusClass(status: string): 'scheduled' | 'completed' | 'cancelled' | 'other' {
+function statusClass(status: string): 'scheduled' | 'completed' | 'cancelled' | 'missing' | 'other' {
   const value = status.toLowerCase();
   if (value === 'completed') return 'completed';
   if (value === 'cancelled' || value === 'canceled') return 'cancelled';
   if (value === 'scheduled') return 'scheduled';
+  if (value === 'not-created') return 'missing';
   return 'other';
 }
 
@@ -96,7 +100,7 @@ export function buildSessionTree(sessions: DeliverySession[]): ModuleGroup[] {
     const moduleName = session.module || 'Unassigned module';
     let moduleGroup = modules.get(moduleName);
     if (!moduleGroup) {
-      moduleGroup = { key: moduleName, module: moduleName, count: 0, scheduled: 0, completed: 0, cancelled: 0, months: [] };
+      moduleGroup = { key: moduleName, module: moduleName, count: 0, scheduled: 0, completed: 0, cancelled: 0, missing: 0, months: [] };
       modules.set(moduleName, moduleGroup);
     }
     moduleGroup.count += 1;
@@ -104,8 +108,17 @@ export function buildSessionTree(sessions: DeliverySession[]): ModuleGroup[] {
     if (bucketClass === 'completed') moduleGroup.completed += 1;
     else if (bucketClass === 'cancelled') moduleGroup.cancelled += 1;
     else if (bucketClass === 'scheduled') moduleGroup.scheduled += 1;
+    else if (bucketClass === 'missing') moduleGroup.missing += 1;
 
-    const bucket = sessionMonthBucket(session.dateIso);
+    // A recording has no date of its own — it is authored into a week, not
+    // onto a day — so its place in the calendar is that week's first teaching
+    // date. A live session is the opposite: its own date *is* the schedule, so
+    // an undated one stays in Unscheduled, where the empty month is a real gap
+    // — except a "no meeting yet" placeholder, which has no schedule to lose but
+    // does belong to a real week, and sorting it into Unscheduled would scatter
+    // the very gaps this view exists to surface away from the week they're in.
+    const bucketDateIso = session.dateIso || (session.kind === 'recorded' || session.status === 'not-created' ? session.weekStartDate : '');
+    const bucket = sessionMonthBucket(bucketDateIso);
     let monthGroup = moduleGroup.months.find(item => item.key === bucket.key);
     if (!monthGroup) {
       monthGroup = { key: bucket.key, label: bucket.label, order: bucket.order, weeks: [], count: 0 };
@@ -161,6 +174,16 @@ function CompletedSessionPanel({ session, state }: { session: DeliverySession; s
         <span><span className="font-semibold text-foreground-700">Recordings</span> {recordings.length}</span>
         <span><span className="font-semibold text-foreground-700">Transcripts</span> {transcripts.length}</span>
       </div>
+
+      {/* This panel only opens for an occurrence the sync service has already
+          pulled (see `canExpand`), so nothing here is "still coming" — an empty
+          result is a meeting Teams holds no recording for. */}
+      {recordings.length === 0 && transcripts.length === 0 && (
+        <p className="text-[12px] text-foreground-500">
+          Teams held no recording or transcript for this session when it was last synced
+          {session.artifactsSyncedAt ? ` (${formatSessionDate(session.artifactsSyncedAt, '')})` : ''}.
+        </p>
+      )}
 
       {(recordings.length > 0 || transcripts.length > 0) && (
         <div className="flex flex-wrap gap-2">
@@ -233,16 +256,53 @@ function SessionRow({
   artifactState,
   onToggle,
   expanded,
+  onSynced,
 }: {
   session: DeliverySession;
   moduleHref: string;
   artifactState: ArtifactState | undefined;
   onToggle: () => void;
   expanded: boolean;
+  /** Re-read the occurrences after a sync, so the row leaves its unsynced state
+   *  on the same data every other row is drawn from rather than a local guess. */
+  onSynced: () => void;
 }) {
   const isCompleted = statusClass(session.status) === 'completed';
-  const canExpand = session.kind === 'live' && isCompleted && Boolean(session.liveSessionId);
+  const isMissing = statusClass(session.status) === 'missing';
+  // A completed occurrence nothing has been pulled from Graph for yet — distinct
+  // from one that was pulled and genuinely held no recording. Expanding it would
+  // only fetch an artifacts payload that is not there, so the row offers the pull
+  // itself instead.
+  const isUnsynced = session.kind === 'live' && isCompleted && !session.artifactsSyncedAt;
+  const canExpand = session.kind === 'live' && isCompleted && Boolean(session.liveSessionId) && Boolean(session.artifactsSyncedAt);
   const [copied, setCopied] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
+
+  const runSync = useCallback(async () => {
+    if (syncing || !session.liveSessionId) return;
+    setSyncing(true);
+    setSyncError(null);
+    setSyncNotice(null);
+    try {
+      const result = await syncTeamsMeetingArtifacts(session.liveSessionId);
+      // A pull that found nothing is not a failure — Teams may hold no recording
+      // for this meeting — so it reports what it found either way, and the reload
+      // is what decides whether the row is still unsynced.
+      setSyncNotice(
+        `Pulled ${result.synced.attendanceRecords} attendance record${result.synced.attendanceRecords === 1 ? '' : 's'},`
+        + ` ${result.synced.recordings} recording${result.synced.recordings === 1 ? '' : 's'}`
+        + ` and ${result.synced.transcripts} transcript${result.synced.transcripts === 1 ? '' : 's'}.`,
+      );
+      if (result.errors.length) setSyncError(result.errors.join(' · '));
+      onSynced();
+    } catch (reason) {
+      setSyncError(reason instanceof Error ? reason.message : 'Unable to sync this session from Microsoft Teams.');
+    } finally {
+      setSyncing(false);
+    }
+  }, [onSynced, session.liveSessionId, syncing]);
 
   const copyLink = useCallback(() => {
     if (!session.url) return;
@@ -274,45 +334,74 @@ function SessionRow({
         >
           <AppIcon className={`${expanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-base`}></AppIcon>
         </button>
-        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${session.kind === 'live' ? 'bg-primary-50 text-primary-600' : 'bg-sky-50 text-sky-700'}`}>
-          <AppIcon className={`${session.kind === 'live' ? 'ri-microsoft-teams-line' : 'ri-film-line'} text-[11px]`}></AppIcon>
+        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${isMissing ? 'bg-amber-50 text-amber-600' : session.kind === 'live' ? 'bg-primary-50 text-primary-600' : 'bg-sky-50 text-sky-700'}`}>
+          <AppIcon className={`${isMissing ? 'ri-calendar-close-line' : session.kind === 'live' ? 'ri-microsoft-teams-line' : 'ri-film-line'} text-[11px]`}></AppIcon>
         </span>
         <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground-800">{session.title}</span>
 
-        <span className="text-[11px] text-foreground-500">
-          {session.kind === 'live'
-            ? (formatSessionDate(session.dateIso, session.date || 'Date not set') + (session.time ? ` · ${session.time}` : ''))
-            : (session.provider || 'Provider not set')}
-        </span>
+        {!isMissing && (
+          <span className="text-[11px] text-foreground-500">
+            {session.kind === 'live'
+              ? (formatSessionDate(session.dateIso, session.date || 'Date not set') + (session.time ? ` · ${session.time}` : ''))
+              : (session.provider || 'Provider not set')}
+          </span>
+        )}
         {session.durationMinutes > 0 && (
           <span className="text-[11px] tabular-nums text-foreground-400">{session.durationMinutes}m</span>
         )}
-        <StatusBadge status={session.status} />
+        {/* Live sessions carry a real scheduling status (scheduled/completed/
+            cancelled) from the sync service, worth showing here. Recorded
+            content's `status` is its authoring publish state (draft/published/
+            ...) from Module Builder — this view is about watch requirements,
+            not authoring workflow, so it stays out of the row. A week with no
+            meeting at all has its own icon and message already; the status
+            badge would only print the literal "not-created" beside them. */}
+        {session.kind === 'live' && !isMissing && <StatusBadge status={session.status} />}
+        {isMissing && (
+          <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-700">
+            No Teams meeting
+          </span>
+        )}
 
-        {session.url && (
-          <a
-            href={session.url}
-            target="_blank"
-            rel="noreferrer"
-            title={session.kind === 'live' ? 'Join this meeting in Microsoft Teams' : 'Open this recording'}
-            className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-lg px-2 text-[11px] font-bold transition-smooth ${session.kind === 'live' ? 'meeting-join-action' : 'bg-primary-600 text-white hover:bg-primary-700'}`}
-          >
-            <AppIcon className={`${session.kind === 'live' ? 'ri-microsoft-teams-line' : 'ri-play-circle-line'} text-sm`}></AppIcon>
-            {session.kind === 'live' ? 'Join' : 'Watch'}
-          </a>
+        {isMissing ? (
+          moduleHref && (
+            <a
+              href={moduleHref}
+              title="Create this week's Teams meeting in the Module Builder"
+              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg bg-primary-600 px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
+            >
+              <AppIcon className="ri-add-line text-sm"></AppIcon>
+              Create meeting
+            </a>
+          )
+        ) : (
+          <>
+            {session.url && !isUnsynced && (
+              <a
+                href={session.url}
+                target="_blank"
+                rel="noreferrer"
+                title={session.kind === 'live' ? (isCompleted ? 'Open this meeting in Microsoft Teams' : 'Join this meeting in Microsoft Teams') : 'Open this recording'}
+                className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-lg px-2 text-[11px] font-bold transition-smooth ${session.kind === 'live' ? 'meeting-join-action' : 'bg-primary-600 text-white hover:bg-primary-700'}`}
+              >
+                <AppIcon className={`${session.kind === 'live' ? 'ri-microsoft-teams-line' : 'ri-play-circle-line'} text-sm`}></AppIcon>
+                {session.kind === 'live' ? (isCompleted ? 'Open in Teams' : 'Join') : 'Watch'}
+              </a>
+            )}
+            {session.url && !isUnsynced && (
+              <button
+                type="button"
+                onClick={copyLink}
+                title={copied ? 'Link copied' : session.kind === 'live' ? 'Copy the meeting link' : 'Copy the recording link'}
+                aria-label="Copy link"
+                className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border transition-smooth ${copied ? 'border-emerald-200 bg-emerald-50 text-emerald-600' : 'border-background-200 bg-background-50 text-foreground-500 hover:bg-background-100'}`}
+              >
+                <AppIcon className={`${copied ? 'ri-check-line' : 'ri-file-copy-line'} text-sm`}></AppIcon>
+              </button>
+            )}
+          </>
         )}
-        {session.url && (
-          <button
-            type="button"
-            onClick={copyLink}
-            title={copied ? 'Link copied' : session.kind === 'live' ? 'Copy the meeting link' : 'Copy the recording link'}
-            aria-label="Copy link"
-            className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border transition-smooth ${copied ? 'border-emerald-200 bg-emerald-50 text-emerald-600' : 'border-background-200 bg-background-50 text-foreground-500 hover:bg-background-100'}`}
-          >
-            <AppIcon className={`${copied ? 'ri-check-line' : 'ri-file-copy-line'} text-sm`}></AppIcon>
-          </button>
-        )}
-        {moduleHref && (
+        {moduleHref && !isMissing && (
           <a
             href={moduleHref}
             title="Open the owning module in the Module Builder"
@@ -323,6 +412,41 @@ function SessionRow({
           </a>
         )}
       </div>
+      {/* Ended, but nothing has been pulled from Graph for it yet — nothing to
+          lazy-load, so this is not gated behind the expand click the way a synced
+          session's artifacts panel is. The button runs the same pull the Module
+          Builder's Teams panel runs (POST .../artifacts/), then reloads the row. */}
+      {isUnsynced && (
+        <div className="flex flex-wrap items-center gap-3 bg-amber-50/60 px-4 py-2.5 text-[12px] text-amber-800">
+          <AppIcon className="ri-time-line shrink-0 text-sm"></AppIcon>
+          <span className="flex-1">
+            {syncError
+              || syncNotice
+              || 'This session ended, but its recording, transcript and attendance have not been pulled from Microsoft Teams yet.'}
+          </span>
+          <button
+            type="button"
+            onClick={runSync}
+            disabled={syncing}
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg bg-amber-600 px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-amber-700 disabled:opacity-70"
+          >
+            <AppIcon className={`${syncing ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} text-sm`}></AppIcon>
+            {syncing ? 'Syncing…' : 'Sync from Teams'}
+          </button>
+          {session.url && (
+            <a
+              href={session.url}
+              target="_blank"
+              rel="noreferrer"
+              title="Open this meeting in Microsoft Teams"
+              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg border border-amber-300 bg-white px-2.5 text-[11px] font-bold text-amber-800 transition-smooth hover:bg-amber-100"
+            >
+              <AppIcon className="ri-microsoft-teams-line text-sm"></AppIcon>
+              Open in Teams
+            </a>
+          )}
+        </div>
+      )}
       {canExpand && expanded && (
         <div className="bg-background-50/60">
           <CompletedSessionPanel session={session} state={artifactState} />
@@ -340,12 +464,14 @@ function WeekBlock({
   artifacts,
   expandedRows,
   onToggleRow,
+  onSynced,
 }: {
   group: WeekGroup;
   moduleHrefFor: (session: DeliverySession) => string;
   artifacts: Map<string, ArtifactState>;
   expandedRows: Set<string>;
   onToggleRow: (session: DeliverySession) => void;
+  onSynced: () => void;
 }) {
   const [open, setOpen] = useState(true);
   return (
@@ -372,6 +498,7 @@ function WeekBlock({
               artifactState={artifacts.get(session.id)}
               expanded={expandedRows.has(session.id)}
               onToggle={() => onToggleRow(session)}
+              onSynced={onSynced}
             />
           ))}
         </div>
@@ -386,12 +513,14 @@ function MonthBlock({
   artifacts,
   expandedRows,
   onToggleRow,
+  onSynced,
 }: {
   group: MonthGroup;
   moduleHrefFor: (session: DeliverySession) => string;
   artifacts: Map<string, ArtifactState>;
   expandedRows: Set<string>;
   onToggleRow: (session: DeliverySession) => void;
+  onSynced: () => void;
 }) {
   const [open, setOpen] = useState(true);
   return (
@@ -417,6 +546,7 @@ function MonthBlock({
               artifacts={artifacts}
               expandedRows={expandedRows}
               onToggleRow={onToggleRow}
+              onSynced={onSynced}
             />
           ))}
         </div>
@@ -431,6 +561,7 @@ function ModuleBlock({
   artifacts,
   expandedRows,
   onToggleRow,
+  onSynced,
   defaultOpen,
 }: {
   group: ModuleGroup;
@@ -438,6 +569,7 @@ function ModuleBlock({
   artifacts: Map<string, ArtifactState>;
   expandedRows: Set<string>;
   onToggleRow: (session: DeliverySession) => void;
+  onSynced: () => void;
   defaultOpen: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -458,6 +590,7 @@ function ModuleBlock({
           {group.completed > 0 && <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700">{group.completed} completed</span>}
           {group.scheduled > 0 && <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-sky-700">{group.scheduled} scheduled</span>}
           {group.cancelled > 0 && <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-red-700">{group.cancelled} cancelled</span>}
+          {group.missing > 0 && <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700">{group.missing} need a meeting</span>}
           <span className="rounded-full bg-background-100 px-2 py-0.5 text-foreground-500">{group.count}</span>
         </span>
       </button>
@@ -471,6 +604,7 @@ function ModuleBlock({
               artifacts={artifacts}
               expandedRows={expandedRows}
               onToggleRow={onToggleRow}
+              onSynced={onSynced}
             />
           ))}
         </div>
@@ -485,10 +619,14 @@ export function SessionsTree({
   sessions,
   moduleHrefFor,
   empty,
+  onSynced,
 }: {
   sessions: DeliverySession[];
   moduleHrefFor: (session: DeliverySession) => string;
   empty: React.ReactNode;
+  /** Called after a row pulls its artifacts from Teams, so the page re-reads the
+   *  occurrences the rows are built from. */
+  onSynced: () => void;
 }) {
   const tree = useMemo(() => buildSessionTree(sessions), [sessions]);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(() => new Set());
@@ -531,6 +669,14 @@ export function SessionsTree({
     });
   }, [loadArtifacts]);
 
+  // A sync rewrites what the artifacts endpoint would answer, so the lazily
+  // cached panels are dropped with it — otherwise reopening a row it just filled
+  // would redraw the empty payload fetched before the pull.
+  const handleSynced = useCallback(() => {
+    setArtifacts(new Map());
+    onSynced();
+  }, [onSynced]);
+
   if (!sessions.length) {
     return <>{empty}</>;
   }
@@ -545,6 +691,7 @@ export function SessionsTree({
           artifacts={artifacts}
           expandedRows={expandedRows}
           onToggleRow={onToggleRow}
+          onSynced={handleSynced}
           defaultOpen={tree.length === 1 || index === 0}
         />
       ))}

@@ -35,6 +35,7 @@ import {
   type CurriculumGroup,
   type CurriculumCohort,
   type CurriculumHoliday,
+  type CurriculumModule,
   type CurriculumProgramme,
   type CurriculumSessionPlanPreview,
 } from '@/lib/curriculumApi';
@@ -110,6 +111,35 @@ export interface ModuleFormTarget {
   notes?: string;
   color?: string;
   deliveryUsages?: ModuleFormDeliveryRef[];
+}
+
+/**
+ * A saved module reduced to what this form reads, so re-opening it edits the
+ * record rather than starting a second one. It lives here, beside the shape it
+ * builds, because every door onto this form needs it — the structure wizard
+ * stepping back to its module step, and a programme workspace opening one of
+ * its module rows.
+ */
+export function moduleFormTarget(module: CurriculumModule | undefined | null): ModuleFormTarget | null {
+  if (!module) return null;
+  const id = cleanText(module.moduleCatalogueId) || cleanText(module.catalogueId) || cleanText(module.moduleId) || cleanText(module.id);
+  if (!id) return null;
+  return {
+    id,
+    name: module.name || '',
+    programmeId: module.programmeId,
+    programme: module.programme,
+    cohortId: module.cohortId,
+    groupId: module.groupId,
+    sessionsNumber: module.sessionsNumber,
+    weeks: module.weeks,
+    startDate: module.startDate,
+    endDate: module.endDate,
+    tutor: module.tutor,
+    status: module.status,
+    notes: module.notes,
+    color: module.color,
+  };
 }
 
 /** What a successful save hands back, so the caller can go straight to the module. */

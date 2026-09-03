@@ -65,7 +65,28 @@ export class AuthError extends Error {
 
 const BASE = '/login_api';
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+// Concurrent GETs of the same path share one request. React StrictMode runs
+// every effect twice in development, so the session lookup on mount left two
+// identical /me/ calls on the wire; the same pattern is used for curriculum
+// reads in lib/sharedGetJson.ts. In-flight only, never a TTL cache: the cookie
+// remains the authority and a later call must still ask the server.
+const inFlightGets = new Map<string, Promise<unknown>>();
+
+function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method || 'GET').toUpperCase();
+  if (method !== 'GET') return send<T>(path, init);
+
+  const existing = inFlightGets.get(path) as Promise<T> | undefined;
+  if (existing) return existing;
+
+  const pending = send<T>(path, init).finally(() => {
+    if (inFlightGets.get(path) === (pending as Promise<unknown>)) inFlightGets.delete(path);
+  });
+  inFlightGets.set(path, pending as Promise<unknown>);
+  return pending;
+}
+
+async function send<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${BASE}${path}`, {

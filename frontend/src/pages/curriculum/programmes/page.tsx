@@ -161,6 +161,17 @@ function isProgrammeDeleteRefusal(error: unknown): error is CurriculumApiError &
   );
 }
 
+/**
+ * A programme the API cannot find. The list is built from a payload the server
+ * caches, so a programme deleted elsewhere - another tab, the guided setup, a
+ * second worker - can still have a card here after its row has gone. Its buttons
+ * then answered 404 and the card stayed put, with no way to clear it short of a
+ * browser reload. A 404 is the answer to "remove this", so it is treated as one.
+ */
+function isMissingProgrammeError(error: unknown): boolean {
+  return error instanceof CurriculumApiError && error.status === 404;
+}
+
 function isProgrammeDependencyError(error: unknown): error is CurriculumApiError & { data: CurriculumProgrammeDependencyError } {
   return isProgrammeDeleteRefusal(error) && error.data.reason === 'programme-has-dependencies';
 }
@@ -250,12 +261,21 @@ export default function CurriculumProgrammes() {
   const [ksbSourcesLoading, setKsbSourcesLoading] = useState(true);
   const [ksbSourcesError, setKsbSourcesError] = useState<string | null>(null);
   const [programmeSourceOverrides, setProgrammeSourceOverrides] = useState<Map<string, string>>(new Map());
-  // skipCache on this page: it *is* the list of programmes, so arriving on it
+  // revalidate on this page: it *is* the list of programmes, so arriving on it
   // must show what exists now. The 30s collection cache is there to spare other
   // pages a rebuild, and reading it here meant a programme created elsewhere —
   // another tab, the structure wizard, a programme's own page — was missing until
   // the entry aged out or the browser was reloaded by hand.
-  const { programmes, loading, error, reload, removeProgramme, markProgrammeArchived, markProgrammeRestored, upsertProgramme } = useCurriculumProgrammes({ visibility: 'all', skipCache: true });
+  //
+  // `revalidate` rather than `skipCache` keeps that guarantee — the request still
+  // goes to the network every mount, so anything written elsewhere is visible —
+  // without sending Cache-Control: no-cache, which made the backend rebuild the
+  // payload from Neon and cost this one request ~14s on arrival. Reading back our
+  // own writes still works: every curriculum write calls
+  // invalidate_curriculum_cache() server-side, so the reload has nothing stale to
+  // hit. The explicit skipCache on the reload calls below is left as belt and
+  // braces for the multi-worker case, where invalidation needs a shared cache.
+  const { programmes, loading, error, reload, removeProgramme, markProgrammeArchived, markProgrammeRestored, upsertProgramme } = useCurriculumProgrammes({ visibility: 'all', revalidate: true });
   const { data: curriculumData, reload: reloadCurriculumData } = useCurriculumData({ autoLoad: false, compact: true, includeHolidays: true, refreshModules: true, compactModules: true });
   const ksbDescriptions = useMemo(() => buildProgrammeKsbDescriptionLookup(ksbSets, standards), [ksbSets, standards]);
 
@@ -470,6 +490,7 @@ export default function CurriculumProgrammes() {
     const programmeId = programme.sourceId || programme.id;
     setActionError(null);
     let outcome: 'archived' | null = null;
+    let alreadyGone = false;
     let dependencyReport: CurriculumProgrammeDependencyReport | null = null;
     await showCurriculumConfirm({
       title: 'Archive programme?',
@@ -488,6 +509,11 @@ export default function CurriculumProgrammes() {
         } catch (err) {
           if (isProgrammeDependencyError(err)) {
             dependencyReport = err.data.dependencyReport || null;
+            return;
+          }
+          if (isMissingProgrammeError(err)) {
+            alreadyGone = true;
+            removeProgramme(programmeId);
             return;
           }
           setActionError(err instanceof Error ? err.message : 'Unable to archive programme.');
@@ -509,6 +535,12 @@ export default function CurriculumProgrammes() {
           navigate(`/curriculum/cohorts?programme=${encodeURIComponent(programmeId)}`);
         },
       });
+    } else if (alreadyGone) {
+      await showProgrammeSwalToast(
+        'Programme already gone',
+        `${programme.name} is no longer in the database, so its card has been taken off the list.`,
+      );
+      await refreshProgrammeCards();
     } else if (outcome === 'archived') {
       await showProgrammeSwalToast(
         'Programme archived',
@@ -521,6 +553,7 @@ export default function CurriculumProgrammes() {
     const programmeId = programme.sourceId || programme.id;
     setActionError(null);
     let removed: Record<string, number> | null = null;
+    let alreadyGone = false;
     let blockers: Record<string, number> | undefined;
     const contents = countSummary(
       { cohorts: programme.cohorts || 0, groups: programme.groups || 0, modules: programme.modules || 0 },
@@ -544,6 +577,11 @@ export default function CurriculumProgrammes() {
             setActionError(err.data.error || err.data.message || 'Unable to delete programme.');
             return;
           }
+          if (isMissingProgrammeError(err)) {
+            alreadyGone = true;
+            removeProgramme(programmeId);
+            return;
+          }
           setActionError(err instanceof Error ? err.message : 'Unable to delete programme.');
           throw err;
         } finally {
@@ -556,6 +594,12 @@ export default function CurriculumProgrammes() {
         'Learner records block this delete',
         `${programme.name} still supplies ${countSummary(blockers, LEARNER_DELIVERY_LABELS)}. Learner plans are never deleted with a programme.`,
       );
+    } else if (alreadyGone) {
+      await showProgrammeSwalToast(
+        'Programme already gone',
+        `${programme.name} is no longer in the database, so its card has been taken off the list.`,
+      );
+      await refreshProgrammeCards();
     } else if (removed) {
       // 'programmes' is the programme row itself, which the title already says.
       const { programmes: _programmeRow, ...children } = removed as Record<string, number>;

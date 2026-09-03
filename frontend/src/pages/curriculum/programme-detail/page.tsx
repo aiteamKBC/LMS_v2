@@ -3,12 +3,17 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
-import { formatProgrammeLevel, namedCurriculumWorkspacePath, programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entities/model';
+import { findModule, formatProgrammeLevel, namedCurriculumWorkspacePath, programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entities/model';
 // Editing the programme, or adding a cohort or group from this page,
 // opens the same drawer that record's own page opens. One form per record type in
 // the whole studio, so nothing behaves differently depending on the door taken.
 import { CohortFormDrawer, GroupFormDrawer, ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
-import { ScopeAchievementPanel, type KsbCredit } from '@/pages/curriculum/shared/entities/scopeAchievement';
+import { ModuleFormDrawer, moduleFormTarget, type ModuleFormTarget } from '@/pages/curriculum/shared/entities/moduleForm';
+import {
+  ScopeAchievementPanel,
+  ScopeLearnerAchievementDetail,
+  type KsbCredit,
+} from '@/pages/curriculum/shared/entities/scopeAchievement';
 // The same rule applies to reading: the record tables, filter bars and workspace
 // chrome here are the shared ones the Cohort, Group and Module workspaces use, so
 // a programme is a lens on those records rather than a second rendering of them.
@@ -23,14 +28,17 @@ import {
   InlineError,
   NamedActions,
   PlainCell,
+  RowActions,
   StackedCell,
   StatusBadge,
   WorkspaceHeader,
   WorkspacePanel,
   WorkspaceTabs,
 } from '@/pages/curriculum/shared/entities/ui';
+import { archiveCohortWithConfirm, archiveGroupWithConfirm, archiveModuleWithConfirm } from '@/pages/curriculum/shared/entities/archive';
 import { curriculumNavItems } from '@/mocks/navigation';
 import type {
+  CurriculumCohort,
   CurriculumComponent,
   CurriculumGroup,
   CurriculumKsbEntry,
@@ -38,6 +46,7 @@ import type {
   CurriculumOverview,
   CurriculumProgramme,
   CurriculumProgrammeDetail,
+  CurriculumProgrammeAssignedLearner,
   CurriculumProgrammeLearnerRosterResponse,
   CurriculumSession,
   CurriculumStaffProfile,
@@ -53,7 +62,7 @@ import {
   fetchCurriculumProgrammes,
   fetchCurriculumProgrammeDetail,
   fetchCurriculumProgrammeKsbCoverage,
-  fetchCurriculumProgrammeLearnerRoster,
+  fetchCurriculumScopeLearnerRoster,
   fetchCurriculumKsbSets,
   fetchCurriculumKsbFrameworks,
   fetchCurriculumCoaches,
@@ -157,6 +166,15 @@ interface Module {
   coach?: string;
   tutor?: string;
   weeks: number;
+  /**
+   * The module's own placement dates, as the record holds them — including an end
+   * that holidays moved or a tutor set by hand. Kept apart from the week span in
+   * `weeksData`, which is where the authored sessions happen to fall: a module
+   * whose last week has one session on 5 Oct can still legitimately end on 15 Oct,
+   * and printing the week span as the module's dates contradicted its own record.
+   */
+  startDate?: string;
+  endDate?: string;
   otjh: number;
   status: 'published' | 'approved' | 'in-review' | 'draft';
   ksbTags: string[];
@@ -279,6 +297,23 @@ interface Programme {
   modules: Module[];
   ksbHeatmap: KsbHeatmapRow[];
   moduleNames: string[];
+  /**
+   * Off-the-job hours a learner must complete across the whole programme.
+   * null means no target has been set, which is not the same as a target of
+   * zero: without one there is nothing for authored OTJH to be a share of.
+   */
+  requiredOtjh: number | null;
+  /**
+   * What the learners have actually evidenced, from the Component Progress
+   * snapshot (`learner_progress_ksbs`) by way of programme_learner_ksb_progress.
+   * A different question from the coverage heatmap above, which measures how
+   * much of the standard the *design* touches, so the two never share a figure.
+   */
+  learnerKsbProgressPercentage: number;
+  learnerKsbCodesStarted: number;
+  learnerKsbCodesComplete: number;
+  learnerKsbCodesTotal: number;
+  learnerKsbLearnerCount: number;
 }
 
 // A delivery session shown on the Sessions tab, derived from real week-builder
@@ -292,9 +327,15 @@ export interface DeliverySession {
   /** The module the row belongs to — the link target for "Open in builder". */
   moduleCatalogueId: string;
   week: number;
+  /** The authored week's own id — the deep-link target for jumping straight to
+   *  this week in Module Builder, whether to review it or to create the meeting
+   *  it doesn't have yet. */
+  weekId: string;
   /** The week's own title, empty when the author never gave it one. */
   weekTitle: string;
-  /** The week's first teaching date. Context for the row, never its schedule. */
+  /** The week's first teaching date. Context for a live row, whose own date is
+   *  its schedule; for a recording, which has no date of its own, this is what
+   *  the Sessions tree groups the row by. */
   weekStartDate: string;
   /** The meeting's own scheduled date and time. Empty means unscheduled. */
   date: string;
@@ -310,7 +351,9 @@ export interface DeliverySession {
   recordingExpected: boolean;
   ksbRefs: string[];
   /** Real occurrence status from the sync service ('scheduled' | 'completed' |
-   *  'cancelled'); falls back to a planned/authoring status when untracked. */
+   *  'cancelled'); falls back to a planned/authoring status when untracked, or to
+   *  `'not-created'` for a week that plans a live session — see
+   *  every-week-gets-its-own-live-session — but has no Teams meeting attached. */
   status: CurriculumComponent['status'] | string;
   /** The live-session series id (component.settings.teamsLiveSessionId), needed
    *  to lazy-load a completed session's attendance/transcript/recording. */
@@ -323,6 +366,11 @@ export interface DeliverySession {
   actualStart: string;
   actualEnd: string;
   participantCount: number;
+  /** When the sync service last pulled this occurrence's recording, transcript
+   *  and attendance from Teams. Empty on a completed occurrence means the
+   *  meeting ended but nothing has synced yet — distinct from a sync that ran
+   *  and genuinely found no recording. */
+  artifactsSyncedAt: string;
 }
 
 // A week and a session are two different records and neither may borrow the
@@ -347,7 +395,10 @@ function deliveryKindForComponent(component: { type?: string; settings?: Record<
   if (key.includes('live') || 'liveSessionUrl' in settings || 'sessionDate' in settings || 'attendanceRequired' in settings || 'recordingExpected' in settings) {
     return 'live';
   }
-  if (key.includes('video') || 'videoUrl' in settings || 'requiredProgressPercentage' in settings) {
+  // `videoUrl` only, not `requiredProgressPercentage` — a podcast component
+  // tracks listening progress under that same key, so sniffing on it alone
+  // classified every podcast as a recorded video too.
+  if (key.includes('video') || 'videoUrl' in settings) {
     return 'recorded';
   }
   return null;
@@ -373,6 +424,12 @@ const EMPTY_PROGRAMME: Programme = {
   modules: [],
   ksbHeatmap: [],
   moduleNames: [],
+  requiredOtjh: null,
+  learnerKsbProgressPercentage: 0,
+  learnerKsbCodesStarted: 0,
+  learnerKsbCodesComplete: 0,
+  learnerKsbCodesTotal: 0,
+  learnerKsbLearnerCount: 0,
 };
 
 function clean(value: unknown, fallback = '') {
@@ -722,6 +779,23 @@ function groupStatus(status: string): Group['status'] {
   return 'active';
 }
 
+/**
+ * An archived module, by any of the signals the payload carries.
+ *
+ * Archiving a module soft-deletes it (`isProgrammeDeleted`) and leaves `status`
+ * alone, so the delivery status is where it usually shows. This page fetches
+ * `visibility: 'all'` so the cohort status filter can reach archived cohorts,
+ * which means archived modules arrive here too and have to be dropped: archive
+ * takes a module off this list and keeps its content, and the programme card
+ * counts only the live ones — so counting them here made the workspace disagree
+ * with the card it was opened from.
+ */
+function isArchivedCurriculumModule(module: Pick<CurriculumModule, 'status' | 'authoringStatus' | 'deliveryStatus' | 'isProgrammeDeleted'>): boolean {
+  if (module.isProgrammeDeleted) return true;
+  return [module.status, module.authoringStatus, module.deliveryStatus]
+    .some(value => normalise(value) === 'archived');
+}
+
 function moduleStatus(status: string): Module['status'] {
   if (status === 'published' || status === 'approved' || status === 'in-review' || status === 'draft') return status;
   return status === 'review' ? 'in-review' : 'published';
@@ -753,8 +827,13 @@ function repairMojibake(value: string) {
   return MOJIBAKE_REPAIRS.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), value);
 }
 
+// An unset date returns an empty string, not a placeholder. "TBD" told a
+// reader neither what is missing nor who would fill it in, and it is truthy, so
+// it also defeated the `|| 'Not scheduled'` fallbacks the call sites already
+// carry and leaked into the module drawer's date inputs. Each caller below says
+// what its own blank means.
 function formatDateLabel(value: string) {
-  if (!value) return 'TBD';
+  if (!value) return '';
   // A date-only string ("2026-08-29") parses as UTC midnight; rendering it in the
   // browser's local zone then rolls it back a day for anyone west of UTC. Anchor
   // those to UTC noon and format in UTC so the calendar day is preserved. Full
@@ -1087,7 +1166,15 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     ...programmeGroups.flatMap(group => group.modules),
     ...programmeCohorts.flatMap(cohort => cohort.modules),
   ].filter(Boolean).map(name => clean(name)));
-  const programmeModules = data.modules.filter(module => belongsToProgramme(source, module));
+  // An archived programme keeps its modules on show: everything beneath it was
+  // archived with it, so a page (and a card) reading "no modules" would say that
+  // deleting it removes nothing. A live programme drops the ones archived on
+  // their own — this is the same rule the programme card counts by, in
+  // enrich_programmes_with_module_counts.
+  const programmeIsArchived = normalise(source.status) === 'archived' || Boolean(source.isArchived);
+  const programmeModules = data.modules.filter(module => (
+    belongsToProgramme(source, module) && (programmeIsArchived || !isArchivedCurriculumModule(module))
+  ));
   const relatedAuthoringModulesBySignature = new Map<string, CurriculumModule[]>();
   programmeModules.forEach(module => {
     if (normalise(module.sourceType) !== 'authoring') return;
@@ -1125,6 +1212,8 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     sessionNames: string[];
     ksbCodes: string[];
     weekStructure?: Array<{ id?: string; weekNumber?: number; number?: number; title?: string; displayOrder?: number }>;
+    startDate?: string;
+    endDate?: string;
   }> = liveModules.length > 0
     ? liveModules
     : [...moduleNamesFromStructure].map((name, index) => ({
@@ -1205,6 +1294,8 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       coach: liveModule.coach || '',
       tutor: liveModule.tutor || '',
       weeks: weeksData.length || liveModule.weeks || 0,
+      startDate: clean(liveModule.startDate),
+      endDate: clean(liveModule.endDate),
       otjh: moduleOtjh,
       status: moduleStatus(liveModule.status),
       ksbTags,
@@ -1274,7 +1365,7 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       startDate: formatDateLabel(group.startDate),
       endDate: formatDateLabel(group.endDate),
       status: groupStatus(group.status),
-      schedule: group.schedule || 'TBD',
+      schedule: group.schedule || '',
       mode: group.mode || 'Live',
       modules: modules.filter(module => moduleMatchesGroup(module, cohort.name, group)),
     })),
@@ -1392,6 +1483,12 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       modules,
       ksbHeatmap,
       moduleNames,
+      requiredOtjh: Number.isFinite(Number(source.requiredOtjh)) && source.requiredOtjh !== null ? Number(source.requiredOtjh) : null,
+      learnerKsbProgressPercentage: Number(source.learnerKsbProgressPercentage || 0),
+      learnerKsbCodesStarted: Number(source.learnerKsbCodesStarted || 0),
+      learnerKsbCodesComplete: Number(source.learnerKsbCodesComplete || 0),
+      learnerKsbCodesTotal: Number(source.learnerKsbCodesTotal || 0),
+      learnerKsbLearnerCount: Number(source.learnerKsbLearnerCount || 0),
     },
   };
 }
@@ -1441,7 +1538,7 @@ function StaffSlot({
 
   if (editing && canEdit) {
     return (
-      <div className="flex min-w-0 items-center gap-1.5 self-center">
+      <div className="flex min-w-0 items-center gap-1.5 self-center" onClick={event => event.stopPropagation()}>
         <select
           autoFocus
           defaultValue=""
@@ -1474,7 +1571,7 @@ function StaffSlot({
   }
 
   return (
-    <span className="group/staff flex min-w-0 items-center gap-2 self-center">
+    <span className="group/staff flex min-w-0 items-center gap-2 self-center" onClick={event => event.stopPropagation()}>
       <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${assigned ? 'bg-primary-50 text-primary-600' : 'bg-amber-50 text-amber-600'}`}>
         <AppIcon className={`${icon} text-[11px]`}></AppIcon>
       </span>
@@ -1599,33 +1696,42 @@ function RecordHomeLink({ icon, label, count, hint, to }: {
   );
 }
 
-// Read-only view of the learners the enrolment team placed into a cohort (and
-// optionally a single group). Curriculum owns the delivery structure, not the
-// placements, so this panel deliberately offers no allocation controls.
+// Read-only view of the learners the enrolment team placed into a group.
+// Curriculum owns the delivery structure, not the placements, so this panel
+// deliberately offers no allocation controls.
+//
+// The roster it is handed is already the group's own — asked for at
+// `/curriculum/groups/<id>/learner-roster/` — so it lists what it is given and
+// filters nothing. It used to be handed the whole programme's roster and match
+// rows on cohort and group *names*, which quietly dropped learners whose stored
+// labels had drifted from the records they were placed in.
+//
+// Each row is a button, because the roster is the way into the one thing a
+// designer actually comes here to ask: what has this person achieved in this
+// group. The figures themselves belong to the achievement read, not to this
+// panel, so the row opens them rather than restating them.
 function EnrolledLearnersPanel({
   roster,
   loading,
   error,
-  cohortName,
-  groupName,
+  selectedLearnerId,
+  onSelectLearner,
   emptyHint,
 }: {
   roster: CurriculumProgrammeLearnerRosterResponse | null;
   loading: boolean;
   error: string | null;
-  cohortName: string;
-  groupName?: string;
+  selectedLearnerId: string;
+  onSelectLearner: (learner: CurriculumProgrammeAssignedLearner | null) => void;
   emptyHint?: string;
 }) {
-  const learners = useMemo(() => {
-    const cohortKey = normalise(cohortName);
-    const groupKey = normalise(groupName);
-    return (roster?.assignedLearners || []).filter(learner => {
-      if (cohortKey && normalise(learner.cohort) !== cohortKey) return false;
-      if (groupKey && normalise(learner.group) !== groupKey) return false;
-      return true;
-    });
-  }, [cohortName, groupName, roster]);
+  const learners = roster?.assignedLearners || [];
+  // The Learners column in the table above counts active placements; this list
+  // is asked for with learnerStatus=all, because someone paused or withdrawn is
+  // still a person this group holds and still keeps whatever they earned here.
+  // Where the two disagree, say why rather than leaving the reader to wonder
+  // which number is wrong.
+  const inactive = learners.filter(learner => normalise(learner.lifecycleStatus) !== 'active').length;
 
   return (
     <>
@@ -1642,25 +1748,49 @@ function EnrolledLearnersPanel({
       )}
 
       {!loading && !error && learners.length > 0 && (
-        <div className="grid gap-2 sm:grid-cols-2">
-          {learners.map(learner => (
-            <div key={String(learner.id)} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-100 px-3 py-2">
-              <div className="min-w-0">
-                <p className="truncate text-[12px] font-semibold text-foreground-900">{learner.name || learner.email || `Learner ${learner.id}`}</p>
-                <p className="truncate text-[11px] text-foreground-500">
-                  {learner.email || 'No email on record'}
-                  {learner.group ? ` · ${learner.group}` : ''}
-                  {learner.coachName ? ` · Coach: ${learner.coachName}` : ''}
-                </p>
-              </div>
-              {learner.lifecycleStatus && (
-                <span className={`rounded-full px-2 py-0.5 text-[9px] font-semibold ${normalise(learner.lifecycleStatus) === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-foreground-100 text-foreground-500'}`}>
-                  {learner.lifecycleStatus}
-                </span>
-              )}
-            </div>
-          ))}
-        </div>
+        <>
+          <p className="mb-2 text-[11px] text-foreground-500">
+            {learners.length} learner{learners.length === 1 ? '' : 's'} placed in this group
+            {inactive ? `, ${inactive} of them no longer active — the count above is active placements only` : ''}.
+            {' '}Open one to see the off-the-job hours and KSBs they have achieved here.
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {learners.map(learner => {
+              const key = String(learner.id);
+              const selected = key === selectedLearnerId;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => onSelectLearner(selected ? null : learner)}
+                  aria-pressed={selected}
+                  className={`flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left transition-smooth ${
+                    selected
+                      ? 'border-primary-300 bg-primary-50'
+                      : 'border-background-200 bg-background-100 hover:border-primary-200 hover:bg-background-50'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-1.5 truncate text-[12px] font-semibold text-foreground-900">
+                      <AppIcon className={`${selected ? 'ri-subtract-line' : 'ri-add-line'} text-[12px] text-foreground-400`}></AppIcon>
+                      {learner.name || learner.email || `Learner ${learner.id}`}
+                    </p>
+                    <p className="truncate pl-4 text-[11px] text-foreground-500">
+                      {learner.email || 'No email on record'}
+                      {learner.group ? ` · ${learner.group}` : ''}
+                      {learner.coachName ? ` · Coach: ${learner.coachName}` : ''}
+                    </p>
+                  </div>
+                  {learner.lifecycleStatus && (
+                    <span className={`rounded-full px-2 py-0.5 text-[9px] font-semibold ${normalise(learner.lifecycleStatus) === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-foreground-100 text-foreground-500'}`}>
+                      {learner.lifecycleStatus}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </>
       )}
     </>
   );
@@ -1707,12 +1837,54 @@ function EnrolledLearnersPanel({
 
 type Tab = 'overview' | 'cohorts' | 'groups' | 'modules' | 'sessions' | 'coverage' | 'achievement' | 'quality';
 
-const COHORT_GRID = 'grid grid-cols-[minmax(170px,1.4fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_80px_80px_minmax(100px,.8fr)_120px]';
-// Actions need room for both "Add first module" and "Learners" on one line.
-// Below this width EntityTable scrolls horizontally instead of squeezing the
-// buttons or turning a single row into an uneven two-line layout.
-const GROUP_GRID = 'grid grid-cols-[minmax(200px,1.35fr)_minmax(160px,1fr)_minmax(180px,1fr)_90px_90px_minmax(210px,auto)]';
-const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_70px_100px_80px_70px_120px]';
+// Actions now carries the "Groups" jump plus Edit and Archive, so the fixed
+// 120px column that fit "Groups" alone is widened to a minmax that keeps room
+// for all three without squeezing them onto a second line.
+const COHORT_GRID = 'grid grid-cols-[minmax(170px,1.4fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_80px_80px_minmax(100px,.8fr)_minmax(200px,auto)]';
+/**
+ * The date window shown on a module row.
+ *
+ * The record's own placement dates first: an end that holidays moved, or that a
+ * tutor set by hand, lives there and nowhere else. The authored week span is the
+ * fallback for a module with no dates stored yet — labelled as the weeks, because
+ * the last week's last session is not the module's end date and this row used to
+ * print one as the other.
+ */
+function moduleDatesLabel(mod: Pick<Module, 'startDate' | 'endDate' | 'weeksData'>): string {
+  const recorded = [mod.startDate, mod.endDate].map(value => clean(value)).filter(Boolean);
+  if (recorded.length) return recorded.map(formatDateLabel).join(' – ');
+
+  const weekSpan = [
+    mod.weeksData[0]?.startDate,
+    mod.weeksData.at(-1)?.endDate || mod.weeksData.at(-1)?.startDate,
+  ].filter(Boolean).join(' – ');
+  return weekSpan ? `${weekSpan} (authored weeks)` : 'No dates set';
+}
+
+/**
+ * The date window shown on a group row.
+ *
+ * A group has no start/end fields of its own in its drawer — only cohorts and
+ * modules do — so a group's row shows the three dates carried on the cohort it
+ * runs inside, the same cohort this table is already scoped to, each labelled
+ * so "12 Dec 2026" doesn't get read as whichever of the three a reader expects.
+ */
+function groupDatesLabel(cohort: { startDate: string; endDate: string; apprenticeshipEndDate: string }): ReactNode {
+  const parts = [
+    cohort.startDate && `Cohort start ${cohort.startDate}`,
+    cohort.endDate && `Cohort practical end ${cohort.endDate}`,
+    cohort.apprenticeshipEndDate && `Cohort apprenticeship end ${cohort.apprenticeshipEndDate}`,
+  ].filter(Boolean) as string[];
+  if (!parts.length) return 'Not scheduled';
+  const text = parts.join(' · ');
+  return <span title={text}>{text}</span>;
+}
+
+// Actions need room for "Add first module", "Learners", Edit and Archive on one
+// line. Below this width EntityTable scrolls horizontally instead of squeezing
+// the buttons or turning a single row into an uneven two-line layout.
+const GROUP_GRID = 'grid grid-cols-[minmax(200px,1.35fr)_minmax(160px,1fr)_minmax(180px,1fr)_90px_90px_minmax(290px,auto)]';
+const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_70px_100px_80px_70px_minmax(210px,auto)]';
 
 const TAB_LABELS: Record<Tab, string> = {
   overview: 'Overview',
@@ -1763,10 +1935,22 @@ export default function ProgrammeDetailPage() {
   const [learnerRoster, setLearnerRoster] = useState<CurriculumProgrammeLearnerRosterResponse | null>(null);
   const [learnerRosterLoading, setLearnerRosterLoading] = useState(false);
   const [learnerRosterError, setLearnerRosterError] = useState<string | null>(null);
+  // The learner whose achievement in the selected group is open. Held as the
+  // roster row rather than the id alone so the detail can be titled with the
+  // name enrolment holds before its own read has landed.
+  const [selectedLearner, setSelectedLearner] = useState<CurriculumProgrammeAssignedLearner | null>(null);
   const [programmeKsbSets, setProgrammeKsbSets] = useState<CurriculumKsbSet[]>([]);
   const [skillsStandards, setSkillsStandards] = useState<CurriculumStandard[]>([]);
+  // The programme's off-the-job hours as the learner records hold them, which is
+  // the only place a *completed* hour exists: authored OTJH is a plan, and
+  // `Learner.learners` is where enrolment keeps what each learner has done
+  // against what they are targeted to do (completed_hours / target_hours, which
+  // is what the learner-roster endpoint reads).
+  const [learnerOtjh, setLearnerOtjh] = useState<{ completed: number; target: number; learners: number } | null>(null);
+  const [learnerOtjhLoading, setLearnerOtjhLoading] = useState(false);
   const coverageRequestKeyRef = useRef('');
   const rosterRequestKeyRef = useRef('');
+  const learnerOtjhRequestKeyRef = useRef('');
   const componentsRequestKeyRef = useRef('');
   const PROGRAMME = useMemo(() => {
     const sourceLabels = buildKsbSourceLabelMap(data);
@@ -1865,9 +2049,23 @@ export default function ProgrammeDetailPage() {
   const [componentPickerOpen, setComponentPickerOpen] = useState(false);
   const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false);
   const [cohortDrawerOpen, setCohortDrawerOpen] = useState(false);
+  // Set only when the cohort drawer is editing an existing record rather than
+  // creating one; the drawer reads it as its `cohort` prop.
+  const [editingCohort, setEditingCohort] = useState<CurriculumCohort | null>(null);
   // The cohort the new group belongs to; '' when the user has not narrowed it.
   const [groupDrawerCohortId, setGroupDrawerCohortId] = useState<string | null>(null);
+  // Same idea for the group drawer: set only while editing.
+  const [editingGroup, setEditingGroup] = useState<CurriculumGroup | null>(null);
   const [savingAction, setSavingAction] = useState<string | null>(null);
+  // Archived from this page's own row action, taken out of the tables straight
+  // away rather than waiting on the reload behind it — see `assignGroupCoach`'s
+  // sibling comment on why: the refresh takes seconds, and a row still on screen
+  // after "Archive" reads as though nothing happened.
+  const [archivedCohortIds, setArchivedCohortIds] = useState<Set<string>>(() => new Set());
+  const [archivedGroupIds, setArchivedGroupIds] = useState<Set<string>>(() => new Set());
+  const [archivedModuleIds, setArchivedModuleIds] = useState<Set<string>>(() => new Set());
+  // Set only while editing a module; the drawer is the shared module form.
+  const [editingModule, setEditingModule] = useState<ModuleFormTarget | null>(null);
 
   const coverageProgrammeIds = useMemo(() => {
     const withoutRoutePrefix = clean(id || '').replace(/^program-/i, '');
@@ -1894,6 +2092,14 @@ export default function ProgrammeDetailPage() {
     () => ksbCoverageSourceLabel(coverageKsbSource, data, programmeKsbSets, skillsStandards),
     [coverageKsbSource, data, programmeKsbSets, skillsStandards],
   );
+  const coverageKsbSourceDetail = useMemo(
+    () => ksbCoverageSourceDetail(coverageKsbSource, data, programmeKsbSets, skillsStandards),
+    [coverageKsbSource, data, programmeKsbSets, skillsStandards],
+  );
+  // An applied source is the one saved on the programme. Anything else on this
+  // row was matched from the programme's standard text, and says so rather than
+  // reading as a deliberate assignment.
+  const coverageKsbSourceApplied = Boolean(splitProgrammeKsbSource(liveProgramme.ksbProfileSourceId).sourceId);
 
   const loadBackendCoverage = useCallback((signal?: AbortSignal) => {
     if (!coverageProgrammeIds.length) return Promise.resolve();
@@ -1926,6 +2132,58 @@ export default function ProgrammeDetailPage() {
       });
   }, [coverageKsbSource, coverageProgrammeIds]);
 
+  // Summed rather than averaged: the programme's progress is what its learners
+  // have between them completed out of what they are between them targeted, so
+  // one learner running ahead cannot cover for a cohort that is behind.
+  const loadLearnerOtjh = useCallback((signal?: AbortSignal) => {
+    if (!coverageProgrammeIds.length) return Promise.resolve();
+    setLearnerOtjhLoading(true);
+    return (async () => {
+      let lastError: unknown = null;
+      for (const programmeId of coverageProgrammeIds) {
+        try {
+          // 'all': a paused or completed placement is still a learner whose
+          // hours count towards the programme.
+          return await fetchCurriculumScopeLearnerRoster('programme', programmeId, { learnerStatus: 'all' }, signal);
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          lastError = error;
+        }
+      }
+      throw lastError || new Error('Unable to load the programme learner roster.');
+    })()
+      .then(result => {
+        if (signal?.aborted) return;
+        const rows = result?.assignedLearners || [];
+        setLearnerOtjh({
+          completed: rows.reduce((total, row) => total + Number(row.completedHours || 0), 0),
+          target: rows.reduce((total, row) => total + Number(row.targetHours || 0), 0),
+          learners: rows.length,
+        });
+      })
+      .catch(error => {
+        if (signal?.aborted) return;
+        console.warn('Unable to load learner off-the-job hours for this programme.', error);
+        setLearnerOtjh(null);
+      })
+      .finally(() => {
+        if (!signal?.aborted) setLearnerOtjhLoading(false);
+      });
+  }, [coverageProgrammeIds]);
+
+  useEffect(() => {
+    if (tab !== 'overview' || !coverageProgrammeIds.length) return;
+    const otjhKey = `programme-otjh:${coverageProgrammeIds.join('|')}`;
+    if (learnerOtjhRequestKeyRef.current === otjhKey) return;
+    learnerOtjhRequestKeyRef.current = otjhKey;
+    const controller = new AbortController();
+    void loadLearnerOtjh(controller.signal);
+    return () => {
+      controller.abort();
+      if (learnerOtjhRequestKeyRef.current === otjhKey) learnerOtjhRequestKeyRef.current = '';
+    };
+  }, [coverageProgrammeIds, loadLearnerOtjh, tab]);
+
   // Overview reads the same coverage the KSB tab draws — its readiness figure and
   // the header's coverage stat are that heatmap counted, not a second calculation
   // — so landing on the page loads it once and both agree.
@@ -1944,61 +2202,61 @@ export default function ProgrammeDetailPage() {
     };
   }, [coverageKsbSource.sourceId, coverageKsbSource.sourceType, coverageProgrammeIds, loadBackendCoverage, needsCoverage]);
 
-  // The roster is only needed by the Delivery tab, so it loads lazily and walks
-  // the same programme-id candidates the coverage call uses.
-  const loadLearnerRoster = useCallback((signal?: AbortSignal) => {
-    if (!coverageProgrammeIds.length) return Promise.resolve();
+  // The roster is asked for at the group's own scope rather than the
+  // programme's. It used to read the whole programme and then filter the rows
+  // down by cohort *name* and group *name* in the browser — and a learner whose
+  // placement labels differed by so much as a renamed cohort dropped out of a
+  // group that plainly contains them. The group endpoint resolves the group by
+  // id, walks its own lineage, and returns everyone enrolment placed in it, so
+  // "Learners" shows the group's roster and not a name match.
+  const loadLearnerRoster = useCallback((groupId: string, signal?: AbortSignal) => {
+    if (!groupId) return Promise.resolve();
     setLearnerRosterLoading(true);
     setLearnerRosterError(null);
-    return (async () => {
-      let lastError: unknown = null;
-      for (const programmeId of coverageProgrammeIds) {
-        try {
-          return await fetchCurriculumProgrammeLearnerRoster(programmeId, {}, signal);
-        } catch (error) {
-          if (signal?.aborted) throw error;
-          lastError = error;
-        }
-      }
-      throw lastError || new Error('Unable to load the enrolment learner roster.');
-    })()
+    // 'all': a paused or completed placement is still someone this group holds,
+    // and hiding them makes the count above the table disagree with the list.
+    return fetchCurriculumScopeLearnerRoster('group', groupId, { learnerStatus: 'all' }, signal)
       .then(result => {
+        if (signal?.aborted) return;
         setLearnerRoster(result || null);
         setLearnerRosterError(null);
       })
       .catch(error => {
         if (signal?.aborted) return;
-        console.warn('Unable to load the enrolment learner roster.', error);
+        console.warn('Unable to load the group learner roster.', error);
         setLearnerRoster(null);
         setLearnerRosterError(error instanceof Error ? error.message : 'Unable to load learners assigned by enrolment.');
       })
       .finally(() => {
         if (!signal?.aborted) setLearnerRosterLoading(false);
       });
-  }, [coverageProgrammeIds]);
+  }, []);
 
   useEffect(() => {
-    if (tab !== 'groups') return;
-    const rosterKey = coverageProgrammeIds.join('|');
-    if (!rosterKey || rosterRequestKeyRef.current === rosterKey) return;
+    if (tab !== 'groups' || !selectedGroup) return;
+    const rosterKey = `group:${selectedGroup}`;
+    if (rosterRequestKeyRef.current === rosterKey) return;
     rosterRequestKeyRef.current = rosterKey;
     const controller = new AbortController();
-    void loadLearnerRoster(controller.signal);
+    void loadLearnerRoster(selectedGroup, controller.signal);
     return () => {
       controller.abort();
       if (rosterRequestKeyRef.current === rosterKey) rosterRequestKeyRef.current = '';
     };
-  }, [coverageProgrammeIds, loadLearnerRoster, tab]);
+  }, [loadLearnerRoster, selectedGroup, tab]);
 
   useEffect(() => {
     setDetailComponents([]);
     componentsRequestKeyRef.current = '';
     coverageRequestKeyRef.current = '';
     rosterRequestKeyRef.current = '';
+    learnerOtjhRequestKeyRef.current = '';
+    setLearnerOtjh(null);
     occurrencesRequestKeyRef.current = '';
     setLiveOccurrences(new Map());
     setLearnerRoster(null);
     setLearnerRosterError(null);
+    setSelectedLearner(null);
   }, [id]);
 
   useEffect(() => {
@@ -2134,6 +2392,9 @@ export default function ProgrammeDetailPage() {
   const filteredCohorts = useMemo(() => {
     const query = normalise(cohortSearch);
     return PROGRAMME.cohorts.filter(cohortItem => {
+      // Taken out the moment "Archive" is confirmed, ahead of the reload that
+      // will otherwise leave it out — see `archiveCohort`.
+      if (archivedCohortIds.has(cohortItem.id)) return false;
       const isArchived = normalise(cohortItem.status) === 'archived';
       if (cohortStatusFilter === 'archived' ? !isArchived : isArchived) return false;
       const matchesQuery = !query || [cohortItem.name, cohortItem.status, cohortItem.startDate, cohortItem.endDate]
@@ -2141,7 +2402,7 @@ export default function ProgrammeDetailPage() {
       const matchesStatus = !cohortStatusFilter || cohortStatusFilter === 'archived' || cohortItem.status === cohortStatusFilter;
       return matchesQuery && matchesStatus;
     });
-  }, [PROGRAMME.cohorts, cohortSearch, cohortStatusFilter]);
+  }, [PROGRAMME.cohorts, archivedCohortIds, cohortSearch, cohortStatusFilter]);
 
   // The groups panel always shows a cohort that is actually in the table above
   // it, so filtering can never leave it describing a hidden row.
@@ -2166,6 +2427,8 @@ export default function ProgrammeDetailPage() {
   const filteredGroups = useMemo(() => {
     const query = normalise(groupSearch);
     return (activeCohort?.groups || []).filter(group => {
+      // Same immediate drop as `filteredCohorts` above, for `archiveGroup`.
+      if (archivedGroupIds.has(group.id)) return false;
       const matchesQuery = !query || [group.name, group.coach, group.schedule, group.mode]
         .some(value => normalise(value).includes(query));
       const hasCoach = isStaffAssigned(group.coach);
@@ -2173,7 +2436,7 @@ export default function ProgrammeDetailPage() {
         || (groupCoachFilter === 'assigned' ? hasCoach : !hasCoach);
       return matchesQuery && matchesCoach;
     });
-  }, [activeCohort, groupCoachFilter, groupSearch]);
+  }, [activeCohort, archivedGroupIds, groupCoachFilter, groupSearch]);
   const activeGroup = useMemo(
     () => filteredGroups.find(group => group.id === selectedGroup) || null,
     [filteredGroups, selectedGroup],
@@ -2182,6 +2445,13 @@ export default function ProgrammeDetailPage() {
   useEffect(() => {
     if (selectedGroup && !filteredGroups.some(group => group.id === selectedGroup)) setSelectedGroup('');
   }, [filteredGroups, selectedGroup]);
+
+  // The open learner belongs to the group whose roster was showing. Changing or
+  // closing the group leaves a detail panel reporting a scope nobody is looking
+  // at any more, so it closes with the roster it came from.
+  useEffect(() => {
+    setSelectedLearner(null);
+  }, [selectedGroup]);
 
   // ----------------------------------------------------------------- modules
 
@@ -2200,9 +2470,12 @@ export default function ProgrammeDetailPage() {
         .some(value => normalise(value).includes(query));
       const matchesCohort = !moduleCohortFilter || clean(mod.cohort) === moduleCohortFilter;
       const matchesGroup = !moduleGroupFilter || clean(mod.group) === moduleGroupFilter;
+      // Archived from the row action a moment ago, and still in the payload the
+      // reload behind it has not replaced yet — same rule as the cohort rows.
+      if (archivedModuleIds.has(mod.id)) return false;
       return matchesQuery && matchesCohort && matchesGroup;
     });
-  }, [PROGRAMME.modules, moduleSearch, moduleCohortFilter, moduleGroupFilter]);
+  }, [PROGRAMME.modules, archivedModuleIds, moduleSearch, moduleCohortFilter, moduleGroupFilter]);
 
   // ---------------------------------------------------------------- sessions
 
@@ -2211,16 +2484,18 @@ export default function ProgrammeDetailPage() {
     PROGRAMME.modules.forEach(mod => {
       const moduleCatalogueId = clean(mod.moduleCatalogueId || mod.catalogueId);
       mod.weeksData.forEach(wk => {
-        (wk.components || []).forEach(component => {
+        const weekComponents = wk.components || [];
+        let weekHasLiveComponent = false;
+        weekComponents.forEach(component => {
           const kind = deliveryKindForComponent(component);
           if (!kind) return;
+          if (kind === 'live') weekHasLiveComponent = true;
           const settings = (component.settings || {}) as Record<string, unknown>;
           const sessionDateTimeUtc = clean(settings.sessionDateTimeUtc);
           const parsedSessionDate = sessionDateTimeUtc ? new Date(sessionDateTimeUtc) : null;
           const sessionTimeUtc = parsedSessionDate && !Number.isNaN(parsedSessionDate.getTime())
             ? `${parsedSessionDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC', hour12: false })} UTC`
             : '';
-          const sessionUrl = watchableUrl(settings.liveSessionUrl || settings.videoUrl || settings.embedCode);
           const groupNames = Array.isArray(settings.selectedGroupNames)
             ? (settings.selectedGroupNames as unknown[]).map(value => clean(value)).filter(Boolean)
             : [];
@@ -2246,6 +2521,10 @@ export default function ProgrammeDetailPage() {
               || (liveSessionId && sessionNumber ? liveOccurrences.get(`${liveSessionId}::${sessionNumber}`) : undefined)
               || (liveSessionId && Number.isFinite(componentInstant) ? liveOccurrences.get(`${liveSessionId}::inst:${componentInstant}`) : undefined))
             : undefined;
+          // The component's own settings first; the occurrence's own join link
+          // covers a completed meeting whose component was never stamped with one.
+          const sessionUrl = watchableUrl(settings.liveSessionUrl || settings.videoUrl || settings.embedCode)
+            || (kind === 'live' ? clean(occurrence?.joinUrl) : '');
 
           const authoredDate = clean(settings.sessionDate);
           // Only positive, finite minutes are a duration; anything else is "—".
@@ -2254,7 +2533,15 @@ export default function ProgrammeDetailPage() {
 
           // Real status wins. Without a tracked occurrence, fall back to a plain
           // planned/authoring label (never "completed", which only the service sets).
+          //
+          // A live component with neither a series id nor a meeting link has had no
+          // Teams work done on it at all: an authored date is the plan for the week,
+          // not a meeting that exists, so calling it "scheduled" claimed a meeting
+          // nobody has created. It reports the same gap a week with no live component
+          // reports, and offers the same way to close it.
+          const liveMeetingExists = Boolean(liveSessionId || sessionUrl || occurrence);
           const status = occurrence?.status
+            || (kind === 'live' && !liveMeetingExists ? 'not-created' : null)
             || (kind === 'live' && (sessionUrl || authoredDate) ? 'scheduled' : component.status || 'draft');
 
           rows.push({
@@ -2264,7 +2551,8 @@ export default function ProgrammeDetailPage() {
             module: mod.name,
             moduleCatalogueId,
             week: wk.number,
-            weekTitle: normalise(authoredWeekTitle) === `week ${wk.number}` ? '' : authoredWeekTitle,
+            weekId: clean(wk.id),
+            weekTitle: normalise(authoredWeekTitle) === normalise(`week ${wk.number}`) ? '' : authoredWeekTitle,
             weekStartDate: clean(wk.startDate),
             date: authoredDate,
             dateIso: clean(occurrence?.scheduledStart) || sessionDateTimeUtc || authoredDate,
@@ -2283,14 +2571,58 @@ export default function ProgrammeDetailPage() {
             actualStart: clean(occurrence?.actualStart),
             actualEnd: clean(occurrence?.actualEnd),
             participantCount: occurrence?.participantCount || 0,
+            artifactsSyncedAt: clean(occurrence?.artifactsSyncedAt),
           });
         });
+
+        // Every authored week plans its own live session (see
+        // every-week-gets-its-own-live-session) — one that hasn't had a Teams
+        // meeting attached yet is still a real gap in the schedule, not a row
+        // that silently doesn't exist. Reported here as its own row rather than
+        // only as a programme-level count, so the reader lands on the exact week
+        // that needs one.
+        if (!weekHasLiveComponent) {
+          const weekTitle = clean(wk.title);
+          rows.push({
+            id: `${moduleCatalogueId || mod.id}-week-${wk.number}-no-meeting`,
+            kind: 'live',
+            title: 'Live session',
+            module: mod.name,
+            moduleCatalogueId,
+            week: wk.number,
+            weekId: clean(wk.id),
+            weekTitle: normalise(weekTitle) === normalise(`week ${wk.number}`) ? '' : weekTitle,
+            weekStartDate: clean(wk.startDate),
+            date: '',
+            dateIso: '',
+            time: '',
+            groups: [],
+            url: '',
+            provider: '',
+            durationMinutes: 0,
+            attendanceRequired: false,
+            recordingExpected: false,
+            ksbRefs: [],
+            status: 'not-created',
+            liveSessionId: '',
+            occurrenceId: '',
+            sessionNumber: 0,
+            actualStart: '',
+            actualEnd: '',
+            participantCount: 0,
+            artifactsSyncedAt: '',
+          });
+        }
       });
     });
     return rows;
   }, [PROGRAMME.modules, liveOccurrences]);
   const liveSessions = useMemo(() => deliverySessions.filter(session => session.kind === 'live'), [deliverySessions]);
   const recordedSessions = useMemo(() => deliverySessions.filter(session => session.kind === 'recorded'), [deliverySessions]);
+  const missingMeetingCount = useMemo(
+    () => liveSessions.filter(session => session.status === 'not-created').length,
+    [liveSessions],
+  );
   const activeSessions = sessionKind === 'live' ? liveSessions : recordedSessions;
   const sessionModules = useMemo(
     () => [...new Set(activeSessions.map(session => session.module).filter(Boolean))].sort(),
@@ -2308,19 +2640,21 @@ export default function ProgrammeDetailPage() {
 
   // Resolve a session's "open in Module Builder" link once per module, keyed by
   // both catalogue id and name so a row matches however it identifies its module.
+  // Deep-linked to the row's own week, which is what the reader came for —
+  // whether to review that week or to create the meeting it hasn't got yet.
   const sessionModuleHref = useMemo(() => {
-    const byId = new Map<string, string>();
-    const byName = new Map<string, string>();
+    const byId = new Map<string, Module>();
+    const byName = new Map<string, Module>();
     for (const mod of PROGRAMME.modules) {
-      const href = moduleBuilderUrl(mod, PROGRAMME);
       const catalogueId = clean(mod.moduleCatalogueId || mod.catalogueId);
-      if (catalogueId) byId.set(catalogueId, href);
-      if (mod.name) byName.set(mod.name, href);
+      if (catalogueId) byId.set(catalogueId, mod);
+      if (mod.name) byName.set(mod.name, mod);
     }
-    return (session: DeliverySession) =>
-      (session.moduleCatalogueId && byId.get(session.moduleCatalogueId))
-      || byName.get(session.module)
-      || '';
+    return (session: DeliverySession) => {
+      const mod = (session.moduleCatalogueId && byId.get(session.moduleCatalogueId)) || byName.get(session.module);
+      if (!mod) return '';
+      return moduleBuilderUrl(mod, PROGRAMME, session.weekId ? { weekId: session.weekId } : undefined);
+    };
   }, [PROGRAMME.modules, PROGRAMME]);
 
   // --------------------------------------------------------------------- KSB
@@ -2483,6 +2817,13 @@ export default function ProgrammeDetailPage() {
   const ksbCoverage = PROGRAMME.ksbHeatmap.length
     ? Math.round((mappedKsbCount / PROGRAMME.ksbHeatmap.length) * 100)
     : 0;
+  // The heatmap is only fetched on the tabs that draw it (see `needsCoverage`), so
+  // an empty one on Modules or Sessions means "not read here", not "nothing to
+  // read". The programme record carries its own source id either way, which is
+  // what lets the header pill tell those two apart: deep-linking to ?tab=sessions
+  // used to report "No KSB source" for a programme that has one applied.
+  const hasKsbSource = Boolean(clean(PROGRAMME.ksbProfileSourceId)) || PROGRAMME.ksbHeatmap.length > 0;
+  const ksbCoverageRead = PROGRAMME.ksbHeatmap.length > 0;
 
   // ---------------------------------------------------------------- readiness
 
@@ -2491,10 +2832,27 @@ export default function ProgrammeDetailPage() {
     [PROGRAMME.modules],
   );
   const publishedComponents = allComponents.filter(component => component.status === 'published').length;
-  const contentReadiness = allComponents.length ? Math.round((publishedComponents / allComponents.length) * 100) : 0;
   const totalOtjh = PROGRAMME.modules.reduce((total, mod) => total + mod.otjh, 0);
+  // Learner off-the-job hours: completed against targeted, both read off
+  // `Learner.learners`. With no learner target recorded the programme's own
+  // requirement stands in as the denominator, labelled as the programme's, since
+  // it is a contracted figure and not something a learner has been set.
+  const programmeRequiredOtjh = Number(PROGRAMME.requiredOtjh) > 0 ? Number(PROGRAMME.requiredOtjh) : 0;
+  const learnerOtjhCompleted = learnerOtjh?.completed || 0;
+  const learnerOtjhLearners = learnerOtjh?.learners || 0;
+  const learnerOtjhTarget = learnerOtjh?.target || 0;
+  const otjhTargetIsProgrammeRequirement = !learnerOtjhTarget && programmeRequiredOtjh > 0 && learnerOtjhLearners > 0;
+  const otjhDenominator = learnerOtjhTarget || (otjhTargetIsProgrammeRequirement ? programmeRequiredOtjh * learnerOtjhLearners : 0);
+  // Capped at 100 so a learner ahead of target still reads as a full bar rather
+  // than a broken one.
+  const otjhProgress = otjhDenominator ? Math.min(100, Math.round((learnerOtjhCompleted / otjhDenominator) * 100)) : 0;
   const totalLearners = PROGRAMME.cohorts.reduce((total, cohortItem) => total + cohortItem.learners, 0);
-  const totalWeeks = PROGRAMME.modules.reduce((total, mod) => total + mod.weeksData.length, 0);
+  // Counted exactly as the Modules table's own WEEKS column counts it, falling
+  // back to the module's stored week count when no week has been opened in the
+  // builder yet. Summing `weeksData.length` alone made the headline stat read
+  // less than the column beneath it — and less than the programme card, which
+  // reads the stored count from the same rows.
+  const totalWeeks = PROGRAMME.modules.reduce((total, mod) => total + (mod.weeksData.length || mod.weeks || 0), 0);
   const emptyWeekCount = PROGRAMME.modules
     .flatMap(mod => mod.weeksData)
     .filter(wk => !(wk.components || []).length).length;
@@ -2553,6 +2911,7 @@ export default function ProgrammeDetailPage() {
     [drawerProgramme, id, liveProgramme.id, liveProgramme.sourceId],
   );
   const drawerCoachNames = useMemo(() => staffNameOptions(data?.coaches, (data?.groups || []).map(group => group.coach)), [data]);
+  const drawerTutorNames = useMemo(() => staffNameOptions(data?.tutors, (data?.modules || []).map(mod => mod.tutor)), [data]);
 
   // Assign a group's coach straight from the Delivery tab. The group PATCH is the
   // canonical endpoint, so nothing here bypasses the rules the form applies.
@@ -2571,6 +2930,99 @@ export default function ProgrammeDetailPage() {
     } finally {
       setSavingAction(null);
     }
+  };
+
+  /** Opens the cohort drawer against an existing record rather than a blank one. */
+  const openEditCohort = (cohortId: string) => {
+    setEditingCohort(data?.cohorts.find(item => item.id === cohortId) || null);
+    setCohortDrawerOpen(true);
+  };
+
+  /**
+   * Archives a cohort from its row here rather than sending the reader to the
+   * Cohorts page — the "Add cohort" button for the same record already lives on
+   * this tab, so archiving from elsewhere was the odd one out.
+   * `archiveCohortWithConfirm` is the same confirm and API call that page uses.
+   */
+  const archiveCohort = async (cohortItem: Cohort) => {
+    await archiveCohortWithConfirm(cohortItem, cohortItem.groups.length, async () => {
+      // Drop the row now, same reason as `assignGroupCoach` above: the refresh
+      // behind this takes seconds, and a cohort still listed after "Archive"
+      // reads as though nothing happened.
+      setArchivedCohortIds(previous => new Set(previous).add(cohortItem.id));
+      await reload({ silent: true });
+      setArchivedCohortIds(previous => {
+        const next = new Set(previous);
+        next.delete(cohortItem.id);
+        return next;
+      });
+    });
+  };
+
+  /** Opens the group drawer against an existing record. */
+  const openEditGroup = (groupId: string, cohortId: string) => {
+    setEditingGroup(data?.groups.find(item => item.id === groupId) || null);
+    setGroupDrawerCohortId(cohortId);
+  };
+
+  const archiveGroup = async (group: Group) => {
+    await archiveGroupWithConfirm(group, group.modules.length, async () => {
+      setArchivedGroupIds(previous => new Set(previous).add(group.id));
+      await reload({ silent: true });
+      setArchivedGroupIds(previous => {
+        const next = new Set(previous);
+        next.delete(group.id);
+        return next;
+      });
+    });
+  };
+
+  /**
+   * Opens the module drawer against an existing record, the same way the Cohorts
+   * and Groups rows above open theirs. The full `CurriculumModule` from the
+   * detail payload is preferred; the row itself stands in when the payload has
+   * no record for it, so an unattached module is still editable from here.
+   */
+  const openEditModule = (mod: Module) => {
+    const detailModule = findModule(data?.modules || [], moduleBuilderIdentifier(mod));
+    setEditingModule(moduleFormTarget(detailModule) || {
+      id: moduleBuilderIdentifier(mod),
+      name: mod.name,
+      programmeId: drawerProgrammeId,
+      programme: PROGRAMME.name,
+      cohortId: mod.cohortId,
+      groupId: mod.groupId,
+      weeks: mod.weeksData.length || mod.weeks,
+      // The record's dates when it has them; the authored week span only for a
+      // module with none, so the form never opens on a recalculated end date.
+      startDate: clean(mod.startDate) || mod.weeksData[0]?.startDate,
+      endDate: clean(mod.endDate) || mod.weeksData.at(-1)?.endDate || mod.weeksData.at(-1)?.startDate,
+      tutor: mod.tutor,
+      status: mod.status,
+    });
+  };
+
+  /**
+   * Archives a module from its row, for the same reason the cohort and group
+   * rows do it here: the reader is already looking at the record, and the only
+   * other door was the Module Builder. Archiving is the whole of it — a module
+   * has no permanent delete — which `archiveModuleWithConfirm` says in the
+   * confirm.
+   */
+  const archiveModule = async (mod: Module) => {
+    const componentCount = mod.weeksData.reduce((total, wk) => total + (wk.components?.length || 0), 0);
+    const moduleId = moduleBuilderIdentifier(mod);
+    await archiveModuleWithConfirm({ id: moduleId, name: mod.name }, componentCount, async () => {
+      // Off the table now; the reload behind this takes seconds and a module
+      // still listed after "Archive" reads as though nothing happened.
+      setArchivedModuleIds(previous => new Set(previous).add(mod.id));
+      await reload({ silent: true });
+      setArchivedModuleIds(previous => {
+        const next = new Set(previous);
+        next.delete(mod.id);
+        return next;
+      });
+    });
   };
 
   const goToTab = (next: Tab) => {
@@ -2652,7 +3104,7 @@ export default function ProgrammeDetailPage() {
       navItems={curriculumNavItems}
       workspaceLabel="Curriculum Studio"
       pageTitle={PROGRAMME.name}
-      pageSubtitle={`${PROGRAMME.duration} · ${liveCohortCount} cohorts · ${PROGRAMME.modules.length} modules`}
+      pageSubtitle={`${PROGRAMME.duration} · ${liveCohortCount} cohort${liveCohortCount === 1 ? '' : 's'} · ${PROGRAMME.modules.length} module${PROGRAMME.modules.length === 1 ? '' : 's'}`}
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
@@ -2669,6 +3121,7 @@ export default function ProgrammeDetailPage() {
           title={PROGRAMME.name}
           subtitle={[formatProgrammeLevel(PROGRAMME.level, ''), PROGRAMME.standard, PROGRAMME.duration].map(value => clean(value)).filter(Boolean).join(' · ')}
           accentColor={PROGRAMME.color}
+          dense
           stats={[
             { icon: 'ri-group-line', label: 'Cohorts', value: liveCohortCount, detail: archivedCohortCount ? `${archivedCohortCount} archived` : undefined },
             { icon: 'ri-team-line', label: 'Groups', value: totalGroups, detail: unstaffedGroupCount ? `${unstaffedGroupCount} need a coach` : 'All coached' },
@@ -2678,8 +3131,14 @@ export default function ProgrammeDetailPage() {
             {
               icon: 'ri-node-tree',
               label: 'KSB coverage',
-              value: PROGRAMME.ksbHeatmap.length ? `${ksbCoverage}%` : '—',
-              detail: PROGRAMME.ksbHeatmap.length ? `${mappedKsbCount}/${PROGRAMME.ksbHeatmap.length} mapped` : 'No KSB source',
+              value: ksbCoverageRead ? `${ksbCoverage}%` : '—',
+              detail: ksbCoverageRead
+                ? `${mappedKsbCount}/${PROGRAMME.ksbHeatmap.length} mapped`
+                : !hasKsbSource
+                  ? 'No KSB source'
+                  : backendCoverageLoading
+                    ? 'Reading coverage…'
+                    : 'Open KSB Coverage to read',
             },
           ]}
           actions={(
@@ -2739,9 +3198,32 @@ export default function ProgrammeDetailPage() {
                 <DetailRow label="Level" value={formatProgrammeLevel(PROGRAMME.level)} />
                 <DetailRow
                   label="KSB source"
-                  value={coverageKsbSource.sourceId
-                    ? clean(coverageKsbSourceLabel) || coverageKsbSource.sourceId
-                    : <span className="text-amber-700">No source applied</span>}
+                  value={coverageKsbSource.sourceId ? (
+                    <span className="flex flex-col items-end gap-1">
+                      <span className="flex flex-wrap items-center justify-end gap-1.5">
+                        {coverageKsbSourceDetail.kindLabel && (
+                          <span className="rounded-full bg-primary-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-primary-700">
+                            {coverageKsbSourceDetail.kindLabel}
+                          </span>
+                        )}
+                        <span>{coverageKsbSourceDetail.name || clean(coverageKsbSourceLabel) || coverageKsbSource.sourceId}</span>
+                      </span>
+                      {(() => {
+                        const ksbCount = coverageKsbSourceDetail.ksbCount || PROGRAMME.ksbHeatmap.length;
+                        const meta = [
+                          coverageKsbSourceDetail.reference,
+                          coverageKsbSourceDetail.level,
+                          ksbCount ? `${ksbCount} KSBs` : '',
+                        ].filter(Boolean).join(' · ');
+                        return meta ? <span className="text-[10px] font-semibold text-foreground-400">{meta}</span> : null;
+                      })()}
+                      {!coverageKsbSourceApplied && (
+                        <span className="text-[10px] font-semibold text-amber-700">
+                          Matched from the programme standard, not applied on the Programmes page
+                        </span>
+                      )}
+                    </span>
+                  ) : <span className="text-amber-700">No source applied</span>}
                 />
                 <DetailRow label="Practical period" value={clean(PROGRAMME.practicalWindow, 'Not scheduled')} />
                 <DetailRow label="Apprenticeship" value={clean(PROGRAMME.apprenticeshipWindow, 'Not scheduled')} />
@@ -2751,7 +3233,7 @@ export default function ProgrammeDetailPage() {
 
               <WorkspacePanel
                 title="Readiness"
-                description="Both figures are counts of real records, so they can be checked rather than trusted."
+                description="Both figures are what the learners on this programme have actually done, read from their own records rather than from the plan."
                 actions={(
                   <button
                     type="button"
@@ -2765,27 +3247,35 @@ export default function ProgrammeDetailPage() {
               >
                 <div className="space-y-4">
                   <ReadinessBar
-                    label="KSB coverage"
-                    value={ksbCoverage}
+                    label="KSB progress"
+                    value={PROGRAMME.learnerKsbProgressPercentage}
                     color="bg-primary-600"
-                    detail={PROGRAMME.ksbHeatmap.length
-                      ? `${mappedKsbCount} of ${PROGRAMME.ksbHeatmap.length} KSBs are taught somewhere on this programme.`
-                      : backendCoverageLoading ? 'Loading coverage…' : 'No KSB source is applied, so there is nothing to cover yet.'}
+                    detail={!PROGRAMME.learnerKsbLearnerCount
+                      ? 'No learners are placed on this programme yet, so no KSB has been evidenced.'
+                      : PROGRAMME.learnerKsbCodesTotal
+                        ? `${PROGRAMME.learnerKsbCodesComplete} of ${PROGRAMME.learnerKsbCodesTotal} mapped KSBs are fully evidenced, across ${PROGRAMME.learnerKsbLearnerCount} ${PROGRAMME.learnerKsbLearnerCount === 1 ? 'learner' : 'learners'}.`
+                        : 'No component maps a KSB yet, so these learners have nothing to evidence against.'}
                   />
                   <ReadinessBar
-                    label="Content published"
-                    value={contentReadiness}
+                    label="OTJH progress"
+                    value={otjhProgress}
                     color="bg-emerald-500"
-                    detail={allComponents.length
-                      ? `${publishedComponents} of ${allComponents.length} authored components are published.`
-                      : 'No components have been authored into these modules yet.'}
+                    detail={learnerOtjhLoading && !learnerOtjh
+                      ? 'Loading learner hours…'
+                      : !learnerOtjh
+                        ? 'Learner hours could not be read for this programme.'
+                        : !learnerOtjhLearners
+                          ? 'No learners are placed on this programme yet, so no hours have been completed.'
+                          : otjhDenominator
+                            ? `${formatHours(learnerOtjhCompleted)}h of ${formatHours(otjhDenominator)}h completed across ${learnerOtjhLearners} ${learnerOtjhLearners === 1 ? 'learner' : 'learners'}${otjhTargetIsProgrammeRequirement ? `, measured against the programme's own ${formatHours(programmeRequiredOtjh)}h requirement because no learner carries target hours.` : '.'}`
+                          : `${formatHours(learnerOtjhCompleted)}h completed across ${learnerOtjhLearners} ${learnerOtjhLearners === 1 ? 'learner' : 'learners'}. Neither their records nor this programme carry target hours, so there is nothing to measure against.`}
                   />
                   <div className="grid grid-cols-2 gap-2 border-t border-background-200 pt-4 sm:grid-cols-4">
                     {[
                       { label: 'Weeks', value: totalWeeks },
                       { label: 'Components', value: allComponents.length },
                       { label: 'KSBs unmapped', value: missingKsbCount },
-                      { label: 'Total OTJH', value: `${formatHours(totalOtjh)}h` },
+                      { label: 'Authored OTJH', value: `${formatHours(totalOtjh)}h` },
                     ].map(stat => (
                       <div key={stat.label} className="rounded-xl border border-background-200 bg-background-100/60 px-3 py-2">
                         <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">{stat.label}</p>
@@ -2941,6 +3431,7 @@ export default function ProgrammeDetailPage() {
               gridClass={COHORT_GRID}
               rows={filteredCohorts}
               rowKey={cohortItem => cohortItem.id}
+              getRowHref={cohortItem => `/curriculum/cohorts/${encodeURIComponent(cohortItem.id)}`}
               loading={loading && !PROGRAMME.cohorts.length}
               refreshing={refreshing}
               empty={(
@@ -2984,19 +3475,27 @@ export default function ProgrammeDetailPage() {
                         {coached}/{cohortItem.groups.length}
                       </span>
                     </PlainCell>
-                    <NamedActions
-                      actions={[{
-                        icon: 'ri-team-line',
-                        label: 'Groups',
-                        title: `Open the groups in ${cohortItem.name}`,
-                        primary: selected,
-                        onClick: () => {
-                          setSelectedCohort(cohortItem.id);
-                          setSelectedGroup('');
-                          setTab('groups');
-                        },
-                      }]}
-                    />
+                    <span className="flex items-center justify-end gap-1.5">
+                      <NamedActions
+                        actions={[{
+                          icon: 'ri-team-line',
+                          label: 'Groups',
+                          title: `Open the groups in ${cohortItem.name}`,
+                          primary: selected,
+                          onClick: () => {
+                            setSelectedCohort(cohortItem.id);
+                            setSelectedGroup('');
+                            setTab('groups');
+                          },
+                        }]}
+                      />
+                      <RowActions
+                        actions={[
+                          { icon: 'ri-edit-line', label: 'Edit cohort', onClick: () => openEditCohort(cohortItem.id) },
+                          { icon: 'ri-archive-line', label: 'Archive cohort', tone: 'danger', onClick: () => void archiveCohort(cohortItem) },
+                        ]}
+                      />
+                    </span>
                   </>
                 );
               }}
@@ -3077,6 +3576,7 @@ export default function ProgrammeDetailPage() {
                   gridClass={GROUP_GRID}
                   rows={filteredGroups}
                   rowKey={group => group.id}
+                  getRowHref={group => namedCurriculumWorkspacePath('groups', group.id, group.name)}
                   refreshing={refreshing}
                   empty={activeCohort ? (
                     <EntityEmptyState
@@ -3100,7 +3600,7 @@ export default function ProgrammeDetailPage() {
                       <StackedCell
                         href={namedCurriculumWorkspacePath('groups', group.id, group.name)}
                         primary={group.name}
-                        secondary={[group.startDate, group.endDate].filter(Boolean).join(' – ') || undefined}
+                        secondary={activeCohort ? groupDatesLabel(activeCohort) : undefined}
                       />
                       <StaffSlot
                         role="Coach"
@@ -3110,57 +3610,92 @@ export default function ProgrammeDetailPage() {
                         saving={savingAction === `coach:${group.id}`}
                         onAssign={value => assignGroupCoach(group.id, value)}
                       />
-                      <PlainCell>{[group.schedule, group.mode].map(value => clean(value)).filter(Boolean).join(' · ') || '—'}</PlainCell>
+                      {/* The mode alone is not a delivery pattern: every group
+                          defaults to Live, so "Live" on its own read as though a
+                          day and time had been set. */}
+                      <PlainCell>
+                        {clean(group.schedule)
+                          ? [group.schedule, group.mode].map(value => clean(value)).filter(Boolean).join(' · ')
+                          : 'Not scheduled'}
+                      </PlainCell>
                       <PlainCell align="center">{group.learners}</PlainCell>
                       <PlainCell align="center">{group.modules.length}</PlainCell>
-                      <NamedActions
-                        actions={[
-                          {
-                            icon: 'ri-add-line',
-                            label: group.modules.length ? 'Add module' : 'Add first module',
-                            title: `Create a module for ${group.name}`,
-                            primary: group.modules.length === 0,
-                            onClick: () => navigate(moduleBuilderGroupUrl(activeCohort?.id || '', group.id)),
-                          },
-                          {
-                            icon: group.id === selectedGroup ? 'ri-eye-line' : 'ri-graduation-cap-line',
-                            label: 'Learners',
-                            title: group.id === selectedGroup
-                              ? `${group.name}'s learners are shown below`
-                              : `Show the learners enrolment has assigned to ${group.name}`,
-                            disabled: group.id === selectedGroup,
-                            onClick: () => setSelectedGroup(group.id),
-                          },
-                        ]}
-                      />
+                      <span className="flex items-center justify-end gap-1.5">
+                        <NamedActions
+                          actions={[
+                            {
+                              icon: 'ri-add-line',
+                              label: group.modules.length ? 'Add module' : 'Add first module',
+                              title: `Create a module for ${group.name}`,
+                              primary: group.modules.length === 0,
+                              onClick: () => navigate(moduleBuilderGroupUrl(activeCohort?.id || '', group.id)),
+                            },
+                            {
+                              icon: group.id === selectedGroup ? 'ri-eye-line' : 'ri-graduation-cap-line',
+                              label: 'Learners',
+                              title: group.id === selectedGroup
+                                ? `${group.name}'s learners are shown below`
+                                : `Show the learners enrolment has assigned to ${group.name}`,
+                              disabled: group.id === selectedGroup,
+                              onClick: () => setSelectedGroup(group.id),
+                            },
+                          ]}
+                        />
+                        <RowActions
+                          actions={[
+                            { icon: 'ri-edit-line', label: 'Edit group', onClick: () => openEditGroup(group.id, activeCohort?.id || '') },
+                            { icon: 'ri-archive-line', label: 'Archive group', tone: 'danger', onClick: () => void archiveGroup(group) },
+                          ]}
+                        />
+                      </span>
                     </>
                   )}
                 />
 
             {activeCohort && activeGroup && (
-                  <WorkspacePanel
-                    title={`Learners in ${activeGroup.name}`}
-                    description="Placed by the enrolment team. Curriculum owns the delivery structure, not the placements, so this is read-only."
-                    actions={(
-                      <button
-                        type="button"
-                        onClick={() => setSelectedGroup('')}
-                        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
-                      >
-                        <AppIcon className="ri-close-line text-sm"></AppIcon>
-                        Hide
-                      </button>
-                    )}
-                  >
-                    <EnrolledLearnersPanel
-                      roster={learnerRoster}
-                      loading={learnerRosterLoading}
-                      error={learnerRosterError}
-                      cohortName={activeCohort.name}
-                      groupName={activeGroup.name}
-                      emptyHint={`No learners have been assigned to ${activeGroup.name} by the enrolment team yet.`}
-                    />
-                  </WorkspacePanel>
+              <>
+                <WorkspacePanel
+                  title={`Learners in ${activeGroup.name}`}
+                  description="Everyone the enrolment team placed in this group. Curriculum owns the delivery structure, not the placements, so the roster is read-only — open a learner to see what they have achieved here."
+                  actions={(
+                    <button
+                      type="button"
+                      onClick={() => setSelectedGroup('')}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
+                    >
+                      <AppIcon className="ri-close-line text-sm"></AppIcon>
+                      Hide
+                    </button>
+                  )}
+                >
+                  <EnrolledLearnersPanel
+                    roster={learnerRoster}
+                    loading={learnerRosterLoading}
+                    error={learnerRosterError}
+                    selectedLearnerId={selectedLearner ? String(selectedLearner.id) : ''}
+                    onSelectLearner={setSelectedLearner}
+                    emptyHint={`No learners have been assigned to ${activeGroup.name} by the enrolment team yet.`}
+                  />
+                </WorkspacePanel>
+
+                {/* One learner, scoped to this group. The same
+                    `learner-ksb-impact` read the Achievement tab uses, asked
+                    for at the group and narrowed to the person clicked, so
+                    the hours and KSB weight here are the same figures that
+                    tab sums rather than a second calculation of them. */}
+                {selectedLearner && (
+                  <ScopeLearnerAchievementDetail
+                    key={`${activeGroup.id}:${selectedLearner.id}`}
+                    scope="group"
+                    identifier={activeGroup.id}
+                    learnerId={String(selectedLearner.id)}
+                    learnerName={selectedLearner.name}
+                    learnerEmail={selectedLearner.email}
+                    scopeLabel={activeGroup.name}
+                    onClose={() => setSelectedLearner(null)}
+                  />
+                )}
+              </>
             )}
           </div>
         )}
@@ -3190,7 +3725,7 @@ export default function ProgrammeDetailPage() {
               ]}
               onReset={() => { setModuleSearch(''); setModuleCohortFilter(''); setModuleGroupFilter(''); }}
               disabled={!PROGRAMME.modules.length}
-              summary={`Showing ${filteredModules.length} of ${PROGRAMME.modules.length} modules · content, Teams meetings and KSB weights open in the module`}
+              summary={`Showing ${filteredModules.length} of ${PROGRAMME.modules.length} modules · content, Teams meetings and KSB weights open in the module · Archive takes a module off this list and keeps its content — modules are never deleted`}
             />
 
             <EntityTable
@@ -3207,6 +3742,7 @@ export default function ProgrammeDetailPage() {
               gridClass={MODULE_GRID}
               rows={filteredModules}
               rowKey={mod => mod.id}
+              getRowHref={mod => moduleWorkspaceUrl(mod) || undefined}
               loading={loading && !PROGRAMME.modules.length}
               refreshing={refreshing}
               empty={(
@@ -3229,10 +3765,7 @@ export default function ProgrammeDetailPage() {
                     <StackedCell
                       href={workspaceUrl || undefined}
                       primary={mod.name}
-                      secondary={[
-                        mod.weeksData[0]?.startDate,
-                        mod.weeksData.at(-1)?.endDate || mod.weeksData.at(-1)?.startDate,
-                      ].filter(Boolean).join(' – ') || 'Not scheduled'}
+                      secondary={moduleDatesLabel(mod)}
                     />
                     <StackedCell
                       primary={(
@@ -3259,21 +3792,29 @@ export default function ProgrammeDetailPage() {
                     <PlainCell align="center">{componentCount}</PlainCell>
                     <PlainCell align="center">{formatHours(mod.otjh)}h</PlainCell>
                     <PlainCell align="center">{ksbCount}</PlainCell>
-                    <NamedActions
-                      actions={[{
-                        icon: 'ri-tools-line',
-                        label: 'Builder',
-                        title: `Author ${mod.name}'s weeks and components in the Module Builder`,
-                        onClick: () => navigate(moduleBuilderUrl(mod, PROGRAMME)),
-                      }]}
-                    />
+                    <span className="flex items-center justify-end gap-1.5">
+                      <NamedActions
+                        actions={[{
+                          icon: 'ri-tools-line',
+                          label: 'Builder',
+                          title: `Author ${mod.name}'s weeks and components in the Module Builder`,
+                          onClick: () => navigate(moduleBuilderUrl(mod, PROGRAMME)),
+                        }]}
+                      />
+                      <RowActions
+                        actions={[
+                          { icon: 'ri-edit-line', label: 'Edit module', onClick: () => openEditModule(mod) },
+                          { icon: 'ri-archive-line', label: 'Archive module', tone: 'danger', onClick: () => void archiveModule(mod) },
+                        ]}
+                      />
+                    </span>
                   </>
                 );
               }}
             />
 
             {hasMinimumDesign && (
-              <div className="flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 sm:flex-row sm:items-center">
                 <div className="flex min-w-0 items-start gap-3">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white">
                     <AppIcon className="ri-check-line"></AppIcon>
@@ -3283,9 +3824,6 @@ export default function ProgrammeDetailPage() {
                     <p className="mt-0.5 text-[11px] leading-5 text-emerald-800">This programme has a module, an authored week and learner-facing content. You can now review its KSB coverage.</p>
                   </div>
                 </div>
-                <button type="button" onClick={() => setTab('coverage')} className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-emerald-800">
-                  Continue to KSB Coverage <AppIcon className="ri-arrow-right-line"></AppIcon>
-                </button>
               </div>
             )}
           </div>
@@ -3326,6 +3864,17 @@ export default function ProgrammeDetailPage() {
               </p>
             </div>
 
+            {sessionKind === 'live' && missingMeetingCount > 0 && (
+              // Every authored week plans its own live session, so a week with no
+              // Teams meeting is a real gap rather than a row that doesn't exist.
+              // The count is the placeholder rows in the tree below, not a separate
+              // calculation, so the summary and the list can never disagree.
+              <p className="rounded-lg border border-amber-200/60 bg-amber-50 px-3 py-2 text-[12px] text-amber-700">
+                {missingMeetingCount} of {liveSessions.length} planned session{liveSessions.length === 1 ? '' : 's'} on this programme
+                {missingMeetingCount === 1 ? ' has' : ' have'} no Teams meeting yet — each is listed below against the week that needs one.
+              </p>
+            )}
+
             <EntityFilterBar
               search={sessionSearch}
               onSearch={setSessionSearch}
@@ -3360,6 +3909,9 @@ export default function ProgrammeDetailPage() {
               <SessionsTree
                 sessions={filteredSessions}
                 moduleHrefFor={sessionModuleHref}
+                // Skip the cache: the sync has just written new occurrence rows,
+                // and a cached read would answer with the pre-sync ones.
+                onSynced={() => { void loadLiveOccurrences({ skipCache: true }); }}
                 empty={(
                   <EntityEmptyState
                     icon={activeSessions.length ? 'ri-filter-off-line' : sessionKind === 'live' ? 'ri-broadcast-line' : 'ri-film-line'}
@@ -3404,7 +3956,11 @@ export default function ProgrammeDetailPage() {
               <span className="inline-flex items-center gap-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-1.5 text-[11px] font-bold text-primary-700">
                 <AppIcon className="ri-bookmark-3-line text-sm"></AppIcon>
                 {coverageKsbSource.sourceId
-                  ? `KSBs from: ${coverageKsbSourceLabel || coverageKsbSource.sourceId}`
+                  ? [
+                    `KSBs from: ${coverageKsbSourceDetail.name || coverageKsbSourceLabel || coverageKsbSource.sourceId}`,
+                    coverageKsbSourceDetail.kindLabel,
+                    coverageKsbSourceDetail.reference,
+                  ].filter(Boolean).join(' · ')
                   : 'No KSB source applied to this programme'}
               </span>
             </div>
@@ -3764,19 +4320,33 @@ export default function ProgrammeDetailPage() {
       />
       <CohortFormDrawer
         open={cohortDrawerOpen}
+        cohort={editingCohort}
         defaults={{ programmeId: drawerProgrammeId }}
         programmes={drawerProgrammes}
         holidays={data?.holidays || []}
-        onClose={() => setCohortDrawerOpen(false)}
+        onClose={() => { setCohortDrawerOpen(false); setEditingCohort(null); }}
         onSaved={() => reload({ silent: true })}
       />
       <GroupFormDrawer
         open={groupDrawerCohortId !== null}
+        group={editingGroup}
         defaults={{ programmeId: drawerProgrammeId, cohortId: groupDrawerCohortId || undefined }}
         programmes={drawerProgrammes}
         cohorts={data?.cohorts || []}
         coachNames={drawerCoachNames}
-        onClose={() => setGroupDrawerCohortId(null)}
+        onClose={() => { setGroupDrawerCohortId(null); setEditingGroup(null); }}
+        onSaved={() => reload({ silent: true })}
+      />
+      <ModuleFormDrawer
+        open={Boolean(editingModule)}
+        module={editingModule}
+        defaults={{ programmeId: drawerProgrammeId }}
+        programmes={drawerProgrammes}
+        cohorts={data?.cohorts || []}
+        groups={data?.groups || []}
+        holidays={data?.holidays || []}
+        tutorNames={drawerTutorNames}
+        onClose={() => setEditingModule(null)}
         onSaved={() => reload({ silent: true })}
       />
       {placementPreview && (
@@ -4081,6 +4651,79 @@ const framework = (data?.ksbFrameworks || []).find(item => [item.id, item.profil
 
   const set = ksbSets.find(item => normaliseKsbSourceId(ksbSetSourceIdForProgrammeDetail(item)) === sourceKey);
   return clean(set?.programmeName || set?.standard || sourceId);
+}
+
+/**
+ * The applied KSB source as a record rather than a bare name: which kind it is
+ * (a KSB framework or a Skills England standard), its own reference and its
+ * size, read off the framework/standard actually applied. The name alone is
+ * ambiguous — a framework and a standard can both be called "Project controls
+ * professional" — so the row that reports it says which one coverage counts.
+ */
+type KsbCoverageSourceDetail = {
+  kindLabel: string;
+  name: string;
+  reference: string;
+  level: string;
+  ksbCount: number;
+};
+
+function ksbCoverageSourceDetail(
+  source: KsbCoverageSourceRequest,
+  data: CurriculumOverview | null,
+  ksbSets: CurriculumKsbSet[],
+  standards: CurriculumStandard[],
+): KsbCoverageSourceDetail {
+  const sourceId = clean(source.sourceId);
+  const kind = normaliseKsbSourceType(source.sourceType, sourceId);
+  const empty: KsbCoverageSourceDetail = { kindLabel: '', name: '', reference: '', level: '', ksbCount: 0 };
+  if (!sourceId) return empty;
+
+  const sourceKey = normaliseKsbSourceId(sourceId);
+  const settle = (detail: KsbCoverageSourceDetail): KsbCoverageSourceDetail => {
+    const name = clean(detail.name) || clean(detail.reference) || sourceId;
+    const reference = normalise(detail.reference) === normalise(name) ? '' : clean(detail.reference);
+    return { ...detail, name, reference };
+  };
+
+  if (kind === 'standard') {
+    const standard = standards.find(item => [item.id, item.code, item.standardRef, item.name, item.larsCode]
+      .some(value => normaliseKsbSourceId(String(value || '')) === sourceKey));
+    return settle({
+      kindLabel: 'KSB standard',
+      name: clean(standard?.name),
+      reference: clean(standard?.standardRef || standard?.code || standard?.larsCode),
+      level: formatProgrammeLevel(standard?.level || standard?.levelValue, ''),
+      ksbCount: Number(standard?.total || 0)
+        || Number(standard?.knowledge || 0) + Number(standard?.skills || 0) + Number(standard?.behaviours || 0),
+    });
+  }
+
+  const framework = (data?.ksbFrameworks || []).find(item => [item.id, item.profileId, item.ksbProfileId]
+    .some(value => normaliseKsbSourceId(String(value || '')) === sourceKey));
+  if (framework) {
+    return settle({
+      kindLabel: 'KSB framework',
+      name: clean(framework.name || framework.programmeName),
+      reference: clean(framework.ifateRef || framework.standard),
+      level: formatProgrammeLevel(framework.level, ''),
+      ksbCount: Number(framework.totalKsbs || 0)
+        || Number(framework.knowledgeCount || 0) + Number(framework.skillCount || 0) + Number(framework.behaviourCount || 0),
+    });
+  }
+
+  const set = ksbSets.find(item => normaliseKsbSourceId(ksbSetSourceIdForProgrammeDetail(item)) === sourceKey);
+  if (set) {
+    return settle({
+      kindLabel: 'KSB framework',
+      name: clean(set.programmeName || set.standard),
+      reference: clean(set.standard),
+      level: '',
+      ksbCount: set.ksbs.length,
+    });
+  }
+
+  return settle({ ...empty, kindLabel: kind === 'standard' ? 'KSB standard' : 'KSB framework' });
 }
 
 type HeatmapModuleBinding = { label: string; backendIndex?: number };
