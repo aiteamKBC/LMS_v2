@@ -288,7 +288,7 @@ describe('ScopeAchievementPanel', () => {
     expect(within(row).queryByText('19')).not.toBeInTheDocument();
   });
 
-  it('keeps what happened to an activity separate from whether it counted', async () => {
+  it('says on the row whether an activity counted here, now that the columns are gone', async () => {
     const [activity] = impact().learnerActivities;
     const payload = impact({
       learnerActivities: [
@@ -305,15 +305,20 @@ describe('ScopeAchievementPanel', () => {
     await renderPanel('cohort', payload);
     await userEvent.click(screen.getByRole('button', { name: /Activity/ }));
 
-    const inScope = screen.getByText('Intro assignment').closest('div')!;
-    expect(within(inScope).getByText('achieved')).toBeInTheDocument();
-    expect(within(inScope).getByText('Counted')).toBeInTheDocument();
+    // Status and Counted have no columns any more, so the row's tooltip is
+    // the only place these two facts are stated -- and an activity that is
+    // left out of the figures above must still say so somewhere.
+    const inScope = screen.getByText('Intro assignment').closest('div[title]')!;
+    expect(inScope.getAttribute('title')).toContain('completed this activity');
+    expect(inScope.getAttribute('title')).toContain('Counts toward');
 
-    // The out-of-scope row still reports its own status: "Elsewhere" is a
-    // separate fact now, not a replacement for it.
-    const elsewhere = screen.getByText('Elsewhere assignment').closest('div')!;
-    expect(within(elsewhere).getByText('achieved')).toBeInTheDocument();
-    expect(within(elsewhere).getByText('Elsewhere')).toBeInTheDocument();
+    const elsewhere = screen.getByText('Elsewhere assignment').closest('div[title]')!;
+    expect(elsewhere.getAttribute('title')).toContain('completed this activity');
+    expect(elsewhere.getAttribute('title')).toContain('excluded from the totals above');
+
+    // The module and week are cut to fit the column, so the whole label is on
+    // the cell itself.
+    expect(within(inScope).getByTitle('Data Foundations · Week 1')).toBeInTheDocument();
   });
 
   it('marks an activity whose module has been deleted from the catalogue', async () => {

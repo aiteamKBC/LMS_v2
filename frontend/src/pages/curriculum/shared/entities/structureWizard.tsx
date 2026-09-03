@@ -40,7 +40,7 @@ import {
 } from '@/lib/curriculumApi';
 import { cleanText, normaliseKey, programmeIdentity, sameIdentifier } from './model';
 import { CohortFormDrawer, GroupFormDrawer, ProgrammeFormDrawer } from './forms';
-import { ModuleFormDrawer, type ModuleFormTarget, type SavedModuleRef } from './moduleForm';
+import { ModuleFormDrawer, moduleFormTarget, type SavedModuleRef } from './moduleForm';
 import { type FormChainStep } from './ui';
 import { StructureWizardOutlineStep } from './structureWizardOutline';
 
@@ -165,29 +165,6 @@ function findModule(modules: CurriculumModule[], catalogueId: string): Curriculu
   if (!catalogueId) return undefined;
   return modules.find(module => [module.moduleCatalogueId, module.catalogueId, module.moduleId, module.id]
     .some(value => sameIdentifier(cleanText(value), catalogueId)));
-}
-
-/** Reduced to what the module form reads, so re-opening it edits rather than duplicates. */
-function moduleFormTarget(module: CurriculumModule | undefined): ModuleFormTarget | null {
-  if (!module) return null;
-  const id = cleanText(module.moduleCatalogueId) || cleanText(module.catalogueId) || cleanText(module.moduleId) || cleanText(module.id);
-  if (!id) return null;
-  return {
-    id,
-    name: module.name || '',
-    programmeId: module.programmeId,
-    programme: module.programme,
-    cohortId: module.cohortId,
-    groupId: module.groupId,
-    sessionsNumber: module.sessionsNumber,
-    weeks: module.weeks,
-    startDate: module.startDate,
-    endDate: module.endDate,
-    tutor: module.tutor,
-    status: module.status,
-    notes: module.notes,
-    color: module.color,
-  };
 }
 
 /** Every id a module row may carry, so a discarded module is recognised however it is keyed. */
@@ -658,7 +635,35 @@ export function CurriculumStructureWizard({
     ].filter(Boolean);
     let deletedForGood = false;
 
+    // The run's own records, deepest first, by the ids it is holding.
+    // `tolerate` is set when the programme delete below will run anyway: that
+    // cascade is the authority on what goes, so a child that refuses to archive
+    // must not stop the programme from being deleted.
+    const archiveRunChildren = async ({ tolerate }: { tolerate: boolean }) => {
+      const moduleId = cleanText(created.module?.catalogueId);
+      const groupId = cleanText(created.group?.id);
+      const cohortId = cleanText(created.cohort?.id);
+      const steps: Array<() => Promise<unknown>> = [];
+      if (moduleId) steps.push(() => archiveCurriculumModule(moduleId));
+      if (groupId) steps.push(() => archiveCurriculumGroup(groupId));
+      if (cohortId) steps.push(() => archiveCurriculumCohort(cohortId));
+      for (const step of steps) {
+        if (!tolerate) { await step(); continue; }
+        try {
+          await step();
+        } catch (err) {
+          console.warn('A discarded record could not be archived on its own; the programme delete takes it.', err);
+        }
+      }
+    };
+
     if (programmeId) {
+      // Each record is taken out by its own id before the cascade runs. The
+      // cascade finds children by matching ids on their rows, so one whose
+      // parent id never landed on it is invisible to it — and a cohort left
+      // behind is enough for the programmes list to rebuild the card for a run
+      // this dialog has just said left nothing behind.
+      await archiveRunChildren({ tolerate: true });
       await archiveCurriculumProgramme(programmeId);
       try {
         await permanentlyDeleteCurriculumProgramme(programmeId);
@@ -671,12 +676,9 @@ export function CurriculumStructureWizard({
         if (!isPermanentDeleteRefusal(err)) throw err;
       }
     } else {
-      const moduleId = cleanText(created.module?.catalogueId);
-      const groupId = cleanText(created.group?.id);
-      const cohortId = cleanText(created.cohort?.id);
-      if (moduleId) await archiveCurriculumModule(moduleId);
-      if (groupId) await archiveCurriculumGroup(groupId);
-      if (cohortId) await archiveCurriculumCohort(cohortId);
+      // Nothing else will take these out, so a failure here is reported rather
+      // than swallowed: the dialog stays open with the reason on it.
+      await archiveRunChildren({ tolerate: false });
     }
 
     discardedRef.current = true;
@@ -725,6 +727,18 @@ export function CurriculumStructureWizard({
   };
 
   /**
+   * Whether the way out offers to take the run's records back out again.
+   *
+   * Off for now: the promise the button makes is one the API cannot yet keep. A
+   * permanent delete answers 200 even when its wipe matched no rows, so a run
+   * whose cohort was left behind was told it had left nothing behind — and the
+   * programme was back on the list a moment later. The run stops and keeps what
+   * it wrote instead, which is the outcome that is always true. Turn this back on
+   * once a discard can be shown to leave nothing behind.
+   */
+  const DISCARD_OFFERED = false;
+
+  /**
    * The cross, Escape and the backdrop end the whole run, not just this form, so
    * a step asks before it goes — even with nothing typed, which a form on its own
    * page would close silently.
@@ -752,17 +766,22 @@ export function CurriculumStructureWizard({
     const undoing = created.programme
       ? `deleting ${them} for good, which cannot be undone`
       : `archiving ${them}, out of the active lists but not out of the database`;
+    // The offer to undo is only ever made for records this run created: `created`
+    // holds nothing a step merely pointed itself at, so a discard can never reach
+    // a programme, cohort or group that was already there.
+    const offerDiscard = DISCARD_OFFERED && saved.length > 0;
+    const savedText = `${trail} ${saved.length > 1 ? 'stay' : 'stays'} saved. This ${step} has not been created yet, and closing now ends the run without it.`;
     return {
       title: saved.length ? 'Stop the guided setup here?' : 'Leave the guided setup?',
+      // The sentence about discarding goes with the button: naming an answer the
+      // dialog is not offering is worse than not offering it. What is left says
+      // where the records stand, and each has its own page to be removed from.
       text: saved.length
-        ? `${trail} ${saved.length > 1 ? 'stay' : 'stays'} saved. This ${step} has not been created yet, and closing now ends the run without it. Discard changes instead to take ${them} back out — ${undoing}.`
+        ? (offerDiscard ? `${savedText} Discard changes instead to take ${them} back out — ${undoing}.` : savedText)
         : `Nothing has been created yet. Closing now ends the run and this ${step} is not saved.`,
       confirmLabel: saved.length ? 'Stop here' : 'Discard',
-      // Only ever offered for records this run created: `created` holds nothing a
-      // step merely pointed itself at, so a discard can never reach a programme,
-      // cohort or group that was already there.
-      denyLabel: saved.length ? 'Discard changes' : undefined,
-      onDeny: saved.length ? discardRun : undefined,
+      denyLabel: offerDiscard ? 'Discard changes' : undefined,
+      onDeny: offerDiscard ? discardRun : undefined,
       denyTone: 'danger',
       denySuccess: discardMessage,
     };

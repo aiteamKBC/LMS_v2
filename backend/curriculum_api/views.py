@@ -61,9 +61,12 @@ TRAINING_MODULE_CATALOGUE_COLUMN = 'module_catalogue_id'
 CANONICAL_MODULE_ID_PATTERN = re.compile(r'^MOD-[A-Z0-9][A-Z0-9_-]*$', re.I)
 STAFF_PROFILE_EMAIL_PATTERN = re.compile(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
 STAFF_PROFILE_PHONE_PATTERN = re.compile(r'^[+()\d\s.\-]{7,20}$')
-CURRICULUM_CACHE_TTL_SECONDS = 300
+CURRICULUM_CACHE_TTL_SECONDS = 1800
 _CURRICULUM_CACHE = {}
 _CURRICULUM_CACHE_LOCK = threading.Lock()
+# One lock per payload key, so concurrent misses on the same key rebuild once
+# instead of each running the factory. See curriculum_build_lock().
+_CURRICULUM_BUILD_LOCKS = {}
 # L1 generation: prevents an in-flight factory in this process from publishing
 # stale rows. The Django-cache generation below provides the cross-worker layer.
 _CURRICULUM_CACHE_EPOCH = 0
@@ -297,6 +300,22 @@ def shared_curriculum_cache_key(key, epoch):
     return f'curriculum:v{epoch}:{digest}'
 
 
+def curriculum_build_lock(key):
+    """The lock that serialises rebuilds of one cache key.
+
+    Kept in its own map rather than reusing ``_CURRICULUM_CACHE_LOCK`` so a build
+    holds only its own key: reads of other keys, and cache hits on this one, stay
+    lock-free. The map is bounded by the number of payload keys (visibility x
+    compact), so nothing is ever evicted from it.
+    """
+    with _CURRICULUM_CACHE_LOCK:
+        lock = _CURRICULUM_BUILD_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _CURRICULUM_BUILD_LOCKS[key] = lock
+        return lock
+
+
 def cached_curriculum_value(key, factory, force=False):
     """The cached payload for ``key``, rebuilding it when it is not there.
 
@@ -316,7 +335,6 @@ def cached_curriculum_value(key, factory, force=False):
         entry = _CURRICULUM_CACHE.get(key)
         if not force and entry and entry['expires_at'] > now and entry.get('shared_epoch') == shared_epoch:
             return entry['value']
-        epoch = _CURRICULUM_CACHE_EPOCH
 
     shared_key = shared_curriculum_cache_key(key, shared_epoch)
     try:
@@ -333,24 +351,48 @@ def cached_curriculum_value(key, factory, force=False):
             }
         return shared_value
 
-    # Build outside the lock: these factories run multi-table queries that can take
-    # seconds on a cold database, and holding the lock would serialise every other
-    # cached read behind them. An exception propagates without storing anything, so
-    # failures are never cached.
-    value = factory()
+    # One build per key at a time. Several endpoints read the same payload —
+    # programmes/ and ksb-sets/ both key overview:<visibility>:compact — and a page
+    # that mounts them together used to hit a cold cache in parallel, so each
+    # request ran the whole multi-table rebuild while the others waited on the same
+    # Neon connections. The lock is per key, not the cache lock, so a build still
+    # never blocks a cached read or a different key.
+    with curriculum_build_lock(key):
+        now = datetime.now().timestamp()
+        shared_epoch = shared_curriculum_epoch()
+        # Whoever held this lock has just published its result, so the requests
+        # queued behind it cost a cache read rather than another rebuild. A force
+        # caller has written and is asking for its own state back, so it skips the
+        # re-check: the value waiting here may predate that write.
+        if not force:
+            with _CURRICULUM_CACHE_LOCK:
+                entry = _CURRICULUM_CACHE.get(key)
+                if entry and entry['expires_at'] > now and entry.get('shared_epoch') == shared_epoch:
+                    return entry['value']
 
-    with _CURRICULUM_CACHE_LOCK:
-        # Only publish if no write invalidated the cache while we were building.
-        if epoch == _CURRICULUM_CACHE_EPOCH and shared_epoch == shared_curriculum_epoch():
-            _CURRICULUM_CACHE[key] = {
-                'expires_at': datetime.now().timestamp() + CURRICULUM_CACHE_TTL_SECONDS,
-                'shared_epoch': shared_epoch,
-                'value': value,
-            }
-            try:
-                cache.set(shared_key, value, timeout=CURRICULUM_CACHE_TTL_SECONDS)
-            except Exception:
-                logger.warning('Unable to populate shared curriculum payload cache.', exc_info=True)
+        with _CURRICULUM_CACHE_LOCK:
+            epoch = _CURRICULUM_CACHE_EPOCH
+
+        # An exception propagates without storing anything, so failures are never
+        # cached.
+        value = factory()
+
+        with _CURRICULUM_CACHE_LOCK:
+            # Only publish if no write invalidated the cache while we were building.
+            if epoch == _CURRICULUM_CACHE_EPOCH and shared_epoch == shared_curriculum_epoch():
+                _CURRICULUM_CACHE[key] = {
+                    'expires_at': datetime.now().timestamp() + CURRICULUM_CACHE_TTL_SECONDS,
+                    'shared_epoch': shared_epoch,
+                    'value': value,
+                }
+                try:
+                    cache.set(
+                        shared_curriculum_cache_key(key, shared_epoch),
+                        value,
+                        timeout=CURRICULUM_CACHE_TTL_SECONDS,
+                    )
+                except Exception:
+                    logger.warning('Unable to populate shared curriculum payload cache.', exc_info=True)
     return value
 
 
@@ -4007,11 +4049,11 @@ def soft_delete_programme_authoring_structure(identifier, programme=None, config
     config = config or programme_config_by_identifier(identifier)
     programme_id = clean_str(programme_config_identity(config) or identifier)
     programme_name = clean_str((programme or {}).get('name') or (config or {}).get('name'))
-    candidates = {value for value in {
-        programme_id,
-        clean_str((programme or {}).get('sourceId')),
-        clean_str((programme or {}).get('id')),
-    } if value}
+    # The candidate set the permanent delete plans against, so an archive and a
+    # delete can never disagree about which rows belong to this programme: the
+    # identifier the caller used is in it, not only the canonical id the config
+    # row carries.
+    candidates = set(programme_identifier_candidates(identifier, programme, config))
     result = {
         'programmeArchived': False,
         'cohorts': 0,
@@ -4041,19 +4083,29 @@ def soft_delete_programme_authoring_structure(identifier, programme=None, config
 
     placeholders = ', '.join(['%s'] * len(candidates))
     params = list(candidates)
+
+    def owned_by_programme(table):
+        """``programme_id`` match, widened to the rows that only carry the name."""
+        orphan_sql, orphan_params = orphan_programme_name_clause(table, programme_name)
+        if orphan_sql:
+            return f'(programme_id in ({placeholders}) or {orphan_sql})', [*params, *orphan_params]
+        return f'programme_id in ({placeholders})', list(params)
+
     try:
+        cohort_where, cohort_params = owned_by_programme(COHORT_AUTHORING_DETAILS_TABLE)
         result['cohorts'] = len(authoring_soft_delete(
             COHORT_AUTHORING_DETAILS_TABLE,
-            f'programme_id in ({placeholders})',
-            params,
+            cohort_where,
+            cohort_params,
             via_parent=programme_id,
             deleted_by='programme-delete',
         ))
 
+        group_where, group_params = owned_by_programme(GROUPS_TABLE)
         result['groups'] = len(authoring_soft_delete(
             GROUPS_TABLE,
-            f'programme_id in ({placeholders})',
-            params,
+            group_where,
+            group_params,
             via_parent=programme_id,
             deleted_by='programme-delete',
         ))
@@ -4283,6 +4335,30 @@ def curriculum_ids_matching(table, column, clauses):
     return [clean_str(row.get('value')) for row in rows if clean_str(row.get('value'))]
 
 
+def orphan_programme_name_clause(table, programme_name):
+    """Rows that name this programme but carry no programme id at all.
+
+    A child saved while its parent id had not resolved yet keeps only the
+    denormalised ``programme_name``. Every id-based sweep - the archive cascade
+    and the permanent delete alike - misses it, and ``build_programmes`` then
+    rebuilds a card out of the leftover row: a discarded run that reads as if it
+    had been saved. Only rows with an empty ``programme_id`` are matched, so a
+    row belonging to a different programme of the same name is never touched.
+    """
+    name = clean_str(programme_name)
+    if not name:
+        return '', []
+    try:
+        if not has_column(table, 'programme_id') or not has_column(table, 'programme_name'):
+            return '', []
+    except Exception:
+        return '', []
+    return (
+        "(coalesce(programme_id, '') = '' and lower(trim(programme_name)) = lower(trim(%s)))",
+        [name],
+    )
+
+
 def programme_identifier_candidates(identifier, programme=None, config=None):
     """Every id a child row may legitimately carry for this programme."""
     values = {
@@ -4340,6 +4416,7 @@ def programme_permanent_delete_plan(identifier, programme=None, config=None):
     it - those are precisely the orphans migration 0038 was added to stop.
     """
     candidates = programme_identifier_candidates(identifier, programme, config)
+    programme_name = clean_str((programme or {}).get('name') or (config or {}).get('name'))
     plan = {
         'candidates': candidates,
         'childIds': {
@@ -4359,11 +4436,15 @@ def programme_permanent_delete_plan(identifier, programme=None, config=None):
     programme_clause = curriculum_in_clause('programme_id', candidates)
     child = plan['childIds']
     child['cohortIds'] = curriculum_ids_matching(
-        COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id', [programme_clause],
+        COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id', [
+            programme_clause,
+            orphan_programme_name_clause(COHORT_AUTHORING_DETAILS_TABLE, programme_name),
+        ],
     )
     child['groupIds'] = curriculum_ids_matching(GROUPS_TABLE, 'group_id', [
         programme_clause,
         curriculum_in_clause('cohort_id', child['cohortIds']),
+        orphan_programme_name_clause(GROUPS_TABLE, programme_name),
     ])
     child['moduleIds'] = curriculum_ids_matching(AUTHORING_MODULES_TABLE, 'module_catalogue_id', [
         programme_clause,
@@ -4614,6 +4695,19 @@ def permanently_delete_programme_structure(plan):
     return removed
 
 
+def programme_config_rows_remaining(candidates):
+    """Programme rows still in the table for these ids, read straight from it.
+
+    Deliberately not ``programme_config_by_identifier``: that reads the cached
+    config rows and matches on name as a fallback, so it can answer for a row
+    that is gone, or for a different programme that shares the name.
+    """
+    clause, params = curriculum_in_clause(programme_config_key_column(), candidates)
+    if not clause or not table_exists('programmes'):
+        return 0
+    return len(fetch_all(f'select 1 from {table_name("programmes")} where {clause}', params))
+
+
 def request_wants_permanent_programme_delete(request):
     """A permanent delete is opt-in per request; the default DELETE still archives."""
     return (
@@ -4659,6 +4753,12 @@ def permanent_programme_delete_response(identifier, programme=None, config=None)
     try:
         with transaction.atomic():
             removed = permanently_delete_programme_structure(plan)
+        # Again, now the delete is committed. The invalidation inside the
+        # transaction cannot be the last word: a read arriving before the commit
+        # refills every cache from rows that are on their way out, and the
+        # programme then keeps its card on the list until that entry ages out --
+        # which is exactly what makes a discarded run look like it was saved.
+        invalidate_curriculum_cache()
     except (IntegrityError, DatabaseError) as exc:
         logger.warning('Permanent delete of programme %s was refused: %s', identifier, exc)
         return json_error(
@@ -4670,6 +4770,28 @@ def permanent_programme_delete_response(identifier, programme=None, config=None)
             permanent=False,
             id=clean_str(identifier),
             detail=clean_str(str(exc)),
+        )
+
+    # Never report a delete the database did not make. A candidate set that
+    # matched no programme row leaves the wipes as no-ops, and answering 'deleted'
+    # to that is what tells a discarded wizard run it left nothing behind while
+    # the programme is still on the list. The archive that ran first still
+    # stands, so this is the same outcome the caller already handles for a
+    # refusal: out of the active lists, still in the database.
+    if programme_config_rows_remaining(plan['candidates']):
+        log_curriculum_decision(
+            'programme.delete', outcome='incomplete', entity_id=identifier,
+            reason='programme-row-survived-delete',
+        )
+        return json_error(
+            'The programme row is still in the database after the delete, so it was '
+            'not removed permanently. It stays archived and out of the active lists.',
+            status=409,
+            reason='programme-delete-incomplete',
+            deleted=False,
+            permanent=False,
+            id=clean_str(identifier),
+            removed=removed,
         )
 
     return JsonResponse({
@@ -5167,12 +5289,29 @@ def programme_authoring_modules(programme, config=None):
             continue
         row_programme_id = clean_str(row.get('programme_id'))
         row_programme_name = normalise(row.get('programme_name'))
-        if (row_programme_id and row_programme_id in programme_ids) or (row_programme_name and row_programme_name in programme_names):
+        if row_programme_id and row_programme_id in programme_ids:
+            rows.append(row)
+            continue
+        # A module that names another programme by id is that programme's, even
+        # while it still carries a name this one answers to. Two programmes may
+        # share a name, and a rename that has not reached the children leaves
+        # them holding the old one -- which is how this programme's page came to
+        # list another programme's modules.
+        if row_programme_id and programme_identifier_looks_exact(row_programme_id):
+            continue
+        if row_programme_name and row_programme_name in programme_names:
             rows.append(row)
     modules = []
+    # One batched read for the whole programme. The per-module reader issues seven
+    # queries each, so a 122-module programme spent 854 round trips (~105s) here.
+    # get_authoring_structure_payloads() returns the identical payload in seven
+    # queries total -- the two are compared field by field before this swap.
+    payloads_by_id = get_authoring_structure_payloads(
+        [clean_str(row.get('module_catalogue_id')) for row in rows]
+    )
     for row in rows:
         module_id = clean_str(row.get('module_catalogue_id'))
-        payload = get_authoring_structure_payload(module_id) if module_id else None
+        payload = payloads_by_id.get(module_id) if module_id else None
         if payload:
             modules.append(curriculum_module_from_authoring_payload(payload))
         else:
@@ -6265,17 +6404,22 @@ def build_modules(module_rows, training_rows, program_configs=None, include_unus
             end_date = format_date(row.get('end_date') or row.get('endDate'))
             modules.append({
                 'id': f'catalogue-module-{module_id}',
-            'sourceId': row.get('Module ID'),
-            'sourceType': 'module_catalogue',
-            'catalogueId': module_id,
-            'name': name,
-            'programmeId': '',
-            'programme': 'Unassigned',
-            'cohortId': '',
-            'cohort': '',
-            'groupId': '',
-            'group': '',
-                'weeks': week_count,
+                'sourceId': row.get('Module ID'),
+                'sourceType': 'module_catalogue',
+                'catalogueId': module_id,
+                'name': name,
+                'programmeId': '',
+                'programme': 'Unassigned',
+                'cohortId': '',
+                'cohort': '',
+                'groupId': '',
+                'group': '',
+                # This module's own count. It used to read `week_count`, left
+                # behind by the delivery loop above, so every catalogue module in
+                # the payload carried the last delivery row's week count.
+                # enrich_modules_with_authoring replaces it with the authored
+                # count wherever the module has one.
+                'weeks': session_count,
                 'sessionsNumber': session_count,
                 'ksbCount': len(ksb_codes),
                 'lessons': session_count,
@@ -6329,6 +6473,119 @@ def _programme_ksb_stats(source_id, required_ksb_codes, only_stats_for_ids):
     }
 
 
+def _empty_programme_structure_counts():
+    return {'cohorts': 0, 'groups': 0, 'modules': 0, 'weeks': 0}
+
+
+@scoped_curriculum_read
+def authoring_programme_structure_counts():
+    """Cohorts, groups, modules and weeks per programme, from the rows that own them.
+
+    A programme's card and the programme's own workspace have to answer with the
+    same figures, so both count the normalized authoring tables --
+    ``curriculum.cohorts``, ``curriculum.groups``, ``curriculum.modules`` and the
+    weeks authored beneath them -- minus anything archived or soft-deleted.
+
+    The card used to count ``training_rows`` narrowed by
+    ``is_actual_delivery_row``, which keeps a module only once it has BOTH a
+    cohort and a group. A programme whose modules were authored before being
+    attached to a group therefore read "0 modules, 0 groups, 0 weeks" on its card
+    and "64 modules, 1 group, 641 weeks" one click later on its own page, which
+    reads these tables.
+
+    Every child row is attributed to exactly ONE programme: by ``programme_id``
+    when it carries one, and only otherwise by name. That matters because a
+    rename that never reached the children leaves them holding the old name --
+    frequently another live programme's name -- and counting by name as well
+    would credit one programme's modules to that one too.
+
+    Returns ``(by_programme_id, by_normalised_programme_name)``.
+    """
+    by_id = {}
+    by_name = {}
+
+    def counts_for(row):
+        """The one bucket this child row counts towards, or None if it has neither key."""
+        programme_id = clean_str(row.get('programme_id'))
+        if programme_id:
+            return by_id.setdefault(programme_id, _empty_programme_structure_counts())
+        programme_name = normalise(row.get('programme_name'))
+        if programme_name:
+            return by_name.setdefault(programme_name, _empty_programme_structure_counts())
+        return None
+
+    def is_countable(row):
+        # Archived is the status cohorts and groups carry; soft delete is the
+        # stamp everything else carries. Neither is on the programme's page, so
+        # neither is on its card.
+        return not (
+            programme_deleted_row(row)
+            or clean_str(row.get('status')).lower() == 'archived'
+        )
+
+    for table, key in ((COHORT_AUTHORING_DETAILS_TABLE, 'cohorts'), (GROUPS_TABLE, 'groups')):
+        try:
+            for row in authoring_fetch_all(table):
+                if not is_countable(row):
+                    continue
+                counts = counts_for(row)
+                if counts is not None:
+                    counts[key] += 1
+        except (Exception, AssertionError):
+            logger.debug('Programme %s counts are not available yet.', key, exc_info=True)
+
+    # Authored weeks per module, so the card's WEEKS figure resolves the same way
+    # the module's own structure endpoint resolves it: the stored weeks_number
+    # wins and rows written before that column existed fall back to the week rows
+    # they actually hold. Narrowed to the four columns that decide it -- this
+    # table is read in full and the database is remote.
+    week_counts_by_module = Counter()
+    try:
+        for row in active_week_rows(authoring_fetch_all(
+            AUTHORING_WEEKS_TABLE,
+            columns=['module_catalogue_id', 'deleted_at', 'is_programme_deleted', 'library_state'],
+        )):
+            module_id = clean_str(row.get('module_catalogue_id'))
+            if module_id:
+                week_counts_by_module[module_id] += 1
+    except (Exception, AssertionError):
+        logger.debug('Authored week counts are not available yet.', exc_info=True)
+
+    try:
+        for row in safe_authoring_module_rows():
+            # A module archived on its own is soft-deleted, so programme_deleted_row
+            # covers it; `status` on a module row is draft/published, not archived.
+            if programme_deleted_row(row):
+                continue
+            counts = counts_for(row)
+            if counts is None:
+                continue
+            counts['modules'] += 1
+            counts['weeks'] += module_stored_week_count(
+                row, week_counts_by_module.get(clean_str(row.get('module_catalogue_id')), 0)
+            )
+    except (Exception, AssertionError):
+        logger.debug('Programme module counts are not available yet.', exc_info=True)
+
+    return by_id, by_name
+
+
+def programme_structure_counts(programme, by_id=None, by_name=None):
+    """This programme's authoring counts, or None when it owns no authoring rows.
+
+    None is the answer for a legacy programme that exists only as delivery rows;
+    its caller keeps whatever it derived from those rows instead.
+    """
+    if by_id is None or by_name is None:
+        by_id, by_name = authoring_programme_structure_counts()
+    programme = programme or {}
+    for value in (programme.get('sourceId'), programme.get('id')):
+        counts = by_id.get(clean_str(value))
+        if counts:
+            return counts
+    return by_name.get(normalise(programme.get('name')))
+
+
 def build_programmes(training_rows, program_configs, ksb_profiles, include_config_only=False, only_stats_for_ids=None):
     configs_by_id = program_config_by_id(program_configs)
     grouped = defaultdict(list)
@@ -6345,20 +6602,10 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
     except Exception:
         logger.debug('Free programme counts are not available yet.', exc_info=True)
 
-    cohort_counts_by_programme_id = defaultdict(int)
-    cohort_counts_by_programme_name = defaultdict(int)
-    try:
-        for detail in cohort_authoring_detail_rows():
-            if detail_is_archived(detail):
-                continue
-            programme_id = clean_str(detail.get('programmeId'))
-            programme_name = normalise(detail.get('programmeName'))
-            if programme_id:
-                cohort_counts_by_programme_id[programme_id] += 1
-            if programme_name:
-                cohort_counts_by_programme_name[programme_name] += 1
-    except Exception:
-        logger.debug('Cohort counts are not available yet.', exc_info=True)
+    # Cohorts, groups, modules and weeks all come from the same read of the
+    # tables that own them, so the card cannot disagree with the programme's own
+    # page about any of the four.
+    structure_counts_by_id, structure_counts_by_name = authoring_programme_structure_counts()
 
     display_program_configs = unique_program_configs_for_display(program_configs)
     row_programme_names = set()
@@ -6466,11 +6713,22 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
         level = (config or {}).get('level') or infer_level(standard) or infer_level(name)
         structure_type = 'scheduled'
         free_counts = free_programme_counts.get(clean_str(source_id), {})
-        programme_modules_count = parse_int(free_counts.get('modules'), 0) if structure_type == 'free' else len(delivery_rows)
-        programme_cohorts_count = (
-            cohort_counts_by_programme_id.get(clean_str(source_id))
-            or cohort_counts_by_programme_name.get(normalise(name))
-            or len(cohort_names)
+        # The authoring tables answer for every programme that has any row of its
+        # own. A programme that exists only as legacy delivery rows has no entry
+        # there and keeps the figures derived from those rows just above.
+        structure_counts = programme_structure_counts(
+            {'id': source_id, 'sourceId': source_id, 'name': name},
+            structure_counts_by_id,
+            structure_counts_by_name,
+        ) or {}
+        programme_modules_count = (
+            parse_int(free_counts.get('modules'), 0) if structure_type == 'free'
+            else structure_counts.get('modules', len(delivery_rows))
+        )
+        programme_cohorts_count = structure_counts.get('cohorts', len(cohort_names))
+        programme_groups_count = structure_counts.get('groups', len(group_keys))
+        programme_weeks_count = structure_counts.get(
+            'weeks', sum(parse_int(row.get('sessions_number')) for row in delivery_rows)
         )
         programme_status = 'archived' if archived or config_archived else programme_config_status(config)
         if programme_status == 'draft' and not include_config_only:
@@ -6486,8 +6744,8 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
             'isArchived': config_archived,
             'isActive': config_active,
             'modules': programme_modules_count,
-            'groups': len(group_keys),
-            'weeks': sum(parse_int(row.get('sessions_number')) for row in delivery_rows),
+            'groups': programme_groups_count,
+            'weeks': programme_weeks_count,
             **_programme_ksb_stats(source_id, required_ksb_codes, only_stats_for_ids),
             'ksbTotal': ksb_total,
             'learners': (
@@ -6693,14 +6951,35 @@ def programme_learner_ksb_progress(programme_id, required_codes=None):
 
 
 @scoped_curriculum_read
-def active_learner_delivery_counts():
-    """Count live learners by their programme/cohort/group delivery labels.
+def delivery_learner_count(counts, record_id, name_key):
+    """Learners placed in one cohort/group, however their placement is recorded.
 
-    ``Learner.learners`` is the permanent canonical learner table. Curriculum
-    relationships currently carry the same labels rather than learner foreign
-    keys, so comparison is deliberately case/whitespace insensitive. Missing
-    learner infrastructure is treated as an empty data source (for example in
-    local SQLite tests or a curriculum-only deployment).
+    The id bucket and the name bucket are *added*, not preferred one over the
+    other: a cohort can hold both learners whose placement resolved to its id
+    and older rows that only ever carried its name, and both are in it. No
+    learner is counted twice -- ``active_learner_delivery_counts`` puts each row
+    in exactly one of the two. Same shape as the programme card's count.
+    """
+    record_id = clean_str(record_id)
+    by_id = counts.get(record_id, 0) if record_id else 0
+    return by_id + counts.get(name_key, 0)
+
+
+def active_learner_delivery_counts():
+    """Count live learners by the cohort/group their placement resolves to.
+
+    ``Learner.learners`` is the permanent canonical learner table. A learner
+    carrying ``cohort_id``/``group_id`` is counted against that record, so a
+    renamed cohort keeps its learners; a learner without one is still counted by
+    programme/cohort/group *name*, case- and whitespace-insensitively, so rows
+    predating those columns do not drop off the cards. Read either half back
+    with ``delivery_learner_count``.
+
+    Returns ``(cohort_counts, group_counts)``. Both are keyed either by a
+    canonical id (a plain string) or by the name tuple -- one dict holding the
+    two kinds of key, because they count the same thing and the caller adds
+    them. Missing learner infrastructure is treated as an empty data source (for
+    example in local SQLite tests or a curriculum-only deployment).
     """
     if connection.vendor != 'postgresql':
         return {}, {}
@@ -6709,11 +6988,20 @@ def active_learner_delivery_counts():
             cursor.execute("select to_regclass(%s)", ['\"Learner\".\"learners\"'])
             if not cursor.fetchone()[0]:
                 return {}, {}
+            # The placement ids only exist where the columns do; elsewhere the
+            # two constants keep the row shape and every learner falls into the
+            # name bucket, which is what this counted before they were added.
+            if learners_link_placement_by_id():
+                id_select = ", coalesce(cohort_id, '') as cohort_id, coalesce(group_id, '') as group_id"
+                id_group = ', cohort_id, group_id'
+            else:
+                id_select = ", '' as cohort_id, '' as group_id"
+                id_group = ''
             cursor.execute(
-                'select programme, cohort, group_name, count(*) '
+                f'select programme, cohort, group_name{id_select}, count(*) '
                 'from "Learner"."learners" '
                 "where lifecycle_status = 'active' "
-                'group by programme, cohort, group_name'
+                f'group by programme, cohort, group_name{id_group}'
             )
             rows = cursor.fetchall()
     except Exception as exc:
@@ -6722,14 +7010,20 @@ def active_learner_delivery_counts():
 
     cohort_counts = Counter()
     group_counts = Counter()
-    for programme_name, cohort_name, group_name, learner_count in rows:
+    for programme_name, cohort_name, group_name, cohort_id, group_id, learner_count in rows:
         programme_key = normalise(programme_name)
         cohort_key = normalise(cohort_name)
         group_key = normalise(group_name)
+        cohort_id = clean_str(cohort_id)
+        group_id = clean_str(group_id)
         count = parse_int(learner_count, 0)
-        if programme_key and cohort_key:
+        if cohort_id:
+            cohort_counts[cohort_id] += count
+        elif programme_key and cohort_key:
             cohort_counts[(programme_key, cohort_key)] += count
-        if programme_key and cohort_key and group_key:
+        if group_id:
+            group_counts[group_id] += count
+        elif programme_key and cohort_key and group_key:
             group_counts[(programme_key, cohort_key, group_key)] += count
     return dict(cohort_counts), dict(group_counts)
 
@@ -6793,10 +7087,10 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
                 infer_duration_months(detail.get('startDate'), detail.get('endDate'), 0),
             ),
             'status': detail.get('status') or 'planned',
-            'learners': cohort_learner_counts.get((
+            'learners': delivery_learner_count(cohort_learner_counts, cohort_id, (
                 normalise(detail.get('programmeName')),
                 normalise(detail.get('cohortName')),
-            ), 0),
+            )),
             'groups': [clean_str(value) for value in (detail.get('groupIds') or []) if clean_str(value)],
             'moduleIds': module_ids(cohort_modules) or stored_module_ids,
             'modules': module_names(cohort_modules),
@@ -6828,11 +7122,11 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
             'cohort': clean_str(detail.get('cohort')),
             'programmeId': clean_str(detail.get('programmeId')),
             'programme': clean_str(detail.get('programme')),
-            'learners': group_learner_counts.get((
+            'learners': delivery_learner_count(group_learner_counts, group_id, (
                 normalise(detail.get('programme')),
                 normalise(detail.get('cohort')),
                 normalise(detail.get('name')),
-            ), 0),
+            )),
             'coach': detail.get('coach') or 'Unassigned',
             'tutor': detail.get('tutor') or 'Unassigned',
             'startDate': format_date(detail.get('startDate')),
@@ -6866,11 +7160,11 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
             'cohort': clean_str(first_module.get('cohort_name')),
             'programmeId': clean_str(first_module.get('programme_id')),
             'programme': clean_str(first_module.get('programme_name')),
-            'learners': group_learner_counts.get((
+            'learners': delivery_learner_count(group_learner_counts, group_id, (
                 normalise(first_module.get('programme_name')),
                 normalise(first_module.get('cohort_name')),
                 normalise(first_module.get('group_name')),
-            ), 0),
+            )),
             'coach': 'Unassigned',
             'tutor': clean_str(first_module.get('tutor_name')) or 'Unassigned',
             'startDate': format_date(first_module.get('start_date')),
@@ -11120,6 +11414,27 @@ def repair_curriculum_parent_links(programme_id='', *, allow_writes=True):
     if not allow_writes:
         return
     programme_id = clean_str(programme_id)
+    # The programme's own name, pushed down onto the children that carry a copy
+    # of it. The rename endpoint already does this (propagate_programme_name),
+    # but a child written before that existed -- or by any other path -- keeps the
+    # old name, and a module with no group has no parent to inherit the new one
+    # from further down this pass. A stale copy is not cosmetic: it is read as an
+    # identity wherever a row carries no programme_id, so it made one programme's
+    # cohorts, groups and modules count towards whichever programme now answers
+    # to the old name.
+    # Scoped to the programme being saved: the update below is conditional, so it
+    # is a no-op when nothing drifted, but a whole-estate sweep on every save is
+    # round trips nobody asked for.
+    if programme_id:
+        try:
+            config = next((
+                item for item in get_program_config_rows()
+                if clean_str(programme_config_identity(item)) == programme_id
+            ), None)
+            if config:
+                propagate_programme_name(programme_id, clean_str(config.get('name')))
+        except (Exception, AssertionError):
+            logger.debug('Could not refresh denormalized programme names for %s.', programme_id, exc_info=True)
     try:
         cohorts = authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE)
         groups = authoring_fetch_all(GROUPS_TABLE)
@@ -12362,6 +12677,24 @@ def component_builder_response(row, module_by_id=None, week_by_id=None, mappings
     }
 
 
+def sort_rows_by_updated_at_desc(rows):
+    """Reproduce ``order by updated_at desc`` on rows already sorted by the
+    remaining ``order by`` terms.
+
+    Two details make this equal to the database rather than merely similar.
+    Postgres sorts ``desc`` as NULLS FIRST, so a row that has never been
+    stamped leads; the key below puts ``None`` in its own group that ranks
+    above every real timestamp. And ``sorted`` is stable, so rows sharing an
+    ``updated_at`` keep the ``display_order, id`` order they arrived in --
+    which is exactly what the trailing sort terms did.
+    """
+    return sorted(
+        rows,
+        key=lambda row: (1, None) if row.get('updated_at') is None else (0, row.get('updated_at')),
+        reverse=True,
+    )
+
+
 def component_builder_rows(module_catalogue_ids=None):
     ensure_module_authoring_tables()
     catalogue_ids = [clean_str(value) for value in (module_catalogue_ids or []) if clean_str(value)]
@@ -12370,7 +12703,13 @@ def component_builder_rows(module_catalogue_ids=None):
     if catalogue_ids:
         where_sql = f'module_catalogue_id in ({", ".join(["%s"] * len(catalogue_ids))})'
         params = catalogue_ids
-    component_rows = active_component_rows(authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, where_sql, params, 'updated_at desc, display_order, id'))
+    # Read in the same order as get_authoring_structure_payloads() and re-sort
+    # here. order_sql is part of the read memo key, so asking for a second sort
+    # of the identical rows made the programme detail build fetch every
+    # component for the programme twice -- ~28 s of a 64 s build. Ordering the
+    # list is this reader's own concern, not the database's.
+    component_rows = active_component_rows(authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, where_sql, params, 'display_order, id'))
+    component_rows = sort_rows_by_updated_at_desc(component_rows)
     module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, where_sql, params) if catalogue_ids else authoring_fetch_all(AUTHORING_MODULES_TABLE)
     week_rows = active_week_rows(authoring_fetch_all(AUTHORING_WEEKS_TABLE, where_sql, params) if catalogue_ids else authoring_fetch_all(AUTHORING_WEEKS_TABLE))
     mapping_rows = active_mapping_rows(authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, where_sql, params) if catalogue_ids else authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE))
@@ -12812,17 +13151,16 @@ def teams_delivery_metadata_from_weeks(weeks):
     return {}
 
 
-def teams_delivery_metadata_from_live_session(module_catalogue_id):
-    ensure_live_session_tracking_tables()
-    sessions = authoring_fetch_all(
-        LIVE_SESSIONS_TABLE,
-        "module_catalogue_id = %s and status = 'active'",
-        [module_catalogue_id],
-        'updated_at desc, created_at desc',
-    )
-    if not sessions:
+def teams_delivery_metadata_from_live_session_row(session_row):
+    """Teams metadata for one live_sessions row, or {} when there is none.
+
+    Split out from the single-module reader below so a caller that has already
+    batch-read the table for many modules maps the row exactly the same way,
+    rather than growing a second copy of this field list that can drift.
+    """
+    if not session_row:
         return {}
-    settings = live_session_row_to_component_settings(sessions[0])
+    settings = live_session_row_to_component_settings(session_row)
     return {
         'teamsMeetingUrl': settings.get('teamsMeetingUrl') or '',
         'liveSessionUrl': settings.get('liveSessionUrl') or '',
@@ -12846,6 +13184,17 @@ def teams_delivery_metadata_from_live_session(module_catalogue_id):
         'teamsAllowTimeProposals': settings.get('teamsAllowTimeProposals'),
         'teamsHideAttendees': settings.get('teamsHideAttendees'),
     }
+
+
+def teams_delivery_metadata_from_live_session(module_catalogue_id):
+    ensure_live_session_tracking_tables()
+    sessions = authoring_fetch_all(
+        LIVE_SESSIONS_TABLE,
+        "module_catalogue_id = %s and status = 'active'",
+        [module_catalogue_id],
+        'updated_at desc, created_at desc',
+    )
+    return teams_delivery_metadata_from_live_session_row(sessions[0] if sessions else None)
 
 
 def live_session_row_to_component_settings(row):
@@ -13416,6 +13765,71 @@ def curriculum_live_session_occurrences(request):
     return JsonResponse({'series': series_payload, 'occurrences': occurrences_payload})
 
 
+def apply_module_session_plan_to_weeks(module, group_row, weeks):
+    """Stamp the module's planned session date/day/time onto its weeks in place.
+
+    Shared by the single-module and batched structure readers so the two cannot
+    drift: the batched one lacked this entirely, which silently dropped
+    sessionDate/sessionDay/sessionStartTime/sessionDurationMinutes from every
+    week it returned. Pure computation over rows the caller already holds --
+    it issues no queries of its own.
+    """
+    required_plan_entries = sum(
+        max(1, len([component for component in week.get('components') or [] if component.get('type') == 'live-session']))
+        for week in weeks
+    )
+    session_plan = module_session_plan_for_count(
+        module,
+        max(module_stored_session_count(module, len(weeks)), required_plan_entries),
+    ).get('sessions') or []
+    session_start_time, _session_end_time, session_duration = module_session_clock(module, group_row)
+    session_index = 0
+    for week in weeks:
+        live_components = [component for component in week.get('components') or [] if component.get('type') == 'live-session']
+        first_planned = {}
+        if live_components:
+            for component in live_components:
+                planned = session_plan[session_index] if session_index < len(session_plan) else {}
+                session_index += 1
+                if not first_planned:
+                    first_planned = planned
+                settings = component.get('settings') if isinstance(component.get('settings'), dict) else {}
+                tracked_occurrence = (
+                    clean_str(settings.get('sessionDateTimeUtc'))
+                    or (
+                        clean_str(settings.get('teamsLiveSessionId'))
+                        and parse_int(settings.get('teamsSessionNumber'), 0) > 0
+                    )
+                )
+                if clean_str(settings.get('sessionDate')) or tracked_occurrence:
+                    continue
+                session_date = format_date(planned.get('date'))
+                if not session_date:
+                    continue
+                planned_settings = {
+                    **settings,
+                    'sessionDate': session_date,
+                    'sessionDay': clean_str(planned.get('day')),
+                    'sessionTime': session_start_time,
+                    'durationMinutes': session_duration,
+                    'teamsDurationMinutes': session_duration,
+                }
+                planned_instant = calendar_clock_to_utc_iso(session_date, session_start_time)
+                if planned_instant:
+                    planned_settings['sessionDateTimeUtc'] = planned_instant
+                    planned_settings['teamsStartDateTimeUtc'] = planned_instant
+                component['settings'] = planned_settings
+        else:
+            first_planned = session_plan[session_index] if session_index < len(session_plan) else {}
+            session_index += 1
+        session_date = format_date(first_planned.get('date'))
+        week['sessionDate'] = session_date
+        week['sessionDay'] = clean_str(first_planned.get('day'))
+        week['sessionStartTime'] = session_start_time if session_date else ''
+        week['sessionDurationMinutes'] = session_duration if session_date else 0
+    return weeks
+
+
 def get_authoring_structure_payload(module_catalogue_id):
     module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
     if not module_rows:
@@ -13487,59 +13901,7 @@ def get_authoring_structure_payload(module_catalogue_id):
     # Live components consume the module's flat plan in display order. A week may
     # therefore consume several dates; its header uses the first one. Content-only
     # weeks retain the legacy one-week/one-session behavior.
-    required_plan_entries = sum(
-        max(1, len([component for component in week.get('components') or [] if component.get('type') == 'live-session']))
-        for week in weeks
-    )
-    session_plan = module_session_plan_for_count(
-        module,
-        max(module_stored_session_count(module, len(weeks)), required_plan_entries),
-    ).get('sessions') or []
-    session_start_time, _session_end_time, session_duration = module_session_clock(module, group_row)
-    session_index = 0
-    for week in weeks:
-        live_components = [component for component in week.get('components') or [] if component.get('type') == 'live-session']
-        first_planned = {}
-        if live_components:
-            for component in live_components:
-                planned = session_plan[session_index] if session_index < len(session_plan) else {}
-                session_index += 1
-                if not first_planned:
-                    first_planned = planned
-                settings = component.get('settings') if isinstance(component.get('settings'), dict) else {}
-                tracked_occurrence = (
-                    clean_str(settings.get('sessionDateTimeUtc'))
-                    or (
-                        clean_str(settings.get('teamsLiveSessionId'))
-                        and parse_int(settings.get('teamsSessionNumber'), 0) > 0
-                    )
-                )
-                if clean_str(settings.get('sessionDate')) or tracked_occurrence:
-                    continue
-                session_date = format_date(planned.get('date'))
-                if not session_date:
-                    continue
-                planned_settings = {
-                    **settings,
-                    'sessionDate': session_date,
-                    'sessionDay': clean_str(planned.get('day')),
-                    'sessionTime': session_start_time,
-                    'durationMinutes': session_duration,
-                    'teamsDurationMinutes': session_duration,
-                }
-                planned_instant = calendar_clock_to_utc_iso(session_date, session_start_time)
-                if planned_instant:
-                    planned_settings['sessionDateTimeUtc'] = planned_instant
-                    planned_settings['teamsStartDateTimeUtc'] = planned_instant
-                component['settings'] = planned_settings
-        else:
-            first_planned = session_plan[session_index] if session_index < len(session_plan) else {}
-            session_index += 1
-        session_date = format_date(first_planned.get('date'))
-        week['sessionDate'] = session_date
-        week['sessionDay'] = clean_str(first_planned.get('day'))
-        week['sessionStartTime'] = session_start_time if session_date else ''
-        week['sessionDurationMinutes'] = session_duration if session_date else 0
+    apply_module_session_plan_to_weeks(module, group_row, weeks)
 
     advanced = advanced_response(advanced_rows[0] if advanced_rows else None)
     payload = {
@@ -13658,6 +14020,24 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
     )
     completion_rows = authoring_fetch_all(AUTHORING_COMPLETION_TABLE, f'module_catalogue_id in ({placeholders})', found_ids) if include_extra else []
     advanced_rows = authoring_fetch_all(AUTHORING_ADVANCED_TABLE, f'module_catalogue_id in ({placeholders})', found_ids) if include_extra else []
+    # Newest active live session per module, read once for the whole set. The
+    # single-module reader falls back to this when a module's weeks carry no
+    # Teams metadata, so a batched caller that skipped it would silently lose
+    # the meeting details for exactly those modules.
+    live_session_by_module = {}
+    if include_extra:
+        ensure_live_session_tracking_tables()
+        for row in authoring_fetch_all(
+            LIVE_SESSIONS_TABLE,
+            f"module_catalogue_id in ({placeholders}) and status = 'active'",
+            found_ids,
+            'updated_at desc, created_at desc',
+        ):
+            key = clean_str(row.get('module_catalogue_id'))
+            # Ordered newest first, so the first row seen for a module is the one
+            # the single-module reader would have taken as sessions[0].
+            if key and key not in live_session_by_module:
+                live_session_by_module[key] = row
     group_ids = unique([clean_str(row.get('group_id')) for row in module_rows])
     group_rows_by_id = {}
     if group_ids:
@@ -13735,7 +14115,15 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
             })
         module_mappings = module_mappings_by_module.get(catalogue_id, [])
         module_components = component_rows_by_module.get(catalogue_id, [])
-        group_coach_name = clean_str(group_rows_by_id.get(clean_str(module.get('group_id')), {}).get('coach_name'))
+        group_row = group_rows_by_id.get(clean_str(module.get('group_id')), {})
+        group_coach_name = clean_str(group_row.get('coach_name'))
+        is_programme_deleted = programme_deleted_row(module) or programme_deleted_row(group_row)
+        if include_extra:
+            # Gated with the other full-detail extras: this rewrites live-session
+            # component settings, and the lean caller (resolve) asked not to pay
+            # for -- or be changed by -- that. The single-module reader always
+            # applies it, so parity holds wherever include_extra is on.
+            apply_module_session_plan_to_weeks(module, group_row, weeks)
         payload = {
             'id': f'module-{catalogue_id}',
             'moduleId': catalogue_id,
@@ -13752,12 +14140,18 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
             'description': module.get('description') or '',
             'color': module.get('color') or '#6941c6',
             'status': module.get('status') or 'draft',
+            'sourceType': module.get('source_type') or '',
+            'sourceId': module.get('source_id') or '',
+            'isProgrammeDeleted': is_programme_deleted,
             'ksbProfileSourceId': normalise_ksb_profile_source_value(module.get('ksb_profile_source_id') or ''),
             'tutor': module.get('tutor_name') or '',
             'coach': group_coach_name,
             'sessionsNumber': parse_int(module.get('sessions_number'), len(weeks)),
             'startDate': format_date(module.get('start_date')),
             'endDate': format_date(module.get('end_date')),
+            'weekDays': module.get('session_week_day') or group_row.get('session_week_day') or schedule_day_part(group_row.get('schedule')) or '',
+            'startTime': module.get('session_start_time') or group_row.get('session_start_time') or schedule_time_parts(group_row.get('schedule'))[0],
+            'endTime': module.get('session_end_time') or group_row.get('session_end_time') or schedule_time_parts(group_row.get('schedule'))[1],
             'weeks': module_stored_week_count(module, len(weeks)),
             'weeksNumber': module_stored_week_count(module, len(weeks)),
             'totalOtjh': float(module.get('total_otjh') or 0),
@@ -13778,13 +14172,29 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
                 'cohort': payload.get('cohort') or '',
                 'groupId': payload.get('groupId') or '',
                 'group': payload.get('group') or '',
-                'coach': group_coach_name,
+                'coach': payload.get('coach') or '',
                 'tutor': payload.get('tutor') or '',
                 'color': payload.get('color') or '',
+                'weekDays': payload.get('weekDays') or '',
+                'startTime': payload.get('startTime') or '',
+                'endTime': payload.get('endTime') or '',
             }
-        teams_metadata = teams_delivery_metadata_from_weeks(weeks)
+        teams_metadata = teams_delivery_metadata_from_weeks(weeks) or teams_delivery_metadata_from_live_session_row(
+            live_session_by_module.get(catalogue_id)
+        )
         if teams_metadata:
             payload['deliveryMetadata'] = {**(payload.get('deliveryMetadata') or {}), **teams_metadata}
+        if module.get('source_type') == 'training_plan' and module.get('source_id'):
+            training_row = training_row_by_id(module.get('source_id'))
+            if training_row:
+                payload['deliveryStatus'] = delivery_status_for_training_row(training_row)
+                payload['deliveryMetadata'] = {
+                    **(payload.get('deliveryMetadata') or {}),
+                    'cohort': training_row.get('Cohort_name') or '',
+                    'group': training_row.get('group_name') or training_row.get('_meta', {}).get('group_name') or '',
+                    'tutor': training_row.get('Tutor_name') or '',
+                    'coach': training_row.get('coach_name') or '',
+                }
         if include_quality:
             checklist, score = module_authoring_quality_check(payload)
             payload['qualityChecklist'] = checklist
@@ -14183,6 +14593,13 @@ def enrich_modules_with_authoring(modules, include_programme_deleted=False):
                     **module,
                     'name': saved['title'],
                     'programme': saved['programmeName'] or module.get('programme'),
+                    # The name is taken from the authoring row, so the id has to
+                    # travel with it. A catalogue module (visibility=all builds
+                    # one per authoring module) arrives with no programme link at
+                    # all, and taking the name alone left it saying "MBA" while
+                    # belonging to the programme that had since been renamed --
+                    # unattributable by id and miscounted by name.
+                    'programmeId': module.get('programmeId') or saved.get('programmeId') or '',
                     'weeks': saved['weeks'] or module.get('weeks'),
                     'weekStructure': saved.get('weekStructure') or module.get('weekStructure') or [],
                     'ksbCount': ksb_count,
@@ -14227,17 +14644,29 @@ def enrich_modules_with_authoring(modules, include_programme_deleted=False):
 
 
 def module_matches_programme(programme, module):
+    """Does this module belong to this programme?
+
+    An explicit programme id settles it on its own. A module that names one
+    programme by id must never be credited to a *different* programme just
+    because it still carries that programme's name: a rename that did not reach
+    the children leaves them holding the old name, and reusing a name is allowed,
+    so counting on the name as well let one programme's card count another's
+    modules. Rows whose ``programmeId`` holds a name rather than an id (older
+    authoring payloads do) still fall through to the name comparison.
+    """
     programme_candidates = {
         normalise(programme.get('id')),
         normalise(programme.get('sourceId')),
         normalise(programme.get('name')),
         normalise(programme.get('standard')),
-    }
-    module_candidates = {
-        normalise(module.get('programmeId')),
-        normalise(module.get('programme')),
-    }
-    return bool(programme_candidates.intersection(module_candidates))
+    } - {''}
+    module_programme_id = clean_str(module.get('programmeId'))
+    if module_programme_id:
+        if normalise(module_programme_id) in programme_candidates:
+            return True
+        if programme_identifier_looks_exact(module_programme_id):
+            return False
+    return normalise(module.get('programme')) in programme_candidates
 
 
 def module_matches_visible_programmes(module, programmes):
@@ -14340,10 +14769,22 @@ def dedupe_authoring_module_rows(module_rows, mapping_rows=None, component_rows=
 
 
 def is_archived_module_summary(module):
+    """Is this module out of the active lists?
+
+    The three status fields are the delivery side of the answer. The soft-delete
+    stamp is the authoring side, and it has to be read here too: archiving a
+    module sets `deleted_at` and leaves `status` alone, and
+    `authoring_catalogue_summaries` reads the module rows without a soft-delete
+    filter (the weeks, components and mappings beside it are filtered). Without
+    this an archived module went on being counted for its programme's card while
+    the programme's own page — which reads the surviving rows — showed none:
+    "3 modules" on the card, "No modules yet" one click later.
+    """
     return (
         clean_str((module or {}).get('status')).lower() == 'archived'
         or clean_str((module or {}).get('authoringStatus')).lower() == 'archived'
         or clean_str((module or {}).get('deliveryStatus')).lower() == 'archived'
+        or programme_deleted_row(module)
     )
 
 
@@ -14371,11 +14812,29 @@ def archived_programme_keys():
     return keys
 
 
+def programme_summary_is_archived(programme):
+    """Whether a programme in the payload is itself archived."""
+    programme = programme or {}
+    return (
+        truthy(programme.get('isArchived'))
+        or programme_status_is_archived(programme.get('status'))
+    )
+
+
 def enrich_programmes_with_module_counts(programmes, modules, modules_enriched=False, include_archived=False):
-    enriched_modules = modules if modules_enriched else enrich_modules_with_authoring(modules)
-    if not include_archived:
-        enriched_modules = [module for module in enriched_modules if not is_archived_module_summary(module)]
+    all_modules = modules if modules_enriched else enrich_modules_with_authoring(modules)
+    live_modules = [module for module in all_modules if not is_archived_module_summary(module)]
+    # `include_archived` is what keeps archived PROGRAMMES in the list, for the
+    # archive view. It must not put archived MODULES into a live programme's
+    # count: a module archived on its own has left that programme's module list,
+    # and the workspace shows it gone — while the card went on counting it, so
+    # the same programme read "3 modules" on the list and "No modules yet" on its
+    # own page. An archived programme still counts its own, because everything
+    # beneath it was archived with it and a card reading 0 would say that
+    # deleting it removes nothing.
+    enriched_modules = all_modules if include_archived else live_modules
     archived_keys = set() if include_archived else archived_programme_keys()
+    structure_counts_by_id, structure_counts_by_name = authoring_programme_structure_counts()
     enriched_programmes = []
     existing_programme_keys = set()
     for programme in programmes:
@@ -14385,9 +14844,29 @@ def enrich_programmes_with_module_counts(programmes, modules, modules_enriched=F
             normalise(programme.get('name')),
             normalise(programme.get('standard')),
         })
-        free_programme_modules = [module for module in enriched_modules if module_matches_programme(programme, module)]
-        if not free_programme_modules or clean_str(programme.get('structureType')).lower() == 'free':
+        # A programme with authoring rows of its own arrives already counted from
+        # curriculum.cohorts/groups/modules -- the very rows its workspace lists
+        # -- so nothing derived from the module list can improve on those figures,
+        # and anything it derives differently is a card that disagrees with the
+        # page. The arithmetic below still answers for a legacy programme that
+        # has no authoring rows, whose count arrives as len(delivery_rows).
+        if programme_structure_counts(programme, structure_counts_by_id, structure_counts_by_name):
             enriched_programmes.append(programme)
+            continue
+        countable_modules = all_modules if programme_summary_is_archived(programme) else live_modules
+        free_programme_modules = [module for module in countable_modules if module_matches_programme(programme, module)]
+        if clean_str(programme.get('structureType')).lower() == 'free':
+            enriched_programmes.append(programme)
+            continue
+        if not free_programme_modules:
+            # No module of its own left, so the card says none. The count it
+            # arrives with was `len(delivery_rows)` -- the legacy training rows,
+            # which outlive the module they were created for and are not what the
+            # programme's own page lists. Leaving that number in place is what
+            # made one programme read "3 modules" on its card and "No modules
+            # yet" on its page. Cohorts, groups and learners are left alone:
+            # those are counted from their own rows, not from a module.
+            enriched_programmes.append({**programme, 'modules': 0})
             continue
 
         cohort_keys = {
@@ -14405,6 +14884,14 @@ def enrich_programmes_with_module_counts(programmes, modules, modules_enriched=F
             'modules': len(free_programme_modules),
             'cohorts': max(parse_int(programme.get('cohorts'), 0), len(cohort_keys)),
             'groups': max(parse_int(programme.get('groups'), 0), len(group_keys)),
+            # Weeks come from the same modules the count above is taken from, the
+            # way the module-only reconstruction below already does it. Reading
+            # them off the delivery rows instead is what left an archived
+            # programme's card saying "0 weeks" beside a page listing twenty.
+            'weeks': (
+                sum(parse_int(module.get('weeks') or module.get('sessionsNumber'), 0) for module in free_programme_modules)
+                or parse_int(programme.get('weeks'), 0)
+            ),
         })
 
     module_only_programmes = {}
@@ -15881,14 +16368,18 @@ def curriculum_programmes(request):
         f'overview:{visibility}:compact',
         lambda: build_curriculum_payload(visibility, compact=True),
     )
-    enriched_modules = cached_curriculum_value(
-        f'modules:{visibility}:enriched',
-        lambda: enrich_modules_with_authoring(payload['modules'], include_programme_deleted=visibility == 'all'),
-    )
-    programmes = cached_curriculum_value(
-        f'programmes:{visibility}:with-module-counts',
-        lambda: enrich_programmes_with_module_counts(payload['programmes'], enriched_modules, modules_enriched=True, include_archived=visibility == 'all'),
-    )
+    # Both enrichments read the authoring tables, so they share one read scope
+    # rather than each paying for its own round trips. Read-only: the payload
+    # above is already built and cached by the time this opens.
+    with curriculum_read_scope():
+        enriched_modules = cached_curriculum_value(
+            f'modules:{visibility}:enriched',
+            lambda: enrich_modules_with_authoring(payload['modules'], include_programme_deleted=visibility == 'all'),
+        )
+        programmes = cached_curriculum_value(
+            f'programmes:{visibility}:with-module-counts',
+            lambda: enrich_programmes_with_module_counts(payload['programmes'], enriched_modules, modules_enriched=True, include_archived=visibility == 'all'),
+        )
     return curriculum_collection_response(
         payload,
         'programmes',
@@ -16151,6 +16642,9 @@ def curriculum_programme_detail(request, identifier):
 
         with transaction.atomic():
             soft_deleted = soft_delete_programme_authoring_structure(identifier, programme, config)
+        # After the commit as well as inside it, for the same reason the permanent
+        # delete does: a read that lands mid-transaction caches the pre-archive rows.
+        invalidate_curriculum_cache()
         log_curriculum_decision(
             'programme.archive', outcome='soft_deleted', entity_id=identifier,
             # The cascade's own per-table counts; the tables it took down with it.
@@ -16261,10 +16755,14 @@ def propagate_programme_name(programme_id, programme_name):
         return
     for table in (COHORT_AUTHORING_DETAILS_TABLE, GROUPS_TABLE, AUTHORING_MODULES_TABLE):
         try:
+            # Only the rows that actually disagree. This runs on every curriculum
+            # save (repair_curriculum_parent_links), and writing `updated_at`
+            # across every child row of a programme that had not been renamed
+            # would reorder its module catalogue on each save for no reason.
             update_authoring_rows(
                 table,
-                'programme_id = %s',
-                [programme_id],
+                'programme_id = %s and coalesce(programme_name, \'\') <> %s',
+                [programme_id, programme_name],
                 {'programme_name': programme_name, 'updated_at': datetime.utcnow()},
             )
         except (Exception, AssertionError):
@@ -18133,6 +18631,18 @@ def learners_link_programme_by_id():
     return 'programme_id' in learner_schema_columns('learners')
 
 
+def learners_link_placement_by_id():
+    """Whether ``Learner.learners`` carries cohort_id / group_id.
+
+    The two columns below programme_id, added out of band by
+    ``sql/2026-09-02_learner_placement_ids.sql``. An environment that has not
+    run it keeps matching placements by name, so every read that uses these
+    falls back rather than failing.
+    """
+    columns = learner_schema_columns('learners')
+    return 'cohort_id' in columns and 'group_id' in columns
+
+
 def programme_identity_candidates(programme_id):
     candidates = unique([programme_id])
     configs = get_program_config_rows()
@@ -18159,6 +18669,9 @@ def assigned_learners_for_programme(programme_id, lifecycle_status=''):
         if not candidate_keys:
             return []
         try:
+            # Both column probes below read the same list, and on a remote
+            # database each read is a round trip. One is enough.
+            learner_columns = learner_schema_columns('learners')
             with connection.cursor() as cursor:
                 status_filter = clean_str(lifecycle_status).lower()
                 status_sql = "and lower(lifecycle_status) = %s" if status_filter else ''
@@ -18166,7 +18679,7 @@ def assigned_learners_for_programme(programme_id, lifecycle_status=''):
                 # exact programme and to no other. Only rows without one fall
                 # back to matching the programme's name, which is what let two
                 # programmes sharing a name both claim the same learner.
-                if learners_link_programme_by_id():
+                if 'programme_id' in learner_columns:
                     scope_sql = '''
                     (
                         btrim(coalesce(programme_id, '')) = %s
@@ -18194,12 +18707,20 @@ def assigned_learners_for_programme(programme_id, lifecycle_status=''):
                     params = [candidate_keys]
                 if status_filter:
                     params.append(status_filter)
+                # The placement ids come back only where the columns exist;
+                # everything downstream treats a missing one as "not resolved"
+                # and matches on the name instead.
+                placement_sql = (
+                    ', cohort_id, group_id'
+                    if {'cohort_id', 'group_id'} <= learner_columns
+                    else ''
+                )
                 cursor.execute(
                     f'''
                     select id, full_name, email, programme, programme_status, cohort,
                            group_name, lifecycle_status, coach_name, coach_email,
                            completed_hours, planned_hours, target_hours, progress_hours,
-                           progress_variance, otjh_status
+                           progress_variance, otjh_status{placement_sql}
                     from "Learner"."learners"
                     where {scope_sql}
                       {status_sql}
@@ -18228,6 +18749,12 @@ def assigned_learners_for_programme(programme_id, lifecycle_status=''):
             'programmeStatus': row.get('programme_status') or '',
             'cohort': row.get('cohort') or '',
             'group': row.get('group_name') or '',
+            # The stable keys behind the two names above. Empty where the name
+            # never resolved to exactly one record -- readers fall back to the
+            # name for those, which is what the whole roster did before these
+            # columns existed.
+            'cohortId': clean_str(row.get('cohort_id')),
+            'groupId': clean_str(row.get('group_id')),
             'lifecycleStatus': row.get('lifecycle_status') or '',
             'coachName': row.get('coach_name') or '',
             'coachEmail': row.get('coach_email') or '',
@@ -18244,20 +18771,23 @@ def assigned_learners_for_programme(programme_id, lifecycle_status=''):
 
 
 # The curriculum hierarchy, top to bottom. Every scope below `programme` is
-# resolved to the placement keys enrolment actually stores on a learner
-# (programme, cohort, group name), because curriculum owns the delivery
-# structure and enrolment owns the placements.
+# resolved to the placement keys enrolment actually stores on a learner --
+# programme/cohort/group, by id where the placement resolved to one and by name
+# where it did not -- because curriculum owns the delivery structure and
+# enrolment owns the placements.
 CURRICULUM_LEARNER_SCOPES = ('programme', 'cohort', 'group', 'module', 'week', 'component')
 
 
 def scope_placement_lineage(scope, identifier):
     """Resolve any curriculum scope to its Programme -> Component lineage.
 
-    Returns the ids *and* the names, because the two are used for different
-    things: curriculum joins on ids, and ``"Learner"."learners"`` stores the
-    cohort/group a learner sits in as a label, not a foreign key. ``found`` says
-    whether the scope record itself exists — an empty scope (a cohort with no
-    modules yet) is not a missing one, and the callers need to tell them apart.
+    Returns the ids *and* the names, because both are still needed to narrow a
+    roster: ``"Learner"."learners"`` now carries ``cohort_id``/``group_id``
+    beside the cohort/group text, but only where the name resolved to exactly one
+    record, so ``assigned_learners_for_scope`` matches on the id where there is
+    one and falls back to the label where there is not. ``found`` says whether
+    the scope record itself exists — an empty scope (a cohort with no modules
+    yet) is not a missing one, and the callers need to tell them apart.
 
     A module/week/component has no roster of its own: the learners who meet it
     are the learners enrolment placed in the group that delivers it. That is what
@@ -18375,26 +18905,61 @@ def scope_programme_identifier(lineage):
     return clean_str(lineage.get('programmeId')) or clean_str(lineage.get('programmeName'))
 
 
+def narrow_learners_to_placement(learners, id_key, scope_id, name_key, scope_name):
+    """Keep the learners placed in one cohort/group, by id where there is one.
+
+    Three cases, and they are deliberately not the same:
+
+    * both sides carry an id -- the id decides, and a learner whose id points at
+      another record is dropped even when the names happen to agree. That is the
+      whole reason the column exists.
+    * the learner has no id (the name never resolved to exactly one record, or
+      the backfill has not run here) -- fall back to comparing names, which is
+      what this did for every row before the ids existed.
+    * neither side has anything to compare -- nothing to narrow by, so the row
+      stays. A scope with no name and no id must not silently empty the roster.
+    """
+    scope_id = clean_str(scope_id)
+    name_key_normalised = normalise(scope_name)
+    if not scope_id and not name_key_normalised:
+        return learners
+    kept = []
+    for row in learners:
+        row_id = clean_str(row.get(id_key))
+        if scope_id and row_id:
+            if row_id == scope_id:
+                kept.append(row)
+            continue
+        if not name_key_normalised or normalise(row.get(name_key)) == name_key_normalised:
+            kept.append(row)
+    return kept
+
+
 def assigned_learners_for_scope(scope, identifier, lifecycle_status='', lineage=None):
     """The learners enrolment placed inside a curriculum scope.
 
-    One read of the programme roster, then narrowed by the cohort/group labels
-    the scope resolves to. Narrowing on the label rather than an id is not a
-    shortcut: ``"Learner"."learners"`` stores ``cohort`` and ``group_name`` as
-    text, and the case/whitespace-insensitive comparison here is the same one the
-    programme delivery counts already use.
+    One read of the programme roster, then narrowed to the cohort/group the
+    scope resolves to.
+
+    The narrowing prefers ``cohort_id``/``group_id`` -- the stable keys beside
+    the placement names on ``"Learner"."learners"`` -- and falls back to the
+    names for rows that carry no id. Names alone were not enough: they are free
+    text owned by enrolment, so renaming a cohort took every learner in it off
+    the group's roster without an error anywhere, and a group name is only
+    unique inside its cohort, so a stale cohort name could put learners on the
+    wrong group's list rather than no list at all.
     """
     lineage = lineage or scope_placement_lineage(scope, identifier)
     programme_ident = scope_programme_identifier(lineage)
     if not programme_ident:
         return []
     learners = assigned_learners_for_programme(programme_ident, lifecycle_status)
-    cohort_key = normalise(lineage.get('cohortName'))
-    group_key = normalise(lineage.get('groupName'))
-    if cohort_key:
-        learners = [row for row in learners if normalise(row.get('cohort')) == cohort_key]
-    if group_key:
-        learners = [row for row in learners if normalise(row.get('group')) == group_key]
+    learners = narrow_learners_to_placement(
+        learners, 'cohortId', lineage.get('cohortId'), 'cohort', lineage.get('cohortName'),
+    )
+    learners = narrow_learners_to_placement(
+        learners, 'groupId', lineage.get('groupId'), 'group', lineage.get('groupName'),
+    )
     return learners
 
 
@@ -19343,10 +19908,21 @@ def scope_authored_plan(module_rows, component_rows, coverage_items):
     whole scope's authored content, which is a different and still useful fact.
     """
     group_by_module = {}
+    # The plan stays keyed by the normalised group label it has always used, so
+    # nothing downstream changes shape. What is added is a second way in: the
+    # group's canonical id mapped to that same key, so a learner carrying
+    # ``group_id`` is matched to their group's bucket without the two labels
+    # having to agree. See ``learner_plan_group_key``.
+    group_key_by_id = {}
     for row in module_rows or []:
         module_id = clean_str(row.get('module_catalogue_id'))
-        if module_id:
-            group_by_module[module_id] = normalise(row.get('group_name') or row.get('group_id'))
+        if not module_id:
+            continue
+        key = normalise(row.get('group_name') or row.get('group_id'))
+        group_by_module[module_id] = key
+        group_id = clean_str(row.get('group_id'))
+        if group_id and key:
+            group_key_by_id[group_id] = key
 
     otjh_by_group = defaultdict(float)
     scope_otjh = 0.0
@@ -19383,9 +19959,26 @@ def scope_authored_plan(module_rows, component_rows, coverage_items):
         'groupKeys': set(otjh_by_group) | set(ksb_by_group),
         'otjhByGroup': dict(otjh_by_group),
         'ksbByGroup': {key: dict(value) for key, value in ksb_by_group.items()},
+        'groupKeyById': group_key_by_id,
         'scopeOtjh': float_weight(scope_otjh),
         'scopeKsbWeights': dict(scope_ksb),
     }
+
+
+def learner_plan_group_key(plan, learner):
+    """Which of the plan's group buckets this learner's placement falls in.
+
+    ``group_id`` first: it survives a rename, and it is the only thing that
+    tells two identically named groups apart. The normalised group name is the
+    fallback, for learners whose id never resolved and for environments where
+    the column has not been added yet.
+    """
+    group_id = clean_str(learner.get('groupId'))
+    if group_id:
+        key = plan.get('groupKeyById', {}).get(group_id)
+        if key:
+            return key
+    return normalise(learner.get('group'))
 
 
 def learner_authored_plan(plan, learner, unmatched='scope'):
@@ -19396,7 +19989,7 @@ def learner_authored_plan(plan, learner, unmatched='scope'):
     ``scope`` hands them the whole scope, ``none`` hands them nothing. Which is
     right is not a per-learner question — see ``learner_plans_for_scope``.
     """
-    key = normalise(learner.get('group'))
+    key = learner_plan_group_key(plan, learner)
     if key and key in plan.get('groupKeys', set()):
         return {
             'otjh': float_weight(plan['otjhByGroup'].get(key, 0)),
@@ -19429,7 +20022,7 @@ def learner_plans_for_scope(plan, learners):
       and every row says ``basis: scope`` so the substitution is visible.
     """
     group_keys = {key for key in plan.get('groupKeys', set()) if key}
-    placements = {normalise(learner.get('group')) for learner in learners or []}
+    placements = {learner_plan_group_key(plan, learner) for learner in learners or []}
     unmatched = 'none' if (group_keys and (group_keys & placements)) else 'scope'
     return {
         learner.get('id'): learner_authored_plan(plan, learner, unmatched)

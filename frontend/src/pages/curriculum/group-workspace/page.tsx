@@ -257,15 +257,34 @@ export default function GroupWorkspacePage() {
           ]}
           eyebrow="Group"
           title={groupDisplayName}
-          subtitle={context ? `${context.cohortName} · ${context.programmeName}` : ''}
+          // The cohort already anchors the breadcrumb; naming it again here as
+          // plain text made it three mentions in one header. A badge instead of
+          // a fourth stat card keeps a proper noun looking like one — the stat
+          // row below is numbers and short facts, not names.
+          subtitle={context ? (
+            <span className="flex flex-wrap items-center gap-1.5">
+              <Link
+                to={`/curriculum/cohorts/${encodeURIComponent(context.cohortId)}`}
+                className="inline-flex items-center rounded-full border border-primary-200 bg-primary-50 px-2 py-0.5 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100"
+              >
+                {context.cohortName}
+              </Link>
+              <span className="text-foreground-300">in</span>
+              <Link
+                to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(context.programme))}?tab=groups`}
+                className="inline-flex items-center rounded-full border border-background-200 bg-background-100 px-2 py-0.5 text-[11px] font-semibold text-foreground-600 transition-smooth hover:bg-background-200"
+              >
+                {context.programmeName}
+              </Link>
+            </span>
+          ) : ''}
           accentColor={group?.color}
+          dense
           stats={[
             { icon: 'ri-stack-line', label: 'Modules', value: groupModules.length },
             { icon: 'ri-graduation-cap-line', label: 'Learners', value: group?.learners || 0 },
             { icon: 'ri-user-star-line', label: 'Coach', value: cleanText(group?.coach, 'Unassigned') },
             { icon: 'ri-calendar-line', label: 'Delivery', value: group ? scheduleLabel(group) : '—' },
-            { icon: 'ri-play-circle-line', label: 'Start', value: formatDateLabel(group?.startDate) },
-            { icon: 'ri-flag-line', label: 'End', value: formatDateLabel(group?.endDate) },
           ]}
           actions={(
             <>
@@ -341,6 +360,7 @@ export default function GroupWorkspacePage() {
             gridClass={MODULE_GRID}
             rows={groupModules}
             rowKey={module => moduleIdentity(module) || module.id}
+            getRowHref={module => namedCurriculumWorkspacePath('modules', moduleIdentity(module), module.name)}
             loading={loading && !loaded}
             refreshing={refreshing || moduleCreating}
             empty={(

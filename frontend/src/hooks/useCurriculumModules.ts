@@ -4,6 +4,7 @@ import { fetchCurriculumModules, type CurriculumModule } from '@/lib/curriculumA
 type LoadOptions = {
   silent?: boolean;
   skipCache?: boolean;
+  revalidate?: boolean;
 };
 
 const MODULE_LOAD_RETRY_DELAY_MS = 400;
@@ -11,10 +12,11 @@ const MODULE_LOAD_RETRY_DELAY_MS = 400;
 type UseCurriculumModulesOptions = {
   autoLoad?: boolean;
   skipCache?: boolean;
+  revalidate?: boolean;
   compact?: boolean;
 };
 
-export function useCurriculumModules({ autoLoad = true, skipCache = false, compact = false }: UseCurriculumModulesOptions = {}) {
+export function useCurriculumModules({ autoLoad = true, skipCache = false, revalidate = false, compact = false }: UseCurriculumModulesOptions = {}) {
   const [modules, setModules] = useState<CurriculumModule[]>([]);
   const [loading, setLoading] = useState(autoLoad);
   const [error, setError] = useState<string | null>(null);
@@ -33,12 +35,12 @@ export function useCurriculumModules({ autoLoad = true, skipCache = false, compa
       setError(null);
     }
 
-    const request = (retry: boolean): Promise<CurriculumModule[]> => fetchCurriculumModules(signal, { compact, skipCache: options.skipCache ?? skipCache })
+    const request = (retry: boolean): Promise<CurriculumModule[]> => fetchCurriculumModules(signal, { compact, skipCache: options.skipCache ?? skipCache, revalidate: options.revalidate ?? revalidate })
       .catch(error => {
         if (signal.aborted || retry) throw error;
         return new Promise<CurriculumModule[]>((resolve, reject) => {
           setTimeout(() => {
-            fetchCurriculumModules(signal, { compact, skipCache: options.skipCache ?? skipCache }).then(resolve, reject);
+            fetchCurriculumModules(signal, { compact, skipCache: options.skipCache ?? skipCache, revalidate: options.revalidate ?? revalidate }).then(resolve, reject);
           }, MODULE_LOAD_RETRY_DELAY_MS);
         });
       });
@@ -56,7 +58,7 @@ export function useCurriculumModules({ autoLoad = true, skipCache = false, compa
       .finally(() => {
         if (mountedRef.current && !signal.aborted) setLoading(false);
       });
-  }, [compact, skipCache]);
+  }, [compact, skipCache, revalidate]);
 
   const load = useCallback((options: LoadOptions = {}) => {
     const controller = new AbortController();

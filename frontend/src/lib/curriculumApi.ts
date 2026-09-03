@@ -58,7 +58,25 @@ interface CurriculumRequestInit {
   body?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
+  /**
+   * Read past every cache, client *and* server: sends `Cache-Control: no-cache`,
+   * which makes the backend rebuild the payload from the database.
+   *
+   * That rebuild costs seconds -- the curriculum overview takes ~13s of Neon
+   * round trips -- so this is only for a read that must reflect a write this
+   * client just made. For "show me what exists now" on mount, use `revalidate`.
+   */
   skipCache?: boolean;
+  /**
+   * Ignore the client-side cache, but let the server answer from its own.
+   *
+   * The same "always current" guarantee as `skipCache` for anything written
+   * elsewhere -- another tab, the structure wizard, another user -- because the
+   * request still goes to the network and the backend invalidates its payload
+   * cache on write. It just does not force the multi-second rebuild. The fresh
+   * response is written back to the client cache, so other pages benefit.
+   */
+  revalidate?: boolean;
 }
 
 export class CurriculumApiError extends Error {
@@ -762,6 +780,17 @@ export interface CurriculumProgrammeAssignedLearner {
   programmeStatus: string;
   cohort: string;
   group: string;
+  /**
+   * The stable keys behind `cohort` and `group`. Enrolment captures a placement
+   * as free text and curriculum owns the records that text names; these are the
+   * records it resolved to, so a renamed cohort or group no longer takes its
+   * learners off the rosters that used to find them by comparing names.
+   *
+   * Empty when the name never resolved to exactly one live record. Readers fall
+   * back to the name for those rows, which is what every row did before.
+   */
+  cohortId?: string;
+  groupId?: string;
   lifecycleStatus: string;
   coachName?: string;
   coachEmail?: string;
@@ -1745,8 +1774,10 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
     return fetchJsonUncached<T>(path, init);
   }
 
-  // GET: check multi-tier cache
-  if (!init?.skipCache) {
+  // GET: check multi-tier cache. `revalidate` skips this read like `skipCache`
+  // does, but unlike `skipCache` it still stores the response below -- the point
+  // of a revalidation is to refresh the entry, not to stop using it.
+  if (!init?.skipCache && !init?.revalidate) {
     const cached = multiTierCache.get<T>(path, init);
     if (cached) {
       return settleWithCallerAbort(Promise.resolve(cached.value), init?.signal);
@@ -1816,7 +1847,10 @@ async function fetchJsonUncached<T>(path: string, init?: CurriculumRequestInit):
   const timeout = timeoutController && init?.timeoutMs
     ? window.setTimeout(() => timeoutController.abort(), init.timeoutMs)
     : null;
-  const { timeoutMs: _timeoutMs, signal: callerSignal, skipCache: _skipCache, ...fetchInit } = init || {};
+  // `revalidate` is destructured out with the other non-fetch options: it is a
+  // client-cache directive only and must not reach the backend, or it would
+  // force the same rebuild `skipCache` does.
+  const { timeoutMs: _timeoutMs, signal: callerSignal, skipCache: _skipCache, revalidate: _revalidate, ...fetchInit } = init || {};
   const signal = callerSignal && timeoutController
     ? anySignal([callerSignal, timeoutController.signal])
     : callerSignal || timeoutController?.signal;
@@ -1898,6 +1932,7 @@ export function fetchCurriculumModules(signal?: AbortSignal, options: {
   page?: number;
   pageSize?: number;
   skipCache?: boolean;
+  revalidate?: boolean;
 } = {}): Promise<CurriculumModule[]> {
   const query = new URLSearchParams();
   if (options.compact) query.set('compact', 'true');
@@ -1908,7 +1943,7 @@ export function fetchCurriculumModules(signal?: AbortSignal, options: {
   if (options.page) query.set('page', String(options.page));
   if (options.pageSize) query.set('page_size', String(options.pageSize));
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchCollection<CurriculumModule>(`/curriculum/modules/${suffix}`, { signal, skipCache: options.skipCache });
+  return fetchCollection<CurriculumModule>(`/curriculum/modules/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate });
 }
 
 export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[]; page?: number; pageSize?: number; skipCache?: boolean } = {}): Promise<CurriculumComponent[]> {
@@ -1970,11 +2005,11 @@ export function fetchCurriculumStats(signal?: AbortSignal): Promise<CurriculumOv
   return fetchJson<CurriculumOverview['stats']>('/curriculum/stats/', { signal });
 }
 
-export function fetchCurriculumProgrammes(signal?: AbortSignal, options: { skipCache?: boolean; visibility?: 'all' | 'operational' } = {}): Promise<CurriculumProgramme[]> {
+export function fetchCurriculumProgrammes(signal?: AbortSignal, options: { skipCache?: boolean; revalidate?: boolean; visibility?: 'all' | 'operational' } = {}): Promise<CurriculumProgramme[]> {
   const query = new URLSearchParams();
   if (options.visibility === 'all') query.set('visibility', 'all');
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchCollection<CurriculumProgramme>(`/curriculum/programmes/${suffix}`, { signal, skipCache: options.skipCache });
+  return fetchCollection<CurriculumProgramme>(`/curriculum/programmes/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate });
 }
 
 export function fetchCurriculumGroups(signal?: AbortSignal): Promise<CurriculumGroup[]> {
@@ -2257,12 +2292,14 @@ export function fetchCurriculumSessions(
   return fetchCollection<CurriculumSession>('/curriculum/sessions/', { signal, skipCache: options.skipCache });
 }
 
-export function fetchCurriculumTutors(signal?: AbortSignal, options: { skipCache?: boolean } = {}): Promise<CurriculumStaffProfile[]> {
-  return fetchCollection<CurriculumStaffProfile>('/curriculum/tutors/', { signal, skipCache: options.skipCache, timeoutMs: 15000 });
+// 30s, not 15s: a forced rebuild of the curriculum payload takes ~13s, so a 15s
+// budget aborted these on a cold cache while the backend was still succeeding.
+export function fetchCurriculumTutors(signal?: AbortSignal, options: { skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumStaffProfile[]> {
+  return fetchCollection<CurriculumStaffProfile>('/curriculum/tutors/', { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: 30000 });
 }
 
-export function fetchCurriculumCoaches(signal?: AbortSignal, options: { skipCache?: boolean } = {}): Promise<CurriculumStaffProfile[]> {
-  return fetchCollection<CurriculumStaffProfile>('/curriculum/coaches/', { signal, skipCache: options.skipCache, timeoutMs: 15000 });
+export function fetchCurriculumCoaches(signal?: AbortSignal, options: { skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumStaffProfile[]> {
+  return fetchCollection<CurriculumStaffProfile>('/curriculum/coaches/', { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: 30000 });
 }
 
 export function fetchCurriculumHolidays(signal?: AbortSignal, options: { skipCache?: boolean } = {}): Promise<CurriculumHoliday[]> {
