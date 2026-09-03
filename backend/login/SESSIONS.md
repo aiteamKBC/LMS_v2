@@ -58,7 +58,7 @@ new expiry = min(now + rolling, Created_at + absolute)
 
 | | Rolling | Absolute |
 |---|---|---|
-| Ordinary | 12 hours | 7 days |
+| Ordinary | 3 hours | 7 days |
 | Remember me | 14 days | 90 days |
 
 Defined in `security.py`; `session_policy(remember)` returns the pair, so
@@ -69,8 +69,8 @@ Two things worth knowing about those numbers:
 - Remember me was **tightened** when it became rolling. It was a 30-day hard
   cap; reusing 30 days as a *rolling* window would let a stolen cookie live
   indefinitely on one request a month.
-- The ordinary rolling window is 12 hours — the old absolute TTL — so nobody is
-  signed out *earlier* than they were before rolling expiry existed.
+- The ordinary rolling window is 3 hours: a device left with no request for
+  that long is treated as unattended and signed out.
 
 `Created_at` is read, never written. Moving it would dissolve the ceiling.
 

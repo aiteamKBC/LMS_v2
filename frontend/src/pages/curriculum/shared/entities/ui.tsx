@@ -10,7 +10,7 @@
 // ============================================================================
 
 import { type ReactNode, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { showCurriculumConfirm, type CurriculumAlertOptions } from '@/components/feature/CurriculumSweetAlert';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
@@ -25,6 +25,33 @@ export interface EntityStat {
   value: string | number;
   detail?: string;
 }
+
+/**
+ * A colour per stat in the dense header strip, cycling through so the row
+ * reads as a row of badges instead of a run of identical grey text — no page
+ * has to hand-pick a colour per figure, and two figures never fight for the
+ * same one since they simply take the next tone in line.
+ */
+const STAT_TONES = [
+  { bg: 'bg-indigo-50', icon: 'text-indigo-500', label: 'text-indigo-500', value: 'text-indigo-900', detail: 'text-indigo-400' },
+  { bg: 'bg-violet-50', icon: 'text-violet-500', label: 'text-violet-500', value: 'text-violet-900', detail: 'text-violet-400' },
+  { bg: 'bg-sky-50', icon: 'text-sky-500', label: 'text-sky-500', value: 'text-sky-900', detail: 'text-sky-400' },
+  { bg: 'bg-amber-50', icon: 'text-amber-600', label: 'text-amber-600', value: 'text-amber-900', detail: 'text-amber-500' },
+  { bg: 'bg-emerald-50', icon: 'text-emerald-600', label: 'text-emerald-600', value: 'text-emerald-900', detail: 'text-emerald-500' },
+  { bg: 'bg-rose-50', icon: 'text-rose-500', label: 'text-rose-500', value: 'text-rose-900', detail: 'text-rose-400' },
+];
+
+/** The same idea, tuned to sit on {@link EntityHero}'s dark purple gradient — the
+ * light tones above would wash out, so this trades solid pastel fills for a
+ * translucent tint plus a matching soft border. */
+const HERO_STAT_TONES = [
+  { bg: 'bg-indigo-400/10', border: 'border-indigo-300/25', icon: 'text-indigo-200' },
+  { bg: 'bg-violet-400/10', border: 'border-violet-300/25', icon: 'text-violet-200' },
+  { bg: 'bg-sky-400/10', border: 'border-sky-300/25', icon: 'text-sky-200' },
+  { bg: 'bg-amber-400/10', border: 'border-amber-300/25', icon: 'text-amber-200' },
+  { bg: 'bg-emerald-400/10', border: 'border-emerald-300/25', icon: 'text-emerald-200' },
+  { bg: 'bg-rose-400/10', border: 'border-rose-300/25', icon: 'text-rose-200' },
+];
 
 /**
  * The page banner every entity page opens with: what this page manages, the
@@ -208,6 +235,7 @@ export function EntityTable<T>({
   rows,
   rowKey,
   renderRow,
+  getRowHref,
   loading,
   refreshing,
   highlightKey,
@@ -218,6 +246,13 @@ export function EntityTable<T>({
   rows: T[];
   rowKey: (row: T) => string;
   renderRow: (row: T) => ReactNode;
+  /**
+   * Makes the whole row navigate, not just whichever cell happens to render a
+   * link. Row actions (RowActions/NamedActions) already stop their clicks from
+   * bubbling, so they keep working untouched; a cell with its own `<Link>`
+   * (StackedCell's `href`) should do the same, or the click fires both.
+   */
+  getRowHref?: (row: T) => string | undefined;
   loading?: boolean;
   /** A background reload is running behind the rows already on screen. */
   refreshing?: boolean;
@@ -225,6 +260,7 @@ export function EntityTable<T>({
   highlightKey?: string | null;
   empty: ReactNode;
 }) {
+  const navigate = useNavigate();
   const [flashKey, setFlashKey] = useState<string | null>(null);
   const rowNodes = useRef(new Map<string, HTMLDivElement>());
   // Both cues below carry information, so a reduced-motion viewer keeps them and
@@ -280,6 +316,7 @@ export function EntityTable<T>({
             <div className="divide-y divide-background-200/70">
               {rows.map(row => {
                 const key = rowKey(row);
+                const href = getRowHref?.(row);
                 return (
                   <div
                     key={key}
@@ -428,7 +465,14 @@ export function StackedCell({ primary, secondary, href }: { primary: ReactNode; 
   );
   if (!href) return <span className="min-w-0 self-center">{body}</span>;
   return (
-    <Link to={href} className="min-w-0 self-center transition-smooth hover:text-primary-700">
+    <Link
+      to={href}
+      // A row this cell sits in may itself be clickable to the same place
+      // (EntityTable's `getRowHref`) — without this the click bubbles and
+      // fires both navigations.
+      onClick={event => event.stopPropagation()}
+      className="min-w-0 self-center transition-smooth hover:text-primary-700"
+    >
       {body}
     </Link>
   );
@@ -1088,7 +1132,7 @@ export function WorkspaceHeader({
   breadcrumbs: Array<{ label: string; href?: string }>;
   eyebrow: string;
   title: string;
-  subtitle: string;
+  subtitle: ReactNode;
   accentColor?: string;
   stats: EntityStat[];
   actions?: ReactNode;
@@ -1124,16 +1168,20 @@ export function WorkspaceHeader({
             <p className="text-[11px] font-semibold uppercase tracking-wider text-primary-600">{eyebrow}</p>
             {subtitle && <p className="text-[12px] text-foreground-500">{subtitle}</p>}
           </div>
-          {/* The same figures, read as a sentence rather than six cards. */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-foreground-200/60 pt-2.5">
-            {stats.map(stat => (
-              <span key={stat.label} className="flex items-center gap-1.5 text-[12px]">
-                <AppIcon className={`${stat.icon} text-sm text-foreground-400`}></AppIcon>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">{stat.label}</span>
-                <span className="font-bold text-foreground-900">{stat.value}</span>
-                {stat.detail && <span className="text-[11px] text-foreground-400">{stat.detail}</span>}
-              </span>
-            ))}
+          {/* The same figures, read as a row of badges rather than six cards
+              or a run of grey text. */}
+          <div className="flex flex-wrap items-center gap-2 border-t border-foreground-200/60 pt-2.5">
+            {stats.map((stat, index) => {
+              const tone = STAT_TONES[index % STAT_TONES.length];
+              return (
+                <span key={stat.label} className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] ${tone.bg}`}>
+                  <AppIcon className={`${stat.icon} text-sm ${tone.icon}`}></AppIcon>
+                  <span className={`text-[10px] font-bold uppercase tracking-wider ${tone.label}`}>{stat.label}</span>
+                  <span className={`font-extrabold ${tone.value}`}>{stat.value}</span>
+                  {stat.detail && <span className={`text-[11px] ${tone.detail}`}>{stat.detail}</span>}
+                </span>
+              );
+            })}
           </div>
         </div>
       </section>

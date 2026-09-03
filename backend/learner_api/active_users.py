@@ -1234,6 +1234,108 @@ def _resolve_linkable_programme_id(programme="", training_plan=None):
     return _s(rows[0][0]) if len(rows) == 1 else ""
 
 
+# The two levels below the programme. Same contract as
+# _resolve_linkable_programme_id: return an id only when the name identifies
+# exactly one live record, and "" otherwise so the caller leaves the existing
+# link alone. Enrolment captures a placement as free text, and these turn that
+# text into the reference curriculum reads -- once, at the moment it is written,
+# rather than by comparing names on every read for ever.
+#
+# Soft-deleted, programme-deleted and archived rows are excluded, and because
+# those flag columns are not present on every database each is read through
+# to_jsonb: an absent column comes back NULL and the row counts as live.
+_LIVE_ROW_SQL = (
+    "     AND coalesce(to_jsonb({alias}) ->> 'deleted_at', '') = '' "
+    "     AND coalesce(to_jsonb({alias}) ->> 'is_programme_deleted', 'false') "
+    "         NOT IN ('true', 't') "
+    "     AND coalesce(to_jsonb({alias}) ->> 'is_archived', 'false') "
+    "         NOT IN ('true', 't') "
+)
+
+
+def _resolve_linkable_cohort_id(cohort="", programme_id="", programme=""):
+    """A cohort id safe to PERSIST on the learner row, or "".
+
+    Scoped to the learner's programme, by id where there is one and by name
+    where there is not -- cohort names repeat across programmes, so an unscoped
+    name match would be ambiguous almost everywhere.
+    """
+    cohort = _s(cohort)
+    programme_id = _s(programme_id)
+    programme = _s(programme)
+    if not cohort or not (programme_id or programme):
+        return ""
+    try:
+        with connections["enrolment"].cursor() as cursor:
+            cursor.execute(
+                "SELECT c.cohort_id FROM curriculum.cohorts c "
+                " WHERE lower(btrim(coalesce(c.cohort_name, ''))) = lower(btrim(%s)) "
+                "   AND coalesce(btrim(c.cohort_id), '') <> '' "
+                "   AND ( (%s <> '' AND c.programme_id = %s) "
+                "      OR (%s =  '' AND lower(btrim(coalesce(c.programme_name, ''))) "
+                "                    = lower(btrim(%s))) ) "
+                + _LIVE_ROW_SQL.format(alias="c"),
+                [cohort, programme_id, programme_id, programme_id, programme],
+            )
+            rows = cursor.fetchall()
+    except DatabaseError as exc:
+        logger.warning("Could not resolve a linkable cohort id for %s: %s", cohort, exc)
+        return ""
+    return _s(rows[0][0]) if len(rows) == 1 else ""
+
+
+def _resolve_linkable_group_id(group="", cohort_id="", programme_id="", programme=""):
+    """A group id safe to PERSIST on the learner row, or "".
+
+    Prefers the cohort: a group name is only unique WITHIN its cohort (the same
+    reason curriculum's resolve_group_row refuses a bare-name lookup), so
+    without a cohort_id this falls back to the programme and will usually find
+    the name ambiguous -- which returns "" rather than a guess.
+    """
+    group = _s(group)
+    cohort_id = _s(cohort_id)
+    programme_id = _s(programme_id)
+    programme = _s(programme)
+    if not group or not (cohort_id or programme_id or programme):
+        return ""
+    if cohort_id:
+        scope_sql = "   AND g.cohort_id = %s "
+        scope_params = [cohort_id]
+    else:
+        scope_sql = (
+            "   AND ( (%s <> '' AND g.programme_id = %s) "
+            "      OR (%s =  '' AND lower(btrim(coalesce(g.programme_name, ''))) "
+            "                    = lower(btrim(%s))) ) "
+        )
+        scope_params = [programme_id, programme_id, programme_id, programme]
+    try:
+        with connections["enrolment"].cursor() as cursor:
+            cursor.execute(
+                "SELECT g.group_id FROM curriculum.groups g "
+                " WHERE lower(btrim(coalesce(g.group_name, ''))) = lower(btrim(%s)) "
+                "   AND coalesce(btrim(g.group_id), '') <> '' "
+                + scope_sql
+                + _LIVE_ROW_SQL.format(alias="g"),
+                [group, *scope_params],
+            )
+            rows = cursor.fetchall()
+    except DatabaseError as exc:
+        logger.warning("Could not resolve a linkable group id for %s: %s", group, exc)
+        return ""
+    return _s(rows[0][0]) if len(rows) == 1 else ""
+
+
+def _linkable_placement_ids(programme_id="", programme="", cohort="", group=""):
+    """(cohort_id, group_id) for one placement, resolved in that order.
+
+    The group lookup is handed the cohort id this just resolved, because that is
+    what makes a repeated group name unambiguous.
+    """
+    cohort_id = _resolve_linkable_cohort_id(cohort, programme_id, programme)
+    group_id = _resolve_linkable_group_id(group, cohort_id, programme_id, programme)
+    return cohort_id, group_id
+
+
 # The three KSB lookups below each run their query inside its own savepoint.
 # They already caught DatabaseError and degraded to "no KSBs", which is the right
 # behaviour — but catching an error does not un-abort a Postgres transaction, and
@@ -1522,6 +1624,22 @@ def mirror_learner_placement(source):
         if programme_id:
             updates["programme_id"] = programme_id
 
+        # The same rule one and two levels down. Resolved from the names this
+        # placement just wrote, using whichever programme id we now hold (the
+        # freshly resolved one, else the link already on the profile), so a
+        # placement lands with its references rather than waiting for a backfill
+        # to infer them later.
+        cohort_id, group_id = _linkable_placement_ids(
+            programme_id or _s(getattr(profile, "programme_id", "")),
+            programme,
+            cohort,
+            updates["group_name"],
+        )
+        if cohort_id:
+            updates["cohort_id"] = cohort_id
+        if group_id:
+            updates["group_id"] = group_id
+
         changed = [
             field for field, value in updates.items()
             if getattr(profile, field, None) != value
@@ -1654,6 +1772,21 @@ def sync_active_user(source):
             )
             if linkable_programme_id:
                 defaults["programme_id"] = linkable_programme_id
+            # Same treatment for the cohort and group this learner sits in, so
+            # curriculum can scope them by reference instead of by a name a
+            # rename can break. Unresolved stays unset rather than blanking a
+            # link an earlier sync got right.
+            linkable_cohort_id, linkable_group_id = _linkable_placement_ids(
+                linkable_programme_id
+                or _s(getattr(learner, "programme_id", "") if learner else ""),
+                defaults["programme"],
+                defaults["cohort"],
+                defaults["group_name"],
+            )
+            if linkable_cohort_id:
+                defaults["cohort_id"] = linkable_cohort_id
+            if linkable_group_id:
+                defaults["group_id"] = linkable_group_id
             if learner is None:
                 # Never force the Created_users primary key into this table:
                 # both sequences are independent after the learner-table merge.

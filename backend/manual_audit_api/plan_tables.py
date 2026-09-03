@@ -31,15 +31,29 @@ from .common import CONN, db_is_read_only
 # must pick one of these too, or they would not render in the existing UI.
 PLAN_CATEGORIES = ("attendance", "assignment", "video", "audio", "reading+quiz")
 
+# Set once the DDL below has run to completion in this process. Every statement
+# is an `if not exists` no-op against a provisioned database, but they are 16
+# sequential round trips to a remote Neon instance and all 26 callers paid them
+# on every request -- including the nine read-only pickers in plan_pickers.
+_PLAN_TABLES_READY = False
+
 
 def ensure_plan_tables(cur):
     """Create every plan-builder table (idempotent).
+
+    Runs its statements once per process: the flag is set only after the whole
+    body succeeds, so a partial failure (or the read-only exit below) leaves it
+    clear and the next caller tries again. A schema changed by hand underneath a
+    running process is therefore not picked up until the workers restart.
 
     Skipped entirely while the database is read-only (returns False so
     callers know the DDL did NOT run): the tables already exist in practice,
     and GET endpoints must not 503 just because their lazy DDL cannot run —
     real writes still fail loudly on their own.
     """
+    global _PLAN_TABLES_READY
+    if _PLAN_TABLES_READY:
+        return True
     if db_is_read_only(cur):
         return False
     cur.execute(
@@ -236,6 +250,7 @@ def ensure_plan_tables(cur):
         )
         '''
     )
+    _PLAN_TABLES_READY = True
     return True
 
 

@@ -96,7 +96,25 @@ export default function GroupWorkspacePage() {
     await reload({ silent: true });
   };
 
+  // The compact overview this list comes from is cached, and a create can land
+  // on a different backend worker than the one that serves this page's very next
+  // load — that worker's cache still predates the write. Rather than tell the
+  // reader their new group does not exist, force one uncached reload before
+  // believing it.
+  const [retriedMissingGroup, setRetriedMissingGroup] = useState(false);
+  useEffect(() => {
+    setRetriedMissingGroup(false);
+  }, [id]);
+
   const group = useMemo(() => findGroup(groups, id), [groups, id]);
+
+  useEffect(() => {
+    if (!loading && loaded && !group && !retriedMissingGroup) {
+      setRetriedMissingGroup(true);
+      void reload({ skipCache: true });
+    }
+  }, [group, loaded, loading, reload, retriedMissingGroup]);
+
   const groupDisplayName = cleanText(group?.name) || cleanText(searchParams.get('groupName')) || 'Group';
   const context = useMemo(
     () => (group ? resolveGroupContext(group, cohorts, programmes) : null),
@@ -202,7 +220,7 @@ export default function GroupWorkspacePage() {
     return Array.from(names).sort((a, b) => a.localeCompare(b));
   }, [modules, tutors]);
 
-  if (!loading && loaded && !group) {
+  if (!loading && loaded && !group && retriedMissingGroup) {
     return (
       <WorkspaceShell
         role="curriculum"
@@ -257,15 +275,31 @@ export default function GroupWorkspacePage() {
           ]}
           eyebrow="Group"
           title={groupDisplayName}
-          subtitle={context ? `${context.cohortName} · ${context.programmeName}` : ''}
+          subtitle={context ? (
+            <span className="flex flex-wrap items-center gap-1">
+              <span>in Cohort</span>
+              <Link
+                to={`/curriculum/cohorts/${encodeURIComponent(context.cohortId)}`}
+                className="font-semibold text-primary-700 hover:underline"
+              >
+                {context.cohortName}
+              </Link>
+              <span>in programme</span>
+              <Link
+                to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(context.programme))}?tab=groups`}
+                className="font-semibold text-primary-700 hover:underline"
+              >
+                {context.programmeName}
+              </Link>
+            </span>
+          ) : ''}
           accentColor={group?.color}
+          dense
           stats={[
             { icon: 'ri-stack-line', label: 'Modules', value: groupModules.length },
             { icon: 'ri-graduation-cap-line', label: 'Learners', value: group?.learners || 0 },
             { icon: 'ri-user-star-line', label: 'Coach', value: cleanText(group?.coach, 'Unassigned') },
             { icon: 'ri-calendar-line', label: 'Delivery', value: group ? scheduleLabel(group) : '—' },
-            { icon: 'ri-play-circle-line', label: 'Start', value: formatDateLabel(group?.startDate) },
-            { icon: 'ri-flag-line', label: 'End', value: formatDateLabel(group?.endDate) },
           ]}
           actions={(
             <>
@@ -301,18 +335,9 @@ export default function GroupWorkspacePage() {
             <WorkspacePanel title="Delivery" description="When and how this group is taught.">
               <DetailRow label="Delivery days" value={cleanText(group?.weekDays, '—')} />
               <DetailRow label="Time" value={group?.startTime ? `${group.startTime} – ${cleanText(group.endTime, '—')}` : '—'} />
-              <DetailRow label="Mode" value={cleanText(group?.mode, '—')} />
               <DetailRow label="Coach" value={cleanText(group?.coach, 'Unassigned')} />
             </WorkspacePanel>
             <WorkspacePanel title="Context" description="This group's place in the hierarchy.">
-              <DetailRow
-                label="Cohort"
-                value={context?.cohortId ? (
-                  <Link to={`/curriculum/cohorts/${encodeURIComponent(context.cohortId)}`} className="text-primary-700 hover:underline">
-                    {context.cohortName}
-                  </Link>
-                ) : cleanText(context?.cohortName, '—')}
-              />
               {/* Delivery owns cohorts and the groups beneath them, which is the
                   level this group was reached from. */}
               <DetailRow
@@ -322,6 +347,14 @@ export default function GroupWorkspacePage() {
                     {context.programmeName}
                   </Link>
                 ) : cleanText(context?.programmeName, '—')}
+              />
+              <DetailRow
+                label="Cohort"
+                value={context?.cohortId ? (
+                  <Link to={`/curriculum/cohorts/${encodeURIComponent(context.cohortId)}`} className="text-primary-700 hover:underline">
+                    {context.cohortName}
+                  </Link>
+                ) : cleanText(context?.cohortName, '—')}
               />
               <DetailRow label="Group ID" value={<code className="text-[11px]">{group?.id || '—'}</code>} />
               <DetailRow label="Modules" value={groupModules.length} />
@@ -341,6 +374,7 @@ export default function GroupWorkspacePage() {
             gridClass={MODULE_GRID}
             rows={groupModules}
             rowKey={module => moduleIdentity(module) || module.id}
+            getRowHref={module => namedCurriculumWorkspacePath('modules', moduleIdentity(module), module.name)}
             loading={loading && !loaded}
             refreshing={refreshing || moduleCreating}
             empty={(

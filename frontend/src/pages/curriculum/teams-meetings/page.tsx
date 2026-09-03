@@ -1569,6 +1569,7 @@ export default function CurriculumTeamsMeetingsPage() {
           gridClass={GRID}
           rows={visibleRows}
           rowKey={row => row.catalogueId}
+          getRowHref={row => `${namedCurriculumWorkspacePath('modules', row.catalogueId, row.name)}&tab=schedule`}
           loading={listLoading}
           empty={(
             <EntityEmptyState
@@ -1582,7 +1583,7 @@ export default function CurriculumTeamsMeetingsPage() {
           renderRow={row => (
             <>
               <StackedCell
-                href={`${namedCurriculumWorkspacePath('modules', row.catalogueId, row.name)}&tab=teams`}
+                href={`${namedCurriculumWorkspacePath('modules', row.catalogueId, row.name)}&tab=schedule`}
                 primary={row.name}
                 secondary={row.programmeName}
               />

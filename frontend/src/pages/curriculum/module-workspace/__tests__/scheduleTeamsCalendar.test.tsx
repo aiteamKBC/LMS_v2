@@ -180,16 +180,20 @@ describe('Module workspace — Schedule tab Teams calendar', () => {
     expect(screen.queryByText(/Runs on its own day/)).not.toBeInTheDocument();
   });
 
-  it('gives every session a way into the meeting', async () => {
+  it('offers the meeting once, and gives each session its own status instead', async () => {
     await renderSchedule();
     expect(await screen.findByText('Session 1')).toBeInTheDocument();
 
-    const links = screen.getAllByRole('link', { name: 'Open' });
-    expect(links).toHaveLength(2);
-    links.forEach(link => {
-      expect(link).toHaveAttribute('href', 'https://teams.microsoft.com/l/meetup-join/one');
-      expect(link).toHaveAttribute('target', '_blank');
-    });
+    // One way in, on the series that owns the link -- not the same link
+    // repeated down every row of the schedule.
+    const link = screen.getByRole('link', { name: 'Open in Teams' });
+    expect(link).toHaveAttribute('href', 'https://teams.microsoft.com/l/meetup-join/one');
+    expect(link).toHaveAttribute('target', '_blank');
+
+    // What a row carries about its meeting is the part that differs by date.
+    expect(await screen.findAllByText('scheduled')).toHaveLength(2);
+    // The calendar's copy of a date is not printed under the date it repeats.
+    expect(screen.queryByText(/scheduled · 0 attended/)).not.toBeInTheDocument();
   });
 
   it('says the Teams calendar is off the plan, and sends the reader to the page that fixes it', async () => {
@@ -205,13 +209,12 @@ describe('Module workspace — Schedule tab Teams calendar', () => {
       .toHaveAttribute('href', '/curriculum/teams-meetings?module=MOD-1');
   });
 
-  it('keeps the Teams meeting tab read-only: every calendar action lives on the Teams Meetings page', async () => {
+  it('keeps the Teams meeting card read-only: every calendar action lives on the Teams Meetings page', async () => {
     await renderSchedule();
     expect(await screen.findByText('Session 1')).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Teams meeting tab' }));
     // What the calendar holds is still read here...
-    expect(await screen.findByText('tutor@example.com')).toBeInTheDocument();
+    expect(await screen.findByText(/tutor@example\.com/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open in Teams' })).toBeInTheDocument();
     // ...but nothing here writes to it. One link out, no action buttons.
     expect(screen.getByRole('link', { name: 'Manage on Teams Meetings' }))
@@ -243,12 +246,10 @@ describe('Module workspace — Schedule tab Teams calendar', () => {
     entityTeamsMeetings = [];
     await renderSchedule();
     expect(await screen.findByText('Session 1')).toBeInTheDocument();
-    // With no meeting there is no calendar column to fill, and no link to offer.
-    expect(screen.queryByRole('link', { name: 'Open' })).not.toBeInTheDocument();
+    // With no meeting there is nothing to say per session, and no link to offer.
+    expect(screen.queryByRole('link', { name: 'Open in Teams' })).not.toBeInTheDocument();
+    expect(screen.queryByText('scheduled')).not.toBeInTheDocument();
     expect(screen.getByText(/No Teams calendar yet\. Create one on the Teams Meetings page/)).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: 'Teams meeting tab' }));
-    expect(await screen.findByText(/Create one on the Teams Meetings page/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Create Teams calendar' })).not.toBeInTheDocument();
     expect(createTeamsMeeting).not.toHaveBeenCalled();
   });

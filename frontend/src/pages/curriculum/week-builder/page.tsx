@@ -9,8 +9,8 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
-// Deck previews below: the same pair the learner's page uses, so an author sees
-// what the learner will (see UploadedDeckPreview / PowerPointLinkPreview).
+// Deck preview below: the same one the learner's page uses, so an author sees
+// what the learner will (see UploadedDeckPreview).
 import { resolveDocEmbed } from '@/lib/docEmbed';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 import { type CurriculumGroup, type CurriculumModule, type CurriculumProgramme } from '@/lib/curriculumApi';
@@ -1830,11 +1830,13 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
   );
 }
 
-const PODCAST_SOURCE_TYPES_WEEK = ['Audio File', 'External Link', 'Embed', 'Shortcode'] as const;
+const PODCAST_SOURCE_TYPES_WEEK = ['Audio File', 'External Link', 'Embed'] as const;
 
-// Bespoke Podcast editor — four source shapes: an uploaded audio file, an
-// external link, an embed snippet (Apple Podcasts / SoundCloud / Deezer /
-// Spotify), or a shortcode — each with its own field beneath the selector.
+// Bespoke Podcast editor — three source shapes: an uploaded audio file, an
+// external link, or an embed snippet (Apple Podcasts / SoundCloud / Deezer /
+// Spotify) — each with its own field beneath the selector. A component
+// authored while Shortcode still existed keeps whatever `podcastShortcode` it
+// has in storage — this editor no longer shows or writes it.
 function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   const rawSourceType = s('podcastSource');
@@ -1891,7 +1893,7 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
           </div>
         ) : sourceType === 'External Link' ? (
           <Field label="Podcast URL" className="mt-4"><input value={s('podcastUrl')} onChange={e => setSetting('podcastUrl', e.target.value)} placeholder="https://…" className={inputClass} /></Field>
-        ) : sourceType === 'Embed' ? (
+        ) : (
           <div className="mt-4">
             <Field label="Embed code"><textarea value={s('podcastEmbedCode')} onChange={e => setSetting('podcastEmbedCode', e.target.value)} rows={4} placeholder="Paste the Apple Podcasts / SoundCloud / Deezer / Spotify embed snippet…" className={`${inputClass} resize-none`} /></Field>
             {s('podcastEmbedCode') && (
@@ -1901,8 +1903,6 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
               </div>
             )}
           </div>
-        ) : (
-          <Field label="Shortcode" className="mt-4"><input value={s('podcastShortcode')} onChange={e => setSetting('podcastShortcode', e.target.value)} placeholder='[podcast id="123"]' className={inputClass} /></Field>
         )}
       </Section>
 
@@ -1941,11 +1941,6 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
   );
 }
 
-const POWERPOINT_SOURCE_TYPES_WEEK = ['External Link', 'Uploaded File'] as const;
-
-/** Authoring preview of a linked deck. The Office Online viewer downloads the
- * file from Microsoft's side, so a relative path or a local dev origin can
- * never render — say so instead of showing the viewer's own error page. */
 /** Preview of an uploaded deck, rendered by the same component the learner
  * page uses — an author sees exactly what the learner will. */
 function UploadedDeckPreview({ url }: { url: string }) {
@@ -1968,29 +1963,13 @@ function UploadedDeckPreview({ url }: { url: string }) {
   );
 }
 
-
-function PowerPointLinkPreview({ url }: { url: string }) {
-  const embed = resolveDocEmbed(url);
-  if (embed.mode === 'unavailable') {
-    return <p className="rounded-lg border border-background-200 bg-background-50 px-3 py-4 text-center text-[11px] text-foreground-500">{embed.reason}</p>;
-  }
-  return (
-    <iframe
-      src={embed.src}
-      className="aspect-video w-full rounded-lg border border-background-200"
-      title="PowerPoint preview"
-    />
-  );
-}
-
-// Bespoke PowerPoint editor — a link to an online deck (with a best-effort
-// Office Online preview, which only renders once the link is reachable over
-// the public internet) or an uploaded file, which is previewed by the same
+// Bespoke PowerPoint editor — an uploaded file only, previewed by the same
 // in-house renderer the learner sees. Slicing is still a "slide range" hint
-// field rather than a real range.
+// field rather than a real range. A component authored while an external-link
+// source still existed keeps whatever `presentationUrl` it has in storage —
+// this editor no longer shows or writes it, but nothing here deletes it.
 function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
-  const sourceType = (POWERPOINT_SOURCE_TYPES_WEEK as readonly string[]).includes(s('powerpointSource')) ? s('powerpointSource') : 'External Link';
 
   return (
     <>
@@ -1998,48 +1977,28 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
         <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
         <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this presentation covers…" className={`${inputClass} resize-none`} /></Field>
 
-        <Field label="Source type" className="mt-4">
-          <select value={sourceType} onChange={e => setSetting('powerpointSource', e.target.value)} className={inputClass}>
-            {POWERPOINT_SOURCE_TYPES_WEEK.map(type => <option key={type} value={type}>{type}</option>)}
-          </select>
-        </Field>
+        <div className="mt-4">
+          <WeekComponentFileUpload
+            componentId={component.id}
+            componentType="powerpoint"
+            onUpload={uploadResource}
+            accept={POWERPOINT_UPLOAD_ACCEPT}
+            uploadedName={s('uploadedFileName') || s('fileName')}
+            uploadedUrl={s('uploadedFileUrl')}
+            uploadedSize={Number(component.settings.uploadedFileSize) || 0}
+            onUploaded={file => onChange({
+              settings: { ...component.settings, uploadedFileName: file.fileName, uploadedFileUrl: file.url, uploadedFileSize: file.size, uploadedFileContentType: file.contentType },
+            })}
+          />
+          <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: PowerPoint (.ppt, .pptx, .pps, .ppsx) or PDF. The preview below is what a learner sees.</p>
+          {s('uploadedFileUrl') && (
+            <div className="mt-3">
+              <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Preview</span>
+              <UploadedDeckPreview url={s('uploadedFileUrl')} />
+            </div>
+          )}
+        </div>
 
-        {sourceType === 'External Link' ? (
-          <div className="mt-4">
-            <Field label="Presentation URL"><input value={s('presentationUrl')} onChange={e => setSetting('presentationUrl', e.target.value)} placeholder="https://…" className={inputClass} /></Field>
-            {s('presentationUrl') && (
-              <div className="mt-3">
-                <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Preview</span>
-                <PowerPointLinkPreview url={s('presentationUrl')} />
-                <p className="mt-1 text-[11px] text-foreground-400">Uses Microsoft's Office Online viewer — it only renders once this link is reachable over the public internet, so it won't load from a local dev URL.</p>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="mt-4">
-            <WeekComponentFileUpload
-              componentId={component.id}
-              componentType="powerpoint"
-              onUpload={uploadResource}
-              accept={POWERPOINT_UPLOAD_ACCEPT}
-              uploadedName={s('uploadedFileName') || s('fileName')}
-              uploadedUrl={s('uploadedFileUrl')}
-              uploadedSize={Number(component.settings.uploadedFileSize) || 0}
-              onUploaded={file => onChange({
-                settings: { ...component.settings, uploadedFileName: file.fileName, uploadedFileUrl: file.url, uploadedFileSize: file.size, uploadedFileContentType: file.contentType },
-              })}
-            />
-            <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: PowerPoint (.ppt, .pptx, .pps, .ppsx) or PDF. The preview below is what a learner sees.</p>
-            {s('uploadedFileUrl') && (
-              <div className="mt-3">
-                <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Preview</span>
-                <UploadedDeckPreview url={s('uploadedFileUrl')} />
-              </div>
-            )}
-          </div>
-        )}
-
-        <Field label="Slide range or deck section" className="mt-4"><input value={s('slideRange')} onChange={e => setSetting('slideRange', e.target.value)} placeholder="e.g. Slides 3–10" className={inputClass} /></Field>
         <Field label="Speaker notes" className="mt-4"><textarea value={s('speakerNotes')} onChange={e => setSetting('speakerNotes', e.target.value)} rows={3} placeholder="Notes for whoever presents or reviews this deck…" className={`${inputClass} resize-none`} /></Field>
         <div className="mt-3">
           <Toggle label="Download allowed" checked={component.settings.downloadAllowed !== false} onChange={value => setSetting('downloadAllowed', value)} />
