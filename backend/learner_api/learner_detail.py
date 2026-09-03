@@ -26,7 +26,7 @@ from django.utils import timezone
 
 from .active_users import completed_hours_from_progress, fmt_hours, hydrate_source_training_plan, target_by_elapsed_time, week_by_elapsed_time
 from .identity import learner_profile_for_source
-from .learner_progression import advance_learner
+from .learner_progression import access_gate, advance_learner
 from .mappers import _s, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
 
@@ -1014,6 +1014,29 @@ def _authored_source_type(settings):
 
 # Every way a component can name its attached document, in the order they are
 # tried when nothing says which the author meant.
+# Does this authored text actually carry markup, or is it plain prose that
+# happens to sit in a rich-text field? Used to decide whether a brief is safe to
+# render as HTML — see the assignment brief resolution below.
+_HTML_TAG_RE = re.compile(r"<[a-zA-Z][^>]*>")
+
+# Every component is seeded with a boilerplate reflection prompt (see
+# BASE_COMPONENT_SETTINGS in curriculum_api.views and defaultReflectionPrompt in
+# the Module Builder), so an untouched one carries no authored instruction — it
+# is the same sentence on every activity in the programme. Showing it as "what
+# to do" tells the learner nothing and crowds out the real task, so a prompt
+# still matching its default is treated as unset.
+_DEFAULT_REFLECTION_PROMPTS = frozenset({
+    "what did you learn? how will you apply this at work? which ksbs did this develop?",
+    "which questions or topics do you need to revisit after this activity?",
+})
+
+
+def _authored_reflection_prompt(prompt):
+    """The reflection prompt only if a human actually wrote one."""
+    if not prompt:
+        return None
+    return None if prompt.strip().casefold() in _DEFAULT_REFLECTION_PROMPTS else prompt
+
 _RESOURCE_URL_KEYS = (
     "resourceUrl",
     "presentationUrl",
@@ -1404,21 +1427,62 @@ def _resolve_from_master(modules, weeks, components):
         file_name = (
             _s(settings.get("fileName"))
             or _s(settings.get("uploadedFileName"))
+            # Paired with assignmentFileUrl below — a row carrying only the
+            # assignment-specific keys would otherwise show its document with
+            # no name on it.
+            or _s(settings.get("assignmentFileName"))
             or _s(audit_source.get("fileName"))
             or None
         )
         download_allowed = bool(settings.get("downloadAllowed"))
+        # An assignment has no description column of its own — the brief the
+        # author writes *is* its description, and it lives only in settings.
+        # The two authoring surfaces store it differently: the Module Builder's
+        # plain TextArea writes `assignmentBrief`, while the Week Builder's rich
+        # text editor writes HTML into `assignmentContent`. Keep them apart so
+        # the learner page can escape the plain one and render the marked-up
+        # one, instead of printing raw tags at the learner.
+        #
+        # Saving in either builder mirrors whichever key is set into the other
+        # (see normaliseComponentSettings), so `assignmentContent` routinely
+        # holds a *copy of the plain text* rather than markup. Only treat it as
+        # rich text when it actually carries tags — otherwise a plain brief
+        # would render through innerHTML and lose its line breaks.
+        assignment_brief = _s(settings.get("assignmentBrief")) or None
+        assignment_content = _s(settings.get("assignmentContent")) or None
+        assignment_brief_html = (
+            assignment_content
+            if assignment_content and _HTML_TAG_RE.search(assignment_content)
+            else None
+        )
+        # A file-tab assignment has no written brief at all; fall back to the
+        # mirrored copy so the text still reaches the learner either way.
+        if not assignment_brief and assignment_content and not assignment_brief_html:
+            assignment_brief = assignment_content
+        # Filtered per key, not on the coalesced result: the boilerplate is
+        # seeded into `reflectionPrompt` on every component, so it always wins
+        # the chain and would hide real guidance authored in one of the later
+        # keys. Dropping it per key lets that authored text through.
         reflection_prompt = (
-            _s(settings.get("reflectionPrompt"))
-            or _s(settings.get("podcastReflectionQuestion"))
-            or _s(settings.get("readingReflectionPrompts"))
-            or _s(settings.get("learnerGuidance"))
+            _authored_reflection_prompt(_s(settings.get("reflectionPrompt")))
+            or _authored_reflection_prompt(_s(settings.get("podcastReflectionQuestion")))
+            or _authored_reflection_prompt(_s(settings.get("readingReflectionPrompts")))
+            or _authored_reflection_prompt(_s(settings.get("learnerGuidance")))
             or None
         )
         # PowerPoint (presentationUrl / uploadedFileUrl) and any other component
         # with an attached link/file all resolve to the same resourceUrl field,
         # picking the one the author actually chose — see _component_resource_url.
         resource_url = _component_resource_url(settings) or (audit_url if not video_url and not audio_url else None)
+        # An assignment's attached document has its own pair of keys, which the
+        # generic resolution above does not know. The Module Builder writes them
+        # alongside `uploadedFileUrl` today, but rows authored before that
+        # dual-write carry the file *only* here — and the client-side mirroring
+        # that would repair them never runs unless someone re-saves the
+        # component, so the learner API has to read them directly or the
+        # curriculum team's file is invisible to the learner.
+        if normalised_type == "assignment":
+            resource_url = resource_url or _s(settings.get("assignmentFileUrl")) or None
         duration = settings.get("durationMinutes")
         ksb_weight, ksb_count = ksb_weight_by_component.get(comp_id, (0.0, 0))
         linked_quiz = quiz_meta_by_id.get(quiz_id_by_component.get(comp_id))
@@ -1427,6 +1491,8 @@ def _resolve_from_master(modules, weeks, components):
             "display": _display_quiz_title(linked_quiz["title"]) if linked_quiz else _display_component_title(ctype, ctitle),
             "type": ctype,
             "description": _s(cdesc) or None,
+            "assignmentBrief": assignment_brief,
+            "assignmentBriefHtml": assignment_brief_html,
             "videoUrl": video_url,
             "audioUrl": audio_url,
             "contentHtml": content_html,
@@ -1486,6 +1552,8 @@ def _resolve_from_master(modules, weeks, components):
                     "moduleId": mid, "weekId": week_id, "componentId": comp["componentId"],
                     "type": comp["type"],
                     "description": comp["description"],
+                    "assignmentBrief": comp["assignmentBrief"],
+                    "assignmentBriefHtml": comp["assignmentBriefHtml"],
                     "videoUrl": comp["videoUrl"],
                     "audioUrl": comp["audioUrl"],
                     "contentHtml": comp["contentHtml"],
@@ -1577,6 +1645,9 @@ def build_learner_detail(source, pk):
             logger.warning("Could not refresh learner KSB snapshot for %s: %s", pk, exc)
 
     detail = to_learner_detail(source, learner_profile)
+    # Why the learner cannot start yet, if they cannot. The workspace shows this
+    # instead of assuming the answer is always their start date.
+    detail["accessGate"] = access_gate(source)
     _apply_cohort_schedule(detail, source)
     # Live-resolve titles + membership from the master authoring tables so coach
     # edits in Module Builder reflect here immediately (structured-plan learners).

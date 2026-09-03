@@ -62,6 +62,7 @@ from .models import (
 )
 from .permissions import require_role
 from .security import client_ip, user_agent
+from .services import sync_account
 
 #: Page size ceiling for the list endpoints. A console table is read by a human;
 #: anything past this is an export job, not a page view.
@@ -523,6 +524,14 @@ def account_action(request, pk):
                 400,
                 code="already_onboarded",
             )
+        # Re-read the address from the person's own record first. The account
+        # holds a copy, and a copy taken before somebody's email was corrected
+        # is exactly the address a re-send must not use. Best-effort: a record
+        # that cannot be resolved leaves the account as it stands.
+        refreshed = sync_account(account.subject_type, account.subject_id)
+        if refreshed is not None:
+            account = refreshed
+
         try:
             from .invitations import send_invitation
 

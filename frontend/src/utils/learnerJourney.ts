@@ -11,6 +11,8 @@ export interface JourneyComponent {
   componentId?: string | null;
   type?: string | null;
   description?: string | null;
+  assignmentBrief?: string | null;
+  assignmentBriefHtml?: string | null;
   videoUrl?: string | null;
   audioUrl?: string | null;
   contentHtml?: string | null;
@@ -315,7 +317,11 @@ export function hasComponentContent(c: JourneyComponent): boolean {
   if (type === 'podcast' || type === 'audio') return hasUrl(c.audioUrl) || hasUrl(c.resourceUrl) || hasDescription;
   if (type === 'reading') return hasText(c.contentHtml) || hasUrl(c.resourceUrl) || hasUrl(c.audioUrl) || hasDescription;
   if (type === 'powerpoint' || type === 'presentation' || type === 'slides') return hasUrl(c.resourceUrl) || hasDescription;
-  if (type === 'reflection') return hasText(c.reflectionPrompt) || hasText(c.reflectionQuestion) || hasDescription;
+  // A reflection's content *is* the reflection form the runner always renders,
+  // so it stays openable even with nothing authored around it. (The API now
+  // drops the boilerplate prompt every component is seeded with, which would
+  // otherwise have made an unedited reflection look empty.)
+  if (type === 'reflection') return true;
   if (type === 'live_session') {
     return hasUrl(c.liveSessionUrl) || hasText(c.sessionDateTimeUtc) || hasText(c.sessionDate) || Boolean(c.teamsLiveSessionId) || hasDescription;
   }
@@ -324,6 +330,10 @@ export function hasComponentContent(c: JourneyComponent): boolean {
     || hasText(c.reflectionQuestion)
     || hasText(c.contentHtml)
     || hasUrl(c.audioUrl)
+    // An assignment carries no description column — its brief is the only text
+    // it has, so a brief-only assignment is still something to consume.
+    || hasText(c.assignmentBrief)
+    || hasText(c.assignmentBriefHtml)
     || hasDescription;
 }
 
@@ -500,6 +510,7 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             ksbWeightTotal: c.ksbWeightTotal, ksbMappingCount: c.ksbMappingCount,
             ksbMappings: c.ksbMappings,
             componentId: c.componentId, type: c.type, description: c.description,
+            assignmentBrief: c.assignmentBrief, assignmentBriefHtml: c.assignmentBriefHtml,
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt,

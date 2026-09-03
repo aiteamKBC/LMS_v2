@@ -41,6 +41,7 @@ from login.permissions import staff_only
 
 from .models import Employer, Organisation, StaffUser
 from .views import _error, _parse_body, _send_platform_invitation
+from login.services import sync_account
 
 # The picker in the reference UI pages ten rows at a time.
 PAGE_SIZE = 10
@@ -254,6 +255,10 @@ def employer_detail(request, pk):
                 emp.save(update_fields=[*fields.keys(), "updated_at"])
             except DatabaseError as exc:
                 return _error(f"Database error: {exc}", 502)
+            # The login account holds its own copy of the address an invitation
+            # is sent to; correcting it here has to reach that copy.
+            if any(field in fields for field in ("email", "full_name")):
+                sync_account("employer", emp.pk, subject=emp)
         return JsonResponse(to_employer_row(emp))
 
     return _error("Method not allowed.", 405)
