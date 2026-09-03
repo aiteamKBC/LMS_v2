@@ -20,20 +20,27 @@ def _risk_from_rate(rate):
 
 def _summarize_attendance(rows):
     """Convert the session-per-row attendance table into the learner summary."""
-    if not rows:
-        return None
-
     def status(row):
         return (row['attendance_status'] or '').strip().lower()
 
-    sessions = len(rows)
-    present = sum(status(row) in {'present', 'late'} for row in rows)
-    absent = sum(status(row) == 'absent' for row in rows)
-    late = sum(status(row) == 'late' or (row['minutes_late'] or 0) > 0 for row in rows)
-    catchup = sum(bool(row['catchup_completed']) for row in rows)
+    # Late is a display distinction only: it counts as attended in both the
+    # numerator and denominator. Non-attendance workflow states (for example a
+    # legacy ``catchup`` row) do not silently dilute the attendance rate.
+    counted_rows = [row for row in rows if status(row) in {'present', 'late', 'absent'}]
+    if not counted_rows:
+        return None
+
+    sessions = len(counted_rows)
+    present = sum(status(row) in {'present', 'late'} for row in counted_rows)
+    absent = sum(status(row) == 'absent' for row in counted_rows)
+    late = sum(
+        status(row) == 'late' or (row['minutes_late'] or 0) > 0
+        for row in counted_rows
+    )
+    catchup = sum(bool(row['catchup_completed']) for row in counted_rows)
     attendance_rate = round((present / sessions) * 100) if sessions else 0
 
-    latest_first = sorted(rows, key=lambda row: row['session_date'], reverse=True)
+    latest_first = sorted(counted_rows, key=lambda row: row['session_date'], reverse=True)
     consecutive_missed = 0
     for row in latest_first:
         if status(row) != 'absent':
@@ -104,8 +111,11 @@ def learner_attendance(request, kind, learner_id):
 
     try:
         mirror = learner_profile_for_source(source, learner_id)
-        email = (mirror.email if mirror else source.email) or ''
-        rows = fetch_verified_teams_attendance_rows([learner_id], [email])
+        # Attendance rows are keyed by LearnerProfile.id, not by the independent
+        # enrolment Created_users.id received in this URL. Computed live off
+        # curriculum.live_session_occurrences/live_session_attendance -- this no
+        # longer reads the Learner.learner_attendance_details snapshot table.
+        rows = fetch_verified_teams_attendance_rows(learner_ids=[mirror.id]) if mirror else []
     except DatabaseError as exc:
         return _error(f'Unable to load attendance: {exc}', 502)
 
