@@ -245,7 +245,11 @@ export function TeamsMeetingModal({
       requestResponses: true,
       allowNewTimeProposals: true,
       hideAttendees: false,
-      transactionId: makeAuthoringId('TEAMS'),
+      // Keep retries and double-clicks for the same module idempotent at Graph
+      // as well as at our API/database boundary.
+      transactionId: module.catalogueId
+        ? 'TEAMS-' + module.catalogueId
+        : makeAuthoringId('TEAMS'),
     };
     setSubmitting(true);
     try {

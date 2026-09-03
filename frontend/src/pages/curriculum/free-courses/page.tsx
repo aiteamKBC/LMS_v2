@@ -7,6 +7,7 @@ import { Link } from 'react-router-dom';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
+import { formatHoursMinutes } from '@/lib/format';
 import { fetchFreeProgrammeModules, saveFreeProgrammeModules, type FreeProgrammeComponentInput, type FreeProgrammeModule, type FreeProgrammeModuleInput } from '@/lib/curriculumApi';
 import {
   fetchWeekTemplateDetail,
@@ -98,7 +99,7 @@ function weekComponentToFreeComponent(component: ModuleComponent, week: WeekTemp
   const meta = COMPONENT_META[kind];
   const duration = kind === 'quiz'
     ? `${Math.max(1, Number(component.points) || 10)} points`
-    : component.expectedOtjh ? `${component.expectedOtjh}h` : `${Math.max(1, Number(component.points) || 5)} pts`;
+    : component.expectedOtjh ? formatHoursMinutes(component.expectedOtjh) : `${Math.max(1, Number(component.points) || 5)} pts`;
   return {
     id: `${week.id}-${component.id}-${index}`,
     kind,
@@ -142,7 +143,7 @@ function freeModuleComponentToCourseComponent(component: FreeProgrammeModule['co
   const meta = COMPONENT_META[kind];
   const duration = kind === 'quiz'
     ? `${Math.max(1, Number(component.points) || 10)} points`
-    : component.expectedOtjh ? `${component.expectedOtjh}h` : `${Math.max(1, Number(component.points) || 5)} pts`;
+    : component.expectedOtjh ? formatHoursMinutes(component.expectedOtjh) : `${Math.max(1, Number(component.points) || 5)} pts`;
   return {
     id: `${sourceWeekId}-${component.id}-${index}`,
     kind,
@@ -856,7 +857,7 @@ export default function FreeCoursesPage() {
                                           <span className="block text-[11px] text-foreground-500">{meta.label}</span>
                                         </span>
                                         <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">
-                                          {component.expectedOtjh ? `${component.expectedOtjh}h` : `${Number(component.points) || 0} pts`}
+                                          {component.expectedOtjh ? formatHoursMinutes(component.expectedOtjh) : `${Number(component.points) || 0} pts`}
                                         </span>
                                       </div>
                                     );
@@ -1001,7 +1002,7 @@ function groupSavedFreeCourses(modules: FreeProgrammeModule[]): SavedFreeCourseC
 function SavedFreeCourseCardView({ card, onEdit, onDelete }: { card: SavedFreeCourseCard; onEdit: () => void; onDelete: () => void }) {
   const shownWeeks = card.weeks.slice(0, 3);
   const hiddenWeekCount = Math.max(0, card.weeks.length - shownWeeks.length);
-  const otjhLabel = Number.isInteger(card.totalOtjh) ? String(card.totalOtjh) : card.totalOtjh.toFixed(1);
+  const otjhLabel = formatHoursMinutes(card.totalOtjh);
   const [coverBroken, setCoverBroken] = useState(false);
   const showCoverImage = Boolean(card.coverImageUrl && !coverBroken);
 

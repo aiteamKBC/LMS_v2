@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
+import { formatHoursMinutes } from '@/lib/format';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
 import {
   fetchCurriculumModuleKsbCoverage,
@@ -332,7 +333,7 @@ export default function ModuleWorkspacePage() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           {occurrence ? (
             <span>
-              {formatCalendarDateTime(occurrence.scheduled_start)} · {cleanText(occurrence.status, 'scheduled')} · {occurrence.participant_count || occurrence.attendance?.length || 0} attended
+              {formatCalendarDateTime(occurrence.scheduled_start)} · {cleanText(occurrence.status, 'scheduled')} · {occurrence.participant_count || occurrence.attendance?.filter(record => record.attended !== false).length || 0} attended
             </span>
           ) : (
             <span className="text-amber-700">{teamsLoading ? 'Loading…' : 'Not on the Teams calendar'}</span>
@@ -422,7 +423,7 @@ export default function ModuleWorkspacePage() {
             { icon: 'ri-broadcast-line', label: 'Sessions', value: module?.sessionsNumber || 0 },
             { icon: 'ri-calendar-line', label: 'Start', value: formatDateLabel(module?.startDate) },
             { icon: 'ri-flag-line', label: 'End', value: formatDateLabel(module?.endDate) },
-            { icon: 'ri-time-line', label: 'Expected OTJH', value: `${totalOtjh}h` },
+            { icon: 'ri-time-line', label: 'Expected OTJH', value: formatHoursMinutes(totalOtjh) },
             { icon: 'ri-layout-4-line', label: 'Components', value: componentCount },
           ]}
           actions={(
@@ -482,7 +483,7 @@ export default function ModuleWorkspacePage() {
               <DetailRow label="Module ID" value={<code className="text-[11px]">{catalogueId || '—'}</code>} />
               <DetailRow label="Weeks" value={weekStructure.length || module?.weeks || 0} />
               <DetailRow label="Components" value={componentCount} />
-              <DetailRow label="Expected OTJH" value={`${totalOtjh}h`} />
+              <DetailRow label="Expected OTJH" value={formatHoursMinutes(totalOtjh)} />
               <DetailRow label="KSB mappings" value={ksbMappingCount} />
               <DetailRow label="Quality score" value={structure ? `${structure.qualityScore}%` : '—'} />
               {visibleNotes(module?.notes) && <DetailRow label="Notes" value={visibleNotes(module?.notes)} />}
@@ -643,7 +644,7 @@ export default function ModuleWorkspacePage() {
                           <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground-900">
                             {component.title || 'Untitled component'}
                           </span>
-                          <span className="shrink-0 text-[11px] text-foreground-400">{component.expectedOtjh || 0}h</span>
+                          <span className="shrink-0 text-[11px] text-foreground-400">{formatHoursMinutes(component.expectedOtjh || 0)}</span>
                         </li>
                       ))}
                     </ul>
@@ -795,9 +796,9 @@ export default function ModuleWorkspacePage() {
                       <div className="grid gap-4 p-4 sm:grid-cols-2">
                         <div>
                           <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-foreground-400">Who attended</p>
-                          {occurrence.attendance?.length ? (
+                          {occurrence.attendance?.some(record => record.attended !== false) ? (
                             <ul className="space-y-1">
-                              {occurrence.attendance.slice(0, 8).map(record => (
+                              {occurrence.attendance.filter(record => record.attended !== false).slice(0, 8).map(record => (
                                 <li key={record.id} className="flex items-center justify-between gap-2 text-[12px]">
                                   <span className="min-w-0 truncate text-foreground-800">{record.display_name || record.email}</span>
                                   <span className="shrink-0 text-foreground-400">

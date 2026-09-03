@@ -27,6 +27,7 @@ import { SearchInput } from '@/components/ui/FilterToolbar';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { cn } from '@/lib/cn';
+import { formatHoursMinutes } from '@/lib/format';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 
@@ -355,10 +356,10 @@ export default function CoachMonthlyCycle() {
               />
               <MetricCard
                 label="OTJH Logged"
-                value={`${Math.round(summary.otjhHours)}h`}
+                value={formatHoursMinutes(summary.otjhHours)}
                 icon="ri-time-line"
                 tone="neutral"
-                note={summary.activeLearners > 0 ? `${Math.round((summary.otjhHours / summary.activeLearners) * 100) / 100}h avg / learner` : undefined}
+                note={summary.activeLearners > 0 ? `${formatHoursMinutes(summary.otjhHours / summary.activeLearners)} avg / learner` : undefined}
               />
             </div>
           )}

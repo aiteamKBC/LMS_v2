@@ -10,6 +10,7 @@
 // this document (note 6 on the form).
 // ============================================================================
 import jsPDF from 'jspdf';
+import { formatHoursMinutes } from '@/lib/format';
 
 const PAGE_W = 210;
 const PAGE_H = 297;
@@ -249,7 +250,7 @@ export function buildApprenticeshipAgreementPdf(
   y = labelRow(doc, y, 'Apprenticeship standard, level and version:', particulars.standard);
   y += 6;
 
-  const hours = particulars.plannedOtjHours ? String(particulars.plannedOtjHours) : '';
+  const hours = particulars.plannedOtjHours ? formatHoursMinutes(particulars.plannedOtjHours) : '';
   y = dateGrid(doc, y, [
     [
       'Start date of apprenticeship (see note 2):',

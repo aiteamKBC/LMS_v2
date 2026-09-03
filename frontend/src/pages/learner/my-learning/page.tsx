@@ -297,7 +297,7 @@ function NextActivityRow({ c }: { c: JourneyComponent }) {
         <span className="block truncate text-[13px] font-semibold leading-snug text-foreground-900">{meta.detail || meta.label}</span>
       </div>
       {c.expectedOtjh != null && c.expectedOtjh > 0 && (
-        <span className="shrink-0 text-[11px] text-foreground-400">{c.expectedOtjh}h</span>
+        <span className="shrink-0 text-[11px] text-foreground-400">{formatHoursMinutes(c.expectedOtjh)}</span>
       )}
     </div>
   );

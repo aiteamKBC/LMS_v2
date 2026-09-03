@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  attendanceSheetGroups,
   attendanceSheetRows,
   buildSessionTree,
   parseTeamsTranscriptVtt,
@@ -124,6 +125,8 @@ describe('completed session artifacts', () => {
     const rows = attendanceSheetRows([{
       id: 'ATT-1', occurrence_id: 'OCC-1', display_name: 'Ahmed Lotfi',
       email: 'ahmed@example.com', role: 'presenter', total_attendance_seconds: 1140,
+      attended: true, expected: true, join_count: 1,
+      attendance_report_start: '2026-08-31T08:00:00Z',
       intervals: [{
         joinDateTime: '2026-08-31T08:00:00Z',
         leaveDateTime: '2026-08-31T08:19:00Z',
@@ -133,11 +136,52 @@ describe('completed session artifacts', () => {
     expect(rows).toEqual([expect.objectContaining({
       'Attendee name': 'Ahmed Lotfi',
       Email: 'ahmed@example.com',
+      'Meeting started': '2026-08-31T08:00:00Z',
+      Status: 'Attended',
+      Expected: 'Yes',
       Role: 'presenter',
+      'Join sessions': 1,
       'Time in session': '19m',
       'Attendance seconds': 1140,
       'Joined at': '2026-08-31T08:00:00Z',
       'Left at': '2026-08-31T08:19:00Z',
     })]);
+  });
+
+  it('exports invited learners who did not attend as absent', () => {
+    const rows = attendanceSheetRows([{
+      id: 'EXPECTED-1', occurrence_id: 'OCC-1', display_name: 'Missing Learner',
+      email: 'missing@example.com', role: 'attendee', total_attendance_seconds: 0,
+      intervals: [], attended: false, expected: true, join_count: 0,
+    }]);
+
+    expect(rows[0]).toEqual(expect.objectContaining({
+      'Attendee name': 'Missing Learner',
+      Status: 'Absent',
+      Expected: 'Yes',
+      'Join sessions': 0,
+      'Attendance seconds': 0,
+    }));
+  });
+
+  it('creates one attendance worksheet group for each meeting date', () => {
+    const groups = attendanceSheetGroups([
+      {
+        id: 'ATT-DAY-3', occurrence_id: 'OCC-1', display_name: 'Third day',
+        attendance_report_start: '2026-09-03T09:00:00Z', intervals: [],
+      },
+      {
+        id: 'ATT-DAY-2-A', occurrence_id: 'OCC-1', display_name: 'Second day A',
+        attendance_report_start: '2026-09-02T09:00:00Z', intervals: [],
+      },
+      {
+        id: 'ATT-DAY-2-B', occurrence_id: 'OCC-1', display_name: 'Second day B',
+        attendance_report_start: '2026-09-02T11:00:00Z', intervals: [],
+      },
+    ]);
+
+    expect(groups.map(group => group.dateKey)).toEqual(['2026-09-02', '2026-09-03']);
+    expect(groups.map(group => group.sheetName)).toEqual(['02 Sept 2026', '03 Sept 2026']);
+    expect(groups[0].attendance.map(person => person.id)).toEqual(['ATT-DAY-2-A', 'ATT-DAY-2-B']);
   });
 });

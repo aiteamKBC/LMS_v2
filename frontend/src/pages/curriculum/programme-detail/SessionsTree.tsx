@@ -1,21 +1,23 @@
 // The Sessions tab's delivery view: a collapsible Module → Month → Week → session
 // tree rather than one flat list, so a programme with dozens of sessions reads as
-// a small set of modules that open on demand. A completed live session expands
-// further to the attendance / transcript / recording the sync service captured.
+// a small set of modules that open on demand. A live session with synced data
+// expands further to the attendance / transcript / recording captured for it.
 //
 // Statuses shown here (scheduled / completed / cancelled) are authored by the
 // Graph artifact-sync service and read straight off the occurrence — this view
 // never decides a status from a date. See `deliverySessions` in page.tsx.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import {
   fetchLiveSessionArtifacts,
   liveSessionArtifactContentUrl,
   liveSessionArtifactPreviewUrl,
+  liveSessionJoinUrl,
   type LiveSessionAttendance,
   type LiveSessionArtifactOccurrence,
 } from '@/lib/curriculumApi';
 import { StatusBadge } from '../shared/entities/ui';
+import { syncTeamsMeetingArtifacts } from '../module-builder/moduleAuthoringData';
 import type { DeliverySession } from './page';
 
 // --------------------------------------------------------------- date helpers
@@ -107,7 +109,11 @@ export function attendanceSheetRows(attendance: LiveSessionAttendance[]) {
     return {
       'Attendee name': person.display_name || '',
       Email: person.email || '',
+      'Meeting started': person.attendance_report_start || '',
+      Status: person.attended === false ? 'Absent' : 'Attended',
+      Expected: person.expected === false ? 'No' : 'Yes',
       Role: person.role || '',
+      'Join sessions': person.join_count ?? intervals.length,
       'Time in session': formatSeconds(seconds),
       'Attendance seconds': Math.round(seconds),
       'Joined at': joins,
@@ -116,17 +122,57 @@ export function attendanceSheetRows(attendance: LiveSessionAttendance[]) {
   });
 }
 
+export interface AttendanceSheetGroup {
+  dateKey: string;
+  sheetName: string;
+  attendance: LiveSessionAttendance[];
+}
+
+/** Group exported attendance by the calendar date shown to the user. Multiple
+ * Teams reports from the same day share one worksheet and remain distinguishable
+ * through the existing "Meeting started" column. */
+export function attendanceSheetGroups(attendance: LiveSessionAttendance[]): AttendanceSheetGroup[] {
+  const groups = new Map<string, AttendanceSheetGroup>();
+  attendance.forEach(person => {
+    const firstInterval = Array.isArray(person.intervals) ? person.intervals[0] : undefined;
+    const source = String(person.attendance_report_start || firstInterval?.joinDateTime || '').trim();
+    const parsed = source ? new Date(source) : null;
+    const valid = Boolean(parsed && !Number.isNaN(parsed.getTime()));
+    const dateKey = valid
+      ? `${parsed!.getFullYear()}-${String(parsed!.getMonth() + 1).padStart(2, '0')}-${String(parsed!.getDate()).padStart(2, '0')}`
+      : 'undated';
+    const sheetName = valid
+      ? parsed!.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/,/g, '')
+      : 'Undated attendance';
+    const group = groups.get(dateKey) || { dateKey, sheetName, attendance: [] };
+    group.attendance.push(person);
+    groups.set(dateKey, group);
+  });
+  return Array.from(groups.values()).sort((left, right) => {
+    if (left.dateKey === 'undated') return 1;
+    if (right.dateKey === 'undated') return -1;
+    return left.dateKey.localeCompare(right.dateKey);
+  });
+}
+
 async function downloadAttendanceSheet(session: DeliverySession, attendance: LiveSessionAttendance[]) {
   const XLSX = await import('xlsx');
-  const worksheet = XLSX.utils.json_to_sheet(attendanceSheetRows(attendance));
-  worksheet['!cols'] = [
-    { wch: 28 }, { wch: 36 }, { wch: 16 }, { wch: 18 },
-    { wch: 20 }, { wch: 32 }, { wch: 32 },
-  ];
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Attendance');
+  const sheetGroups = attendanceSheetGroups(attendance);
+  sheetGroups.forEach(group => {
+    const worksheet = XLSX.utils.json_to_sheet(attendanceSheetRows(group.attendance));
+    worksheet['!cols'] = [
+      { wch: 28 }, { wch: 36 }, { wch: 24 }, { wch: 14 }, { wch: 12 },
+      { wch: 16 }, { wch: 14 }, { wch: 18 }, { wch: 20 },
+      { wch: 32 }, { wch: 32 },
+    ];
+    XLSX.utils.book_append_sheet(workbook, worksheet, group.sheetName.slice(0, 31));
+  });
   const safeTitle = (session.title || 'teams-session').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '');
-  const date = (session.dateIso || session.date || '').slice(0, 10);
+  const onlyRunDate = sheetGroups.length === 1 && sheetGroups[0].dateKey !== 'undated'
+    ? sheetGroups[0].dateKey
+    : '';
+  const date = onlyRunDate || (session.dateIso || session.date || '').slice(0, 10);
   XLSX.writeFile(workbook, `${safeTitle || 'teams-session'}${date ? `-${date}` : ''}-attendance.xlsx`, { compression: true });
 }
 
@@ -256,6 +302,19 @@ function CompletedSessionPanel({ session, state }: { session: DeliverySession; s
   }
   const occurrence = state.occurrence;
   const attendance = occurrence?.attendance || [];
+  const attendanceRuns = Array.from(attendance.reduce((groups, person) => {
+    const key = person.attendance_report_id || person.attendance_report_start || 'legacy';
+    const group = groups.get(key) || {
+      key,
+      startedAt: person.attendance_report_start || '',
+      rows: [] as LiveSessionAttendance[],
+    };
+    group.rows.push(person);
+    groups.set(key, group);
+    return groups;
+  }, new Map<string, { key: string; startedAt: string; rows: LiveSessionAttendance[] }>()).values());
+  const attendedCount = attendance.filter(person => person.attended !== false).length;
+  const expectedCount = Math.max(0, ...attendanceRuns.map(run => run.rows.filter(person => person.expected !== false).length));
   const artifacts = occurrence?.artifacts || [];
   const transcripts = artifacts.filter(item => (item.artifact_type || '').toLowerCase() === 'transcript');
   const recordings = artifacts.filter(item => (item.artifact_type || '').toLowerCase() === 'recording');
@@ -264,7 +323,9 @@ function CompletedSessionPanel({ session, state }: { session: DeliverySession; s
     <div className="space-y-4 px-4 py-3">
       <div className="flex flex-wrap gap-x-6 gap-y-1 text-[11px] text-foreground-500">
         {session.actualStart && <span><span className="font-semibold text-foreground-700">Started</span> {formatSessionDate(session.actualStart, '')}</span>}
-        <span><span className="font-semibold text-foreground-700">Attendees</span> {session.participantCount || attendance.length}</span>
+        <span><span className="font-semibold text-foreground-700">Attended</span> {attendedCount}</span>
+        <span><span className="font-semibold text-foreground-700">Expected per run</span> {expectedCount}</span>
+        {attendanceRuns.length > 1 && <span><span className="font-semibold text-foreground-700">Attendance runs</span> {attendanceRuns.length}</span>}
         <span><span className="font-semibold text-foreground-700">Recordings</span> {recordings.length}</span>
         <span><span className="font-semibold text-foreground-700">Transcripts</span> {transcripts.length}</span>
       </div>
@@ -364,47 +425,79 @@ function CompletedSessionPanel({ session, state }: { session: DeliverySession; s
       )}
 
       <div>
-        <div className="mb-1.5 flex items-center justify-between gap-3">
+        <div className="mb-1.5">
           <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-400">Attendance</p>
-          {attendance.length > 0 && (
-            <button
-              type="button"
-              onClick={() => {
-                setSheetError('');
-                void downloadAttendanceSheet(session, attendance).catch(error => {
-                  setSheetError(error instanceof Error ? error.message : 'Attendance sheet could not be downloaded.');
-                });
-              }}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 text-[11px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100"
-            >
-              <AppIcon className="ri-file-excel-2-line text-sm"></AppIcon>
-              Download attendance sheet
-            </button>
-          )}
         </div>
         {sheetError && <p className="mb-2 text-[11px] font-semibold text-red-600">{sheetError}</p>}
         {attendance.length === 0 ? (
           <p className="text-[12px] text-foreground-500">No attendance was captured for this session.</p>
         ) : (
-          <div className="overflow-hidden rounded-xl border border-background-200">
+          <div className="max-h-[360px] overflow-auto rounded-xl border border-background-200">
             <table className="w-full text-left text-[12px]">
-              <thead className="bg-background-100 text-[10px] uppercase tracking-wide text-foreground-500">
+              <thead className="sticky top-0 z-10 bg-background-100 text-[10px] uppercase tracking-wide text-foreground-500 shadow-[0_1px_0_var(--color-background-200)]">
                 <tr>
                   <th className="px-3 py-2 font-bold">Attendee</th>
+                  <th className="px-3 py-2 font-bold">Attendance</th>
                   <th className="px-3 py-2 font-bold">Role</th>
+                  <th className="px-3 py-2 text-center font-bold">Join sessions</th>
                   <th className="px-3 py-2 text-right font-bold">Time in session</th>
                 </tr>
               </thead>
               <tbody>
-                {attendance.map(person => (
+                {attendanceRuns.map(run => (
+                  <Fragment key={run.key}>
+                    <tr className="border-t border-primary-100 bg-primary-50/70">
+                      <td colSpan={5} className="px-3 py-2 text-[11px] font-bold text-primary-800">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <AppIcon className="ri-calendar-event-line mr-1.5"></AppIcon>
+                            {run.startedAt ? formatSessionDate(run.startedAt, run.startedAt) : 'Attendance report'}
+                            <span className="ml-2 font-semibold text-primary-600">
+                              {run.rows.filter(person => person.attended !== false).length} attended / {run.rows.filter(person => person.expected !== false).length} expected
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSheetError('');
+                              void downloadAttendanceSheet(session, run.rows).catch(error => {
+                                setSheetError(error instanceof Error ? error.message : 'Attendance sheet could not be downloaded.');
+                              });
+                            }}
+                            className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 text-[10px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100"
+                          >
+                            <AppIcon className="ri-file-excel-2-line text-sm"></AppIcon>
+                            Download
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    {run.rows.map(person => (
                   <tr key={person.id} className="border-t border-background-200">
                     <td className="px-3 py-2">
                       <span className="font-semibold text-foreground-800">{person.display_name || person.email || 'Unknown'}</span>
                       {person.email && person.display_name && <span className="ml-1 text-foreground-400">· {person.email}</span>}
                     </td>
+                    <td className="px-3 py-2">
+                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-bold ${
+                        person.attended === false
+                          ? 'bg-red-50 text-red-700'
+                          : 'bg-emerald-50 text-emerald-700'
+                      }`}>
+                        <AppIcon className={person.attended === false ? 'ri-close-circle-fill' : 'ri-checkbox-circle-fill'}></AppIcon>
+                        {person.attended === false ? 'Absent' : 'Attended'}
+                      </span>
+                    </td>
                     <td className="px-3 py-2 capitalize text-foreground-600">{person.role || '—'}</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-foreground-700">{formatSeconds(person.total_attendance_seconds || 0)}</td>
+                    <td className="px-3 py-2 text-center tabular-nums text-foreground-700">
+                      {person.join_count ?? person.intervals?.length ?? 0}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-foreground-700">
+                      {person.attended === false ? '—' : formatSeconds(person.total_attendance_seconds || 0)}
+                    </td>
                   </tr>
+                    ))}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -422,17 +515,25 @@ function SessionRow({
   moduleHref,
   artifactState,
   onToggle,
+  onSync,
+  syncing,
   expanded,
 }: {
   session: DeliverySession;
   moduleHref: string;
   artifactState: ArtifactState | undefined;
   onToggle: () => void;
+  onSync: () => void;
+  syncing: boolean;
   expanded: boolean;
 }) {
+  const hasLoadedOccurrence = artifactState?.status === 'ready' && Boolean(artifactState.occurrence);
   const isCompleted = statusClass(session.status) === 'completed';
-  const canExpand = session.kind === 'live' && isCompleted && Boolean(session.liveSessionId);
+  const canExpand = session.kind === 'live' && Boolean(session.liveSessionId) && (isCompleted || hasLoadedOccurrence);
   const [copied, setCopied] = useState(false);
+  const launchUrl = session.kind === 'live' && session.liveSessionId && session.occurrenceId
+    ? liveSessionJoinUrl(session.liveSessionId, session.occurrenceId)
+    : session.url;
 
   const copyLink = useCallback(() => {
     if (!session.url) return;
@@ -479,9 +580,22 @@ function SessionRow({
         )}
         <StatusBadge status={session.status} />
 
+        {session.kind === 'live' && session.liveSessionId && (
+          <button
+            type="button"
+            onClick={onSync}
+            disabled={syncing}
+            title="Ask Microsoft Graph now for attendance, transcripts and recordings."
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg border border-primary-200 bg-primary-50 px-2 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-wait disabled:opacity-60"
+          >
+            <AppIcon className={`${syncing ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} text-sm`}></AppIcon>
+            {syncing ? 'Syncing&' : 'Sync'}
+          </button>
+        )}
+
         {session.url && (
           <a
-            href={session.url}
+            href={launchUrl}
             target="_blank"
             rel="noreferrer"
             title={session.kind === 'live' ? 'Join this meeting in Microsoft Teams' : 'Open this recording'}
@@ -530,12 +644,16 @@ function WeekBlock({
   artifacts,
   expandedRows,
   onToggleRow,
+  onSync,
+  syncingSessionIds,
 }: {
   group: WeekGroup;
   moduleHrefFor: (session: DeliverySession) => string;
   artifacts: Map<string, ArtifactState>;
   expandedRows: Set<string>;
   onToggleRow: (session: DeliverySession) => void;
+  onSync: (session: DeliverySession) => void;
+  syncingSessionIds: Set<string>;
 }) {
   const [open, setOpen] = useState(true);
   return (
@@ -562,6 +680,8 @@ function WeekBlock({
               artifactState={artifacts.get(session.id)}
               expanded={expandedRows.has(session.id)}
               onToggle={() => onToggleRow(session)}
+              onSync={() => onSync(session)}
+              syncing={syncingSessionIds.has(session.id)}
             />
           ))}
         </div>
@@ -576,12 +696,16 @@ function MonthBlock({
   artifacts,
   expandedRows,
   onToggleRow,
+  onSync,
+  syncingSessionIds,
 }: {
   group: MonthGroup;
   moduleHrefFor: (session: DeliverySession) => string;
   artifacts: Map<string, ArtifactState>;
   expandedRows: Set<string>;
   onToggleRow: (session: DeliverySession) => void;
+  onSync: (session: DeliverySession) => void;
+  syncingSessionIds: Set<string>;
 }) {
   const [open, setOpen] = useState(true);
   return (
@@ -607,6 +731,8 @@ function MonthBlock({
               artifacts={artifacts}
               expandedRows={expandedRows}
               onToggleRow={onToggleRow}
+              onSync={onSync}
+              syncingSessionIds={syncingSessionIds}
             />
           ))}
         </div>
@@ -621,6 +747,8 @@ function ModuleBlock({
   artifacts,
   expandedRows,
   onToggleRow,
+  onSync,
+  syncingSessionIds,
   defaultOpen,
 }: {
   group: ModuleGroup;
@@ -628,6 +756,8 @@ function ModuleBlock({
   artifacts: Map<string, ArtifactState>;
   expandedRows: Set<string>;
   onToggleRow: (session: DeliverySession) => void;
+  onSync: (session: DeliverySession) => void;
+  syncingSessionIds: Set<string>;
   defaultOpen: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -661,6 +791,8 @@ function ModuleBlock({
               artifacts={artifacts}
               expandedRows={expandedRows}
               onToggleRow={onToggleRow}
+              onSync={onSync}
+              syncingSessionIds={syncingSessionIds}
             />
           ))}
         </div>
@@ -675,20 +807,25 @@ export function SessionsTree({
   sessions,
   moduleHrefFor,
   empty,
+  onSynced,
 }: {
   sessions: DeliverySession[];
   moduleHrefFor: (session: DeliverySession) => string;
   empty: React.ReactNode;
+  onSynced?: () => void | Promise<void>;
 }) {
   const tree = useMemo(() => buildSessionTree(sessions), [sessions]);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(() => new Set());
   const [artifacts, setArtifacts] = useState<Map<string, ArtifactState>>(() => new Map());
+  const [syncingSessionIds, setSyncingSessionIds] = useState<Set<string>>(() => new Set());
+  const [syncNotice, setSyncNotice] = useState<{ tone: 'success' | 'warning' | 'error'; text: string } | null>(null);
+  const syncInFlight = useRef<Set<string>>(new Set());
 
-  const loadArtifacts = useCallback(async (session: DeliverySession) => {
-    if (!session.liveSessionId) return;
+  const loadArtifacts = useCallback(async (session: DeliverySession, skipCache = false) => {
+    if (!session.liveSessionId) return null;
     setArtifacts(prev => new Map(prev).set(session.id, { status: 'loading' }));
     try {
-      const response = await fetchLiveSessionArtifacts(session.liveSessionId);
+      const response = await fetchLiveSessionArtifacts(session.liveSessionId, { skipCache });
       const rowInstant = Date.parse(session.dateIso);
       const occurrence = response.occurrences.find(item =>
         (session.occurrenceId && item.id === session.occurrenceId)
@@ -696,13 +833,54 @@ export function SessionsTree({
         || (Number.isFinite(rowInstant) && Date.parse(item.scheduled_start || '') === rowInstant),
       ) || null;
       setArtifacts(prev => new Map(prev).set(session.id, { status: 'ready', occurrence }));
+      return occurrence;
     } catch (error) {
       setArtifacts(prev => new Map(prev).set(session.id, {
         status: 'error',
         message: error instanceof Error ? error.message : 'Unable to load session details.',
       }));
+      return null;
     }
   }, []);
+
+  const syncSession = useCallback(async (session: DeliverySession) => {
+    if (!session.liveSessionId || syncInFlight.current.has(session.id)) return;
+    syncInFlight.current.add(session.id);
+    setSyncingSessionIds(current => new Set(current).add(session.id));
+    setSyncNotice(null);
+    try {
+      const result = await syncTeamsMeetingArtifacts(session.liveSessionId);
+      // Manual sync must bypass the ordinary GET cache. Otherwise the POST can
+      // save new Graph rows while this panel still renders its old empty payload.
+      const occurrence = await loadArtifacts(session, true);
+      await onSynced?.();
+      if (result.partial || result.errors.length) {
+        setSyncNotice({ tone: 'warning', text: result.errors.join(' � ') || 'Some meeting files are not available from Microsoft yet.' });
+      } else if (!occurrence) {
+        setSyncNotice({ tone: 'warning', text: 'Microsoft returned data for this Teams series, but none could be matched to this session.' });
+      } else {
+        const attendanceCount = occurrence.attendance?.filter(person => person.attended !== false).length || 0;
+        const artifactCount = occurrence.artifacts?.length || 0;
+        const total = attendanceCount + artifactCount;
+        setExpandedRows(current => new Set(current).add(session.id));
+        setSyncNotice({
+          tone: 'success',
+          text: total
+            ? `This session refreshed: ${attendanceCount} attendance record${attendanceCount === 1 ? '' : 's'} and ${artifactCount} transcript/recording file${artifactCount === 1 ? '' : 's'}.`
+            : 'Microsoft has not published attendance or files for this session yet.',
+        });
+      }
+    } catch (error) {
+      setSyncNotice({ tone: 'error', text: error instanceof Error ? error.message : 'Attendance, transcripts and recordings could not be synced.' });
+    } finally {
+      syncInFlight.current.delete(session.id);
+      setSyncingSessionIds(current => {
+        const next = new Set(current);
+        next.delete(session.id);
+        return next;
+      });
+    }
+  }, [loadArtifacts, onSynced]);
 
   const onToggleRow = useCallback((session: DeliverySession) => {
     setExpandedRows(prev => {
@@ -727,6 +905,17 @@ export function SessionsTree({
 
   return (
     <div className="space-y-3">
+      {syncNotice && (
+        <div className={`rounded-xl border px-3 py-2 text-[12px] font-semibold ${
+          syncNotice.tone === 'success'
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+            : syncNotice.tone === 'warning'
+              ? 'border-amber-200 bg-amber-50 text-amber-700'
+              : 'border-red-200 bg-red-50 text-red-700'
+        }`}>
+          {syncNotice.text}
+        </div>
+      )}
       {tree.map((group, index) => (
         <ModuleBlock
           key={group.key}
@@ -735,6 +924,8 @@ export function SessionsTree({
           artifacts={artifacts}
           expandedRows={expandedRows}
           onToggleRow={onToggleRow}
+          onSync={session => void syncSession(session)}
+          syncingSessionIds={syncingSessionIds}
           defaultOpen={tree.length === 1 || index === 0}
         />
       ))}

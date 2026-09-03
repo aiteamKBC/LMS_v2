@@ -14,6 +14,7 @@ import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
 import { useCurriculumStaffProfiles } from '@/hooks/useCurriculumStaffProfiles';
 import { curriculumNavItems } from '@/mocks/navigation';
+import { formatHoursMinutes } from '@/lib/format';
 import {
   archiveCurriculumCohort,
   archiveCurriculumGroup,
@@ -1530,7 +1531,7 @@ function ProgrammeLearnerImpactModal({
 
         <div className="grid grid-cols-2 gap-3 border-b border-background-200 bg-background-50 p-4 lg:grid-cols-4">
           <ImpactStat icon="ri-user-follow-line" label="Assigned learners" value={String(assignedLearners.length)} detail="Learner + enrolment records" />
-          <ImpactStat icon="ri-time-line" label="OTJH achieved" value={`${formatMetricNumber(achievedHours)}h`} detail={`of ${formatMetricNumber(plannedHours)}h planned across this programme's components`} />
+          <ImpactStat icon="ri-time-line" label="OTJH achieved" value={formatHoursMinutes(achievedHours)} detail={`of ${formatHoursMinutes(plannedHours)} planned across this programme's components`} />
           <ImpactStat icon="ri-node-tree" label="KSB weight earned" value={`${averageProgress}%`} detail={`${formatMetricNumber(totalConsumed)} of ${formatMetricNumber(totalExpected)} expected weight`} />
           <ImpactStat icon="ri-checkbox-circle-line" label="Achieved KSBs" value={String(achievedKsbCount)} detail={`${achievedRecordCount} learner record${achievedRecordCount === 1 ? '' : 's'}`} />
         </div>
@@ -1607,10 +1608,10 @@ function ProgrammeLearnerImpactRow({
         <div className="grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-4 xl:w-[620px]">
           <LearnerMiniMetric
             label="OTJH here"
-            value={`${formatMetricNumber(otjhCompleted)}h`}
+            value={formatHoursMinutes(otjhCompleted)}
             detail={otjhRow
-              ? `${otjhProgress}% of ${formatMetricNumber(otjhPlanned)}h · ${formatMetricNumber(learnerMeta?.completedHours || 0)}h on record`
-              : `${otjhProgress}% of ${formatMetricNumber(otjhPlanned)}h`}
+              ? `${otjhProgress}% of ${formatHoursMinutes(otjhPlanned)} · ${formatHoursMinutes(learnerMeta?.completedHours || 0)} on record`
+              : `${otjhProgress}% of ${formatHoursMinutes(otjhPlanned)}`}
           />
           <LearnerMiniMetric label="KSB weight achieved" value={formatMetricNumber(achievedWeight)} detail="Total consumed weight" />
           <LearnerMiniMetric label="Achieved KSBs" value={String(achievements.length)} detail={`${achievedCount} record${achievedCount === 1 ? '' : 's'}`} />
@@ -1804,7 +1805,7 @@ function formatMetricNumber(value: number) {
 }
 
 function formatNullableHours(value: number | null) {
-  return value === null ? 'Not returned' : `${formatMetricNumber(value)}h`;
+  return value === null ? 'Not returned' : formatHoursMinutes(value);
 }
 
 function formatOtjhPair(actual: number | null, planned: number | null) {

@@ -114,12 +114,25 @@ export function daysUntil(value?: string | null): number | null {
 
 // --- numbers ----------------------------------------------------------------
 
-const HOURS_FORMAT = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 });
 const WHOLE_FORMAT = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 0 });
 
-export function formatHours(value?: number | null): string {
+/** Decimal hours -> a user-facing hours/minutes label.
+ * 21.58 -> "21h 35m", 1.5 -> "1h 30m", 0.5 -> "30m". */
+export function formatHoursMinutes(value?: number | null): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return EMPTY_VALUE;
-  return HOURS_FORMAT.format(value);
+  const roundedMinutes = Math.round(value * 60);
+  const sign = roundedMinutes < 0 ? '-' : '';
+  const absoluteMinutes = Math.abs(roundedMinutes);
+  const hours = Math.floor(absoluteMinutes / 60);
+  const minutes = absoluteMinutes % 60;
+  if (hours === 0 && minutes === 0) return '0h';
+  if (hours === 0) return `${sign}${minutes}m`;
+  if (minutes === 0) return `${sign}${hours}h`;
+  return `${sign}${hours}h ${minutes}m`;
+}
+
+export function formatHours(value?: number | null): string {
+  return formatHoursMinutes(value);
 }
 
 /** "42 / 60 hrs" — the ratio a coach reads, with its unit attached. */
@@ -132,7 +145,7 @@ export function formatHoursRatio(completed?: number | null, target?: number | nu
   ) {
     return EMPTY_VALUE;
   }
-  return `${HOURS_FORMAT.format(completed)} / ${HOURS_FORMAT.format(target)} hrs`;
+  return `${formatHoursMinutes(completed)} / ${formatHoursMinutes(target)}`;
 }
 
 export function formatRatio(completed?: number | null, target?: number | null): string {

@@ -11,7 +11,7 @@ import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import { CoachDirectoryPicker } from './CoachDirectoryPicker';
 import { cn } from '@/lib/cn';
-import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
+import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE, formatHoursMinutes } from '@/lib/format';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { SectionHeader, SectionLabel } from '@/components/ui/SectionHeader';
@@ -676,7 +676,7 @@ interface OverdueSignal {
 }
 
 function formatHours(value: number) {
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+  return formatHoursMinutes(value);
 }
 
 function otjhPercentFor(learner: CoachLearner): number | null {
@@ -1715,7 +1715,7 @@ function AttentionLearnerRow({ rank, learner, priority, onOpen }: {
   const extraReasons = Math.max(priority.reasons.length - 1, 0);
 
   const otjhPercent = otjhPercentFor(learner);
-  const otjhLabel = learner.otjhTarget > 0 ? `${formatHours(learner.otjhCompleted)}/${formatHours(learner.otjhTarget)} hrs` : EMPTY_VALUE;
+  const otjhLabel = learner.otjhTarget > 0 ? `${formatHours(learner.otjhCompleted)} / ${formatHours(learner.otjhTarget)}` : EMPTY_VALUE;
   const progressLabel = learner.overallProgressAvailable ? `${learner.overallProgress}%` : EMPTY_VALUE;
   const attendanceLabel = learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE;
   const review = nextReviewCell(learner);

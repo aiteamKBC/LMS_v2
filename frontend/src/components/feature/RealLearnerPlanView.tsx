@@ -6,7 +6,7 @@ import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail, LearnerKind, LearnerQuizAttempt, LearnerQuizQuestionResult } from '@/api/learnerDetail';
 import { fetchQuiz, type Quiz } from '@/api/quizzes';
 import { EvidenceFilesButton } from '@/components/feature/EvidenceFilesButton';
-import { buildLearnerJourney, componentTypeMeta, gradePercent, hasComponentContent, isOpenableComponent, type JourneyModule, type JourneyWeek, type JourneyComponent } from '@/utils/learnerJourney';
+import { buildLearnerJourney, componentTypeMeta, formatHoursMinutes, gradePercent, hasComponentContent, isOpenableComponent, type JourneyModule, type JourneyWeek, type JourneyComponent } from '@/utils/learnerJourney';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 
@@ -168,7 +168,7 @@ export function LearnerPlanBody({
             {totalOtjh > 0 && (
               <div className="flex shrink-0 items-center justify-center border-t border-white/10 bg-white/[0.025] px-8 py-6 lg:w-[230px] lg:border-l lg:border-t-0">
                 <div className="flex flex-col items-center gap-1.5">
-                  <span className="font-heading text-4xl font-bold tracking-tight text-white">{totalOtjh}h</span>
+                  <span className="font-heading text-4xl font-bold tracking-tight text-white">{formatHoursMinutes(totalOtjh)}</span>
                   <span className="text-xs font-semibold uppercase tracking-[0.14em] text-white/55">Planned OTJH</span>
                 </div>
               </div>
@@ -184,7 +184,7 @@ export function LearnerPlanBody({
               { icon: 'ri-book-2-line', value: `${journey.length} ${journey.length === 1 ? 'module' : 'modules'}` },
               { icon: 'ri-calendar-line', value: `${totalWeeks} ${totalWeeks === 1 ? 'week' : 'weeks'}` },
               { icon: 'ri-stack-line', value: `${totalComponents} ${totalComponents === 1 ? 'component' : 'components'}` },
-              ...(totalOtjh > 0 ? [{ icon: 'ri-time-line', value: `${totalOtjh}h planned OTJH` }] : []),
+              ...(totalOtjh > 0 ? [{ icon: 'ri-time-line', value: `${formatHoursMinutes(totalOtjh)} planned OTJH` }] : []),
             ].map((s) => (
               <span key={s.icon} className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-100 bg-background-50 px-3 py-1.5 text-xs font-semibold text-foreground-600">
                 <AppIcon className={`${s.icon} text-[13px] text-primary-500`} />{s.value}
@@ -269,7 +269,7 @@ function ModuleSection({ module, defaultOpen, kind, learnerId, completedIds, com
         </div>
         <div className="flex items-center gap-3">
           {moduleOtjh > 0 && (
-            <span className="hidden rounded-full bg-primary-50 px-3 py-1 text-xs font-bold text-primary-700 sm:inline">{Math.round(moduleOtjh * 10) / 10}h OTJH</span>
+            <span className="hidden rounded-full bg-primary-50 px-3 py-1 text-xs font-bold text-primary-700 sm:inline">{formatHoursMinutes(moduleOtjh)} OTJH</span>
           )}
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-background-100">
             <AppIcon className={`ri-arrow-down-s-line text-base text-foreground-500 transition-transform ${collapsed ? '' : 'rotate-180'}`} />
@@ -361,7 +361,7 @@ function WeekCard({ week, module, kind, learnerId, completedIds, compact, isCurr
             )}
           </div>
           <div className="flex items-center gap-3 shrink-0">
-            {week.otjh > 0 && <span className="rounded-md bg-background-100 px-2 py-1 text-xs font-semibold text-foreground-600">{Math.round(week.otjh * 10) / 10}h</span>}
+            {week.otjh > 0 && <span className="rounded-md bg-background-100 px-2 py-1 text-xs font-semibold text-foreground-600">{formatHoursMinutes(week.otjh)}</span>}
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-background-100">
               <AppIcon className={`ri-arrow-down-s-line text-sm text-foreground-500 transition-transform ${open ? 'rotate-180' : ''}`} />
             </div>
@@ -464,7 +464,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
           </span>
         ) : c.expectedOtjh != null && c.expectedOtjh > 0 && (
           <span className="shrink-0 text-[11px] text-foreground-400 inline-flex items-center gap-1">
-            <AppIcon className="ri-time-line text-[10px]" />{c.expectedOtjh}h
+            <AppIcon className="ri-time-line text-[10px]" />{formatHoursMinutes(c.expectedOtjh)}
           </span>
         )}
         {c.isQuiz && lastAttempt && (

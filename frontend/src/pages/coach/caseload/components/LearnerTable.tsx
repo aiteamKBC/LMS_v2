@@ -185,7 +185,7 @@ const LearnerRow = memo(function LearnerRow({
         </p>
         {delta !== null ? (
           <p className={`text-[12px] tabular-nums ${delta < -0.5 ? 'text-red-600' : delta > 0.5 ? 'text-emerald-600' : 'text-foreground-400'}`}>
-            {delta < -0.5 ? `-${formatHours(Math.abs(delta))} hrs` : delta > 0.5 ? `+${formatHours(delta)} hrs` : 'On target'}
+            {delta < -0.5 ? `-${formatHours(Math.abs(delta))}` : delta > 0.5 ? `+${formatHours(delta)}` : 'On target'}
           </p>
         ) : null}
       </td>

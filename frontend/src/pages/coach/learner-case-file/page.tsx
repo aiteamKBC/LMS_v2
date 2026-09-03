@@ -1134,7 +1134,7 @@ function buildRiskItems(data: CoachLearnerCaseFileData) {
   items.push({
     label: 'OTJH Hours',
     tone: otjhTone,
-    detail: `${formatFraction(data.otjhCompleted, data.otjhTarget)}${data.otjhPlanned ? ` planned ${data.otjhPlanned}h` : ''}`,
+    detail: `${formatHours(data.otjhCompleted)} / ${formatHours(data.otjhTarget)}${data.otjhPlanned ? ` · planned ${formatHours(data.otjhPlanned)}` : ''}`,
   });
 
   items.push({

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { useToast } from '@/hooks/useToast';
+import { formatHoursMinutes } from '@/lib/format';
 import {
   ENGAGEMENT_LEARNERS, RECOGNITIONS, VOUCHER_CLAIMS, CATCHUP_ITEMS,
   type EngagementLearner, type Recognition, type VoucherClaim,
@@ -245,7 +246,7 @@ export function LearnerProfilePanel({ learnerId, onClose }: LearnerProfilePanelP
                 <div className="space-y-2">
                   <ProgressBar label="Session Attendance" value={attendancePct} detail={`${learner.sessionsAttended}/${learner.totalSessions} sessions`} />
                   <ProgressBar label="Evidence Submission" value={Math.round((learner.evidenceSubmitted / learner.evidenceTarget) * 100)} detail={`${learner.evidenceSubmitted}/${learner.evidenceTarget} pieces`} />
-                  <ProgressBar label="OTJH Progress" value={Math.round((learner.otjhHours / learner.otjhTarget) * 100)} detail={`${learner.otjhHours}/${learner.otjhTarget}h`} />
+                  <ProgressBar label="OTJH Progress" value={Math.round((learner.otjhHours / learner.otjhTarget) * 100)} detail={`${formatHoursMinutes(learner.otjhHours)} / ${formatHoursMinutes(learner.otjhTarget)}`} />
                   <ProgressBar label="Quiz Average" value={learner.quizAverage} detail={`${learner.quizAverage}%`} />
                   <ProgressBar label="KSB Progression" value={learner.ksbProgress} detail={`${learner.ksbProgress}%`} />
                   <ProgressBar label="Message Response" value={learner.messageResponse} detail={`${learner.messageResponse}%`} />

@@ -1,7 +1,7 @@
 import json
 import os
 import threading
-from datetime import date, timezone
+from datetime import date, datetime, timezone
 from unittest.mock import patch
 from types import SimpleNamespace
 
@@ -386,6 +386,112 @@ CURRICULUM_HOLIDAY_ROWS = [
 ]
 
 
+class TeamsAttendanceRosterTests(SimpleTestCase):
+    def test_join_launches_override_closest_scheduled_week(self):
+        occurrences = [
+            {'id': 'WEEK-6', 'session_number': 6, 'scheduled_start': datetime(2026, 9, 7, 19)},
+            {'id': 'WEEK-7', 'session_number': 7, 'scheduled_start': datetime(2026, 9, 14, 19)},
+            {'id': 'WEEK-12', 'session_number': 12, 'scheduled_start': datetime(2026, 10, 26, 20)},
+        ]
+        launches = [
+            {'id': 'JOIN-7', 'occurrence_id': 'WEEK-7', 'launched_at': datetime(2026, 9, 3, 10)},
+            {'id': 'JOIN-12', 'occurrence_id': 'WEEK-12', 'launched_at': datetime(2026, 9, 3, 11)},
+        ]
+
+        week_7, launch_7 = views.launch_linked_live_occurrence(
+            occurrences, datetime(2026, 9, 3, 10, 1), launches, 'REPORT-7'
+        )
+        week_12, launch_12 = views.launch_linked_live_occurrence(
+            occurrences, datetime(2026, 9, 3, 11, 1), launches, 'REPORT-12'
+        )
+
+        self.assertEqual(week_7['id'], 'WEEK-7')
+        self.assertEqual(launch_7['id'], 'JOIN-7')
+        self.assertEqual(week_12['id'], 'WEEK-12')
+        self.assertEqual(launch_12['id'], 'JOIN-12')
+
+    def test_existing_report_launch_binding_wins_on_resync(self):
+        occurrences = [
+            {'id': 'WEEK-7', 'scheduled_start': datetime(2026, 9, 14, 19)},
+            {'id': 'WEEK-12', 'scheduled_start': datetime(2026, 10, 26, 20)},
+        ]
+        launches = [
+            {'id': 'JOIN-7', 'occurrence_id': 'WEEK-7', 'launched_at': datetime(2026, 9, 3, 10), 'attendance_report_id': 'REPORT-7'},
+            {'id': 'JOIN-12', 'occurrence_id': 'WEEK-12', 'launched_at': datetime(2026, 9, 3, 10, 1)},
+        ]
+
+        occurrence, launch = views.launch_linked_live_occurrence(
+            occurrences, datetime(2026, 9, 3, 10, 2), launches, 'REPORT-7'
+        )
+
+        self.assertEqual(occurrence['id'], 'WEEK-7')
+        self.assertEqual(launch['id'], 'JOIN-7')
+
+    def test_merges_distinct_rejoins_without_counting_a_resync_twice(self):
+        first = [{'joinDateTime': '2026-09-02T09:00:00Z', 'leaveDateTime': '2026-09-02T09:10:00Z'}]
+        second = [{'joinDateTime': '2026-09-03T09:00:00Z', 'leaveDateTime': '2026-09-03T09:05:00Z'}]
+
+        merged = views.merge_attendance_intervals(first, second, first)
+
+        self.assertEqual(len(merged), 2)
+        self.assertEqual(views.attendance_interval_seconds(merged), 900)
+
+    def test_adds_invited_non_attendees_to_completed_roster(self):
+        roster = views.attendance_roster({
+            'organizer_email': 'organizer@example.com',
+            'attendees': ['present@example.com', 'absent@example.com'],
+            'presenters': [],
+        }, [{
+            'id': 'ATT-1',
+            'email': 'present@example.com',
+            'display_name': 'Present',
+            'intervals': [{}],
+        }], include_absent=True)
+
+        by_email = {row['email']: row for row in roster}
+        self.assertTrue(by_email['present@example.com']['attended'])
+        self.assertFalse(by_email['absent@example.com']['attended'])
+        self.assertFalse(by_email['organizer@example.com']['attended'])
+        self.assertEqual(by_email['present@example.com']['join_count'], 1)
+
+    def test_keeps_different_graph_reports_as_separate_attendance_runs(self):
+        series = {
+            'organizer_email': 'organizer@example.com',
+            'attendees': ['learner@example.com'],
+            'presenters': [],
+        }
+        rows = [
+            {
+                'id': 'ATT-DAY-1', 'email': 'organizer@example.com',
+                'display_name': 'Organizer', 'intervals': [{}],
+                'raw_data': {
+                    'attendanceReportId': 'REPORT-1',
+                    'attendanceReportStart': '2026-09-02T09:00:00Z',
+                },
+            },
+            {
+                'id': 'ATT-DAY-2', 'email': 'organizer@example.com',
+                'display_name': 'Organizer', 'intervals': [{}],
+                'raw_data': {
+                    'attendanceReportId': 'REPORT-2',
+                    'attendanceReportStart': '2026-09-03T09:00:00Z',
+                },
+            },
+        ]
+
+        roster = views.attendance_report_rosters(series, rows, include_absent=True)
+
+        organizer_rows = [row for row in roster if row['email'] == 'organizer@example.com']
+        learner_rows = [row for row in roster if row['email'] == 'learner@example.com']
+        self.assertEqual(len(organizer_rows), 2)
+        self.assertEqual(len(learner_rows), 2)
+        self.assertEqual(
+            {row['attendance_report_id'] for row in organizer_rows},
+            {'REPORT-1', 'REPORT-2'},
+        )
+        self.assertEqual(len({row['id'] for row in learner_rows}), 2)
+
+
 class CurriculumTeamsMeetingTests(TestCase):
     def setUp(self):
         self.client = Client()
@@ -532,6 +638,37 @@ class CurriculumTeamsMeetingTests(TestCase):
 
     @patch('coach_api.views.microsoft_graph_request')
     @patch('coach_api.views.has_graph_credentials', return_value=True)
+    def test_refuses_duplicate_active_calendar_before_touching_graph(self, _credentials, graph_request):
+        views.authoring_upsert(views.LIVE_SESSIONS_TABLE, ['id'], {
+            'id': 'LIVE-EXISTING',
+            'module_draft_id': 'module-draft-duplicate',
+            'module_title': 'Risk module',
+            'organizer_email': 'khaled@example.com',
+            'graph_event_id': 'event-existing',
+            'join_url': 'https://teams.microsoft.com/l/meetup-join/existing',
+            'status': 'active',
+        })
+
+        response = self.client.post(
+            '/curriculum_api/curriculum/teams-meetings/',
+            data=json.dumps({
+                'title': 'A second calendar',
+                'moduleDraftId': 'module-draft-duplicate',
+                'organizerEmail': 'another@example.com',
+                'localStartDateTime': '2026-09-03T09:00',
+                'startDateTimeUtc': '2026-09-03T08:00:00Z',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertEqual(response.json()['code'], 'teams_calendar_already_exists')
+        self.assertEqual(response.json()['existingMeeting']['liveSessionId'], 'LIVE-EXISTING')
+        self.assertEqual(response.json()['existingMeeting']['organizerEmail'], 'khaled@example.com')
+        graph_request.assert_not_called()
+
+    @patch('coach_api.views.microsoft_graph_request')
+    @patch('coach_api.views.has_graph_credentials', return_value=True)
     @patch('coach_api.views.get_graph_settings', return_value={
         'tenant_id': 'tenant',
         'client_id': 'client',
@@ -559,7 +696,6 @@ class CurriculumTeamsMeetingTests(TestCase):
             'status': 'active',
         })
         instance_reads = {'count': 0}
-        recreated_join_url = 'https://teams.microsoft.com/l/meetup-join/recreated'
 
         def graph_side_effect(method, path, payload=None):
             if method == 'PATCH' and path == 'users/tutor%40example.com/events/event-1':
@@ -591,15 +727,8 @@ class CurriculumTeamsMeetingTests(TestCase):
             # already sit on wanted dates and are deliberately left alone.
             if method == 'PATCH' and path.endswith('/instance-4'):
                 raise RuntimeError('ErrorOccurrenceCrossingBoundary')
-            # The recreated occurrence is a new event, so Teams gives it a Teams
-            # link -- and an online meeting -- of its own.
-            if method == 'POST' and path == 'users/tutor%40example.com/events':
-                return {
-                    'id': 'event-recreated',
-                    'onlineMeeting': {'joinUrl': recreated_join_url},
-                }
             if method == 'GET' and 'onlineMeetings?' in path:
-                return {'value': [{'id': 'meeting-recreated' if 'recreated' in path else 'meeting-1'}]}
+                return {'value': [{'id': 'meeting-1'}]}
             if method in {'PATCH', 'POST', 'DELETE'}:
                 return {}
             raise AssertionError(f'Unexpected Graph call: {method} {path}')
@@ -639,8 +768,9 @@ class CurriculumTeamsMeetingTests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         result = response.json()
         self.assertEqual(result['meeting']['trackedOccurrences'], 6)
-        self.assertEqual(result['warnings'][0]['code'], 'teams_shifted_occurrence_recreated')
-        self.assertTrue(any(call.args[:2] == ('DELETE', 'users/tutor%40example.com/events/instance-4') for call in graph_request.call_args_list))
+        self.assertEqual(result['warnings'][0]['code'], 'teams_shifted_occurrence_not_moved')
+        self.assertFalse(any(call.args[0] == 'POST' for call in graph_request.call_args_list))
+        self.assertFalse(any(call.args[:2] == ('DELETE', 'users/tutor%40example.com/events/instance-4') for call in graph_request.call_args_list))
         occurrences = views.authoring_fetch_all(
             views.LIVE_SESSION_OCCURRENCES_TABLE,
             'live_session_id = %s',
@@ -656,24 +786,11 @@ class CurriculumTeamsMeetingTests(TestCase):
             '2026-10-14',
         ])
 
-        # The recreated session runs on a meeting of its own, so the series'
-        # options never reached it: automatic recording and transcription have to
-        # be applied to that meeting too, or the one session that moved is the one
-        # that records nothing.
-        recreated_patch = next(
-            call.kwargs.get('payload') or call.args[2]
-            for call in graph_request.call_args_list
-            if call.args[:2] == ('PATCH', 'users/tutor%40example.com/onlineMeetings/meeting-recreated')
-        )
-        self.assertTrue(recreated_patch['recordAutomatically'])
-        self.assertTrue(recreated_patch['allowTranscription'])
-        self.assertEqual(recreated_patch['lobbyBypassSettings']['scope'], 'invited')
-        # ...and the session points at the event and meeting it actually has, so
-        # learners join the right call and its transcript is looked for where it is.
-        moved = [row for row in occurrences if views.clean_str(row.get('online_meeting_id'))]
-        self.assertEqual([row['online_meeting_id'] for row in moved], ['meeting-recreated'])
-        self.assertEqual(moved[0]['graph_event_id'], 'event-recreated')
-        self.assertEqual(moved[0]['join_url'], recreated_join_url)
+        # No occurrence receives its own event/meeting/link. The warning is safer
+        # than silently breaking the module's fixed Teams URL.
+        self.assertFalse(any(views.clean_str(row.get('online_meeting_id')) for row in occurrences))
+        self.assertTrue(all(row['graph_event_id'] == 'event-1' for row in occurrences))
+        self.assertTrue(all(row['join_url'] == 'https://teams.microsoft.com/l/meetup-join/example' for row in occurrences))
 
     @patch('coach_api.views.microsoft_graph_request')
     @patch('coach_api.views.has_graph_credentials', return_value=True)

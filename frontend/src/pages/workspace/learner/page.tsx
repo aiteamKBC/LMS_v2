@@ -560,10 +560,10 @@ export default function LearnerOverview() {
   const otjPercent = isRealMode ? (otj.targetHours > 0 ? otj.targetPercent : otj.percent) : Math.round((p.otjhCompleted / p.otjhTarget) * 100);
   const otjValue = isRealMode
     ? formatHoursMinutes(otj.activities > 0 ? otj.completedHours : otj.plannedHours)
-    : `${p.otjhCompleted}h`;
+    : formatHoursMinutes(p.otjhCompleted);
   const otjCaption = isRealMode
     ? (otj.targetHours > 0 ? `Target ${formatHoursMinutes(otj.targetHours)}${otj.status ? ` · ${otj.status}` : ''}` : `${otj.activities} ${otj.activities === 1 ? 'activity' : 'activities'} logged`)
-    : `${p.otjhCompleted}/${p.otjhTarget}h planned`;
+    : `${formatHoursMinutes(p.otjhCompleted)} / ${formatHoursMinutes(p.otjhTarget)} planned`;
   const otjTone: StatusTone = isRealMode ? (otj.status ? statusTone(otj.status) : 'brand') : 'brand';
 
   const ksbTotal = isRealMode ? (real?.ksbs.length || 0) : p.ksbTotal;

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { formatHoursMinutes } from '@/lib/format';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
@@ -86,7 +87,7 @@ export default function LearnerProfilePage() {
 
           <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <StatCard icon="ri-calendar-check-line" label="Attendance" value={attendance ? `${attendance.attendanceRate}%` : '–'} detail={attendance ? `${attendance.present} of ${attendance.sessions} sessions` : 'No record'} progress={attendance?.attendanceRate || 0} colour="bg-amber-50 text-amber-600" bar="bg-amber-500" />
-            <StatCard icon="ri-time-line" label="OTJ hours" value={`${completedHours} / ${plannedHours}`} detail={`${otjProgress}% of plan`} progress={otjProgress} colour="bg-primary-50 text-primary-600" bar="bg-primary-600" />
+            <StatCard icon="ri-time-line" label="OTJ hours" value={`${formatHoursMinutes(completedHours)} / ${formatHoursMinutes(plannedHours)}`} detail={`${otjProgress}% of plan`} progress={otjProgress} colour="bg-primary-50 text-primary-600" bar="bg-primary-600" />
             <StatCard icon="ri-stack-line" label="Modules" value={String(learner.modules.length)} detail="Assigned modules" colour="bg-secondary-50 text-secondary-600" />
             <StatCard icon="ri-calendar-todo-line" label="Weeks" value={String(learner.week.length)} detail="Planned weeks" colour="bg-blue-50 text-blue-600" />
             <StatCard icon="ri-checkbox-multiple-line" label="Activities" value={String(completedActivities)} detail="Recorded completions" colour="bg-emerald-50 text-emerald-600" />
@@ -115,8 +116,8 @@ export default function LearnerProfilePage() {
             <ProfileSection icon="ri-route-line" title="Learning plan">
               <DetailRow label="Assigned modules" value={String(learner.modules.length)} />
               <DetailRow label="Assigned components" value={String(learner.components.length)} />
-              <DetailRow label="Planned OTJ hours" value={String(plannedHours)} />
-              <DetailRow label="Completed OTJ hours" value={String(completedHours)} />
+              <DetailRow label="Planned OTJ hours" value={formatHoursMinutes(plannedHours)} />
+              <DetailRow label="Completed OTJ hours" value={formatHoursMinutes(completedHours)} />
             </ProfileSection>
           </div>
         </>}

@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
+import { formatHoursMinutes } from '@/lib/format';
 
 /* ── Types ── */
 interface OTJHEntry {
@@ -216,7 +217,7 @@ export function MockOtjhBody({ showHero = true }: { showHero?: boolean }) {
                   </div>
                   <div>
                     <p className="text-xs text-white/40 mb-0.5">Total Progress</p>
-                    <p className="text-base font-heading font-bold text-white">{p.otjhCompleted}h<span className="text-white/30 text-sm font-normal">/{p.otjhTarget}h</span></p>
+                    <p className="text-base font-heading font-bold text-white">{formatHoursMinutes(p.otjhCompleted)}<span className="text-white/30 text-sm font-normal"> / {formatHoursMinutes(p.otjhTarget)}</span></p>
                     <p className="text-[10px] text-white/25 mt-0.5">{p.otjhTarget - p.otjhCompleted}h remaining</p>
                   </div>
                 </div>
@@ -239,10 +240,10 @@ export function MockOtjhBody({ showHero = true }: { showHero?: boolean }) {
           ═══════════════════════════════════════════════════ */}
       <SectionReveal delay={60}>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <StatsCard label="Target Hours" value={`${p.otjhTarget}h`} sub={`${p.durationMonths}-month programme`} icon="ri-flag-line" color="primary" />
+          <StatsCard label="Target Hours" value={formatHoursMinutes(p.otjhTarget)} sub={`${p.durationMonths}-month programme`} icon="ri-flag-line" color="primary" />
           <StatsCard label="Hours Logged" value={`${totalLogged}h`} sub={isBehind ? 'Behind target' : 'On track'} icon="ri-time-line" color={isBehind ? 'amber' : 'emerald'} />
-          <StatsCard label="Validated" value={`${totalValidated}h`} sub={`${OTJH_ENTRIES.filter(e => e.status === 'Validated').length} entries`} icon="ri-check-double-line" color="emerald" />
-          <StatsCard label="Pending / Rejected" value={`${totalPending + totalRejected}h`} sub={`${OTJH_ENTRIES.filter(e => e.status !== 'Validated').length} need action`} icon="ri-alert-line" color={totalPending + totalRejected > 5 ? 'red' : 'amber'} />
+          <StatsCard label="Validated" value={formatHoursMinutes(totalValidated)} sub={`${OTJH_ENTRIES.filter(e => e.status === 'Validated').length} entries`} icon="ri-check-double-line" color="emerald" />
+          <StatsCard label="Pending / Rejected" value={formatHoursMinutes(totalPending + totalRejected)} sub={`${OTJH_ENTRIES.filter(e => e.status !== 'Validated').length} need action`} icon="ri-alert-line" color={totalPending + totalRejected > 5 ? 'red' : 'amber'} />
         </div>
       </SectionReveal>
 
@@ -259,7 +260,7 @@ export function MockOtjhBody({ showHero = true }: { showHero?: boolean }) {
               </Link>
             </div>
             <p className="text-sm text-foreground-400 mb-5">
-              Track your OTJH pace — you need ~{(p.otjhTarget / p.durationMonths).toFixed(1)}h per month to stay on target
+              Track your OTJH pace — you need ~{formatHoursMinutes(p.otjhTarget / p.durationMonths)} per month to stay on target
             </p>
 
             <div className="flex items-end gap-2 h-44 md:h-48">
@@ -632,7 +633,7 @@ export function MockOtjhBody({ showHero = true }: { showHero?: boolean }) {
               <GuidanceItem icon="ri-checkbox-circle-line" color="emerald" text="Always link entries to specific KSB codes for stronger evidence trails" />
               <GuidanceItem icon="ri-checkbox-circle-line" color="emerald" text="Your employer must confirm OTJH is genuine — your coach reviews each entry" />
               <GuidanceItem icon="ri-checkbox-circle-line" color="emerald" text="Live sessions, assignments, coaching meetings and reflections all count as OTJH" />
-              <GuidanceItem icon="ri-checkbox-circle-line" color="emerald" text={`You need at least ${p.otjhTarget} hours across your ${p.durationMonths}-month apprenticeship — roughly ${(p.otjhTarget / p.durationMonths).toFixed(1)}h/month`} />
+              <GuidanceItem icon="ri-checkbox-circle-line" color="emerald" text={`You need at least ${formatHoursMinutes(p.otjhTarget)} across your ${p.durationMonths}-month apprenticeship — roughly ${formatHoursMinutes(p.otjhTarget / p.durationMonths)}/month`} />
             </div>
           </div>
 

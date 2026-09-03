@@ -83,6 +83,7 @@ LIVE_SESSION_OCCURRENCES_TABLE = 'live_session_occurrences'
 LIVE_SESSION_ATTENDANCE_TABLE = 'live_session_attendance'
 LIVE_SESSION_ARTIFACTS_TABLE = 'live_session_artifacts'
 LIVE_SESSION_RECORDING_EVENTS_TABLE = 'live_session_recording_events'
+LIVE_SESSION_JOIN_LAUNCHES_TABLE = 'live_session_join_launches'
 SOFT_DELETE_COLUMNS = {'deleted_at', 'deleted_by', 'deleted_via_parent'}
 SUPPORTED_KSB_WEIGHT_CLASSES = {'hard', 'soft', 'possible'}
 
@@ -784,6 +785,16 @@ def provision_live_sessions_table():
             f'create index if not exists curriculum_live_sessions_graph_event_idx '
             f'on {authoring_table_name(LIVE_SESSIONS_TABLE)} (graph_event_id)'
         )
+        cursor.execute(
+            f'create unique index if not exists curriculum_one_active_teams_calendar_per_module '
+            f'on {authoring_table_name(LIVE_SESSIONS_TABLE)} (module_catalogue_id) '
+            f"where status = 'active' and module_catalogue_id is not null and module_catalogue_id <> ''"
+        )
+        cursor.execute(
+            f'create unique index if not exists curriculum_one_active_teams_calendar_per_draft '
+            f'on {authoring_table_name(LIVE_SESSIONS_TABLE)} (module_draft_id) '
+            f"where status = 'active' and module_draft_id <> ''"
+        )
     _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{LIVE_SESSIONS_TABLE}', None)
     _LIVE_SESSIONS_TABLE_READY = True
 
@@ -799,6 +810,7 @@ def ensure_live_session_tracking_tables():
             LIVE_SESSION_ATTENDANCE_TABLE,
             LIVE_SESSION_ARTIFACTS_TABLE,
             LIVE_SESSION_RECORDING_EVENTS_TABLE,
+            LIVE_SESSION_JOIN_LAUNCHES_TABLE,
         )
         _LIVE_SESSION_TRACKING_TABLES_READY = True
         return
@@ -816,6 +828,7 @@ def provision_live_session_tracking_tables():
     attendance = authoring_table_name(LIVE_SESSION_ATTENDANCE_TABLE)
     artifacts = authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)
     recording_events = authoring_table_name(LIVE_SESSION_RECORDING_EVENTS_TABLE)
+    join_launches = authoring_table_name(LIVE_SESSION_JOIN_LAUNCHES_TABLE)
     json_type = 'jsonb' if connection.vendor == 'postgresql' else 'text'
     with connection.cursor() as cursor:
         if connection.vendor == 'postgresql':
@@ -888,6 +901,19 @@ def provision_live_session_tracking_tables():
                 foreign key (artifact_id) references {artifacts} (id) on delete cascade on update cascade
             )
         ''')
+        cursor.execute(f'''
+            create table if not exists {join_launches} (
+                id varchar(128) primary key, live_session_id varchar(128) not null,
+                occurrence_id varchar(128) not null, launched_at timestamp not null default current_timestamp,
+                attendance_report_id varchar(512) not null default '', viewer_id varchar(255) not null default '',
+                viewer_email varchar(320) not null default '', viewer_name varchar(500) not null default '',
+                user_agent text not null default '', referrer text not null default '', metadata {json_type},
+                created_at timestamp not null default current_timestamp,
+                updated_at timestamp not null default current_timestamp,
+                foreign key (live_session_id) references {live_sessions} (id) on delete cascade,
+                foreign key (occurrence_id) references {occurrences} (id) on delete cascade
+            )
+        ''')
         cursor.execute(f'create index if not exists curriculum_live_occurrence_series_idx on {occurrences} (live_session_id)')
         cursor.execute(f'create index if not exists curriculum_live_occurrence_start_idx on {occurrences} (scheduled_start)')
         cursor.execute(f'create index if not exists curriculum_live_attendance_occurrence_idx on {attendance} (occurrence_id)')
@@ -896,7 +922,9 @@ def provision_live_session_tracking_tables():
         cursor.execute(f'create index if not exists curriculum_recording_events_preview_idx on {recording_events} (preview_session_id)')
         cursor.execute(f'create index if not exists curriculum_recording_events_viewer_idx on {recording_events} (viewer_email, viewer_id)')
         cursor.execute(f'create index if not exists curriculum_recording_events_time_idx on {recording_events} (event_time)')
-    for table in (LIVE_SESSIONS_TABLE, LIVE_SESSION_OCCURRENCES_TABLE, LIVE_SESSION_ATTENDANCE_TABLE, LIVE_SESSION_ARTIFACTS_TABLE, LIVE_SESSION_RECORDING_EVENTS_TABLE):
+        cursor.execute(f'create index if not exists curriculum_join_launch_occurrence_time_idx on {join_launches} (occurrence_id, launched_at)')
+        cursor.execute(f'create index if not exists curriculum_join_launch_report_idx on {join_launches} (attendance_report_id)')
+    for table in (LIVE_SESSIONS_TABLE, LIVE_SESSION_OCCURRENCES_TABLE, LIVE_SESSION_ATTENDANCE_TABLE, LIVE_SESSION_ARTIFACTS_TABLE, LIVE_SESSION_RECORDING_EVENTS_TABLE, LIVE_SESSION_JOIN_LAUNCHES_TABLE):
         _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{table}', None)
     _LIVE_SESSION_TRACKING_TABLES_READY = True
 
@@ -1327,8 +1355,8 @@ def teams_event_payload(payload, graph_settings):
     return event, invited_people, presenters, utc_start, duration, repeat, occurrences
 
 
-def teams_single_occurrence_payload(title, target, attendees):
-    return {
+def teams_single_occurrence_payload(title, target, attendees, transaction_id=''):
+    payload = {
         'subject': title,
         'body': {'contentType': 'HTML', 'content': teams_event_body_html(title)},
         'start': {
@@ -1349,6 +1377,10 @@ def teams_single_occurrence_payload(title, target, attendees):
         'allowNewTimeProposals': True,
         'hideAttendees': False,
     }
+    transaction_id = clean_str(transaction_id)[:255]
+    if transaction_id:
+        payload['transactionId'] = transaction_id
+    return payload
 
 
 def teams_calendar_minute_key(value):
@@ -1479,10 +1511,9 @@ def apply_teams_occurrence_shifts(
     shifted dates on both calls, and skipping the reconciliation leaves Teams showing
     sessions on the very holidays the wizard moved them off.
 
-    Returns `(warnings, recreated)`. An empty warning list means the calendar
-    matches the plan; `recreated` describes every session Graph would only accept
-    as an event of its own, so the caller can record the event, Teams link and
-    online meeting that session now really has.
+    Returns `(warnings, recreated)`. The second value is retained for backward
+    compatibility and is always empty for recurring module calendars: a module
+    must keep one online meeting and one join URL for every occurrence.
     """
     from coach_api.views import microsoft_graph_request
 
@@ -1510,7 +1541,6 @@ def apply_teams_occurrence_shifts(
         instance_response = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}/instances?{instance_query}')
         instances = instance_response.get('value') if isinstance(instance_response, dict) else []
         instances = sorted(instances, key=lambda item: clean_str((item.get('start') or {}).get('dateTime')))
-        recreated_event_ids = set()
         # Claim instances that already sit on a wanted date before assigning the
         # rest. Pairing purely by position would move an instance that is already
         # correct onto another wanted date and duplicate it, because a shifted
@@ -1571,34 +1601,16 @@ def apply_teams_occurrence_shifts(
                     'end': {'dateTime': target['end'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
                 })
             except RuntimeError as exc:
-                recreated = microsoft_graph_request(
-                    'POST',
-                    f'users/{owner_key}/events',
-                    payload=teams_single_occurrence_payload(title, target, invited_people),
-                )
-                if isinstance(recreated, dict):
-                    recreated_id = clean_str(recreated.get('id'))
-                    if recreated_id:
-                        recreated_event_ids.add(recreated_id)
-                    # The new event brought a new onlineMeeting with it, at the
-                    # tenant defaults. Without this the moved session is the one
-                    # that opens with nothing recording and no transcript after it.
-                    standalone = teams_standalone_occurrence_meeting(
-                        owner_key, recreated, target, invited_people, meeting_options,
-                    )
-                    warnings.extend(standalone.pop('warnings'))
-                    recreated_details.append(standalone)
-                microsoft_graph_request('DELETE', f'users/{owner_key}/events/{instance_key}')
                 warnings.append({
-                    'code': 'teams_shifted_occurrence_recreated',
-                    'message': 'Microsoft Teams could not move a recurring occurrence across the series boundary, so it was recreated on the wizard date and the old occurrence was removed.',
+                    'code': 'teams_shifted_occurrence_not_moved',
+                    'message': 'Microsoft Teams could not move this occurrence, so it was left in the recurring series to preserve the module\'s fixed join URL.',
                     'detail': str(exc),
                 })
         instance_response = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}/instances?{instance_query}')
         instances = instance_response.get('value') if isinstance(instance_response, dict) else []
         for instance in instances:
             instance_id = clean_str(instance.get('id'))
-            if not instance_id or instance_id in recreated_event_ids:
+            if not instance_id:
                 continue
             current_key = teams_calendar_minute_key((instance.get('start') or {}).get('dateTime'))
             if current_key and current_key not in target_by_key:
@@ -1624,8 +1636,9 @@ def reschedule_single_live_session_occurrence(series, occurrence, new_start_utc,
     be recreated on its own event (a holiday shift) is moved directly. Mirrors
     ``apply_teams_occurrence_shifts`` for the one-instance case, including its
     fall back to recreating the occurrence when Graph refuses to move it across
-    the recurrence boundary. Returns ``(join_url, online_meeting_id, event_id,
-    warnings)``.
+    the recurrence boundary. The module always keeps its shared join URL; if
+    Graph refuses the move, the occurrence is left unchanged and a warning is
+    returned. Returns ``(join_url, online_meeting_id, event_id, warnings)``.
     """
     from coach_api.views import microsoft_graph_request
 
@@ -1695,31 +1708,9 @@ def reschedule_single_live_session_occurrence(series, occurrence, new_start_utc,
     try:
         microsoft_graph_request('PATCH', f'users/{owner_key}/events/{instance_key}', payload=patch_body)
     except RuntimeError as exc:
-        # Graph refuses a move outside the recurrence range, exactly as the bulk
-        # shift does: recreate the session on its own event and drop the instance.
-        target = {'session_number': parse_int(occurrence.get('session_number'), 0), 'start': new_start_utc, 'end': new_end_utc}
-        invited_people = teams_series_email_list(series.get('presenters'), series.get('attendees'))
-        meeting_options = {
-            'organizer': organizer,
-            'recording': clean_str(series.get('recording')).lower() or 'none',
-            'lobby_bypass': clean_str(series.get('lobby_bypass')).lower() or 'invited',
-            'spoken_language': clean_str(series.get('spoken_language')) or 'en-GB',
-            'presenters': teams_series_email_list(series.get('presenters')),
-        }
-        recreated = microsoft_graph_request('POST', f'users/{owner_key}/events', payload=teams_single_occurrence_payload(title, target, invited_people))
-        if isinstance(recreated, dict):
-            standalone = teams_standalone_occurrence_meeting(owner_key, recreated, target, invited_people, meeting_options)
-            warnings.extend(standalone.get('warnings') or [])
-            result_event_id = clean_str(standalone.get('graph_event_id')) or result_event_id
-            join_url = clean_str(standalone.get('join_url')) or join_url
-            online_meeting_id = clean_str(standalone.get('online_meeting_id')) or online_meeting_id
-            try:
-                microsoft_graph_request('DELETE', f'users/{owner_key}/events/{instance_key}')
-            except RuntimeError:
-                pass
         warnings.append({
-            'code': 'teams_shifted_occurrence_recreated',
-            'message': 'Microsoft Teams could not move this session within the series, so it was recreated on the new date.',
+            'code': 'teams_occurrence_not_moved',
+            'message': 'Microsoft Teams could not move this occurrence, so it was left in the recurring series to preserve the module\'s fixed join URL.',
             'detail': str(exc),
         })
     return join_url, online_meeting_id, result_event_id, warnings
@@ -1938,27 +1929,20 @@ def live_session_meeting_groups(series, occurrences):
     organizer = clean_str(series.get('organizer_email'))
     series_meeting_id = clean_str(series.get('online_meeting_id'))
     series_join_url = clean_str(series.get('join_url'))
-    shared = []
-    own = []
+    grouped = {}
     for row in occurrences:
-        own_meeting_id = clean_str(row.get('online_meeting_id'))
-        if not own_meeting_id or own_meeting_id == series_meeting_id:
-            shared.append(row)
-        else:
-            own.append(row)
-    groups = []
-    if series_meeting_id and (shared or not own):
-        groups.append((teams_meeting_base_path(organizer, series_meeting_id, series_join_url), shared))
-    for row in own:
-        groups.append((
-            teams_meeting_base_path(
-                organizer,
-                clean_str(row.get('online_meeting_id')),
-                clean_str(row.get('join_url')) or series_join_url,
-            ),
-            [row],
-        ))
-    return groups
+        meeting_id = clean_str(row.get('online_meeting_id')) or series_meeting_id
+        if not meeting_id:
+            continue
+        bucket = grouped.setdefault(meeting_id, {
+            'join_url': clean_str(row.get('join_url')) or series_join_url,
+            'rows': [],
+        })
+        bucket['rows'].append(row)
+    return [
+        (teams_meeting_base_path(organizer, meeting_id, bucket['join_url']), bucket['rows'])
+        for meeting_id, bucket in grouped.items()
+    ]
 
 
 @csrf_exempt
@@ -1993,6 +1977,48 @@ def curriculum_teams_meeting(request):
     payload = json_body(request)
     if not isinstance(payload, dict):
         return json_error('A valid JSON body is required.')
+
+    # One module delivery owns one active Teams calendar. Creating from a
+    # second live-session component used to POST another real Outlook event
+    # first and only then mark the previous LMS row as superseded, leaving
+    # duplicate invitations on different organizer calendars. Refuse before
+    # touching Graph; callers should re-attach or update the active series.
+    ensure_live_sessions_table()
+    requested_catalogue_id = clean_str(payload.get('moduleCatalogueId'))
+    resolved_catalogue_id = (
+        resolve_authoring_catalogue_id(requested_catalogue_id) or requested_catalogue_id
+        if requested_catalogue_id
+        else ''
+    )
+    module_draft_id = clean_str(payload.get('moduleDraftId'))
+    existing_series = []
+    if resolved_catalogue_id and authoring_module_exists(resolved_catalogue_id):
+        existing_series = authoring_fetch_all(
+            LIVE_SESSIONS_TABLE,
+            "module_catalogue_id = %s and status = 'active'",
+            [resolved_catalogue_id],
+            'updated_at desc, created_at desc',
+        )
+    elif module_draft_id:
+        existing_series = authoring_fetch_all(
+            LIVE_SESSIONS_TABLE,
+            "module_draft_id = %s and status = 'active'",
+            [module_draft_id],
+            'updated_at desc, created_at desc',
+        )
+    if existing_series:
+        existing = existing_series[0]
+        return json_error(
+            'This module already has an active Teams calendar. Use Restore Teams sessions & links or update its dates instead of creating another meeting.',
+            status=409,
+            code='teams_calendar_already_exists',
+            existingMeeting={
+                'liveSessionId': clean_str(existing.get('id')),
+                'organizerEmail': clean_str(existing.get('organizer_email')),
+                'joinUrl': clean_str(existing.get('join_url')),
+            },
+        )
+
     organizer = teams_new_meeting_organizer(payload.get('organizerEmail'))
     if not organizer:
         return json_error(
@@ -2139,6 +2165,74 @@ def closest_live_occurrence(occurrences, timestamp):
     )
 
 
+def live_session_join_launches(occurrences):
+    occurrence_ids = [clean_str(row.get('id')) for row in occurrences if clean_str(row.get('id'))]
+    if not occurrence_ids:
+        return []
+    placeholders = ', '.join(['%s'] * len(occurrence_ids))
+    return authoring_fetch_all(
+        LIVE_SESSION_JOIN_LAUNCHES_TABLE,
+        f'occurrence_id in ({placeholders})',
+        occurrence_ids,
+        'launched_at asc',
+    )
+
+
+def launch_linked_live_occurrence(occurrences, timestamp, launches, report_id=''):
+    """Resolve a Graph run to the Week whose Join button opened it.
+
+    Graph reports identify the online meeting and run time, but not the calendar
+    occurrence. The LMS redirect records that missing context. Existing report
+    bindings win on re-sync; a launch within 24 hours wins for a new run; the
+    scheduled-date heuristic remains only for historical runs with no launch log.
+    """
+    if not occurrences or not timestamp:
+        return None, None
+    by_id = {clean_str(row.get('id')): row for row in occurrences}
+    report_id = clean_str(report_id)
+    if report_id:
+        exact = next(
+            (row for row in launches if clean_str(row.get('attendance_report_id')) == report_id),
+            None,
+        )
+        occurrence = by_id.get(clean_str((exact or {}).get('occurrence_id')))
+        if occurrence:
+            return occurrence, exact
+
+    moment = timestamp.replace(tzinfo=None)
+    candidates = []
+    for launch in launches:
+        bound_report_id = clean_str(launch.get('attendance_report_id'))
+        if report_id and bound_report_id and bound_report_id != report_id:
+            # A click that has already been matched to one Teams run must not
+            # be reused by a later report from the same shared meeting URL.
+            continue
+        occurrence = by_id.get(clean_str(launch.get('occurrence_id')))
+        launched_at = parse_graph_datetime(launch.get('launched_at'))
+        if not occurrence or not launched_at:
+            continue
+        delta = (moment - launched_at.replace(tzinfo=None)).total_seconds()
+        # A browser normally opens Teams just before the report starts. Allow a
+        # small clock/order skew and long teaching sessions, without letting an
+        # old test click steal a later week's real report.
+        if -900 <= delta <= 86400:
+            candidates.append((abs(delta), launch, occurrence))
+    if candidates:
+        _distance, launch, occurrence = min(candidates, key=lambda item: item[0])
+        return occurrence, launch
+    return closest_live_occurrence(occurrences, timestamp), None
+
+
+def graph_item_with_occurrence_link(item, occurrence, launch=None):
+    """Persist the calendar/LMS occurrence chosen for a Graph report or artifact."""
+    linked = dict(item) if isinstance(item, dict) else {}
+    linked['lmsOccurrenceId'] = clean_str(occurrence.get('id'))
+    linked['lmsSessionNumber'] = parse_int(occurrence.get('session_number'), 0)
+    linked['calendarEventId'] = clean_str(occurrence.get('graph_event_id'))
+    linked['joinLaunchId'] = clean_str((launch or {}).get('id'))
+    return linked
+
+
 def attendance_identity(record):
     identity = record.get('identity') if isinstance(record.get('identity'), dict) else {}
     for key in ('user', 'guest', 'phone', 'encrypted'):
@@ -2178,6 +2272,123 @@ def attendance_interval_seconds(intervals):
         if start and end and end >= start:
             total += int((end - start).total_seconds())
     return total
+
+
+def merge_attendance_intervals(*interval_groups):
+    """Keep every distinct join/leave visit returned across Graph reports."""
+    merged = []
+    seen = set()
+    for intervals in interval_groups:
+        for interval in intervals if isinstance(intervals, list) else []:
+            if not isinstance(interval, dict):
+                continue
+            key = (
+                clean_str(interval.get('joinDateTime')),
+                clean_str(interval.get('leaveDateTime')),
+            )
+            if key == ('', ''):
+                key = (json.dumps(interval, sort_keys=True, default=str), '')
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(interval)
+    merged.sort(key=lambda item: clean_str(item.get('joinDateTime')))
+    return merged
+
+
+def attendance_roster(series, actual_rows, include_absent=False):
+    """Merge the invitation roster with Graph attendance for UI/reporting."""
+    expected_roles = {}
+    organizer = clean_str(series.get('organizer_email')).lower()
+    if organizer:
+        expected_roles[organizer] = 'Organizer'
+    for email in teams_series_email_list(series.get('attendees')):
+        expected_roles.setdefault(email, 'Attendee')
+    for email in teams_series_email_list(series.get('presenters')):
+        expected_roles[email] = 'Presenter'
+
+    rows = []
+    actual_emails = set()
+    for row in actual_rows:
+        email = clean_str(row.get('email')).lower()
+        if email:
+            actual_emails.add(email)
+        intervals = row.get('intervals') if isinstance(row.get('intervals'), list) else []
+        row['attended'] = True
+        row['expected'] = bool(email and email in expected_roles)
+        row['join_count'] = len(intervals)
+        rows.append(row)
+
+    for email, role in expected_roles.items() if include_absent else []:
+        if email in actual_emails:
+            continue
+        rows.append({
+            'id': 'EXPECTED-' + hashlib.sha256(email.encode('utf-8')).hexdigest()[:24].upper(),
+            'occurrence_id': '',
+            'graph_record_id': '',
+            'email': email,
+            'display_name': attendance_display_name({'emailAddress': email}),
+            'role': role,
+            'total_attendance_seconds': 0,
+            'intervals': [],
+            'raw_data': {},
+            'attended': False,
+            'expected': True,
+            'join_count': 0,
+        })
+
+    rows.sort(key=lambda row: (
+        not bool(row.get('expected')),
+        not bool(row.get('attended')),
+        clean_str(row.get('display_name') or row.get('email')).lower(),
+    ))
+    return rows
+
+
+def attendance_report_rosters(series, actual_rows, include_absent=False):
+    """Return one complete expected-vs-attended roster per Graph meeting run.
+
+    A recurring Teams link can be opened on different days. Microsoft publishes
+    one attendance report per run and can reuse the same attendee record id in
+    those reports, so collapsing rows by attendee would incorrectly turn two
+    different days into two rejoins in one session.
+    """
+    groups = {}
+    for source_row in actual_rows:
+        row = dict(source_row)
+        raw = row.get('raw_data') if isinstance(row.get('raw_data'), dict) else {}
+        source_report_ids = raw.get('sourceAttendanceReportIds')
+        report_id = clean_str(raw.get('attendanceReportId'))
+        if not report_id and isinstance(source_report_ids, list) and len(source_report_ids) == 1:
+            report_id = clean_str(source_report_ids[0])
+        report_start = clean_str(raw.get('attendanceReportStart'))
+        report_end = clean_str(raw.get('attendanceReportEnd'))
+        group_key = report_id or report_start or 'legacy'
+        group = groups.setdefault(group_key, {
+            'report_id': report_id,
+            'report_start': report_start,
+            'report_end': report_end,
+            'rows': [],
+        })
+        group['rows'].append(row)
+
+    flattened = []
+    ordered_groups = sorted(
+        groups.values(),
+        key=lambda group: group.get('report_start') or '',
+        reverse=True,
+    )
+    for group in ordered_groups:
+        report_key = group.get('report_id') or group.get('report_start') or 'legacy'
+        roster = attendance_roster(series, group['rows'], include_absent=include_absent)
+        for row in roster:
+            if row.get('attended') is False:
+                row['id'] = f"{row['id']}-{hashlib.sha256(report_key.encode('utf-8')).hexdigest()[:12].upper()}"
+            row['attendance_report_id'] = group.get('report_id') or ''
+            row['attendance_report_start'] = group.get('report_start') or ''
+            row['attendance_report_end'] = group.get('report_end') or ''
+            flattened.append(row)
+    return flattened
 
 
 @csrf_exempt
@@ -2401,19 +2612,17 @@ def curriculum_teams_meeting_occurrence_schedule(request, live_session_id, sessi
         series, occurrence, new_start, duration,
     )
 
-    # Only persist a time Teams actually adopted. The helper either moves the
-    # instance, recreates it on its own event (a real move, new join link), or
-    # reports one of the hard-failure codes below -- in which case Teams still
+    # Only persist a time Teams actually adopted. The helper moves the recurring
+    # instance or reports one of the hard-failure codes below -- in which case Teams still
     # runs the session at the old time, so writing the new one here would make
     # the LMS claim a slot that does not exist and read as a success.
     warning_codes = {clean_str(item.get('code')) for item in warnings}
-    recreated = 'teams_shifted_occurrence_recreated' in warning_codes
     hard_failures = warning_codes & {
         'teams_occurrence_not_moved',
         'teams_occurrence_missing_event',
         'teams_occurrence_not_found',
     }
-    if hard_failures and not recreated:
+    if hard_failures:
         message = next(
             (clean_str(item.get('message')) for item in warnings if clean_str(item.get('code')) in hard_failures),
             'Microsoft Teams could not move this session.',
@@ -2484,6 +2693,24 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
     return True
 
 
+def remove_artifact_from_wrong_occurrences(occurrences, target_occurrence, artifact_type, artifact):
+    """Remove an earlier date-heuristic copy when launch tracking remaps an artifact."""
+    graph_id = clean_str(artifact.get('id'))
+    target_id = clean_str(target_occurrence.get('id'))
+    occurrence_ids = {clean_str(row.get('id')) for row in occurrences}
+    if not graph_id or not target_id:
+        return
+    matches = authoring_fetch_all(
+        LIVE_SESSION_ARTIFACTS_TABLE,
+        'artifact_type = %s and graph_artifact_id = %s',
+        [artifact_type, graph_id],
+    )
+    for row in matches:
+        occurrence_id = clean_str(row.get('occurrence_id'))
+        if occurrence_id in occurrence_ids and occurrence_id != target_id:
+            authoring_delete(LIVE_SESSION_ARTIFACTS_TABLE, 'id = %s', [row['id']])
+
+
 @csrf_exempt
 def curriculum_teams_meeting_artifacts(request, live_session_id):
     """Read the tracked lecture plan or pull completed artifacts from Graph."""
@@ -2502,10 +2729,10 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
     )
     if request.method == 'GET':
         for occurrence in occurrences:
-            occurrence['attendance'] = authoring_fetch_all(
+            actual_attendance = authoring_fetch_all(
                 LIVE_SESSION_ATTENDANCE_TABLE, 'occurrence_id = %s', [occurrence['id']], 'display_name asc'
             )
-            for attendance in occurrence['attendance']:
+            for attendance in actual_attendance:
                 attendance['intervals'] = parse_json_value(attendance.get('intervals'), [])
                 attendance['raw_data'] = parse_json_value(attendance.get('raw_data'), {})
                 if not clean_str(attendance.get('display_name')):
@@ -2513,6 +2740,15 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                         **attendance['raw_data'],
                         'emailAddress': attendance.get('email') or attendance['raw_data'].get('emailAddress'),
                     })
+            occurrence['attendance'] = attendance_report_rosters(
+                series,
+                actual_attendance,
+                include_absent=bool(
+                    clean_str(occurrence.get('status')).lower() == 'completed'
+                    or occurrence.get('artifacts_synced_at')
+                    or occurrence.get('actual_start')
+                ),
+            )
             occurrence['artifacts'] = authoring_fetch_all(
                 LIVE_SESSION_ARTIFACTS_TABLE, 'occurrence_id = %s', [occurrence['id']], 'artifact_type asc'
             )
@@ -2589,17 +2825,31 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
     # apply_teams_occurrence_shifts). Asking the series for that session's
     # attendance, transcript or recording returns nothing at all.
     for base, group in live_session_meeting_groups(series, occurrences):
+        launches = live_session_join_launches(group)
         try:
             response = microsoft_graph_request('GET', f'{base}/attendanceReports')
+            synced_ids_by_occurrence = defaultdict(set)
+            returned_report_ids = set()
+            assigned_reports_by_occurrence = defaultdict(set)
             for report in response.get('value') or []:
                 report_id = clean_str(report.get('id'))
                 report_start = parse_graph_datetime(report.get('meetingStartDateTime'))
-                occurrence = closest_live_occurrence(group, report_start)
+                occurrence, launch = launch_linked_live_occurrence(group, report_start, launches, report_id)
                 if not occurrence or not report_id:
                     continue
+                assigned_reports_by_occurrence[occurrence['id']].add(report_id)
+                if launch and clean_str(launch.get('attendance_report_id')) != report_id:
+                    update_authoring_rows(
+                        LIVE_SESSION_JOIN_LAUNCHES_TABLE,
+                        'id = %s',
+                        [launch['id']],
+                        {'attendance_report_id': report_id},
+                    )
+                    launch['attendance_report_id'] = report_id
                 report_key = urllib_parse.quote(report_id, safe='')
                 detail = microsoft_graph_request('GET', f'{base}/attendanceReports/{report_key}?$expand=attendanceRecords')
                 records = detail.get('attendanceRecords') or []
+                returned_report_ids.add(report_id)
                 update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [occurrence['id']], {
                     'attendance_report_id': report_id,
                     'participant_count': int(detail.get('totalParticipantCount') or len(records)),
@@ -2614,19 +2864,76 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                     display_name = display_name or attendance_display_name(record)
                     graph_record_id = clean_str(record.get('id') or identity_id or record.get('emailAddress'))
                     stable_key = graph_record_id or uuid.uuid4().hex
+                    attendance_id = f'ATT-{uuid.uuid5(uuid.NAMESPACE_URL, occurrence["id"] + report_id + stable_key).hex.upper()}'
+                    synced_ids_by_occurrence[occurrence['id']].add(attendance_id)
+                    existing_rows = authoring_fetch_all(
+                        LIVE_SESSION_ATTENDANCE_TABLE, 'id = %s', [attendance_id]
+                    )
+                    existing = existing_rows[0] if existing_rows else {}
+                    existing_intervals = parse_json_value(existing.get('intervals'), [])
+                    merged_intervals = merge_attendance_intervals(
+                        existing_intervals,
+                        record.get('attendanceIntervals') or [],
+                    )
+                    existing_raw = parse_json_value(existing.get('raw_data'), {})
+                    report_ids = list(dict.fromkeys([
+                        *(
+                            existing_raw.get('sourceAttendanceReportIds')
+                            if isinstance(existing_raw.get('sourceAttendanceReportIds'), list)
+                            else []
+                        ),
+                        report_id,
+                    ]))
+                    merged_raw = {
+                        **record,
+                        'attendanceIntervals': merged_intervals,
+                        'sourceAttendanceReportIds': report_ids,
+                        'attendanceReportId': report_id,
+                        'attendanceReportStart': clean_str(detail.get('meetingStartDateTime') or report.get('meetingStartDateTime')),
+                        'attendanceReportEnd': clean_str(detail.get('meetingEndDateTime') or report.get('meetingEndDateTime')),
+                    }
+                    merged_raw = graph_item_with_occurrence_link(merged_raw, occurrence, launch)
                     authoring_upsert(LIVE_SESSION_ATTENDANCE_TABLE, ['id'], {
-                        'id': f'ATT-{uuid.uuid5(uuid.NAMESPACE_URL, occurrence["id"] + stable_key).hex.upper()}',
+                        'id': attendance_id,
                         'occurrence_id': occurrence['id'],
                         'graph_record_id': graph_record_id,
                         'email': clean_str(record.get('emailAddress')).lower(),
                         'display_name': display_name,
                         'role': clean_str(record.get('role')),
-                        'total_attendance_seconds': attendance_interval_seconds(record.get('attendanceIntervals')),
-                        'intervals': json_db_value(record.get('attendanceIntervals') or []),
-                        'raw_data': json_db_value(record),
+                        'total_attendance_seconds': attendance_interval_seconds(merged_intervals),
+                        'intervals': json_db_value(merged_intervals),
+                        'raw_data': json_db_value(merged_raw),
                     })
                     synced['attendanceRecords'] += 1
                 synced['attendanceReports'] += 1
+
+            # Replace legacy attendee-only rows after every report has been
+            # persisted. Those rows merged the same Graph attendee id across
+            # different meeting runs and would otherwise duplicate the new,
+            # correctly report-scoped rows in the response.
+            for occurrence in group:
+                keep_ids = synced_ids_by_occurrence.get(occurrence['id'], set())
+                existing_rows = authoring_fetch_all(
+                    LIVE_SESSION_ATTENDANCE_TABLE, 'occurrence_id = %s', [occurrence['id']]
+                )
+                for existing in existing_rows:
+                    existing_id = clean_str(existing.get('id'))
+                    if existing_id in keep_ids:
+                        continue
+                    existing_raw = parse_json_value(existing.get('raw_data'), {})
+                    source_ids = existing_raw.get('sourceAttendanceReportIds')
+                    source_ids = set(source_ids) if isinstance(source_ids, list) else set()
+                    if source_ids & returned_report_ids:
+                        authoring_delete(LIVE_SESSION_ATTENDANCE_TABLE, 'id = %s', [existing_id])
+                stored_report_id = clean_str(occurrence.get('attendance_report_id'))
+                if stored_report_id in returned_report_ids and stored_report_id not in assigned_reports_by_occurrence.get(occurrence['id'], set()):
+                    update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [occurrence['id']], {
+                        'attendance_report_id': '',
+                        'participant_count': 0,
+                        'actual_start': None,
+                        'actual_end': None,
+                        'status': 'scheduled',
+                    })
         except RuntimeError as exc:
             errors.append(f'Attendance: {exc}')
 
@@ -2638,8 +2945,11 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                         parse_graph_datetime(artifact.get('endDateTime'))
                         or parse_graph_datetime(artifact.get('createdDateTime'))
                     )
-                    occurrence = closest_live_occurrence(group, timestamp)
-                    if occurrence and upsert_live_session_artifact(occurrence, artifact_type, artifact):
+                    occurrence, launch = launch_linked_live_occurrence(group, timestamp, launches)
+                    linked_artifact = graph_item_with_occurrence_link(artifact, occurrence, launch) if occurrence else artifact
+                    if occurrence:
+                        remove_artifact_from_wrong_occurrences(group, occurrence, artifact_type, linked_artifact)
+                    if occurrence and upsert_live_session_artifact(occurrence, artifact_type, linked_artifact):
                         synced[f'{artifact_type}s'] += 1
                         update_authoring_rows(
                             LIVE_SESSION_OCCURRENCES_TABLE,
@@ -4692,6 +5002,49 @@ def permanent_programme_delete_response(identifier, programme=None, config=None)
         'learners': plan['learners'],
         'message': 'Programme and every curriculum row beneath it were deleted permanently.',
     })
+
+
+@require_GET
+def curriculum_teams_meeting_join(request, live_session_id, occurrence_id):
+    """Record the Week/occurrence context, then redirect to the shared Teams URL."""
+    ensure_live_session_tracking_tables()
+    rows = authoring_fetch_all(
+        LIVE_SESSION_OCCURRENCES_TABLE,
+        'id = %s and live_session_id = %s',
+        [occurrence_id, live_session_id],
+    )
+    if not rows:
+        return json_error('Live-session occurrence not found.', status=404)
+    occurrence = rows[0]
+    series_rows = authoring_fetch_all(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])
+    series = series_rows[0] if series_rows else {}
+    join_url = clean_str(occurrence.get('join_url')) or clean_str(series.get('join_url'))
+    parsed = urlparse(join_url)
+    hostname = (parsed.hostname or '').lower()
+    if parsed.scheme != 'https' or not (hostname == 'teams.microsoft.com' or hostname.endswith('.teams.microsoft.com')):
+        return json_error('This occurrence does not have a valid Microsoft Teams link.', status=409)
+
+    user = getattr(request, 'user', None)
+    is_authenticated = bool(user and getattr(user, 'is_authenticated', False))
+    launch_id = f'JOIN-{uuid.uuid4().hex.upper()}'
+    authoring_upsert(LIVE_SESSION_JOIN_LAUNCHES_TABLE, ['id'], {
+        'id': launch_id,
+        'live_session_id': live_session_id,
+        'occurrence_id': occurrence_id,
+        'launched_at': datetime.utcnow(),
+        'attendance_report_id': '',
+        'viewer_id': clean_str(getattr(user, 'pk', '')) if is_authenticated else '',
+        'viewer_email': clean_str(getattr(user, 'email', '')).lower() if is_authenticated else '',
+        'viewer_name': clean_str(getattr(user, 'get_full_name', lambda: '')()) if is_authenticated else '',
+        'user_agent': clean_str(request.META.get('HTTP_USER_AGENT'))[:2000],
+        'referrer': clean_str(request.META.get('HTTP_REFERER'))[:2000],
+        'metadata': json_db_value({'sessionNumber': parse_int(occurrence.get('session_number'), 0)}),
+        'created_at': datetime.utcnow(),
+    })
+    response = HttpResponse(status=302)
+    response['Location'] = join_url
+    response['Cache-Control'] = 'no-store, private'
+    return response
 
 
 def curriculum_visibility(request):
@@ -12875,12 +13228,10 @@ def live_session_row_to_component_settings(row):
 def live_occurrence_component_settings(occurrence, series_settings):
     """The settings that belong to one session rather than to the whole series.
 
-    A plain recurring series shares one join link, so the series values are right
-    for every component in it. A session Graph would only accept as an event of
-    its own has a link, an event and an online meeting of its own, and every
-    session has its own date -- so a component that took the series values whole
-    would send a learner to session one, on session one's date, whichever session
-    they opened.
+    A plain recurring series shares one join link, event series and online meeting,
+    while every LMS session keeps its own occurrence id and date. This lets the
+    sync attach each report/artifact to the correct session without changing the
+    learner's join URL.
     """
     if not occurrence:
         return {}

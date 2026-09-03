@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { formatHoursMinutes } from '@/lib/format';
 import { RealThisWeekView } from '@/components/feature/RealThisWeekView';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
@@ -515,8 +516,8 @@ export default function ThisWeekPage() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-5">
               <OTJHStatCard label="Planned" value={`${stats.totalPlanned}h`} icon="ri-calendar-line" color="primary" />
               <OTJHStatCard label="Claimed" value={`${stats.totalClaimed}h`} icon="ri-time-line" color="accent" />
-              <OTJHStatCard label="Validated" value={`${(stats.totalClaimed * 0.75).toFixed(1)}h`} icon="ri-check-double-line" color="emerald" />
-              <OTJHStatCard label="Remaining" value={`${(stats.totalPlanned - stats.totalClaimed).toFixed(1)}h`} icon="ri-hourglass-line" color={stats.totalPlanned - stats.totalClaimed > 2 ? 'amber' : 'emerald'} />
+              <OTJHStatCard label="Validated" value={formatHoursMinutes(stats.totalClaimed * 0.75)} icon="ri-check-double-line" color="emerald" />
+              <OTJHStatCard label="Remaining" value={formatHoursMinutes(stats.totalPlanned - stats.totalClaimed)} icon="ri-hourglass-line" color={stats.totalPlanned - stats.totalClaimed > 2 ? 'amber' : 'emerald'} />
             </div>
 
             <div className="mb-3">
@@ -592,9 +593,9 @@ export default function ThisWeekPage() {
                       <td className="px-4 py-3 text-right text-foreground-700">{stats.totalPlanned}h</td>
                       <td className="px-4 py-3 text-right text-emerald-600 font-semibold">{stats.totalClaimed.toFixed(2)}h</td>
                       <td className="px-4 py-3 text-xs text-foreground-500">
-                        Validated {components.filter(c => c.status === 'Completed').reduce((s, c) => s + c.actualOTJH, 0).toFixed(1)}h
+                        Validated {formatHoursMinutes(components.filter(c => c.status === 'Completed').reduce((s, c) => s + c.actualOTJH, 0))}
                         {components.filter(c => c.status === 'Evidence Submitted').reduce((s, c) => s + c.actualOTJH, 0) > 0 && (
-                          <span> · Pending {components.filter(c => c.status === 'Evidence Submitted').reduce((s, c) => s + c.actualOTJH, 0).toFixed(1)}h</span>
+                          <span> · Pending {formatHoursMinutes(components.filter(c => c.status === 'Evidence Submitted').reduce((s, c) => s + c.actualOTJH, 0))}</span>
                         )}
                       </td>
                     </tr>
@@ -829,11 +830,11 @@ function CompactComponentCard({
             if (navigator.share) {
               navigator.share({
                 title: c.title,
-                text: `${c.type} — ${c.title} (${c.plannedOTJH}h OTJH)`,
+                text: `${c.type} — ${c.title} (${formatHoursMinutes(c.plannedOTJH)} OTJH)`,
                 url: window.location.href,
               });
             } else {
-              navigator.clipboard.writeText(`${c.title} — ${c.type} (${c.plannedOTJH}h OTJH)`);
+              navigator.clipboard.writeText(`${c.title} — ${c.type} (${formatHoursMinutes(c.plannedOTJH)} OTJH)`);
             }
           }}
           title="Share"
@@ -1027,7 +1028,7 @@ function ComponentDetailPanel({ component: c, onCtaClick }: { component: typeof 
             <SummaryRow label="Coach Approval Date" value={c.coachApprovedDate || '—'} />
             <SummaryRow label="QA Approval Date" value={c.qaApprovedDate || '—'} />
             <SummaryRow label="Assessment Method" value={c.assessmentMethod === 'ai-assisted' ? 'AI Assisted Assessment' : c.assessmentMethod === 'tutor-assessed' ? 'Tutor Assessed' : 'Standard'} />
-            <SummaryRow label="OTJH Awarded" value={`${c.otjhAwarded} hours`} />
+            <SummaryRow label="OTJH Awarded" value={formatHoursMinutes(c.otjhAwarded)} />
             <SummaryRow label="Points Earned" value={`${c.pointsEarned} pts`} />
             {c.score !== null && c.score !== undefined && (
               <div className="flex items-center justify-between text-sm py-1 px-2 rounded-lg bg-emerald-100/50">

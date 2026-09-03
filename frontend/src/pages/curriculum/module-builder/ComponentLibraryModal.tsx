@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { fetchComponentLibrary, fetchComponentLibraryDetail, type LibraryComponent, type LibraryComponentOrigin } from '@/lib/curriculumApi';
 import { componentTypes } from './componentAuthoringModel';
+import { formatHoursMinutes } from '@/lib/format';
 
 /**
  * Pick components from anywhere in the curriculum and copy them into a week.
@@ -212,7 +213,7 @@ export function ComponentLibraryModal({ weekLabel, onClose, onAddMany }: {
                       <span className="mt-0.5 block text-[11px] text-foreground-500">
                         {row.type}
                         {row.programme ? ` · ${row.programme}` : ''}
-                        {typeof row.expectedOtjh === 'number' ? ` · ${row.expectedOtjh}h OTJH` : ''}
+                        {typeof row.expectedOtjh === 'number' ? ` · ${formatHoursMinutes(row.expectedOtjh)} OTJH` : ''}
                         {row.ksbRefs?.length ? ` · ${row.ksbRefs.length} KSBs` : ''}
                       </span>
                       {provenance && (

@@ -29,6 +29,7 @@
 // ============================================================================
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { formatHoursMinutes } from '@/lib/format';
 import {
   fetchCurriculumScopeLearnerKsbImpact,
   type CurriculumLearnerActivity,
@@ -62,8 +63,7 @@ const SCOPE_NOUN: Record<string, string> = {
 // ---------------------------------------------------------------- formatting
 
 function hours(value: number | null | undefined) {
-  const number = Number(value || 0);
-  return `${Number.isInteger(number) ? number : number.toFixed(1)}h`;
+  return formatHoursMinutes(Number(value || 0));
 }
 
 function weight(value: number | null | undefined) {
