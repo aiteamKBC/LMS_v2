@@ -945,7 +945,14 @@ export default function ModuleBuilder() {
       const deepLinkTarget = moduleBuilderDeepLinkTarget(next, new URLSearchParams(window.location.search));
       savedModuleSnapshotRef.current = moduleSnapshot(next);
       setWorkingModule(next);
-      setSelection(deepLinkTarget.selection || (next.weekStructure[0] ? { kind: 'week', weekId: next.weekStructure[0].id } : null));
+      const firstWeek = next.weekStructure[0];
+      const firstComponent = firstWeek?.components[0];
+      const defaultSelection: Selection | null = firstComponent
+        ? { kind: 'component', weekId: firstWeek.id, componentId: firstComponent.id }
+        : firstWeek
+          ? { kind: 'week', weekId: firstWeek.id }
+          : null;
+      setSelection(deepLinkTarget.selection || defaultSelection);
       setSettingsOpen(openSettings || deepLinkTarget.openSettings);
       await finishLoadingProgress(setOpeningModuleComplete);
     } catch (err) {
