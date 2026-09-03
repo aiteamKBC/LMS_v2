@@ -62,6 +62,7 @@ from .models import (
 )
 from .permissions import require_role
 from .security import client_ip, user_agent
+from .services import sync_account
 
 #: Page size ceiling for the list endpoints. A console table is read by a human;
 #: anything past this is an export job, not a page view.
@@ -523,6 +524,14 @@ def account_action(request, pk):
                 400,
                 code="already_onboarded",
             )
+        # Re-read the address from the person's own record first. The account
+        # holds a copy, and a copy taken before somebody's email was corrected
+        # is exactly the address a re-send must not use. Best-effort: a record
+        # that cannot be resolved leaves the account as it stands.
+        refreshed = sync_account(account.subject_type, account.subject_id)
+        if refreshed is not None:
+            account = refreshed
+
         try:
             from .invitations import send_invitation
 
@@ -1181,4 +1190,397 @@ def system(request):
         "checks": checks,
         "configuredCount": sum(1 for c in checks if c["configured"]),
         "totalCount": len(checks),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Platform report drill-down
+#
+# Every figure on the platform report is a count. This registry is what turns
+# one back into the records behind it: for each metric it names the schema and
+# table the count reads, the predicate that narrows it, and the columns worth
+# showing. The report's own counts are computed in `overview` above as scalar
+# subqueries; the predicates here are kept identical to those, because a
+# drill-down that disagrees with the number it was opened from is worse than no
+# drill-down at all.
+# ---------------------------------------------------------------------------
+
+#: Rows returned for a single metric. Deliberately small: this answers "where
+#: does this number come from", not "export the table".
+DRILL_LIMIT = 100
+
+#: metric key -> how to explain and reproduce it.
+#:   table      the schema-qualified relation the count reads
+#:   predicate  the WHERE clause, exactly as `overview` counts it ('' = all rows)
+#:   columns    what to select for the sample, in display order
+#:   order      ORDER BY for the sample (most useful first, not table order)
+#:   label      human name, matching the report row
+#:   note       anything a reader needs to know to trust the number
+DRILL_METRICS = {
+    # -- login."Login_accounts" ------------------------------------------
+    "accounts.total": {
+        "label": "Total accounts",
+        "table": 'login."Login_accounts"',
+        "predicate": "",
+        "columns": '"id", "Email", "Display_name", "Role", "Is_active", "Last_login_at", "Created_at"',
+        "order": '"Created_at" DESC NULLS LAST',
+    },
+    "accounts.active": {
+        "label": "Able to sign in",
+        "table": 'login."Login_accounts"',
+        "predicate": '"Is_active"',
+        "columns": '"id", "Email", "Display_name", "Role", "Is_active", "Last_login_at"',
+        "order": '"Last_login_at" DESC NULLS LAST',
+        "note": (
+            "The report's wording pairs this with a password check, but the count "
+            "itself is Is_active alone -- which is what is reproduced here."
+        ),
+    },
+    "accounts.neverSignedIn": {
+        "label": "Awaiting first sign-in",
+        "table": 'login."Login_accounts"',
+        "predicate": "\"Password_hash\" = ''",
+        "columns": '"id", "Email", "Display_name", "Role", "Is_active", "Created_at"',
+        "order": '"Created_at" DESC NULLS LAST',
+        "note": (
+            "The report derives this as total minus accounts holding a password, "
+            "so it is the same set as the empty-password rows listed here."
+        ),
+    },
+    "accounts.suspended": {
+        "label": "Suspended",
+        "table": 'login."Login_accounts"',
+        "predicate": 'NOT "Is_active"',
+        "columns": '"id", "Email", "Display_name", "Role", "Is_active", "Last_login_at"',
+        "order": '"Email"',
+    },
+    "accounts.locked": {
+        "label": "Locked out",
+        "table": 'login."Login_accounts"',
+        "predicate": '"Locked_until" IS NOT NULL AND "Locked_until" > now()',
+        "columns": '"id", "Email", "Role", "Locked_until", "Failed_attempts"',
+        "order": '"Locked_until" DESC',
+    },
+    "accounts.activeLast30d": {
+        "label": "Signed in within 30 days",
+        "table": 'login."Login_accounts"',
+        "predicate": "\"Last_login_at\" IS NOT NULL AND \"Last_login_at\" > now() - interval '30 days'",
+        "columns": '"id", "Email", "Display_name", "Role", "Last_login_at"',
+        "order": '"Last_login_at" DESC',
+    },
+    "accounts.byRole.admin": {
+        "label": "Admins",
+        "table": 'login."Login_accounts"',
+        "predicate": "\"Role\" = 'admin'",
+        "columns": '"id", "Email", "Display_name", "Role", "Is_active", "Last_login_at"',
+        "order": '"Email"',
+    },
+    "accounts.byRole.staff": {
+        "label": "Staff",
+        "table": 'login."Login_accounts"',
+        "predicate": "\"Role\" = 'staff'",
+        "columns": '"id", "Email", "Display_name", "Role", "Is_active", "Last_login_at"',
+        "order": '"Email"',
+    },
+    "accounts.byRole.employer": {
+        "label": "Employer accounts",
+        "table": 'login."Login_accounts"',
+        "predicate": "\"Role\" = 'employer'",
+        "columns": '"id", "Email", "Display_name", "Role", "Is_active", "Last_login_at"',
+        "order": '"Email"',
+    },
+    "accounts.byRole.learner": {
+        "label": "Learner accounts",
+        "table": 'login."Login_accounts"',
+        "predicate": "\"Role\" = 'learner'",
+        "columns": '"id", "Email", "Display_name", "Role", "Is_active", "Last_login_at"',
+        "order": '"Email"',
+    },
+    "accounts.liveSessions": {
+        "label": "Live sessions",
+        "table": 'login."Login_sessions"',
+        "predicate": '"Revoked_at" IS NULL AND "Expires_at" > now()',
+        "columns": '"id", "Account_id", "Created_at", "Expires_at", "Ip_address"',
+        "order": '"Created_at" DESC',
+    },
+
+    # -- login."Invitations" ---------------------------------------------
+    "invitations.pending": {
+        "label": "Pending invitations",
+        "table": 'login."Invitations"',
+        "predicate": '"Used_at" IS NULL AND "Expires_at" > now()',
+        "columns": '"id", "Email", "Created_at", "Expires_at", "Sent_at"',
+        "order": '"Created_at" DESC',
+    },
+    "invitations.expired": {
+        "label": "Expired unused",
+        "table": 'login."Invitations"',
+        "predicate": '"Used_at" IS NULL AND "Expires_at" <= now()',
+        "columns": '"id", "Email", "Created_at", "Expires_at", "Sent_at"',
+        "order": '"Expires_at" DESC',
+    },
+    "invitations.failed": {
+        "label": "Failed to send",
+        "table": 'login."Invitations"',
+        "predicate": '"Send_error" IS NOT NULL AND "Acknowledged_at" IS NULL',
+        "columns": '"id", "Email", "Send_error", "Sent_at", "Created_at"',
+        "order": '"Created_at" DESC',
+        "note": (
+            "Acknowledged failures are excluded on purpose: the row keeps its "
+            "Send_error, but an administrator who has dealt with a bounce is not "
+            "told about it for ever."
+        ),
+    },
+
+    # -- login."Login_audit" ---------------------------------------------
+    "authActivity.signIns24h": {
+        "label": "Sign-ins (24h)",
+        "table": 'login."Login_audit"',
+        "predicate": "\"Event\" = 'login' AND \"Succeeded\" AND \"Created_at\" > now() - interval '24 hours'",
+        "columns": '"id", "Account_id", "Email", "Event", "Succeeded", "Reason", "Ip_address", "Created_at"',
+        "order": '"Created_at" DESC',
+    },
+    "authActivity.failedSignIns24h": {
+        "label": "Failed sign-ins (24h)",
+        "table": 'login."Login_audit"',
+        "predicate": "\"Event\" = 'login' AND NOT \"Succeeded\" AND \"Created_at\" > now() - interval '24 hours'",
+        "columns": '"id", "Account_id", "Email", "Event", "Succeeded", "Reason", "Ip_address", "Created_at"',
+        "order": '"Created_at" DESC',
+    },
+    "authActivity.distinctSignIns7d": {
+        "label": "Distinct users (7d)",
+        "table": 'login."Login_audit"',
+        "predicate": "\"Event\" = 'login' AND \"Succeeded\" AND \"Created_at\" > now() - interval '7 days'",
+        "columns": '"Account_id", max("Email") AS "Email", max("Created_at") AS "Last_sign_in", count(*) AS "Sign_ins"',
+        "group": '"Account_id"',
+        "order": '"Last_sign_in" DESC',
+        "note": "The report counts DISTINCT Account_id, so this lists one row per user rather than per sign-in.",
+    },
+    "authActivity.events24h": {
+        "label": "All audit events (24h)",
+        "table": 'login."Login_audit"',
+        "predicate": "\"Created_at\" > now() - interval '24 hours'",
+        "columns": '"id", "Account_id", "Email", "Event", "Succeeded", "Reason", "Ip_address", "Created_at"',
+        "order": '"Created_at" DESC',
+    },
+
+    # -- enrolment: the people themselves --------------------------------
+    "people.learners": {
+        "label": "Learners",
+        "table": 'enrolment."Created_users"',
+        "predicate": "",
+        "columns": '"id", "Username", "Preferred_name", "Email", "Learner_type", " Status", "Programme"',
+        "order": '"id" DESC',
+    },
+    "people.apprenticeship": {
+        "label": "Learners -- apprenticeship",
+        "table": 'enrolment."Created_users"',
+        "predicate": "\"Learner_type\" = 'apprenticeship'",
+        "columns": '"id", "Username", "Preferred_name", "Email", "Learner_type", " Status", "Programme"',
+        "order": '"id" DESC',
+    },
+    "people.commercial": {
+        "label": "Learners -- commercial",
+        "table": 'enrolment."Created_users"',
+        "predicate": "\"Learner_type\" = 'commercial'",
+        "columns": '"id", "Username", "Preferred_name", "Email", "Learner_type", " Status", "Programme"',
+        "order": '"id" DESC',
+    },
+    "people.learnersActive": {
+        "label": "Marked active",
+        "table": 'enrolment."Created_users"',
+        "predicate": "lower(coalesce(\" Status\", '')) = 'active'",
+        "columns": '"id", "Username", "Preferred_name", "Email", "Learner_type", " Status", "Programme"',
+        "order": '"id" DESC',
+        "note": "The Status column genuinely has a leading space in its name; it is quoted exactly, not trimmed.",
+    },
+    "people.staff": {
+        "label": "Staff",
+        "table": 'enrolment."Staff_users"',
+        "predicate": "",
+        "columns": '"id", "Username", "Email", "Type", " Status", "Position"',
+        "order": '"id" DESC',
+    },
+    "people.employers": {
+        "label": "Employers",
+        "table": 'enrolment."Employers"',
+        "predicate": "",
+        "columns": '"id", "First_name", "Surname", "Email", "Town_City", "Created_at"',
+        "order": '"id" DESC',
+    },
+    "people.organisations": {
+        "label": "Organisations",
+        "table": 'enrolment."Organisations"',
+        "predicate": "",
+        "columns": '"id", "Name", "Status", "Category", "City_Town", "Country"',
+        "order": '"id" DESC',
+    },
+
+    # -- curriculum ------------------------------------------------------
+    "curriculum.programmes": {
+        "label": "Programmes",
+        "table": "curriculum.programmes",
+        "predicate": "coalesce(is_archived, false) = false",
+        "columns": "DISTINCT name",
+        "order": "name",
+        "note": "The report counts DISTINCT name, so programmes sharing a name appear once.",
+    },
+    "curriculum.cohorts": {
+        "label": "Cohorts",
+        "table": "curriculum.cohorts",
+        "predicate": "cohort_name IS NOT NULL AND cohort_name <> ''",
+        "columns": "DISTINCT cohort_name",
+        "order": "cohort_name",
+        "note": "The report counts DISTINCT cohort_name, so cohorts sharing a name appear once.",
+    },
+    "curriculum.modules": {
+        "label": "Modules authored",
+        "table": "curriculum.modules",
+        "predicate": "",
+        "columns": "module_catalogue_id, title",
+        "order": "title",
+    },
+
+    # -- documents -------------------------------------------------------
+    "documents.total": {
+        "label": "Stored documents",
+        "table": 'enrolment."Enrolment_Documents"',
+        "predicate": "",
+        "columns": '"id", "Doc_type", "Signed", "Generated_at"',
+        "order": '"Generated_at" DESC NULLS LAST',
+    },
+    "documents.signed": {
+        "label": "Fully signed",
+        "table": 'enrolment."Enrolment_Documents"',
+        "predicate": '"Signed"',
+        "columns": '"id", "Doc_type", "Signed", "Generated_at"',
+        "order": '"Generated_at" DESC NULLS LAST',
+    },
+    "documents.docTypes": {
+        "label": "Distinct types",
+        "table": 'enrolment."Enrolment_Documents"',
+        "predicate": "",
+        "columns": 'DISTINCT "Doc_type"',
+        "order": '"Doc_type"',
+        "note": "The report counts DISTINCT Doc_type, so this lists the types themselves, not the documents.",
+    },
+    "documents.last30d": {
+        "label": "Generated in last 30 days",
+        "table": 'enrolment."Enrolment_Documents"',
+        "predicate": "\"Generated_at\" > now() - interval '30 days'",
+        "columns": '"id", "Doc_type", "Signed", "Generated_at"',
+        "order": '"Generated_at" DESC',
+    },
+
+    # -- delivery --------------------------------------------------------
+    "delivery.activeLearners": {
+        "label": "Active learners",
+        "table": '"Learner"."Active_users"',
+        "predicate": "",
+        "columns": "*",
+        "order": None,
+    },
+    "delivery.inactiveLearners": {
+        "label": "Archived learners",
+        "table": '"Learner"."Unactive_users"',
+        "predicate": "",
+        "columns": "*",
+        "order": None,
+    },
+}
+
+
+def _drill_rows_sql(spec, limit=None):
+    """The SELECT that lists the records behind a metric.
+
+    Also what is shown to the reader: the point of this screen is that the query
+    behind a number is not a secret, so the same text is executed and displayed.
+    """
+    where = "\nWHERE %s" % spec["predicate"] if spec.get("predicate") else ""
+    group = "\nGROUP BY %s" % spec["group"] if spec.get("group") else ""
+    order = "\nORDER BY %s" % spec["order"] if spec.get("order") else ""
+    tail = "\nLIMIT %s" % limit if limit else ""
+    return "SELECT %s\nFROM %s%s%s%s%s" % (
+        spec["columns"], spec["table"], where, group, order, tail,
+    )
+
+
+def _drill_count_sql(spec):
+    """The COUNT the report's own figure comes from."""
+    where = " WHERE %s" % spec["predicate"] if spec.get("predicate") else ""
+    if spec.get("group"):
+        return "SELECT count(DISTINCT %s) FROM %s%s" % (spec["group"], spec["table"], where)
+    columns = str(spec["columns"])
+    if columns.upper().startswith("DISTINCT "):
+        expression = columns[len("DISTINCT "):].split(",")[0].strip()
+        return "SELECT count(DISTINCT %s) FROM %s%s" % (expression, spec["table"], where)
+    return "SELECT count(*) FROM %s%s" % (spec["table"], where)
+
+
+def _drill_value(value):
+    """JSON-safe cell. Dates become ISO strings; anything exotic becomes text."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+@require_GET
+@require_role(ROLE_ADMIN)
+def report_drill(request):
+    """Where one platform-report figure comes from: its query, and its rows.
+
+    The report names a source table against every number. This answers the next
+    question -- which records actually make it up -- by re-running the same
+    predicate and returning a sample, alongside the SQL, so a figure can be
+    checked by hand rather than taken on trust.
+
+    Read-only by construction, and no request input reaches SQL: the metric key
+    selects a fixed entry from DRILL_METRICS and the statement is assembled from
+    that entry alone.
+    """
+    key = (request.GET.get("metric") or "").strip()
+    spec = DRILL_METRICS.get(key)
+    if not spec:
+        return _error("Unknown metric.", 404, code="unknown_metric")
+
+    count_sql = _drill_count_sql(spec)
+    rows_sql = _drill_rows_sql(spec, DRILL_LIMIT)
+
+    try:
+        with transaction.atomic(using="enrolment"):
+            with connections["enrolment"].cursor() as cur:
+                cur.execute(count_sql)
+                row = cur.fetchone()
+                total = int(row[0]) if row and row[0] is not None else 0
+            rows = _rows(rows_sql)
+    except DatabaseError as exc:
+        # The source table is absent on this database -- the same state the
+        # report itself reports by dropping a section, so it is said plainly
+        # rather than shown as an empty result.
+        return JsonResponse({
+            "metric": key,
+            "label": spec["label"],
+            "table": spec["table"],
+            "available": False,
+            "error": str(exc),
+            "countSql": count_sql,
+            "rowsSql": rows_sql,
+        })
+
+    return JsonResponse({
+        "metric": key,
+        "label": spec["label"],
+        "table": spec["table"],
+        "predicate": spec.get("predicate") or None,
+        "note": spec.get("note"),
+        "available": True,
+        "total": total,
+        "shown": len(rows),
+        "limit": DRILL_LIMIT,
+        "countSql": count_sql,
+        "rowsSql": rows_sql,
+        "columns": list(rows[0].keys()) if rows else [],
+        "rows": [{k: _drill_value(v) for k, v in r.items()} for r in rows],
     })

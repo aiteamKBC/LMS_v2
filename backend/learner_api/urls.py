@@ -135,4 +135,5 @@ urlpatterns = [
     path("evidence/<str:kind>/<int:pk>/upload/", evidence.upload_evidence, name="evidence-upload"),
     path("evidence/<str:kind>/<int:pk>/", evidence.list_evidence, name="evidence-list"),
     path("evidence/<str:kind>/<int:pk>/<uuid:file_id>/download/", evidence.download_evidence, name="evidence-download"),
+    path("evidence/<str:kind>/<int:pk>/<uuid:file_id>/", evidence.delete_evidence, name="evidence-delete"),
 ]

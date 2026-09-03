@@ -41,6 +41,13 @@ from .active_users import (
 )
 from .identity import learner_profile_for_source
 from .learner_progression import ACTIVE_STATUS, advance_learner
+from login.services import sync_account
+
+#: Fields on a learner row that the login account keeps a copy of. A change to
+#: any of them has to be pushed to that copy — see login.identity.ensure_account.
+ACCOUNT_IDENTITY_FIELDS = ("email", "username", "preferred_name")
+#: The same for a staff row, where the role follows position and access.
+STAFF_IDENTITY_FIELDS = ("email", "username", "preferred_name", "position", "access")
 from .constants import (
     ACCESS_SUPER_ADMIN,
     STATUS_CHOICES,
@@ -802,6 +809,14 @@ def enrolment_user_detail(request, pk):
                 setattr(user, attr, value)
             if fields:
                 user.save(update_fields=list(fields.keys()))
+                # The address and name on this row ARE the sign-in identity, and
+                # the login account keeps its own copy — which is what an
+                # invitation is sent to. Correcting an email here without this
+                # left the invitation going to the old address for ever, since
+                # the account only refreshes itself when its owner signs in and
+                # an invited learner has not yet.
+                if any(field in fields for field in ACCOUNT_IDENTITY_FIELDS):
+                    sync_account("learner", user.pk, subject=user)
                 if any(field in fields for field in PLACEMENT_SOURCE_FIELDS):
                     # A learner placed after they were created has none of the
                     # cohort's dates, and progression cannot start them without
@@ -1004,6 +1019,11 @@ def staff_user_detail(request, pk):
                 user.save(update_fields=[*fields.keys(), "updated_at"])
             except DatabaseError as exc:
                 return _error(f"Database error: {exc}", 502)
+            # Same as the learner path, plus role: a staff account's role is
+            # derived from position and access, so an edit to either has to
+            # reach the account that enforces it.
+            if any(field in fields for field in STAFF_IDENTITY_FIELDS):
+                sync_account("staff", user.pk, subject=user)
         return JsonResponse(to_staff_row(user))
 
     return _error("Method not allowed.", 405)

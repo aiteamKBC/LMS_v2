@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { AppIcon } from '@/components/feature/AppIcon';
 import {
-  fetchEvidence, uploadEvidence, getEvidenceDownloadUrl,
+  fetchEvidence, uploadEvidence, getEvidenceDownloadUrl, deleteEvidence,
   type EvidenceRecord, type EvidenceTrainingPlanDetails,
 } from '@/api/evidence';
 
@@ -14,7 +14,21 @@ import {
    SAS URL.
    ═══════════════════════════════════════════════════════ */
 
-const ACCEPT = 'application/pdf,image/png,image/jpeg,video/mp4';
+// Extensions as well as types: a browser with no mapping for .docx offers the
+// file only if the extension is listed, and the server accepts a generic type
+// on the strength of the extension for the same reason. Keep in step with
+// learner_api/evidence.py ALLOWED_TYPES / ALLOWED_EXTENSIONS.
+const ACCEPT = [
+  'application/pdf', '.pdf',
+  'image/png', '.png',
+  'image/jpeg', '.jpg', '.jpeg',
+  'video/mp4', '.mp4',
+  'application/msword', '.doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx',
+  'application/vnd.ms-powerpoint', '.ppt',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation', '.pptx',
+  'application/vnd.openxmlformats-officedocument.presentationml.slideshow', '.ppsx',
+].join(',');
 const MAX_BYTES = 50 * 1024 * 1024;
 
 const STATUS_META: Record<string, { label: string; bg: string; color: string; icon: string }> = {
@@ -49,6 +63,8 @@ export function AssignmentEvidence({
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   // Callers pass an inline arrow, so keep it in a ref: depending on the prop
   // directly would give `load` a new identity every render and re-fire the
@@ -104,6 +120,24 @@ export function AssignmentEvidence({
     }
   };
 
+  // Removing a file is destructive and cannot be undone, so the row asks first
+  // rather than deleting on a single stray click.
+  const handleDelete = async (fileId: string) => {
+    setError(null);
+    setDeletingId(fileId);
+    try {
+      await deleteEvidence(kind, learnerId, fileId);
+      setConfirmingId(null);
+      // Re-read rather than splicing locally: `load` is what tells the page the
+      // approved count moved, which is what re-locks the Finish button.
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not remove the file.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const handleDownload = async (fileId: string) => {
     try {
       const url = await getEvidenceDownloadUrl(kind, learnerId, fileId);
@@ -144,7 +178,7 @@ export function AssignmentEvidence({
           />
         </label>
       </div>
-      <p className="text-[11px] text-foreground-400 mb-3">PDF, PNG, JPEG or MP4, up to 50 MB.</p>
+      <p className="text-[11px] text-foreground-400 mb-3">Word, PowerPoint, PDF, PNG, JPEG or MP4, up to 50 MB.</p>
 
       {error && <p className="text-xs font-medium text-red-600 mb-3">{error}</p>}
 
@@ -186,6 +220,35 @@ export function AssignmentEvidence({
                     title="Open in a new tab"
                   >
                     <AppIcon className="ri-external-link-line" />
+                  </button>
+                )}
+                {/* Remove, so a learner can correct a wrong file: deleting the
+                    one that is here leaves the uploader ready for the right
+                    one, which is the whole reupload path. */}
+                {confirmingId === f.id ? (
+                  <span className="shrink-0 inline-flex items-center gap-1.5">
+                    <button
+                      onClick={() => handleDelete(f.id)}
+                      disabled={deletingId === f.id}
+                      className="rounded-md bg-red-600 px-2 py-1 text-[11px] font-semibold text-white transition-colors enabled:cursor-pointer enabled:hover:bg-red-700 disabled:opacity-60"
+                    >
+                      {deletingId === f.id ? 'Removing…' : 'Remove'}
+                    </button>
+                    <button
+                      onClick={() => setConfirmingId(null)}
+                      disabled={deletingId === f.id}
+                      className="rounded-md border border-background-300 px-2 py-1 text-[11px] font-semibold text-foreground-600 transition-colors enabled:cursor-pointer enabled:hover:bg-background-100 disabled:opacity-60"
+                    >
+                      Cancel
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => { setError(null); setConfirmingId(f.id); }}
+                    className="shrink-0 text-foreground-400 hover:text-red-600 transition-colors cursor-pointer"
+                    title="Remove this file"
+                  >
+                    <AppIcon className="ri-delete-bin-line" />
                   </button>
                 )}
               </li>

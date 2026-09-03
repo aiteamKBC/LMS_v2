@@ -111,6 +111,40 @@ export function fetchPlatformOverview(): Promise<PlatformOverview> {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Report drill-down — the records behind one figure                           */
+/* -------------------------------------------------------------------------- */
+
+/** Where a single platform-report number comes from.
+ *
+ * `available: false` means the source table is not on this database — the same
+ * state the report reports by dropping the whole section, so the drill says it
+ * rather than showing an empty result that would read as "no records". */
+export interface ReportDrill {
+  metric: string;
+  label: string;
+  table: string;
+  available: boolean;
+  /** The WHERE clause narrowing the count; absent when it counts every row. */
+  predicate?: string | null;
+  /** Anything needed to read the figure honestly (derived counts, DISTINCT). */
+  note?: string | null;
+  error?: string;
+  /** The full count — `rows` is capped at `limit`, so this can exceed it. */
+  total?: number;
+  shown?: number;
+  limit?: number;
+  /** The exact statements run, shown so a figure can be checked by hand. */
+  countSql: string;
+  rowsSql: string;
+  columns?: string[];
+  rows?: Record<string, string | number | boolean | null>[];
+}
+
+export function fetchReportDrill(metric: string): Promise<ReportDrill> {
+  return request<ReportDrill>(`${BASE}/report-drill/?metric=${encodeURIComponent(metric)}`);
+}
+
+/* -------------------------------------------------------------------------- */
 /* Accounts                                                                    */
 /* -------------------------------------------------------------------------- */
 

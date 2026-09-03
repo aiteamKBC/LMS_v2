@@ -829,7 +829,9 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
 
         self.assertEqual(completed_hours_from_progress(progress), "6")
 
-    def test_completed_hours_prefers_curriculum_expected_otjh_for_known_components(self):
+    def test_completed_hours_falls_back_to_expected_otjh_without_tracked_time(self):
+        # Rows written before time tracking carry no verified seconds, so the
+        # authored hours are all there is to count.
         progress = [
             {"kind": "video", "componentId": "component-1", "reportedTime": "120"},
             {"kind": "component", "componentId": "component-2", "reportedTime": "5"},
@@ -840,6 +842,37 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
         ]
 
         self.assertEqual(completed_hours_from_progress(progress, components), "3.5")
+
+    def test_completed_hours_counts_tracked_time_not_planned_hours(self):
+        # The learner finished a 2h assignment in 30 minutes and a 2h reading in
+        # 33 seconds: the total is what they actually did, not what was planned.
+        progress = [
+            {
+                "kind": "component", "componentId": "component-1",
+                "expectedOtjh": 2, "reportedTime": "2h", "verifiedSeconds": 1800,
+            },
+            {
+                "kind": "component", "componentId": "component-2",
+                "expectedOtjh": 2, "reportedTime": "2h", "verifiedSeconds": 33,
+            },
+        ]
+        components = [
+            {"componentId": "component-1", "expectedOtjh": 2},
+            {"componentId": "component-2", "expectedOtjh": 2},
+        ]
+
+        # 1800s = 0.5h, 33s ≈ 0.01h — not the 4h the plan allocated.
+        self.assertEqual(completed_hours_from_progress(progress, components), "0.5")
+
+    def test_completed_hours_counts_a_zero_second_completion_as_zero(self):
+        # An activity clicked straight through contributes nothing, rather than
+        # falling through to its planned hours.
+        progress = [{
+            "kind": "component", "componentId": "component-1",
+            "expectedOtjh": 3, "reportedTime": "3h", "verifiedSeconds": 0,
+        }]
+
+        self.assertEqual(completed_hours_from_progress(progress), "0")
 
     def test_coerce_ksb_items_parses_profile_json_payload(self):
         items = _coerce_ksb_items(

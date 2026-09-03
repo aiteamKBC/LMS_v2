@@ -635,7 +635,18 @@ class LearnerProfile(models.Model):
     @property
     def training_plan_progress(self):
         records = []
-        for entry in self.progress_entries.all():
+        # Prefetched, not lazily walked: the body below touches ksb_links twice,
+        # quiz_answers once, and two relations under each answer, so plain
+        # `.all()` issues a query per entry per relation. A learner with 1,392
+        # entries — an MBA import, but any long-running learner gets there —
+        # spent over four minutes here on several thousand round trips, on the
+        # property every progress and OTJH screen reads.
+        entries = self.progress_entries.prefetch_related(
+            "ksb_links",
+            "quiz_answers__chosen_answers",
+            "quiz_answers__correct_answers",
+        )
+        for entry in entries:
             if entry.kind == "activity_event":
                 continue
             record = {
@@ -694,17 +705,12 @@ class LearnerProfile(models.Model):
                 record["questions"] = [
                     {
                         "questionId": answer.question_ref,
+                        # Built from the prefetched rows rather than .exists(),
+                        # which would issue its own query per answer and undo
+                        # the prefetch above.
                         "chosenAnswerId": (
-                            [
-                                choice.answer_ref
-                                for choice in answer.chosen_answers.all()
-                            ]
-                            # .all() and not .exists(): only the result cache that
-                            # prefetch_related fills is reused here. .exists()
-                            # always issues its own query, once per answer, and so
-                            # defeated the prefetch its callers set up.
-                            if answer.chosen_answers.all()
-                            else answer.chosen_answer_ref
+                            [choice.answer_ref for choice in answer.chosen_answers.all()]
+                            or answer.chosen_answer_ref
                         ),
                         "correct": answer.is_correct,
                         "earned": float(answer.earned) if answer.earned is not None else None,
