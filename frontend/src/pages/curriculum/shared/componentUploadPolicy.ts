@@ -1,6 +1,6 @@
-export const COMPONENT_UPLOAD_MAX_BYTES = 5 * 1024 * 1024;
-export const COMPONENT_UPLOAD_MAX_LABEL = '5 MB';
-export const COMPONENT_UPLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+export const COMPONENT_UPLOAD_MAX_BYTES = 300 * 1024 * 1024;
+export const COMPONENT_UPLOAD_MAX_LABEL = '300 MB';
+export const COMPONENT_UPLOAD_TIMEOUT_MS = 30 * 60 * 1000;
 
 export function assertComponentUploadAllowed(file: File) {
   if (file.size > COMPONENT_UPLOAD_MAX_BYTES) {
