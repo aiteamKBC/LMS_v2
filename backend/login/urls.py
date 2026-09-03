@@ -31,6 +31,8 @@ urlpatterns = [
 
     # --- super admin console (admin role only, see platform_admin.py) ---
     path("admin/overview/", platform_admin.overview, name="admin-overview"),
+    # ?metric=<key> — the records behind one platform-report figure.
+    path("admin/report-drill/", platform_admin.report_drill, name="admin-report-drill"),
     path("admin/accounts/", platform_admin.accounts, name="admin-accounts"),
     path("admin/accounts/<int:pk>/", platform_admin.account_action, name="admin-account-action"),
     path("admin/audit/", platform_admin.audit, name="admin-audit"),
