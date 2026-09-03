@@ -63,6 +63,7 @@ export const learnerNavItems: SidebarNavItem[] = [
       { id: 'learner-clubs', label: 'Clubs', icon: 'ri-team-line', href: '/learner/clubs' },
       { id: 'learner-events', label: 'Events', icon: 'ri-calendar-event-line', href: '/learner/clubs/events', statusDot: 'green' },
       { id: 'learner-rewards', label: 'Rewards', icon: 'ri-trophy-line', href: '/learner/rewards', badge: 4 },
+      { id: 'learner-flash-cards', label: 'Flash Cards', icon: 'ri-flashlight-line', href: '/learner/flash-cards' },
     ],
   },
 
@@ -248,7 +249,6 @@ export const curriculumNavItems: SidebarNavItem[] = [
     icon: 'ri-folder-open-line',
     href: '/curriculum/library',
     matchPaths: [
-      '/curriculum/module-builder',
       '/curriculum/week-builder',
       '/curriculum/free-courses',
       '/curriculum/standards',
@@ -264,6 +264,7 @@ export const curriculumNavItems: SidebarNavItem[] = [
     icon: 'ri-calendar-schedule-line',
     href: '/curriculum/delivery',
     matchPaths: [
+      '/curriculum/module-builder',
       '/curriculum/cohorts',
       '/curriculum/groups',
       '/curriculum/modules',
@@ -275,7 +276,7 @@ export const curriculumNavItems: SidebarNavItem[] = [
   {
     id: 'curriculum-quality',
     label: 'Quality',
-    icon: 'ri-shield-check-line',
+    icon: 'ri-book-open-line',
     href: '/curriculum/quality',
     comingSoon: true,
     matchPaths: [

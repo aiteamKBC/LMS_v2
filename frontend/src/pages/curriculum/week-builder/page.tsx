@@ -9,8 +9,8 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
-// Deck previews below: the same pair the learner's page uses, so an author sees
-// what the learner will (see UploadedDeckPreview / PowerPointLinkPreview).
+// Deck preview below: the same one the learner's page uses, so an author sees
+// what the learner will (see UploadedDeckPreview).
 import { resolveDocEmbed } from '@/lib/docEmbed';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 import { type CurriculumGroup, type CurriculumModule, type CurriculumProgramme } from '@/lib/curriculumApi';
@@ -250,7 +250,7 @@ function TemplateListView({
   const totalOtjh = Math.round(templates.reduce((sum, t) => sum + t.totalOtjh, 0) * 10) / 10;
 
   return (
-    <div className="p-6 lg:p-8 max-w-[1200px] mx-auto space-y-8">
+    <div className="p-4 sm:p-5 lg:p-6 max-w-[1400px] mx-auto space-y-5">
       {/* Masthead */}
       <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
         <div>
@@ -258,7 +258,7 @@ function TemplateListView({
           <h1 className="mt-1 font-heading text-[28px] leading-none font-black text-foreground-950">Week templates</h1>
           <p className="mt-2 text-[13px] text-foreground-500 max-w-md">A week is a sequence of learning. Build the shape once, drop it into any module.</p>
         </div>
-        <button onClick={onNew} className="group inline-flex items-center gap-2 rounded-full bg-primary-600 pl-5 pr-2 py-2 text-[13px] font-bold text-background-50 hover:bg-primary-700 transition-smooth self-start sm:self-auto">
+        <button onClick={onNew} className="primary-action group inline-flex items-center gap-2 rounded-full bg-primary-600 pl-5 pr-2 py-2 text-[13px] font-bold text-background-50 hover:bg-primary-700 transition-smooth self-start sm:self-auto">
           New template
           <span className="grid place-items-center w-7 h-7 rounded-full bg-background-50 text-foreground-950 group-hover:rotate-90 transition-transform"><AppIcon className="ri-add-line"></AppIcon></span>
         </button>
@@ -367,7 +367,7 @@ function EmptyCatalogue({ onNew, hasAny }: { onNew: () => void; hasAny: boolean 
       <div className="mx-auto w-12 h-12 rounded-2xl bg-primary-50 grid place-items-center text-primary-500 text-2xl"><AppIcon className="ri-route-line"></AppIcon></div>
       <p className="mt-4 font-heading text-[15px] font-bold text-foreground-800">{hasAny ? 'Nothing matches those filters' : 'No week templates yet'}</p>
       <p className="mt-1 text-[12px] text-foreground-400">{hasAny ? 'Try clearing a filter or the search box.' : 'Build a week once and reuse it everywhere.'}</p>
-      {!hasAny && <button onClick={onNew} className="mt-5 inline-flex items-center gap-2 rounded-full bg-primary-600 px-5 py-2 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth"><AppIcon className="ri-add-line"></AppIcon> New template</button>}
+      {!hasAny && <button onClick={onNew} className="primary-action mt-5 inline-flex items-center gap-2 rounded-full bg-primary-600 px-5 py-2 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth"><AppIcon className="ri-add-line"></AppIcon> New template</button>}
     </div>
   );
 }
@@ -481,7 +481,7 @@ function CreateTemplateModal({ onClose, onCreated }: { onClose: () => void; onCr
 
         <div className="flex items-center justify-end gap-2 pt-1">
           <button onClick={onClose} className="px-4 py-2 rounded-full text-[12px] font-semibold text-foreground-500 hover:text-foreground-800 transition-smooth">Cancel</button>
-          <button onClick={handleCreate} disabled={!canCreate} className="inline-flex items-center gap-2 px-5 py-2 rounded-full bg-primary-600 text-background-50 text-[12px] font-bold hover:bg-primary-700 transition-smooth disabled:opacity-30">Start building <AppIcon className="ri-arrow-right-line"></AppIcon></button>
+          <button onClick={handleCreate} disabled={!canCreate} className="primary-action inline-flex items-center gap-2 px-5 py-2 rounded-full bg-primary-600 text-background-50 text-[12px] font-bold hover:bg-primary-700 transition-smooth disabled:opacity-30">Start building <AppIcon className="ri-arrow-right-line"></AppIcon></button>
         </div>
       </div>
     </ModalShell>
@@ -730,7 +730,7 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
                   if (file) void importKsbSheet(file);
                 }}
               />
-              <button onClick={save} disabled={saving || !dirty} className="inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-5 py-2 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth disabled:opacity-30">
+              <button onClick={save} disabled={saving || !dirty} className="primary-action inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-5 py-2 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth disabled:opacity-30">
                 {saving ? <><AppIcon className="ri-loader-4-line animate-spin"></AppIcon>Saving</> : <><AppIcon className="ri-save-3-line"></AppIcon>{persistedId ? 'Save' : 'Create'}</>}
               </button>
             </div>
@@ -794,7 +794,7 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
             {saving ? <><AppIcon className="ri-loader-4-line animate-spin text-primary-500"></AppIcon>Saving changes…</> : <><span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />Unsaved changes</>}
           </span>
           {!saving && <button onClick={discard} className="rounded-full px-3 py-1.5 text-[12px] font-semibold text-foreground-500 hover:text-foreground-900 hover:bg-background-100 transition-smooth">Discard</button>}
-          <button onClick={save} disabled={saving} className="inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-5 py-1.5 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth disabled:opacity-40">
+          <button onClick={save} disabled={saving} className="primary-action inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-5 py-1.5 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth disabled:opacity-40">
             <AppIcon className="ri-save-3-line"></AppIcon>{persistedId ? 'Save changes' : 'Create template'}
           </button>
         </div>
@@ -1386,7 +1386,7 @@ function ReadinessDial({ value }: { value: number }) {
 
 function BigStat({ value, label, icon, accent = 'text-foreground-900' }: { value: string; label: string; icon: string; accent?: string }) {
   return (
-    <div className="min-w-0 p-3 sm:p-4">
+    <div className="coach-metric-card min-w-0">
       <AppIcon className={`${icon} text-foreground-300`}></AppIcon>
       <p className={`mt-1 truncate font-heading text-[18px] sm:text-[22px] leading-none font-black tabular-nums ${accent}`}>{value}</p>
       <p className="mt-1 truncate text-[10px] font-bold uppercase tracking-[0.12em] text-foreground-400">{label}</p>
@@ -1830,11 +1830,13 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
   );
 }
 
-const PODCAST_SOURCE_TYPES_WEEK = ['Audio File', 'External Link', 'Embed', 'Shortcode'] as const;
+const PODCAST_SOURCE_TYPES_WEEK = ['Audio File', 'External Link', 'Embed'] as const;
 
-// Bespoke Podcast editor — four source shapes: an uploaded audio file, an
-// external link, an embed snippet (Apple Podcasts / SoundCloud / Deezer /
-// Spotify), or a shortcode — each with its own field beneath the selector.
+// Bespoke Podcast editor — three source shapes: an uploaded audio file, an
+// external link, or an embed snippet (Apple Podcasts / SoundCloud / Deezer /
+// Spotify) — each with its own field beneath the selector. A component
+// authored while Shortcode still existed keeps whatever `podcastShortcode` it
+// has in storage — this editor no longer shows or writes it.
 function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   const rawSourceType = s('podcastSource');
@@ -1891,7 +1893,7 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
           </div>
         ) : sourceType === 'External Link' ? (
           <Field label="Podcast URL" className="mt-4"><input value={s('podcastUrl')} onChange={e => setSetting('podcastUrl', e.target.value)} placeholder="https://…" className={inputClass} /></Field>
-        ) : sourceType === 'Embed' ? (
+        ) : (
           <div className="mt-4">
             <Field label="Embed code"><textarea value={s('podcastEmbedCode')} onChange={e => setSetting('podcastEmbedCode', e.target.value)} rows={4} placeholder="Paste the Apple Podcasts / SoundCloud / Deezer / Spotify embed snippet…" className={`${inputClass} resize-none`} /></Field>
             {s('podcastEmbedCode') && (
@@ -1901,8 +1903,6 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
               </div>
             )}
           </div>
-        ) : (
-          <Field label="Shortcode" className="mt-4"><input value={s('podcastShortcode')} onChange={e => setSetting('podcastShortcode', e.target.value)} placeholder='[podcast id="123"]' className={inputClass} /></Field>
         )}
       </Section>
 
@@ -1941,11 +1941,6 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
   );
 }
 
-const POWERPOINT_SOURCE_TYPES_WEEK = ['External Link', 'Uploaded File'] as const;
-
-/** Authoring preview of a linked deck. The Office Online viewer downloads the
- * file from Microsoft's side, so a relative path or a local dev origin can
- * never render — say so instead of showing the viewer's own error page. */
 /** Preview of an uploaded deck, rendered by the same component the learner
  * page uses — an author sees exactly what the learner will. */
 function UploadedDeckPreview({ url }: { url: string }) {
@@ -1968,29 +1963,13 @@ function UploadedDeckPreview({ url }: { url: string }) {
   );
 }
 
-
-function PowerPointLinkPreview({ url }: { url: string }) {
-  const embed = resolveDocEmbed(url);
-  if (embed.mode === 'unavailable') {
-    return <p className="rounded-lg border border-background-200 bg-background-50 px-3 py-4 text-center text-[11px] text-foreground-500">{embed.reason}</p>;
-  }
-  return (
-    <iframe
-      src={embed.src}
-      className="aspect-video w-full rounded-lg border border-background-200"
-      title="PowerPoint preview"
-    />
-  );
-}
-
-// Bespoke PowerPoint editor — a link to an online deck (with a best-effort
-// Office Online preview, which only renders once the link is reachable over
-// the public internet) or an uploaded file, which is previewed by the same
+// Bespoke PowerPoint editor — an uploaded file only, previewed by the same
 // in-house renderer the learner sees. Slicing is still a "slide range" hint
-// field rather than a real range.
+// field rather than a real range. A component authored while an external-link
+// source still existed keeps whatever `presentationUrl` it has in storage —
+// this editor no longer shows or writes it, but nothing here deletes it.
 function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
-  const sourceType = (POWERPOINT_SOURCE_TYPES_WEEK as readonly string[]).includes(s('powerpointSource')) ? s('powerpointSource') : 'External Link';
 
   return (
     <>
@@ -1998,48 +1977,28 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
         <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
         <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this presentation covers…" className={`${inputClass} resize-none`} /></Field>
 
-        <Field label="Source type" className="mt-4">
-          <select value={sourceType} onChange={e => setSetting('powerpointSource', e.target.value)} className={inputClass}>
-            {POWERPOINT_SOURCE_TYPES_WEEK.map(type => <option key={type} value={type}>{type}</option>)}
-          </select>
-        </Field>
+        <div className="mt-4">
+          <WeekComponentFileUpload
+            componentId={component.id}
+            componentType="powerpoint"
+            onUpload={uploadResource}
+            accept={POWERPOINT_UPLOAD_ACCEPT}
+            uploadedName={s('uploadedFileName') || s('fileName')}
+            uploadedUrl={s('uploadedFileUrl')}
+            uploadedSize={Number(component.settings.uploadedFileSize) || 0}
+            onUploaded={file => onChange({
+              settings: { ...component.settings, uploadedFileName: file.fileName, uploadedFileUrl: file.url, uploadedFileSize: file.size, uploadedFileContentType: file.contentType },
+            })}
+          />
+          <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: PowerPoint (.ppt, .pptx, .pps, .ppsx) or PDF. The preview below is what a learner sees.</p>
+          {s('uploadedFileUrl') && (
+            <div className="mt-3">
+              <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Preview</span>
+              <UploadedDeckPreview url={s('uploadedFileUrl')} />
+            </div>
+          )}
+        </div>
 
-        {sourceType === 'External Link' ? (
-          <div className="mt-4">
-            <Field label="Presentation URL"><input value={s('presentationUrl')} onChange={e => setSetting('presentationUrl', e.target.value)} placeholder="https://…" className={inputClass} /></Field>
-            {s('presentationUrl') && (
-              <div className="mt-3">
-                <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Preview</span>
-                <PowerPointLinkPreview url={s('presentationUrl')} />
-                <p className="mt-1 text-[11px] text-foreground-400">Uses Microsoft's Office Online viewer — it only renders once this link is reachable over the public internet, so it won't load from a local dev URL.</p>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="mt-4">
-            <WeekComponentFileUpload
-              componentId={component.id}
-              componentType="powerpoint"
-              onUpload={uploadResource}
-              accept={POWERPOINT_UPLOAD_ACCEPT}
-              uploadedName={s('uploadedFileName') || s('fileName')}
-              uploadedUrl={s('uploadedFileUrl')}
-              uploadedSize={Number(component.settings.uploadedFileSize) || 0}
-              onUploaded={file => onChange({
-                settings: { ...component.settings, uploadedFileName: file.fileName, uploadedFileUrl: file.url, uploadedFileSize: file.size, uploadedFileContentType: file.contentType },
-              })}
-            />
-            <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: PowerPoint (.ppt, .pptx, .pps, .ppsx) or PDF. The preview below is what a learner sees.</p>
-            {s('uploadedFileUrl') && (
-              <div className="mt-3">
-                <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Preview</span>
-                <UploadedDeckPreview url={s('uploadedFileUrl')} />
-              </div>
-            )}
-          </div>
-        )}
-
-        <Field label="Slide range or deck section" className="mt-4"><input value={s('slideRange')} onChange={e => setSetting('slideRange', e.target.value)} placeholder="e.g. Slides 3–10" className={inputClass} /></Field>
         <Field label="Speaker notes" className="mt-4"><textarea value={s('speakerNotes')} onChange={e => setSetting('speakerNotes', e.target.value)} rows={3} placeholder="Notes for whoever presents or reviews this deck…" className={`${inputClass} resize-none`} /></Field>
         <div className="mt-3">
           <Toggle label="Download allowed" checked={component.settings.downloadAllowed !== false} onChange={value => setSetting('downloadAllowed', value)} />
@@ -2226,7 +2185,7 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
               <span className="grid place-items-center w-10 h-10 shrink-0 rounded-xl bg-primary-500 text-white"><AppIcon className="ri-questionnaire-line text-lg"></AppIcon></span>
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <button type="button" onClick={() => setEditorOpen(true)} className="inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-4 py-1.5 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth">
+              <button type="button" onClick={() => setEditorOpen(true)} className="primary-action inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-4 py-1.5 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth">
                 <AppIcon className="ri-edit-2-line"></AppIcon>Edit questions
               </button>
               <button type="button" onClick={() => loadQuizzes()} className="inline-flex items-center gap-1.5 rounded-full border border-background-200 bg-background-50 px-3 py-1.5 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 transition-smooth"><AppIcon className={loading ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}></AppIcon>Refresh</button>
@@ -2431,7 +2390,7 @@ function WeekComponentFileUpload({ componentId, componentType, accept, uploadedN
               if (file) void handleFile(file);
             }}
           />
-          <label htmlFor={inputId} aria-disabled={uploading} className={`inline-flex h-9 w-full min-w-[124px] items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold !text-white shadow-sm transition-smooth sm:w-auto ${uploading ? 'cursor-wait bg-foreground-300' : 'cursor-pointer bg-primary-600 hover:bg-primary-700'}`}>
+          <label htmlFor={inputId} aria-disabled={uploading} className={`primary-action inline-flex h-9 w-full min-w-[124px] items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold !text-white shadow-sm transition-smooth sm:w-auto ${uploading ? 'cursor-wait bg-foreground-300' : 'cursor-pointer bg-primary-600 hover:bg-primary-700'}`}>
             <AppIcon className={`${uploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-cloud-2-line'} !text-white`}></AppIcon>
             {uploading ? 'Uploading…' : 'Upload file'}
           </label>

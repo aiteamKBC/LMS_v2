@@ -103,7 +103,7 @@ function QuickStat({ label, value, icon, variant }: { label: string; value: stri
     : variant === 'fail' ? 'bg-red-50 text-red-600'
     : 'bg-amber-50 text-amber-600';
   return (
-    <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-background-50 border border-foreground-200/60">
+    <div className="coach-metric-card flex items-center gap-2.5">
       <span className={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 ${iconBg}`}>
         <AppIcon className={`${icon} text-xs`}></AppIcon>
       </span>

@@ -44,6 +44,9 @@ export interface CoachCalendarEvent {
   startHour?: number;
   endHour?: number;
   timeLabel?: string;
+  /** True when startHour is a generated placeholder (e.g. an unbooked MCR
+   *  slot), not a real scheduled time -- see sortEvents. */
+  isTimeEstimated?: boolean;
   learner?: string;
   email?: string;
   programme?: string;
@@ -275,6 +278,15 @@ export function sortEvents(events: CoachCalendarEvent[]) {
     const aDate = parseLocalDate(eventDisplayDate(a))?.getTime() || 0;
     const bDate = parseLocalDate(eventDisplayDate(b))?.getTime() || 0;
     if (aDate !== bDate) return aDate - bDate;
+    // A generated event's startHour is a placeholder (isTimeEstimated), not a
+    // real booking, and defaults to the same hour (9) most confirmed sessions
+    // start at. Without this, an unscheduled "Time TBC" coaching slot ties
+    // with a real 09:00 live session and can win the tiebreak on array order
+    // alone -- ranking as "Next" ahead of something that actually has a set
+    // time today.
+    const aEstimated = Boolean(a.isTimeEstimated);
+    const bEstimated = Boolean(b.isTimeEstimated);
+    if (aEstimated !== bEstimated) return aEstimated ? 1 : -1;
     return (a.startHour || 0) - (b.startHour || 0);
   });
 }

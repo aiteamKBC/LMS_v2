@@ -4,14 +4,14 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { ProgrammeFilter } from '@/components/feature/ProgrammeFilter';
 import { useToast } from '@/hooks/useToast';
+import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 import { roleNavMap } from '@/mocks/navigation';
-import { ENGAGEMENT_LEARNERS, countByProgramme, filterByProgramme, type Recognition, type ProgrammeFilterValue } from '@/mocks/engagement-data';
+import { countByProgramme, filterByProgramme, type Recognition, type ProgrammeFilterValue } from '@/mocks/engagement-data';
 import { fetchRecognitions, createRecognition, updateRecognition } from '@/api/engagement';
 import { RecognitionCardSkeletonGrid } from '@/pages/engagement/EngagementSkeletons';
-import { LearnerPickerModal } from '@/pages/engagement/LearnerPickerModal';
+import { LearnerPickerModal, type PickedLearner } from '@/pages/engagement/LearnerPickerModal';
 
 const engagementNav = roleNavMap.engagement;
-const AWARDER = 'Tom Harrington';
 
 type RecognitionType = Recognition['type'];
 type SortKey = 'recent' | 'points' | 'name';
@@ -80,6 +80,7 @@ function validateEdit(form: EditFormData): FormErrors {
 export default function RecognitionPage() {
   const navigate = useNavigate();
   const { success, warning } = useToast();
+  const operator = useOperatorIdentity();
   const [recognitions, setRecognitions] = useState<Recognition[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -93,6 +94,7 @@ export default function RecognitionPage() {
   const [awardForm, setAwardForm] = useState<AwardFormData>({ ...blankAward });
   const [awardErrors, setAwardErrors] = useState<FormErrors>({});
   const [showLearnerPicker, setShowLearnerPicker] = useState(false);
+  const [selectedLearner, setSelectedLearner] = useState<PickedLearner | null>(null);
 
   const [editId, setEditId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<EditFormData>({ title: '', description: '', category: '', points: 0, public: true });
@@ -139,20 +141,24 @@ export default function RecognitionPage() {
   function openAward() {
     setAwardForm({ ...blankAward });
     setAwardErrors({});
+    setSelectedLearner(null);
     setShowAward(true);
   }
 
   async function handleAward() {
     const errs = validateAward(awardForm);
     if (Object.keys(errs).length > 0) { setAwardErrors(errs); return; }
-    const learner = ENGAGEMENT_LEARNERS.find(l => l.id === awardForm.learnerId);
+    const learner = selectedLearner;
     if (!learner) { setAwardErrors({ learnerId: 'Choose the learner being recognised' }); return; }
     try {
       const created = await createRecognition({
-        learnerId: learner.id, learnerName: learner.name, avatarImg: learner.avatarImg,
-        programmeCode: learner.programmeCode, programme: learner.programme, cohort: learner.cohort,
+        learnerId: learner.id, learnerName: learner.name,
+        // The real learner directory has no avatar or PCP/APM/MM/ME code —
+        // those were mock-only fields. Reuse the real programme name for
+        // programmeCode rather than inventing one.
+        programmeCode: learner.programme || '', programme: learner.programme || '', cohort: learner.cohort || '',
         type: awardForm.type, title: awardForm.title.trim(), description: awardForm.description.trim(),
-        awardedBy: AWARDER, category: awardForm.category.trim(), points: awardForm.points, public: awardForm.public,
+        category: awardForm.category.trim(), points: awardForm.points, public: awardForm.public,
       });
       setRecognitions(prev => [created, ...prev]);
       setShowAward(false);
@@ -207,13 +213,12 @@ export default function RecognitionPage() {
   }
 
   const editRec = recognitions.find(r => r.id === editId) ?? null;
-  const selectedLearner = ENGAGEMENT_LEARNERS.find(l => l.id === awardForm.learnerId) ?? null;
 
   return (
     <WorkspaceShell
       role="engagement" roleLabel={engagementNav.label} navItems={engagementNav.items} workspaceLabel={engagementNav.workspaceLabel}
       pageTitle="Recognition" pageSubtitle="Celebrate learner achievements with badges, certificates, and public recognition"
-      userName="Tom Harrington" userRole="Engagement Manager"
+      userName={operator.name} userRole={operator.role}
     >
       <div className="p-6 space-y-6">
         <WorkspaceHeroBanner
@@ -350,8 +355,8 @@ export default function RecognitionPage() {
                       <AppIcon className="ri-copper-coin-line"></AppIcon>{rec.points} pts
                     </span>
                     <div className="flex items-center gap-2">
-                      <button onClick={() => shareRecognition(rec)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                        <AppIcon className="ri-share-line mr-1"></AppIcon> Share
+                      <button onClick={() => shareRecognition(rec)} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                        <AppIcon className="ri-share-line text-sm"></AppIcon> Share
                       </button>
                       <button onClick={() => openEdit(rec)} className="px-3 py-1.5 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[10px] font-medium hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
                         <AppIcon className="ri-edit-line mr-1"></AppIcon> Edit
@@ -390,12 +395,8 @@ export default function RecognitionPage() {
                 >
                   {selectedLearner ? (
                     <>
-                      <div className="w-7 h-7 rounded-full shrink-0 overflow-hidden bg-primary-100">
-                        {selectedLearner.avatarImg ? (
-                          <img src={selectedLearner.avatarImg} alt={selectedLearner.name} className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-[10px] font-bold text-primary-600">{selectedLearner.name.charAt(0)}</div>
-                        )}
+                      <div className="w-7 h-7 rounded-full shrink-0 overflow-hidden bg-primary-100 flex items-center justify-center text-[10px] font-bold text-primary-600">
+                        {selectedLearner.name.charAt(0)}
                       </div>
                       <span className="text-[12px] font-semibold text-foreground-900 truncate">{selectedLearner.name}</span>
                       <span className="text-[10px] text-foreground-400 truncate">· {selectedLearner.cohort}</span>
@@ -514,7 +515,11 @@ export default function RecognitionPage() {
         open={showLearnerPicker}
         onClose={() => setShowLearnerPicker(false)}
         selectedId={awardForm.learnerId}
-        onSelect={l => { setAwardForm(f => ({ ...f, learnerId: l.id })); setAwardErrors(er => ({ ...er, learnerId: undefined })); }}
+        onSelect={l => {
+          setSelectedLearner(l);
+          setAwardForm(f => ({ ...f, learnerId: l.id }));
+          setAwardErrors(er => ({ ...er, learnerId: undefined }));
+        }}
       />
     </WorkspaceShell>
   );

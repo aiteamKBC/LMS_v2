@@ -557,7 +557,7 @@ export default function MessagesPage() {
 
         <section className="h-full min-w-0 rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm overflow-hidden">
           <div className={`${activeConversationId !== null ? 'hidden lg:flex' : 'flex'} px-3 sm:px-5 md:px-6 py-3 md:py-4 border-b border-foreground-200/70 flex-col gap-3`}>
-            <div className="flex flex-col lg:flex-row lg:items-start gap-3 lg:gap-5">
+            <div className="flex flex-col lg:flex-row lg:items-center gap-3 lg:gap-5">
               <div className="lg:flex-1 min-w-0">
                 <p className="text-[10px] font-semibold tracking-[0.2em] text-primary-600 uppercase mb-2">{inboxCopy.eyebrow}</p>
                 <h1 className="text-2xl md:text-[28px] font-heading font-semibold tracking-tight text-foreground-950">
@@ -566,23 +566,8 @@ export default function MessagesPage() {
                 <p className="text-sm text-foreground-500 mt-1">{inboxCopy.description}</p>
               </div>
 
-              <div className="xl:min-w-[520px] lg:shrink-0">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                {[
-                  { label: isCoach ? 'Learners' : 'Conversations', icon: 'ri-group-line', iconTone: 'text-primary-600 bg-primary-50' },
-                  { label: 'Unread', icon: 'ri-mail-unread-line', iconTone: 'text-secondary-600 bg-secondary-50' },
-                  { label: 'Need Reply', icon: 'ri-reply-line', iconTone: 'text-accent-600 bg-accent-50' },
-                  { label: isCoach ? 'At Risk' : 'Active', icon: isCoach ? 'ri-alarm-warning-line' : 'ri-chat-check-line', iconTone: isCoach ? 'text-red-600 bg-red-50' : 'text-emerald-600 bg-emerald-50' },
-                ].map(stat => (
-                  <div key={stat.label} className="min-h-[58px] rounded-xl border border-foreground-200 bg-background-100/60 px-3 py-2.5 flex items-center gap-2.5">
-                    <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${stat.iconTone}`}>
-                      <AppIcon className={`${stat.icon} text-sm`} />
-                    </span>
-                    <p className="text-[11px] font-medium text-foreground-600 leading-tight">{stat.label}</p>
-                  </div>
-                ))}
-                </div>
-                <div className="flex items-center justify-start xl:justify-end gap-2 mt-3 overflow-x-auto pb-1">
+              <div className="w-full min-w-0 lg:w-auto lg:shrink-0">
+                <div className="flex items-center justify-start lg:justify-end gap-2 overflow-x-auto pb-1">
                   {[
                     { id: 'all' as const, label: `All (${conversations.length})` },
                     { id: 'unread' as const, label: `Unread (${unreadCount})` },
@@ -602,7 +587,7 @@ export default function MessagesPage() {
               </div>
             </div>
 
-            <div className="relative mt-5">
+            <div className="relative">
               <AppIcon className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-300" />
               <input
                 value={searchQuery}

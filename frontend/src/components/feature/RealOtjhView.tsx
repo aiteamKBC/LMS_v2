@@ -38,13 +38,21 @@ interface LogRow {
 
 /**
  * The hours one activity contributed, by the same rule the backend totals with
- * (see active_users.completed_hours_from_progress): the component's own
- * off-the-job hours when it has them, and only failing that whatever the learner
- * reported. A bare number is hours up to 24 and minutes above it — the same
- * reading _reported_minutes applies, so this panel cannot disagree with the
- * "Completed" figure beside it.
+ * (see active_users.completed_hours_from_progress): the time the learner
+ * actually recorded on submission, and only for rows predating time tracking
+ * the component's authored off-the-job hours. A bare number in that fallback is
+ * hours up to 24 and minutes above it — the same reading _reported_minutes
+ * applies, so this panel cannot disagree with the "Completed" figure beside it.
  */
-function contributedHours(expectedOtjh: unknown, reported: string, fallback?: number): number {
+function contributedHours(
+  expectedOtjh: unknown,
+  reported: string,
+  fallback?: number,
+  verifiedSeconds?: unknown,
+): number {
+  // What the learner actually did, and so what the activity is worth.
+  const verified = Number(verifiedSeconds);
+  if (Number.isFinite(verified) && verified >= 0 && verifiedSeconds != null) return verified / 3600;
   const expected = Number(expectedOtjh);
   if (Number.isFinite(expected) && expected > 0) return expected;
   const text = String(reported || '').trim().toLowerCase();
@@ -162,10 +170,7 @@ export function OtjhBody({
       type: 'Quiz', icon: 'ri-questionnaire-line',
       tint: a.passed ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600',
       at: a.submittedAt, ksbs: a.ksbs || [],
-      hours: contributedHours(
-        (a as { expectedOtjh?: number }).expectedOtjh,
-        a.reportedTime || a.timeTaken || '',
-      ),
+      hours: contributedHours(a.expectedOtjh, a.reportedTime || a.timeTaken || '', undefined, a.verifiedSeconds),
       reported: a.reportedTime || a.timeTaken || '',
       // A quiz is one activity however many attempts it took, which is how the
       // total counts it.
@@ -178,9 +183,7 @@ export function OtjhBody({
       type: 'Video', icon: 'ri-play-circle-line', tint: 'bg-red-100 text-red-600',
       at: v.submittedAt, ksbs: v.ksbs || [],
       hours: contributedHours(
-        (v as { expectedOtjh?: number }).expectedOtjh,
-        v.reportedTime || v.timeTaken || '',
-        expectedFor(v.componentId),
+        v.expectedOtjh, v.reportedTime || v.timeTaken || '', expectedFor(v.componentId), v.verifiedSeconds,
       ),
       reported: v.reportedTime || v.timeTaken || '',
       dedupeKey: `component:${v.componentId || v.submittedAt}`,
@@ -196,9 +199,7 @@ export function OtjhBody({
         tint: look?.tint || 'bg-primary-100 text-primary-600',
         at: c.submittedAt, ksbs: c.ksbs || [],
         hours: contributedHours(
-          (c as { expectedOtjh?: number }).expectedOtjh,
-          c.reportedTime || c.timeTaken || '',
-          expectedFor(c.componentId),
+          c.expectedOtjh, c.reportedTime || c.timeTaken || '', expectedFor(c.componentId), c.verifiedSeconds,
         ),
         reported: c.reportedTime || c.timeTaken || '',
         dedupeKey: `component:${c.componentId || c.submittedAt}`,
@@ -398,7 +399,7 @@ export function OtjhBody({
 
 function StatCard({ icon, iconTint, label, value, sub }: { icon: string; iconTint: string; label: string; value: string; sub: string }) {
   return (
-    <div className="group rounded-2xl border border-foreground-100 bg-background-50 p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
+    <div className="coach-metric-card group transition-all hover:-translate-y-0.5 hover:shadow-md">
       <div className="mb-3 flex items-center justify-between">
         <span className={`flex h-10 w-10 items-center justify-center rounded-xl ring-1 ring-black/5 ${iconTint}`}><AppIcon className={`${icon} text-base`} /></span>
         <AppIcon className="ri-more-line text-sm text-foreground-200" />

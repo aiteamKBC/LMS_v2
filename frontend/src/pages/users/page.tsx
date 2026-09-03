@@ -144,16 +144,16 @@ function UserMetricCard({ icon, label, value, detail, tone, onClick, active = fa
     emerald: 'border-white/30 bg-gradient-to-br from-[#b9f6db] via-[#34d399] to-[#059669] text-white shadow-md shadow-emerald-500/25',
   }[tone];
 
-  const surface = `flex min-h-[132px] items-start gap-4 rounded-2xl border border-primary-100/70 bg-white/90 p-5 text-left shadow-sm transition ${active ? 'ring-2 ring-primary-300' : 'hover:-translate-y-0.5 hover:shadow-md'} ${onClick ? 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400' : ''}`;
+  const surface = `coach-metric-card flex min-h-[112px] items-start gap-3 text-left transition ${active ? 'ring-2 ring-primary-300' : 'hover:-translate-y-0.5 hover:shadow-md'} ${onClick ? 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400' : ''}`;
   const content = (
     <>
-      <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border text-[20px] ring-1 ring-black/5 ${iconStyles}`}>
+      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-[18px] ring-1 ring-black/5 ${iconStyles}`}>
         <i className={icon} />
       </span>
       <div className="min-w-0">
-        <p className="text-[28px] font-semibold leading-none tracking-tight text-foreground-950">{value}</p>
-        <p className="mt-2 text-[13px] font-semibold text-foreground-800">{label}</p>
-        <p className="mt-1 text-[12px] text-foreground-500">{detail}</p>
+        <p className="truncate text-[11px] font-medium text-foreground-500">{label}</p>
+        <p className="mt-1 text-[25px] font-semibold leading-none tabular-nums text-foreground-950">{value}</p>
+        <p className="mt-1.5 truncate text-[11px] leading-snug text-foreground-500">{detail}</p>
       </div>
     </>
   );
@@ -568,7 +568,7 @@ export default function UsersListPage() {
         </div>
 
         {/* Results table */}
-        <div className="overflow-hidden rounded-2xl border border-foreground-100 bg-background-50 shadow-sm">
+        <div className="admin-cool-table overflow-hidden rounded-2xl border border-foreground-100 bg-background-50 shadow-sm">
           <div className="flex items-center justify-between gap-4 px-5 py-4">
             <div className="flex items-center gap-3">
               <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary-600"><i className="ri-group-line" /></span>

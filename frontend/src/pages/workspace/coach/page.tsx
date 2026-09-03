@@ -66,6 +66,15 @@ interface CoachLearner {
   id: string;
   name: string;
   initials: string;
+  /** 'commercial' | 'apprenticeship' — which learner_detail table this id resolves against. */
+  learnerType?: 'commercial' | 'apprenticeship';
+  /** enrolment."Created_users".id -- a different, disjoint pk space from `id`
+   *  above. /learner-detail/ needs this one, not the LearnerProfile id. */
+  enrolmentId?: string | null;
+  /** Which module/week otjhTarget's cumulative-to-date figure currently falls in. */
+  currentModule?: string | null;
+  currentWeek?: string | null;
+  componentsTargetToDate?: number | null;
   programme: string;
   cohortName?: string | null;
   group: string;
@@ -243,6 +252,11 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     id: id === EMPTY_VALUE ? `learner-${index}` : id,
     name: fallbackName,
     initials: initials === EMPTY_VALUE ? fallbackName.slice(0, 2).toUpperCase() : initials,
+    learnerType: learner.learnerType,
+    enrolmentId: learner.enrolmentId,
+    currentModule: learner.currentModule,
+    currentWeek: learner.currentWeek,
+    componentsTargetToDate: learner.componentsTargetToDate,
     programme,
     cohortName: cohortName === EMPTY_VALUE ? null : cohortName,
     group: displayValue(learner.group),
@@ -827,6 +841,12 @@ function scheduleEventTime(event: CoachCalendarEvent) {
   return 'TBC';
 }
 
+/** Just the start, for the fixed-size "Next" badge -- a live session's
+ * "09:00 - 11:00" wraps and overflows a box sized for a single time. */
+function scheduleEventStartTime(event: CoachCalendarEvent) {
+  return scheduleEventTime(event).split(' - ')[0];
+}
+
 /** "12 Sep 2025" -> "12 Sep", so a quick-stat cell stays one line. */
 function shortDateLabel(value?: string | null) {
   const label = displayValue(value);
@@ -953,6 +973,8 @@ export default function CoachDashboard() {
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [liveSessionsLoading, setLiveSessionsLoading] = useState(true);
   const [liveSessionsError, setLiveSessionsError] = useState<string | null>(null);
+  const [caseloadExpanded, setCaseloadExpanded] = useState(true);
+  const [scheduleExpanded, setScheduleExpanded] = useState(true);
 
   useEffect(() => {
     if (!isInitialized) return;
@@ -1127,7 +1149,7 @@ export default function CoachDashboard() {
     });
   }, [upcomingScheduleEvents]);
   const nextTodayEvent = todayEvents[0];
-  const remainingTodayEvents = todayEvents.slice(1, 4);
+  const remainingTodayEvents = todayEvents.slice(1);
   /* ── This Week ── */
   const weekEvents = useMemo(
     () => [...activeCalendarEvents, ...liveSessionEvents].filter(event => isEventThisWeek(event)),
@@ -1344,7 +1366,7 @@ export default function CoachDashboard() {
                 >
                   <span className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-xl bg-background-50 text-center shadow-sm ring-1 ring-primary-100">
                     <span className="text-[10px] font-semibold uppercase text-primary-500">Next</span>
-                    <span className="text-sm font-bold tabular-nums text-primary-800">{scheduleEventTime(nextTodayEvent)}</span>
+                    <span className="whitespace-nowrap text-sm font-bold tabular-nums text-primary-800">{scheduleEventStartTime(nextTodayEvent)}</span>
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-semibold text-foreground-950">{scheduleEventTitle(nextTodayEvent)}</span>
@@ -1361,23 +1383,27 @@ export default function CoachDashboard() {
             {remainingTodayEvents.length > 0 && (
               <div className="mt-3 border-t border-foreground-100 pt-3">
                 <SectionLabel>Later today</SectionLabel>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {remainingTodayEvents.map(event => (
-                    <Link
-                      key={`today-${event.eventKey || event.id}`}
-                      to="/coach/timetable"
-                      state={buildTimetableFocusState(event)}
-                      className="flex min-w-0 items-center gap-2 rounded-lg border border-foreground-100 bg-background-50 px-3 py-2 text-[12px] text-foreground-700 transition-colors hover:border-primary-200 hover:bg-primary-50/50"
-                    >
-                      <span className="shrink-0 font-semibold tabular-nums text-primary-700">{scheduleEventTime(event)}</span>
-                      <span className="truncate">{scheduleEventTitle(event)}</span>
-                    </Link>
-                  ))}
-                  {todayEvents.length > 4 && (
-                    <span className="inline-flex items-center rounded-lg border border-foreground-200 bg-background-100 px-2.5 py-1.5 text-[12px] text-foreground-500">
-                      +{todayEvents.length - 4} more
-                    </span>
-                  )}
+                <div className="mt-2 grid max-h-48 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
+                  {remainingTodayEvents.map(event => {
+                    const classes = eventStatusClasses(event);
+                    return (
+                      <Link
+                        key={`today-${event.eventKey || event.id}`}
+                        to="/coach/timetable"
+                        state={buildTimetableFocusState(event)}
+                        className="group flex min-w-0 items-center gap-2.5 rounded-lg border border-foreground-100 bg-background-50 px-3 py-2 transition-colors hover:border-primary-200 hover:bg-primary-50/50"
+                      >
+                        <span className={cn('shrink-0 rounded-md px-2 py-1 text-center text-[12px] font-bold tabular-nums', classes.badge)}>
+                          {scheduleEventTime(event)}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[12px] font-semibold text-foreground-900">{scheduleEventTitle(event)}</span>
+                          <span className="block truncate text-[11px] text-foreground-400">{scheduleEventMeta(event)}</span>
+                        </span>
+                        <AppIcon className={cn('shrink-0 text-[13px] transition-transform group-hover:translate-x-0.5', classes.icon)}></AppIcon>
+                      </Link>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -1396,8 +1422,8 @@ export default function CoachDashboard() {
             ═══════════════════════════════════════════════════ */}
         <SectionReveal delay={70}>
           <div className="space-y-3">
-            <SectionHeader icon="ri-pulse-line" title="Caseload health" />
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <SectionHeader icon="ri-heart-pulse-line" title="Caseload health" />
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
               <FilterMetricCard
                 label="Caseload"
                 value={totalCaseload}
@@ -1408,39 +1434,47 @@ export default function CoachDashboard() {
                 onFilter={() => setSelectedKpi('caseload')}
               />
               <FilterMetricCard
-                label="On track"
-                value={onTrackCount}
-                note={OTJH_STATUS_META['on-track'].sub}
+                label="Active"
+                value={activeLearners.length}
+                note="Currently active"
                 tone="positive"
-                icon="ri-checkbox-circle-line"
-                active={kpiFilter === 'on-track'}
-                onFilter={() => setSelectedKpi('on-track')}
+                icon="ri-user-follow-line"
+                active={kpiFilter === 'active'}
+                onFilter={() => setSelectedKpi('active')}
               />
               <FilterMetricCard
-                label="At risk"
-                value={atRiskCount}
-                note={OTJH_STATUS_META['at-risk'].sub}
-                tone="critical"
-                icon="ri-alarm-warning-line"
-                active={kpiFilter === 'at-risk'}
-                onFilter={() => setSelectedKpi('at-risk')}
-              />
-              <FilterMetricCard
-                label="Need attention"
-                value={needAttentionCount}
-                note={OTJH_STATUS_META['need-attention'].sub}
+                label="On break"
+                value={onBreakLearners.length}
+                note="Programme paused"
                 tone="caution"
-                icon="ri-error-warning-line"
-                active={kpiFilter === 'need-attention'}
-                onFilter={() => setSelectedKpi('need-attention')}
+                icon="ri-pause-circle-line"
+                active={kpiFilter === 'on-break'}
+                onFilter={() => setSelectedKpi('on-break')}
+              />
+              <FilterMetricCard
+                label="Gateway"
+                value={gatewayLearners.length}
+                note="At gateway stage"
+                tone="upcoming"
+                icon="ri-door-open-line"
+                active={kpiFilter === 'gateway'}
+                onFilter={() => setSelectedKpi('gateway')}
+              />
+              <FilterMetricCard
+                label="EPA"
+                value={epaLearners.length}
+                note="At EPA stage"
+                tone="info"
+                icon="ri-medal-line"
+                active={kpiFilter === 'epa'}
+                onFilter={() => setSelectedKpi('epa')}
               />
             </div>
-            <MetricRow className="sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4">
-              <FilterCompactMetric label="Active" value={activeLearners.length} note="Currently active" tone="positive" active={kpiFilter === 'active'} onFilter={() => setSelectedKpi('active')} />
-              <FilterCompactMetric label="On break" value={onBreakLearners.length} note="Programme paused" tone="caution" active={kpiFilter === 'on-break'} onFilter={() => setSelectedKpi('on-break')} />
-              <FilterCompactMetric label="Gateway" value={gatewayLearners.length} note="At gateway stage" tone="upcoming" active={kpiFilter === 'gateway'} onFilter={() => setSelectedKpi('gateway')} />
-              <FilterCompactMetric label="EPA" value={epaLearners.length} note="At EPA stage" tone="info" active={kpiFilter === 'epa'} onFilter={() => setSelectedKpi('epa')} />
-            </MetricRow>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <FilterCompactMetric label="On track" value={onTrackCount} note={OTJH_STATUS_META['on-track'].sub} tone="positive" active={kpiFilter === 'on-track'} onFilter={() => setSelectedKpi('on-track')} />
+              <FilterCompactMetric label="Need attention" value={needAttentionCount} note={OTJH_STATUS_META['need-attention'].sub} tone="caution" active={kpiFilter === 'need-attention'} onFilter={() => setSelectedKpi('need-attention')} />
+              <FilterCompactMetric label="At risk" value={atRiskCount} note={OTJH_STATUS_META['at-risk'].sub} tone="critical" active={kpiFilter === 'at-risk'} onFilter={() => setSelectedKpi('at-risk')} />
+            </div>
           </div>
         </SectionReveal>
 
@@ -1448,129 +1482,163 @@ export default function CoachDashboard() {
             3. LEARNERS REQUIRING ATTENTION  +  4. UPCOMING SCHEDULE
             ═══════════════════════════════════════════════════ */}
         <SectionReveal delay={100}>
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:items-start">
 
-            <div id="learner-caseload" className="h-full scroll-mt-4 lg:col-span-2">
-            <Panel className="flex h-full flex-col" padding="lg">
+            <div id="learner-caseload" className="scroll-mt-4 lg:col-span-2">
+            <Panel className="flex flex-col" padding="lg">
               <SectionHeader
                 icon="ri-user-search-line"
                 title={attentionPanelTitle}
-                count={attentionRows.length}
                 description={attentionPanelSubtitle}
                 actions={
-                  <Link
-                    to="/coach/caseload"
-                    className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-primary-100 bg-primary-50 px-3 py-1.5 text-[12px] font-semibold text-primary-700 transition-colors hover:bg-primary-100"
-                  >
-                    <AppIcon className="ri-group-line text-[13px]"></AppIcon>
-                    All learners
-                  </Link>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setCaseloadExpanded(current => !current)}
+                      aria-expanded={caseloadExpanded}
+                      aria-controls="coach-caseload-content"
+                      aria-label={`${caseloadExpanded ? 'Collapse' : 'Expand'} caseload panel`}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-200/70 bg-background-50 text-foreground-400 transition-colors hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                    >
+                      <AppIcon className={`${caseloadExpanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-base`}></AppIcon>
+                    </button>
+                    <Link
+                      to="/coach/caseload"
+                      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-primary-100 bg-primary-50 px-3 py-1.5 text-[12px] font-semibold text-primary-700 transition-colors hover:bg-primary-100"
+                    >
+                      <AppIcon className="ri-group-line text-[13px]"></AppIcon>
+                      All learners
+                    </Link>
+                  </>
                 }
               />
 
-              {/* Priority queue filters */}
-              <div className="mt-3.5">
-                {kpiFilter ? (
-                  <FilterChip label="Filter" value={KPI_FILTER_LABEL[kpiFilter]} onRemove={() => setKpiFilter(null)} />
-                ) : (
-                  <PageTabs
-                    label="Filter learners by priority"
-                    value={priorityFilter ?? 'all'}
-                    onChange={(next) => (next === 'all' ? setPriorityFilter(null) : applyPriorityFilter(next as PriorityKey))}
-                    items={priorityTabItems(attentionQueue.length, priorityCounts)}
-                  />
-                )}
-              </div>
+              {caseloadExpanded && (
+                <div id="coach-caseload-content">
+                  {/* Priority queue filters */}
+                  <div className="mt-3.5">
+                    {kpiFilter ? (
+                      <FilterChip label="Filter" value={KPI_FILTER_LABEL[kpiFilter]} onRemove={() => setKpiFilter(null)} />
+                    ) : (
+                      <PageTabs
+                        label="Filter learners by priority"
+                        value={priorityFilter ?? 'all'}
+                        onChange={(next) => (next === 'all' ? setPriorityFilter(null) : applyPriorityFilter(next as PriorityKey))}
+                        items={priorityTabItems(attentionQueue.length, priorityCounts)}
+                      />
+                    )}
+                  </div>
 
-              <div className={cn('mt-3.5 min-h-0 space-y-2.5', attentionHasOverflow && 'max-h-[36rem] overflow-y-auto pr-1.5')}>
-                {loading && !attentionRows.length && <AttentionSkeleton />}
-                {!loading && attentionRows.map((entry, index) => (
-                  <AttentionLearnerRow
-                    key={entry.learner.id}
-                    rank={index + 1}
-                    learner={entry.learner}
-                    priority={entry.priority}
-                    onOpen={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(entry.learner.id)}`, {
-                      state: { learnerId: entry.learner.id, learnerName: entry.learner.name },
-                    })}
-                  />
-                ))}
-                {!loading && !attentionRows.length && (
-                  <EmptyState
-                    variant={kpiFilter || priorityFilter ? 'no-matches' : 'empty'}
-                    icon={kpiFilter || priorityFilter ? undefined : 'ri-shield-check-line'}
-                    title={kpiFilter || priorityFilter ? 'No learners match this filter' : 'No learners need attention'}
-                    description={kpiFilter || priorityFilter
-                      ? 'Clear the filter to see the full priority queue.'
-                      : 'Everyone on your caseload is on track for hours, attendance and reviews.'}
-                  />
-                )}
-              </div>
+                  <div className={cn('mt-3.5 min-h-0 space-y-2.5', attentionHasOverflow && 'max-h-[36rem] overflow-y-auto pr-1.5')}>
+                    {loading && !attentionRows.length && <AttentionSkeleton />}
+                    {!loading && attentionRows.map((entry, index) => (
+                      <AttentionLearnerRow
+                        key={entry.learner.id}
+                        rank={index + 1}
+                        learner={entry.learner}
+                        priority={entry.priority}
+                        onOpen={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(entry.learner.id)}`, {
+                          state: {
+                            learnerId: entry.learner.id,
+                            learnerName: entry.learner.name,
+                            ...(entry.learner.learnerType ? { kind: entry.learner.learnerType } : {}),
+                            ...(entry.learner.enrolmentId ? { enrolmentId: entry.learner.enrolmentId } : {}),
+                          },
+                        })}
+                      />
+                    ))}
+                    {!loading && !attentionRows.length && (
+                      <EmptyState
+                        variant={kpiFilter || priorityFilter ? 'no-matches' : 'empty'}
+                        icon={kpiFilter || priorityFilter ? undefined : 'ri-shield-check-line'}
+                        title={kpiFilter || priorityFilter ? 'No learners match this filter' : 'No learners need attention'}
+                        description={kpiFilter || priorityFilter
+                          ? 'Clear the filter to see the full priority queue.'
+                          : 'Everyone on your caseload is on track for hours, attendance and reviews.'}
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
             </Panel>
             </div>
 
             {/* ── Upcoming Schedule (live sessions + calendar, merged) ── */}
-            <Panel className="flex h-full flex-col" padding="lg">
+            <Panel className="flex flex-col" padding="lg">
               <SectionHeader
                 icon="ri-calendar-schedule-line"
                 title="Upcoming schedule"
                 description={`Next ${COACHING_CALENDAR_WINDOW_DAYS} days · live, coaching & reviews`}
                 actions={
-                  <Link
-                    to="/coach/timetable"
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-primary-100 bg-primary-50 px-3 py-1.5 text-[12px] font-semibold text-primary-700 transition-colors hover:bg-primary-100"
-                  >
-                    <AppIcon className="ri-calendar-line text-[13px]"></AppIcon>
-                    Calendar
-                  </Link>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setScheduleExpanded(current => !current)}
+                      aria-expanded={scheduleExpanded}
+                      aria-controls="coach-schedule-content"
+                      aria-label={`${scheduleExpanded ? 'Collapse' : 'Expand'} upcoming schedule`}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-200/70 bg-background-50 text-foreground-400 transition-colors hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                    >
+                      <AppIcon className={`${scheduleExpanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-base`}></AppIcon>
+                    </button>
+                    <Link
+                      to="/coach/timetable"
+                      className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-primary-100 bg-primary-50 px-3 py-1.5 text-[12px] font-semibold text-primary-700 transition-colors hover:bg-primary-100"
+                    >
+                      <AppIcon className="ri-calendar-line text-[13px]"></AppIcon>
+                      Calendar
+                    </Link>
+                  </>
                 }
               />
 
-              <div className="mt-3.5 max-h-[36rem] min-h-0 flex-1 space-y-3 overflow-y-auto pr-1.5">
-                {schedulePanelLoading && <ScheduleSkeleton />}
-                {!schedulePanelLoading && upcomingScheduleGroups.map(group => (
-                  <div key={`schedule-group-${group.date}`} className="rounded-lg border border-foreground-200/60 bg-background-100/40 p-3">
-                    <div className="flex items-center justify-between gap-2 border-b border-foreground-100 pb-2">
-                      <div className="flex min-w-0 items-baseline gap-2">
-                        <span className="shrink-0 text-[17px] font-bold leading-none text-foreground-900">{formatCalendarDayNumber(group.date)}</span>
-                        <span className="min-w-0 truncate text-[12px] font-semibold text-foreground-700">{formatUpcomingLiveSessionDayLabel(group.date)}</span>
-                        <span className="shrink-0 text-[12px] text-foreground-400">{formatCalendarWeekday(group.date)} &middot; {formatCalendarMonth(group.date)}</span>
+              {scheduleExpanded && (
+                <div id="coach-schedule-content" className="mt-3.5 max-h-[36rem] space-y-3 overflow-y-auto pr-1.5">
+                  {schedulePanelLoading && <ScheduleSkeleton />}
+                  {!schedulePanelLoading && upcomingScheduleGroups.map(group => (
+                    <div key={`schedule-group-${group.date}`} className="rounded-lg border border-foreground-200/60 bg-background-100/40 p-3">
+                      <div className="flex items-center justify-between gap-2 border-b border-foreground-100 pb-2">
+                        <div className="flex min-w-0 items-baseline gap-2">
+                          <span className="shrink-0 text-[17px] font-bold leading-none text-foreground-900">{formatCalendarDayNumber(group.date)}</span>
+                          <span className="min-w-0 truncate text-[12px] font-semibold text-foreground-700">{formatUpcomingLiveSessionDayLabel(group.date)}</span>
+                          <span className="shrink-0 text-[12px] text-foreground-400">{formatCalendarWeekday(group.date)} &middot; {formatCalendarMonth(group.date)}</span>
+                        </div>
+                        <span className="shrink-0 rounded-full bg-background-100 px-2 py-0.5 text-[12px] font-semibold text-foreground-500">{group.events.length}</span>
                       </div>
-                      <span className="shrink-0 rounded-full bg-background-100 px-2 py-0.5 text-[12px] font-semibold text-foreground-500">{group.events.length}</span>
+                      <div className="divide-y divide-foreground-100/80">
+                        {group.events.map(event => {
+                          const classes = eventStatusClasses(event);
+                          return (
+                            <Link
+                              key={event.eventKey || event.id}
+                              to="/coach/timetable"
+                              state={buildTimetableFocusState(event)}
+                              className="group flex items-center gap-3 py-2.5 transition-colors first:pt-2 last:pb-0.5 hover:text-primary-800"
+                            >
+                              <span className={cn('w-14 shrink-0 rounded-md px-2 py-1 text-center text-[12px] font-bold tabular-nums', classes.badge)}>
+                                {scheduleEventTime(event)}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-[13px] font-semibold text-foreground-900">{scheduleEventTitle(event)}</span>
+                                <span className="mt-0.5 block truncate text-[12px] text-foreground-400">{scheduleEventMeta(event)}</span>
+                              </span>
+                              <AppIcon className={cn('shrink-0 text-[14px] transition-transform group-hover:translate-x-0.5', classes.icon)}></AppIcon>
+                            </Link>
+                          );
+                        })}
+                      </div>
                     </div>
-                    <div className="divide-y divide-foreground-100/80">
-                      {group.events.map(event => {
-                        const classes = eventStatusClasses(event);
-                        return (
-                          <Link
-                            key={event.eventKey || event.id}
-                            to="/coach/timetable"
-                            state={buildTimetableFocusState(event)}
-                            className="group flex items-center gap-3 py-2.5 transition-colors first:pt-2 last:pb-0.5 hover:text-primary-800"
-                          >
-                            <span className={cn('w-14 shrink-0 rounded-md px-2 py-1 text-center text-[12px] font-bold tabular-nums', classes.badge)}>
-                              {scheduleEventTime(event)}
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-[13px] font-semibold text-foreground-900">{scheduleEventTitle(event)}</span>
-                              <span className="mt-0.5 block truncate text-[12px] text-foreground-400">{scheduleEventMeta(event)}</span>
-                            </span>
-                            <AppIcon className={cn('shrink-0 text-[14px] transition-transform group-hover:translate-x-0.5', classes.icon)}></AppIcon>
-                          </Link>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-                {!schedulePanelLoading && !upcomingScheduleGroups.length && (
-                  <EmptyState
-                    size="sm"
-                    icon="ri-calendar-check-line"
-                    title="Nothing scheduled"
-                    description={calendarError || liveSessionsError || `Nothing scheduled in the next ${COACHING_CALENDAR_WINDOW_DAYS} days.`}
-                  />
-                )}
-              </div>
+                  ))}
+                  {!schedulePanelLoading && !upcomingScheduleGroups.length && (
+                    <EmptyState
+                      size="sm"
+                      icon="ri-calendar-check-line"
+                      title="Nothing scheduled"
+                      description={calendarError || liveSessionsError || `Nothing scheduled in the next ${COACHING_CALENDAR_WINDOW_DAYS} days.`}
+                    />
+                  )}
+                </div>
+              )}
             </Panel>
           </div>
         </SectionReveal>
@@ -1634,8 +1702,8 @@ function FilterMetricCard({ label, value, note, tone, icon, active, onFilter }: 
         title={`Open ${label} details`}
         className="absolute inset-0 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
       />
-      <span className="pointer-events-none absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-lg text-foreground-300">
-        <AppIcon className="ri-arrow-right-up-line text-[13px]"></AppIcon>
+      <span className="pointer-events-none absolute right-2.5 top-2.5 z-10 flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-100 bg-background-50/90 text-foreground-400 shadow-sm transition-colors">
+        <AppIcon className="ri-arrow-right-up-line text-[14px]"></AppIcon>
       </span>
     </div>
   );
@@ -1655,10 +1723,10 @@ function FilterCompactMetric({ label, value, note, tone, active, onFilter }: {
       onClick={onFilter}
       aria-pressed={active}
       className={cn(
-        'rounded-lg border p-2 text-left transition-all',
+        'rounded-lg border bg-background-50 p-3 text-left shadow-sm transition-all hover:shadow-md',
         active
           ? 'border-primary-300 bg-primary-50/70 shadow-sm ring-2 ring-primary-300/60'
-          : 'border-transparent hover:bg-background-100/70',
+          : 'border-foreground-100 hover:border-primary-100 hover:bg-background-50',
       )}
     >
       <CompactMetric label={label} value={value} note={note} tone={tone} />
@@ -1838,7 +1906,12 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
 
   const openLearnerProfile = (learner: CoachLearner) => {
     navigate(`/coach/learner-case-file?id=${encodeURIComponent(learner.id)}`, {
-      state: { learnerId: learner.id, learnerName: learner.name },
+      state: {
+        learnerId: learner.id,
+        learnerName: learner.name,
+        ...(learner.learnerType ? { kind: learner.learnerType } : {}),
+        ...(learner.enrolmentId ? { enrolmentId: learner.enrolmentId } : {}),
+      },
     });
     onClose();
   };
@@ -1913,11 +1986,21 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
 
           {type === 'evidence' && (
             <div className="space-y-3">
-              {evidenceLearners.map(learner => (
+              {evidenceLearners.map(learner => {
+                // The marking queue has no learnerType of its own -- cross-reference the
+                // caseload list already loaded on this page instead of guessing.
+                const caseloadMatch = learners.find(candidate => candidate.id === learner.learnerId);
+                return (
                 <Link
                   key={learner.id}
                   to={`/coach/learner-case-file?id=${encodeURIComponent(learner.learnerId)}&tab=evidence`}
-                  state={{ learnerId: learner.learnerId, learnerName: learner.learner, tab: 'evidence' }}
+                  state={{
+                    learnerId: learner.learnerId,
+                    learnerName: learner.learner,
+                    tab: 'evidence',
+                    ...(caseloadMatch?.learnerType ? { kind: caseloadMatch.learnerType } : {}),
+                    ...(caseloadMatch?.enrolmentId ? { enrolmentId: caseloadMatch.enrolmentId } : {}),
+                  }}
                   onClick={onClose}
                   className="flex items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 px-4 py-3 shadow-sm transition-colors hover:border-secondary-200 hover:bg-secondary-50/30"
                 >
@@ -1933,7 +2016,8 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
                   </div>
                   <AppIcon className="ri-arrow-right-s-line text-foreground-300"></AppIcon>
                 </Link>
-              ))}
+                );
+              })}
               {!evidenceLearners.length && (
                 <EmptyState icon="ri-file-search-line" title="No evidence awaiting review" description="Learners will appear here when submitted evidence needs marking." />
               )}
@@ -1967,9 +2051,9 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
 
         <footer className="flex flex-wrap items-center justify-end gap-2.5 border-t border-foreground-100 bg-background-100/60 px-5 py-4 sm:px-7">
           <button type="button" onClick={onClose} className="rounded-xl border border-foreground-200 bg-background-50 px-4 py-2.5 text-xs font-semibold text-foreground-700 shadow-sm transition-colors hover:bg-background-100 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Close</button>
-          {filterForType[type] && <button type="button" onClick={() => onFilter(filterForType[type]!)} className="rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">View in caseload list</button>}
-          {type === 'evidence' && <Link to="/coach/marking-queue" onClick={onClose} className="rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open marking queue</Link>}
-          {type === 'reviews' && <Link to="/coach/progress-reviews" onClick={onClose} className="rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open reviews</Link>}
+          {filterForType[type] && <button type="button" onClick={() => onFilter(filterForType[type]!)} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">View in caseload list</button>}
+          {type === 'evidence' && <Link to="/coach/marking-queue" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open marking queue</Link>}
+          {type === 'reviews' && <Link to="/coach/progress-reviews" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open reviews</Link>}
         </footer>
       </div>
     </div>,

@@ -119,6 +119,7 @@ import {
   Search,
   SeparatorHorizontal,
   Send,
+  Share2,
   Settings2,
   Shield,
   ShieldCheck,
@@ -246,6 +247,7 @@ function resolveIcon(name: string): LucideIcon {
   if (/group|team|organization|organisation|cohort|apprentice|learner/.test(key)) return Users;
   if (/mail/.test(key)) return Mail;
   if (/send/.test(key)) return Send;
+  if (/share/.test(key)) return Share2;
   if (/attachment/.test(key)) return Paperclip;
   if (/phone|contact/.test(key)) return Phone;
   if (/video|live|vidicon/.test(key)) return Video;
@@ -338,10 +340,10 @@ export function AppIcon({ name, className = '', size = '1em', style, ...props }:
     <Icon
       {...props}
       aria-hidden={props['aria-label'] ? undefined : true}
-      className={visualClassName || undefined}
+      className={visualClassName ? `app-icon ${visualClassName}` : 'app-icon'}
       width={size}
       height={size}
-      strokeWidth={2.05}
+      strokeWidth={2.2}
       fill={isFilled ? 'currentColor' : 'none'}
       style={{ verticalAlign: 'middle', ...style }}
     />

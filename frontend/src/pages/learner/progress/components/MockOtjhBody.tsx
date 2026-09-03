@@ -179,7 +179,7 @@ export function MockOtjhBody({ showHero = true }: { showHero?: boolean }) {
           ═══════════════════════════════════════════════════ */}
       {showHero && (
       <SectionReveal delay={0}>
-        <section className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
+        <section className="learner-super-admin-hero relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute animate-liquid-blob-1 opacity-25" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
             <div className="absolute animate-liquid-blob-2 opacity-15" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
@@ -255,7 +255,7 @@ export function MockOtjhBody({ showHero = true }: { showHero?: boolean }) {
           <div className="lg:col-span-2 bg-background-50 rounded-xl border border-foreground-200/60 p-5 md:p-6">
             <div className="flex items-center justify-between mb-1">
               <h3 className="text-sm font-heading font-semibold text-foreground-900">Monthly Planned vs Actual</h3>
-              <Link to="/learner/progress-reviews" className="text-xs font-medium text-primary-600 hover:text-primary-700 cursor-pointer whitespace-nowrap">
+              <Link to="/learner/progress-reviews" className="compact-action text-xs font-medium text-primary-600 hover:text-primary-700 cursor-pointer">
                 View Progress Reviews <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
               </Link>
             </div>
@@ -709,7 +709,7 @@ function StatsCard({ label, value, sub, icon, color }: { label: string; value: s
   };
   const c = colorMap[color] || colorMap.primary;
   return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
+    <div className="coach-metric-card">
       <div className="flex items-center gap-2.5 mb-2">
         <span className={`w-10 h-10 rounded-xl flex items-center justify-center ring-1 ring-black/5 ${c.iconBg} ${c.iconText}`}>
           <AppIcon className={`${icon} text-base`}></AppIcon>

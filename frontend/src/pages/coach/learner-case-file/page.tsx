@@ -8,7 +8,6 @@ import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
 import { cn } from '@/lib/cn';
 import { statusTone, toneStyle, type StatusTone } from '@/lib/statusTone';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -70,6 +69,8 @@ type LocationState = {
   learnerId?: string;
   learnerName?: string;
   kind?: 'commercial' | 'apprenticeship';
+  /** enrolment."Created_users".id -- see useCoachLearnerCaseFileData's enrolmentId doc. */
+  enrolmentId?: string;
   tab?: string;
 };
 
@@ -110,11 +111,13 @@ export default function LearnerCaseFile() {
   const learnerId = searchParams.get('id') || state.learnerId;
   const learnerName = state.learnerName;
   const explicitKind = parseLearnerKind(searchParams.get('kind') || state.kind);
+  const enrolmentId = searchParams.get('enrolmentId') || state.enrolmentId;
 
   const { data, loading, error } = useCoachLearnerCaseFileData({
     learnerId,
     learnerName,
     kind: explicitKind,
+    enrolmentId,
     enabled: coach.isInitialized && coach.hasCoachAccess,
   });
 
@@ -208,65 +211,76 @@ export default function LearnerCaseFile() {
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">{error}</div>
         )}
 
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-          <LearnerAvatar
-            name={pageTitle}
-            initials={data?.initials}
-            size="lg"
-            tone={statusTone(data?.attendance?.risk)}
-            className="mt-1 shrink-0"
-          />
-          <div className="min-w-0 flex-1">
-            <PageHeader
-              title={pageTitle}
-              description={pageSubtitle}
-              meta={(
-                <>
-                  <StatusBadge tone={statusTone(data?.attendance?.risk)} label={statusLabel(data)} size="sm" />
-                  {data?.email && (
-                    <span className="inline-flex items-center gap-1.5 text-[12px] text-foreground-500">
-                      <AppIcon className="ri-mail-line"></AppIcon>{data.email}
-                    </span>
-                  )}
-                  {data?.detail?.phone && (
-                    <span className="inline-flex items-center gap-1.5 text-[12px] text-foreground-500">
-                      <AppIcon className="ri-phone-line"></AppIcon>{data.detail.phone}
-                    </span>
-                  )}
-                  <span className="text-[12px] text-foreground-500">Overall {formatPercent(data?.overallProgress ?? null)}</span>
-                  <span className="text-[12px] text-foreground-500">OTJH {data ? formatFraction(data.otjhCompleted, data.otjhTarget) : '--'}</span>
-                  <span className="text-[12px] text-foreground-500">KSB {formatPercent(data?.ksbProgress ?? null)}</span>
-                  <span className="text-[12px] text-foreground-500">Attendance {formatPercent(data?.attendanceRate ?? null)}</span>
-                  {data?.snapshot?.coachRag && (
-                    <StatusBadge status={data.snapshot.coachRag} label={`RAG: ${data.snapshot.coachRag}`} size="sm" />
-                  )}
-                  <span className="text-[12px] text-foreground-500">Gateway {data?.gatewayReviewDate || '--'}</span>
-                  <span className="text-[12px] text-foreground-500">Next session {nextLiveSession?.summary || '--'}</span>
-                </>
-              )}
-              actions={(
-                <>
+        <section
+          className="overflow-hidden rounded-2xl shadow-sm"
+          style={{ background: 'linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 36%, oklch(var(--primary-100)) 100%)' }}
+        >
+          <div className="flex flex-col gap-5 px-5 py-5 md:px-7">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div className="flex min-w-0 items-start gap-4">
+                <LearnerAvatar
+                  name={pageTitle}
+                  initials={data?.initials}
+                  size="lg"
+                  tone={statusTone(data?.attendance?.risk)}
+                  className="shrink-0 bg-white/90 shadow-sm"
+                />
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h1 className="min-w-0 truncate font-heading text-xl font-bold tracking-tight text-white md:text-2xl">
+                      {pageTitle}
+                    </h1>
+                    <StatusBadge tone={statusTone(data?.attendance?.risk)} label={statusLabel(data)} size="sm" />
+                    {data?.snapshot?.coachRag && (
+                      <StatusBadge status={data.snapshot.coachRag} label={`RAG: ${data.snapshot.coachRag}`} size="sm" />
+                    )}
+                  </div>
+                  <p className="mt-1 text-[13px] leading-relaxed text-white/80">{pageSubtitle}</p>
+                  <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px] text-white/75">
+                    {data?.email && (
+                      <span className="inline-flex items-center gap-1.5">
+                        <AppIcon className="ri-mail-line"></AppIcon>{data.email}
+                      </span>
+                    )}
+                    {data?.detail?.phone && (
+                      <span className="inline-flex items-center gap-1.5">
+                        <AppIcon className="ri-phone-line"></AppIcon>{data.detail.phone}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => navigate('/coach/timetable')}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-white/95 px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-white"
+                >
+                  <AppIcon className="ri-calendar-line"></AppIcon> Schedule
+                </button>
+                {data?.kind && (
                   <button
                     type="button"
-                    onClick={() => navigate('/coach/timetable')}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary-600 px-3 text-[12px] font-semibold text-white transition hover:bg-primary-700"
+                    onClick={handleOpenTrainingPlan}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/30 bg-white/10 px-3 text-[12px] font-semibold text-white transition hover:bg-white/20"
                   >
-                    <AppIcon className="ri-calendar-line"></AppIcon> Schedule
+                    <AppIcon className="ri-route-line"></AppIcon> Training Plan
                   </button>
-                  {data?.kind && (
-                    <button
-                      type="button"
-                      onClick={handleOpenTrainingPlan}
-                      className="inline-flex h-9 items-center gap-1.5 rounded-md border border-foreground-200 bg-background-50 px-3 text-[12px] font-semibold text-foreground-700 transition hover:bg-background-100"
-                    >
-                      <AppIcon className="ri-route-line"></AppIcon> Training Plan
-                    </button>
-                  )}
-                </>
-              )}
-            />
+                )}
+              </div>
+            </div>
+
+            <div className="grid gap-2 border-t border-white/20 pt-4 sm:grid-cols-2 lg:grid-cols-6">
+              <CaseFileHeroMetric label="Overall" value={formatPercent(data?.overallProgress ?? null)} />
+              <CaseFileHeroMetric label="OTJH" value={data ? formatFraction(data.otjhCompleted, data.otjhTarget) : '--'} />
+              <CaseFileHeroMetric label="KSB" value={formatPercent(data?.ksbProgress ?? null)} />
+              <CaseFileHeroMetric label="Attendance" value={formatPercent(data?.attendanceRate ?? null)} />
+              <CaseFileHeroMetric label="Gateway" value={data?.gatewayReviewDate || '--'} />
+              <CaseFileHeroMetric label="Next session" value={nextLiveSession?.summary || '--'} wide />
+            </div>
           </div>
-        </div>
+        </section>
 
         <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
           <div className="border-b border-foreground-100 p-3">
@@ -283,6 +297,15 @@ export default function LearnerCaseFile() {
         </section>
       </PageContainer>
     </WorkspaceShell>
+  );
+}
+
+function CaseFileHeroMetric({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
+  return (
+    <div className={cn('rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-white shadow-sm backdrop-blur-sm', wide && 'sm:col-span-2 lg:col-span-1')}>
+      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-white/60">{label}</p>
+      <p className="mt-1 truncate text-[12px] font-semibold text-white" title={value}>{value}</p>
+    </div>
   );
 }
 

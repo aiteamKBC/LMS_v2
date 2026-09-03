@@ -6,9 +6,14 @@ import { roleNavMap } from '@/mocks/navigation';
 import {
   fetchClubs, createClub as apiCreateClub, updateClub, deleteClub as apiDeleteClub,
   addClubMeeting, updateClubMeeting, deleteClubMeeting,
-  type EngagementClub as Club, type EngagementClubMeeting as ClubMeeting,
+  fetchClubMembers, assignClubMember, removeClubMember,
+  fetchClubMeetingAttendance, saveClubMeetingAttendance,
+  type EngagementClub as Club, type EngagementClubMeeting as ClubMeeting, type ClubMember,
+  type AttendanceRosterEntry,
 } from '@/api/engagement';
 import { ClubCardSkeletonGrid } from '@/pages/engagement/EngagementSkeletons';
+import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
+import { LearnerPickerModal } from '@/pages/engagement/LearnerPickerModal';
 
 const engagementNav = roleNavMap.engagement;
 
@@ -44,6 +49,7 @@ function remainingLabel(date?: string, time?: string) {
 
 export default function EngagementClubsPage() {
   const navigate = useNavigate();
+  const operator = useOperatorIdentity();
   const [clubs, setClubs] = useState<Club[]>([]);
   const [loading, setLoading] = useState(true);
   const [customLocations, setCustomLocations] = useState<string[]>([]);
@@ -76,6 +82,20 @@ export default function EngagementClubsPage() {
   // Manage (edit / activate / delete) an existing club.
   const [managingClubId, setManagingClubId] = useState<string | null>(null);
   const [manageForm, setManageForm] = useState({ description: '', ambassador: '', ambassadorRole: '' });
+
+  // Staff-assigned membership — learners never join themselves.
+  const [membersClubId, setMembersClubId] = useState<string | null>(null);
+  const [members, setMembers] = useState<ClubMember[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [showLearnerPicker, setShowLearnerPicker] = useState(false);
+
+  // Attendance modal — mark which members showed up to a meeting. Marking
+  // 'present' awards club_meeting_attended points server-side.
+  const [attendanceCtx, setAttendanceCtx] = useState<{ clubId: string; meetingId: string; meetingTitle: string } | null>(null);
+  const [attendanceRoster, setAttendanceRoster] = useState<AttendanceRosterEntry[]>([]);
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
+  const [attendanceSaving, setAttendanceSaving] = useState(false);
+  const [attendanceDraft, setAttendanceDraft] = useState<Record<string, 'present' | 'absent'>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -158,6 +178,56 @@ export default function EngagementClubsPage() {
     showToast(`Reminder emailed to ${recipients} learner${recipients === 1 ? '' : 's'} in ${clubName}`);
   };
 
+  const openAttendance = async (club: Club, meeting: ClubMeeting) => {
+    setAttendanceCtx({ clubId: club.id, meetingId: meeting.id, meetingTitle: meeting.title });
+    setAttendanceLoading(true);
+    try {
+      const roster = await fetchClubMeetingAttendance(club.id, meeting.id);
+      setAttendanceRoster(roster);
+      const draft: Record<string, 'present' | 'absent'> = {};
+      roster.forEach(r => { if (r.status) draft[r.learnerId] = r.status; });
+      setAttendanceDraft(draft);
+    } catch (err: any) {
+      showToast(err.message || 'Could not load attendance', 'error');
+      setAttendanceCtx(null);
+    } finally {
+      setAttendanceLoading(false);
+    }
+  };
+
+  const setMark = (learnerId: string, status: 'present' | 'absent') => {
+    setAttendanceDraft(prev => ({ ...prev, [learnerId]: status }));
+  };
+
+  const markAll = (status: 'present' | 'absent') => {
+    const draft: Record<string, 'present' | 'absent'> = {};
+    attendanceRoster.forEach(r => { draft[r.learnerId] = status; });
+    setAttendanceDraft(draft);
+  };
+
+  const saveAttendance = async () => {
+    if (!attendanceCtx) return;
+    const records = attendanceRoster
+      .filter(r => attendanceDraft[r.learnerId])
+      .map(r => ({ learnerId: r.learnerId, learnerName: r.learnerName, status: attendanceDraft[r.learnerId] }));
+    if (records.length === 0) { showToast('Mark at least one learner before saving', 'error'); return; }
+    setAttendanceSaving(true);
+    try {
+      const { meeting, roster } = await saveClubMeetingAttendance(attendanceCtx.clubId, attendanceCtx.meetingId, records);
+      setClubs(prev => prev.map(c => c.id === attendanceCtx.clubId
+        ? { ...c, meetings: c.meetings.map(m => m.id === attendanceCtx.meetingId ? meeting : m) }
+        : c));
+      setAttendanceRoster(prev => prev.map(r => roster.find(saved => saved.learnerId === r.learnerId) ?? r));
+      const presentCount = records.filter(r => r.status === 'present').length;
+      showToast(`Attendance saved — ${presentCount} learner${presentCount === 1 ? '' : 's'} marked present`);
+      setAttendanceCtx(null);
+    } catch (err: any) {
+      showToast(err.message || 'Could not save attendance', 'error');
+    } finally {
+      setAttendanceSaving(false);
+    }
+  };
+
   const addLocation = () => {
     const loc = draftLocation.trim();
     if (!loc) return;
@@ -230,7 +300,46 @@ export default function EngagementClubsPage() {
     }
   };
 
+  useEffect(() => {
+    if (!membersClubId) { setMembers([]); return; }
+    let cancelled = false;
+    setMembersLoading(true);
+    fetchClubMembers(membersClubId)
+      .then(data => { if (!cancelled) setMembers(data); })
+      .catch(err => { if (!cancelled) showToast(err.message || 'Could not load members', 'error'); })
+      .finally(() => { if (!cancelled) setMembersLoading(false); });
+    return () => { cancelled = true; };
+  }, [membersClubId]);
+
+  const refreshClubMemberCount = (clubId: string, delta: number) => {
+    setClubs(prev => prev.map(c => c.id === clubId ? { ...c, members: Math.max(0, c.members + delta) } : c));
+  };
+
+  const assignMember = async (learner: { id: string; name: string }) => {
+    if (!membersClubId) return;
+    try {
+      const result = await assignClubMember(membersClubId, { learnerId: learner.id, learnerName: learner.name });
+      setMembers(prev => prev.some(m => m.learnerId === learner.id) ? prev : [...prev, result].sort((a, b) => a.learnerName.localeCompare(b.learnerName)));
+      refreshClubMemberCount(membersClubId, 1);
+      setShowLearnerPicker(false);
+    } catch (err: any) {
+      showToast(err.message || 'Could not assign learner', 'error');
+    }
+  };
+
+  const removeMember = async (learnerId: string) => {
+    if (!membersClubId) return;
+    try {
+      await removeClubMember(membersClubId, learnerId);
+      setMembers(prev => prev.filter(m => m.learnerId !== learnerId));
+      refreshClubMemberCount(membersClubId, -1);
+    } catch (err: any) {
+      showToast(err.message || 'Could not remove learner', 'error');
+    }
+  };
+
   const managingClub = clubs.find(c => c.id === managingClubId) ?? null;
+  const membersClub = clubs.find(c => c.id === membersClubId) ?? null;
   const managingMeeting = (() => {
     if (!meetingCtx) return null;
     const club = clubs.find(c => c.id === meetingCtx.clubId);
@@ -242,7 +351,7 @@ export default function EngagementClubsPage() {
     <WorkspaceShell
       role="engagement" roleLabel={engagementNav.label} navItems={engagementNav.items} workspaceLabel={engagementNav.workspaceLabel}
       pageTitle="Learner Clubs" pageSubtitle="Local community clubs that bring nearby learners together to meet, network, and connect"
-      userName="Tom Harrington" userRole="Engagement Manager"
+      userName={operator.name} userRole={operator.role}
     >
       <div className="p-6 space-y-6">
         <WorkspaceHeroBanner
@@ -331,17 +440,17 @@ export default function EngagementClubsPage() {
                   <AppIcon className="ri-map-pin-2-line text-sm"></AppIcon>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h4 className="text-[13px] font-semibold text-foreground-900">{club.name}</h4>
-                  <span className="inline-flex items-center gap-1 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-primary-100 text-primary-700">
+                  <h4 className="text-sm font-semibold text-foreground-900">{club.name}</h4>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-primary-100 text-primary-700">
                     <AppIcon className="ri-map-pin-line"></AppIcon> {club.location}
                   </span>
                 </div>
-                {!club.active && <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-background-200 text-foreground-500">Inactive</span>}
+                {!club.active && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-background-200 text-foreground-500">Inactive</span>}
               </div>
 
-              <p className="text-[11px] text-foreground-500 mb-3">{club.description}</p>
+              <p className="text-xs text-foreground-500 mb-3">{club.description}</p>
 
-              <div className="text-[10px] text-foreground-400 mb-3">
+              <div className="text-[11px] text-foreground-400 mb-3">
                 <p><AppIcon className="ri-shield-star-line mr-1 text-secondary-500"></AppIcon>Ambassador: {club.ambassador} ({club.ambassadorRole})</p>
               </div>
 
@@ -350,12 +459,12 @@ export default function EngagementClubsPage() {
                 <div className="flex items-center">
                   <div className="flex -space-x-2">
                     {club.sampleMembers.slice(0, 4).map((initials, i) => (
-                      <span key={i} className="w-6 h-6 rounded-full bg-secondary-100 text-secondary-700 border-2 border-background-50 flex items-center justify-center text-[8px] font-bold">{initials}</span>
+                      <span key={i} className="w-6 h-6 rounded-full bg-secondary-100 text-secondary-700 border-2 border-background-50 flex items-center justify-center text-[9px] font-bold">{initials}</span>
                     ))}
                   </div>
-                  {club.members > 4 && <span className="ml-1 text-[10px] font-semibold text-foreground-500">+{club.members - 4}</span>}
+                  {club.members > 4 && <span className="ml-1 text-[11px] font-semibold text-foreground-500">+{club.members - 4}</span>}
                 </div>
-                <span className="flex items-center gap-1 text-[11px] font-semibold text-primary-600">
+                <span className="flex items-center gap-1 text-xs font-semibold text-primary-600">
                   <AppIcon className="ri-group-line"></AppIcon> {club.members} joined
                 </span>
               </div>
@@ -363,8 +472,8 @@ export default function EngagementClubsPage() {
               {/* Meetings — scheduled or awaiting a date */}
               <div className="space-y-2 mb-1">
                 <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-semibold text-foreground-500 uppercase tracking-wide">Meetings</p>
-                  <button onClick={() => { setAddingClubId(addingClubId === club.id ? null : club.id); setDraftTitle(''); }} className="flex items-center gap-1 px-2 py-1 rounded-md text-[9px] font-semibold text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer whitespace-nowrap">
+                  <p className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wide">Meetings</p>
+                  <button onClick={() => { setAddingClubId(addingClubId === club.id ? null : club.id); setDraftTitle(''); }} className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer whitespace-nowrap">
                     <AppIcon className="ri-add-line"></AppIcon> Add meeting
                   </button>
                 </div>
@@ -379,44 +488,52 @@ export default function EngagementClubsPage() {
                       placeholder="Meeting name (e.g. Coffee & connect)"
                       maxLength={80}
                       onKeyDown={e => { if (e.key === 'Enter') addMeeting(club.id); }}
-                      className="flex-1 min-w-[140px] px-2 py-1 rounded-md border border-foreground-200/60 bg-background-50 text-[10px] text-foreground-700 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40"
+                      className="flex-1 min-w-[140px] px-2 py-1 rounded-md border border-foreground-200/60 bg-background-50 text-[11px] text-foreground-700 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40"
                     />
-                    <button onClick={() => addMeeting(club.id)} disabled={!draftTitle.trim()} className="px-2.5 py-1 bg-primary-500 text-white rounded-md text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">Add</button>
-                    <button onClick={() => { setAddingClubId(null); setDraftTitle(''); }} className="px-2 py-1 text-[10px] font-semibold text-foreground-500 hover:text-foreground-700 cursor-pointer">Cancel</button>
+                    <button onClick={() => addMeeting(club.id)} disabled={!draftTitle.trim()} className="px-2.5 py-1 bg-primary-500 text-white rounded-md text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">Add</button>
+                    <button onClick={() => { setAddingClubId(null); setDraftTitle(''); }} className="px-2 py-1 text-[11px] font-semibold text-foreground-500 hover:text-foreground-700 cursor-pointer">Cancel</button>
                   </div>
                 )}
 
                 {club.meetings.length === 0 && (
-                  <p className="text-[10px] text-foreground-400 italic">No meetings yet — add one to get started.</p>
+                  <p className="text-[11px] text-foreground-400 italic">No meetings yet — add one to get started.</p>
                 )}
                 {club.meetings.map(m => (
                   <div key={m.id} className="rounded-lg border border-foreground-200/50 p-2.5">
                     <div className="flex items-start gap-2">
                       <AppIcon className={`${m.scheduled ? 'ri-calendar-check-line text-primary-500' : 'ri-calendar-todo-line text-foreground-400'} text-sm mt-0.5`}></AppIcon>
                       <div className="flex-1 min-w-0">
-                        <p className="text-[11px] font-semibold text-foreground-800">{m.title}</p>
+                        <p className="text-xs font-semibold text-foreground-800">{m.title}</p>
                         {m.scheduled ? (
-                          <p className="text-[10px] text-foreground-500">
+                          <p className="text-[11px] text-foreground-500">
                             {formatMeetingDate(m.date)}{m.time ? ` · ${m.time}` : ''}{m.venue ? ` · ${m.venue}` : ''}
                           </p>
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 mt-0.5">
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 mt-0.5">
                             <AppIcon className="ri-time-line"></AppIcon> Not scheduled
                           </span>
                         )}
                       </div>
-                      <button onClick={() => openMeeting(club, m)} className="shrink-0 px-2 py-1 rounded-md text-[9px] font-semibold text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer whitespace-nowrap">
-                        <AppIcon className="ri-edit-line mr-0.5"></AppIcon> Manage
-                      </button>
+                      <div className="shrink-0 flex items-center gap-1">
+                        <button onClick={() => openAttendance(club, m)} className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-secondary-600 hover:bg-secondary-50 transition-smooth cursor-pointer whitespace-nowrap">
+                          <AppIcon className="ri-checkbox-circle-line"></AppIcon> Attendance
+                        </button>
+                        <button onClick={() => openMeeting(club, m)} className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer whitespace-nowrap">
+                          <AppIcon className="ri-edit-line"></AppIcon> Manage
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
               </div>
 
-              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-foreground-200/40">
+              <div className="mt-auto flex items-center gap-2 pt-3 border-t border-foreground-200/40">
+                <button onClick={() => setMembersClubId(club.id)} className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary-50 border border-secondary-200/50 text-secondary-700 rounded-lg text-[11px] font-medium hover:bg-secondary-100 transition-smooth cursor-pointer whitespace-nowrap">
+                  <AppIcon className="ri-group-line"></AppIcon> Members
+                </button>
                 <div className="flex-1"></div>
-                <button onClick={() => openManage(club)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                  <AppIcon className="ri-edit-line mr-1"></AppIcon> Manage
+                <button onClick={() => openManage(club)} className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                  <AppIcon className="ri-edit-line"></AppIcon> Manage
                 </button>
               </div>
             </div>
@@ -469,7 +586,7 @@ export default function EngagementClubsPage() {
 
               <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-foreground-200/60">
                 <button onClick={() => { setCreatingClub(false); setClubForm(emptyClubForm); }} className="px-4 py-2 rounded-lg text-xs font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">Cancel</button>
-                <button onClick={createClub} disabled={!clubForm.name.trim() || !clubForm.location.trim()} className="px-4 py-2 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"><AppIcon className="ri-add-line mr-1"></AppIcon>Create club</button>
+                <button onClick={createClub} disabled={!clubForm.name.trim() || !clubForm.location.trim()} className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"><AppIcon className="ri-add-line"></AppIcon>Create club</button>
               </div>
             </div>
           </div>
@@ -517,10 +634,10 @@ export default function EngagementClubsPage() {
               </div>
 
               <div className="flex items-center justify-between gap-2 px-5 py-4 border-t border-foreground-200/60">
-                <button onClick={() => deleteClub(managingClub.id)} className="px-3 py-2 rounded-lg text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-smooth cursor-pointer"><AppIcon className="ri-delete-bin-line mr-1"></AppIcon>Delete</button>
+                <button onClick={() => deleteClub(managingClub.id)} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-smooth cursor-pointer"><AppIcon className="ri-delete-bin-line"></AppIcon>Delete</button>
                 <div className="flex items-center gap-2">
                   <button onClick={() => setManagingClubId(null)} className="px-4 py-2 rounded-lg text-xs font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">Cancel</button>
-                  <button onClick={saveManage} className="px-4 py-2 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer"><AppIcon className="ri-save-line mr-1"></AppIcon>Save changes</button>
+                  <button onClick={saveManage} className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer"><AppIcon className="ri-save-line"></AppIcon>Save changes</button>
                 </div>
               </div>
             </div>
@@ -568,8 +685,8 @@ export default function EngagementClubsPage() {
                     : <><AppIcon className="ri-information-line mr-0.5"></AppIcon>Leave the date empty to keep this meeting unscheduled.</>}
                 </p>
                 <div className="flex items-center gap-2">
-                  <button onClick={saveMeeting} className="px-4 py-2 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer"><AppIcon className="ri-save-line mr-1"></AppIcon>Save meeting</button>
-                  <button onClick={deleteMeeting} className="px-3 py-2 rounded-lg text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-smooth cursor-pointer"><AppIcon className="ri-delete-bin-line mr-1"></AppIcon>Delete meeting</button>
+                  <button onClick={saveMeeting} className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer"><AppIcon className="ri-save-line"></AppIcon>Save meeting</button>
+                  <button onClick={deleteMeeting} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-smooth cursor-pointer"><AppIcon className="ri-delete-bin-line"></AppIcon>Delete meeting</button>
                 </div>
               </div>
 
@@ -589,11 +706,117 @@ export default function EngagementClubsPage() {
                 <button
                   onClick={() => sendMeetingEmail(managingMeeting.club.members, managingMeeting.club.name)}
                   disabled={!emailMsg.trim()}
-                  className="w-full px-4 py-2 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <AppIcon className="ri-mail-send-line mr-1"></AppIcon> Send reminder now
+                  <AppIcon className="ri-mail-send-line"></AppIcon> Send reminder now
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Members modal — staff assign learners; learners never join themselves */}
+        {membersClub && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setMembersClubId(null)}>
+            <div className="bg-background-50 rounded-2xl max-w-md w-full max-h-[85vh] overflow-hidden flex flex-col shadow-xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4 border-b border-foreground-200/60 shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <span className="w-9 h-9 rounded-xl bg-secondary-100 text-secondary-600 flex items-center justify-center"><AppIcon className="ri-group-line"></AppIcon></span>
+                  <div>
+                    <h3 className="text-sm font-heading font-semibold text-foreground-900">{membersClub.name} members</h3>
+                    <p className="text-[11px] text-foreground-400">Staff-assigned — learners don't join themselves</p>
+                  </div>
+                </div>
+                <button onClick={() => setMembersClubId(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
+              </div>
+              <div className="p-5 overflow-y-auto space-y-2">
+                <button onClick={() => setShowLearnerPicker(true)} className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer mb-2">
+                  <AppIcon className="ri-add-line"></AppIcon> Assign a learner
+                </button>
+                {membersLoading && <p className="text-[11px] text-foreground-400 text-center py-4">Loading members…</p>}
+                {!membersLoading && members.length === 0 && (
+                  <p className="text-[11px] text-foreground-400 text-center py-4">No learners assigned yet.</p>
+                )}
+                {members.map(m => (
+                  <div key={m.id} className="flex items-center gap-2.5 rounded-lg border border-foreground-200/50 p-2.5">
+                    <div className="w-7 h-7 rounded-full bg-secondary-100 text-secondary-700 flex items-center justify-center text-[10px] font-bold shrink-0">{m.learnerName.charAt(0)}</div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[12px] font-semibold text-foreground-900 truncate">{m.learnerName}</p>
+                      <p className="text-[10px] text-foreground-400">Assigned {new Date(m.assignedAt).toLocaleDateString('en-GB')}{m.assignedBy ? ` by ${m.assignedBy}` : ''}</p>
+                    </div>
+                    <button onClick={() => removeMember(m.learnerId)} className="shrink-0 px-2 py-1 rounded-md text-[9px] font-semibold text-rose-600 hover:bg-rose-50 transition-smooth cursor-pointer whitespace-nowrap">Remove</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <LearnerPickerModal
+          open={showLearnerPicker}
+          onClose={() => setShowLearnerPicker(false)}
+          onSelect={learner => assignMember({ id: learner.id, name: learner.name })}
+        />
+
+        {/* Attendance modal — mark who showed up; 'present' awards points */}
+        {attendanceCtx && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setAttendanceCtx(null)}>
+            <div className="bg-background-50 rounded-2xl max-w-md w-full max-h-[85vh] overflow-hidden flex flex-col shadow-xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4 border-b border-foreground-200/60 shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <span className="w-9 h-9 rounded-xl bg-secondary-100 text-secondary-600 flex items-center justify-center"><AppIcon className="ri-checkbox-circle-line"></AppIcon></span>
+                  <div>
+                    <h3 className="text-sm font-heading font-semibold text-foreground-900">Mark attendance</h3>
+                    <p className="text-[11px] text-foreground-400">{attendanceCtx.meetingTitle} · marking present awards points</p>
+                  </div>
+                </div>
+                <button onClick={() => setAttendanceCtx(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
+              </div>
+
+              {attendanceLoading && <p className="text-[11px] text-foreground-400 text-center py-8">Loading roster…</p>}
+
+              {!attendanceLoading && (
+                <>
+                  <div className="px-5 pt-3 flex items-center gap-2 shrink-0">
+                    <button onClick={() => markAll('present')} className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-smooth cursor-pointer">
+                      <AppIcon className="ri-checkbox-circle-line"></AppIcon> Mark all present
+                    </button>
+                    <button onClick={() => markAll('absent')} className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-semibold text-foreground-600 bg-background-100 hover:bg-background-200/60 transition-smooth cursor-pointer">
+                      <AppIcon className="ri-close-circle-line"></AppIcon> Mark all absent
+                    </button>
+                  </div>
+
+                  <div className="p-5 overflow-y-auto space-y-2">
+                    {attendanceRoster.length === 0 && (
+                      <p className="text-[11px] text-foreground-400 text-center py-4">No members assigned to this club yet.</p>
+                    )}
+                    {attendanceRoster.map(entry => {
+                      const mark = attendanceDraft[entry.learnerId];
+                      return (
+                        <div key={entry.learnerId} className="flex items-center gap-2.5 rounded-lg border border-foreground-200/50 p-2.5">
+                          <div className="w-7 h-7 rounded-full bg-secondary-100 text-secondary-700 flex items-center justify-center text-[10px] font-bold shrink-0">{entry.learnerName.charAt(0)}</div>
+                          <p className="text-[12px] font-semibold text-foreground-900 truncate flex-1 min-w-0">{entry.learnerName}</p>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button onClick={() => setMark(entry.learnerId, 'present')} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[9px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${mark === 'present' ? 'bg-emerald-500 text-white' : 'bg-background-100 text-foreground-500 hover:bg-emerald-50 hover:text-emerald-700'}`}>
+                              <AppIcon className="ri-check-line"></AppIcon> Present
+                            </button>
+                            <button onClick={() => setMark(entry.learnerId, 'absent')} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[9px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${mark === 'absent' ? 'bg-rose-500 text-white' : 'bg-background-100 text-foreground-500 hover:bg-rose-50 hover:text-rose-700'}`}>
+                              <AppIcon className="ri-close-line"></AppIcon> Absent
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-foreground-200/60 shrink-0">
+                    <button onClick={() => setAttendanceCtx(null)} className="px-4 py-2 rounded-lg text-xs font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">Cancel</button>
+                    <button onClick={saveAttendance} disabled={attendanceSaving} className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+                      <AppIcon className="ri-save-line"></AppIcon> {attendanceSaving ? 'Saving…' : 'Save attendance'}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}

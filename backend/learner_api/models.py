@@ -515,7 +515,21 @@ class LearnerProfile(models.Model):
     programme_id = models.CharField(max_length=64, blank=True, null=True)
     programme_status = models.CharField(max_length=100, blank=True)
     cohort = models.TextField(blank=True)
+    # curriculum.cohorts.cohort_id for `cohort`, and curriculum.groups.group_id
+    # for `group_name` -- the same relationship programme_id has to `programme`,
+    # for the two levels below it. The names stay: they are what the enrolment
+    # screens capture and edit, and what every consumer that has not been moved
+    # over still reads. These are the stable keys those names resolve to, so a
+    # renamed cohort or group no longer drops its learners off the curriculum
+    # rosters that used to find them by comparing text.
+    #
+    # NULL means "not resolved" -- an unmatched or ambiguous name -- and every
+    # reader falls back to matching by name for those rows. Added out of band by
+    # sql/2026-09-02_learner_placement_ids.sql, like programme_id before them,
+    # so an environment that has not run it simply never sees them populated.
+    cohort_id = models.CharField(max_length=64, blank=True, null=True)
     group_name = models.TextField(blank=True)
+    group_id = models.CharField(max_length=64, blank=True, null=True)
     completed_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     target_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     minimum_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
@@ -621,7 +635,18 @@ class LearnerProfile(models.Model):
     @property
     def training_plan_progress(self):
         records = []
-        for entry in self.progress_entries.all():
+        # Prefetched, not lazily walked: the body below touches ksb_links twice,
+        # quiz_answers once, and two relations under each answer, so plain
+        # `.all()` issues a query per entry per relation. A learner with 1,392
+        # entries — an MBA import, but any long-running learner gets there —
+        # spent over four minutes here on several thousand round trips, on the
+        # property every progress and OTJH screen reads.
+        entries = self.progress_entries.prefetch_related(
+            "ksb_links",
+            "quiz_answers__chosen_answers",
+            "quiz_answers__correct_answers",
+        )
+        for entry in entries:
             if entry.kind == "activity_event":
                 continue
             record = {
@@ -680,13 +705,12 @@ class LearnerProfile(models.Model):
                 record["questions"] = [
                     {
                         "questionId": answer.question_ref,
+                        # Built from the prefetched rows rather than .exists(),
+                        # which would issue its own query per answer and undo
+                        # the prefetch above.
                         "chosenAnswerId": (
-                            [
-                                choice.answer_ref
-                                for choice in answer.chosen_answers.all()
-                            ]
-                            if answer.chosen_answers.exists()
-                            else answer.chosen_answer_ref
+                            [choice.answer_ref for choice in answer.chosen_answers.all()]
+                            or answer.chosen_answer_ref
                         ),
                         "correct": answer.is_correct,
                         "earned": float(answer.earned) if answer.earned is not None else None,

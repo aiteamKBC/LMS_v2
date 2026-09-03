@@ -298,7 +298,7 @@ export default function WeekDetailPage() {
         {/* ═══════════════════════════════════════════════════
             SECTION 1 — WEEK HERO
             ═══════════════════════════════════════════════════ */}
-        <section className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
+        <section className="learner-super-admin-hero relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute animate-liquid-blob-1 opacity-25" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
             <div className="absolute animate-liquid-blob-2 opacity-15" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
@@ -569,7 +569,7 @@ export default function WeekDetailPage() {
           <section className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-heading font-semibold text-foreground-900">KSB Development</h2>
-              <Link to="/learner/ksbs" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+              <Link to="/learner/ksbs" className="compact-action text-sm text-primary-600 hover:text-primary-700 font-medium transition-smooth">
                 View all KSBs <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
               </Link>
             </div>
@@ -1111,7 +1111,7 @@ function SnapshotCard({ icon, label, value, detail, color }: { icon: string; lab
   const c = colorMap[color];
 
   return (
-    <div className={`rounded-xl border ${c.border} ${c.bg} p-4 card-premium`}>
+    <div className={`coach-metric-card ${c.border} ${c.bg}`}>
       <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${c.iconBg} ${c.iconText} mb-3`}>
         <AppIcon className={`${icon} text-sm`}></AppIcon>
       </span>
@@ -1131,7 +1131,7 @@ function OTJHStatCard({ label, value, icon, color }: { label: string; value: str
   }[color] || { bg: 'bg-background-50', border: 'border-foreground-200/50', iconBg: 'bg-background-100', iconText: 'text-foreground-500', accent: 'text-foreground-700' };
 
   return (
-    <div className={`rounded-xl border ${c.border} ${c.bg} p-4`}>
+    <div className={`coach-metric-card ${c.border} ${c.bg}`}>
       <div className="flex items-center gap-2.5 mb-2">
         <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${c.iconBg} ${c.iconText}`}>
           <AppIcon className={`${icon} text-sm`}></AppIcon>

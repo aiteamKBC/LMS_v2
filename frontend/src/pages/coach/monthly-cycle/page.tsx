@@ -19,7 +19,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { MetricCard } from '@/components/ui/MetricCard';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
@@ -31,16 +30,12 @@ import { formatHoursMinutes } from '@/lib/format';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 
-import { ActivityTimelinePanel } from './components/ActivityTimelinePanel';
 import { CoachingDeliveryPanel } from './components/CoachingDeliveryPanel';
-import { EngagementOverviewChart } from './components/EngagementOverviewChart';
 import { LearnerMonthCard } from './components/LearnerMonthCard';
 import { LearnerOverviewPanel } from './components/LearnerOverviewPanel';
 import { MonthHeroTiles } from './components/MonthHeroTiles';
 import { MonthNavigator } from './components/MonthNavigator';
 import { MonthlyCycleError, MonthlyCycleLoading, NoActiveLearners, NoLearnerMatches } from './components/MonthlyCycleStates';
-import { StatusBreakdownPanel } from './components/StatusBreakdownPanel';
-import { TopLearnerActionsPanel } from './components/TopLearnerActionsPanel';
 import { COACHING_DELIVERY_CONFIG, COACHING_DELIVERY_ORDER, EMPTY_LEARNERS, EMPTY_SUMMARY, LEARNERS_PER_PAGE } from './lib/constants';
 import {
   coachingDeliveryEventKey,
@@ -52,7 +47,6 @@ import {
   currentMonthKey,
   emptyCoachingDeliverySummary,
   formatMonthLabel,
-  formatNumber,
   monthlyActivityEndpoint,
   normalizeSearch,
   readJson,
@@ -76,7 +70,7 @@ export default function CoachMonthlyCycle() {
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey());
   const [data, setData] = useState<MonthlyActivityResponse | null>(null);
   const [selectedLearnerId, setSelectedLearnerId] = useState<string | null>(null);
-  const [expandedLearnerId, setExpandedLearnerId] = useState<string | null>(null);
+  const [expandedLearnerIds, setExpandedLearnerIds] = useState<string[]>([]);
   const [learnerSearch, setLearnerSearch] = useState('');
   const [learnerPage, setLearnerPage] = useState(1);
   const [inlineFilter, setInlineFilter] = useState<InlineActivityFilter>('all');
@@ -90,7 +84,7 @@ export default function CoachMonthlyCycle() {
     if (!coach.email) {
       setData(null);
       setSelectedLearnerId(null);
-      setExpandedLearnerId(null);
+      setExpandedLearnerIds([]);
       setError('Coach access is required to load monthly activity.');
       setLoading(false);
       return;
@@ -115,17 +109,14 @@ export default function CoachMonthlyCycle() {
           if (current && payload.learners.some((learner) => learner.id === current)) return current;
           return null;
         });
-        setExpandedLearnerId((current) => {
-          if (current && payload.learners.some((learner) => learner.id === current)) return current;
-          return null;
-        });
+        setExpandedLearnerIds((current) => current.filter((id) => payload.learners.some((learner) => learner.id === id)));
       })
       .catch((requestError: unknown) => {
         if (disposed) return;
         if (requestError instanceof DOMException && requestError.name === 'AbortError' && !timedOut) return;
         setData(null);
         setSelectedLearnerId(null);
-        setExpandedLearnerId(null);
+        setExpandedLearnerIds([]);
         setError(
           timedOut
             ? 'Monthly activity is taking too long to load. Please refresh or try a different month.'
@@ -159,22 +150,6 @@ export default function CoachMonthlyCycle() {
   const paginatedLearners = useMemo(
     () => filteredLearners.slice(pageStartIndex, pageEndIndex),
     [filteredLearners, pageEndIndex, pageStartIndex],
-  );
-  const latestActivities = useMemo(
-    () => learners
-      .flatMap((learner) => learner.activities.map((activity) => ({ ...activity, learnerId: learner.id, learnerName: learner.name })))
-      .sort((a, b) => b.date.localeCompare(a.date))
-      .slice(0, 6),
-    [learners],
-  );
-  const learnerActionCounts = useMemo(
-    () => learners.map((learner) => ({
-      id: learner.id,
-      name: learner.name,
-      initials: learner.initials,
-      actionCount: learner.activities.length,
-    })),
-    [learners],
   );
   const coachingDelivery = useMemo<CoachingDeliverySummary>(() => {
     const delivery = emptyCoachingDeliverySummary();
@@ -219,7 +194,7 @@ export default function CoachMonthlyCycle() {
 
   useEffect(() => {
     setLearnerPage(1);
-    setExpandedLearnerId(null);
+    setExpandedLearnerIds([]);
     setInlineFilter('all');
     setInlineSearch('');
   }, [learnerSearch, selectedMonth]);
@@ -281,19 +256,19 @@ export default function CoachMonthlyCycle() {
   const handleLearnerPageChange = (nextPage: number) => {
     const clampedPage = Math.max(1, Math.min(totalLearnerPages, nextPage));
     setLearnerPage(clampedPage);
-    setExpandedLearnerId(null);
+    setExpandedLearnerIds([]);
     setInlineFilter('all');
     setInlineSearch('');
   };
 
   const handleToggleLearnerTimeline = (learnerId: string) => {
-    setExpandedLearnerId((current) => {
-      const next = current === learnerId ? null : learnerId;
-      if (next) {
+    setExpandedLearnerIds((current) => {
+      if (current.includes(learnerId)) return current.filter((id) => id !== learnerId);
+      if (current.length === 0) {
         setInlineFilter('all');
         setInlineSearch('');
       }
-      return next;
+      return [...current, learnerId];
     });
   };
 
@@ -308,11 +283,7 @@ export default function CoachMonthlyCycle() {
             meta={(
               <MonthHeroTiles
                 learners={summary.activeLearners}
-                completions={summary.learningActivities}
                 reviews={summary.coachingSessions}
-                evidence={summary.evidence}
-                ksbs={summary.ksbTouched}
-                otjhHours={summary.otjhHours}
               />
             )}
             actions={(
@@ -417,25 +388,35 @@ export default function CoachMonthlyCycle() {
                 )}
 
                 <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                  {paginatedLearners.map((learner) => (
-                    <div key={learner.id} className={cn(expandedLearnerId === learner.id && 'xl:col-span-2')}>
-                      <LearnerMonthCard
-                        learner={learner}
-                        monthLabel={monthLabel}
-                        monthKey={selectedMonth}
-                        coachName={coachName}
-                        selected={selectedLearnerId === learner.id}
-                        expanded={expandedLearnerId === learner.id}
-                        inlineFilter={inlineFilter}
-                        inlineSearch={inlineSearch}
-                        onOpenOverview={() => handleOpenLearnerOverview(learner.id)}
-                        onOpenCaseFile={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(learner.id)}`)}
-                        onToggleTimeline={() => handleToggleLearnerTimeline(learner.id)}
-                        onInlineFilterChange={setInlineFilter}
-                        onInlineSearchChange={setInlineSearch}
-                      />
-                    </div>
-                  ))}
+                  {paginatedLearners.map((learner) => {
+                    const isExpanded = expandedLearnerIds.includes(learner.id);
+                    return (
+                      <div key={learner.id} className={cn(isExpanded && 'xl:col-span-2')}>
+                        <LearnerMonthCard
+                          learner={learner}
+                          monthLabel={monthLabel}
+                          monthKey={selectedMonth}
+                          coachName={coachName}
+                          selected={selectedLearnerId === learner.id}
+                          expanded={isExpanded}
+                          inlineFilter={inlineFilter}
+                          inlineSearch={inlineSearch}
+                          onOpenOverview={() => handleOpenLearnerOverview(learner.id)}
+                          onOpenCaseFile={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(learner.id)}`, {
+                            state: {
+                              learnerId: learner.id,
+                              learnerName: learner.name,
+                              ...(learner.learnerType ? { kind: learner.learnerType } : {}),
+                              ...(learner.enrolmentId ? { enrolmentId: learner.enrolmentId } : {}),
+                            },
+                          })}
+                          onToggleTimeline={() => handleToggleLearnerTimeline(learner.id)}
+                          onInlineFilterChange={setInlineFilter}
+                          onInlineSearchChange={setInlineSearch}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
 
                 {filteredLearners.length > LEARNERS_PER_PAGE && (

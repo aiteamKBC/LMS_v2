@@ -345,7 +345,7 @@ export function WizardShell({
               </div>
               {/* Same gate as the footer Next — this arrow is a second way
                   forward, so it cannot be allowed to skip the check. */}
-              <button onClick={() => !isLast && navigateTo(currentIndex + 1)} disabled={isLast} aria-label="Next step" className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-primary-500 text-white transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-40">
+              <button onClick={() => !isLast && navigateTo(currentIndex + 1)} disabled={isLast} aria-label="Next step" className="primary-action flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-primary-500 text-white transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-40">
                 <AppIcon className="ri-arrow-right-line" />
               </button>
             </div>

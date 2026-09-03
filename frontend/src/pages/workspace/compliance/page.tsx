@@ -198,7 +198,7 @@ export default function EnrolmentDashboard() {
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Onboarding Pipeline Overview</h3>
                 <p className="text-[11px] text-foreground-400 mt-0.5">14 learners progressing through 15-stage onboarding journey</p>
               </div>
-              <Link to="/compliance/pre-active" className="text-[12px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap">
+              <Link to="/compliance/pre-active" className="compact-action text-[12px] text-primary-600 hover:text-primary-700 font-medium">
                 Full Journey <AppIcon className="ri-arrow-right-line ml-1"></AppIcon>
               </Link>
             </div>
@@ -278,7 +278,7 @@ export default function EnrolmentDashboard() {
                 <p className="text-[11px] text-foreground-400 mt-0.5">3 unread messages from coaches, employers and MIS team</p>
               </div>
             </div>
-            <Link to="/messages" className="text-[12px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap">
+            <Link to="/messages" className="compact-action text-[12px] text-primary-600 hover:text-primary-700 font-medium">
               Open Messages <AppIcon className="ri-arrow-right-line ml-1"></AppIcon>
             </Link>
           </div>

@@ -149,7 +149,7 @@ export default function IfateStandardPage() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <div className="p-5 sm:p-6 space-y-5">
+      <div className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
         <div className="flex items-center gap-2 text-[11px] font-medium text-foreground-400">
           <Link to="/curriculum/standards" className="transition-smooth hover:text-primary-600">Standards</Link>
           <AppIcon className="ri-arrow-right-s-line text-[12px]" />

@@ -293,7 +293,7 @@ export default function CohortDetailPage() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle={`${data.name} — ${data.programme}`} pageSubtitle={`${data.standard} · ${data.level} · ${data.startDate} — ${data.endDate} · ${data.totalLearners} learners`} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="p-6 space-y-6">
+      <div className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
         {/* ── Breadcrumb ── */}
         <div className="flex items-center gap-2 text-[12px] text-foreground-400">
           <Link to="/curriculum/programmes" className="hover:text-foreground-700 transition-smooth">Programmes</Link>
@@ -676,7 +676,7 @@ function StatCard({ icon, value, label, color, sub }: { icon: string; value: num
     sky: 'bg-sky-50 text-sky-700',
   };
   return (
-    <div className="bg-background-100 rounded-xl p-3">
+    <div className="coach-metric-card">
       <div className="flex items-center gap-2 mb-1">
         <AppIcon className={`${icon} ${colorMap[color] || 'text-foreground-400'} text-xs`}></AppIcon>
         <span className="text-[10px] text-foreground-400 uppercase">{label}</span>

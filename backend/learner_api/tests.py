@@ -1,4 +1,5 @@
 import json
+from contextlib import nullcontext
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from io import BytesIO
@@ -33,7 +34,9 @@ from .progress_rules import (
     progress_counts_as_achieved,
     progress_record_counts_as_achieved,
 )
-from .attendance import _summarize_attendance
+from . import attendance as attendance_module
+from . import teams_attendance as teams_attendance_module
+from .attendance import _summarize_attendance, learner_attendance
 from .evidence_storage import (
     blob_url,
     parse_blob_url,
@@ -57,6 +60,11 @@ from .mappers import to_learner_detail
 from .models import LearnerProfile, _progress_entry_activity, _serialise_quiz_ref
 from .reflection_submissions import get_reflection_submission
 from .time_tracking import issue_tracking_session
+from .teams_attendance import (
+    _attendance_interval_bounds,
+    _session_expected_emails,
+    sync_verified_teams_attendance_reporting,
+)
 
 
 class LearnerQuizReferenceTests(SimpleTestCase):
@@ -206,6 +214,23 @@ class LearnerProgressionTests(SimpleTestCase):
         self.assertEqual(advance_learner(learner), "Active")
         self.assertEqual(learner.programme_status, "Active")
         sync.assert_called_once_with(learner)
+
+    @patch("learner_api.active_users.sync_active_user")
+    @patch("learner_api.learner_progression._has_assigned_learning_plan", return_value=True)
+    @patch("learner_api.learner_progression._programme_start_date", return_value=date(2026, 8, 8))
+    @patch("learner_api.learner_progression.timezone.localdate", return_value=date(2026, 8, 8))
+    def test_already_active_commercial_learner_is_not_resynced_on_every_read(self, _today, _start, _plan, sync):
+        # Regression: re-reading an already-active commercial learner (e.g.
+        # every GET /learner_api/enrolment-users/) used to call
+        # sync_active_user() unconditionally on every call, whether or not a
+        # transition happened — a full atomic LearnerProfile upsert per
+        # learner, per read. It must only fire on an actual status change.
+        learner = self._learner("Active", learner_type="commercial", plan=[{"moduleId": "mod-1"}])
+
+        self.assertIsNone(advance_learner(learner))
+        self.assertEqual(learner.programme_status, "Active")
+        learner.save.assert_not_called()
+        sync.assert_not_called()
 
 
 class TrainingPlanHydrationTests(SimpleTestCase):
@@ -442,6 +467,154 @@ class AttendanceSummaryTests(SimpleTestCase):
 
     def test_returns_none_without_session_rows(self):
         self.assertIsNone(_summarize_attendance([]))
+
+    def test_late_status_counts_as_attended(self):
+        rows = [
+            {
+                'learner_id': 2,
+                'learner_name': 'Test Learner',
+                'learner_email': 'learner@example.com',
+                'session_date': date(2026, 7, 1),
+                'attendance_status': 'late',
+                'minutes_late': 15,
+                'catchup_completed': False,
+                'updated_at': None,
+            },
+            {
+                'learner_id': 2,
+                'learner_name': 'Test Learner',
+                'learner_email': 'learner@example.com',
+                'session_date': date(2026, 7, 8),
+                'attendance_status': 'absent',
+                'minutes_late': 0,
+                'catchup_completed': False,
+                'updated_at': None,
+            },
+        ]
+
+        summary = _summarize_attendance(rows)
+
+        self.assertEqual(summary['present'], 1)
+        self.assertEqual(summary['late'], 1)
+        self.assertEqual(summary['absent'], 1)
+        self.assertEqual(summary['attendanceRate'], 50)
+
+    def test_non_attendance_workflow_status_does_not_dilute_rate(self):
+        common = {
+            'learner_id': 2,
+            'learner_name': 'Test Learner',
+            'learner_email': 'learner@example.com',
+            'session_date': date(2026, 7, 1),
+            'minutes_late': 0,
+            'catchup_completed': False,
+            'updated_at': None,
+        }
+
+        summary = _summarize_attendance([
+            {**common, 'attendance_status': 'present'},
+            {**common, 'attendance_status': 'catchup'},
+        ])
+
+        self.assertEqual(summary['sessions'], 1)
+        self.assertEqual(summary['attendanceRate'], 100)
+
+
+class TeamsAttendanceEligibilityTests(SimpleTestCase):
+    def test_reads_every_invited_email_off_the_session(self):
+        session = SimpleNamespace(attendees=['Learner@Example.com', ' second@example.com '])
+
+        self.assertEqual(
+            _session_expected_emails(session),
+            {'learner@example.com', 'second@example.com'},
+        )
+
+    def test_missing_or_empty_invite_list_expects_nobody(self):
+        self.assertEqual(_session_expected_emails(SimpleNamespace(attendees=[])), set())
+        self.assertEqual(_session_expected_emails(SimpleNamespace(attendees=None)), set())
+
+    def test_blank_entries_in_the_invite_list_are_dropped(self):
+        session = SimpleNamespace(attendees=['learner@example.com', '', '   '])
+
+        self.assertEqual(_session_expected_emails(session), {'learner@example.com'})
+
+    def test_tracks_first_join_and_last_leave_across_intervals(self):
+        first, last = _attendance_interval_bounds([
+            {
+                'joinDateTime': '2026-07-01T09:15:00Z',
+                'leaveDateTime': '2026-07-01T09:30:00Z',
+            },
+            {
+                'joinDateTime': '2026-07-01T09:00:00Z',
+                'leaveDateTime': '2026-07-01T10:00:00Z',
+            },
+        ])
+
+        self.assertEqual(first.isoformat(), '2026-07-01T09:00:00+00:00')
+        self.assertEqual(last.isoformat(), '2026-07-01T10:00:00+00:00')
+
+
+class LearnerAttendanceEndpointTests(SimpleTestCase):
+    @patch('learner_api.attendance.fetch_verified_teams_attendance_rows', return_value=[])
+    @patch('learner_api.attendance.learner_profile_for_source')
+    def test_reads_projection_with_profile_id_not_enrolment_id(self, resolve_profile, fetch_rows):
+        source = SimpleNamespace(id=19, email='learner@example.com')
+        profile = SimpleNamespace(id=2, email='learner@example.com')
+        resolve_profile.return_value = profile
+        source_model = MagicMock()
+        source_model.DoesNotExist = type('SourceDoesNotExist', (Exception,), {})
+        source_model.all_learners.only.return_value.get.return_value = source
+
+        with patch.dict(
+            attendance_module.SOURCE_MODELS,
+            {'apprenticeship': source_model},
+            clear=True,
+        ):
+            response = learner_attendance(
+                RequestFactory().get('/learner_api/attendance/apprenticeship/19/'),
+                'apprenticeship',
+                19,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        resolve_profile.assert_called_once_with(source, 19)
+        fetch_rows.assert_called_once_with(learner_ids=[2])
+
+
+class TeamsAttendanceSyncTests(SimpleTestCase):
+    @patch('learner_api.teams_attendance.ensure_teams_attendance_reporting_columns')
+    @patch('learner_api.teams_attendance._verified_occurrence_ids', return_value=[])
+    @patch('learner_api.teams_attendance.fetch_verified_teams_attendance_rows', return_value=[])
+    @patch('learner_api.teams_attendance.router.db_for_write', return_value='default')
+    def test_module_sync_hides_stale_rows_even_when_the_report_was_removed(
+        self,
+        _database,
+        _fetch_rows,
+        _occurrences,
+        ensure_schema,
+    ):
+        cursor = MagicMock()
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cursor
+        connection = MagicMock()
+        connection.cursor.return_value = cursor_context
+
+        with patch.object(
+            teams_attendance_module,
+            'connections',
+            {'default': connection},
+        ), patch.object(
+            teams_attendance_module.transaction,
+            'atomic',
+            side_effect=lambda **_kwargs: nullcontext(),
+        ):
+            count = sync_verified_teams_attendance_reporting(module_refs=['MOD-1'])
+
+        self.assertEqual(count, 0)
+        ensure_schema.assert_called_once_with('default')
+        cursor.executemany.assert_not_called()
+        sql, params = cursor.execute.call_args.args
+        self.assertIn('module_catalogue_id = ANY(%s)', sql)
+        self.assertEqual(params, [['MOD-1'], []])
 
 
 class LearnerQuizModuleMatchingTests(SimpleTestCase):
@@ -695,6 +868,37 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
         ]
 
         self.assertEqual(completed_hours_from_progress(progress, components), "3.5")
+
+    def test_completed_hours_counts_tracked_time_not_planned_hours(self):
+        # The learner finished a 2h assignment in 30 minutes and a 2h reading in
+        # 33 seconds: the total is what they actually did, not what was planned.
+        progress = [
+            {
+                "kind": "component", "componentId": "component-1",
+                "expectedOtjh": 2, "reportedTime": "2h", "verifiedSeconds": 1800,
+            },
+            {
+                "kind": "component", "componentId": "component-2",
+                "expectedOtjh": 2, "reportedTime": "2h", "verifiedSeconds": 33,
+            },
+        ]
+        components = [
+            {"componentId": "component-1", "expectedOtjh": 2},
+            {"componentId": "component-2", "expectedOtjh": 2},
+        ]
+
+        # 1800s = 0.5h, 33s ≈ 0.01h — not the 4h the plan allocated.
+        self.assertEqual(completed_hours_from_progress(progress, components), "0.5")
+
+    def test_completed_hours_counts_a_zero_second_completion_as_zero(self):
+        # An activity clicked straight through contributes nothing, rather than
+        # falling through to its planned hours.
+        progress = [{
+            "kind": "component", "componentId": "component-1",
+            "expectedOtjh": 3, "reportedTime": "3h", "verifiedSeconds": 0,
+        }]
+
+        self.assertEqual(completed_hours_from_progress(progress), "0")
 
     def test_coerce_ksb_items_parses_profile_json_payload(self):
         items = _coerce_ksb_items(

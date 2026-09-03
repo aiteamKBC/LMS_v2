@@ -5,36 +5,32 @@ import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { ProgrammeFilter } from '@/components/feature/ProgrammeFilter';
 import { useToast } from '@/hooks/useToast';
+import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 import { roleNavMap } from '@/mocks/navigation';
-import { ENGAGEMENT_LEARNERS, countByProgramme, filterByProgramme, type VoucherClaim, type ProgrammeFilterValue } from '@/mocks/engagement-data';
+import { countByProgramme, filterByProgramme, type VoucherClaim, type ProgrammeFilterValue } from '@/mocks/engagement-data';
 import { fetchVoucherClaims, updateVoucherClaim } from '@/api/engagement';
+import { fetchEnrolmentUsers } from '@/api/enrolmentUsers';
+import type { UserListRow } from '@/pages/users/types';
 import { ClaimCardSkeletonGrid } from '@/pages/engagement/EngagementSkeletons';
 import { LearnerProfilePanel } from '@/pages/engagement/LearnerProfilePanel';
-
-const REVIEWER_NAME = 'Tom Harrington';
+import { EmptyState } from '@/components/feature/EmptyState';
 
 const engagementNav = roleNavMap.engagement;
 
 type SortKey = 'points' | 'name';
 
-// The learner's stored contact info — the fulfilment form defaults to this
-// and lets the reviewer override it per-claim (a different postal address, etc).
-function defaultDeliveryDetail(claim: VoucherClaim): string {
-  const learner = ENGAGEMENT_LEARNERS.find(l => l.id === claim.learnerId);
-  if (!learner) return claim.deliveryDetail ?? '';
-  return claim.deliveryType === 'digital' ? learner.email : learner.homeAddress;
-}
-
-interface FulfilFormState {
-  useDefault: boolean;
-  customDetail: string;
-  instructions: string;
+// Every reward is digital now — always the learner's own real, on-file
+// email. Never a manually typed address, and never prompted for again.
+function learnerEmail(claim: VoucherClaim, directory: Map<string, UserListRow>): string {
+  return directory.get(claim.learnerId)?.email || '';
 }
 
 export default function VoucherClaimsPage() {
   const navigate = useNavigate();
   const { success, warning } = useToast();
+  const operator = useOperatorIdentity();
   const [claims, setClaims] = useState<VoucherClaim[]>([]);
+  const [directory, setDirectory] = useState<Map<string, UserListRow>>(new Map());
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected' | 'fulfilled'>('all');
@@ -43,15 +39,23 @@ export default function VoucherClaimsPage() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [reviewId, setReviewId] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string | null>(null);
+  const [profileMeta, setProfileMeta] = useState<{ name: string; programme: string; cohort: string } | null>(null);
   const [fulfilId, setFulfilId] = useState<string | null>(null);
-  const [fulfilForm, setFulfilForm] = useState<FulfilFormState>({ useDefault: true, customDetail: '', instructions: '' });
 
-  // Load claims from the backend on mount (enriched with mocked learner data
-  // in the api layer, so the shape matches the old VOUCHER_CLAIMS mock).
+  // Load claims plus the real learner directory (for programme/cohort/email —
+  // fields the Engagement schema doesn't own) and enrich claims client-side.
   useEffect(() => {
     let cancelled = false;
-    fetchVoucherClaims()
-      .then(data => { if (!cancelled) setClaims(data); })
+    Promise.all([fetchVoucherClaims(), fetchEnrolmentUsers()])
+      .then(([claimRows, users]) => {
+        if (cancelled) return;
+        const byId = new Map(users.map(u => [u.id, u]));
+        setDirectory(byId);
+        setClaims(claimRows.map(c => {
+          const user = byId.get(c.learnerId);
+          return user ? { ...c, programme: user.programme || '', cohort: user.cohort || '' } : c;
+        }));
+      })
       .catch(err => { if (!cancelled) warning('Could not load claims', err.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -87,7 +91,7 @@ export default function VoucherClaimsPage() {
 
   async function approveClaim(claim: VoucherClaim) {
     try {
-      const updated = await updateVoucherClaim(claim.id, { status: 'approved', reviewedBy: REVIEWER_NAME });
+      const updated = await updateVoucherClaim(claim.id, { status: 'approved' });
       setClaims(prev => prev.map(c => c.id === claim.id ? updated : c));
       success(`Claim approved for ${claim.learner}`, `${claim.reward} · ${claim.points} pts`);
     } catch (err: any) {
@@ -97,7 +101,7 @@ export default function VoucherClaimsPage() {
 
   async function rejectClaim(claim: VoucherClaim) {
     try {
-      const updated = await updateVoucherClaim(claim.id, { status: 'rejected', reviewedBy: REVIEWER_NAME });
+      const updated = await updateVoucherClaim(claim.id, { status: 'rejected' });
       setClaims(prev => prev.map(c => c.id === claim.id ? updated : c));
       warning(`Claim rejected for ${claim.learner}`, `${claim.reward} · ${claim.points} pts`);
     } catch (err: any) {
@@ -106,26 +110,16 @@ export default function VoucherClaimsPage() {
   }
 
   function openFulfilModal(claim: VoucherClaim) {
-    setFulfilForm({
-      useDefault: !claim.deliveryDetail || claim.deliveryDetail === defaultDeliveryDetail(claim),
-      customDetail: claim.deliveryDetail ?? '',
-      instructions: claim.deliveryInstructions ?? '',
-    });
     setFulfilId(claim.id);
   }
 
   async function handleFulfil(claim: VoucherClaim) {
-    const finalDetail = (fulfilForm.useDefault ? defaultDeliveryDetail(claim) : fulfilForm.customDetail).trim();
-    const finalInstructions = claim.deliveryType === 'physical' ? (fulfilForm.instructions.trim() || null) : null;
+    const email = learnerEmail(claim, directory);
     try {
-      const updated = await updateVoucherClaim(claim.id, {
-        status: 'fulfilled',
-        deliveryDetail: finalDetail || claim.deliveryDetail || '',
-        deliveryInstructions: finalInstructions,
-      });
+      const updated = await updateVoucherClaim(claim.id, { status: 'fulfilled', deliveryDetail: email });
       setClaims(prev => prev.map(c => c.id === claim.id ? updated : c));
       setFulfilId(null);
-      success(`${claim.reward} marked as fulfilled for ${claim.learner}`, claim.deliveryType === 'digital' ? `Sent to ${finalDetail}` : `Delivered to ${finalDetail}`);
+      success(`${claim.reward} marked as fulfilled for ${claim.learner}`, `Sent to ${email}`);
     } catch (err: any) {
       warning('Could not fulfil claim', err.message);
     }
@@ -138,7 +132,7 @@ export default function VoucherClaimsPage() {
     <WorkspaceShell
       role="engagement" roleLabel={engagementNav.label} navItems={engagementNav.items} workspaceLabel={engagementNav.workspaceLabel}
       pageTitle="Voucher Claims" pageSubtitle="Review and approve learner voucher redemption requests"
-      userName="Tom Harrington" userRole="Engagement Manager"
+      userName={operator.name} userRole={operator.role}
     >
       <div className="p-6 space-y-6">
         <WorkspaceHeroBanner
@@ -205,11 +199,7 @@ export default function VoucherClaimsPage() {
         {loading && <ClaimCardSkeletonGrid />}
 
         {!loading && filtered.length === 0 && (
-          <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-10 flex flex-col items-center justify-center text-center gap-2">
-            <AppIcon className="ri-search-line text-2xl text-foreground-300"></AppIcon>
-            <p className="text-sm font-semibold text-foreground-700">No claims match this view</p>
-            <p className="text-[11px] text-foreground-400">Try switching the status or programme filter.</p>
-          </div>
+          <EmptyState icon="ri-search-line" title="No claims match this view" subtitle="Try switching the status or programme filter." />
         )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 stagger-children">
@@ -340,7 +330,11 @@ export default function VoucherClaimsPage() {
               </button>
             )}
 
-            <button onClick={() => { setReviewId(null); setProfileId(reviewClaim.learnerId); }} className="w-full px-3 py-2 border border-foreground-200/60 text-foreground-600 rounded-lg text-[11px] font-medium hover:bg-background-100 transition-smooth cursor-pointer">
+            <button onClick={() => {
+              setProfileMeta({ name: reviewClaim.learner, programme: reviewClaim.programme, cohort: reviewClaim.cohort });
+              setProfileId(reviewClaim.learnerId);
+              setReviewId(null);
+            }} className="w-full px-3 py-2 border border-foreground-200/60 text-foreground-600 rounded-lg text-[11px] font-medium hover:bg-background-100 transition-smooth cursor-pointer">
               View Full Engagement Profile
             </button>
           </div>
@@ -348,7 +342,14 @@ export default function VoucherClaimsPage() {
       </RightSlidePanel>
 
       {/* FULL ENGAGEMENT PROFILE — opens in place, over the voucher page */}
-      <LearnerProfilePanel learnerId={profileId} onClose={() => setProfileId(null)} />
+      <LearnerProfilePanel
+        learnerId={profileId}
+        learnerName={profileMeta?.name}
+        programme={(profileId && directory.get(profileId)?.programme) || profileMeta?.programme}
+        cohort={(profileId && directory.get(profileId)?.cohort) || profileMeta?.cohort}
+        email={profileId ? directory.get(profileId)?.email : undefined}
+        onClose={() => setProfileId(null)}
+      />
 
       {/* FULFILMENT FORM MODAL */}
       {fulfilClaim && (
@@ -367,50 +368,16 @@ export default function VoucherClaimsPage() {
             </div>
             <div className="p-5 overflow-y-auto space-y-4">
               <div>
-                <label className="block text-[11px] font-semibold text-foreground-700 mb-1.5">
-                  {fulfilClaim.deliveryType === 'digital' ? 'Delivery Email' : 'Delivery Location'}
-                </label>
-                <div className="space-y-2">
-                  <label className="flex items-start gap-2 p-3 rounded-lg border border-foreground-200/60 bg-background-100/40 cursor-pointer">
-                    <input type="radio" name="delivery-target" checked={fulfilForm.useDefault} onChange={() => setFulfilForm(f => ({ ...f, useDefault: true }))} className="mt-0.5 accent-primary-500" />
-                    <span className="text-[11px] text-foreground-700">
-                      <span className="block font-semibold">Use learner's default {fulfilClaim.deliveryType === 'digital' ? 'email' : 'address'}</span>
-                      <span className="block text-foreground-400">{defaultDeliveryDetail(fulfilClaim)}</span>
-                    </span>
-                  </label>
-                  <label className="flex items-start gap-2 p-3 rounded-lg border border-foreground-200/60 bg-background-100/40 cursor-pointer">
-                    <input type="radio" name="delivery-target" checked={!fulfilForm.useDefault} onChange={() => setFulfilForm(f => ({ ...f, useDefault: false }))} className="mt-0.5 accent-primary-500" />
-                    <span className="text-[11px] text-foreground-700 flex-1">
-                      <span className="block font-semibold mb-1.5">Use a different {fulfilClaim.deliveryType === 'digital' ? 'email' : 'delivery address'}</span>
-                      <input
-                        type="text"
-                        value={fulfilForm.customDetail}
-                        onChange={e => setFulfilForm(f => ({ ...f, useDefault: false, customDetail: e.target.value }))}
-                        onFocus={() => setFulfilForm(f => ({ ...f, useDefault: false }))}
-                        placeholder={fulfilClaim.deliveryType === 'digital' ? 'name@example.com' : 'Street, City, Postcode'}
-                        className="w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300"
-                      />
-                    </span>
-                  </label>
+                <label className="block text-[11px] font-semibold text-foreground-700 mb-1.5">Delivery Email</label>
+                <div className="rounded-lg border border-foreground-200/60 bg-background-100/40 p-3">
+                  <p className="text-[11px] text-foreground-700 font-semibold">{learnerEmail(fulfilClaim, directory) || 'No email on file'}</p>
+                  <p className="text-[10px] text-foreground-400 mt-0.5">The learner's own on-file email — this can't be changed here.</p>
                 </div>
               </div>
-              {fulfilClaim.deliveryType === 'physical' && (
-                <div>
-                  <label className="block text-[11px] font-semibold text-foreground-700 mb-1.5">Delivery Instructions</label>
-                  <textarea
-                    value={fulfilForm.instructions}
-                    onChange={e => setFulfilForm(f => ({ ...f, instructions: e.target.value }))}
-                    rows={3}
-                    maxLength={200}
-                    placeholder="e.g. leave with reception, access code, preferred time..."
-                    className="w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300 resize-none"
-                  ></textarea>
-                </div>
-              )}
             </div>
             <div className="p-5 border-t border-foreground-200/60 bg-background-100/30 flex items-center justify-between">
               <button onClick={() => setFulfilId(null)} className="px-4 py-2 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[12px] font-medium hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
-              <button onClick={() => handleFulfil(fulfilClaim)} disabled={!fulfilForm.useDefault && !fulfilForm.customDetail.trim()} className="px-5 py-2 rounded-lg text-[12px] font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed">
+              <button onClick={() => handleFulfil(fulfilClaim)} disabled={!learnerEmail(fulfilClaim, directory)} className="px-5 py-2 rounded-lg text-[12px] font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed">
                 <AppIcon className="ri-check-double-line"></AppIcon> Mark Fulfilled
               </button>
             </div>

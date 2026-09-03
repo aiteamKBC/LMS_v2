@@ -415,7 +415,7 @@ function QAStatCard({ label, value, sub, icon, color }: { label: string; value: 
     : 'bg-secondary-100 text-secondary-600';
 
   return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium cursor-pointer">
+    <div className="coach-metric-card cursor-pointer">
       <div className="flex items-start justify-between mb-3">
         <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${iconBg}`}>
           <AppIcon className={`${icon} text-sm`}></AppIcon>

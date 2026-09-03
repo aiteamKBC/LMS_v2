@@ -192,7 +192,7 @@ function StatCard({ label, value, icon, colour }: { label: string; value: number
     red: 'bg-red-50 text-red-600', amber: 'bg-amber-50 text-amber-600', emerald: 'bg-emerald-50 text-emerald-600',
   };
   return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4">
+    <div className="coach-metric-card">
       <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${colourMap[colour]} mb-2`}>
         <AppIcon className={`${icon} text-xs`}></AppIcon>
       </span>

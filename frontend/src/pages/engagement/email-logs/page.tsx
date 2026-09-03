@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { roleNavMap } from '@/mocks/navigation';
+import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 
 const engagementNav = roleNavMap.engagement;
 
@@ -43,6 +44,7 @@ const statusConfig: Record<string, { color: string; bg: string }> = {
 };
 
 export default function EmailLogsPage() {
+  const operator = useOperatorIdentity();
   const [typeFilter, setTypeFilter] = useState<'all' | 'automated' | 'manual'>('all');
   const [search, setSearch] = useState('');
   const filtered = EMAIL_LOGS.filter(e => {
@@ -57,7 +59,7 @@ export default function EmailLogsPage() {
     <WorkspaceShell
       role="engagement" roleLabel={engagementNav.label} navItems={engagementNav.items} workspaceLabel={engagementNav.workspaceLabel}
       pageTitle="Email Logs" pageSubtitle="Search and review all email communications sent through the platform"
-      userName="Tom Harrington" userRole="Engagement Manager"
+      userName={operator.name} userRole={operator.role}
     >
       <div className="p-6 space-y-6">
         <WorkspaceHeroBanner
@@ -114,8 +116,8 @@ export default function EmailLogsPage() {
                       {email.attachments > 0 && <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700"><AppIcon className="ri-attachment-2 mr-0.5"></AppIcon>{email.attachments}</span>}
                     </div>
                   </div>
-                  <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap shrink-0">
-                    <AppIcon className="ri-eye-line mr-1"></AppIcon> View
+                  <button className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap shrink-0">
+                    <AppIcon className="ri-eye-line"></AppIcon> View
                   </button>
                 </div>
               );

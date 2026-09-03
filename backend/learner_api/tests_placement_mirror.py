@@ -30,7 +30,9 @@ def _profile(**kwargs):
         'programme': '',
         'programme_id': '',
         'cohort': '',
+        'cohort_id': '',
         'group_name': '',
+        'group_id': '',
         'start_date': None,
         'end_date': None,
         'gateway_review_date': None,
@@ -41,11 +43,14 @@ def _profile(**kwargs):
 
 
 class MirrorLearnerPlacementTests(SimpleTestCase):
-    def _mirror(self, source, profile, programme_id='PROG-1', window=WINDOW):
+    def _mirror(self, source, profile, programme_id='PROG-1', window=WINDOW,
+                placement_ids=('COHORT-1', 'GROUP-1')):
         with patch('learner_api.active_users.learner_profile_for_source', return_value=profile), \
                 patch('learner_api.active_users.cohort_dates', return_value=window), \
                 patch('learner_api.active_users._resolve_linkable_programme_id',
-                      return_value=programme_id):
+                      return_value=programme_id), \
+                patch('learner_api.active_users._linkable_placement_ids',
+                      return_value=placement_ids):
             return mirror_learner_placement(source)
 
     def test_the_placement_is_written_to_the_profile(self):
@@ -57,6 +62,10 @@ class MirrorLearnerPlacementTests(SimpleTestCase):
         self.assertEqual(profile.programme, 'Test fouda')
         self.assertEqual(profile.cohort, 'fouda cohort')
         self.assertEqual(profile.group_name, 'Fouda group 1')
+        # The names are what enrolment captured; these are the curriculum
+        # records they resolved to, and what curriculum reads a roster by.
+        self.assertEqual(profile.cohort_id, 'COHORT-1')
+        self.assertEqual(profile.group_id, 'GROUP-1')
         # Saved with exactly the fields that moved, plus the timestamp.
         saved = profile.save.call_args.kwargs['update_fields']
         self.assertIn('programme', saved)
@@ -86,12 +95,28 @@ class MirrorLearnerPlacementTests(SimpleTestCase):
     def test_a_profile_already_in_step_is_not_written_to(self):
         profile = _profile(
             programme='Test fouda', programme_id='PROG-1', cohort='fouda cohort',
-            group_name='Fouda group 1', start_date=WINDOW[0], end_date=WINDOW[1],
+            cohort_id='COHORT-1', group_name='Fouda group 1', group_id='GROUP-1',
+            start_date=WINDOW[0], end_date=WINDOW[1],
             gateway_review_date=date(2027, 4, 1),
         )
 
         self.assertIsNone(self._mirror(_source(), profile))
         profile.save.assert_not_called()
+
+    def test_an_unresolvable_placement_leaves_the_ids_alone(self):
+        # A cohort name two programmes share, or a group name repeated across
+        # cohorts, resolves to '' -- exactly as an ambiguous programme name
+        # does. Writing a guess would move the learner onto another group's
+        # roster, which is worse than leaving them matched by name.
+        profile = _profile(cohort_id='COHORT-ORIGINAL', group_id='GROUP-ORIGINAL')
+
+        self._mirror(_source(), profile, placement_ids=('', ''))
+
+        self.assertEqual(profile.cohort_id, 'COHORT-ORIGINAL')
+        self.assertEqual(profile.group_id, 'GROUP-ORIGINAL')
+        # The names still moved: they are what the placement actually said.
+        self.assertEqual(profile.cohort, 'fouda cohort')
+        self.assertEqual(profile.group_name, 'Fouda group 1')
 
     def test_clearing_a_placement_clears_the_mirror_too(self):
         profile = _profile(programme='Test fouda', cohort='fouda cohort', group_name='Fouda group 1')

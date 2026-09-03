@@ -171,7 +171,7 @@ function StatCard({ icon, label, value, tone }: { icon: string; label: string; v
     accent: 'bg-secondary-100 text-secondary-700',
   } as const;
   return (
-    <div className="rounded-xl border border-foreground-200/60 bg-background-50 p-4">
+    <div className="coach-metric-card">
       <div className={`mb-3 flex h-9 w-9 items-center justify-center rounded-lg ${toneMap[tone]}`}>
         <AppIcon className={`${icon} text-base`}></AppIcon>
       </div>

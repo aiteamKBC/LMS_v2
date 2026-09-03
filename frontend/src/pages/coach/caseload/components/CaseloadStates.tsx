@@ -10,7 +10,6 @@
 // ============================================================================
 import { AppIcon } from '@/components/feature/AppIcon';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
-import type { ViewMode } from '../types';
 
 function CardSkeleton() {
   return (
@@ -41,29 +40,7 @@ function CardSkeleton() {
   );
 }
 
-function RowSkeleton() {
-  return (
-    <div className="flex items-center gap-3 border-b border-foreground-100 px-3.5 py-3">
-      <SkeletonBlock className="h-7 w-7 rounded-full" />
-      <SkeletonBlock className="h-3 w-40" />
-      <SkeletonBlock className="h-3 w-36" />
-      <SkeletonBlock className="ml-auto h-3 w-16" />
-      <SkeletonBlock className="h-3 w-16" />
-      <SkeletonBlock className="h-3 w-16" />
-      <SkeletonBlock className="h-4 w-20 rounded" />
-    </div>
-  );
-}
-
-export function CaseloadLoading({ viewMode }: { viewMode: ViewMode }) {
-  if (viewMode === 'table') {
-    return (
-      <div aria-busy="true" aria-live="polite">
-        {Array.from({ length: 8 }).map((_, index) => <RowSkeleton key={index} />)}
-      </div>
-    );
-  }
-
+export function CaseloadLoading() {
   return (
     <div
       aria-busy="true"

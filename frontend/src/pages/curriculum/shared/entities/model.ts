@@ -150,6 +150,33 @@ export function findProgramme(
   return programmes.find(programme => programmeKeys(programme).includes(key));
 }
 
+/**
+ * The value a programme `<select>` can actually show for `identifier`.
+ *
+ * A programme option's value is `programmeIdentity` -- the id as the programmes
+ * collection spells it -- and a `<select>` matches its value by exact string.
+ * Stored records name their programme in whatever shape wrote them: the cohort
+ * endpoint upper-cases the id it resolved ("PROG-Mon" -> "PROG-MON"), and older
+ * rows carry the programme *name* instead of an id. Either one refers to the
+ * right programme and neither equals the option value, so the field came up
+ * reading "Select a programme" over a parent that was demonstrably set -- and a
+ * save from there had to have it picked again by hand.
+ *
+ * So resolve the identifier to the programme it names, case- and shape-blind,
+ * and answer with that programme's identity. An identifier that matches nothing
+ * is handed back untouched: it is still what the record says, and blanking it
+ * would throw a parent away rather than fail to display it.
+ */
+export function programmeSelectValue(
+  programmes: CurriculumProgramme[],
+  identifier: unknown,
+): string {
+  const raw = cleanText(identifier);
+  if (!raw) return '';
+  const programme = findProgramme(programmes, raw);
+  return programme ? programmeIdentity(programme) : raw;
+}
+
 export function findCohort(cohorts: CurriculumCohort[], identifier: unknown): CurriculumCohort | undefined {
   const key = normaliseKey(identifier);
   if (!key) return undefined;

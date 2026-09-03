@@ -34,6 +34,11 @@ export interface CoachCaseloadLearner {
   id: string;
   name: string;
   initials: string;
+  /** 'commercial' | 'apprenticeship' — which learner_detail table this id resolves against. */
+  learnerType?: LearnerKind | null;
+  /** enrolment."Created_users".id — a different, disjoint pk space from `id` above.
+   *  This is the id /learner_api/learner-detail/<kind>/<pk>/ actually queries. */
+  enrolmentId?: string | null;
   employer: string;
   cohortId: string;
   cohortName: string;
@@ -92,6 +97,8 @@ export interface CoachAttendanceLearner {
   id: string;
   learner: string;
   initials: string;
+  learnerType?: LearnerKind | null;
+  enrolmentId?: string | null;
   email?: string | null;
   programme: string;
   cohort: string;
@@ -232,6 +239,11 @@ export function useCoachLearnerCaseFileData(args: {
   learnerId?: string | null;
   learnerName?: string | null;
   kind?: LearnerKind | null;
+  /** enrolment."Created_users".id, when the caller already has it (see
+   *  CoachCaseloadLearner.enrolmentId) -- the id /learner-detail/ actually
+   *  needs. learnerId above is the coach-side LearnerProfile id, a different,
+   *  disjoint pk space that always 404s against that endpoint. */
+  enrolmentId?: string | null;
   enabled?: boolean;
 }) {
   const [data, setData] = useState<CoachLearnerCaseFileData | null>(null);
@@ -271,8 +283,15 @@ export function useCoachLearnerCaseFileData(args: {
         fetchCoachTimetable(),
       ]);
       const directId = numericId(rawLearnerId);
-      const directDetailPromise = directId
-        ? fetchAnyLearnerDetail(directId, args.kind ?? undefined)
+      // rawLearnerId is the coach-side LearnerProfile id -- a disjoint pk space
+      // from enrolment."Created_users".id, which /learner-detail/ actually
+      // queries. Only start the fast path when the caller already resolved the
+      // real enrolment id (see CoachCaseloadLearner.enrolmentId); otherwise
+      // fetching it here would just 404 and get overwritten by the slow path
+      // below anyway, once the coach lists resolve the real id.
+      const directEnrolmentId = numericId(args.enrolmentId);
+      const directDetailPromise = directEnrolmentId
+        ? fetchAnyLearnerDetail(directEnrolmentId, args.kind ?? undefined)
         : null;
 
       let detail: LearnerDetail | null = null;
@@ -321,12 +340,21 @@ export function useCoachLearnerCaseFileData(args: {
       const attendanceLearner = resolveAttendanceLearner(attendance, rawLearnerId, rawLearnerName);
       const evidence = resolveMarkingItem(marking, rawLearnerId, rawLearnerName);
       const resolvedId = snapshot?.id || attendanceLearner?.id || evidence?.learnerId || numericId(rawLearnerId);
+      // Prefer the real enrolment id surfaced by whichever coach list matched
+      // this learner. Falling back to resolvedId (the profile id) only applies
+      // to the rare profile with no linked enrolment row left -- it will 404
+      // the same way this already did before enrolmentId existed, not worse.
+      const resolvedEnrolmentId = directEnrolmentId
+        || snapshot?.enrolmentId
+        || attendanceLearner?.enrolmentId
+        || null;
+      const resolvedDetailKind = args.kind ?? snapshot?.learnerType ?? attendanceLearner?.learnerType ?? undefined;
 
       // Non-numeric routes need coach data to resolve the id. Numeric routes have
       // already loaded detail above, concurrently with the coach requests.
-      if (resolvedId && !directDetailPromise) {
+      if ((resolvedEnrolmentId || resolvedId) && !directDetailPromise) {
         try {
-          const detailResult = await fetchAnyLearnerDetail(resolvedId, args.kind ?? undefined);
+          const detailResult = await fetchAnyLearnerDetail(resolvedEnrolmentId || resolvedId, resolvedDetailKind);
           detail = detailResult.detail;
           resolvedKind = detailResult.kind;
         } catch (loadErr) {
@@ -378,7 +406,7 @@ export function useCoachLearnerCaseFileData(args: {
     return () => {
       cancelled = true;
     };
-  }, [args.enabled, args.kind, args.learnerId, args.learnerName]);
+  }, [args.enabled, args.kind, args.learnerId, args.learnerName, args.enrolmentId]);
 
   return { data, loading, error };
 }

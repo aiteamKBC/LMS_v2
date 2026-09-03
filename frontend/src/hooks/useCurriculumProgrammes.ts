@@ -4,15 +4,17 @@ import { fetchCurriculumProgrammes, type CurriculumProgramme } from '@/lib/curri
 type LoadOptions = {
   silent?: boolean;
   skipCache?: boolean;
+  revalidate?: boolean;
   visibility?: 'all' | 'operational';
 };
 
 type UseCurriculumProgrammesOptions = {
   skipCache?: boolean;
+  revalidate?: boolean;
   visibility?: 'all' | 'operational';
 };
 
-export function useCurriculumProgrammes({ skipCache = false, visibility }: UseCurriculumProgrammesOptions = {}) {
+export function useCurriculumProgrammes({ skipCache = false, revalidate = false, visibility }: UseCurriculumProgrammesOptions = {}) {
   const [programmes, setProgrammes] = useState<CurriculumProgramme[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +25,7 @@ export function useCurriculumProgrammes({ skipCache = false, visibility }: UseCu
     requestIdRef.current = requestId;
     if (!options.silent) setLoading(true);
     try {
-      const programmeResult = await fetchCurriculumProgrammes(signal, { skipCache: options.skipCache ?? skipCache, visibility: options.visibility ?? visibility });
+      const programmeResult = await fetchCurriculumProgrammes(signal, { skipCache: options.skipCache ?? skipCache, revalidate: options.revalidate ?? revalidate, visibility: options.visibility ?? visibility });
       if (signal?.aborted || requestId !== requestIdRef.current) return [];
       setProgrammes(programmeResult);
       setError(null);
@@ -35,7 +37,7 @@ export function useCurriculumProgrammes({ skipCache = false, visibility }: UseCu
     } finally {
       if (!options.silent && !signal?.aborted && requestId === requestIdRef.current) setLoading(false);
     }
-  }, [skipCache, visibility]);
+  }, [skipCache, revalidate, visibility]);
 
   useEffect(() => {
     const controller = new AbortController();

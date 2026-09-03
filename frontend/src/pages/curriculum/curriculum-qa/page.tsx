@@ -249,7 +249,7 @@ export default function CurriculumQAPage() {
       pageTitle="Curriculum QA" pageSubtitle="Review cycles, findings management and programme version approval workflow"
       userName="Rachel Myers" userRole="Curriculum Designer"
     >
-      <div className="p-6 space-y-5">
+      <div className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
 
         {/* Notification */}
         {notification && (
@@ -260,7 +260,7 @@ export default function CurriculumQAPage() {
         )}
 
         {/* Stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
           {[
             { label: 'Total Versions', value: stats.total, icon: 'ri-stack-line', color: 'bg-background-100 text-foreground-600' },
             { label: 'In QA Review', value: stats.inQa, icon: 'ri-search-eye-line', color: 'bg-amber-100 text-amber-700' },
@@ -293,7 +293,7 @@ export default function CurriculumQAPage() {
 
         {/* ── TAB: Programme Versions ── */}
         {activeTab === 'versions' && (
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
             {/* Version List */}
             <div className="lg:col-span-2 space-y-3">
               <div className="flex items-center gap-2">

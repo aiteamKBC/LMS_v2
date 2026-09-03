@@ -56,7 +56,7 @@ from learner_api.models import (
     learner_ksbs_relation_exists,
 )
 from learner_api.constants import ACCESS_COACH, ACCESS_SUPER_ADMIN
-from learner_api.active_users import dedupe_otjh_progress_records, hydrate_source_training_plan, refresh_learner_ksb_snapshot
+from learner_api.active_users import components_target_to_date, current_week_label, dedupe_otjh_progress_records, hydrate_source_training_plan, refresh_learner_ksb_snapshot
 from learner_api.calendar_connections import (
     booking_conflicts as personal_calendar_booking_conflicts,
 )
@@ -250,13 +250,6 @@ ATTENDANCE_INCLUDED_STATUSES = {"active", "break"}
 MARKING_OVERDUE_DAYS = 7
 TIMETABLE_SCHEDULE_SLOTS = (9, 10, 11, 13, 14, 15, 16)
 ENV_FILE_NAME = ".env"
-COACH_ATTENDANCE_DETAILS_RELATION_CANDIDATES = (
-    '"Learner"."learner_attendance_details"',
-    '"Learner"."Learner_attendance_details"',
-    '"learner"."learner_attendance_details"',
-    '"Coach"."learner_attendance_details"',
-    '"coach"."learner_attendance_details"',
-)
 LEARNER_ABSENCE_RELATION_CANDIDATES = (
     '"Learner"."Absence"',
     '"Learner"."absence"',
@@ -1242,6 +1235,43 @@ def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | S
     return rows
 
 
+def fetch_all_learner_profiles(programme: str | None = None, cohort: str | None = None) -> list[LearnerProfile]:
+    """Every learner with a resolved enrolment id, prefetched exactly like
+    `fetch_caseload_learner_profiles` but WITHOUT the single-coach filter —
+    for the engagement app's roster-wide analytics (attendance-risk /
+    learner-engagement pages, the command-centre charts), which need every
+    learner, not one coach's caseload.
+
+    `enrolment_id` is the bridge to the engagement points economy's
+    `learner_id` (== `Created_users.id` == `account.subject_id`) — see
+    `LearnerProfile.enrolment_id` (models.py:500). A profile with no
+    enrolment_id can't be attributed to an engagement learner_id, so it's
+    excluded here (mirrors the same skip already applied in
+    `learner_api.active_users.save_progress_record`'s points-award hook).
+    """
+    learner_alias = get_learner_db_alias()
+    prefetches = [
+        "ksb_assignment__profile_version__definitions",
+        "plan_modules__weeks__components",
+        "progress_entries__ksb_links",
+        "progress_entries__quiz_answers__correct_answers",
+        "progress_entries__quiz_answers__chosen_answers",
+    ]
+    if learner_ksbs_relation_exists(learner_alias):
+        prefetches.insert(0, "assigned_ksbs")
+    if learner_activity_events_relation_exists(learner_alias):
+        prefetches.append("activity_events")
+
+    queryset = LearnerProfile.objects.exclude(enrolment_id__isnull=True).prefetch_related(*prefetches)
+    if programme:
+        queryset = queryset.filter(programme__iexact=programme)
+    if cohort:
+        queryset = queryset.filter(cohort__iexact=cohort)
+    queryset = queryset.order_by("full_name", "id")
+
+    return [row for row in queryset if clean_text(row.username)]
+
+
 def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
     """Return a lean learner snapshot for the coach dashboard first paint."""
     requested_owner = normalize_email(owner_email)
@@ -1269,7 +1299,13 @@ def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
             "start_date",
             "end_date",
             "gateway_review_date",
+            "learner_type",
+            "enrolment_id",
         )
+        # For current_week_label(): a few extra batched queries (one per
+        # related table, not one per learner) rather than a lazy per-row
+        # fetch the first time each learner's .training_plan is touched.
+        .prefetch_related("plan_modules__weeks__components")
         .order_by("full_name", "id")
     )
     return [row for row in queryset if clean_text(row.username)]
@@ -1295,7 +1331,11 @@ def fetch_attendance_caseload_rows(owner_email: str) -> list[LearnerProfile]:
             "lifecycle_status",
             "coach_name",
             "coach_email",
+            "learner_type",
+            "enrolment_id",
+            "start_date",
         )
+        .prefetch_related("plan_modules__weeks__components")
         .order_by("full_name", "id")
     )
     rows: list[LearnerProfile] = []
@@ -1441,6 +1481,15 @@ def coach_learner_personal_calendar_conflicts(
 def refresh_caseload_learner_ksb_snapshot(row: LearnerProfile | SimpleNamespace) -> None:
     if not callable(getattr(row, "save", None)):
         return
+    # An existing learner stays pinned to the KSB profile version assigned at
+    # enrolment (see replace_learner_ksbs) — once `ksb_assignment` exists,
+    # refresh_learner_ksb_snapshot can only ever re-derive and no-op via its
+    # own get_or_create calls. Skipping it here avoids opening a transaction
+    # + two get_or_create round-trips per learner on every `?live=1` caseload
+    # read — the same "unconditional per-row DB work on a read" shape as the
+    # sync_active_user bug fixed in learner_progression.advance_learner.
+    if getattr(row, "ksb_assignment", None) is not None:
+        return
     source = getattr(row, "_caseload_source", None) or resolve_caseload_source_row(row)
     if source is None:
         return
@@ -1576,11 +1625,28 @@ def serialize_caseload_learner(
     cohort_name = clean_text(row.cohort) or "--"
     group_name = clean_text(row.group) or "--"
     cohort_id = re.sub(r"[^a-z0-9]+", "-", cohort_name.lower()).strip("-") or "unassigned"
+    # Same 'commercial'/'apprenticeship' discriminator learner_detail.py keys its
+    # lookup on (see learner_calendar_source_identity above) — surfaced here so
+    # the coach case file can request the learner's real detail record directly
+    # instead of racing both kinds and silently rendering whichever answers first.
+    learner_type = "commercial" if clean_text(getattr(row, "learner_type", "")).casefold() == "commercial" else "apprenticeship"
+    # row.id is this LearnerProfile's own pk -- a different, disjoint sequence
+    # from enrolment."Created_users".id (see LearnerProfile.enrolment_id's
+    # docstring). /learner_api/learner-detail/<kind>/<pk>/ queries the latter
+    # table directly, so callers that only had row.id would 404 against it.
+    enrolment_id = str(row.enrolment_id) if getattr(row, "enrolment_id", None) else None
+    current_week = current_week_label(row)
+    components_target = components_target_to_date(row)
 
     return {
         "id": str(row.id),
         "name": clean_text(row.username) or "Unknown learner",
         "initials": build_initials(row.username),
+        "learnerType": learner_type,
+        "enrolmentId": enrolment_id,
+        "currentModule": current_week["module"] if current_week else None,
+        "currentWeek": current_week["week"] if current_week else None,
+        "componentsTargetToDate": components_target,
         "employer": "--",
         "cohortId": cohort_id,
         "cohortName": cohort_name,
@@ -1682,11 +1748,20 @@ def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) 
     group_name = clean_text(getattr(row, "group", None)) or "--"
     programme_name = clean_text(getattr(row, "programme", None)) or cohort_name
     cohort_id = re.sub(r"[^a-z0-9]+", "-", cohort_name.lower()).strip("-") or "unassigned"
+    learner_type = "commercial" if clean_text(getattr(row, "learner_type", "")).casefold() == "commercial" else "apprenticeship"
+    enrolment_id = str(row.enrolment_id) if getattr(row, "enrolment_id", None) else None
+    current_week = current_week_label(row)
+    components_target = components_target_to_date(row)
 
     return {
         "id": str(row.id),
         "name": clean_text(row.username) or "Unknown learner",
         "initials": build_initials(row.username),
+        "learnerType": learner_type,
+        "enrolmentId": enrolment_id,
+        "currentModule": current_week["module"] if current_week else None,
+        "currentWeek": current_week["week"] if current_week else None,
+        "componentsTargetToDate": components_target,
         "employer": "--",
         "cohortId": cohort_id,
         "cohortName": cohort_name,
@@ -1751,11 +1826,20 @@ def serialize_attendance_source_learner(row: LearnerProfile) -> dict:
     cohort_name = clean_text(getattr(row, "cohort", None)) or "--"
     group_name = clean_text(getattr(row, "group", None)) or "--"
     program_status = get_lms_row_program_status(row)
+    learner_type = "commercial" if clean_text(getattr(row, "learner_type", "")).casefold() == "commercial" else "apprenticeship"
+    enrolment_id = str(row.enrolment_id) if getattr(row, "enrolment_id", None) else None
+    current_week = current_week_label(row)
+    components_target = components_target_to_date(row)
 
     return {
         "id": str(row.id),
         "name": clean_text(row.username) or "Unknown learner",
         "initials": build_initials(row.username),
+        "learnerType": learner_type,
+        "enrolmentId": enrolment_id,
+        "currentModule": current_week["module"] if current_week else None,
+        "currentWeek": current_week["week"] if current_week else None,
+        "componentsTargetToDate": components_target,
         "email": clean_text(row.email) or None,
         "employer": "--",
         "programmeName": programme_name,
@@ -2621,6 +2705,11 @@ def build_monthly_activity_learner(
         "id": learner["id"],
         "name": learner["name"],
         "initials": learner["initials"],
+        "learnerType": learner.get("learnerType"),
+        "enrolmentId": learner.get("enrolmentId"),
+        "currentModule": learner.get("currentModule"),
+        "currentWeek": learner.get("currentWeek"),
+        "componentsTargetToDate": learner.get("componentsTargetToDate"),
         "email": learner.get("email"),
         "cohortName": learner.get("cohortName") or "--",
         "group": learner.get("group") or "--",
@@ -2993,120 +3082,6 @@ def fetch_learner_absence_data(email_keys: list[str]) -> dict:
             })
 
     return {"metrics": metrics, "records": {}, "trends": trends}
-
-
-def sync_learner_absence_counts_from_details(learner_ids: list[int], email_keys: list[str]) -> None:
-    ids = sorted({int(learner_id) for learner_id in learner_ids if learner_id})
-    emails = sorted({normalize_email(email) for email in email_keys if normalize_email(email)})
-    if not ids and not emails:
-        return
-
-    connection = connections[router.db_for_read(CoachAbsenceReport) or "default"]
-    absence_relation = find_learner_absence_relation(connection)
-    if not absence_relation:
-        return
-
-    detail_relation = find_existing_relation(connection, COACH_ATTENDANCE_DETAILS_RELATION_CANDIDATES)
-    if not detail_relation:
-        return
-
-    detail_columns = relation_columns(connection, detail_relation)
-    learner_id_column = first_existing_column(detail_columns, "learner_id", "learnerid", "Learner ID")
-    learner_email_column = first_existing_column(detail_columns, "learner_email", "email", "Email")
-    status_column = first_existing_column(detail_columns, "attendance_status", "status", "attendance", "is_present", "present", "attended")
-    if not status_column or not any([learner_id_column, learner_email_column]):
-        return
-
-    absence_columns = relation_columns(connection, absence_relation)
-    absence_learner_id_column = first_existing_column(absence_columns, "learner_id", "learnerid", "Learner ID")
-    absence_learner_email_column = first_existing_column(absence_columns, "learner_email", "email", "Email")
-    absence_present_column = first_existing_column(absence_columns, "present")
-    absence_absent_column = first_existing_column(absence_columns, "absent")
-    if not absence_present_column or not absence_absent_column or not any([absence_learner_id_column, absence_learner_email_column]):
-        return
-
-    filters = []
-    params: list = []
-    if learner_id_column and ids:
-        placeholders = ", ".join(["%s"] * len(ids))
-        filters.append(f"{quote_sql_identifier(learner_id_column)} in ({placeholders})")
-        params.extend(ids)
-    if learner_email_column and emails:
-        filters.append(f"lower(trim({quote_sql_identifier(learner_email_column)}::text)) = any(%s)")
-        params.append(emails)
-    if not filters:
-        return
-
-    learner_id_select = (
-        f"{quote_sql_identifier(learner_id_column)} as learner_id"
-        if learner_id_column
-        else "null as learner_id"
-    )
-    learner_email_select = (
-        f"{quote_sql_identifier(learner_email_column)} as learner_email"
-        if learner_email_column
-        else "null as learner_email"
-    )
-    query = f"""
-        select
-            {learner_id_select},
-            {learner_email_select},
-            {quote_sql_identifier(status_column)} as attendance_status
-        from {detail_relation}
-        where {" or ".join(filters)}
-    """
-
-    with connection.cursor() as cursor:
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-
-    counts_by_id: dict[int, dict[str, int]] = {}
-    counts_by_email: dict[str, dict[str, int]] = {}
-    for learner_id_value, learner_email_value, status_value in rows:
-        status = normalize_attendance_detail_status(status_value)
-        if status not in {"present", "absent"}:
-            continue
-        learner_id = to_int(learner_id_value)
-        email_key = normalize_email(learner_email_value)
-        if learner_id:
-            counts = counts_by_id.setdefault(learner_id, {"present": 0, "absent": 0})
-            counts[status] += 1
-        if email_key:
-            counts = counts_by_email.setdefault(email_key, {"present": 0, "absent": 0})
-            counts[status] += 1
-
-    if not counts_by_id and not counts_by_email:
-        return
-
-    with connection.cursor() as cursor:
-        if absence_learner_id_column:
-            for learner_id, counts in counts_by_id.items():
-                cursor.execute(
-                    f"""
-                    update {absence_relation}
-                    set {quote_sql_identifier(absence_present_column)} = %s,
-                        {quote_sql_identifier(absence_absent_column)} = %s
-                    where {quote_sql_identifier(absence_learner_id_column)} = %s
-                    """,
-                    [counts["present"], counts["absent"], learner_id],
-                )
-        if absence_learner_email_column:
-            learner_id_guard = (
-                f" and {quote_sql_identifier(absence_learner_id_column)} is null"
-                if absence_learner_id_column
-                else ""
-            )
-            for email_key, counts in counts_by_email.items():
-                cursor.execute(
-                    f"""
-                    update {absence_relation}
-                    set {quote_sql_identifier(absence_present_column)} = %s,
-                        {quote_sql_identifier(absence_absent_column)} = %s
-                    where lower(trim({quote_sql_identifier(absence_learner_email_column)}::text)) = %s
-                    {learner_id_guard}
-                    """,
-                    [counts["present"], counts["absent"], email_key],
-                )
 
 
 def is_truthy_value(value) -> bool:
@@ -4658,7 +4633,15 @@ def collect_live_session_events(
         if module_catalogue_id:
             weeks_by_module.setdefault(module_catalogue_id, []).append(week)
     component_links_by_week: dict[str, str] = {}
-    for component in authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, ensure_tables=False):
+    # columns= is load-bearing, not an optimisation: curriculum.components is
+    # ~18k rows / 39MB (mostly settings_json) on a remote database -- a plain
+    # select * here alone accounts for the "Timetable is taking too long to
+    # load" timeout coaches were hitting (~23s vs ~0.5s narrowed).
+    for component in authoring_fetch_all(
+        AUTHORING_COMPONENTS_TABLE,
+        ensure_tables=False,
+        columns=["type", "week_id", "live_sessions_link"],
+    ):
         if clean_text(component.get("type")).lower() != "live_session":
             continue
         week_id = clean_text(component.get("week_id"))
@@ -5983,6 +5966,11 @@ def serialize_attendance_learner(
         "id": learner["id"],
         "learner": learner["name"],
         "initials": learner["initials"],
+        "learnerType": learner.get("learnerType"),
+        "enrolmentId": learner.get("enrolmentId"),
+        "currentModule": learner.get("currentModule"),
+        "currentWeek": learner.get("currentWeek"),
+        "componentsTargetToDate": learner.get("componentsTargetToDate"),
         "email": learner.get("email"),
         "programme": learner.get("programmeName") or learner["cohortName"],
         "cohort": learner["cohortName"],
@@ -6016,7 +6004,7 @@ def serialize_attendance_learner(
 
 def normalize_attendance_detail_status(value) -> str:
     text = clean_text(value).lower()
-    if text in {"1", "true", "yes", "y", "present", "attended", "attend"}:
+    if text in {"1", "true", "yes", "y", "present", "attended", "attend", "late"}:
         return "present"
     if text in {"0", "false", "no", "n", "absent", "missed", "did not attend", "non-attendance"}:
         return "absent"
@@ -6552,7 +6540,6 @@ def coach_attendance(request):
             active_learner_ids,
             active_email_keys,
         )
-        sync_learner_absence_counts_from_details(learner_ids, email_keys)
         metrics_by_id = attendance_data["metricsById"]
         metrics_by_email = attendance_data["metrics"]
         missing_fallback_emails = [
@@ -7043,13 +7030,18 @@ def coach_marking_queue(request, submission_id=None):
     """List and review complete reflections, scoped and paged in PostgreSQL."""
     owner_email = authenticated_coach_email(request)
     requested_owner = normalize_email(owner_email)
+    # learning_reflection_submissions.learner_id is populated from
+    # enrolment."Created_users".id (see LearnerProfile.enrolment_id), not from
+    # LearnerProfile.id -- the two are disjoint pk spaces, so this must filter
+    # on enrolment_id or it never matches a real submission.
     allowed_learner_ids = [
         str(learner_id)
         for learner_id in (
             LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
             .filter(coach_email_key=requested_owner)
-            .values_list("id", flat=True)
+            .values_list("enrolment_id", flat=True)
         )
+        if learner_id is not None
     ]
 
     if submission_id is not None:

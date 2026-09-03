@@ -3,8 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { useToast } from '@/hooks/useToast';
+import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 import { roleNavMap } from '@/mocks/navigation';
-import { fetchEvents, createEvent, updateEvent, deleteEvent, type EngagementEvent as Event } from '@/api/engagement';
+import {
+  fetchEvents, createEvent, updateEvent, deleteEvent,
+  fetchEventAttendance, saveEventAttendance,
+  type EngagementEvent as Event, type AttendanceRosterEntry,
+} from '@/api/engagement';
 import { EventCardSkeletonGrid } from '@/pages/engagement/EngagementSkeletons';
 
 const engagementNav = roleNavMap.engagement;
@@ -154,6 +159,7 @@ function validateForm(form: EventFormData): FormErrors {
 export default function EventsPage() {
   const navigate = useNavigate();
   const { success, warning } = useToast();
+  const operator = useOperatorIdentity();
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState<string>('all');
@@ -182,6 +188,13 @@ export default function EventsPage() {
 
   // DELETE dialog
   const [deleteEventId, setDeleteEventId] = useState<string | null>(null);
+
+  // Attendance modal — mark who showed up; 'present' awards event_attended points.
+  const [attendanceEventId, setAttendanceEventId] = useState<string | null>(null);
+  const [attendanceRoster, setAttendanceRoster] = useState<AttendanceRosterEntry[]>([]);
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
+  const [attendanceSaving, setAttendanceSaving] = useState(false);
+  const [attendanceDraft, setAttendanceDraft] = useState<Record<string, 'present' | 'absent'>>({});
 
   const filtered = events.filter(e => {
     const matchType = typeFilter === 'all' || e.type === typeFilter;
@@ -274,12 +287,60 @@ export default function EventsPage() {
   }
 
   const eventToDelete = events.find(e => e.id === deleteEventId);
+  const attendanceEvent = events.find(e => e.id === attendanceEventId) ?? null;
+
+  const openAttendance = async (event: Event) => {
+    setAttendanceEventId(event.id);
+    setAttendanceLoading(true);
+    try {
+      const roster = await fetchEventAttendance(event.id);
+      setAttendanceRoster(roster);
+      const draft: Record<string, 'present' | 'absent'> = {};
+      roster.forEach(r => { if (r.status) draft[r.learnerId] = r.status; });
+      setAttendanceDraft(draft);
+    } catch (err: any) {
+      warning('Could not load attendance', err.message);
+      setAttendanceEventId(null);
+    } finally {
+      setAttendanceLoading(false);
+    }
+  };
+
+  const setMark = (learnerId: string, status: 'present' | 'absent') => {
+    setAttendanceDraft(prev => ({ ...prev, [learnerId]: status }));
+  };
+
+  const markAll = (status: 'present' | 'absent') => {
+    const draft: Record<string, 'present' | 'absent'> = {};
+    attendanceRoster.forEach(r => { draft[r.learnerId] = status; });
+    setAttendanceDraft(draft);
+  };
+
+  const saveAttendance = async () => {
+    if (!attendanceEventId) return;
+    const records = attendanceRoster
+      .filter(r => attendanceDraft[r.learnerId])
+      .map(r => ({ learnerId: r.learnerId, learnerName: r.learnerName, status: attendanceDraft[r.learnerId] }));
+    if (records.length === 0) { warning('Mark at least one learner before saving'); return; }
+    setAttendanceSaving(true);
+    try {
+      const roster = await saveEventAttendance(attendanceEventId, records);
+      setAttendanceRoster(prev => prev.map(r => roster.find(saved => saved.learnerId === r.learnerId) ?? r));
+      const presentCount = records.filter(r => r.status === 'present').length;
+      success(`Attendance saved — ${presentCount} learner${presentCount === 1 ? '' : 's'} marked present`);
+      setAttendanceEventId(null);
+    } catch (err: any) {
+      warning('Could not save attendance', err.message);
+    } finally {
+      setAttendanceSaving(false);
+    }
+  };
 
   return (
     <WorkspaceShell
       role="engagement" roleLabel={engagementNav.label} navItems={engagementNav.items} workspaceLabel={engagementNav.workspaceLabel}
       pageTitle="Events" pageSubtitle="Schedule and manage learner events, workshops, and social activities"
-      userName="Tom Harrington" userRole="Engagement Manager"
+      userName={operator.name} userRole={operator.role}
     >
       <div className="p-6 space-y-6">
         <WorkspaceHeroBanner
@@ -346,30 +407,33 @@ export default function EventsPage() {
                     <AppIcon className={`${cfg.icon} text-sm`}></AppIcon>
                   </span>
                   <div className="flex-1 min-w-0">
-                    <h4 className="text-[13px] font-semibold text-foreground-900">{event.title}</h4>
-                    <span className={`text-[8px] font-semibold px-1.5 py-0.5 rounded-full ${cfg.bg} ${cfg.text}`}>{event.type}</span>
+                    <h4 className="text-sm font-semibold text-foreground-900">{event.title}</h4>
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${cfg.bg} ${cfg.text}`}>{event.type}</span>
                   </div>
                 </div>
-                <p className="text-[11px] text-foreground-500 mb-3">{event.description}</p>
-                <div className="space-y-1 text-[10px] text-foreground-400">
+                <p className="text-xs text-foreground-500 mb-3">{event.description}</p>
+                <div className="space-y-1 text-[11px] text-foreground-400">
                   <p><AppIcon className="ri-calendar-line mr-1 text-primary-500"></AppIcon>{event.date}</p>
                   <p><AppIcon className="ri-time-line mr-1 text-primary-500"></AppIcon>{event.time}</p>
                   <p><AppIcon className="ri-map-pin-line mr-1 text-primary-500"></AppIcon>{event.location}</p>
                   <p><AppIcon className="ri-user-line mr-1 text-primary-500"></AppIcon>{event.organizer}</p>
                 </div>
-                <div className="mt-3 flex items-center gap-1.5 text-[11px] text-foreground-600">
+                <div className="mt-3 flex items-center gap-1.5 text-xs text-foreground-600">
                   <AppIcon className="ri-group-line text-primary-500"></AppIcon>
                   <span className="font-semibold text-foreground-900">{event.attendees}</span>
                   <span className="text-foreground-400">student{event.attendees === 1 ? '' : 's'} intending to attend</span>
                 </div>
-                <div className="mt-3 flex items-center gap-2">
-                  <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${event.status === 'upcoming' ? 'bg-primary-100 text-primary-700' : event.status === 'ongoing' ? 'bg-emerald-100 text-emerald-700' : 'bg-foreground-100 text-foreground-500'}`}>{event.status}</span>
+                <div className="mt-3 flex items-center gap-2 flex-wrap">
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${event.status === 'upcoming' ? 'bg-primary-100 text-primary-700' : event.status === 'ongoing' ? 'bg-emerald-100 text-emerald-700' : 'bg-foreground-100 text-foreground-500'}`}>{event.status}</span>
                   <div className="flex-1"></div>
-                  <button onClick={() => openEditModal(event)} className="px-2 py-1.5 bg-background-100 text-foreground-600 rounded-lg text-[10px] font-medium hover:bg-background-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-                    <AppIcon className="ri-edit-line mr-0.5"></AppIcon> Edit
+                  <button onClick={() => openAttendance(event)} className="flex items-center gap-1 px-2 py-1.5 bg-secondary-50 text-secondary-700 rounded-lg text-[11px] font-medium hover:bg-secondary-100 transition-smooth cursor-pointer whitespace-nowrap">
+                    <AppIcon className="ri-checkbox-circle-line"></AppIcon> Attendance
                   </button>
-                  <button onClick={() => setDeleteEventId(event.id)} className="px-2 py-1.5 bg-red-50 text-red-600 rounded-lg text-[10px] font-medium hover:bg-red-100 transition-smooth cursor-pointer whitespace-nowrap">
-                    <AppIcon className="ri-delete-bin-line mr-0.5"></AppIcon> Delete
+                  <button onClick={() => openEditModal(event)} className="flex items-center gap-1 px-2 py-1.5 bg-background-100 text-foreground-600 rounded-lg text-[11px] font-medium hover:bg-background-200/50 transition-smooth cursor-pointer whitespace-nowrap">
+                    <AppIcon className="ri-edit-line"></AppIcon> Edit
+                  </button>
+                  <button onClick={() => setDeleteEventId(event.id)} className="flex items-center gap-1 px-2 py-1.5 bg-red-50 text-red-600 rounded-lg text-[11px] font-medium hover:bg-red-100 transition-smooth cursor-pointer whitespace-nowrap">
+                    <AppIcon className="ri-delete-bin-line"></AppIcon> Delete
                   </button>
                 </div>
               </div>
@@ -458,6 +522,72 @@ export default function EventsPage() {
                   <AppIcon className="ri-delete-bin-line"></AppIcon> Delete Event
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ATTENDANCE MODAL — mark who showed up; 'present' awards points */}
+        {attendanceEventId !== null && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => setAttendanceEventId(null)}>
+            <div className="bg-background-50 rounded-2xl max-w-md w-full max-h-[85vh] overflow-hidden flex flex-col shadow-xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-4 border-b border-foreground-200/60 shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <span className="w-9 h-9 rounded-xl bg-secondary-100 text-secondary-600 flex items-center justify-center"><AppIcon className="ri-checkbox-circle-line"></AppIcon></span>
+                  <div>
+                    <h3 className="text-sm font-heading font-semibold text-foreground-900">Mark attendance</h3>
+                    <p className="text-[11px] text-foreground-400">{attendanceEvent?.title} · marking present awards points</p>
+                  </div>
+                </div>
+                <button onClick={() => setAttendanceEventId(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
+              </div>
+
+              {attendanceLoading && <p className="text-[11px] text-foreground-400 text-center py-8">Loading roster…</p>}
+
+              {!attendanceLoading && (
+                <>
+                  <div className="px-5 pt-3 flex items-center gap-2 shrink-0">
+                    <button onClick={() => markAll('present')} className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-smooth cursor-pointer">
+                      <AppIcon className="ri-checkbox-circle-line"></AppIcon> Mark all present
+                    </button>
+                    <button onClick={() => markAll('absent')} className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-semibold text-foreground-600 bg-background-100 hover:bg-background-200/60 transition-smooth cursor-pointer">
+                      <AppIcon className="ri-close-circle-line"></AppIcon> Mark all absent
+                    </button>
+                  </div>
+
+                  <div className="p-5 overflow-y-auto space-y-2">
+                    {attendanceRoster.length === 0 && (
+                      <p className="text-[11px] text-foreground-400 text-center py-4">No learners booked onto this event yet.</p>
+                    )}
+                    {attendanceRoster.map(entry => {
+                      const mark = attendanceDraft[entry.learnerId];
+                      return (
+                        <div key={entry.learnerId} className="flex items-center gap-2.5 rounded-lg border border-foreground-200/50 p-2.5">
+                          <div className="w-7 h-7 rounded-full bg-secondary-100 text-secondary-700 flex items-center justify-center text-[10px] font-bold shrink-0">{entry.learnerName.charAt(0)}</div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[12px] font-semibold text-foreground-900 truncate">{entry.learnerName}</p>
+                            {entry.booked === false && <span className="text-[9px] font-semibold text-amber-600">Walk-in (not booked)</span>}
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button onClick={() => setMark(entry.learnerId, 'present')} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[9px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${mark === 'present' ? 'bg-emerald-500 text-white' : 'bg-background-100 text-foreground-500 hover:bg-emerald-50 hover:text-emerald-700'}`}>
+                              <AppIcon className="ri-check-line"></AppIcon> Present
+                            </button>
+                            <button onClick={() => setMark(entry.learnerId, 'absent')} className={`flex items-center gap-1 px-2 py-1 rounded-md text-[9px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${mark === 'absent' ? 'bg-rose-500 text-white' : 'bg-background-100 text-foreground-500 hover:bg-rose-50 hover:text-rose-700'}`}>
+                              <AppIcon className="ri-close-line"></AppIcon> Absent
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-foreground-200/60 shrink-0">
+                    <button onClick={() => setAttendanceEventId(null)} className="px-4 py-2 rounded-lg text-xs font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">Cancel</button>
+                    <button onClick={saveAttendance} disabled={attendanceSaving} className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+                      <AppIcon className="ri-save-line"></AppIcon> {attendanceSaving ? 'Saving…' : 'Save attendance'}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}

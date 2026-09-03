@@ -62,7 +62,7 @@ export function RealThisWeekView({
     >
       <div className="p-3 md:p-6 space-y-5 md:space-y-6">
         {/* ═══════════ HERO ═══════════ */}
-        <section className="relative rounded-2xl overflow-hidden animate-in fade-in duration-300" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
+        <section className="learner-super-admin-hero relative rounded-2xl overflow-hidden animate-in fade-in duration-300" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute animate-liquid-blob-1 opacity-25" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
             <div className="absolute animate-liquid-blob-2 opacity-15" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
@@ -159,7 +159,7 @@ function SnapshotCard({ icon, label, value, detail, color }: {
 }) {
   const c = SNAPSHOT_COLORS[color] || SNAPSHOT_COLORS.primary;
   return (
-    <div className="bg-background-50 rounded-2xl border border-foreground-200/50 p-4 md:p-5 card-premium">
+    <div className="coach-metric-card">
       <div className={`w-9 h-9 rounded-xl ${c.bg} flex items-center justify-center mb-3`}>
         <AppIcon className={`${icon} ${c.icon} text-base`} />
       </div>

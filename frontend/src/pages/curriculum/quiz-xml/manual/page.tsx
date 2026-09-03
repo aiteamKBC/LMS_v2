@@ -420,7 +420,7 @@ export default function ManualQuizPage() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel={curriculumNav.label} navItems={curriculumNav.items} workspaceLabel={curriculumNav.workspaceLabel} pageTitle="Manual Quiz" pageSubtitle="Create quiz questions and settings manually" userName="Rachel Myers" userRole="Curriculum Designer">
-      <form onSubmit={saveManualQuiz} className="min-h-screen bg-[#f7f6f4] p-4 sm:p-6 space-y-5">
+      <form onSubmit={saveManualQuiz} className="min-h-full bg-[#f7f6f4] p-4 sm:p-5 lg:p-6 space-y-4">
         <div className="rounded-2xl border border-[#e3dee9] bg-white p-5 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="min-w-0">
             <button type="button" onClick={() => navigate(-1)} className="text-xs font-semibold text-[#5b2dbb] hover:text-[#43207d]">

@@ -480,12 +480,37 @@ def _normalise_component_ksb_mappings(value):
 
 
 def completed_hours_from_progress(progress, components=None):
+    """Hours the learner has actually done, for the OTJ total.
+
+    Completed OTJ hours are what the learner recorded on submission, NOT the
+    component's authored `expected_otjh` — that is the *plan*, and counting it
+    credited a learner the full 2h for an assignment they finished in 33
+    seconds. `verified_seconds` is the server-checked time the submit path
+    stores, so it is what a completed activity is worth.
+
+    `reportedTime` is deliberately not consulted: in the stored data it holds
+    the planned figure ("2h" on rows whose verified time was seconds), so
+    reading it would reintroduce exactly the planned-hours total this avoids.
+    `timeTaken` is not used either — it is a clock string whose minutes field
+    can exceed 59 ("60:00"), which no HH:MM:SS parse handles correctly.
+
+    Rows predating time tracking carry no verified time at all; those still
+    fall back to the authored hours, because dropping them would silently zero
+    historical activity rather than measure it.
+    """
     if not isinstance(progress, list):
         return "0"
     expected_hours_by_component = _component_expected_hours_lookup(components)
     hours = 0.0
     for record in dedupe_otjh_progress_records(progress):
         component_id = _s(record.get("componentId"))
+        verified_seconds = _number(
+            record.get("verifiedSeconds") if record.get("verifiedSeconds") is not None
+            else record.get("verified_seconds")
+        )
+        if verified_seconds is not None:
+            hours += max(verified_seconds, 0) / 3600
+            continue
         record_expected = _number(record.get("expectedOtjh") or record.get("expected_otjh"))
         if record_expected is not None:
             hours += record_expected
@@ -616,6 +641,95 @@ def hydrate_training_plan(plan):
             "weeks": weeks_by_module.get(module_id, []),
         })
     return expanded
+
+
+def flatten_plan_weeks(plan):
+    """(module title, week title) pairs in authored order, from either the
+    hydrated enrolment-side plan or LearnerProfile.training_plan -- both use
+    the same [{moduleTitle, weeks: [{weekTitle, ...}]}] shape."""
+    weeks = []
+    for module in plan or []:
+        if not isinstance(module, dict):
+            continue
+        module_title = _s(module.get("moduleTitle") or module.get("module"))
+        for week in module.get("weeks") or []:
+            if not isinstance(week, dict):
+                continue
+            week_title = _s(week.get("weekTitle") or week.get("week"))
+            if week_title:
+                weeks.append((module_title, week_title))
+    return weeks
+
+
+def week_by_elapsed_time(weeks, start_date, today=None):
+    """Index into an ordered (module, week) list by whole calendar weeks
+    elapsed since start_date -- the same no-real-schedule approximation
+    _sequential_week_target (learner_detail.py) falls back to for the OTJH
+    target itself, reused here so "current week" never disagrees with
+    whichever pace figure is displayed next to it.
+
+    None when there's no plan or no start date to anchor it to: a wrong
+    week label is worse than an absent one.
+    """
+    if not weeks or not start_date:
+        return None
+    today = today or timezone.localdate()
+    weeks_elapsed = max(0, (today - start_date).days // 7)
+    index = min(weeks_elapsed, len(weeks) - 1)
+    return weeks[index]
+
+
+def current_week_label(profile, today=None):
+    """{"module": ..., "week": ...} for wherever profile is in their plan
+    right now, or None. `profile` is anything get_training_plan() accepts
+    (LearnerProfile or an enrolment CommercialUser/EnrolmentUser row) with a
+    real `start_date` DateField -- LearnerProfile.start_date qualifies;
+    EnrolmentUser.start_date is legacy free text and does not."""
+    weeks = flatten_plan_weeks(get_training_plan(profile))
+    result = week_by_elapsed_time(weeks, getattr(profile, "start_date", None), today=today)
+    if result is None:
+        return None
+    module_title, week_title = result
+    return {"module": module_title, "week": week_title}
+
+
+def flatten_plan_component_counts(plan):
+    """Component count per week, in the same authored order flatten_plan_weeks
+    walks the plan -- kept as its own parallel list rather than changing that
+    function's (module, week) tuple shape, since current_week_label already
+    unpacks it."""
+    counts = []
+    for module in plan or []:
+        if not isinstance(module, dict):
+            continue
+        for week in module.get("weeks") or []:
+            if not isinstance(week, dict):
+                continue
+            week_title = _s(week.get("weekTitle") or week.get("week"))
+            if week_title:
+                counts.append(len(week.get("components") or []))
+    return counts
+
+
+def target_by_elapsed_time(per_week_values, start_date, today=None):
+    """Cumulative sum of per_week_values[0..index], where index is the same
+    elapsed-calendar-weeks-since-start_date index week_by_elapsed_time uses --
+    so a target built this way never disagrees with whichever week is shown
+    as current."""
+    if not per_week_values or not start_date:
+        return None
+    today = today or timezone.localdate()
+    weeks_elapsed = max(0, (today - start_date).days // 7)
+    index = min(weeks_elapsed, len(per_week_values) - 1)
+    return sum(per_week_values[: index + 1])
+
+
+def components_target_to_date(profile, today=None):
+    """How many components the learner should have reached by today, same
+    pacing assumption as current_week_label. None when there's no plan or
+    start date to anchor it to."""
+    counts = flatten_plan_component_counts(get_training_plan(profile))
+    return target_by_elapsed_time(counts, getattr(profile, "start_date", None), today=today)
 
 
 def hydrate_source_training_plan(source):
@@ -863,6 +977,27 @@ def save_progress_record(learner, record, activity=None):
             completed_hours_from_progress(learner.training_plan_progress)
         )
         learner.save(update_fields=["completed_hours", "updated_at"])
+
+        # Engagement points: fire only once this transaction actually commits.
+        # Progress writes route to the "enrolment" DB alias while engagement
+        # models route to "default" (see learner_api.routers) — separate
+        # connections even though both currently point at the same Neon
+        # database — so an inline grant here could survive a later rollback
+        # of this very save. award_for_progress is best-effort and never
+        # raises, matching the try/except every caller used to wrap the old,
+        # per-caller record_progress_points call in.
+        enrolment_id = learner.enrolment_id
+        if enrolment_id is not None:
+            progress_snapshot = dict(record)
+            learner_username = learner.username
+
+            def _award_engagement_points():
+                from engagement_api.hooks import award_for_progress
+
+                award_for_progress(enrolment_id, learner_username, progress_snapshot)
+
+            transaction.on_commit(_award_engagement_points, using="enrolment")
+
         return progress
 
 
@@ -1122,6 +1257,108 @@ def _resolve_linkable_programme_id(programme="", training_plan=None):
         logger.warning("Could not resolve a linkable programme id for %s: %s", programme, exc)
         return ""
     return _s(rows[0][0]) if len(rows) == 1 else ""
+
+
+# The two levels below the programme. Same contract as
+# _resolve_linkable_programme_id: return an id only when the name identifies
+# exactly one live record, and "" otherwise so the caller leaves the existing
+# link alone. Enrolment captures a placement as free text, and these turn that
+# text into the reference curriculum reads -- once, at the moment it is written,
+# rather than by comparing names on every read for ever.
+#
+# Soft-deleted, programme-deleted and archived rows are excluded, and because
+# those flag columns are not present on every database each is read through
+# to_jsonb: an absent column comes back NULL and the row counts as live.
+_LIVE_ROW_SQL = (
+    "     AND coalesce(to_jsonb({alias}) ->> 'deleted_at', '') = '' "
+    "     AND coalesce(to_jsonb({alias}) ->> 'is_programme_deleted', 'false') "
+    "         NOT IN ('true', 't') "
+    "     AND coalesce(to_jsonb({alias}) ->> 'is_archived', 'false') "
+    "         NOT IN ('true', 't') "
+)
+
+
+def _resolve_linkable_cohort_id(cohort="", programme_id="", programme=""):
+    """A cohort id safe to PERSIST on the learner row, or "".
+
+    Scoped to the learner's programme, by id where there is one and by name
+    where there is not -- cohort names repeat across programmes, so an unscoped
+    name match would be ambiguous almost everywhere.
+    """
+    cohort = _s(cohort)
+    programme_id = _s(programme_id)
+    programme = _s(programme)
+    if not cohort or not (programme_id or programme):
+        return ""
+    try:
+        with connections["enrolment"].cursor() as cursor:
+            cursor.execute(
+                "SELECT c.cohort_id FROM curriculum.cohorts c "
+                " WHERE lower(btrim(coalesce(c.cohort_name, ''))) = lower(btrim(%s)) "
+                "   AND coalesce(btrim(c.cohort_id), '') <> '' "
+                "   AND ( (%s <> '' AND c.programme_id = %s) "
+                "      OR (%s =  '' AND lower(btrim(coalesce(c.programme_name, ''))) "
+                "                    = lower(btrim(%s))) ) "
+                + _LIVE_ROW_SQL.format(alias="c"),
+                [cohort, programme_id, programme_id, programme_id, programme],
+            )
+            rows = cursor.fetchall()
+    except DatabaseError as exc:
+        logger.warning("Could not resolve a linkable cohort id for %s: %s", cohort, exc)
+        return ""
+    return _s(rows[0][0]) if len(rows) == 1 else ""
+
+
+def _resolve_linkable_group_id(group="", cohort_id="", programme_id="", programme=""):
+    """A group id safe to PERSIST on the learner row, or "".
+
+    Prefers the cohort: a group name is only unique WITHIN its cohort (the same
+    reason curriculum's resolve_group_row refuses a bare-name lookup), so
+    without a cohort_id this falls back to the programme and will usually find
+    the name ambiguous -- which returns "" rather than a guess.
+    """
+    group = _s(group)
+    cohort_id = _s(cohort_id)
+    programme_id = _s(programme_id)
+    programme = _s(programme)
+    if not group or not (cohort_id or programme_id or programme):
+        return ""
+    if cohort_id:
+        scope_sql = "   AND g.cohort_id = %s "
+        scope_params = [cohort_id]
+    else:
+        scope_sql = (
+            "   AND ( (%s <> '' AND g.programme_id = %s) "
+            "      OR (%s =  '' AND lower(btrim(coalesce(g.programme_name, ''))) "
+            "                    = lower(btrim(%s))) ) "
+        )
+        scope_params = [programme_id, programme_id, programme_id, programme]
+    try:
+        with connections["enrolment"].cursor() as cursor:
+            cursor.execute(
+                "SELECT g.group_id FROM curriculum.groups g "
+                " WHERE lower(btrim(coalesce(g.group_name, ''))) = lower(btrim(%s)) "
+                "   AND coalesce(btrim(g.group_id), '') <> '' "
+                + scope_sql
+                + _LIVE_ROW_SQL.format(alias="g"),
+                [group, *scope_params],
+            )
+            rows = cursor.fetchall()
+    except DatabaseError as exc:
+        logger.warning("Could not resolve a linkable group id for %s: %s", group, exc)
+        return ""
+    return _s(rows[0][0]) if len(rows) == 1 else ""
+
+
+def _linkable_placement_ids(programme_id="", programme="", cohort="", group=""):
+    """(cohort_id, group_id) for one placement, resolved in that order.
+
+    The group lookup is handed the cohort id this just resolved, because that is
+    what makes a repeated group name unambiguous.
+    """
+    cohort_id = _resolve_linkable_cohort_id(cohort, programme_id, programme)
+    group_id = _resolve_linkable_group_id(group, cohort_id, programme_id, programme)
+    return cohort_id, group_id
 
 
 # The three KSB lookups below each run their query inside its own savepoint.
@@ -1412,6 +1649,22 @@ def mirror_learner_placement(source):
         if programme_id:
             updates["programme_id"] = programme_id
 
+        # The same rule one and two levels down. Resolved from the names this
+        # placement just wrote, using whichever programme id we now hold (the
+        # freshly resolved one, else the link already on the profile), so a
+        # placement lands with its references rather than waiting for a backfill
+        # to infer them later.
+        cohort_id, group_id = _linkable_placement_ids(
+            programme_id or _s(getattr(profile, "programme_id", "")),
+            programme,
+            cohort,
+            updates["group_name"],
+        )
+        if cohort_id:
+            updates["cohort_id"] = cohort_id
+        if group_id:
+            updates["group_id"] = group_id
+
         changed = [
             field for field, value in updates.items()
             if getattr(profile, field, None) != value
@@ -1544,6 +1797,21 @@ def sync_active_user(source):
             )
             if linkable_programme_id:
                 defaults["programme_id"] = linkable_programme_id
+            # Same treatment for the cohort and group this learner sits in, so
+            # curriculum can scope them by reference instead of by a name a
+            # rename can break. Unresolved stays unset rather than blanking a
+            # link an earlier sync got right.
+            linkable_cohort_id, linkable_group_id = _linkable_placement_ids(
+                linkable_programme_id
+                or _s(getattr(learner, "programme_id", "") if learner else ""),
+                defaults["programme"],
+                defaults["cohort"],
+                defaults["group_name"],
+            )
+            if linkable_cohort_id:
+                defaults["cohort_id"] = linkable_cohort_id
+            if linkable_group_id:
+                defaults["group_id"] = linkable_group_id
             if learner is None:
                 # Never force the Created_users primary key into this table:
                 # both sequences are independent after the learner-table merge.

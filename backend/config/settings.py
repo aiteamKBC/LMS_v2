@@ -60,6 +60,13 @@ DB_CONN_HEALTH_CHECKS = os.environ.get('DB_CONN_HEALTH_CHECKS', 'true').lower() 
 # Seconds to wait for a database connection before giving up. Keeps a stalled DNS
 # resolver or unreachable Neon endpoint from hanging a request indefinitely.
 DB_CONNECT_TIMEOUT = int(os.environ.get('DB_CONNECT_TIMEOUT', '10'))
+# Milliseconds Postgres itself will run a statement (lock waits included) before
+# cancelling it. connect_timeout only bounds opening a connection; once one is
+# open, a query that stalls on a held lock or a slow-to-wake Neon compute has
+# nothing else capping it, so a request can hang forever with no client-visible
+# error (a pooled connection sits ESTABLISHED, and psycopg just never returns).
+# This turns that into a fast, catchable OperationalError instead.
+DB_STATEMENT_TIMEOUT_MS = int(os.environ.get('DB_STATEMENT_TIMEOUT_MS', '15000'))
 # psycopg 3 connection pooling. Neon is remote, so a fresh connection costs a
 # ~1s TLS handshake; CONN_MAX_AGE alone cannot avoid that under the threaded
 # dev server (persistent connections are per-thread and runserver spawns a new
@@ -458,6 +465,29 @@ if _kbc_attendance_database_url and not USE_SQLITE_FOR_TESTS:
     DATABASES['kbc_attendance'] = database_from_url(_kbc_attendance_database_url)
 
 DATABASE_ROUTERS = ['learner_api.routers.EnrolmentRouter']
+
+# Bound how long a query can run once a connection is open. connect_timeout
+# (above) only bounds *opening* a connection — a query that then stalls on a
+# held lock, or a Neon compute that is slow to wake, has nothing else capping
+# it, so a request can hang forever with no client-visible error (the socket
+# just sits ESTABLISHED and nothing ever answers).
+#
+# This can't be a startup parameter (`options: '-c statement_timeout=...'`):
+# Neon's pooled endpoint (PgBouncer) rejects any startup packet option other
+# than the ones it recognises — "unsupported startup parameter in options" —
+# so setting it there breaks every connection outright. `SET` after connecting
+# is a plain query, which the pooler allows through.
+from django.db.backends.signals import connection_created  # noqa: E402
+
+
+def _apply_statement_timeout(sender, connection, **kwargs):
+    if connection.vendor != 'postgresql':
+        return
+    with connection.cursor() as cursor:
+        cursor.execute('SET statement_timeout = %s', [DB_STATEMENT_TIMEOUT_MS])
+
+
+connection_created.connect(_apply_statement_timeout)
 
 # CORS/CSRF: the Vite dev server (port 3000) proxies /learner_api to this server, so
 # requests are same-origin in the browser. Allow the dev hosts explicitly.

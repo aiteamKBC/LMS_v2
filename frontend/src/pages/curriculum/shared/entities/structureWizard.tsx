@@ -27,6 +27,12 @@ import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
 import { useCurriculumStaffProfiles } from '@/hooks/useCurriculumStaffProfiles';
 import {
+  CurriculumApiError,
+  archiveCurriculumCohort,
+  archiveCurriculumGroup,
+  archiveCurriculumModule,
+  archiveCurriculumProgramme,
+  permanentlyDeleteCurriculumProgramme,
   type CurriculumCohort,
   type CurriculumGroup,
   type CurriculumModule,
@@ -34,7 +40,7 @@ import {
 } from '@/lib/curriculumApi';
 import { cleanText, normaliseKey, programmeIdentity, sameIdentifier } from './model';
 import { CohortFormDrawer, GroupFormDrawer, ProgrammeFormDrawer } from './forms';
-import { ModuleFormDrawer, type ModuleFormTarget, type SavedModuleRef } from './moduleForm';
+import { ModuleFormDrawer, moduleFormTarget, type SavedModuleRef } from './moduleForm';
 import { type FormChainStep } from './ui';
 import { StructureWizardOutlineStep } from './structureWizardOutline';
 
@@ -144,6 +150,16 @@ function countUnder<T>(list: T[], parentId: string, parentOf: (item: T) => strin
   return list.filter(item => sameIdentifier(parentOf(item), parentId)).length;
 }
 
+/**
+ * A permanent programme delete the backend refused — learner delivery under the
+ * programme, normally, which is never deleted with one. The archive that ran
+ * first still stands, so a discard that hits this has taken the run's records out
+ * of the active lists without removing them from the database.
+ */
+function isPermanentDeleteRefusal(error: unknown): boolean {
+  return error instanceof CurriculumApiError && error.status === 409;
+}
+
 /** The `CurriculumModule` the run just created, once a refresh has brought it back. */
 function findModule(modules: CurriculumModule[], catalogueId: string): CurriculumModule | undefined {
   if (!catalogueId) return undefined;
@@ -151,26 +167,49 @@ function findModule(modules: CurriculumModule[], catalogueId: string): Curriculu
     .some(value => sameIdentifier(cleanText(value), catalogueId)));
 }
 
-/** Reduced to what the module form reads, so re-opening it edits rather than duplicates. */
-function moduleFormTarget(module: CurriculumModule | undefined): ModuleFormTarget | null {
-  if (!module) return null;
-  const id = cleanText(module.moduleCatalogueId) || cleanText(module.catalogueId) || cleanText(module.moduleId) || cleanText(module.id);
-  if (!id) return null;
+/** Every id a module row may carry, so a discarded module is recognised however it is keyed. */
+function moduleIdentifiers(module: CurriculumModule): string[] {
+  return [module.moduleCatalogueId, module.catalogueId, module.moduleId, module.id].map(value => cleanText(value));
+}
+
+/**
+ * The four collections with a discarded run's records taken out, for a host page
+ * to hand straight to its `applyLocal`.
+ *
+ * Children go with their parent, because that is what the discard did to the
+ * database: archiving a cohort takes its groups down with it, and deleting a
+ * programme takes everything beneath it. Filtering only the exact rows the run
+ * wrote would leave the reader looking at a group whose cohort is gone.
+ */
+export function withoutDiscardedRecords<T extends {
+  programmes: CurriculumProgramme[];
+  cohorts: CurriculumCohort[];
+  groups: CurriculumGroup[];
+  modules: CurriculumModule[];
+}>(entities: T, discarded: StructureWizardCreated): T {
+  const programmeId = discarded.programme ? cleanText(programmeIdentity(discarded.programme)) : '';
+  const cohortId = cleanText(discarded.cohort?.id);
+  const groupId = cleanText(discarded.group?.id);
+  const moduleId = cleanText(discarded.module?.catalogueId);
+  if (!programmeId && !cohortId && !groupId && !moduleId) return entities;
+
+  const underProgramme = (value: unknown) => Boolean(programmeId) && sameIdentifier(value, programmeId);
+  const underCohort = (value: unknown) => Boolean(cohortId) && sameIdentifier(value, cohortId);
+  const underGroup = (value: unknown) => Boolean(groupId) && sameIdentifier(value, groupId);
+
   return {
-    id,
-    name: module.name || '',
-    programmeId: module.programmeId,
-    programme: module.programme,
-    cohortId: module.cohortId,
-    groupId: module.groupId,
-    sessionsNumber: module.sessionsNumber,
-    weeks: module.weeks,
-    startDate: module.startDate,
-    endDate: module.endDate,
-    tutor: module.tutor,
-    status: module.status,
-    notes: module.notes,
-    color: module.color,
+    ...entities,
+    programmes: entities.programmes.filter(programme => !underProgramme(programmeIdentity(programme))),
+    cohorts: entities.cohorts.filter(cohort => !underProgramme(cohort.programmeId) && !underCohort(cohort.id)),
+    groups: entities.groups.filter(group => (
+      !underProgramme(group.programmeId) && !underCohort(group.cohortId) && !underGroup(group.id)
+    )),
+    modules: entities.modules.filter(module => (
+      !underProgramme(module.programmeId)
+      && !underCohort(module.cohortId)
+      && !underGroup(module.groupId)
+      && !(Boolean(moduleId) && moduleIdentifiers(module).some(value => sameIdentifier(value, moduleId)))
+    )),
   };
 }
 
@@ -312,50 +351,24 @@ function WizardStepBrief({
   );
 }
 
-/**
- * Read once, before the run writes anything: what the chain is going to do, and
- * the one thing about it that surprises people -- it creates a single record at
- * each level. Someone who needs three groups under a cohort should know that
- * before they fill the first form in, not after they have finished the run and
- * gone looking for the button that adds the second one.
- *
- * Shown only on the run's opening step and only while nothing has been created,
- * so it is a briefing rather than a banner that follows the reader down the
- * chain. The per-record pages it names are the same ones the sidebar offers.
- */
-function WizardIntroNote({ steps }: { steps: StructureWizardStep[] }) {
-  const records = steps.filter((candidate): candidate is StructureWizardRecordStep => (
-    RECORD_STEPS.includes(candidate as StructureWizardRecordStep)
-  ));
-  const chain = records.map(candidate => STEP_META[candidate].label.toLowerCase()).join(' → ');
-
+function WizardBeforeYouStart() {
   return (
-    <div className="mt-2.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2">
-      <p className="flex items-center gap-1.5 text-[11px] font-bold leading-4 text-amber-900">
-        <AppIcon className="ri-information-line text-[12px]"></AppIcon>
+    <div className="mt-2.5 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-[11px] leading-4 text-amber-800">
+      <p className="font-bold text-amber-900">
+        <AppIcon className="ri-file-info-line mr-1.5 text-xs" />
         Before you start — this run creates one of each
       </p>
-      <p className="mt-1 text-[11px] leading-4 text-amber-800">
-        The guided setup walks {chain} and links each record to the one above it. It writes
-        <span className="font-bold"> exactly one record per step</span> and then moves on — there is no
-        “add another” inside the run. Plan the run around the first of each, and add the rest afterwards.
+      <p className="mt-1">
+        The guided setup walks programme → cohort → group → module and links each record to the one above it. It writes exactly one record per step and then moves on — there is no “add another” inside the run. Plan the run around the first of each, and add the rest afterwards.
       </p>
-      <ul className="mt-1.5 space-y-0.5">
-        {records.map(candidate => (
-          <li key={candidate} className="flex items-start gap-1.5 text-[11px] leading-4 text-amber-800">
-            <AppIcon className="ri-arrow-right-s-line mt-px shrink-0 text-[11px] text-amber-600"></AppIcon>
-            <span>
-              More than one {STEP_META[candidate].label.toLowerCase()}? Create the first here, then add the others on the{' '}
-              <span className="font-bold">{STEP_META[candidate].moreAt}</span> page.
-            </span>
-          </li>
-        ))}
+      <ul className="mt-1 space-y-0.5 pl-3.5">
+        <li className="before:mr-2 before:content-['›']">More than one programme? Create the first here, then add the others on the <strong>Programmes</strong> page.</li>
+        <li className="before:mr-2 before:content-['›']">More than one cohort? Create the first here, then add the others on the <strong>Cohorts</strong> page.</li>
+        <li className="before:mr-2 before:content-['›']">More than one group? Create the first here, then add the others on the <strong>Groups</strong> page.</li>
+        <li className="before:mr-2 before:content-['›']">More than one module? Create the first here, then add the others on the <strong>Modules</strong> page.</li>
       </ul>
-      <p className="mt-1.5 text-[11px] leading-4 text-amber-800">
-        Any step can be passed over with <span className="font-bold">Use an existing…</span>, which attaches the next
-        record to something already stored instead of creating a new one. Each step saves as it is submitted, so stopping
-        part way keeps whatever has been created. The run ends at the module — the components inside its weeks are
-        authored in the Module Builder.
+      <p className="mt-1">
+        Any step can be passed over with <strong>Use an existing...</strong>, which attaches the next record to something already stored instead of creating a new one. Each step saves as it is submitted, so stopping part way keeps whatever has been created. The run ends at the module — the components inside its weeks are authored in the Module Builder.
       </p>
     </div>
   );
@@ -372,6 +385,7 @@ export function CurriculumStructureWizard({
   defaults,
   onClose,
   onStepSaved,
+  onRunDiscarded,
   onFinished,
 }: {
   open: boolean;
@@ -382,6 +396,21 @@ export function CurriculumStructureWizard({
   onClose: () => void;
   /** Called with each record as it is saved, so the host list can paint it. */
   onStepSaved?: (created: StructureWizardCreated) => unknown | Promise<unknown>;
+  /**
+   * Called with everything the discard took back out, so the host list can
+   * un-paint it — the mirror of `onStepSaved`, and for the same reason: the
+   * refresh that would notice rebuilds several tables and lands seconds later,
+   * which is long enough for rows still on screen to read as a discard that did
+   * nothing. `deletedForGood` separates records that are gone from records that
+   * were only archived — a dropped row from a row that moved to the archive.
+   *
+   * `withoutDiscardedRecords` does the filtering for a page that holds the four
+   * collections. The refresh still follows, through `onStepSaved({})`.
+   */
+  onRunDiscarded?: (
+    discarded: StructureWizardCreated,
+    outcome: { deletedForGood: boolean },
+  ) => unknown | Promise<unknown>;
   /** Called once, with everything the run wrote, as the wizard closes. */
   onFinished?: (created: StructureWizardCreated) => void;
 }) {
@@ -399,12 +428,23 @@ export function CurriculumStructureWizard({
   // the open transition is tracked by hand: the body below is a no-op unless the
   // wizard has just been opened, however often the effect itself re-runs.
   const openedRef = useRef(false);
+  /**
+   * Set by `discardRun` on its way out. The drawer closes through `exit` after
+   * the discard has finished, and without this the host would be handed the
+   * records the discard has just removed — painting a row, and on the Programmes
+   * page opening a KSB picker, for a programme that is no longer there.
+   */
+  const discardedRef = useRef(false);
+  /** What the discard took out, held for the message that follows its dialog. */
+  const discardOutcomeRef = useRef<{ names: string[]; deletedForGood: boolean } | null>(null);
   useEffect(() => {
     if (!open) { openedRef.current = false; return; }
     if (openedRef.current) return;
     openedRef.current = true;
     setStep(from);
     setCreated({});
+    discardedRef.current = false;
+    discardOutcomeRef.current = null;
     void reload({ silent: true });
     reloadStaff({ silent: true });
   }, [from, open, reload, reloadStaff]);
@@ -556,7 +596,122 @@ export function CurriculumStructureWizard({
   };
 
   /** Cancel, Escape, the backdrop or the cross — the run stops where it is. */
-  const exit = () => finish(created, false);
+  const exit = () => {
+    const result = discardedRef.current ? {} : created;
+    discardedRef.current = false;
+    finish(result, false);
+  };
+
+  /**
+   * The third answer on the way out: take back out what the run wrote, rather
+   * than leaving it behind or staying in the form.
+   *
+   * It works from the top down and lets the parents cascade. Archiving a
+   * programme soft-deletes every curriculum row beneath it and the permanent
+   * delete then clears them from the database, so a run that created the
+   * programme is undone in two calls instead of five — and a programme is deleted
+   * for good rather than merely archived, because a programme still sitting in
+   * the Programmes archive is not what "discard" said would happen.
+   *
+   * Records under a programme this run did not create have no permanent delete of
+   * their own, so those are archived, deepest first — a cohort archive takes its
+   * groups with it. Which of the two happened is left in `discardOutcomeRef` for
+   * `discardMessage` to report, rather than claiming more than the API did.
+   *
+   * Throws when a delete fails, which leaves the confirm dialog and the form open
+   * with the reason on it: a half-undone run nobody has been told about is worse
+   * than one still on screen.
+   */
+  const discardRun = async () => {
+    // Read before the deletes run: `created` is cleared on the way out, and the
+    // host still has to be told which rows to take off its list.
+    const discarded: StructureWizardCreated = { ...created };
+    const programmeId = created.programme ? cleanText(programmeIdentity(created.programme)) : '';
+    const names = [
+      cleanText(created.programme?.name),
+      cleanText(created.cohort?.name),
+      cleanText(created.group?.name),
+      cleanText(created.module?.name),
+    ].filter(Boolean);
+    let deletedForGood = false;
+
+    // The run's own records, deepest first, by the ids it is holding.
+    // `tolerate` is set when the programme delete below will run anyway: that
+    // cascade is the authority on what goes, so a child that refuses to archive
+    // must not stop the programme from being deleted.
+    const archiveRunChildren = async ({ tolerate }: { tolerate: boolean }) => {
+      const moduleId = cleanText(created.module?.catalogueId);
+      const groupId = cleanText(created.group?.id);
+      const cohortId = cleanText(created.cohort?.id);
+      const steps: Array<() => Promise<unknown>> = [];
+      if (moduleId) steps.push(() => archiveCurriculumModule(moduleId));
+      if (groupId) steps.push(() => archiveCurriculumGroup(groupId));
+      if (cohortId) steps.push(() => archiveCurriculumCohort(cohortId));
+      for (const step of steps) {
+        if (!tolerate) { await step(); continue; }
+        try {
+          await step();
+        } catch (err) {
+          console.warn('A discarded record could not be archived on its own; the programme delete takes it.', err);
+        }
+      }
+    };
+
+    if (programmeId) {
+      // Each record is taken out by its own id before the cascade runs. The
+      // cascade finds children by matching ids on their rows, so one whose
+      // parent id never landed on it is invisible to it — and a cohort left
+      // behind is enough for the programmes list to rebuild the card for a run
+      // this dialog has just said left nothing behind.
+      await archiveRunChildren({ tolerate: true });
+      await archiveCurriculumProgramme(programmeId);
+      try {
+        await permanentlyDeleteCurriculumProgramme(programmeId);
+        deletedForGood = true;
+      } catch (err) {
+        // A refusal is not a failure to report as one: the archive above has
+        // already taken the run's records out of every active list, so the run
+        // still ends discarded — the message below just stops short of saying
+        // they are gone from the database.
+        if (!isPermanentDeleteRefusal(err)) throw err;
+      }
+    } else {
+      // Nothing else will take these out, so a failure here is reported rather
+      // than swallowed: the dialog stays open with the reason on it.
+      await archiveRunChildren({ tolerate: false });
+    }
+
+    discardedRef.current = true;
+    discardOutcomeRef.current = { names, deletedForGood };
+    setCreated({});
+    // The host painted a row for each step as it saved, and those rows are now
+    // for records that are gone. It is handed them back so it can take them off
+    // the list at once, then told to re-read: `onStepSaved` with nothing in it is
+    // how every host is already asked to go and refresh rather than paint.
+    void Promise.resolve(onRunDiscarded?.(discarded, { deletedForGood })).catch(() => undefined);
+    void Promise.resolve(onStepSaved?.({})).catch(() => undefined);
+    void reload({ silent: true });
+  };
+
+  /**
+   * What the discard managed, said after its dialog has closed — the dialog is
+   * still up while `discardRun` works, so this cannot be said from in there.
+   */
+  const discardMessage = () => {
+    const outcome = discardOutcomeRef.current;
+    discardOutcomeRef.current = null;
+    if (!outcome?.names.length) return null;
+    const trail = outcome.names.join(' → ');
+    const were = outcome.names.length > 1 ? 'were' : 'was';
+    return {
+      title: 'Guided setup discarded',
+      text: outcome.deletedForGood
+        ? `${trail} ${were} deleted. The run left nothing behind.`
+        : `${trail} ${were} archived and ${outcome.names.length > 1 ? 'are' : 'is'} out of the active lists. Nothing was deleted from the database — that is done from the archive on each record's own page.`,
+      icon: outcome.deletedForGood ? ('success' as const) : ('info' as const),
+      timer: outcome.deletedForGood ? 3200 : undefined,
+    };
+  };
 
   // Nothing this run wrote is undone by leaving, so once a step has saved the
   // way out stops calling itself Cancel.
@@ -572,10 +727,27 @@ export function CurriculumStructureWizard({
   };
 
   /**
+   * Whether the way out offers to take the run's records back out again.
+   *
+   * Off for now: the promise the button makes is one the API cannot yet keep. A
+   * permanent delete answers 200 even when its wipe matched no rows, so a run
+   * whose cohort was left behind was told it had left nothing behind — and the
+   * programme was back on the list a moment later. The run stops and keeps what
+   * it wrote instead, which is the outcome that is always true. Turn this back on
+   * once a discard can be shown to leave nothing behind.
+   */
+  const DISCARD_OFFERED = false;
+
+  /**
    * The cross, Escape and the backdrop end the whole run, not just this form, so
    * a step asks before it goes — even with nothing typed, which a form on its own
-   * page would close silently. What the run already wrote is named, so "discard"
-   * is never read as undoing it.
+   * page would close silently.
+   *
+   * Once the run has written something there are three answers, not two: stay,
+   * stop and keep what it wrote, or discard it. Each is named for what it does to
+   * the records, which are listed either way — "stop" used to be the only way out
+   * and had to make clear it was not undoing anything, and now that a button
+   * beside it does undo them the two cannot be told apart by wording alone.
    */
   const closeConfirmFor = (target: StructureWizardStep): FormChainStep['closeConfirm'] => {
     if (target === 'outline') return undefined;
@@ -586,12 +758,32 @@ export function CurriculumStructureWizard({
       cleanText(created.module?.name),
     ].filter(Boolean);
     const step = STEP_META[target].label.toLowerCase();
+    const trail = saved.join(' → ');
+    const them = saved.length > 1 ? 'them' : 'it';
+    // What discarding actually does to these records, which is not the same in
+    // both cases: only a programme has a permanent delete, and the promise made
+    // here has to be the one the API can keep.
+    const undoing = created.programme
+      ? `deleting ${them} for good, which cannot be undone`
+      : `archiving ${them}, out of the active lists but not out of the database`;
+    // The offer to undo is only ever made for records this run created: `created`
+    // holds nothing a step merely pointed itself at, so a discard can never reach
+    // a programme, cohort or group that was already there.
+    const offerDiscard = DISCARD_OFFERED && saved.length > 0;
+    const savedText = `${trail} ${saved.length > 1 ? 'stay' : 'stays'} saved. This ${step} has not been created yet, and closing now ends the run without it.`;
     return {
       title: saved.length ? 'Stop the guided setup here?' : 'Leave the guided setup?',
+      // The sentence about discarding goes with the button: naming an answer the
+      // dialog is not offering is worse than not offering it. What is left says
+      // where the records stand, and each has its own page to be removed from.
       text: saved.length
-        ? `${saved.join(' → ')} ${saved.length > 1 ? 'stay' : 'stays'} saved. This ${step} has not been created yet, and closing now ends the run without it.`
+        ? (offerDiscard ? `${savedText} Discard changes instead to take ${them} back out — ${undoing}.` : savedText)
         : `Nothing has been created yet. Closing now ends the run and this ${step} is not saved.`,
       confirmLabel: saved.length ? 'Stop here' : 'Discard',
+      denyLabel: offerDiscard ? 'Discard changes' : undefined,
+      onDeny: offerDiscard ? discardRun : undefined,
+      denyTone: 'danger',
+      denySuccess: discardMessage,
     };
   };
 
@@ -607,10 +799,7 @@ export function CurriculumStructureWizard({
       <>
         <WizardRail steps={steps} step={step} created={created} resolved={chainNames} />
         <WizardStepBrief steps={steps} step={target} inherited={inheritedFor(target)} siblingCount={siblingCountFor(target)} />
-        {/* The briefing, on the opening step only and only while the run has
-            written nothing: once a record exists the reader has started, and a
-            note about what the run is going to do has become noise. */}
-        {target === steps[0] && !written && <WizardIntroNote steps={steps} />}
+        {target === 'programme' && <WizardBeforeYouStart />}
       </>
     ),
     // A record step with nothing after it keeps its form's own label ("Create

@@ -912,12 +912,12 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
   };
 
   if (loading) {
-    return <div className="p-6 text-sm text-foreground-500">Loading quiz editor...</div>;
+    return <div className="p-4 sm:p-5 text-sm text-foreground-500">Loading quiz editor...</div>;
   }
 
   if (pageError || !data || !settings) {
     return (
-      <div className="p-6">
+      <div className="p-4 sm:p-5">
         <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{pageError || 'Quiz not found'}</div>
       </div>
     );
@@ -926,7 +926,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
   const activeAnswerCopy = activeQuestion ? answerEditorCopy(activeQuestion.questionType) : answerEditorCopy('single_choice');
 
   return (
-    <div className="p-6 space-y-6 bg-[#f7f6f4] min-h-screen">
+    <div className="p-4 sm:p-5 lg:p-6 space-y-4 bg-[#f7f6f4] min-h-full">
         <div className="rounded-2xl border border-[#e3dee9] bg-white/90 p-5 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div>
             {onClose ? (
@@ -980,7 +980,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
           </div>
 
           {activeTab === 'questions' && (
-            <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-5">
+            <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-4">
               <aside className="border border-[#dfe4ec] rounded-2xl bg-[#f8fafc] p-3 max-h-[680px] overflow-y-auto quiz-preview-scroll">
                 <button
                   type="button"

@@ -179,7 +179,7 @@ function StatStripCard({ label, value, icon, color }: { label: string; value: nu
   };
   const c = colorMap[color] || colorMap.primary;
   return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-foreground-300 hover:shadow-[0_12px_24px_rgba(75,75,75,0.28)]">
+    <div className="coach-metric-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
       <div className="flex items-center gap-2.5 mb-2">
         <span className={`w-10 h-10 rounded-xl flex items-center justify-center ring-1 ring-black/5 ${c.iconBg} ${c.iconText}`}>
           <AppIcon className={`${icon} text-base`}></AppIcon>

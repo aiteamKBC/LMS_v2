@@ -1,3 +1,4 @@
+import type { LearnerAccessGate } from '@/utils/learnerAccessGate';
 // ============================================================================
 // Learner-detail API client.
 // Talks to the Django backend at /learner_api (proxied to :8000 by Vite in dev).
@@ -38,6 +39,8 @@ export interface LearnerComponentEntry {
   componentId?: string | null;
   type?: string | null;                 // master component type, e.g. 'video', 'live_session'
   description?: string | null;
+  assignmentBrief?: string | null;      // assignment brief authored as plain text (Module Builder)
+  assignmentBriefHtml?: string | null;  // assignment brief authored as rich text (Week Builder)
   videoUrl?: string | null;             // present on video components authored with a URL
   audioUrl?: string | null;             // podcast / reading voice-over
   contentHtml?: string | null;          // reading rich-text content
@@ -76,6 +79,11 @@ export interface LearnerQuizQuestionResult {
 }
 
 export interface LearnerQuizAttempt {
+  /**
+   * The quiz component's off-the-job hours, when it is component-linked — what
+   * this attempt put towards the learner's total.
+   */
+  expectedOtjh?: number | null;
   kind?: 'quiz';
   moduleId?: string | null;
   moduleTitle?: string | null;
@@ -97,6 +105,7 @@ export interface LearnerQuizAttempt {
   startedAt: string;
   submittedAt: string;
   timeTaken?: string;         // "MM:SS", e.g. "00:26" (auto-tracked)
+  verifiedSeconds?: number | null;  // server-checked seconds actually spent; the OTJ total
 }
 
 export interface LearnerDetail {
@@ -136,10 +145,25 @@ export interface LearnerDetail {
   progressHours?: string;     // completed - target (Progress_Hours)
   progressVariance?: string;  // (completed - target) / target, decimal (Progress_variance); '' if target=0
   otjhStatus?: string;        // "On track" | "Need attention" | "At risk" (OTJHoursStatus)
+  currentModule?: string | null;  // module targetHours' cumulative-target week currently falls in
+  currentWeek?: string | null;    // that week's own label, e.g. "Week 4"
+  componentsTargetToDate?: number | null;  // components expected by now, same pacing as targetHours
+  /**
+   * Why this learner cannot start yet, from the same conditions that would
+   * activate them (learner_progression.access_gate). Absent on older responses;
+   * `blocked: false` when nothing is holding them back.
+   */
+  accessGate?: LearnerAccessGate;
 }
 
 /** A completed non-quiz, non-video component (podcast/reading/slides/reflection/…). */
 export interface LearnerComponentProgress {
+  /**
+   * The component's off-the-job hours — what this completion put towards the
+   * learner's total (see active_users.completed_hours_from_progress). Absent on
+   * records written before components carried hours.
+   */
+  expectedOtjh?: number | null;
   kind: 'component';
   componentType: string;      // 'podcast' | 'reading' | 'powerpoint' | 'reflection' | …
   componentId: string;
@@ -150,6 +174,7 @@ export interface LearnerComponentProgress {
   startedAt: string | null;
   submittedAt: string;
   timeTaken: string | null;
+  verifiedSeconds?: number | null;  // server-checked seconds actually spent; the OTJ total
   // Ungraded completions leave this absent — the row itself is the completion.
   // An explicit false is a recorded failure and never counts as achievement.
   passed?: boolean | null;
@@ -170,6 +195,12 @@ export interface LearnerActivityEntry {
 }
 
 export interface LearnerVideoProgress {
+  /**
+   * The component's off-the-job hours — what this completion put towards the
+   * learner's total (see active_users.completed_hours_from_progress). Absent on
+   * records written before components carried hours.
+   */
+  expectedOtjh?: number | null;
   kind: 'video';
   componentId: string;
   attempt?: number;
@@ -179,6 +210,7 @@ export interface LearnerVideoProgress {
   startedAt: string | null;
   submittedAt: string;
   timeTaken: string | null;
+  verifiedSeconds?: number | null;  // server-checked seconds actually spent; the OTJ total
   // See LearnerComponentProgress.passed.
   passed?: boolean | null;
 }
