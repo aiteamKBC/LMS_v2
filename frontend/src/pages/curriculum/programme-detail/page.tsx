@@ -1840,7 +1840,7 @@ type Tab = 'overview' | 'cohorts' | 'groups' | 'modules' | 'sessions' | 'coverag
 // Actions now carries the "Groups" jump plus Edit and Archive, so the fixed
 // 120px column that fit "Groups" alone is widened to a minmax that keeps room
 // for all three without squeezing them onto a second line.
-const COHORT_GRID = 'grid grid-cols-[minmax(170px,1.4fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_80px_80px_minmax(100px,.8fr)_minmax(200px,auto)]';
+const COHORT_GRID = 'grid grid-cols-[minmax(170px,1.4fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_80px_80px_minmax(200px,auto)]';
 /**
  * The date window shown on a module row.
  *
@@ -3425,7 +3425,6 @@ export default function ProgrammeDetailPage() {
                 { label: 'Apprenticeship end' },
                 { label: 'Learners', align: 'center' },
                 { label: 'Groups', align: 'center' },
-                { label: 'Coached', align: 'center' },
                 { label: 'Actions', align: 'right' },
               ]}
               gridClass={COHORT_GRID}
@@ -3445,7 +3444,6 @@ export default function ProgrammeDetailPage() {
                 />
               )}
               renderRow={cohortItem => {
-                const coached = cohortItem.groups.filter(group => isStaffAssigned(group.coach)).length;
                 const selected = cohortItem.id === selectedCohort;
                 return (
                   <>
@@ -3457,7 +3455,6 @@ export default function ProgrammeDetailPage() {
                           {cohortItem.name}
                         </span>
                       )}
-                      secondary={cohortItem.status}
                     />
                     <PlainCell>{[cohortItem.startDate, cohortItem.endDate].filter(Boolean).join(' – ') || '—'}</PlainCell>
                     <PlainCell>
@@ -3470,11 +3467,6 @@ export default function ProgrammeDetailPage() {
                     </PlainCell>
                     <PlainCell align="center">{cohortItem.learners}</PlainCell>
                     <PlainCell align="center">{cohortItem.groups.length}</PlainCell>
-                    <PlainCell align="center">
-                      <span className={coached === cohortItem.groups.length ? 'font-bold text-emerald-700' : 'font-bold text-amber-700'}>
-                        {coached}/{cohortItem.groups.length}
-                      </span>
-                    </PlainCell>
                     <span className="flex items-center justify-end gap-1.5">
                       <NamedActions
                         actions={[{

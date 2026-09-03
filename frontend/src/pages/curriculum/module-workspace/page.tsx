@@ -215,6 +215,24 @@ export default function ModuleWorkspacePage() {
   );
   const cohort = context?.cohort;
 
+  // The compact overview `groups` comes from is cached, and a create can land on
+  // a different backend worker than the one that serves this page's very next
+  // load — that worker's cache still predates the write, so the group the module
+  // was just attached to fails to resolve here. Before believing the module is
+  // really unattached, force one uncached reload — the module's own groupId
+  // (read straight off the record, not the cache) says whether that is worth doing.
+  const [retriedUnlinkedModule, setRetriedUnlinkedModule] = useState(false);
+  useEffect(() => {
+    setRetriedUnlinkedModule(false);
+  }, [id]);
+  useEffect(() => {
+    if (loading || !loaded || retriedUnlinkedModule) return;
+    if (context && !context.linked && cleanText(module?.groupId)) {
+      setRetriedUnlinkedModule(true);
+      void reload({ skipCache: true });
+    }
+  }, [context, loaded, loading, module, reload, retriedUnlinkedModule]);
+
   // The three values the session dates are generated from. They are read from
   // the saved module (and its group's timetable) rather than typed here: the
   // module form is the one place they are edited.
@@ -528,7 +546,28 @@ export default function ModuleWorkspacePage() {
           ]}
           eyebrow="Module"
           title={moduleDisplayName}
-          subtitle={context ? `${context.programmeName} / ${context.cohortName} / ${context.groupName}` : ''}
+          subtitle={context ? (
+            <span className="flex flex-wrap items-center gap-1">
+              <span>in Group</span>
+              {context.groupId ? (
+                <Link to={namedCurriculumWorkspacePath('groups', context.groupId, context.groupName)} className="font-semibold text-primary-700 hover:underline">
+                  {context.groupName}
+                </Link>
+              ) : <span className="font-semibold text-primary-700">{context.groupName}</span>}
+              <span>in Cohort</span>
+              {context.cohortId ? (
+                <Link to={`/curriculum/cohorts/${encodeURIComponent(context.cohortId)}`} className="font-semibold text-primary-700 hover:underline">
+                  {context.cohortName}
+                </Link>
+              ) : <span className="font-semibold text-primary-700">{context.cohortName}</span>}
+              <span>in programme</span>
+              {context.programme ? (
+                <Link to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(context.programme))}?tab=modules`} className="font-semibold text-primary-700 hover:underline">
+                  {context.programmeName}
+                </Link>
+              ) : <span className="font-semibold text-primary-700">{context.programmeName}</span>}
+            </span>
+          ) : ''}
           accentColor={module?.color}
           dense
           stats={[
@@ -551,7 +590,7 @@ export default function ModuleWorkspacePage() {
           )}
         />
 
-        {context && !context.linked && (
+        {context && !context.linked && (!cleanText(module?.groupId) || retriedUnlinkedModule) && (
           <InlineError message="This module is not attached to a group, so it will not appear under a programme or cohort. Attach it from the Modules page." />
         )}
 
