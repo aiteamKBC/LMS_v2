@@ -2125,15 +2125,6 @@ function ApplyProgrammeKsbSourceModal({
   const appliedSelection = useMemo(() => (
     currentSource.value && options.some(option => option.value === currentSource.value) ? currentSource.value : ''
   ), [currentSource.value, options]);
-  const suggestedSource = useMemo(() => {
-    if (appliedSelection) return '';
-    const programmeKey = normalise(programme.name);
-    const standardKey = normalise(programme.standard);
-    return options.find(option => (
-      (standardKey && normalise(option.title) === standardKey)
-      || (programmeKey && (normalise(option.title) === programmeKey || normalise(option.subtitle).includes(programmeKey)))
-    ))?.value || '';
-  }, [appliedSelection, options, programme.name, programme.standard]);
   const [selectedSource, setSelectedSource] = useState(appliedSelection);
   useEffect(() => {
     setSelectedSource(appliedSelection);
@@ -2178,7 +2169,6 @@ function ApplyProgrammeKsbSourceModal({
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
                         <p className="text-sm font-heading font-black text-foreground-950">{option.title}</p>
                         {current && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-emerald-700">Currently applied</span>}
-                        {!currentSource.value && option.value === suggestedSource && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-700">Suggested</span>}
                       </div>
                       <p className="mt-1 text-[12px] font-semibold text-foreground-500">{option.subtitle}</p>
                     </div>

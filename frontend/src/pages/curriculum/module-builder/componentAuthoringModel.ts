@@ -443,9 +443,20 @@ export function normaliseComponentSettings(type: ModuleComponentType, settings: 
   // Module Builder key. For the two keys that clash on VALUE (readingSource,
   // podcastSource) the Week Builder value is canonical, since it's the only
   // editor rendering these now — we translate the old Module values forward.
+  // Each pair below is a one-time migration for a record saved under the old
+  // key before the Week Builder key existed — never a live sync. It has to
+  // run on *undefined* (the key was never written), not on falsy: this
+  // function re-runs on every keystroke via `recalculateModule`, and a falsy
+  // check cannot tell "never authored" from "the person just deleted it back
+  // to empty" — so it was copying the stale old value straight back over an
+  // intentional clear, on the very same update, before the empty field ever
+  // painted. That is what made a field read as impossible to clear.
+  const migrateKey = (fromKey: string, toKey: string) => {
+    if (source[toKey] === undefined && source[fromKey] !== undefined) source[toKey] = source[fromKey];
+  };
   if (type === 'podcast') {
-    if (!source.embedCode && source.podcastEmbedCode) source.embedCode = source.podcastEmbedCode;
-    if (!source.podcastEmbedCode && source.embedCode) source.podcastEmbedCode = source.embedCode;
+    migrateKey('podcastEmbedCode', 'embedCode');
+    migrateKey('embedCode', 'podcastEmbedCode');
     if (!source.shortcode && source.podcastShortcode) source.shortcode = source.podcastShortcode;
     if (source.podcastSource === 'Device upload') source.podcastSource = 'Audio File';
     if (source.podcastSource === 'External URL') source.podcastSource = 'External Link';
@@ -454,8 +465,8 @@ export function normaliseComponentSettings(type: ModuleComponentType, settings: 
   if (type === 'reading') {
     if (source.readingSource === 'Written in LMS') source.readingSource = 'Text';
     if (source.readingSource === 'LMS resource') source.readingSource = 'File';
-    if (!source.resourceUrl && source.uploadedFileUrl) source.resourceUrl = source.uploadedFileUrl;
-    if (!source.uploadedFileUrl && source.resourceUrl) source.uploadedFileUrl = source.resourceUrl;
+    migrateKey('uploadedFileUrl', 'resourceUrl');
+    migrateKey('resourceUrl', 'uploadedFileUrl');
   }
   if (type === 'assignment') {
     // Recover assignments saved before `assignmentSource` was persisted: an
@@ -464,12 +475,12 @@ export function normaliseComponentSettings(type: ModuleComponentType, settings: 
     if (!source.assignmentSource && (source.uploadedFileUrl || source.assignmentFileUrl) && !source.assignmentContent && !source.assignmentBrief) {
       source.assignmentSource = 'File';
     }
-    if (!source.assignmentBrief && source.assignmentContent) source.assignmentBrief = source.assignmentContent;
-    if (!source.assignmentContent && source.assignmentBrief) source.assignmentContent = source.assignmentBrief;
-    if (!source.assignmentFileName && source.uploadedFileName) source.assignmentFileName = source.uploadedFileName;
-    if (!source.uploadedFileName && source.assignmentFileName) source.uploadedFileName = source.assignmentFileName;
-    if (!source.assignmentFileUrl && source.uploadedFileUrl) source.assignmentFileUrl = source.uploadedFileUrl;
-    if (!source.uploadedFileUrl && source.assignmentFileUrl) source.uploadedFileUrl = source.assignmentFileUrl;
+    migrateKey('assignmentContent', 'assignmentBrief');
+    migrateKey('assignmentBrief', 'assignmentContent');
+    migrateKey('uploadedFileName', 'assignmentFileName');
+    migrateKey('assignmentFileName', 'uploadedFileName');
+    migrateKey('uploadedFileUrl', 'assignmentFileUrl');
+    migrateKey('assignmentFileUrl', 'uploadedFileUrl');
   }
   const defaults = getDefaultComponentSettings(type);
   const allowed = allowedSettingKeysForType(type);
