@@ -397,7 +397,7 @@ const WEEK_BUILDER_SHARED_KEYS = [
   'placedCopyWeekIds',
   'placedCopyComponentIds',
   'podcastEmbedCode',         // podcast "Embed" source snippet
-  'powerpointSource',         // PowerPoint source toggle (External Link vs Uploaded file)
+  'powerpointSource',         // legacy PowerPoint source toggle; the editor no longer writes it
   'quizAssessmentType',       // quiz/checkpoint flag stored on the component
   'quizProgramme',
   'quizModule',
