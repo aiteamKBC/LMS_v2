@@ -183,6 +183,7 @@ export function BookMockSessionModal({ isOpen, onClose, coachName, coachEmail }:
                   <button
                     key={slot}
                     onClick={() => setPreferredTime(slot)}
+                    aria-pressed={preferredTime === slot}
                     className={`py-2 rounded-lg text-xs font-semibold transition-smooth cursor-pointer whitespace-nowrap ${
                       preferredTime === slot
                         ? 'bg-primary-500 text-white'

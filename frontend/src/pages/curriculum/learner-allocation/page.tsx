@@ -168,7 +168,7 @@ export default function LearnerAllocationPage() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Learner Allocation" pageSubtitle={`${data.name} · ${data.programme} · ${unassigned.length} unassigned learners`} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="p-6 space-y-6">
+      <div className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
         {/* Breadcrumb */}
         <div className="flex items-center gap-2 text-[12px] text-foreground-400">
           <Link to="/curriculum/programmes" className="hover:text-foreground-700 transition-smooth">Programmes</Link>

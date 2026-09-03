@@ -440,17 +440,17 @@ export default function EngagementClubsPage() {
                   <AppIcon className="ri-map-pin-2-line text-sm"></AppIcon>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h4 className="text-[13px] font-semibold text-foreground-900">{club.name}</h4>
-                  <span className="inline-flex items-center gap-1 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-primary-100 text-primary-700">
+                  <h4 className="text-sm font-semibold text-foreground-900">{club.name}</h4>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-primary-100 text-primary-700">
                     <AppIcon className="ri-map-pin-line"></AppIcon> {club.location}
                   </span>
                 </div>
-                {!club.active && <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-background-200 text-foreground-500">Inactive</span>}
+                {!club.active && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-background-200 text-foreground-500">Inactive</span>}
               </div>
 
-              <p className="text-[11px] text-foreground-500 mb-3">{club.description}</p>
+              <p className="text-xs text-foreground-500 mb-3">{club.description}</p>
 
-              <div className="text-[10px] text-foreground-400 mb-3">
+              <div className="text-[11px] text-foreground-400 mb-3">
                 <p><AppIcon className="ri-shield-star-line mr-1 text-secondary-500"></AppIcon>Ambassador: {club.ambassador} ({club.ambassadorRole})</p>
               </div>
 
@@ -459,12 +459,12 @@ export default function EngagementClubsPage() {
                 <div className="flex items-center">
                   <div className="flex -space-x-2">
                     {club.sampleMembers.slice(0, 4).map((initials, i) => (
-                      <span key={i} className="w-6 h-6 rounded-full bg-secondary-100 text-secondary-700 border-2 border-background-50 flex items-center justify-center text-[8px] font-bold">{initials}</span>
+                      <span key={i} className="w-6 h-6 rounded-full bg-secondary-100 text-secondary-700 border-2 border-background-50 flex items-center justify-center text-[9px] font-bold">{initials}</span>
                     ))}
                   </div>
-                  {club.members > 4 && <span className="ml-1 text-[10px] font-semibold text-foreground-500">+{club.members - 4}</span>}
+                  {club.members > 4 && <span className="ml-1 text-[11px] font-semibold text-foreground-500">+{club.members - 4}</span>}
                 </div>
-                <span className="flex items-center gap-1 text-[11px] font-semibold text-primary-600">
+                <span className="flex items-center gap-1 text-xs font-semibold text-primary-600">
                   <AppIcon className="ri-group-line"></AppIcon> {club.members} joined
                 </span>
               </div>
@@ -472,8 +472,8 @@ export default function EngagementClubsPage() {
               {/* Meetings — scheduled or awaiting a date */}
               <div className="space-y-2 mb-1">
                 <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-semibold text-foreground-500 uppercase tracking-wide">Meetings</p>
-                  <button onClick={() => { setAddingClubId(addingClubId === club.id ? null : club.id); setDraftTitle(''); }} className="flex items-center gap-1 px-2 py-1 rounded-md text-[9px] font-semibold text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer whitespace-nowrap">
+                  <p className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wide">Meetings</p>
+                  <button onClick={() => { setAddingClubId(addingClubId === club.id ? null : club.id); setDraftTitle(''); }} className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer whitespace-nowrap">
                     <AppIcon className="ri-add-line"></AppIcon> Add meeting
                   </button>
                 </div>
@@ -488,37 +488,37 @@ export default function EngagementClubsPage() {
                       placeholder="Meeting name (e.g. Coffee & connect)"
                       maxLength={80}
                       onKeyDown={e => { if (e.key === 'Enter') addMeeting(club.id); }}
-                      className="flex-1 min-w-[140px] px-2 py-1 rounded-md border border-foreground-200/60 bg-background-50 text-[10px] text-foreground-700 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40"
+                      className="flex-1 min-w-[140px] px-2 py-1 rounded-md border border-foreground-200/60 bg-background-50 text-[11px] text-foreground-700 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40"
                     />
-                    <button onClick={() => addMeeting(club.id)} disabled={!draftTitle.trim()} className="px-2.5 py-1 bg-primary-500 text-white rounded-md text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">Add</button>
-                    <button onClick={() => { setAddingClubId(null); setDraftTitle(''); }} className="px-2 py-1 text-[10px] font-semibold text-foreground-500 hover:text-foreground-700 cursor-pointer">Cancel</button>
+                    <button onClick={() => addMeeting(club.id)} disabled={!draftTitle.trim()} className="px-2.5 py-1 bg-primary-500 text-white rounded-md text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">Add</button>
+                    <button onClick={() => { setAddingClubId(null); setDraftTitle(''); }} className="px-2 py-1 text-[11px] font-semibold text-foreground-500 hover:text-foreground-700 cursor-pointer">Cancel</button>
                   </div>
                 )}
 
                 {club.meetings.length === 0 && (
-                  <p className="text-[10px] text-foreground-400 italic">No meetings yet — add one to get started.</p>
+                  <p className="text-[11px] text-foreground-400 italic">No meetings yet — add one to get started.</p>
                 )}
                 {club.meetings.map(m => (
                   <div key={m.id} className="rounded-lg border border-foreground-200/50 p-2.5">
                     <div className="flex items-start gap-2">
                       <AppIcon className={`${m.scheduled ? 'ri-calendar-check-line text-primary-500' : 'ri-calendar-todo-line text-foreground-400'} text-sm mt-0.5`}></AppIcon>
                       <div className="flex-1 min-w-0">
-                        <p className="text-[11px] font-semibold text-foreground-800">{m.title}</p>
+                        <p className="text-xs font-semibold text-foreground-800">{m.title}</p>
                         {m.scheduled ? (
-                          <p className="text-[10px] text-foreground-500">
+                          <p className="text-[11px] text-foreground-500">
                             {formatMeetingDate(m.date)}{m.time ? ` · ${m.time}` : ''}{m.venue ? ` · ${m.venue}` : ''}
                           </p>
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 mt-0.5">
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 mt-0.5">
                             <AppIcon className="ri-time-line"></AppIcon> Not scheduled
                           </span>
                         )}
                       </div>
                       <div className="shrink-0 flex items-center gap-1">
-                        <button onClick={() => openAttendance(club, m)} className="flex items-center gap-1 px-2 py-1 rounded-md text-[9px] font-semibold text-secondary-600 hover:bg-secondary-50 transition-smooth cursor-pointer whitespace-nowrap">
+                        <button onClick={() => openAttendance(club, m)} className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-secondary-600 hover:bg-secondary-50 transition-smooth cursor-pointer whitespace-nowrap">
                           <AppIcon className="ri-checkbox-circle-line"></AppIcon> Attendance
                         </button>
-                        <button onClick={() => openMeeting(club, m)} className="flex items-center gap-1 px-2 py-1 rounded-md text-[9px] font-semibold text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer whitespace-nowrap">
+                        <button onClick={() => openMeeting(club, m)} className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-semibold text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer whitespace-nowrap">
                           <AppIcon className="ri-edit-line"></AppIcon> Manage
                         </button>
                       </div>
@@ -527,12 +527,12 @@ export default function EngagementClubsPage() {
                 ))}
               </div>
 
-              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-foreground-200/40">
-                <button onClick={() => setMembersClubId(club.id)} className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary-50 border border-secondary-200/50 text-secondary-700 rounded-lg text-[10px] font-medium hover:bg-secondary-100 transition-smooth cursor-pointer whitespace-nowrap">
+              <div className="mt-auto flex items-center gap-2 pt-3 border-t border-foreground-200/40">
+                <button onClick={() => setMembersClubId(club.id)} className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary-50 border border-secondary-200/50 text-secondary-700 rounded-lg text-[11px] font-medium hover:bg-secondary-100 transition-smooth cursor-pointer whitespace-nowrap">
                   <AppIcon className="ri-group-line"></AppIcon> Members
                 </button>
                 <div className="flex-1"></div>
-                <button onClick={() => openManage(club)} className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                <button onClick={() => openManage(club)} className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
                   <AppIcon className="ri-edit-line"></AppIcon> Manage
                 </button>
               </div>

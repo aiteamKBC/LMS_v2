@@ -592,7 +592,7 @@ export default function CoachAttendance() {
           <p className="inline-flex items-center gap-1.5 rounded-md bg-background-100 px-2.5 py-1.5 text-[12px] font-semibold text-foreground-700">
             <AppIcon className="ri-calendar-check-line text-primary-500"></AppIcon>{displayText(row.lastSession)}
           </p>
-          <button type="button" onClick={() => navigate(`/coach/attendance/${row.id}`)} className="mt-2 inline-flex items-center gap-1 text-[12px] font-bold text-primary-600 transition hover:gap-1.5 hover:text-primary-800">
+          <button type="button" onClick={() => navigate(`/coach/attendance/${row.id}`)} className="compact-action mt-2 text-[12px] font-bold text-primary-600 transition hover:text-primary-800">
             View profile <AppIcon className="ri-arrow-right-line"></AppIcon>
           </button>
         </div>

@@ -407,32 +407,32 @@ export default function EventsPage() {
                     <AppIcon className={`${cfg.icon} text-sm`}></AppIcon>
                   </span>
                   <div className="flex-1 min-w-0">
-                    <h4 className="text-[13px] font-semibold text-foreground-900">{event.title}</h4>
-                    <span className={`text-[8px] font-semibold px-1.5 py-0.5 rounded-full ${cfg.bg} ${cfg.text}`}>{event.type}</span>
+                    <h4 className="text-sm font-semibold text-foreground-900">{event.title}</h4>
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${cfg.bg} ${cfg.text}`}>{event.type}</span>
                   </div>
                 </div>
-                <p className="text-[11px] text-foreground-500 mb-3">{event.description}</p>
-                <div className="space-y-1 text-[10px] text-foreground-400">
+                <p className="text-xs text-foreground-500 mb-3">{event.description}</p>
+                <div className="space-y-1 text-[11px] text-foreground-400">
                   <p><AppIcon className="ri-calendar-line mr-1 text-primary-500"></AppIcon>{event.date}</p>
                   <p><AppIcon className="ri-time-line mr-1 text-primary-500"></AppIcon>{event.time}</p>
                   <p><AppIcon className="ri-map-pin-line mr-1 text-primary-500"></AppIcon>{event.location}</p>
                   <p><AppIcon className="ri-user-line mr-1 text-primary-500"></AppIcon>{event.organizer}</p>
                 </div>
-                <div className="mt-3 flex items-center gap-1.5 text-[11px] text-foreground-600">
+                <div className="mt-3 flex items-center gap-1.5 text-xs text-foreground-600">
                   <AppIcon className="ri-group-line text-primary-500"></AppIcon>
                   <span className="font-semibold text-foreground-900">{event.attendees}</span>
                   <span className="text-foreground-400">student{event.attendees === 1 ? '' : 's'} intending to attend</span>
                 </div>
                 <div className="mt-3 flex items-center gap-2 flex-wrap">
-                  <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${event.status === 'upcoming' ? 'bg-primary-100 text-primary-700' : event.status === 'ongoing' ? 'bg-emerald-100 text-emerald-700' : 'bg-foreground-100 text-foreground-500'}`}>{event.status}</span>
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${event.status === 'upcoming' ? 'bg-primary-100 text-primary-700' : event.status === 'ongoing' ? 'bg-emerald-100 text-emerald-700' : 'bg-foreground-100 text-foreground-500'}`}>{event.status}</span>
                   <div className="flex-1"></div>
-                  <button onClick={() => openAttendance(event)} className="flex items-center gap-1 px-2 py-1.5 bg-secondary-50 text-secondary-700 rounded-lg text-[10px] font-medium hover:bg-secondary-100 transition-smooth cursor-pointer whitespace-nowrap">
+                  <button onClick={() => openAttendance(event)} className="flex items-center gap-1 px-2 py-1.5 bg-secondary-50 text-secondary-700 rounded-lg text-[11px] font-medium hover:bg-secondary-100 transition-smooth cursor-pointer whitespace-nowrap">
                     <AppIcon className="ri-checkbox-circle-line"></AppIcon> Attendance
                   </button>
-                  <button onClick={() => openEditModal(event)} className="flex items-center gap-1 px-2 py-1.5 bg-background-100 text-foreground-600 rounded-lg text-[10px] font-medium hover:bg-background-200/50 transition-smooth cursor-pointer whitespace-nowrap">
+                  <button onClick={() => openEditModal(event)} className="flex items-center gap-1 px-2 py-1.5 bg-background-100 text-foreground-600 rounded-lg text-[11px] font-medium hover:bg-background-200/50 transition-smooth cursor-pointer whitespace-nowrap">
                     <AppIcon className="ri-edit-line"></AppIcon> Edit
                   </button>
-                  <button onClick={() => setDeleteEventId(event.id)} className="flex items-center gap-1 px-2 py-1.5 bg-red-50 text-red-600 rounded-lg text-[10px] font-medium hover:bg-red-100 transition-smooth cursor-pointer whitespace-nowrap">
+                  <button onClick={() => setDeleteEventId(event.id)} className="flex items-center gap-1 px-2 py-1.5 bg-red-50 text-red-600 rounded-lg text-[11px] font-medium hover:bg-red-100 transition-smooth cursor-pointer whitespace-nowrap">
                     <AppIcon className="ri-delete-bin-line"></AppIcon> Delete
                   </button>
                 </div>

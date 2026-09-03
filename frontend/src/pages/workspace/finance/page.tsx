@@ -72,7 +72,7 @@ export default function FinanceWorkspace() {
         {/* Stats Banner */}
         <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
           {STATS.map((stat) => (
-            <div key={stat.label} className="bg-background-50 border border-foreground-200 rounded-xl p-4">
+            <div key={stat.label} className="coach-metric-card">
               <div className="flex items-center gap-2 mb-2">
                 <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${
                   stat.colour === 'emerald' ? 'bg-emerald-50 text-emerald-600' :

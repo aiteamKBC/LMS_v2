@@ -154,7 +154,7 @@ export default function CohortWorkspacePage() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <div className="min-h-full space-y-5 bg-background-50 p-4 sm:p-6">
+      <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
         {error && <InlineError message={error} onRetry={() => void reload()} />}
 
         <WorkspaceHeader
@@ -213,7 +213,7 @@ export default function CohortWorkspacePage() {
         <WorkspaceTabs tabs={tabs} active={tab} onChange={key => setTab(key as Tab)} />
 
         {tab === 'overview' && (
-          <div className="grid gap-5 xl:grid-cols-2">
+          <div className="grid gap-4 xl:grid-cols-2">
             <WorkspacePanel title="Dates" description="Contract dates stay fixed; selected holidays only affect clashing module sessions.">
               <DetailRow label="Start" value={formatDateLabel(cohort?.startDate)} />
               <DetailRow label="Duration" value={cohort?.durationMonths ? `${cohort.durationMonths} months` : '-'} />

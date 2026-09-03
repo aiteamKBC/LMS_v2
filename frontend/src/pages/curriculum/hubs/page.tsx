@@ -60,10 +60,10 @@ export function CurriculumQualityHub() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <main className="min-h-full bg-background-100 p-4 sm:p-6">
-        <div className="mx-auto max-w-[1480px] space-y-5">
+      <main className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6">
+        <div className="mx-auto max-w-[1560px] space-y-4">
           <section className="overflow-hidden rounded-2xl border border-primary-100 bg-background-50 shadow-sm">
-            <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:p-7">
+            <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:p-6">
               <div className="min-w-0">
                 <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-primary-600">{copy.eyebrow}</p>
                 <h1 className="mt-2 font-heading text-3xl font-bold tracking-tight text-foreground-950">{copy.title}</h1>
@@ -165,10 +165,10 @@ function CurriculumHub({ kind }: { kind: HubKind }) {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <main className="min-h-full bg-background-100 p-4 sm:p-6">
-        <div className="mx-auto max-w-[1480px] space-y-5">
+      <main className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6">
+        <div className="mx-auto max-w-[1560px] space-y-4">
           <section className="overflow-hidden rounded-2xl border border-primary-100 bg-background-50 shadow-sm">
-            <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:p-7">
+            <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:p-6">
               <div className="min-w-0">
                 <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-primary-600">{copy.eyebrow}</p>
                 <h1 className="mt-2 font-heading text-3xl font-bold tracking-tight text-foreground-950">{copy.title}</h1>
@@ -176,7 +176,11 @@ function CurriculumHub({ kind }: { kind: HubKind }) {
               </div>
               <Link
                 to={primary.href}
-                className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-primary-600 px-5 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2"
+                className={`inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-5 text-[12px] font-bold text-white ${
+                  kind === 'delivery'
+                    ? 'bg-[linear-gradient(135deg,#8f5f0e_0%,#b27715_45%,#d39a2c_100%)] shadow-[0_6px_16px_rgba(178,119,21,0.28)] transition-all duration-200 hover:bg-[linear-gradient(135deg,#9f6d16_0%,#c08422_45%,#dfa645_100%)] hover:shadow-[0_9px_20px_rgba(178,119,21,0.38)] focus:outline-none focus:ring-2 focus:ring-[#b27715] focus:ring-offset-2 active:translate-y-px'
+                    : 'bg-primary-600 shadow-sm transition-smooth hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2'
+                }`}
               >
                 <AppIcon className={primary.icon} />
                 Open {primary.title}
@@ -301,7 +305,7 @@ function hubStats(kind: HubKind, counts: { programmes: number; modules: number; 
 
 function StatCard({ label, value, icon, tone, loading }: { label: string; value: number; icon: string; tone?: 'amber'; loading: boolean }) {
   return (
-    <div className="rounded-xl border border-foreground-200 bg-background-50 p-4 shadow-sm">
+    <div className="coach-metric-card">
       <div className="flex items-center gap-3">
         <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${tone === 'amber' ? 'bg-amber-50 text-amber-700' : 'bg-primary-50 text-primary-700'}`}>
           <AppIcon className={`${icon} text-lg`} />

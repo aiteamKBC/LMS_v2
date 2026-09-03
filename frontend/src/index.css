@@ -55,6 +55,14 @@
   --accent-900: 0.26 0.08 80;
   --accent-950: 0.14 0.05 78;
 
+  /* Primary actions - semantic CTA colour, kept separate from the purple
+     brand scale used by navigation, headers, icons and decorative UI. */
+  --action-primary: #b27715;
+  --action-primary-hover: #986511;
+  --action-primary-active: #80540e;
+  --action-primary-foreground: #ffffff;
+  --action-primary-focus: rgb(178 119 21 / 0.28);
+
   /* Secondary — soft lavender/electric violet, supporting UI */
   --secondary-50: 0.97 0.01 290;
   --secondary-100: 0.93 0.03 290;
@@ -132,6 +140,14 @@ h4 { font-size: 1.1875rem; font-weight: 600; }
 *:focus-visible {
   outline: 2px solid oklch(var(--primary-400) / 0.5);
   outline-offset: 2px;
+}
+
+/* Shared icon treatment: slightly stronger strokes improve visibility without
+   changing icon dimensions, colours, or the surrounding layout. */
+:is(svg.app-icon, svg.lucide) {
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 /* Transition utilities */
@@ -1773,6 +1789,23 @@ table tbody td:last-child {
   line-height: 1;
 }
 
+/* Keep every icon-labelled action on one horizontal line. A number of older
+   buttons use an inline SVG without the `inline-flex` utility, which lets the
+   icon wrap or sit out of alignment with its label. */
+:is(button, a):has(> :is(svg.app-icon, svg.lucide)) {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+}
+
+:is(button, a):has(> :is(svg.app-icon, svg.lucide)) > :is(svg.app-icon, svg.lucide) {
+  flex: 0 0 auto;
+  margin-inline: 0 !important;
+  line-height: 1;
+}
+
 /* The admin dashboard's platform-issues control is the entry point to the
    attention state shown below it. Keep it visually prominent, using the amber
    brand colour by default and red on hover when a warning needs attention. */
@@ -1788,6 +1821,35 @@ table tbody td:last-child {
 
 .dashboard-theme .workspace-main .super-admin-filters-button > :is(svg, i, span:not(.super-admin-filters-count)) {
   color: #fff !important;
+}
+
+/* The platform report export is a primary action: use the shared gold brand
+   colour with a stronger gradient and depth so it remains easy to spot in the
+   hero actions area. */
+.dashboard-theme .workspace-main .platform-report-export-button {
+  border: 1px solid transparent !important;
+  background-image: linear-gradient(135deg, #8f5e0e 0%, #b27715 54%, #e1aa48 100%) !important;
+  color: #fff !important;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.28),
+    0 10px 24px -8px rgb(143 94 14 / 0.72);
+  letter-spacing: 0.01em;
+}
+
+.dashboard-theme .workspace-main .platform-report-export-button > :is(svg, i, span) {
+  color: #fff !important;
+}
+
+.dashboard-theme .workspace-main .platform-report-export-button:hover {
+  background-image: linear-gradient(135deg, #7f520b 0%, #9b650f 54%, #b27715 100%) !important;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.3),
+    0 14px 28px -9px rgb(127 82 11 / 0.8);
+}
+
+.dashboard-theme .workspace-main .platform-report-export-button:active {
+  background-image: linear-gradient(135deg, #704709 0%, #8f5e0e 54%, #9b650f 100%) !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.18), 0 6px 14px -8px rgb(112 71 9 / 0.78);
 }
 
 .super-admin-filters-icon {
@@ -1826,16 +1888,28 @@ table tbody td:last-child {
   color: #b91c1c !important;
 }
 
-/* Arrow glyphs are block-level SVGs by default. Keep them in the same inline
-   flex row as their labels and prevent them from wrapping to a second line. */
-.dashboard-theme .workspace-main .super-admin-arrow-link,
-.dashboard-theme .workspace-main .super-admin-arrow-icon {
-  flex: 0 0 auto;
+/* Compact text actions keep their label and trailing arrow as one unit. */
+.compact-action,
+.dashboard-theme .workspace-main .super-admin-arrow-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.25rem;
+  white-space: nowrap;
 }
 
-.dashboard-theme .workspace-main .super-admin-arrow-icon {
-  display: inline-block;
+.compact-action > :is(svg, i):last-child,
+.dashboard-theme .workspace-main .super-admin-arrow-link > :is(svg, i):last-child {
+  flex: 0 0 auto;
+  margin-inline: 0 !important;
+  line-height: 1;
   vertical-align: middle;
+  transition: transform 150ms ease;
+}
+
+.compact-action:hover > :is(svg, i):last-child,
+.dashboard-theme .workspace-main .super-admin-arrow-link:hover > :is(svg, i):last-child {
+  transform: translateX(1px);
 }
 
 .dashboard-theme .workspace-main .super-admin-filters-button:not(:disabled):hover,
@@ -2281,16 +2355,19 @@ table tbody td:last-child {
   overflow: hidden;
   border: 1px solid oklch(var(--foreground-200) / 0.52);
   border-radius: 1rem;
-  background: oklch(var(--background-50) / 0.82);
+  background: linear-gradient(180deg, #fff 0%, #f8fafc 100%);
+  box-shadow:
+    0 18px 34px -24px rgb(30 41 59 / 0.3),
+    0 3px 9px -7px rgb(15 23 42 / 0.2);
 }
 
 .dashboard-theme table thead th {
-  border-bottom: 1px solid oklch(var(--foreground-200) / 0.58);
-  background: oklch(var(--background-100) / 0.76);
-  color: oklch(var(--foreground-500));
+  border-bottom: 1px solid rgb(129 140 248 / 0.5);
+  background: linear-gradient(115deg, #111827 0%, #312e81 58%, #4338ca 100%);
+  color: rgb(238 242 255);
   font-size: 0.68rem;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.08em;
 }
 
 .dashboard-theme table tbody td,
@@ -2298,8 +2375,20 @@ table tbody td:last-child {
   border-bottom: 1px solid oklch(var(--foreground-200) / 0.4);
 }
 
+.dashboard-theme table tbody tr {
+  background: rgb(255 255 255 / 0.98);
+  transition: background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.dashboard-theme table tbody tr:nth-child(even) {
+  background: rgb(241 245 249 / 0.58);
+}
+
 .dashboard-theme table tbody tr:last-child td { border-bottom: 0; }
-.dashboard-theme table tbody tr:hover { background: oklch(var(--primary-50) / 0.34); }
+.dashboard-theme table tbody tr:hover {
+  background: linear-gradient(90deg, rgb(245 243 255 / 0.95), rgb(239 246 255 / 0.9)) !important;
+  box-shadow: inset 3px 0 0 rgb(99 102 241 / 0.72);
+}
 
 .dashboard-theme .workspace-drawer {
   top: 0.75rem;
@@ -2922,13 +3011,13 @@ table tbody td:last-child {
 }
 
 .dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-action-open {
-  background: oklch(var(--primary-600)) !important;
+  background: var(--action-primary) !important;
   color: white !important;
 }
 
 .dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-action-open:hover,
 .dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-action-open:focus-visible {
-  background: oklch(var(--primary-700)) !important;
+  background: var(--action-primary-hover) !important;
   color: white !important;
 }
 
@@ -3474,19 +3563,75 @@ table tbody td:last-child {
     0 5px 14px -7px oklch(var(--foreground-950) / 0.24);
 }
 
-/* One primary action treatment across pages that still use the older utility
-   names. Existing semantic danger/success styles are intentionally excluded. */
-.dashboard-theme .workspace-main :is(button, a)[class*="bg-primary-500"],
-.dashboard-theme .workspace-main :is(button, a)[class*="bg-primary-600"] {
-  background-image: linear-gradient(135deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 62%, oklch(var(--secondary-500)) 100%);
-  border-color: transparent;
-  box-shadow: 0 8px 18px -10px oklch(var(--primary-900) / 0.62);
+/* Give padded text actions a clear visual anchor without changing their role,
+   colour, size or placement. Compact navigation and state controls are kept
+   out of this treatment. */
+:is(button, a)[class*="px-"][class*="py-"]:not([class*="rounded-full"]):not([class*="w-8"]):not([class*="w-9"]):not([class*="w-10"]):not([role="tab"]):not([aria-current]):not([aria-selected]):not([aria-pressed]):not(:disabled):not([aria-disabled="true"]) {
+  box-shadow: 0 3px 10px -8px rgb(31 24 58 / 0.45);
+  transition: box-shadow 180ms ease, border-color 180ms ease, background-color 180ms ease, color 180ms ease;
 }
 
-.dashboard-theme .workspace-main :is(button, a)[class*="bg-primary-500"]:not(:disabled):hover,
-.dashboard-theme .workspace-main :is(button, a)[class*="bg-primary-600"]:not(:disabled):hover {
-  background-image: linear-gradient(135deg, oklch(var(--primary-800)) 0%, oklch(var(--primary-600)) 62%, oklch(var(--secondary-600)) 100%);
-  box-shadow: 0 12px 24px -10px oklch(var(--primary-900) / 0.7);
+:is(button, a)[class*="px-"][class*="py-"]:not([class*="rounded-full"]):not([class*="w-8"]):not([class*="w-9"]):not([class*="w-10"]):not([role="tab"]):not([aria-current]):not([aria-selected]):not([aria-pressed]):not(:disabled):not([aria-disabled="true"]):hover {
+  box-shadow: 0 8px 16px -10px rgb(31 24 58 / 0.58);
+}
+
+/* One primary action treatment across pages and portal-based modals that still
+   use the older utility names. Stateful controls are excluded so tabs,
+   pagination and date pickers retain their purple selected state. */
+:is(button, a)[class~="bg-primary-500"]:not(:disabled):not([class*="rounded-full"]):not([role="tab"]):not([aria-current]):not([aria-selected]):not([aria-pressed]):not([data-timetable-view-active="true"]),
+:is(button, a)[class~="bg-primary-600"]:not(:disabled):not([class*="rounded-full"]):not([role="tab"]):not([aria-current]):not([aria-selected]):not([aria-pressed]):not([data-timetable-view-active="true"]),
+.dashboard-theme .workspace-main :is(button, a).primary-action:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--action-primary);
+  background-image: none;
+  border-color: transparent;
+  color: var(--action-primary-foreground);
+  box-shadow: 0 6px 16px rgb(178 119 21 / 0.2);
+  transition: background-color 200ms ease, box-shadow 200ms ease, color 200ms ease, outline-color 200ms ease;
+}
+
+:is(button, a)[class~="bg-primary-500"]:not(:disabled):not([class*="rounded-full"]):not([role="tab"]):not([aria-current]):not([aria-selected]):not([aria-pressed]):not([data-timetable-view-active="true"]):hover,
+:is(button, a)[class~="bg-primary-600"]:not(:disabled):not([class*="rounded-full"]):not([role="tab"]):not([aria-current]):not([aria-selected]):not([aria-pressed]):not([data-timetable-view-active="true"]):hover,
+.dashboard-theme .workspace-main :is(button, a).primary-action:not(:disabled):not([aria-disabled="true"]):hover {
+  background: var(--action-primary-hover);
+  background-image: none;
+  box-shadow: 0 8px 18px rgb(152 101 17 / 0.28);
+}
+
+:is(button, a)[class~="bg-primary-500"]:not(:disabled):not([class*="rounded-full"]):not([role="tab"]):not([aria-current]):not([aria-selected]):not([aria-pressed]):not([data-timetable-view-active="true"]):active,
+:is(button, a)[class~="bg-primary-600"]:not(:disabled):not([class*="rounded-full"]):not([role="tab"]):not([aria-current]):not([aria-selected]):not([aria-pressed]):not([data-timetable-view-active="true"]):active,
+.dashboard-theme .workspace-main :is(button, a).primary-action:not(:disabled):not([aria-disabled="true"]):active {
+  background: var(--action-primary-active);
+  background-image: none;
+}
+
+:is(button, a)[class~="bg-primary-500"]:not([class*="rounded-full"]):not([role="tab"]):not([aria-current]):not([aria-selected]):not([aria-pressed]):not([data-timetable-view-active="true"]):focus-visible,
+:is(button, a)[class~="bg-primary-600"]:not([class*="rounded-full"]):not([role="tab"]):not([aria-current]):not([aria-selected]):not([aria-pressed]):not([data-timetable-view-active="true"]):focus-visible,
+.dashboard-theme .workspace-main :is(button, a).primary-action:focus-visible,
+.primary-action:focus-visible {
+  outline: 2px solid var(--action-primary-focus);
+  outline-offset: 2px;
+}
+
+/* The standalone audit workspaces use their own Button implementation but
+   share this semantic class for the same action treatment. */
+.primary-action:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--action-primary);
+  background-image: none;
+  border-color: transparent;
+  color: var(--action-primary-foreground);
+  box-shadow: 0 6px 16px rgb(178 119 21 / 0.2);
+  transition: background-color 200ms ease, box-shadow 200ms ease, color 200ms ease, outline-color 200ms ease;
+}
+
+.primary-action:not(:disabled):not([aria-disabled="true"]):hover {
+  background: var(--action-primary-hover);
+  background-image: none;
+  box-shadow: 0 8px 18px rgb(152 101 17 / 0.28);
+}
+
+.primary-action:not(:disabled):not([aria-disabled="true"]):active {
+  background: var(--action-primary-active);
+  background-image: none;
 }
 
 .dashboard-theme .workspace-main :is(input, textarea, select) {
@@ -3616,6 +3761,11 @@ table tbody td:last-child {
 .dashboard-theme[data-workspace-role="tutor"] .workspace-main :is(span, div):has(> svg)[class*="rounded"],
 .dashboard-theme[data-workspace-role="engagement"] .workspace-main :is(span, div):has(> svg)[class*="rounded"] {
   box-shadow: inset 0 0 0 1px oklch(var(--foreground-50) / 0.74), 0 5px 12px -9px oklch(var(--foreground-950) / 0.5);
+}
+
+/* Keep selected Engagement filter pills readable against their purple state. */
+.dashboard-theme[data-workspace-role="engagement"] .workspace-main button[class~="bg-[#541EA0]"] {
+  color: #fff !important;
 }
 
 @media (max-width: 767px) {
@@ -4028,6 +4178,46 @@ table tbody td:last-child {
 
 .super-admin-accounts-section > .grid a {
   box-shadow: 0 8px 18px -16px rgb(46 16 101 / 0.5);
+}
+
+.admin-cool-table {
+  background: linear-gradient(180deg, #fff 0%, #f8fafc 100%) !important;
+  border-color: rgb(203 213 225 / 0.92) !important;
+  box-shadow:
+    0 18px 34px -24px rgb(30 41 59 / 0.34),
+    0 3px 9px -7px rgb(15 23 42 / 0.2);
+}
+
+.admin-cool-table thead {
+  background: linear-gradient(115deg, #111827 0%, #312e81 58%, #4338ca 100%);
+}
+
+.admin-cool-table thead tr {
+  border-bottom-color: rgb(129 140 248 / 0.5) !important;
+}
+
+.admin-cool-table thead th {
+  color: rgb(238 242 255) !important;
+  letter-spacing: 0.08em;
+}
+
+.admin-cool-table tbody tr {
+  background: rgb(255 255 255 / 0.98);
+  border-bottom-color: rgb(226 232 240 / 0.95) !important;
+  transition: background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.admin-cool-table tbody tr:nth-child(even) {
+  background: rgb(241 245 249 / 0.58);
+}
+
+.admin-cool-table tbody tr:hover {
+  background: linear-gradient(90deg, rgb(245 243 255 / 0.95), rgb(239 246 255 / 0.9)) !important;
+  box-shadow: inset 3px 0 0 rgb(99 102 241 / 0.72);
+}
+
+.admin-cool-table tbody .text-foreground-300 {
+  color: oklch(var(--foreground-400)) !important;
 }
 
 .super-admin-figure {
@@ -4780,4 +4970,225 @@ table tbody td:last-child {
 
 .dashboard-theme[data-workspace-role="curriculum"] .kbc-workspace-switcher-button :is(.text-foreground-400, .text-foreground-700) {
   color: #fff !important;
+}
+
+/* Shared learner hero treatment: the same purple-to-lavender gradient used by
+   the Super Admin dashboard header. Individual learner pages keep their own
+   spacing, artwork and controls while sharing this visual anchor. */
+.learner-super-admin-hero {
+  background: linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 30%, oklch(var(--primary-100)) 66%, oklch(var(--background-50)) 100%) !important;
+}
+
+/* Coach KPI cards are the shared visual language for every workspace summary:
+   quiet white surface, compact hierarchy, and the accent reserved for the
+   icon/value rather than tinting the entire card. Older pages use different
+   utility combinations, so this class gives their metric tiles one stable
+   treatment without changing the underlying data or interactions. */
+.dashboard-theme .workspace-main .coach-metric-card {
+  min-width: 0;
+  min-height: 7.25rem;
+  border: 1px solid oklch(var(--foreground-100) / 0.7) !important;
+  border-radius: 0.75rem !important;
+  background: linear-gradient(145deg, #fff 0%, #f8fafc 68%, #eef2ff 100%) !important;
+  padding: 1.15rem !important;
+  text-align: left;
+  position: relative;
+  isolation: isolate;
+  box-shadow:
+    0 16px 30px -20px oklch(var(--foreground-950) / 0.48),
+    0 4px 10px -6px oklch(var(--foreground-950) / 0.24) !important;
+}
+
+.dashboard-theme .workspace-main .coach-metric-card::before {
+  position: absolute;
+  inset: 0.65rem auto 0.65rem 0;
+  z-index: -1;
+  width: 0.2rem;
+  border-radius: 999px;
+  background: linear-gradient(180deg, oklch(var(--primary-400)), oklch(var(--secondary-500)));
+  content: '';
+}
+
+.dashboard-theme .workspace-main .coach-metric-card:hover {
+  border-color: oklch(var(--primary-200) / 0.9) !important;
+  box-shadow:
+    0 22px 36px -20px oklch(var(--primary-800) / 0.38),
+    0 5px 12px -6px oklch(var(--foreground-950) / 0.26) !important;
+}
+
+.dashboard-theme .workspace-main .workspace-hero-metric,
+.dashboard-theme .workspace-main .admin-hero-metric {
+  min-width: 6.25rem;
+  min-height: 5.75rem;
+  background: rgb(255 255 255 / 0.82) !important;
+  backdrop-filter: blur(10px);
+}
+
+.dashboard-theme .workspace-main .workspace-hero-metric::before,
+.dashboard-theme .workspace-main .admin-hero-metric::before {
+  background: linear-gradient(180deg, oklch(var(--secondary-500)), oklch(var(--primary-500)));
+}
+
+.dashboard-theme .workspace-main .workspace-hero-metric p:last-child,
+.dashboard-theme .workspace-main .admin-hero-metric p:last-child {
+  color: oklch(var(--foreground-900)) !important;
+}
+
+/* Progress Reviews keeps the purple hero, but its learner summary uses the
+   same compact, readable KPI treatment as the Coach workspace. */
+.dashboard-theme .workspace-main .progress-review-hero-metric {
+  min-width: 6.25rem;
+  min-height: 4.5rem;
+  border-color: rgb(255 255 255 / 0.64) !important;
+  background: rgb(255 255 255 / 0.78) !important;
+  padding: 0.75rem !important;
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 10px 22px -14px rgb(19 5 45 / 0.42),
+    inset 0 1px 0 rgb(255 255 255 / 0.3) !important;
+}
+
+.dashboard-theme .workspace-main .progress-review-hero-metric::before {
+  display: none;
+}
+
+.dashboard-theme .workspace-main .progress-review-hero-metric > div {
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.dashboard-theme .workspace-main .progress-review-hero-metric > div > span {
+  height: 2.25rem !important;
+  width: 2.25rem !important;
+  border-radius: 0.75rem !important;
+}
+
+.dashboard-theme .workspace-main .progress-review-hero-metric > div > span > svg {
+  height: 1rem;
+  width: 1rem;
+}
+
+.dashboard-theme .workspace-main .progress-review-hero-metric > div > div > p:first-child {
+  color: oklch(var(--foreground-700)) !important;
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+
+.dashboard-theme .workspace-main .progress-review-hero-metric > div > div > p:nth-child(2) {
+  margin-top: 0.15rem !important;
+  color: oklch(var(--primary-900)) !important;
+  font-size: 1.375rem !important;
+  font-weight: 700 !important;
+}
+
+/* Reuse the same visible Coach KPI surface for the older learner hero metric
+   blocks that predate the shared MetricCard component. */
+.dashboard-theme .workspace-main .learner-hero-kpi {
+  min-width: 6.25rem !important;
+  min-height: 4.5rem;
+  border: 1px solid rgb(255 255 255 / 0.64) !important;
+  border-radius: 0.75rem !important;
+  background: rgb(255 255 255 / 0.78) !important;
+  padding: 0.75rem !important;
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 10px 22px -14px rgb(19 5 45 / 0.42),
+    inset 0 1px 0 rgb(255 255 255 / 0.3) !important;
+  color: oklch(var(--foreground-900));
+}
+
+.dashboard-theme .workspace-main .learner-hero-kpi::before {
+  display: none;
+}
+
+.dashboard-theme .workspace-main .learner-hero-kpi > svg.app-icon,
+.dashboard-theme .workspace-main .learner-hero-kpi > span:has(> svg.app-icon) {
+  display: inline-flex;
+  height: 2.25rem !important;
+  width: 2.25rem !important;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.75rem !important;
+  background: rgb(238 242 255 / 0.95) !important;
+  color: oklch(var(--primary-700)) !important;
+  flex: 0 0 auto;
+}
+
+.dashboard-theme .workspace-main .learner-hero-kpi > svg.app-icon {
+  padding: 0.5rem;
+}
+
+.dashboard-theme .workspace-main .learner-hero-kpi > span:has(> svg.app-icon) > svg.app-icon {
+  height: 1rem;
+  width: 1rem;
+}
+
+.dashboard-theme .workspace-main .learner-hero-kpi p:first-of-type {
+  color: oklch(var(--primary-900)) !important;
+  font-size: 1.375rem !important;
+  font-weight: 700 !important;
+  line-height: 1.1;
+}
+
+.dashboard-theme .workspace-main .learner-hero-kpi p:last-of-type {
+  color: oklch(var(--foreground-700)) !important;
+  font-size: 0.6875rem !important;
+  font-weight: 600 !important;
+}
+
+.dashboard-theme .workspace-main .learner-hero-kpi :is(.text-violet-200, .text-violet-300, .text-primary-200, .text-primary-300, .text-secondary-200, .text-secondary-300, .text-accent-300) {
+  color: oklch(var(--primary-700)) !important;
+}
+
+.dashboard-theme .workspace-main .learner-hero-kpi :is(.text-blue-300) {
+  color: #2563eb !important;
+}
+
+.dashboard-theme .workspace-main .learner-hero-kpi :is(.text-emerald-200, .text-emerald-300) {
+  color: #047857 !important;
+}
+
+.dashboard-theme .workspace-main .learner-hero-kpi :is(.text-amber-300) {
+  color: oklch(var(--accent-700)) !important;
+}
+
+.dashboard-theme .workspace-main .learner-hero-kpi :is(.text-rose-300, .text-pink-300) {
+  color: #be185d !important;
+}
+
+.dashboard-theme .workspace-main .learner-hero-balance {
+  border-color: rgb(255 255 255 / 0.64) !important;
+  background: rgb(255 255 255 / 0.78) !important;
+  box-shadow:
+    0 10px 22px -14px rgb(19 5 45 / 0.42),
+    inset 0 1px 0 rgb(255 255 255 / 0.3) !important;
+}
+
+.dashboard-theme .workspace-main .learner-hero-balance p:first-of-type {
+  color: oklch(var(--foreground-700)) !important;
+  font-size: 0.6875rem !important;
+  font-weight: 600 !important;
+}
+
+.dashboard-theme .workspace-main .learner-hero-balance p:last-of-type {
+  color: oklch(var(--primary-900)) !important;
+  font-size: 1.5rem !important;
+  font-weight: 700 !important;
+}
+
+.dashboard-theme .workspace-main .learner-hero-balance .text-amber-300 {
+  color: #b45309 !important;
+}
+
+/* Keep native dropdown controls aligned with the app's custom select fields.
+   This gives every dashboard filter the same inset chevron and reserves space
+   so the arrow never crowds or overlaps the selected label. */
+.dashboard-theme select:not([multiple]):not([size]) {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-inline-end: 2.5rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none'%3E%3Cpath d='m5 7.5 5 5 5-5' stroke='%2364748b' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: right 0.75rem center;
+  background-repeat: no-repeat;
+  background-size: 1rem 1rem;
 }

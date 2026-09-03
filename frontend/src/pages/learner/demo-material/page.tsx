@@ -74,7 +74,7 @@ export default function DemoMaterialPage() {
       breadcrumbCurrentLabel={material?.name || 'Material'}
     >
       <PageContainer>
-        <div className="mb-5 overflow-hidden rounded-3xl bg-gradient-to-br from-primary-800 via-primary-600 to-violet-400 px-6 py-7 text-white shadow-lg md:px-8">
+        <div className="learner-super-admin-hero mb-5 overflow-hidden rounded-3xl bg-gradient-to-br from-primary-800 via-primary-600 to-violet-400 px-6 py-7 text-white shadow-lg md:px-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <span className="grid h-14 w-14 place-items-center rounded-2xl bg-white/15 ring-1 ring-white/20">

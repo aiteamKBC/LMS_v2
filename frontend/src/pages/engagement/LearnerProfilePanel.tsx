@@ -43,7 +43,7 @@ const CLAIM_STATUS: Record<VoucherClaim['status'], string> = {
 
 function StatTile({ label, value, sub }: { label: string; value: string; sub?: React.ReactNode }) {
   return (
-    <div className="bg-background-100/50 rounded-lg p-3">
+    <div className="coach-metric-card">
       <p className="text-[10px] text-foreground-400 mb-1">{label}</p>
       <p className="font-semibold text-foreground-900 text-[13px]">{value}</p>
       {sub}

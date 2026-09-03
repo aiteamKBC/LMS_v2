@@ -234,7 +234,7 @@ function StatTile({ icon, label, value, percent, tone, progressToneClass }: {
   icon: string; label: string; value: string; percent?: number; tone: ReturnType<typeof toneStyle>; progressToneClass?: string;
 }) {
   return (
-    <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
+    <div className="coach-metric-card">
       <div className="flex items-center justify-between gap-2">
         <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-foreground-400">{label}</p>
         <AppIcon className={`${icon} shrink-0 text-[15px] ${tone.text}`} />

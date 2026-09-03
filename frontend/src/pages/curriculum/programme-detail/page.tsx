@@ -3049,7 +3049,7 @@ export default function ProgrammeDetailPage() {
   if (loading && !found) {
     return (
       <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Programme loading" pageSubtitle="Preparing live curriculum data from the database" userName="Rachel Myers" userRole="Curriculum Designer">
-        <div className="min-h-full space-y-5 bg-background-50 p-4 sm:p-6">
+        <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
           <div className="h-40 animate-pulse rounded-2xl border border-foreground-200/70 bg-background-100" />
           <div className="flex items-center gap-2 rounded-2xl border border-foreground-200/70 bg-background-50 p-1.5">
             {Object.values(TAB_LABELS).map(label => (
@@ -3108,7 +3108,7 @@ export default function ProgrammeDetailPage() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <div className="min-h-full space-y-5 bg-background-50 p-4 sm:p-6">
+      <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
         {error && <InlineError message={error} onRetry={() => void reload()} />}
 
         <WorkspaceHeader

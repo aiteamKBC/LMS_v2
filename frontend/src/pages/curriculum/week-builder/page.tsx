@@ -250,7 +250,7 @@ function TemplateListView({
   const totalOtjh = Math.round(templates.reduce((sum, t) => sum + t.totalOtjh, 0) * 10) / 10;
 
   return (
-    <div className="p-6 lg:p-8 max-w-[1200px] mx-auto space-y-8">
+    <div className="p-4 sm:p-5 lg:p-6 max-w-[1400px] mx-auto space-y-5">
       {/* Masthead */}
       <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
         <div>
@@ -258,7 +258,7 @@ function TemplateListView({
           <h1 className="mt-1 font-heading text-[28px] leading-none font-black text-foreground-950">Week templates</h1>
           <p className="mt-2 text-[13px] text-foreground-500 max-w-md">A week is a sequence of learning. Build the shape once, drop it into any module.</p>
         </div>
-        <button onClick={onNew} className="group inline-flex items-center gap-2 rounded-full bg-primary-600 pl-5 pr-2 py-2 text-[13px] font-bold text-background-50 hover:bg-primary-700 transition-smooth self-start sm:self-auto">
+        <button onClick={onNew} className="primary-action group inline-flex items-center gap-2 rounded-full bg-primary-600 pl-5 pr-2 py-2 text-[13px] font-bold text-background-50 hover:bg-primary-700 transition-smooth self-start sm:self-auto">
           New template
           <span className="grid place-items-center w-7 h-7 rounded-full bg-background-50 text-foreground-950 group-hover:rotate-90 transition-transform"><AppIcon className="ri-add-line"></AppIcon></span>
         </button>
@@ -367,7 +367,7 @@ function EmptyCatalogue({ onNew, hasAny }: { onNew: () => void; hasAny: boolean 
       <div className="mx-auto w-12 h-12 rounded-2xl bg-primary-50 grid place-items-center text-primary-500 text-2xl"><AppIcon className="ri-route-line"></AppIcon></div>
       <p className="mt-4 font-heading text-[15px] font-bold text-foreground-800">{hasAny ? 'Nothing matches those filters' : 'No week templates yet'}</p>
       <p className="mt-1 text-[12px] text-foreground-400">{hasAny ? 'Try clearing a filter or the search box.' : 'Build a week once and reuse it everywhere.'}</p>
-      {!hasAny && <button onClick={onNew} className="mt-5 inline-flex items-center gap-2 rounded-full bg-primary-600 px-5 py-2 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth"><AppIcon className="ri-add-line"></AppIcon> New template</button>}
+      {!hasAny && <button onClick={onNew} className="primary-action mt-5 inline-flex items-center gap-2 rounded-full bg-primary-600 px-5 py-2 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth"><AppIcon className="ri-add-line"></AppIcon> New template</button>}
     </div>
   );
 }
@@ -481,7 +481,7 @@ function CreateTemplateModal({ onClose, onCreated }: { onClose: () => void; onCr
 
         <div className="flex items-center justify-end gap-2 pt-1">
           <button onClick={onClose} className="px-4 py-2 rounded-full text-[12px] font-semibold text-foreground-500 hover:text-foreground-800 transition-smooth">Cancel</button>
-          <button onClick={handleCreate} disabled={!canCreate} className="inline-flex items-center gap-2 px-5 py-2 rounded-full bg-primary-600 text-background-50 text-[12px] font-bold hover:bg-primary-700 transition-smooth disabled:opacity-30">Start building <AppIcon className="ri-arrow-right-line"></AppIcon></button>
+          <button onClick={handleCreate} disabled={!canCreate} className="primary-action inline-flex items-center gap-2 px-5 py-2 rounded-full bg-primary-600 text-background-50 text-[12px] font-bold hover:bg-primary-700 transition-smooth disabled:opacity-30">Start building <AppIcon className="ri-arrow-right-line"></AppIcon></button>
         </div>
       </div>
     </ModalShell>
@@ -730,7 +730,7 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
                   if (file) void importKsbSheet(file);
                 }}
               />
-              <button onClick={save} disabled={saving || !dirty} className="inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-5 py-2 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth disabled:opacity-30">
+              <button onClick={save} disabled={saving || !dirty} className="primary-action inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-5 py-2 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth disabled:opacity-30">
                 {saving ? <><AppIcon className="ri-loader-4-line animate-spin"></AppIcon>Saving</> : <><AppIcon className="ri-save-3-line"></AppIcon>{persistedId ? 'Save' : 'Create'}</>}
               </button>
             </div>
@@ -794,7 +794,7 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
             {saving ? <><AppIcon className="ri-loader-4-line animate-spin text-primary-500"></AppIcon>Saving changes…</> : <><span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />Unsaved changes</>}
           </span>
           {!saving && <button onClick={discard} className="rounded-full px-3 py-1.5 text-[12px] font-semibold text-foreground-500 hover:text-foreground-900 hover:bg-background-100 transition-smooth">Discard</button>}
-          <button onClick={save} disabled={saving} className="inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-5 py-1.5 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth disabled:opacity-40">
+          <button onClick={save} disabled={saving} className="primary-action inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-5 py-1.5 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth disabled:opacity-40">
             <AppIcon className="ri-save-3-line"></AppIcon>{persistedId ? 'Save changes' : 'Create template'}
           </button>
         </div>
@@ -1386,7 +1386,7 @@ function ReadinessDial({ value }: { value: number }) {
 
 function BigStat({ value, label, icon, accent = 'text-foreground-900' }: { value: string; label: string; icon: string; accent?: string }) {
   return (
-    <div className="min-w-0 p-3 sm:p-4">
+    <div className="coach-metric-card min-w-0">
       <AppIcon className={`${icon} text-foreground-300`}></AppIcon>
       <p className={`mt-1 truncate font-heading text-[18px] sm:text-[22px] leading-none font-black tabular-nums ${accent}`}>{value}</p>
       <p className="mt-1 truncate text-[10px] font-bold uppercase tracking-[0.12em] text-foreground-400">{label}</p>
@@ -2185,7 +2185,7 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
               <span className="grid place-items-center w-10 h-10 shrink-0 rounded-xl bg-primary-500 text-white"><AppIcon className="ri-questionnaire-line text-lg"></AppIcon></span>
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <button type="button" onClick={() => setEditorOpen(true)} className="inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-4 py-1.5 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth">
+              <button type="button" onClick={() => setEditorOpen(true)} className="primary-action inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-4 py-1.5 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth">
                 <AppIcon className="ri-edit-2-line"></AppIcon>Edit questions
               </button>
               <button type="button" onClick={() => loadQuizzes()} className="inline-flex items-center gap-1.5 rounded-full border border-background-200 bg-background-50 px-3 py-1.5 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 transition-smooth"><AppIcon className={loading ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}></AppIcon>Refresh</button>
@@ -2390,7 +2390,7 @@ function WeekComponentFileUpload({ componentId, componentType, accept, uploadedN
               if (file) void handleFile(file);
             }}
           />
-          <label htmlFor={inputId} aria-disabled={uploading} className={`inline-flex h-9 w-full min-w-[124px] items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold !text-white shadow-sm transition-smooth sm:w-auto ${uploading ? 'cursor-wait bg-foreground-300' : 'cursor-pointer bg-primary-600 hover:bg-primary-700'}`}>
+          <label htmlFor={inputId} aria-disabled={uploading} className={`primary-action inline-flex h-9 w-full min-w-[124px] items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold !text-white shadow-sm transition-smooth sm:w-auto ${uploading ? 'cursor-wait bg-foreground-300' : 'cursor-pointer bg-primary-600 hover:bg-primary-700'}`}>
             <AppIcon className={`${uploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-cloud-2-line'} !text-white`}></AppIcon>
             {uploading ? 'Uploading…' : 'Upload file'}
           </label>

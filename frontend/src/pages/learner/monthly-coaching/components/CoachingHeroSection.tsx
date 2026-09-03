@@ -6,7 +6,7 @@ export default function CoachingHeroSection() {
   const m = NEXT_COACHING_MEETING;
 
   return (
-    <section className="relative rounded-2xl overflow-hidden h-36 md:h-40" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
+    <section className="learner-super-admin-hero relative rounded-2xl overflow-hidden h-36 md:h-40" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
       {/* Subtle top/bottom lines */}
       <div className="absolute top-0 left-0 right-0 h-px bg-white/10"></div>
       <div className="absolute bottom-0 left-0 right-0 h-px bg-black/10"></div>

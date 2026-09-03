@@ -53,9 +53,9 @@ export function WorkspaceHeroBanner({
         {stats && stats.length > 0 && (
           <div className="flex shrink-0 flex-wrap items-center gap-3">
             {stats.map((stat, i) => (
-              <div key={i} className="min-w-[80px] rounded-xl border border-white/60 bg-white/50 px-4 py-3 text-center backdrop-blur-sm">
-                <p className="text-2xl font-bold text-primary-900">{stat.value}</p>
-                <p className="whitespace-nowrap text-[10px] uppercase tracking-wide text-primary-800/75">{stat.label}</p>
+              <div key={i} className="coach-metric-card workspace-hero-metric min-w-[80px]">
+                <p className="whitespace-nowrap text-[10px] font-medium uppercase tracking-wide text-foreground-500">{stat.label}</p>
+                <p className="mt-1 text-[28px] font-semibold leading-none tabular-nums text-foreground-900">{stat.value}</p>
               </div>
             ))}
           </div>

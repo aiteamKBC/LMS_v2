@@ -534,7 +534,7 @@ export default function ModuleWorkspacePage() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <div className="min-h-full space-y-5 bg-background-50 p-4 sm:p-6">
+      <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
         {error && <InlineError message={error} onRetry={() => void reload()} />}
 
         <WorkspaceHeader
@@ -1031,109 +1031,9 @@ export default function ModuleWorkspacePage() {
 function ScheduleStat({ icon, tone, label, value }: { icon: string; tone: string; label: string; value: string | number }) {
   const t = COMPONENT_TONE[tone] || COMPONENT_TONE.slate;
   return (
-    <div className="rounded-xl border border-background-200 bg-background-50 p-3">
-      <div className="flex items-center gap-2">
-        <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${t.chip}`}>
-          <AppIcon className={`${icon} text-sm ${t.icon}`}></AppIcon>
-        </span>
-        <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">{label}</p>
-      </div>
-      <p className="mt-1.5 text-lg font-heading font-bold text-foreground-950">{value}</p>
-    </div>
-  );
-}
-
-// One fact about the Teams series, inline. A grid of six bordered tiles for
-// six short strings was most of the old card's height, and half of what it
-// held — the first meeting, the number of dates — is the schedule below.
-function TeamsFact({ label, value, tone }: { label: string; value: string; tone?: 'emerald' | 'rose' }) {
-  const toneClass = tone === 'emerald' ? 'text-emerald-700' : tone === 'rose' ? 'text-rose-700' : 'text-foreground-900';
-  return (
-    <span className="inline-flex items-baseline gap-1.5">
-      <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">{label}</span>
-      <span className={`text-[12px] font-semibold ${toneClass}`}>{value}</span>
-    </span>
-  );
-}
-
-// What the calendar has to say about one session, in one chip: its status, and
-// the turnout when there was any. A meeting nobody has attended yet says
-// nothing about attendance rather than "0 attended" on every future date.
-function MeetingChip({ status, attended }: { status: string; attended: number }) {
-  const key = normaliseKey(status);
-  const tone = key === 'completed'
-    ? 'bg-emerald-50 text-emerald-700'
-    : key === 'cancelled'
-      ? 'bg-rose-50 text-rose-700'
-      : 'bg-background-100 text-foreground-600';
-  return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${tone}`}>
-      {status}
-      {attended > 0 && (
-        <span className="inline-flex items-center gap-1">
-          <AppIcon className="ri-team-line text-[11px]"></AppIcon>
-          {attended}
-        </span>
-      )}
-    </span>
-  );
-}
-
-// Who turned up to one meeting and what Teams kept of it, opened from that
-// meeting's own row. Only ever rendered for a meeting that has one or the
-// other: a block per date saying "no attendance reported yet" and "no
-// transcript or recording yet" is the boilerplate this replaced.
-function MeetingRecord({
-  liveSessionId,
-  attendance,
-  artifacts,
-}: {
-  liveSessionId: string;
-  attendance: TeamsAttendanceRecord[];
-  artifacts: TeamsMeetingArtifact[];
-}) {
-  return (
-    <div className="grid gap-4 py-1 sm:grid-cols-2">
-      {attendance.length > 0 && (
-        <div>
-          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-foreground-400">
-            Attended ({attendance.length})
-          </p>
-          <ul className="space-y-1">
-            {attendance.slice(0, 8).map(record => (
-              <li key={record.id} className="flex items-center justify-between gap-2">
-                <span className="min-w-0 truncate text-foreground-800">{record.display_name || record.email}</span>
-                <span className="shrink-0 text-foreground-400">
-                  {Math.round((record.total_attendance_seconds || 0) / 60)} min
-                </span>
-              </li>
-            ))}
-          </ul>
-          {attendance.length > 8 && (
-            <p className="mt-1 text-foreground-400">and {attendance.length - 8} more</p>
-          )}
-        </div>
-      )}
-      {artifacts.length > 0 && (
-        <div>
-          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-foreground-400">Transcript &amp; recording</p>
-          <ul className="space-y-1">
-            {artifacts.map(artifact => (
-              <li key={artifact.id}>
-                <a
-                  href={teamsMeetingArtifactPreviewUrl(liveSessionId, artifact.id)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-primary-700 hover:underline"
-                >
-                  <AppIcon className="ri-film-line text-[12px]"></AppIcon>
-                  {teamsArtifactLabel(artifact.artifact_type)}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+    <div className="coach-metric-card">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">{label}</p>
+      <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{value}</p>
     </div>
   );
 }

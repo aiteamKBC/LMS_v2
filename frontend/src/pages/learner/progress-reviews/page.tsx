@@ -7,6 +7,7 @@ import { fetchLearnerCalendarEvents, type LearnerCalendarEvent } from '@/api/lea
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { responsesForSection, type ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { MetricCard } from '@/components/ui/MetricCard';
 
 const learnerNav = roleNavMap.learner;
 
@@ -208,6 +209,12 @@ export function ProgressReviewsListPage() {
   const scheduledCount = reviews.filter((review) => ['scheduled', 'in-progress'].includes(review.status)).length;
   const planningCount = reviews.filter((review) => review.status === 'not-scheduled').length;
   const reviewerName = reviews.find((review) => review.coachName)?.coachName || 'Your reviewer';
+  const summaryMetrics = [
+    { label: 'Total', value: reviews.length, icon: 'ri-stack-line', tone: 'brand' as const, iconClassName: 'bg-violet-100 text-violet-700' },
+    { label: 'Scheduled', value: scheduledCount, icon: 'ri-calendar-check-line', tone: 'info' as const, iconClassName: 'bg-blue-100 text-blue-700' },
+    { label: 'Completed', value: completedCount, icon: 'ri-checkbox-circle-line', tone: 'positive' as const, iconClassName: 'bg-emerald-100 text-emerald-700' },
+    { label: 'To plan', value: planningCount, icon: 'ri-time-line', tone: 'neutral' as const, iconClassName: 'bg-amber-100 text-amber-700' },
+  ];
 
   return (
     <WorkspaceShell
@@ -223,7 +230,7 @@ export function ProgressReviewsListPage() {
       <main className="w-full space-y-5 p-3 sm:p-4 md:p-6">
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}</div>}
 
-        <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-4 text-white shadow-xl shadow-primary-950/10 sm:rounded-3xl sm:p-6 md:p-7">
+        <section className="learner-super-admin-hero relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-4 text-white shadow-xl shadow-primary-950/10 sm:rounded-3xl sm:p-6 md:p-7">
           <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>
           <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
@@ -231,13 +238,8 @@ export function ProgressReviewsListPage() {
               <h1 className="mt-3 text-[22px] font-bold leading-tight text-white sm:text-2xl md:text-3xl">Progress reviews</h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">Review your learning, progress and next actions with {reviewerName} and your line manager.</p>
             </div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[520px]">
-              {[
-                ['Total', reviews.length, 'ri-stack-line', 'text-secondary-300'],
-                ['Scheduled', scheduledCount, 'ri-calendar-check-line', 'text-blue-300'],
-                ['Completed', completedCount, 'ri-checkbox-circle-line', 'text-emerald-300'],
-                ['To plan', planningCount, 'ri-time-line', 'text-amber-300'],
-              ].map(([label, value, icon, colour]) => <div key={String(label)} className="rounded-xl border border-white/[0.08] bg-white/[0.07] p-3 backdrop-blur sm:rounded-2xl"><AppIcon className={`${icon} ${colour} text-sm`} /><p className="mt-1 text-xl font-bold text-white">{value}</p><p className="text-[10px] text-white/55">{label}</p></div>)}
+            <div className="grid grid-cols-2 gap-2 lg:min-w-[520px] lg:grid-cols-4">
+              {summaryMetrics.map((metric) => <MetricCard key={metric.label} {...metric} className="progress-review-hero-metric" />)}
             </div>
           </div>
         </section>
@@ -314,7 +316,7 @@ export function ProgressReviewsListPage() {
                 <div className="flex items-center gap-1.5">
                   <button type="button" onClick={() => setPage(1)} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-left-line" /></button>
                   <button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-left-s-line" /></button>
-                  {Array.from({ length: totalPages }, (_, index) => index + 1).slice(0, 5).map((number) => <button key={number} type="button" onClick={() => setPage(number)} className={`h-8 min-w-8 rounded-lg border px-2 text-xs font-bold ${page === number ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300 bg-white text-foreground-600'}`}>{number}</button>)}
+                  {Array.from({ length: totalPages }, (_, index) => index + 1).slice(0, 5).map((number) => <button key={number} type="button" onClick={() => setPage(number)} aria-current={page === number ? 'page' : undefined} className={`h-8 min-w-8 rounded-lg border px-2 text-xs font-bold ${page === number ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300 bg-white text-foreground-600'}`}>{number}</button>)}
                   <button type="button" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-right-s-line" /></button>
                   <button type="button" onClick={() => setPage(totalPages)} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-right-line" /></button>
                   <span className="ml-2 hidden text-[10px] text-foreground-400 sm:inline">10 items per page</span>
@@ -466,7 +468,7 @@ export default function ProgressReviewsPage() {
           <AppIcon className="ri-arrow-left-line" /> Back to progress reviews
         </button>
 
-        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-5 text-white shadow-xl shadow-primary-950/10 sm:p-6">
+        <section className="learner-super-admin-hero relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-5 text-white shadow-xl shadow-primary-950/10 sm:p-6">
           <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>
           <div className="relative flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex items-start gap-4">
@@ -504,7 +506,7 @@ export default function ProgressReviewsPage() {
           <div>
             <main className="space-y-4">
               <section className="overflow-hidden rounded-3xl border border-background-200 bg-background-50 shadow-[0_10px_35px_rgba(25,12,50,0.07)]">
-                <div className="relative overflow-hidden border-b border-white/10 bg-gradient-to-r from-[#10021f] via-primary-950 to-[#35105e] p-5 text-white sm:p-6">
+                <div className="learner-super-admin-hero relative overflow-hidden border-b border-white/10 bg-gradient-to-r from-[#10021f] via-primary-950 to-[#35105e] p-5 text-white sm:p-6">
                   <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-secondary-400/10 blur-3xl"></div>
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                     <div className="relative">

@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 
 // ---- Button / input class strings (match app conventions) ----
 export const btnPrimary =
-  'px-4 py-2.5 bg-primary-500 text-white rounded-xl text-[13px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5';
+  'primary-action px-4 py-2.5 bg-primary-500 text-white rounded-xl text-[13px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5';
 export const btnGold =
   'px-4 py-2.5 bg-[#b27715] text-white rounded-xl text-[13px] font-semibold shadow-sm shadow-[#b27715]/25 hover:bg-[#965f0f] transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5';
 export const btnSecondary =
@@ -54,9 +54,9 @@ export function Hero({ icon, title, subtitle, right }: { icon: string; title: st
 // ---- Glass stat pill (inside hero) ----
 export function HeroStat({ value, label }: { value: ReactNode; label: string }) {
   return (
-    <div className="bg-primary-50 border border-primary-100/70 rounded-xl px-4 py-3 text-center">
-      <p className="text-2xl font-bold text-foreground-900 leading-none">{value}</p>
-      <p className="text-[10px] text-foreground-500 uppercase tracking-wide mt-1">{label}</p>
+    <div className="coach-metric-card">
+      <p className="truncate text-[11px] font-medium text-foreground-500">{label}</p>
+      <p className="mt-1 text-[25px] font-semibold leading-none tabular-nums text-foreground-900">{value}</p>
     </div>
   );
 }
@@ -72,12 +72,16 @@ const STAT_TINTS: Record<string, { bg: string; text: string }> = {
 export function StatCard({ icon, label, value, tint = 'primary' }: { icon: string; label: string; value: ReactNode; tint?: keyof typeof STAT_TINTS }) {
   const t = STAT_TINTS[tint] ?? STAT_TINTS.primary;
   return (
-    <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-4 card-premium">
-      <div className={`w-10 h-10 rounded-xl border flex items-center justify-center mb-3 ${t.bg}`}>
-        <AppIcon className={`${icon} text-[16px] ${t.text}`} />
+    <div className="coach-metric-card">
+      <div className="flex min-w-0 items-start gap-3">
+        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border ${t.bg}`}>
+          <AppIcon className={`${icon} text-[16px] ${t.text}`} />
+        </div>
+        <div className="min-w-0">
+          <p className="truncate text-[11px] font-medium text-foreground-500">{label}</p>
+          <p className="mt-1 text-[25px] font-semibold leading-none tabular-nums text-foreground-900">{value}</p>
+        </div>
       </div>
-      <p className="text-[22px] font-heading font-semibold text-foreground-900 leading-none">{value}</p>
-      <p className="text-[11px] text-foreground-400 mt-1">{label}</p>
     </div>
   );
 }

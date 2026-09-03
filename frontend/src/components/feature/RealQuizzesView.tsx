@@ -116,7 +116,7 @@ const STAT_COLORS: Record<string, { bg: string; icon: string }> = {
 function StatCard({ icon, label, value, detail, color }: { icon: string; label: string; value: string; detail: string; color: string }) {
   const c = STAT_COLORS[color] || STAT_COLORS.primary;
   return (
-    <div className="bg-background-50 rounded-2xl border border-foreground-200/50 p-4 md:p-5 card-premium">
+    <div className="coach-metric-card">
       <div className={`w-9 h-9 rounded-xl ${c.bg} flex items-center justify-center mb-3`}><AppIcon className={`${icon} ${c.icon} text-base`} /></div>
       <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-1">{label}</p>
       <p className="text-2xl font-heading font-bold text-foreground-900 leading-none">{value}</p>

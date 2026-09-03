@@ -105,7 +105,7 @@ export function EmptyStateAction({
       className={cn(
         'inline-flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-[12px] font-semibold transition',
         emphasis === 'primary'
-          ? 'bg-primary-600 text-white hover:bg-primary-700'
+          ? 'primary-action bg-primary-600 text-white hover:bg-primary-700'
           : 'border border-foreground-200 bg-background-50 text-foreground-700 hover:border-foreground-300',
       )}
     >

@@ -14,11 +14,18 @@ import { AdminPage, DataPanel, SourceNote } from '../_shared/AdminPage';
 import { useAdminData } from '../_shared/useAdminData';
 import { fetchRoles } from '@/api/platformAdmin';
 
-const ROLE_ICONS: Record<string, string> = {
-  admin: 'ri-shield-star-line',
-  staff: 'ri-team-line',
-  employer: 'ri-building-2-line',
-  learner: 'ri-graduation-cap-line',
+const ROLE_EMOJIS: Record<string, string> = {
+  admin: '🛡️',
+  staff: '👥',
+  employer: '🏢',
+  learner: '🎓',
+};
+
+const ROLE_ICON_STYLES: Record<string, string> = {
+  admin: 'bg-gradient-to-br from-violet-100 to-violet-200 text-violet-700',
+  staff: 'bg-gradient-to-br from-blue-100 to-blue-200 text-blue-700',
+  employer: 'bg-gradient-to-br from-amber-100 to-amber-200 text-amber-700',
+  learner: 'bg-gradient-to-br from-emerald-100 to-emerald-200 text-emerald-700',
 };
 
 export default function AdminRolesPage() {
@@ -46,8 +53,8 @@ export default function AdminRolesPage() {
           {roles.map(role => (
             <div key={role.id} className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
               <div className="flex items-start gap-3 mb-4">
-                <span className="w-11 h-11 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center shrink-0">
-                  <AppIcon className={`${ROLE_ICONS[role.id] || 'ri-shield-line'} text-lg`}></AppIcon>
+                <span className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${ROLE_ICON_STYLES[role.id] || 'bg-primary-100 text-primary-600'}`}>
+                  <span aria-hidden="true" className="text-xl leading-none">{ROLE_EMOJIS[role.id] || '👤'}</span>
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -84,7 +91,7 @@ export default function AdminRolesPage() {
                 <p className="text-[10px] text-foreground-400 truncate">
                   <AppIcon className="ri-database-2-line mr-1"></AppIcon>{role.source}
                 </p>
-                <Link to={`/admin/users?role=${role.id}`} className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer shrink-0">
+                <Link to={`/admin/users?role=${role.id}`} className="compact-action text-[11px] text-primary-600 hover:text-primary-700 font-medium cursor-pointer shrink-0">
                   View accounts <AppIcon className="ri-arrow-right-line text-[10px]"></AppIcon>
                 </Link>
               </div>

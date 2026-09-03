@@ -832,7 +832,7 @@ export default function LearnerOverview() {
         {!isDemoAccount && (
           <SectionReveal delay={0}>
             <header
-              className="relative overflow-hidden rounded-2xl px-5 py-5 shadow-sm md:px-7 md:py-6"
+              className="learner-super-admin-hero relative overflow-hidden rounded-2xl px-5 py-5 shadow-sm md:px-7 md:py-6"
               style={{ background: 'linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 30%, oklch(var(--primary-100)) 66%, oklch(var(--background-50)) 100%)' }}
             >
             <div
@@ -892,7 +892,7 @@ export default function LearnerOverview() {
             ================================================================ */}
         {isDemoAccount && (
           <SectionReveal delay={0} immediate>
-            <div className="overflow-hidden rounded-3xl bg-gradient-to-br from-primary-800 via-primary-600 to-violet-400 px-6 py-7 text-white shadow-lg shadow-primary-950/10 md:px-8">
+            <div className="learner-super-admin-hero overflow-hidden rounded-3xl bg-gradient-to-br from-primary-800 via-primary-600 to-violet-400 px-6 py-7 text-white shadow-lg shadow-primary-950/10 md:px-8">
               <div className="flex flex-wrap items-center justify-between gap-5">
                 <div className="flex min-w-0 items-center gap-4">
                   <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-white/15 ring-1 ring-white/20">
@@ -1056,7 +1056,7 @@ export default function LearnerOverview() {
                   title="My Apprenticeship Journey"
                   icon="ri-road-map-line"
                   actions={
-                    <Link to={journeyHref} className="text-[12px] font-semibold text-primary-600 hover:text-primary-700">
+                    <Link to={journeyHref} className="compact-action text-[12px] font-semibold text-primary-600 hover:text-primary-700">
                       View full journey <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
                     </Link>
                   }
@@ -1165,7 +1165,7 @@ export default function LearnerOverview() {
               title="My Apprenticeship Journey"
               icon="ri-road-map-line"
               actions={
-                <Link to={journeyHref} className="text-[12px] font-semibold text-primary-600 hover:text-primary-700">
+                <Link to={journeyHref} className="compact-action text-[12px] font-semibold text-primary-600 hover:text-primary-700">
                   Open <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
                 </Link>
               }

@@ -118,7 +118,7 @@ export default function CurriculumReportsPage() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <div className="p-6 space-y-5">
+      <div className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
 
         {/* Notification */}
         {notification && (
@@ -242,6 +242,7 @@ export default function CurriculumReportsPage() {
                         <button
                           key={f}
                           onClick={() => setSelectedFormat(f)}
+                          aria-pressed={selectedFormat === f}
                           className={`px-4 py-2 rounded-xl text-[12px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${selectedFormat === f ? 'bg-primary-500 text-white' : 'bg-background-100 border border-background-200 text-foreground-600 hover:bg-background-200'}`}
                         >
                           {f}
