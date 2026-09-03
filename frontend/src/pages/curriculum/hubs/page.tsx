@@ -103,7 +103,6 @@ const QUALITY_ROADMAP: Array<{ title: string; description: string; icon: string 
   { title: 'Quality Assurance', description: 'Sampling, IQA checks and sign-off against live curriculum records.', icon: 'ri-shield-check-line' },
   { title: 'Version Control', description: 'Track curriculum revisions and see exactly what changed between versions.', icon: 'ri-git-branch-line' },
   { title: 'Reporting', description: 'Curriculum coverage and readiness reports you can export or share.', icon: 'ri-bar-chart-box-line' },
-  { title: 'KSB Coverage', description: 'Trace missing mappings back to their modules and components.', icon: 'ri-node-tree' },
   { title: 'Published Content', description: 'Review what is live, what is draft and what is awaiting approval.', icon: 'ri-checkbox-multiple-line' },
   { title: 'Audit Trail', description: 'Who changed what, when, across programmes, modules and assessments.', icon: 'ri-history-line' },
 ];
@@ -257,22 +256,22 @@ function hubCards(kind: HubKind, counts: {
 }): HubCard[] {
   if (kind === 'library') {
     return [
-      { title: 'Module Library', description: 'Build reusable module content with weeks and components.', href: '/curriculum/module-builder', icon: 'ri-layout-4-line', meta: `${counts.modules} modules`, tone: 'primary' },
+      { title: 'Free Courses', description: 'Manage curriculum content that sits outside apprenticeship delivery.', href: '/curriculum/free-courses', icon: 'ri-graduation-cap-line', tone: 'emerald' },
+      { title: 'Week Templates', description: 'Prepare reusable week structures for faster authoring.', href: '/curriculum/week-builder', icon: 'ri-calendar-line', tone: 'emerald' },
       { title: 'KSB Standards', description: 'Browse the published Skills England standards and their KSBs.', href: '/curriculum/standards', icon: 'ri-node-tree', tone: 'sky' },
       { title: 'KSB Frameworks', description: 'Create and edit the reusable KSB profiles programmes are mapped to.', href: '/curriculum/ksb-frameworks', icon: 'ri-git-branch-line', meta: `${counts.frameworks} profiles`, tone: 'emerald' },
-      { title: 'Week Templates', description: 'Prepare reusable week structures for faster authoring.', href: '/curriculum/week-builder', icon: 'ri-calendar-line', tone: 'emerald' },
       { title: 'Quiz Workspace', description: 'Create and edit quizzes connected to curriculum components.', href: '/curriculum/quiz-xml', icon: 'ri-question-answer-line', tone: 'amber' },
       { title: 'Question Bank', description: 'Reuse assessment questions across quizzes and modules.', href: '/curriculum/question-bank', icon: 'ri-questionnaire-line', tone: 'sky' },
-      { title: 'Free Courses', description: 'Manage curriculum content that sits outside apprenticeship delivery.', href: '/curriculum/free-courses', icon: 'ri-graduation-cap-line', tone: 'emerald' },
     ];
   }
   if (kind === 'delivery') {
     return [
       { title: 'Cohorts', description: 'Set delivery windows and the groups running inside them.', href: '/curriculum/cohorts', icon: 'ri-group-line', meta: `${counts.cohorts} cohorts`, tone: 'primary' },
       { title: 'Groups', description: 'Assign coaches, delivery days and group schedules.', href: '/curriculum/groups', icon: 'ri-team-line', meta: `${counts.groups} groups`, tone: 'sky' },
-      { title: 'Session Calendar', description: 'See every curriculum session in one chronological view.', href: '/curriculum/session-calendar', icon: 'ri-calendar-schedule-line', meta: `${counts.sessions} sessions`, tone: 'emerald' },
+      { title: 'Module Builder', description: 'Build reusable module content with weeks and components.', href: '/curriculum/module-builder', icon: 'ri-layout-4-line', meta: `${counts.modules} modules`, tone: 'primary' },
       { title: 'Teams Meetings', description: 'Review and restore the meetings attached to live sessions.', href: '/curriculum/teams-meetings', icon: 'ri-vidicon-line', tone: 'primary' },
       { title: 'Holidays', description: 'Control the dates session plans should skip.', href: '/curriculum/holidays', icon: 'ri-calendar-close-line', tone: 'amber' },
+      { title: 'Session Calendar', description: 'See every curriculum session in one chronological view.', href: '/curriculum/session-calendar', icon: 'ri-calendar-schedule-line', meta: `${counts.sessions} sessions`, tone: 'emerald' },
     ];
   }
   return [

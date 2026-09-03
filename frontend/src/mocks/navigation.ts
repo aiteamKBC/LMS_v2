@@ -248,7 +248,6 @@ export const curriculumNavItems: SidebarNavItem[] = [
     icon: 'ri-folder-open-line',
     href: '/curriculum/library',
     matchPaths: [
-      '/curriculum/module-builder',
       '/curriculum/week-builder',
       '/curriculum/free-courses',
       '/curriculum/standards',
@@ -264,6 +263,7 @@ export const curriculumNavItems: SidebarNavItem[] = [
     icon: 'ri-calendar-schedule-line',
     href: '/curriculum/delivery',
     matchPaths: [
+      '/curriculum/module-builder',
       '/curriculum/cohorts',
       '/curriculum/groups',
       '/curriculum/modules',
@@ -274,7 +274,7 @@ export const curriculumNavItems: SidebarNavItem[] = [
   },
   {
     id: 'curriculum-quality',
-    label: 'Directory',
+    label: 'Quality',
     icon: 'ri-book-open-line',
     href: '/curriculum/quality',
     comingSoon: true,
