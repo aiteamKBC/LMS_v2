@@ -7474,7 +7474,7 @@ def build_sessions(training_rows, module_rows, program_configs=None, authoring_m
     return sessions
 
 
-def build_sessions_basic(training_rows, module_rows, program_configs=None):
+def build_sessions_basic(training_rows, module_rows, program_configs=None, holiday_rows=None, holidays_by_cohort=None):
     program_configs_by_id = program_config_by_id(program_configs or [])
     module_catalog = {}
     for module in module_rows:
@@ -7502,9 +7502,38 @@ def build_sessions_basic(training_rows, module_rows, program_configs=None):
         delivery_module_id = f'training-module-{row.get("id")}'
         session_names = module_catalog.get(explicit_catalogue_id) or module_catalog.get(normalise(row.get('module_name'))) or []
         ksb_entries = parse_json_value(row.get('session_ksb_json'), [])
+        meta = row.get('_meta', {})
+        # The same plan `build_sessions` runs, for the same reason: a session
+        # falls on the module's delivery day and steps over the cohort's ticked
+        # closures. Walking `start + index * 7` here instead put every dated
+        # screen fed by this payload -- the Sessions tab's week dates and month
+        # buckets among them -- on days the college is shut, and on the wrong
+        # weekday whenever delivery is not on the module's start day.
+        #
+        # The cohort's own selection is asked first, and is trusted even when it
+        # is empty: that is the same list the module's Schedule tab skips days
+        # from, and a delivery row that never carried holiday ids of its own
+        # (the common case) would otherwise plan straight through a closure.
+        applied_holidays = (holidays_by_cohort or {}).get(clean_str(cohort['id']))
+        if applied_holidays is None:
+            holiday_info = cohort_holiday_details(
+                holiday_rows or [],
+                meta.get('holiday_ids') or row.get('holiday_ids'),
+                row.get('Starting_date_lable') or row.get('start_date'),
+                meta.get('cohort_end_date') or row.get('end_date'),
+            )
+            applied_holidays = holiday_info.get('selectedHolidays') or []
+        session_plan = build_module_session_plan(
+            row.get('start_date'),
+            session_count,
+            row.get('session_week_day'),
+            applied_holidays,
+        )
+        planned_sessions = session_plan.get('sessions') or []
 
         for index in range(session_count):
-            session_date = start + timedelta(days=index * 7) if start else None
+            planned_session = planned_sessions[index] if index < len(planned_sessions) else {}
+            session_date = parse_date(planned_session.get('date')) or (start + timedelta(days=index * 7) if start else None)
             ksb_entry = ksb_entries[index] if isinstance(ksb_entries, list) and index < len(ksb_entries) and isinstance(ksb_entries[index], dict) else {}
             sessions.append({
                 'id': f'session-{row.get("id")}-{index + 1}',
@@ -7519,7 +7548,7 @@ def build_sessions_basic(training_rows, module_rows, program_configs=None):
                 'title': session_names[index] if index < len(session_names) else f'{row.get("module_name") or "Session"} #{index + 1}',
                 'type': 'Live Session',
                 'date': session_date.isoformat() if session_date else '',
-                'day': row.get('session_week_day') or '',
+                'day': planned_session.get('day') or row.get('session_week_day') or '',
                 'startTime': row.get('session_start_time') or '',
                 'endTime': row.get('session_end_time') or '',
                 'tutor': row.get('Tutor_name') or 'Unassigned',
@@ -7529,75 +7558,8 @@ def build_sessions_basic(training_rows, module_rows, program_configs=None):
                 'venue': 'LMS',
                 'module': row.get('module_name') or '',
                 'week': index + 1,
-                'skippedHolidays': row.get('skippedHolidays') or [],
-                'scheduleWarnings': row.get('warnings') or [],
-                'status': 'completed' if session_date and session_date < date.today() else 'scheduled',
-                'ksbCodes': [
-                    *ksb_entry.get('knowledgeCodes', []),
-                    *ksb_entry.get('skillCodes', []),
-                    *ksb_entry.get('behaviourCodes', []),
-                ],
-            })
-    return sessions
-
-
-def build_sessions_basic(training_rows, module_rows, program_configs=None):
-    program_configs_by_id = program_config_by_id(program_configs or [])
-    module_catalog = {}
-    for module in module_rows:
-        session_names = get_module_session_names(module)
-        module_catalog[str(module.get('Module ID'))] = session_names
-        module_catalog[normalise(module.get('Module_name'))] = session_names
-
-    sessions = []
-    for row in training_rows:
-        if not clean_str(row.get('module_name')):
-            continue
-        identity = programme_identity(row, program_configs_by_id)
-        program = identity['name']
-        session_count = parse_int(row.get('sessions_number'), 0)
-        if session_count <= 0:
-            continue
-        start = parse_date(row.get('start_date'))
-        cohort = actual_cohort_identity(row, program)
-        if not cohort:
-            continue
-        group = actual_group_identity(row, cohort['id'])
-        if not group:
-            continue
-        explicit_catalogue_id = training_row_module_catalogue_id(row)
-        delivery_module_id = f'training-module-{row.get("id")}'
-        session_names = module_catalog.get(explicit_catalogue_id) or module_catalog.get(normalise(row.get('module_name'))) or []
-        ksb_entries = parse_json_value(row.get('session_ksb_json'), [])
-
-        for index in range(session_count):
-            session_date = start + timedelta(days=index * 7) if start else None
-            ksb_entry = ksb_entries[index] if isinstance(ksb_entries, list) and index < len(ksb_entries) and isinstance(ksb_entries[index], dict) else {}
-            sessions.append({
-                'id': f'session-{row.get("id")}-{index + 1}',
-                'trainingPlanId': row.get('id'),
-                'deliveryRowId': row.get('id'),
-                'programmeId': f'program-{slugify(identity["sourceId"])}',
-                'cohortId': cohort['id'],
-                'groupId': group['id'],
-                'moduleId': explicit_catalogue_id or delivery_module_id,
-                'moduleCatalogueId': explicit_catalogue_id,
-                'deliveryModuleId': delivery_module_id,
-                'title': session_names[index] if index < len(session_names) else f'{row.get("module_name") or "Session"} #{index + 1}',
-                'type': 'Live Session',
-                'date': session_date.isoformat() if session_date else '',
-                'day': row.get('session_week_day') or '',
-                'startTime': row.get('session_start_time') or '',
-                'endTime': row.get('session_end_time') or '',
-                'tutor': row.get('Tutor_name') or 'Unassigned',
-                'group': group['name'],
-                'cohort': cohort['name'],
-                'programme': program,
-                'venue': 'LMS',
-                'module': row.get('module_name') or '',
-                'week': index + 1,
-                'skippedHolidays': [],
-                'scheduleWarnings': [],
+                'skippedHolidays': planned_session.get('skippedHolidays') or [],
+                'scheduleWarnings': session_plan.get('warnings') or [],
                 'status': 'completed' if session_date and session_date < date.today() else 'scheduled',
                 'ksbCodes': [
                     *ksb_entry.get('knowledgeCodes', []),
@@ -12232,8 +12194,24 @@ def authoring_module_exists(module_catalogue_id):
     return rows[0] if rows else None
 
 
-def resolve_module_catalogue_id_for_write(identifier):
-    """Resolve any public module identifier to the stored MOD-* primary key."""
+def resolve_stored_module_catalogue_id(identifier):
+    """Resolve any public module identifier to the stored MOD-* primary key.
+
+    The existence check first is what makes this cheap.
+    ``resolve_authoring_catalogue_id`` is the general answer, but it summarises
+    every module in the database to give it -- five round trips, four of them
+    whole-table reads and one of them every component row -- because it has to
+    search modules by source id, training id and delivery signature. That search
+    only means anything for an identifier that is *not* a stored module: a legacy
+    ``training-module-`` id, a ``catalogue-module-`` alias, a delivery source id.
+    An identifier that already names a stored module is its own answer, and one
+    indexed lookup settles it.
+
+    Named for what it returns rather than for a caller: reads want the same
+    resolution writes do, and the previous ``_for_write`` name had the module
+    structure endpoint reaching for the expensive resolver on every GET rather
+    than this one.
+    """
     ident = clean_str(identifier)
     if not ident:
         return ''
@@ -15014,6 +14992,12 @@ def infer_mapping_source_for_code(module_catalogue_id, code):
 
 def mappings_with_inferred_sources(mapping_rows, module_rows):
     module_by_id = {clean_str(row.get('module_catalogue_id')): row for row in module_rows}
+    # One cache for the whole batch, the way authoring_mapping_payload already
+    # threads its `source_cache`. Passing nothing gave every row a fresh cache,
+    # and each fresh cache re-read the KSB profiles and the Skills England
+    # standards -- whole tables, no where clause -- to answer about one code. A
+    # module with thirty unsourced mappings paid for that thirty times over.
+    source_cache = {}
     enriched = []
     for row in mapping_rows:
         if clean_str(row.get('source_type')) and clean_str(row.get('source_id')):
@@ -15022,6 +15006,7 @@ def mappings_with_inferred_sources(mapping_rows, module_rows):
         source_type, source_id = infer_mapping_source_from_module(
             module_by_id.get(clean_str(row.get('module_catalogue_id')), {}),
             row.get('ksb_code'),
+            source_cache,
         )
         enriched.append({**row, 'source_type': source_type, 'source_id': source_id} if source_type and source_id else row)
     return enriched
@@ -16288,17 +16273,23 @@ def curriculum_preview_tutor_availability(request):
     requested_module = clean_str(
         payload.get('moduleCatalogueId') or payload.get('moduleId') or payload.get('catalogueId')
     )
-    excluded = resolve_module_catalogue_id_for_write(requested_module)
-    if requested_module and not excluded:
-        # Silently carrying on would leave the slot empty, and an empty slot
-        # clashes with nothing -- every tutor would read as free. A wrong
-        # all-clear is worse here than no answer, so this is an error.
-        return json_error('Module not found.', status=404)
-    # Read *and date* the module rows once, then reuse them for every tutor: the
-    # all-tutors form of this call is made on every keystroke-ish change of the
-    # slot, and the answer for a name depends on the name alone.
-    module_rows = safe_authoring_module_rows()
-    context = tutor_conflict_context(module_rows)
+    # One scope over every read this preview makes. It is asked on a 300ms
+    # debounce as a slot is typed, and the reads below overlap heavily: resolving
+    # the module identifier and listing the modules both read the modules table,
+    # and dating the stored modules reads each cohort's holidays.
+    with curriculum_read_scope():
+        excluded = resolve_stored_module_catalogue_id(requested_module)
+        if requested_module and not excluded:
+            # Silently carrying on would leave the slot empty, and an empty slot
+            # clashes with nothing -- every tutor would read as free. A wrong
+            # all-clear is worse here than no answer, so this is an error.
+            return json_error('Module not found.', status=404)
+        # Read *and date* the module rows once, then reuse them for every tutor: the
+        # all-tutors form of this call is made on every keystroke-ish change of the
+        # slot, and the answer for a name depends on the name alone.
+        module_rows = safe_authoring_module_rows()
+        context = tutor_conflict_context(module_rows)
+        tutor_rows = get_tutor_rows()
 
     # Naming a module is enough. A screen that only wants "who is free for this
     # module" should not have to carry its weekday and times around just to ask,
@@ -16349,7 +16340,7 @@ def curriculum_preview_tutor_availability(request):
 
     names = unique([
         staff_profile_name(row)
-        for row in get_tutor_rows()
+        for row in tutor_rows
         if staff_profile_name(row) and not truthy(row.get('is_archived'))
     ])
     results = [answer_for(name) for name in names]
@@ -16538,7 +16529,20 @@ def _build_curriculum_programme_tree_detail_payload(identifier, visibility):
         *programme_authoring_modules(programme, config),
         *programme_config_modules(config),
     ], ['moduleCatalogueId', 'catalogueId', 'moduleId', 'structureId', 'id'])
-    sessions = build_sessions_basic(programme_training_rows, curriculum_rows['modules'], program_configs)
+    # `get_curriculum_rows(compact=True)` deliberately returns no holidays, to
+    # save the read. The session dates below are holiday-shifted, so this one
+    # read is bought back deliberately: without it the detail payload dates
+    # disagree with the overview's, which is the same programme's own calendar.
+    # Keyed by cohort once, not read per module, for the same reason
+    # `cohort_selected_holidays_by_id` exists at all.
+    session_holiday_rows = get_holiday_rows()
+    sessions = build_sessions_basic(
+        programme_training_rows,
+        curriculum_rows['modules'],
+        program_configs,
+        session_holiday_rows,
+        cohort_selected_holidays_by_id(cohorts, session_holiday_rows),
+    )
     module_catalogue_ids = unique([
         module.get('moduleCatalogueId')
         or module.get('catalogueId')
@@ -17668,17 +17672,47 @@ def curriculum_module_structure_resolve(request):
 @csrf_exempt
 def curriculum_module_structure(request, module_catalogue_id):
     module_catalogue_id = clean_str(module_catalogue_id)
-    resolved_catalogue_id = resolve_authoring_catalogue_id(module_catalogue_id) or module_catalogue_id
+    # Existence-first, so a request for a stored module does not summarise every
+    # module in the database to learn that its own id was the answer. See
+    # resolve_stored_module_catalogue_id.
+    stored_catalogue_id = resolve_stored_module_catalogue_id(module_catalogue_id)
+    resolved_catalogue_id = stored_catalogue_id or module_catalogue_id
     if request.method == 'GET':
+        is_training_alias = module_catalogue_id.startswith('training-module-')
         try:
-            payload = (
-                get_authoring_structure_payload(resolved_catalogue_id)
-                if resolved_catalogue_id != module_catalogue_id
-                else ensure_training_module_authoring_structure(module_catalogue_id)
-                if module_catalogue_id.startswith('training-module-')
-                else get_authoring_structure_payload(resolved_catalogue_id)
-            )
-            if payload and module_catalogue_id.startswith('training-module-'):
+            # One read scope for the whole payload. The KSB source inference
+            # inside it (mappings_with_inferred_sources) asks whether a code
+            # exists in a standard or a profile once per mapping row that has no
+            # stored source, and each of those questions is a whole-table read of
+            # standard_ksbs or ksb_profiles. Memoised for the scope, a module
+            # with thirty unsourced mappings costs two reads instead of ninety.
+            with curriculum_read_scope(targeted_child_reads=True):
+                if is_training_alias:
+                    # A training-plan alias provisions on the way through, so it
+                    # is never served from a cache.
+                    payload = (
+                        get_authoring_structure_payload(resolved_catalogue_id)
+                        if resolved_catalogue_id != module_catalogue_id
+                        else ensure_training_module_authoring_structure(module_catalogue_id)
+                    )
+                elif stored_catalogue_id:
+                    # Cached the way curriculum_module_structure_resolve already
+                    # caches the batch form of this payload; every write to a
+                    # module's structure ends in invalidate_curriculum_cache(),
+                    # which is what drops this entry. Only a stored module is
+                    # cached -- an id that resolves to nothing is a 404 worth
+                    # recomputing, so a module authored a moment later is not
+                    # missing until the TTL runs out.
+                    payload = cached_curriculum_value(
+                        f'module-structure:{resolved_catalogue_id}',
+                        lambda: get_authoring_structure_payload(resolved_catalogue_id),
+                    )
+                else:
+                    payload = get_authoring_structure_payload(resolved_catalogue_id)
+            # Outside the read scope on purpose: this is a write, and the scope
+            # above memoises reads for the request. A write that read a memoised
+            # row would be deciding from a snapshot taken earlier in the request.
+            if payload and is_training_alias:
                 link_training_row_to_catalogue(
                     module_catalogue_id.replace('training-module-', '', 1),
                     payload.get('catalogueId') or resolved_catalogue_id,
@@ -17801,7 +17835,7 @@ def curriculum_module_session_plan(request, module_catalogue_id):
     if request.method != 'GET':
         return json_error('Method not allowed.', status=405)
     try:
-        catalogue_id = resolve_module_catalogue_id_for_write(module_catalogue_id)
+        catalogue_id = resolve_stored_module_catalogue_id(module_catalogue_id)
         module_rows = authoring_fetch_all(
             AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [catalogue_id],
         ) if catalogue_id else []
@@ -21086,7 +21120,7 @@ def curriculum_module_detail(request, identifier):
     if ident.startswith('training-module-'):
         return json_error('Delivery module rows are not available. Use the module catalogue record instead.', status=404)
 
-    module_catalogue_id = resolve_module_catalogue_id_for_write(ident)
+    module_catalogue_id = resolve_stored_module_catalogue_id(ident)
     existing_authoring = authoring_module_exists(module_catalogue_id) if module_catalogue_id else None
     if existing_authoring:
         if request.method == 'DELETE':
@@ -22828,7 +22862,14 @@ def curriculum_staff_profile_collection(request, role):
     if request.method != 'GET':
         return json_error(STAFF_PROFILE_READ_ONLY_MESSAGE, status=405)
     visibility = curriculum_visibility(request)
-    profiles = build_staff_user_profile_collection(role, visibility)
+    # A staff profile carries what the person teaches, so building the list walks
+    # the modules, cohorts and groups -- and it read every one of those tables
+    # more than once: the programme config twice, the modules table three times.
+    # The scope memoises them for the request, which is the difference between
+    # ~13 round trips and ~8 on an endpoint the UI asks for twice per page (once
+    # for tutors, once for coaches).
+    with curriculum_read_scope():
+        profiles = build_staff_user_profile_collection(role, visibility)
     return curriculum_results_response(profiles)
 
 
@@ -22836,7 +22877,9 @@ def curriculum_staff_profile_collection(request, role):
 def curriculum_staff_profile_detail(request, role, identifier):
     if request.method != 'GET':
         return json_error(STAFF_PROFILE_READ_ONLY_MESSAGE, status=405)
-    profile = find_staff_user_profile(role, identifier)
+    # Same build as the collection above, for one person. See the note there.
+    with curriculum_read_scope():
+        profile = find_staff_user_profile(role, identifier)
     if not profile:
         return json_error(f'{role.title()} profile not found.', status=404)
     return JsonResponse({'schema': CURRICULUM_SCHEMA, 'profile': profile})

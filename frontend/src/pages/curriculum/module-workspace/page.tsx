@@ -12,9 +12,12 @@ import {
 } from '@/lib/curriculumApi';
 import {
   formatCalendarDateTime,
+  liveSessionNamesByNumber,
   loadModuleStructure,
   loadTeamsMeetingArtifacts,
   teamsMeetingArtifactPreviewUrl,
+  weekHeadingTitle,
+  weekPlacementLabel,
   zonedNaiveToUtcIso,
   type KsbMapping,
   type ModuleCatalogueItem,
@@ -33,6 +36,7 @@ import {
   normaliseKey,
   programmeIdentity,
   resolveModuleContext,
+  scheduleLabel,
   visibleNotes,
 } from '../shared/entities/model';
 import { ModuleFormDrawer } from '../shared/entities/moduleForm';
@@ -42,6 +46,7 @@ import {
   DetailRow,
   EntityEmptyState,
   InlineError,
+  ParentBadge,
   StatusBadge,
   WorkspaceHeader,
   WorkspacePanel,
@@ -432,6 +437,10 @@ export default function ModuleWorkspacePage() {
   // list further down said it a third time; what the calendar actually adds to
   // a row is its status, how many people turned up, and — folded away until
   // asked for — who they were and what was recorded.
+  // What is taught on each of those dates, from the weeks this page has already
+  // read for its Components tab. The plan preview supplies the dates and knows
+  // nothing about this module, so the names are matched to it by session number.
+  const sessionNames = useMemo(() => liveSessionNamesByNumber(structure), [structure]);
   const scheduleOccurrences = useMemo(() => (plan?.sessions || []).map((session, index) => {
     const sessionNumber = session.sessionNumber || index + 1;
     const occurrence = teamsOccurrenceFor(sessionNumber, index);
@@ -443,6 +452,7 @@ export default function ModuleWorkspacePage() {
     const open = hasDetail && openMeetings.has(detailKey);
     return {
       session,
+      name: sessionNames[sessionNumber - 1] || '',
       plannedUtc: plannedOccurrences[index]?.startDateTimeUtc || '',
       durationMinutes: sessionDurationMinutes,
       shift: scheduleShiftPlan.shifts[index],
@@ -476,7 +486,7 @@ export default function ModuleWorkspacePage() {
         />
       ) : undefined,
     };
-  }), [openMeetings, plan, plannedOccurrences, scheduleShiftPlan, sessionDurationMinutes, teamsLoading, teamsOccurrenceFor, teamsSummary, toggleMeeting]);
+  }), [openMeetings, plan, plannedOccurrences, scheduleShiftPlan, sessionDurationMinutes, sessionNames, teamsLoading, teamsOccurrenceFor, teamsSummary, toggleMeeting]);
 
   // Not found only once both readings have come back empty: the overview knows
   // nothing about an unattached module, and the structure is what settles it.
@@ -511,13 +521,32 @@ export default function ModuleWorkspacePage() {
   }, [catalogueId, weekStructure]);
   const componentCount = weekStructure.reduce((sum, week) => sum + (week.components?.length || 0), 0);
   const totalOtjh = structure?.totalOtjh ?? 0;
+
+  // Each week runs its own live session, one per session number -- so the plan
+  // preview built for the Schedule tab is also where a week's date lives. See
+  // "Every week gets its own live session" for why that pairing holds.
+  const weekDateByNumber = new Map<number, string>();
+  (plan?.sessions || []).forEach(session => {
+    if (session.sessionNumber) weekDateByNumber.set(session.sessionNumber, session.date);
+  });
+  const weekMonthGroups: Array<{ key: string; label: string; weeks: typeof weekStructure }> = [];
+  weekStructure.forEach(week => {
+    const date = weekDateByNumber.get(week.weekNumber) || '';
+    const key = date ? date.slice(0, 7) : '';
+    const current = weekMonthGroups[weekMonthGroups.length - 1];
+    if (current && current.key === key) { current.weeks.push(week); return; }
+    const label = key
+      ? new Date(`${key}-01T12:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
+      : 'Date not yet scheduled';
+    weekMonthGroups.push({ key, label, weeks: [week] });
+  });
   const allKsbMappings = structure ? allStructureKsbMappings(structure) : [];
   const ksbMappingCount = allKsbMappings.length || structure?.ksbCount || module?.ksbCount || 0;
 
   const tabs = [
     { key: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
     { key: 'schedule', label: 'Schedule & Teams meeting', icon: 'ri-calendar-line' },
-    { key: 'components', label: 'Components', icon: 'ri-layout-4-line', count: componentCount },
+    { key: 'components', label: 'Weeks & Components', icon: 'ri-layout-4-line', count: componentCount },
     { key: 'ksbs', label: 'KSBs', icon: 'ri-node-tree', count: ksbMappingCount },
     { key: 'achievement', label: 'Achievement KSBs', icon: 'ri-medal-line' },
   ];
@@ -547,32 +576,51 @@ export default function ModuleWorkspacePage() {
           eyebrow="Module"
           title={moduleDisplayName}
           subtitle={context ? (
-            <span className="flex flex-wrap items-center gap-1">
-              <span>in Group</span>
-              {context.groupId ? (
-                <Link to={namedCurriculumWorkspacePath('groups', context.groupId, context.groupName)} className="font-semibold text-primary-700 hover:underline">
-                  {context.groupName}
-                </Link>
-              ) : <span className="font-semibold text-primary-700">{context.groupName}</span>}
-              <span>in Cohort</span>
-              {context.cohortId ? (
-                <Link to={`/curriculum/cohorts/${encodeURIComponent(context.cohortId)}`} className="font-semibold text-primary-700 hover:underline">
-                  {context.cohortName}
-                </Link>
-              ) : <span className="font-semibold text-primary-700">{context.cohortName}</span>}
-              <span>in programme</span>
-              {context.programme ? (
-                <Link to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(context.programme))}?tab=modules`} className="font-semibold text-primary-700 hover:underline">
-                  {context.programmeName}
-                </Link>
-              ) : <span className="font-semibold text-primary-700">{context.programmeName}</span>}
+            <span className="flex flex-wrap items-center gap-1.5">
+              <span className="text-foreground-400">in Group</span>
+              <ParentBadge
+                tone="group"
+                label={context.groupName}
+                href={context.groupId
+                  ? namedCurriculumWorkspacePath('groups', context.groupId, context.groupName)
+                  : undefined}
+              />
+              <span className="text-foreground-400">in Cohort</span>
+              <ParentBadge
+                tone="cohort"
+                label={context.cohortName}
+                href={context.cohortId ? `/curriculum/cohorts/${encodeURIComponent(context.cohortId)}` : undefined}
+              />
+              <span className="text-foreground-400">in programme</span>
+              <ParentBadge
+                tone="programme"
+                label={context.programmeName}
+                href={context.programme
+                  ? `/curriculum/programmes/${encodeURIComponent(programmeIdentity(context.programme))}?tab=modules`
+                  : undefined}
+              />
             </span>
           ) : ''}
           accentColor={module?.color}
           dense
           stats={[
             { icon: 'ri-presentation-line', label: 'Tutor', value: cleanText(module?.tutor, 'Unassigned') },
+            // Weeks and Sessions are different numbers: a group delivering Mon
+            // and Thu runs two sessions a week, so sessions is weeks times the
+            // delivery days. Shown together because Weeks is what the Components
+            // tab is organised by, and one figure standing alone was being read
+            // as both. Counted off the authored weeks when they have loaded, and
+            // off the module row until then.
+            { icon: 'ri-calendar-2-line', label: 'Weeks', value: weekStructure.length || module?.weeks || 0 },
             { icon: 'ri-broadcast-line', label: 'Sessions', value: module?.sessionsNumber || 0 },
+            // Why every date below is a Tuesday. The slot belongs to the group,
+            // so this is the group's -- the same label the Group workspace shows
+            // -- and it is read-only here, as Edit module has no such field.
+            {
+              icon: 'ri-calendar-schedule-line',
+              label: 'Delivery',
+              value: context?.group ? scheduleLabel(context.group) : 'No group linked',
+            },
             { icon: 'ri-calendar-line', label: 'Start', value: formatDateLabel(module?.startDate) },
             { icon: 'ri-flag-line', label: 'End', value: formatDateLabel(module?.endDate) },
             { icon: 'ri-time-line', label: 'Expected OTJH', value: `${totalOtjh}h` },
@@ -818,104 +866,123 @@ export default function ModuleWorkspacePage() {
             {!structureLoading && !structureError && !weekStructure.length && (
               <p className="text-[12px] text-foreground-500">No weeks have been authored for this module yet.</p>
             )}
-            <div className="space-y-6">
-              {weekStructure.map(week => {
-                const components = week.components || [];
-                const weekOtjh = components.reduce((sum, component) => sum + (component.expectedOtjh || 0), 0);
-                const isCollapsed = collapsedWeeks.has(week.id);
-                return (
-                  <div key={week.id} className="overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-sm">
-                    <button
-                      type="button"
-                      onClick={() => setCollapsedWeeks(previous => {
-                        const next = new Set(previous);
-                        if (next.has(week.id)) next.delete(week.id); else next.add(week.id);
-                        return next;
-                      })}
-                      aria-expanded={!isCollapsed}
-                      className="flex w-full flex-wrap items-center justify-between gap-3 border-b border-background-200 bg-gradient-to-r from-primary-50/70 to-transparent px-6 py-5 text-left transition-smooth hover:from-primary-50"
-                    >
-                      <div className="flex min-w-0 items-center gap-3.5">
-                        <AppIcon className={`ri-arrow-right-s-line shrink-0 text-base text-foreground-400 transition-transform ${isCollapsed ? '' : 'rotate-90'}`}></AppIcon>
-                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-600 text-[12px] font-extrabold text-white">
-                          {week.weekNumber}
-                        </span>
-                        <span className="min-w-0 truncate text-[13px] font-bold text-foreground-900">
-                          Week {week.weekNumber}
-                          {week.title ? ` · ${week.title}` : ''}
-                        </span>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <span className="inline-flex items-center gap-1.5 rounded-full bg-background-100 px-3.5 py-1.5 text-[11px] font-bold text-foreground-600">
-                          <AppIcon className="ri-stack-line text-[13px] text-foreground-400"></AppIcon>
-                          {components.length} component{components.length === 1 ? '' : 's'}
-                        </span>
-                        {weekOtjh > 0 && (
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-primary-50 px-3.5 py-1.5 text-[11px] font-bold text-primary-700">
-                            <AppIcon className="ri-time-line text-[13px]"></AppIcon>
-                            {weekOtjh}h OTJH
-                          </span>
-                        )}
-                      </div>
-                    </button>
-                    {!isCollapsed && (
-                      components.length ? (
-                        // Each component is its own card with air around it,
-                        // rather than a row in a hairline-divided stack: a week
-                        // of twenty reads as twenty things instead of one wall.
-                        <ul className="space-y-2.5 p-4">
-                          {components.map(component => {
-                            const definition = getComponentDefinition(component.type);
-                            const tone = componentTone(component.type);
-                            return (
-                              <li
-                                key={component.id}
-                                className={`flex items-center gap-4 rounded-xl border border-background-200 border-l-4 bg-background-0 px-4 py-3.5 ${tone.accent}`}
-                              >
-                                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${tone.chip}`}>
-                                  <AppIcon className={`${definition.icon} text-[15px] ${tone.icon}`}></AppIcon>
+            <div className="space-y-8">
+              {weekMonthGroups.map(group => (
+                <div key={group.key || 'unscheduled'}>
+                  <p className="mb-3 text-[11px] font-bold uppercase tracking-wider text-foreground-400">
+                    {group.label}
+                  </p>
+                  <div className="space-y-6">
+                    {group.weeks.map(week => {
+                      const components = week.components || [];
+                      const weekOtjh = components.reduce((sum, component) => sum + (component.expectedOtjh || 0), 0);
+                      const isCollapsed = collapsedWeeks.has(week.id);
+                      const weekDate = weekDateByNumber.get(week.weekNumber);
+                      return (
+                        <div key={week.id} className="overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-sm">
+                          <button
+                            type="button"
+                            onClick={() => setCollapsedWeeks(previous => {
+                              const next = new Set(previous);
+                              if (next.has(week.id)) next.delete(week.id); else next.add(week.id);
+                              return next;
+                            })}
+                            aria-expanded={!isCollapsed}
+                            className="flex w-full flex-wrap items-center justify-between gap-3 border-b border-background-200 bg-gradient-to-r from-primary-50/70 to-transparent px-6 py-5 text-left transition-smooth hover:from-primary-50"
+                          >
+                            <div className="flex min-w-0 items-center gap-3.5">
+                              <AppIcon className={`ri-arrow-right-s-line shrink-0 text-base text-foreground-400 transition-transform ${isCollapsed ? '' : 'rotate-90'}`}></AppIcon>
+                              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-600 text-[12px] font-extrabold text-white">
+                                {week.weekNumber}
+                              </span>
+                              {/* The title the Module Builder holds, named the
+                                  way its own rail names it: the number lives in
+                                  the badge to the left, so repeating "Week N"
+                                  here printed it twice -- "Week 1 · Week 1" for
+                                  every week of a module nobody had retitled. */}
+                              <span className="min-w-0 truncate text-[13px] font-bold text-foreground-900">
+                                {weekHeadingTitle(week)}
+                              </span>
+                              {weekDate && (
+                                <span className="shrink-0 text-[11px] font-semibold text-foreground-400">
+                                  {formatDateLabel(weekDate)}
                                 </span>
-                                <div className="min-w-0 flex-1">
-                                  <p className="truncate text-[13px] font-semibold text-foreground-900">
-                                    {component.title || 'Untitled component'}
-                                  </p>
-                                  <span className={`mt-1 inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${tone.chip}`}>
-                                    {definition.label}
-                                  </span>
-                                </div>
-                                {/* KSBs and OTJH sit together, right-aligned: both are
-                                    what this component counts toward, read at a glance
-                                    as one group rather than one tucked under the title
-                                    and the other pinned to the far edge. */}
-                                <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-                                  {(component.ksbMappings || []).length ? (
-                                    component.ksbMappings.map(mapping => (
-                                      <span
-                                        key={mapping.id}
-                                        title={mapping.description}
-                                        className="inline-flex rounded-full border border-primary-100 bg-primary-50 px-1.5 py-0.5 text-[10px] font-bold text-primary-700"
-                                      >
-                                        {mapping.code}
+                              )}
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              <span className="inline-flex items-center gap-1.5 rounded-full bg-background-100 px-3.5 py-1.5 text-[11px] font-bold text-foreground-600">
+                                <AppIcon className="ri-stack-line text-[13px] text-foreground-400"></AppIcon>
+                                {components.length} component{components.length === 1 ? '' : 's'}
+                              </span>
+                              {weekOtjh > 0 && (
+                                <span className="inline-flex items-center gap-1.5 rounded-full bg-primary-50 px-3.5 py-1.5 text-[11px] font-bold text-primary-700">
+                                  <AppIcon className="ri-time-line text-[13px]"></AppIcon>
+                                  {weekOtjh}h OTJH
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                          {!isCollapsed && (
+                            components.length ? (
+                              // Each component is its own card with air around it,
+                              // rather than a row in a hairline-divided stack: a week
+                              // of twenty reads as twenty things instead of one wall.
+                              <ul className="space-y-2.5 p-4">
+                                {components.map(component => {
+                                  const definition = getComponentDefinition(component.type);
+                                  const tone = componentTone(component.type);
+                                  return (
+                                    <li
+                                      key={component.id}
+                                      className={`flex items-center gap-4 rounded-xl border border-background-200 border-l-4 bg-background-0 px-4 py-3.5 ${tone.accent}`}
+                                    >
+                                      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${tone.chip}`}>
+                                        <AppIcon className={`${definition.icon} text-[15px] ${tone.icon}`}></AppIcon>
                                       </span>
-                                    ))
-                                  ) : (
-                                    <span className="text-[10px] font-semibold italic text-foreground-400">No KSBs mapped</span>
-                                  )}
-                                  <span className="rounded-full bg-background-100 px-2.5 py-1.5 text-[11px] font-bold text-foreground-500">
-                                    {component.expectedOtjh || 0}h
-                                  </span>
-                                </div>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      ) : (
-                        <p className="px-6 py-5 text-[12px] text-foreground-400">No components in this week.</p>
-                      )
-                    )}
+                                      <div className="min-w-0 flex-1">
+                                        <p className="truncate text-[13px] font-semibold text-foreground-900">
+                                          {component.title || 'Untitled component'}
+                                        </p>
+                                        <span className={`mt-1 inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${tone.chip}`}>
+                                          {definition.label}
+                                        </span>
+                                      </div>
+                                      {/* KSBs and OTJH sit together, right-aligned: both are
+                                          what this component counts toward, read at a glance
+                                          as one group rather than one tucked under the title
+                                          and the other pinned to the far edge. */}
+                                      <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                                        {(component.ksbMappings || []).length ? (
+                                          component.ksbMappings.map(mapping => (
+                                            <span
+                                              key={mapping.id}
+                                              title={mapping.description}
+                                              className="inline-flex rounded-full border border-primary-100 bg-primary-50 px-1.5 py-0.5 text-[10px] font-bold text-primary-700"
+                                            >
+                                              {mapping.code}
+                                            </span>
+                                          ))
+                                        ) : (
+                                          <span className="text-[10px] font-semibold italic text-foreground-400">No KSBs mapped</span>
+                                        )}
+                                        <span className="rounded-full bg-background-100 px-2.5 py-1.5 text-[11px] font-bold text-foreground-500">
+                                          {component.expectedOtjh || 0}h
+                                        </span>
+                                      </div>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            ) : (
+                              <p className="px-6 py-5 text-[12px] text-foreground-400">No components in this week.</p>
+                            )
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
+                </div>
+              ))}
             </div>
           </WorkspacePanel>
         )}
@@ -1031,9 +1098,109 @@ export default function ModuleWorkspacePage() {
 function ScheduleStat({ icon, tone, label, value }: { icon: string; tone: string; label: string; value: string | number }) {
   const t = COMPONENT_TONE[tone] || COMPONENT_TONE.slate;
   return (
-    <div className="coach-metric-card">
-      <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">{label}</p>
-      <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{value}</p>
+    <div className="rounded-xl border border-background-200 bg-background-50 p-3">
+      <div className="flex items-center gap-2">
+        <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${t.chip}`}>
+          <AppIcon className={`${icon} text-sm ${t.icon}`}></AppIcon>
+        </span>
+        <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">{label}</p>
+      </div>
+      <p className="mt-1.5 text-lg font-heading font-bold text-foreground-950">{value}</p>
+    </div>
+  );
+}
+
+// One fact about the Teams series, inline. A grid of six bordered tiles for
+// six short strings was most of the old card's height, and half of what it
+// held — the first meeting, the number of dates — is the schedule below.
+function TeamsFact({ label, value, tone }: { label: string; value: string; tone?: 'emerald' | 'rose' }) {
+  const toneClass = tone === 'emerald' ? 'text-emerald-700' : tone === 'rose' ? 'text-rose-700' : 'text-foreground-900';
+  return (
+    <span className="inline-flex items-baseline gap-1.5">
+      <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">{label}</span>
+      <span className={`text-[12px] font-semibold ${toneClass}`}>{value}</span>
+    </span>
+  );
+}
+
+// What the calendar has to say about one session, in one chip: its status, and
+// the turnout when there was any. A meeting nobody has attended yet says
+// nothing about attendance rather than "0 attended" on every future date.
+function MeetingChip({ status, attended }: { status: string; attended: number }) {
+  const key = normaliseKey(status);
+  const tone = key === 'completed'
+    ? 'bg-emerald-50 text-emerald-700'
+    : key === 'cancelled'
+      ? 'bg-rose-50 text-rose-700'
+      : 'bg-background-100 text-foreground-600';
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${tone}`}>
+      {status}
+      {attended > 0 && (
+        <span className="inline-flex items-center gap-1">
+          <AppIcon className="ri-team-line text-[11px]"></AppIcon>
+          {attended}
+        </span>
+      )}
+    </span>
+  );
+}
+
+// Who turned up to one meeting and what Teams kept of it, opened from that
+// meeting's own row. Only ever rendered for a meeting that has one or the
+// other: a block per date saying "no attendance reported yet" and "no
+// transcript or recording yet" is the boilerplate this replaced.
+function MeetingRecord({
+  liveSessionId,
+  attendance,
+  artifacts,
+}: {
+  liveSessionId: string;
+  attendance: TeamsAttendanceRecord[];
+  artifacts: TeamsMeetingArtifact[];
+}) {
+  return (
+    <div className="grid gap-4 py-1 sm:grid-cols-2">
+      {attendance.length > 0 && (
+        <div>
+          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-foreground-400">
+            Attended ({attendance.length})
+          </p>
+          <ul className="space-y-1">
+            {attendance.slice(0, 8).map(record => (
+              <li key={record.id} className="flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate text-foreground-800">{record.display_name || record.email}</span>
+                <span className="shrink-0 text-foreground-400">
+                  {Math.round((record.total_attendance_seconds || 0) / 60)} min
+                </span>
+              </li>
+            ))}
+          </ul>
+          {attendance.length > 8 && (
+            <p className="mt-1 text-foreground-400">and {attendance.length - 8} more</p>
+          )}
+        </div>
+      )}
+      {artifacts.length > 0 && (
+        <div>
+          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-foreground-400">Transcript &amp; recording</p>
+          <ul className="space-y-1">
+            {artifacts.map(artifact => (
+              <li key={artifact.id}>
+                <a
+                  href={teamsMeetingArtifactPreviewUrl(liveSessionId, artifact.id)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-primary-700 hover:underline"
+                >
+                  <AppIcon className="ri-film-line text-[12px]"></AppIcon>
+                  {teamsArtifactLabel(artifact.artifact_type)}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
@@ -1042,7 +1209,9 @@ function allStructureKsbMappings(module: ModuleCatalogueItem): Array<{ mapping: 
   const rows: Array<{ mapping: KsbMapping; placement: string }> = [];
   (module.moduleKsbMappings || []).forEach(mapping => rows.push({ mapping, placement: 'Module level' }));
   (module.weekStructure || []).forEach(week => {
-    const weekLabel = `Week ${week.weekNumber}${week.title ? ` - ${week.title}` : ''}`;
+    // Running text with no number badge beside it, so the number is spelled out
+    // here -- and the title only appended when it says more than the number.
+    const weekLabel = weekPlacementLabel(week);
     (week.ksbMappings || []).forEach(mapping => rows.push({ mapping, placement: weekLabel }));
     (week.components || []).forEach(component => {
       const componentLabel = component.title || 'Untitled component';

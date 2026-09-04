@@ -1717,6 +1717,7 @@ function EnrolledLearnersPanel({
   selectedLearnerId,
   onSelectLearner,
   emptyHint,
+  scopeLabel = 'this group',
 }: {
   roster: CurriculumProgrammeLearnerRosterResponse | null;
   loading: boolean;
@@ -1724,6 +1725,8 @@ function EnrolledLearnersPanel({
   selectedLearnerId: string;
   onSelectLearner: (learner: CurriculumProgrammeAssignedLearner | null) => void;
   emptyHint?: string;
+  /** What to call this scope in the summary line, e.g. "this group" or "this programme". */
+  scopeLabel?: string;
 }) {
   const learners = roster?.assignedLearners || [];
   // The Learners column in the table above counts active placements; this list
@@ -1750,7 +1753,7 @@ function EnrolledLearnersPanel({
       {!loading && !error && learners.length > 0 && (
         <>
           <p className="mb-2 text-[11px] text-foreground-500">
-            {learners.length} learner{learners.length === 1 ? '' : 's'} placed in this group
+            {learners.length} learner{learners.length === 1 ? '' : 's'} placed in {scopeLabel}
             {inactive ? `, ${inactive} of them no longer active — the count above is active placements only` : ''}.
             {' '}Open one to see the off-the-job hours and KSBs they have achieved here.
           </p>
@@ -1883,7 +1886,7 @@ function groupDatesLabel(cohort: { startDate: string; endDate: string; apprentic
 // Actions need room for "Add first module", "Learners", Edit and Archive on one
 // line. Below this width EntityTable scrolls horizontally instead of squeezing
 // the buttons or turning a single row into an uneven two-line layout.
-const GROUP_GRID = 'grid grid-cols-[minmax(200px,1.35fr)_minmax(160px,1fr)_minmax(180px,1fr)_90px_90px_minmax(290px,auto)]';
+const GROUP_GRID = 'grid grid-cols-[minmax(200px,1.35fr)_minmax(160px,1fr)_minmax(180px,1fr)_90px_minmax(290px,auto)]';
 const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_70px_100px_80px_70px_minmax(210px,auto)]';
 
 const TAB_LABELS: Record<Tab, string> = {
@@ -1932,13 +1935,23 @@ export default function ProgrammeDetailPage() {
     label: 'Programme',
     description: '',
   }));
-  const [learnerRoster, setLearnerRoster] = useState<CurriculumProgrammeLearnerRosterResponse | null>(null);
-  const [learnerRosterLoading, setLearnerRosterLoading] = useState(false);
-  const [learnerRosterError, setLearnerRosterError] = useState<string | null>(null);
-  // The learner whose achievement in the selected group is open. Held as the
-  // roster row rather than the id alone so the detail can be titled with the
-  // name enrolment holds before its own read has landed.
-  const [selectedLearner, setSelectedLearner] = useState<CurriculumProgrammeAssignedLearner | null>(null);
+  // Every learner across the programme, read at whichever level ScopePicker
+  // narrows to -- the same programme/cohort/group/module hierarchy the
+  // Achievement tab already picks from, so a module is a level here too. The
+  // Overview panel's "Learners" row is the one place in this workspace that
+  // opens a roster, so a group or cohort row that wants its own learners jumps
+  // here pre-scoped instead of each keeping a second roster read of its own.
+  const [programmeLearnersOpen, setProgrammeLearnersOpen] = useState(false);
+  const [programmeLearnerRoster, setProgrammeLearnerRoster] = useState<CurriculumProgrammeLearnerRosterResponse | null>(null);
+  const [programmeLearnerRosterLoading, setProgrammeLearnerRosterLoading] = useState(false);
+  const [programmeLearnerRosterError, setProgrammeLearnerRosterError] = useState<string | null>(null);
+  const [selectedProgrammeLearner, setSelectedProgrammeLearner] = useState<CurriculumProgrammeAssignedLearner | null>(null);
+  const [programmeLearnerScope, setProgrammeLearnerScope] = useState<AchievementScope>(() => ({
+    scope: 'programme',
+    identifier: '',
+    label: 'Programme',
+    description: '',
+  }));
   const [programmeKsbSets, setProgrammeKsbSets] = useState<CurriculumKsbSet[]>([]);
   const [skillsStandards, setSkillsStandards] = useState<CurriculumStandard[]>([]);
   // The programme's off-the-job hours as the learner records hold them, which is
@@ -1949,7 +1962,6 @@ export default function ProgrammeDetailPage() {
   const [learnerOtjh, setLearnerOtjh] = useState<{ completed: number; target: number; learners: number } | null>(null);
   const [learnerOtjhLoading, setLearnerOtjhLoading] = useState(false);
   const coverageRequestKeyRef = useRef('');
-  const rosterRequestKeyRef = useRef('');
   const learnerOtjhRequestKeyRef = useRef('');
   const componentsRequestKeyRef = useRef('');
   const PROGRAMME = useMemo(() => {
@@ -1990,9 +2002,8 @@ export default function ProgrammeDetailPage() {
       return params;
     }, { replace: true });
   }, [setSearchParams]);
-  // Delivery tab: which cohort's groups are shown, and which group's learners.
+  // Delivery tab: which cohort's groups are shown.
   const [selectedCohort, setSelectedCohort] = useState('');
-  const [selectedGroup, setSelectedGroup] = useState('');
   const [cohortSearch, setCohortSearch] = useState('');
   const [cohortStatusFilter, setCohortStatusFilter] = useState('');
   const [groupSearch, setGroupSearch] = useState('');
@@ -2003,6 +2014,11 @@ export default function ProgrammeDetailPage() {
   const [sessionKind, setSessionKind] = useState<'live' | 'recorded'>('live');
   const [sessionSearch, setSessionSearch] = useState('');
   const [sessionModuleFilter, setSessionModuleFilter] = useState('');
+  // Which class the sessions tree is reading, same idea as coverageCohortId/
+  // coverageGroupId: a module delivers to one group, so this narrows sessions
+  // down to a real class instead of every group's meetings at once.
+  const [sessionCohortId, setSessionCohortId] = useState('');
+  const [sessionGroupId, setSessionGroupId] = useState('');
   // Real per-occurrence status/dates from the sync service, keyed for O(1) lookup
   // by occurrence id and by `${liveSessionId}::${sessionNumber}` (a component
   // carries one or both). The Sessions tab reads status from here — it never
@@ -2202,61 +2218,44 @@ export default function ProgrammeDetailPage() {
     };
   }, [coverageKsbSource.sourceId, coverageKsbSource.sourceType, coverageProgrammeIds, loadBackendCoverage, needsCoverage]);
 
-  // The roster is asked for at the group's own scope rather than the
-  // programme's. It used to read the whole programme and then filter the rows
-  // down by cohort *name* and group *name* in the browser — and a learner whose
-  // placement labels differed by so much as a renamed cohort dropped out of a
-  // group that plainly contains them. The group endpoint resolves the group by
-  // id, walks its own lineage, and returns everyone enrolment placed in it, so
-  // "Learners" shows the group's roster and not a name match.
-  const loadLearnerRoster = useCallback((groupId: string, signal?: AbortSignal) => {
-    if (!groupId) return Promise.resolve();
-    setLearnerRosterLoading(true);
-    setLearnerRosterError(null);
-    // 'all': a paused or completed placement is still someone this group holds,
-    // and hiding them makes the count above the table disagree with the list.
-    return fetchCurriculumScopeLearnerRoster('group', groupId, { learnerStatus: 'all' }, signal)
+  // Everyone enrolment placed at whichever scope is picked. A module asks at
+  // 'module' scope rather than the programme filtered down to it: a module has
+  // no roster of its own, so this reads the same group roster the module
+  // inherits, the way every other module-scoped read in this file already does.
+  const loadProgrammeLearnerRoster = useCallback((scope: AchievementScope['scope'], identifier: string, signal?: AbortSignal) => {
+    if (!identifier) return Promise.resolve();
+    setProgrammeLearnerRosterLoading(true);
+    setProgrammeLearnerRosterError(null);
+    return fetchCurriculumScopeLearnerRoster(scope, identifier, { learnerStatus: 'all' }, signal)
       .then(result => {
         if (signal?.aborted) return;
-        setLearnerRoster(result || null);
-        setLearnerRosterError(null);
+        setProgrammeLearnerRoster(result || null);
+        setProgrammeLearnerRosterError(null);
       })
       .catch(error => {
         if (signal?.aborted) return;
-        console.warn('Unable to load the group learner roster.', error);
-        setLearnerRoster(null);
-        setLearnerRosterError(error instanceof Error ? error.message : 'Unable to load learners assigned by enrolment.');
+        console.warn('Unable to load the programme learner roster.', error);
+        setProgrammeLearnerRoster(null);
+        setProgrammeLearnerRosterError(error instanceof Error ? error.message : 'Unable to load learners assigned by enrolment.');
       })
       .finally(() => {
-        if (!signal?.aborted) setLearnerRosterLoading(false);
+        if (!signal?.aborted) setProgrammeLearnerRosterLoading(false);
       });
   }, []);
-
-  useEffect(() => {
-    if (tab !== 'groups' || !selectedGroup) return;
-    const rosterKey = `group:${selectedGroup}`;
-    if (rosterRequestKeyRef.current === rosterKey) return;
-    rosterRequestKeyRef.current = rosterKey;
-    const controller = new AbortController();
-    void loadLearnerRoster(selectedGroup, controller.signal);
-    return () => {
-      controller.abort();
-      if (rosterRequestKeyRef.current === rosterKey) rosterRequestKeyRef.current = '';
-    };
-  }, [loadLearnerRoster, selectedGroup, tab]);
 
   useEffect(() => {
     setDetailComponents([]);
     componentsRequestKeyRef.current = '';
     coverageRequestKeyRef.current = '';
-    rosterRequestKeyRef.current = '';
     learnerOtjhRequestKeyRef.current = '';
     setLearnerOtjh(null);
     occurrencesRequestKeyRef.current = '';
     setLiveOccurrences(new Map());
-    setLearnerRoster(null);
-    setLearnerRosterError(null);
-    setSelectedLearner(null);
+    setProgrammeLearnerRoster(null);
+    setProgrammeLearnerRosterError(null);
+    setSelectedProgrammeLearner(null);
+    setProgrammeLearnersOpen(false);
+    setProgrammeLearnerScope({ scope: 'programme', identifier: '', label: 'Programme', description: '' });
   }, [id]);
 
   useEffect(() => {
@@ -2437,21 +2436,6 @@ export default function ProgrammeDetailPage() {
       return matchesQuery && matchesCoach;
     });
   }, [activeCohort, archivedGroupIds, groupCoachFilter, groupSearch]);
-  const activeGroup = useMemo(
-    () => filteredGroups.find(group => group.id === selectedGroup) || null,
-    [filteredGroups, selectedGroup],
-  );
-
-  useEffect(() => {
-    if (selectedGroup && !filteredGroups.some(group => group.id === selectedGroup)) setSelectedGroup('');
-  }, [filteredGroups, selectedGroup]);
-
-  // The open learner belongs to the group whose roster was showing. Changing or
-  // closing the group leaves a detail panel reporting a scope nobody is looking
-  // at any more, so it closes with the roster it came from.
-  useEffect(() => {
-    setSelectedLearner(null);
-  }, [selectedGroup]);
 
   // ----------------------------------------------------------------- modules
 
@@ -2624,19 +2608,6 @@ export default function ProgrammeDetailPage() {
     [liveSessions],
   );
   const activeSessions = sessionKind === 'live' ? liveSessions : recordedSessions;
-  const sessionModules = useMemo(
-    () => [...new Set(activeSessions.map(session => session.module).filter(Boolean))].sort(),
-    [activeSessions],
-  );
-  const filteredSessions = useMemo(() => {
-    const query = normalise(sessionSearch);
-    return activeSessions.filter(session => {
-      const matchesModule = !sessionModuleFilter || session.module === sessionModuleFilter;
-      const matchesQuery = !query || [session.title, session.module, sessionWeekLabel(session), session.provider, session.date, session.time, session.weekStartDate, ...session.groups, ...session.ksbRefs]
-        .some(value => normalise(value).includes(query));
-      return matchesModule && matchesQuery;
-    });
-  }, [activeSessions, sessionModuleFilter, sessionSearch]);
 
   // Resolve a session's "open in Module Builder" link once per module, keyed by
   // both catalogue id and name so a row matches however it identifies its module.
@@ -2668,6 +2639,22 @@ export default function ProgrammeDetailPage() {
         : current
     ));
   }, [PROGRAMME.name, programmeScopeId]);
+
+  useEffect(() => {
+    if (!programmeScopeId) return;
+    setProgrammeLearnerScope(current => (
+      current.scope === 'programme' && current.identifier !== programmeScopeId
+        ? { ...current, identifier: programmeScopeId, label: PROGRAMME.name || 'Programme' }
+        : current
+    ));
+  }, [PROGRAMME.name, programmeScopeId]);
+
+  useEffect(() => {
+    if (!programmeLearnersOpen || !programmeLearnerScope.identifier) return undefined;
+    const controller = new AbortController();
+    void loadProgrammeLearnerRoster(programmeLearnerScope.scope, programmeLearnerScope.identifier, controller.signal);
+    return () => controller.abort();
+  }, [loadProgrammeLearnerRoster, programmeLearnerScope.identifier, programmeLearnerScope.scope, programmeLearnersOpen]);
 
   /**
    * Where each module column sits in the delivery tree.
@@ -2712,6 +2699,33 @@ export default function ProgrammeDetailPage() {
     });
     return map;
   }, [PROGRAMME.cohorts, PROGRAMME.moduleNames, liveProgramme.modules]);
+
+  // Same cohort/group narrowing as the Coverage tab, applied to sessions
+  // instead of KSB columns: a session belongs to whichever module authored
+  // it, and that module belongs to one group, so this reads the delivery
+  // scope from moduleScopeByLabel rather than a second lookup.
+  const sessionScopedSessions = useMemo(() => {
+    if (!sessionCohortId && !sessionGroupId) return activeSessions;
+    return activeSessions.filter(session => {
+      const meta = moduleScopeByLabel.get(session.module);
+      if (!meta) return false;
+      if (sessionGroupId) return meta.groupId === sessionGroupId;
+      return meta.cohortId === sessionCohortId;
+    });
+  }, [activeSessions, sessionCohortId, sessionGroupId, moduleScopeByLabel]);
+  const sessionModules = useMemo(
+    () => [...new Set(sessionScopedSessions.map(session => session.module).filter(Boolean))].sort(),
+    [sessionScopedSessions],
+  );
+  const filteredSessions = useMemo(() => {
+    const query = normalise(sessionSearch);
+    return sessionScopedSessions.filter(session => {
+      const matchesModule = !sessionModuleFilter || session.module === sessionModuleFilter;
+      const matchesQuery = !query || [session.title, session.module, sessionWeekLabel(session), session.provider, session.date, session.time, session.weekStartDate, ...session.groups, ...session.ksbRefs]
+        .some(value => normalise(value).includes(query));
+      return matchesModule && matchesQuery;
+    });
+  }, [sessionScopedSessions, sessionModuleFilter, sessionSearch]);
 
   /**
    * Which module each coverage column actually is, so a placement can be
@@ -3225,9 +3239,19 @@ export default function ProgrammeDetailPage() {
                     </span>
                   ) : <span className="text-amber-700">No source applied</span>}
                 />
-                <DetailRow label="Practical period" value={clean(PROGRAMME.practicalWindow, 'Not scheduled')} />
-                <DetailRow label="Apprenticeship" value={clean(PROGRAMME.apprenticeshipWindow, 'Not scheduled')} />
-                <DetailRow label="Learners" value={totalLearners} />
+                <DetailRow
+                  label="Learners"
+                  value={(
+                    <button
+                      type="button"
+                      onClick={() => setProgrammeLearnersOpen(open => !open)}
+                      className="inline-flex items-center gap-1 font-semibold text-primary-700 underline-offset-2 hover:underline"
+                    >
+                      {totalLearners}
+                      <AppIcon className={`${programmeLearnersOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-sm`}></AppIcon>
+                    </button>
+                  )}
+                />
                 <DetailRow label="Programme ID" value={<code className="text-[11px]">{clean(PROGRAMME.sourceId) || PROGRAMME.id || '—'}</code>} />
               </WorkspacePanel>
 
@@ -3286,6 +3310,57 @@ export default function ProgrammeDetailPage() {
                 </div>
               </WorkspacePanel>
             </div>
+
+            {programmeLearnersOpen && (
+              <WorkspacePanel
+                title={`Learners in ${PROGRAMME.name || 'this programme'}`}
+                description="Everyone the enrolment team placed anywhere under this programme, across every cohort and group. Curriculum owns the delivery structure, not the placements, so the roster is read-only."
+                actions={(
+                  <button
+                    type="button"
+                    onClick={() => setProgrammeLearnersOpen(false)}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
+                  >
+                    <AppIcon className="ri-close-line text-sm"></AppIcon>
+                    Hide
+                  </button>
+                )}
+              >
+                <div className="mb-4">
+                  <ScopePicker
+                    programme={PROGRAMME}
+                    value={programmeLearnerScope}
+                    onChange={next => {
+                      setProgrammeLearnerScope(next);
+                      setSelectedProgrammeLearner(null);
+                    }}
+                  />
+                </div>
+                <EnrolledLearnersPanel
+                  roster={programmeLearnerRoster}
+                  loading={programmeLearnerRosterLoading}
+                  error={programmeLearnerRosterError}
+                  selectedLearnerId={selectedProgrammeLearner ? String(selectedProgrammeLearner.id) : ''}
+                  onSelectLearner={setSelectedProgrammeLearner}
+                  emptyHint={`No learners have been assigned to ${programmeLearnerScope.label || 'this programme'} by the enrolment team yet.`}
+                  scopeLabel={programmeLearnerScope.label || 'this programme'}
+                />
+                {/* Same read the Achievement tab sums, at the same scope this
+                    roster is narrowed to, narrowed further to the person clicked. */}
+                {selectedProgrammeLearner && programmeLearnerScope.identifier && (
+                  <ScopeLearnerAchievementDetail
+                    key={`${programmeLearnerScope.scope}:${programmeLearnerScope.identifier}:${selectedProgrammeLearner.id}`}
+                    scope={programmeLearnerScope.scope}
+                    identifier={programmeLearnerScope.identifier}
+                    learnerId={String(selectedProgrammeLearner.id)}
+                    learnerName={selectedProgrammeLearner.name}
+                    learnerEmail={selectedProgrammeLearner.email}
+                    scopeLabel={programmeLearnerScope.label || PROGRAMME.name}
+                    onClose={() => setSelectedProgrammeLearner(null)}
+                  />
+                )}
+              </WorkspacePanel>
+            )}
 
             <WorkspacePanel
               title="Needs attention"
@@ -3561,7 +3636,6 @@ export default function ProgrammeDetailPage() {
                     { label: 'Group' },
                     { label: 'Coach' },
                     { label: 'Delivery' },
-                    { label: 'Learners', align: 'center' },
                     { label: 'Modules', align: 'center' },
                     { label: 'Actions', align: 'right' },
                   ]}
@@ -3610,7 +3684,6 @@ export default function ProgrammeDetailPage() {
                           ? [group.schedule, group.mode].map(value => clean(value)).filter(Boolean).join(' · ')
                           : 'Not scheduled'}
                       </PlainCell>
-                      <PlainCell align="center">{group.learners}</PlainCell>
                       <PlainCell align="center">{group.modules.length}</PlainCell>
                       <span className="flex items-center justify-end gap-1.5">
                         <NamedActions
@@ -3623,13 +3696,19 @@ export default function ProgrammeDetailPage() {
                               onClick: () => navigate(moduleBuilderGroupUrl(activeCohort?.id || '', group.id)),
                             },
                             {
-                              icon: group.id === selectedGroup ? 'ri-eye-line' : 'ri-graduation-cap-line',
+                              icon: 'ri-graduation-cap-line',
                               label: 'Learners',
-                              title: group.id === selectedGroup
-                                ? `${group.name}'s learners are shown below`
-                                : `Show the learners enrolment has assigned to ${group.name}`,
-                              disabled: group.id === selectedGroup,
-                              onClick: () => setSelectedGroup(group.id),
+                              title: `Show the learners enrolment has assigned to ${group.name}, in the Overview tab`,
+                              onClick: () => {
+                                setProgrammeLearnerScope({
+                                  scope: 'group',
+                                  identifier: group.id,
+                                  label: group.name,
+                                  description: `The timetabled class ${group.name}: its modules, and the learners enrolment placed in it.`,
+                                });
+                                setProgrammeLearnersOpen(true);
+                                goToTab('overview');
+                              },
                             },
                           ]}
                         />
@@ -3643,52 +3722,6 @@ export default function ProgrammeDetailPage() {
                     </>
                   )}
                 />
-
-            {activeCohort && activeGroup && (
-              <>
-                <WorkspacePanel
-                  title={`Learners in ${activeGroup.name}`}
-                  description="Everyone the enrolment team placed in this group. Curriculum owns the delivery structure, not the placements, so the roster is read-only — open a learner to see what they have achieved here."
-                  actions={(
-                    <button
-                      type="button"
-                      onClick={() => setSelectedGroup('')}
-                      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
-                    >
-                      <AppIcon className="ri-close-line text-sm"></AppIcon>
-                      Hide
-                    </button>
-                  )}
-                >
-                  <EnrolledLearnersPanel
-                    roster={learnerRoster}
-                    loading={learnerRosterLoading}
-                    error={learnerRosterError}
-                    selectedLearnerId={selectedLearner ? String(selectedLearner.id) : ''}
-                    onSelectLearner={setSelectedLearner}
-                    emptyHint={`No learners have been assigned to ${activeGroup.name} by the enrolment team yet.`}
-                  />
-                </WorkspacePanel>
-
-                {/* One learner, scoped to this group. The same
-                    `learner-ksb-impact` read the Achievement tab uses, asked
-                    for at the group and narrowed to the person clicked, so
-                    the hours and KSB weight here are the same figures that
-                    tab sums rather than a second calculation of them. */}
-                {selectedLearner && (
-                  <ScopeLearnerAchievementDetail
-                    key={`${activeGroup.id}:${selectedLearner.id}`}
-                    scope="group"
-                    identifier={activeGroup.id}
-                    learnerId={String(selectedLearner.id)}
-                    learnerName={selectedLearner.name}
-                    learnerEmail={selectedLearner.email}
-                    scopeLabel={activeGroup.name}
-                    onClose={() => setSelectedLearner(null)}
-                  />
-                )}
-              </>
-            )}
           </div>
         )}
 
@@ -3867,28 +3900,51 @@ export default function ProgrammeDetailPage() {
               </p>
             )}
 
-            <EntityFilterBar
-              search={sessionSearch}
-              onSearch={setSessionSearch}
-              placeholder={sessionKind === 'live' ? 'Search sessions, dates, groups or KSBs...' : 'Search videos, providers, modules or KSBs...'}
+            {/* One bar for every filter this tab has: cohort and group narrow
+                which modules are in scope, and Module narrows again inside it —
+                it only ever offers modules the scope already contains. */}
+            <DeliveryScopeFilter
+              cohorts={PROGRAMME.cohorts}
+              cohortId={sessionCohortId}
+              groupId={sessionGroupId}
+              summary={`${filteredSessions.length} ${sessionKind === 'live' ? 'live session' : 'recording'}${filteredSessions.length === 1 ? '' : 's'} across ${new Set(filteredSessions.map(session => session.module)).size} module${new Set(filteredSessions.map(session => session.module)).size === 1 ? '' : 's'}`}
+              onChange={next => {
+                setSessionCohortId(next.cohortId);
+                setSessionGroupId(next.groupId);
+                setSessionModuleFilter(current => (sessionModules.includes(current) ? current : ''));
+              }}
               selects={[{
                 label: 'Module',
                 value: sessionModuleFilter,
                 onChange: setSessionModuleFilter,
                 options: [{ value: '', label: 'All modules' }, ...sessionModules.map(name => ({ value: name, label: name }))],
               }]}
-              onReset={() => { setSessionSearch(''); setSessionModuleFilter(''); }}
-              summary={`${filteredSessions.length} ${sessionKind === 'live' ? 'live session' : 'recording'}${filteredSessions.length === 1 ? '' : 's'} across ${new Set(filteredSessions.map(session => session.module)).size} module${new Set(filteredSessions.map(session => session.module)).size === 1 ? '' : 's'}`}
+              search={{
+                value: sessionSearch,
+                onChange: setSessionSearch,
+                placeholder: sessionKind === 'live' ? 'Search sessions, dates, groups or KSBs...' : 'Search videos, providers, modules or KSBs...',
+              }}
               trailing={(
-                <button
-                  type="button"
-                  onClick={() => { void reload({ silent: true }); void loadLiveOccurrences({ skipCache: true }); }}
-                  disabled={occurrencesLoading || refreshing}
-                  className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <AppIcon className={`${occurrencesLoading || refreshing ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} text-sm`}></AppIcon>
-                  Refresh
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => { void reload({ silent: true }); void loadLiveOccurrences({ skipCache: true }); }}
+                    disabled={occurrencesLoading || refreshing}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <AppIcon className={`${occurrencesLoading || refreshing ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} text-sm`}></AppIcon>
+                    Refresh
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setSessionSearch(''); setSessionModuleFilter(''); setSessionCohortId(''); setSessionGroupId(''); }}
+                    disabled={!sessionSearch && !sessionModuleFilter && !sessionCohortId && !sessionGroupId}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-semibold text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <AppIcon className="ri-refresh-line text-sm"></AppIcon>
+                    Reset
+                  </button>
+                </>
               )}
             />
 
@@ -5910,12 +5966,29 @@ function DeliveryScopeFilter({
   groupId,
   onChange,
   summary,
+  selects,
+  search,
+  trailing,
 }: {
   cohorts: Cohort[];
   cohortId: string;
   groupId: string;
   onChange: (next: { cohortId: string; groupId: string }) => void;
   summary?: string;
+  /**
+   * Further filters on the same view — a module, say. They sit in this bar
+   * rather than a second toolbar beneath it: two stacked bars filtering one
+   * table cost a band of empty space and split one question ("which sessions
+   * am I looking at?") across two places to answer it.
+   */
+  selects?: Array<{
+    label: string;
+    value: string;
+    onChange: (value: string) => void;
+    options: Array<{ value: string; label: string }>;
+  }>;
+  search?: { value: string; onChange: (value: string) => void; placeholder: string };
+  trailing?: ReactNode;
 }) {
   const cohort = cohorts.find(item => item.id === cohortId);
   const group = cohort?.groups.find(item => item.id === groupId);
@@ -5966,6 +6039,36 @@ function DeliveryScopeFilter({
           </select>
         </label>
 
+        {(selects || []).map(item => (
+          <label key={item.label} className="flex flex-col gap-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">{item.label}</span>
+            <select
+              className={selectClass}
+              value={item.value}
+              onChange={event => item.onChange(event.target.value)}
+            >
+              {item.options.map(option => (
+                <option key={option.value || 'all'} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+        ))}
+
+        {search && (
+          <label className="flex min-w-[220px] flex-1 flex-col gap-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Search</span>
+            <span className="relative block">
+              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-300"></AppIcon>
+              <input
+                value={search.value}
+                onChange={event => search.onChange(event.target.value)}
+                placeholder={search.placeholder}
+                className="h-9 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition-smooth focus:border-primary-300"
+              />
+            </span>
+          </label>
+        )}
+
         {/* Said back in words. Two selects reading "Sept 2026 / Group B" is a
             setting; "Showing Group B" is what the numbers below are about. */}
         <span className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700">
@@ -5973,6 +6076,8 @@ function DeliveryScopeFilter({
           Showing {group ? group.name : cohort ? cohort.name : 'every cohort and group'}
           {summary ? <span className="font-semibold text-primary-600">· {summary}</span> : null}
         </span>
+
+        {trailing ? <span className="ml-auto flex items-center gap-2">{trailing}</span> : null}
       </div>
     </div>
   );

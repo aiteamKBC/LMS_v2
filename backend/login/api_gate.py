@@ -54,7 +54,11 @@ import os
 from django.db import DatabaseError
 from django.http import JsonResponse
 
-from .sessions import authenticate_request
+from .sessions import (
+    authenticate_request,
+    mark_session_unreadable,
+    session_unreadable,
+)
 
 logger = logging.getLogger("login")
 
@@ -226,6 +230,30 @@ def _forbidden(roles):
     )
 
 
+def _unavailable():
+    """The session could not be read. Fail closed, but do not say "signed out".
+
+    ``503`` rather than ``401`` because the two are different facts and only one
+    of them is the caller's. A 401 tells the SPA the session has ended and it
+    signs the person out and navigates to /login -- so answering an unreadable
+    auth database with 401 converts a few seconds of database trouble into a
+    lost session and a re-typed password, for somebody whose session row is
+    alive and hours from expiring.
+
+    Nothing is admitted either way: this is still a refusal. ``Retry-After``
+    says the condition is expected to pass, which is the honest shape of it.
+    """
+    response = JsonResponse(
+        {
+            "error": "The sign-in service is temporarily unavailable.",
+            "code": "session_unavailable",
+        },
+        status=503,
+    )
+    response["Retry-After"] = "5"
+    return response
+
+
 def refusal_for(path, account, *, django_user_is_authenticated=False):
     """The response refusing this caller, or None to let the request through.
 
@@ -263,9 +291,18 @@ class ApiSessionGateMiddleware:
 
     def __call__(self, request):
         if request.method not in _EXEMPT_METHODS:
+            account = self._account(request)
+
+            # Checked before ``refusal_for``, which only knows "account or no
+            # account" and would answer 401 -- the status that ends the session
+            # in the browser. Either this middleware failed the lookup just now
+            # or ``LoginSessionMiddleware`` did upstream; the flag carries both.
+            if account is None and session_unreadable(request):
+                return _unavailable()
+
             refusal = refusal_for(
                 request.path_info,
-                self._account(request),
+                account,
                 django_user_is_authenticated=self._django_user(request),
             )
             if refusal is not None:
@@ -285,6 +322,7 @@ class ApiSessionGateMiddleware:
             _log_failure(
                 "session", "Could not resolve login session at the API gate"
             )
+            mark_session_unreadable(request)
             return None
 
     @staticmethod

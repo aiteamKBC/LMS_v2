@@ -1,5 +1,10 @@
 import type { CurriculumKsbEntry, CurriculumModule, LibraryComponent } from '@/lib/curriculumApi';
-import { clearCurriculumGetCache } from '@/lib/curriculumApi';
+import {
+  CurriculumApiError,
+  clearCurriculumGetCache,
+  fetchCurriculumJson,
+  invalidateCurriculumCacheByEntity,
+} from '@/lib/curriculumApi';
 import {
   assertComponentUploadAllowed,
   uploadComponentFile,
@@ -250,6 +255,36 @@ export function applyModuleWeekSessionPlan(
 }
 
 /**
+ * Every planned session's name, indexed by session number - 1, read from the
+ * live-session components the module's weeks hold.
+ *
+ * A session's name is not a field of its own: it is the title of the live
+ * session that runs on that date -- what the Components tab shows and what the
+ * Teams series is built from. So the walk here is the one
+ * `applyModuleWeekSessionPlan` above and the backend's
+ * `apply_module_session_plan_to_weeks` both do: live components consume the flat
+ * plan in week-then-display order, and a week with no live session still
+ * consumes one date. Reproducing that is what keeps the name against a date the
+ * name that date's session carries, rather than an off-by-one from every
+ * content-only week above it.
+ *
+ * `null` marks a date a content-only week consumed, so a caller can say the week
+ * holds no live session instead of leaving the row unexplained.
+ */
+export function liveSessionNamesByNumber(module: ModuleCatalogueItem | null | undefined): Array<string | null> {
+  const names: Array<string | null> = [];
+  (module?.weekStructure || []).forEach(week => {
+    const liveComponents = (week.components || []).filter(component => component.type === 'live-session');
+    if (!liveComponents.length) {
+      names.push(null);
+      return;
+    }
+    liveComponents.forEach(component => names.push(String(component.title || '').trim()));
+  });
+  return names;
+}
+
+/**
  * The same weeks, with the dates back in calendar order.
  *
  * Dragging a week to a new place moves what is taught, not when the module
@@ -409,6 +444,42 @@ export function createEmptyWeek(moduleId: string, weekNumber: number): ModuleWee
 
 function normalisePlaceholderText(value: unknown) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+/**
+ * A week's authored title, or '' when the title only repeats its number.
+ *
+ * `createEmptyWeek` seeds a week's title as "Week N", so an unedited module
+ * carries titles that say exactly what the number beside them says. Printed as
+ * `Week ${n} · ${title}` that came out as "Week 1 · Week 1". The number and the
+ * title are worth showing together only when the title adds something.
+ *
+ * The placeholder test is the one `isGeneratedWeekPlaceholderComponent` uses, so
+ * "Week 1", "week 1" and "WEEK  1" are all recognised as the generated default.
+ */
+export function weekAuthoredTitle(week: Pick<ModuleWeek, 'weekNumber' | 'title'>): string {
+  const title = String(week.title || '').trim();
+  if (!title) return '';
+  return normalisePlaceholderText(title) === normalisePlaceholderText(`Week ${week.weekNumber}`) ? '' : title;
+}
+
+/**
+ * What to print beside a week's number badge: the title the Module Builder
+ * holds, exactly as its own rail shows it. Falls back to "Week N" for a week
+ * with no title at all, so the row is never nameless.
+ */
+export function weekHeadingTitle(week: Pick<ModuleWeek, 'weekNumber' | 'title'>): string {
+  return String(week.title || '').trim() || `Week ${week.weekNumber}`;
+}
+
+/**
+ * A week named in running text, where there is no number badge to carry the
+ * number — a KSB's placement, for instance. "Week 3", or "Week 3 - <title>"
+ * when the title says more than the number does.
+ */
+export function weekPlacementLabel(week: Pick<ModuleWeek, 'weekNumber' | 'title'>, separator = ' - '): string {
+  const title = weekAuthoredTitle(week);
+  return title ? `Week ${week.weekNumber}${separator}${title}` : `Week ${week.weekNumber}`;
 }
 
 function isGeneratedWeekPlaceholderComponent(component: ModuleComponent, week: Pick<ModuleWeek, 'weekNumber' | 'title'>) {
@@ -671,13 +742,30 @@ export async function deleteModuleStructure(moduleCatalogueId: string) {
   await apiJson<{ deleted?: boolean; archived?: boolean; deletedAuthoring?: boolean; id?: string }>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/`, {
     method: 'DELETE',
   });
+  // As in `saveModuleStructure`: this write bypasses the shared cache, so the
+  // cached structure of a module that no longer exists has to be dropped here.
+  invalidateCurriculumCacheByEntity('module');
 }
 
+/**
+ * A module's authored weeks and components.
+ *
+ * Read through the shared curriculum cache rather than this file's bare
+ * `apiJson`, because several places want the same module at the same moment --
+ * the Module Builder, the module workspace, the module drawer's session preview,
+ * the week builder's place-component drawer -- and StrictMode mounts each of
+ * them twice in development. Uncached, that was four to six identical requests
+ * for one payload, queued behind each other on the server until their timeout
+ * aborted them; shared, it is one request and a two-minute answer.
+ */
 export async function loadModuleStructure(catalogueId: string): Promise<ModuleCatalogueItem | null> {
   try {
-    return recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(catalogueId)}/structure/`, { timeoutMs: 15000 }));
+    return recalculateModule(await fetchCurriculumJson<ModuleCatalogueItem>(
+      `/curriculum/modules/${encodeURIComponent(catalogueId)}/structure/`,
+      { timeoutMs: 30000 },
+    ));
   } catch (err) {
-    const status = err instanceof ApiError ? err.status : 0;
+    const status = err instanceof ApiError || err instanceof CurriculumApiError ? err.status : 0;
     if (status === 404) return null;
     throw err;
   }
@@ -747,15 +835,13 @@ export async function loadModuleStructuresBatch(modules: ModuleStructureResolveR
 }
 
 export async function updateModuleSettings(moduleCatalogueId: string, payload: Partial<ModuleCatalogueItem>) {
-  try {
-    const response = await apiJson<{ updated: boolean; module: ModuleCatalogueItem }>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/settings/`, {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    });
-    return recalculateModule(response.module);
-  } catch (err) {
-    throw err;
-  }
+  const response = await apiJson<{ updated: boolean; module: ModuleCatalogueItem }>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/settings/`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+  // Same reason as `saveModuleStructure`: an `apiJson` write invalidates nothing.
+  invalidateCurriculumCacheByEntity('module');
+  return recalculateModule(response.module);
 }
 
 export function createLegacyLocalModule(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus }): ModuleCatalogueItem {
@@ -1085,11 +1171,17 @@ export async function saveModuleStructure(moduleCatalogueId: string, payload: Mo
   // it: on this endpoint that name is the legacy alias for the week *list*, and
   // the backend rejects a number there.
   const body = { ...recalculated, weeksNumber: recalculated.weekStructure.length || recalculated.weeks };
-  return recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/structure/`, {
+  const saved = recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/structure/`, {
     method: 'PATCH',
     body: JSON.stringify(body),
     timeoutMs: 90000,
   }));
+  // `apiJson` writes go straight to the network, so nothing above invalidates
+  // the read this save just made stale. `loadModuleStructure` is cached now, and
+  // a save that left the previous weeks in the cache would have the builder
+  // re-read what it had just replaced.
+  invalidateCurriculumCacheByEntity('module');
+  return saved;
 }
 
 export interface ComponentUploadResult {
