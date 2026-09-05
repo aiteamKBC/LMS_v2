@@ -46,9 +46,26 @@ const planResponse = (learner: Record<string, string>, plan: unknown[] = []) => 
 const UNPLACED = { programme: '', cohort: '', group: '' };
 const PLACED = { programme: 'Final Test', cohort: 'Final Cohort', group: 'Aya Group' };
 
+/**
+ * Choose all three, waiting for each list to arrive first. Each one is fetched
+ * when the one above it is picked, so selecting without waiting races the
+ * request that fills the options.
+ */
+async function choosePlacement(user: ReturnType<typeof userEvent.setup>) {
+  await screen.findByRole('option', { name: 'Final Test' });
+  await user.selectOptions(screen.getByLabelText(/Programme/), 'Final Test');
+  await screen.findByRole('option', { name: 'Final Cohort' });
+  await user.selectOptions(screen.getByLabelText(/Cohort/), 'Final Cohort');
+  await screen.findByRole('option', { name: 'Aya Group' });
+  await user.selectOptions(screen.getByLabelText(/Group/), 'Aya Group');
+}
+
 describe('learning plan placement step', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    // reset, not clear: one case queues two `mockResolvedValueOnce` responses,
+    // and clearAllMocks leaves an unconsumed queue behind for the next case —
+    // which then read a placed learner and found no chooser.
+    vi.resetAllMocks();
     fetchProgrammes.mockResolvedValue(['Final Test', 'MBA']);
     fetchCohorts.mockResolvedValue(['Final Cohort']);
     fetchGroups.mockResolvedValue(['Aya Group', 'Final Group']);
@@ -86,12 +103,14 @@ describe('learning plan placement step', () => {
     const save = screen.getByRole('button', { name: 'Save and continue' });
     expect(save.hasAttribute('disabled')).toBe(true);
 
+    await screen.findByRole('option', { name: 'Final Test' });
     await user.selectOptions(screen.getByLabelText(/Programme/), 'Final Test');
-    await waitFor(() => expect(fetchCohorts).toHaveBeenCalledWith('Final Test'));
+    await screen.findByRole('option', { name: 'Final Cohort' });
     await user.selectOptions(screen.getByLabelText(/Cohort/), 'Final Cohort');
+    // Two of three is still not a placement.
     expect(save.hasAttribute('disabled')).toBe(true);
 
-    await waitFor(() => expect(fetchGroups).toHaveBeenCalledWith('Final Test', 'Final Cohort'));
+    await screen.findByRole('option', { name: 'Aya Group' });
     await user.selectOptions(screen.getByLabelText(/Group/), 'Aya Group');
     expect(save.hasAttribute('disabled')).toBe(false);
   });
@@ -107,11 +126,7 @@ describe('learning plan placement step', () => {
     render(<LearningPlanModal learnerId="91" learnerName="Aya Aya Test" onClose={vi.fn()} onSaved={onSaved} />);
     await screen.findByText(/is not on a programme yet/);
 
-    await user.selectOptions(screen.getByLabelText(/Programme/), 'Final Test');
-    await waitFor(() => expect(fetchCohorts).toHaveBeenCalled());
-    await user.selectOptions(screen.getByLabelText(/Cohort/), 'Final Cohort');
-    await waitFor(() => expect(fetchGroups).toHaveBeenCalled());
-    await user.selectOptions(screen.getByLabelText(/Group/), 'Aya Group');
+    await choosePlacement(user);
     await user.click(screen.getByRole('button', { name: 'Save and continue' }));
 
     await waitFor(() => expect(updateEnrolmentUser).toHaveBeenCalledWith('91', {

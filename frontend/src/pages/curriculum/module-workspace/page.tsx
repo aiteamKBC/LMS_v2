@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
+import { formatHoursMinutes } from '@/lib/format';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
 import {
   fetchCurriculumModuleKsbCoverage,
@@ -459,7 +460,9 @@ export default function ModuleWorkspacePage() {
       actions: teamsSummary ? (
         <>
           {occurrence ? (
-            <MeetingChip status={cleanText(occurrence.status, 'scheduled')} attended={attended} />
+            <span>
+              {formatCalendarDateTime(occurrence.scheduled_start)} · {cleanText(occurrence.status, 'scheduled')} · {occurrence.participant_count || occurrence.attendance?.filter(record => record.attended !== false).length || 0} attended
+            </span>
           ) : (
             <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-700">
               {teamsLoading ? 'Loading…' : 'Not on the calendar'}
@@ -623,7 +626,7 @@ export default function ModuleWorkspacePage() {
             },
             { icon: 'ri-calendar-line', label: 'Start', value: formatDateLabel(module?.startDate) },
             { icon: 'ri-flag-line', label: 'End', value: formatDateLabel(module?.endDate) },
-            { icon: 'ri-time-line', label: 'Expected OTJH', value: `${totalOtjh}h` },
+            { icon: 'ri-time-line', label: 'Expected OTJH', value: formatHoursMinutes(totalOtjh) },
             { icon: 'ri-layout-4-line', label: 'Components', value: componentCount },
           ]}
           actions={(
@@ -683,7 +686,7 @@ export default function ModuleWorkspacePage() {
               <DetailRow label="Module ID" value={<code className="text-[11px]">{catalogueId || '—'}</code>} />
               <DetailRow label="Weeks" value={weekStructure.length || module?.weeks || 0} />
               <DetailRow label="Components" value={componentCount} />
-              <DetailRow label="Expected OTJH" value={`${totalOtjh}h`} />
+              <DetailRow label="Expected OTJH" value={formatHoursMinutes(totalOtjh)} />
               <DetailRow label="KSB mappings" value={ksbMappingCount} />
               <DetailRow label="Quality score" value={structure ? `${structure.qualityScore}%` : '—'} />
               {visibleNotes(module?.notes) && <DetailRow label="Notes" value={visibleNotes(module?.notes)} />}
@@ -917,7 +920,7 @@ export default function ModuleWorkspacePage() {
                               {weekOtjh > 0 && (
                                 <span className="inline-flex items-center gap-1.5 rounded-full bg-primary-50 px-3.5 py-1.5 text-[11px] font-bold text-primary-700">
                                   <AppIcon className="ri-time-line text-[13px]"></AppIcon>
-                                  {weekOtjh}h OTJH
+                                  {formatHoursMinutes(weekOtjh)} OTJH
                                 </span>
                               )}
                             </div>
@@ -966,7 +969,7 @@ export default function ModuleWorkspacePage() {
                                           <span className="text-[10px] font-semibold italic text-foreground-400">No KSBs mapped</span>
                                         )}
                                         <span className="rounded-full bg-background-100 px-2.5 py-1.5 text-[11px] font-bold text-foreground-500">
-                                          {component.expectedOtjh || 0}h
+                                          {formatHoursMinutes(component.expectedOtjh || 0)}
                                         </span>
                                       </div>
                                     </li>
@@ -1057,6 +1060,117 @@ export default function ModuleWorkspacePage() {
             learnerStatus="all"
             active={tab === 'achievement'}
           />
+        )}
+
+        {tab === 'teams' && (
+          <div className="space-y-5">
+            {teamsError && <InlineError message={teamsError} />}
+            <WorkspacePanel
+              title="Teams meeting"
+              description="What the Microsoft Teams calendar holds for this module, read-only: the series, its meeting dates, and the attendance, transcripts and recordings Teams has returned. Creating the calendar, sending session dates, invitations and fetching results are all done on the Teams Meetings page."
+              actions={(
+                <Link
+                  to={`/curriculum/teams-meetings?module=${encodeURIComponent(catalogueId)}`}
+                  title="Open this module on the Teams Meetings page, where the calendar is created, sent the session dates and synced."
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700"
+                >
+                  <AppIcon className="ri-external-link-line text-sm"></AppIcon>
+                  Manage on Teams Meetings
+                </Link>
+              )}
+            >
+              {teamsSummary ? (
+                <>
+                  <DetailRow label="Status" value={<StatusBadge status={teamsSummary.status} />} />
+                  <DetailRow label="Organizer" value={teamsSummary.organizerEmail || '—'} />
+                  <DetailRow label="Repeats" value={teamsSummary.repeatPattern} />
+                  <DetailRow label="First meeting" value={formatDateTimeLabel(teamsSummary.startDateTime)} />
+                  <DetailRow label="Next meeting" value={teamsSummary.nextOccurrence ? formatDateTimeLabel(teamsSummary.nextOccurrence) : 'None upcoming'} />
+                  <DetailRow label="Meeting dates" value={`${teamsSummary.occurrenceCount} (${teamsSummary.upcomingCount} upcoming)`} />
+                  <DetailRow
+                    label="Join link"
+                    value={teamsSummary.joinUrl ? (
+                      <a href={teamsSummary.joinUrl} target="_blank" rel="noreferrer" className="text-primary-700 hover:underline">Open in Teams</a>
+                    ) : '—'}
+                  />
+                </>
+              ) : (
+                <p className="text-[12px] text-foreground-500">
+                  {planLoading && !plannedOccurrences.length && 'Reading this module’s generated session dates…'}
+                  {!planLoading && !plannedOccurrences.length && 'No Teams calendar for this module yet, and no session dates to put on one. Set the start date, the weeks and the delivery day with Edit module first — the Schedule tab lists the dates a calendar would be built from.'}
+                  {Boolean(plannedOccurrences.length) && `No Teams calendar for this module yet. Create one on the Teams Meetings page: it puts a meeting on each of the ${plannedOccurrences.length} generated session date${plannedOccurrences.length === 1 ? '' : 's'}, holiday shifts included, and writes the join link into this module’s live-session components.`}
+                </p>
+              )}
+            </WorkspacePanel>
+
+            {teamsSummary?.liveSessionId && (
+              <WorkspacePanel
+                title="Attendance and recordings per meeting"
+                description="One block per meeting date. Teams only fills these in after a meeting has run — fetch the latest from the Teams Meetings page."
+              >
+                {teamsLoading && <p className="text-[12px] text-foreground-400">Loading meeting history…</p>}
+                {!teamsLoading && !teams?.occurrences?.length && (
+                  <p className="text-[12px] text-foreground-500">
+                    Nothing has been fetched yet. Attendance and recordings only exist once a meeting has actually run, and are pulled in from the Teams Meetings page.
+                  </p>
+                )}
+                <div className="space-y-3">
+                  {(teams?.occurrences || []).map(occurrence => (
+                    <div key={occurrence.id} className="overflow-hidden rounded-xl border border-background-200">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-background-200 bg-background-100/60 px-4 py-2.5">
+                        <span className="text-[13px] font-bold text-foreground-900">
+                          Meeting {occurrence.session_number} · {formatDateTimeLabel(occurrence.scheduled_start)}
+                        </span>
+                        <span className="text-[11px] font-semibold text-foreground-500">
+                          {occurrence.participant_count} participant{occurrence.participant_count === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                      <div className="grid gap-4 p-4 sm:grid-cols-2">
+                        <div>
+                          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-foreground-400">Who attended</p>
+                          {occurrence.attendance?.some(record => record.attended !== false) ? (
+                            <ul className="space-y-1">
+                              {occurrence.attendance.filter(record => record.attended !== false).slice(0, 8).map(record => (
+                                <li key={record.id} className="flex items-center justify-between gap-2 text-[12px]">
+                                  <span className="min-w-0 truncate text-foreground-800">{record.display_name || record.email}</span>
+                                  <span className="shrink-0 text-foreground-400">
+                                    {Math.round((record.total_attendance_seconds || 0) / 60)} min
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-[12px] text-foreground-400">No attendance reported yet.</p>
+                          )}
+                        </div>
+                        <div>
+                          <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-foreground-400">Transcript &amp; recording</p>
+                          {occurrence.artifacts?.length ? (
+                            <ul className="space-y-1">
+                              {occurrence.artifacts.map(artifact => (
+                                <li key={artifact.id} className="text-[12px]">
+                                  <a
+                                    href={teamsMeetingArtifactPreviewUrl(teamsSummary.liveSessionId, artifact.id)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-primary-700 hover:underline"
+                                  >
+                                    {teamsArtifactLabel(artifact.artifact_type)}
+                                  </a>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-[12px] text-foreground-400">No transcript or recording yet.</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </WorkspacePanel>
+            )}
+          </div>
         )}
       </div>
 

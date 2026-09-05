@@ -480,12 +480,37 @@ def _normalise_component_ksb_mappings(value):
 
 
 def completed_hours_from_progress(progress, components=None):
+    """Hours the learner has actually done, for the OTJ total.
+
+    Completed OTJ hours are what the learner recorded on submission, NOT the
+    component's authored `expected_otjh` — that is the *plan*, and counting it
+    credited a learner the full 2h for an assignment they finished in 33
+    seconds. `verified_seconds` is the server-checked time the submit path
+    stores, so it is what a completed activity is worth.
+
+    `reportedTime` is deliberately not consulted: in the stored data it holds
+    the planned figure ("2h" on rows whose verified time was seconds), so
+    reading it would reintroduce exactly the planned-hours total this avoids.
+    `timeTaken` is not used either — it is a clock string whose minutes field
+    can exceed 59 ("60:00"), which no HH:MM:SS parse handles correctly.
+
+    Rows predating time tracking carry no verified time at all; those still
+    fall back to the authored hours, because dropping them would silently zero
+    historical activity rather than measure it.
+    """
     if not isinstance(progress, list):
         return "0"
     expected_hours_by_component = _component_expected_hours_lookup(components)
     hours = 0.0
     for record in dedupe_otjh_progress_records(progress):
         component_id = _s(record.get("componentId"))
+        verified_seconds = _number(
+            record.get("verifiedSeconds") if record.get("verifiedSeconds") is not None
+            else record.get("verified_seconds")
+        )
+        if verified_seconds is not None:
+            hours += max(verified_seconds, 0) / 3600
+            continue
         record_expected = _number(record.get("expectedOtjh") or record.get("expected_otjh"))
         if record_expected is not None:
             hours += record_expected

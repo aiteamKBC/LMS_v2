@@ -39,6 +39,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ProgressBar } from '@/components/ui/ProgressMetric';
 import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
 import { toneStyle, statusTone, type StatusTone } from '@/lib/statusTone';
+import { waitingCopy } from '@/utils/learnerAccessGate';
 import { displayValue, EMPTY_VALUE, ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
 import { fetchDemoMaterialSummaries, type DemoMaterialTable } from '@/api/demoMaterials';
 
@@ -559,11 +560,14 @@ export default function LearnerOverview() {
 
   const otjPercent = isRealMode ? (otj.targetHours > 0 ? otj.targetPercent : otj.percent) : Math.round((p.otjhCompleted / p.otjhTarget) * 100);
   const otjValue = isRealMode
-    ? formatHoursMinutes(otj.activities > 0 ? otj.completedHours : otj.plannedHours)
-    : `${p.otjhCompleted}h`;
+    // Always the hours actually logged. Falling back to the planned total when
+    // nothing had been submitted yet showed a learner the programme's whole
+    // OTJ allocation as though they had already done it.
+    ? formatHoursMinutes(otj.completedHours)
+    : formatHoursMinutes(p.otjhCompleted);
   const otjCaption = isRealMode
     ? (otj.targetHours > 0 ? `Target ${formatHoursMinutes(otj.targetHours)}${otj.status ? ` · ${otj.status}` : ''}` : `${otj.activities} ${otj.activities === 1 ? 'activity' : 'activities'} logged`)
-    : `${p.otjhCompleted}/${p.otjhTarget}h planned`;
+    : `${formatHoursMinutes(p.otjhCompleted)} / ${formatHoursMinutes(p.otjhTarget)} planned`;
   const otjTone: StatusTone = isRealMode ? (otj.status ? statusTone(otj.status) : 'brand') : 'brand';
 
   const ksbTotal = isRealMode ? (real?.ksbs.length || 0) : p.ksbTotal;
@@ -731,7 +735,10 @@ export default function LearnerOverview() {
      message beats a wall of figures that mean nothing yet. */
   if (isFreshUser || isCommercialWaiting) {
     const commercialWaiting = isCommercialWaiting;
-    const startDate = formatProgrammeStartDate(real?.programmeStartDate);
+    // What is actually holding this learner back, as progression sees it —
+    // an unsigned document, an unassigned plan, or a date still to come. The
+    // page used to say "your start date has not arrived" whichever it was.
+    const waiting = waitingCopy(real?.accessGate, { commercial: kind === 'commercial' });
     return (
       <WorkspaceShell
         role="learner"
@@ -751,7 +758,7 @@ export default function LearnerOverview() {
                   <AppIcon className="ri-time-line text-3xl"></AppIcon>
                 </span>
                 <h2 className="text-xl md:text-2xl font-heading font-bold text-foreground-900 mb-3">
-                  {commercialWaiting ? 'Your programme starts soon' : <>Your enrolment hasn&apos;t started yet</>}
+                  {commercialWaiting ? waiting.title : <>Your enrolment hasn&apos;t started yet</>}
                 </h2>
                 <p className={commercialWaiting ? 'hidden' : 'text-[14px] text-foreground-500 leading-relaxed max-w-lg mx-auto'}>
                   Your account is set up and ready. The enrolment team will be in touch to begin
@@ -761,18 +768,16 @@ export default function LearnerOverview() {
                   Once they start the process, your training plan, learning materials and progress
                   will appear here automatically.
                 </p>
-                {commercialWaiting && (
-                  <>
-                    <p className="text-[14px] text-foreground-500 leading-relaxed max-w-lg mx-auto">
-                      {startDate
-                        ? <>Your programme is scheduled to start on <strong className="text-foreground-700">{startDate}</strong>.</>
-                        : 'Your programme start date has not been set yet.'}
-                    </p>
-                    <p className="text-[13px] text-foreground-400 leading-relaxed max-w-lg mx-auto mt-3">
-                      You will wait until the starting date of the programme to start. Your learning access will become active automatically when the programme begins.
-                    </p>
-                  </>
-                )}
+                {commercialWaiting && waiting.lines.map((line, index) => (
+                  <p
+                    key={line}
+                    className={index === 0
+                      ? 'text-[14px] text-foreground-500 leading-relaxed max-w-lg mx-auto'
+                      : 'text-[13px] text-foreground-400 leading-relaxed max-w-lg mx-auto mt-3'}
+                  >
+                    {line}
+                  </p>
+                ))}
               </div>
 
               <div className="px-6 md:px-10 py-5 bg-background-100/60 border-t border-foreground-200/60">
@@ -781,11 +786,7 @@ export default function LearnerOverview() {
                 </p>
                 <ol className="space-y-2.5">
                   {[
-                    ...(commercialWaiting ? [
-                      startDate ? `Your programme starts on ${startDate}.` : 'Your programme start date is confirmed by your programme team.',
-                      'You will wait until the programme start date before beginning delivery.',
-                      'Your commercial learning access will activate automatically when it starts.',
-                    ] : [
+                    ...(commercialWaiting ? waiting.steps : [
                       'The enrolment team reviews your details and starts your enrolment.',
                       'You complete your enrolment form and book your onboarding reviews.',
                       'Your training plan is built and your programme begins.',

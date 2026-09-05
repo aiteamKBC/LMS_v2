@@ -106,3 +106,18 @@ export async function getEvidenceDownloadUrl(kind: LearnerKind, id: string, file
   const data = await parse<{ url: string }>(res);
   return data.url;
 }
+
+/** Remove one of the learner's own evidence files.
+ *
+ * Reuploading is this followed by an ordinary upload — there is no separate
+ * replace endpoint. The server refuses (409) once the file has been submitted
+ * for marking. */
+export async function deleteEvidence(kind: LearnerKind, id: string, fileId: string): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/${kind}/${id}/${fileId}/`, { method: 'DELETE' });
+  } catch {
+    throw new Error('Could not reach the server. Is the backend running on port 8000?');
+  }
+  await parse<{ deleted: boolean }>(res);
+}

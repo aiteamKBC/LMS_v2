@@ -143,6 +143,8 @@ function mapCoachEvent(ev: LearnerCalendarEvent, learnerName: string): CalendarE
   if (!y || !m || !d) return null;
   const dateObj = new Date(y, m - 1, d);
   const dayName = DAYS_OF_WEEK[dateObj.getDay() === 0 ? 6 : dateObj.getDay() - 1];
+  // The grid parses this, so an unbooked slot still needs a time to sit at —
+  // it is flagged below rather than dressed up as an arranged hour.
   let time = '09:00–10:00';
   if (ev.scheduledTime) {
     const [h, min] = ev.scheduledTime.split(':').map(Number);
@@ -170,6 +172,7 @@ function mapCoachEvent(ev: LearnerCalendarEvent, learnerName: string): CalendarE
       : `${ev.title} session with ${ev.coachName || 'your coach'} for ${learnerName}.`),
     isoDate: iso,
     meetingLink: ev.meetingLink || undefined,
+    timeToBeConfirmed: !ev.scheduledTime,
   };
 }
 
@@ -888,7 +891,7 @@ export function LearnerCalendarContent() {
             <div className="flex items-center justify-between mb-4"><span className={`text-xs font-semibold px-2 py-1 rounded-full ${statusConfig[showEventDetails.status].cls}`}>{statusConfig[showEventDetails.status].label}</span><button onClick={() => setShowEventDetails(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button></div>
             <h3 className="text-lg font-heading font-bold text-foreground-900 mb-2">{showEventDetails.title}</h3>
             <div className="space-y-2 mb-4">
-              <div className="flex items-center gap-2 text-sm text-foreground-600"><AppIcon className="ri-calendar-line text-foreground-400"></AppIcon><span className="font-semibold">{showEventDetails.date}, {showEventDetails.dayName} &middot; {showEventDetails.time}</span></div>
+              <div className="flex items-center gap-2 text-sm text-foreground-600"><AppIcon className="ri-calendar-line text-foreground-400"></AppIcon><span className="font-semibold">{showEventDetails.date}, {showEventDetails.dayName} &middot; {showEventDetails.timeToBeConfirmed ? 'Time to be confirmed' : showEventDetails.time}</span></div>
               <div className="flex items-center gap-2 text-sm text-foreground-600"><AppIcon className="ri-map-pin-line text-foreground-400"></AppIcon><span>{showEventDetails.location}</span></div>
               <div className="flex items-center gap-2 text-sm text-foreground-600"><AppIcon className="ri-team-line text-foreground-400"></AppIcon><span>{showEventDetails.club}</span></div>
             </div>

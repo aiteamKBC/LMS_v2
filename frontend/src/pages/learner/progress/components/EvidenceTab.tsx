@@ -3,6 +3,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { getEvidenceDownloadUrl, uploadEvidence, type EvidenceRecord } from '@/api/evidence';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
+import { formatHoursMinutes } from '@/lib/format';
 
 /* ═══════════════════════════════════════════════════════════════
    TYPES
@@ -230,7 +231,7 @@ function EvidenceCard({ ev, onClick }: { ev: EvidenceItem; onClick: () => void }
         </span>
         {ev.otjh > 0 && <>
           <span className="text-foreground-200">·</span>
-          <span className="flex items-center gap-1"><AppIcon className="ri-time-line text-[10px]" />{ev.otjh}h OTJH</span>
+          <span className="flex items-center gap-1"><AppIcon className="ri-time-line text-[10px]" />{formatHoursMinutes(ev.otjh)} OTJH</span>
         </>}
       </div>
       <div className="flex items-center gap-1.5 mb-3 flex-wrap">
@@ -283,7 +284,7 @@ function EvidenceRow({ ev, onClick }: { ev: EvidenceItem; onClick: () => void })
           <span>{ev.documents?.[0]?.size || 'Size unavailable'}</span>
           <span className="text-foreground-200">·</span>
           <span>{ev.type}</span>
-          {ev.otjh > 0 && <><span className="text-foreground-200">·</span><span>{ev.otjh}h OTJH</span></>}
+          {ev.otjh > 0 && <><span className="text-foreground-200">·</span><span>{formatHoursMinutes(ev.otjh)} OTJH</span></>}
         </div>
       </div>
       <div className="hidden sm:flex items-center gap-1.5 shrink-0">
@@ -817,7 +818,7 @@ export function EvidenceTab({
               <MetaBox label="Status" value={STATUS_CONFIG[selectedItem.status].label} />
               <MetaBox label="Session" value={selectedItem.sessionType || 'N/A'} />
               <MetaBox label="Submitted" value={selectedItem.date} />
-              {selectedItem.otjh > 0 && <MetaBox label="OTJH" value={`${selectedItem.otjh}h`} />}
+              {selectedItem.otjh > 0 && <MetaBox label="OTJH" value={formatHoursMinutes(selectedItem.otjh)} />}
             </div>
             {selectedItem.ksb.length > 0 && <div>
               <h4 className="text-[11px] font-semibold text-foreground-400 uppercase tracking-wider mb-2">Linked KSBs</h4>

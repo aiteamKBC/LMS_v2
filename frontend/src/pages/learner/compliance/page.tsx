@@ -3,6 +3,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { useToast } from '@/hooks/useToast';
+import { formatHoursMinutes } from '@/lib/format';
 import {
   fetchAgreement,
   signAgreement,
@@ -259,7 +260,7 @@ export default function LearnerCompliancePage() {
                     />
                     <Field
                       label="Planned off-the-job training"
-                      value={agreementShown.plannedOtjHours != null ? `${agreementShown.plannedOtjHours} hours` : ''}
+                      value={agreementShown.plannedOtjHours != null ? formatHoursMinutes(agreementShown.plannedOtjHours) : ''}
                       hint={
                         agreementData?.meta.moduleCount
                           ? `from ${agreementData.meta.moduleCount} module${agreementData.meta.moduleCount === 1 ? '' : 's'} on your learning plan`
@@ -372,7 +373,7 @@ export default function LearnerCompliancePage() {
                       label="Planned off-the-job training"
                       value={
                         (written ?? writtenData)?.delivery?.totalOtjHours != null
-                          ? `${(written ?? writtenData)!.delivery.totalOtjHours} hours`
+                          ? formatHoursMinutes((written ?? writtenData)!.delivery.totalOtjHours!)
                           : ''
                       }
                       hint={

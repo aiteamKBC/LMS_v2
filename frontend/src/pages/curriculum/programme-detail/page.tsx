@@ -37,6 +37,7 @@ import {
 } from '@/pages/curriculum/shared/entities/ui';
 import { archiveCohortWithConfirm, archiveGroupWithConfirm, archiveModuleWithConfirm } from '@/pages/curriculum/shared/entities/archive';
 import { curriculumNavItems } from '@/mocks/navigation';
+import { formatHoursMinutes } from '@/lib/format';
 import type {
   CurriculumCohort,
   CurriculumComponent,
@@ -176,7 +177,8 @@ interface Module {
   startDate?: string;
   endDate?: string;
   otjh: number;
-  status: 'published' | 'approved' | 'in-review' | 'draft';
+  status: 'published' | 'approved' | 'in-review' | 'draft' | 'archived';
+  archived: boolean;
   ksbTags: string[];
   ksbMapping: ModuleKsbMappingSummary[];
   weeksData: Week[];
@@ -249,7 +251,8 @@ interface Group {
   tutor: string;
   startDate: string;
   endDate: string;
-  status: 'active' | 'planned' | 'completed';
+  status: 'active' | 'planned' | 'completed' | 'archived';
+  archived: boolean;
   modules: Module[];
   schedule: string;
   mode: string;
@@ -266,7 +269,8 @@ interface Cohort {
   /** True when the date above was typed rather than calculated. */
   apprenticeshipEndIsManual: boolean;
   epaMonths: number | null;
-  status: 'active' | 'planned' | 'completed';
+  status: 'active' | 'planned' | 'completed' | 'archived';
+  archived: boolean;
   learners: number;
   groups: Group[];
   holidayIds?: string[];
@@ -769,11 +773,13 @@ function fallbackKsbRollup(codes: string[], moduleName: string, weight?: number)
 }
 
 function cohortStatus(status: string): Cohort['status'] {
+  if (status === 'archived') return 'archived';
   if (status === 'planned' || status === 'completed') return status;
   return 'active';
 }
 
 function groupStatus(status: string): Group['status'] {
+  if (status === 'archived') return 'archived';
   if (status === 'completed') return 'completed';
   if (status === 'planned' || status === 'pending') return 'planned';
   return 'active';
@@ -797,8 +803,16 @@ function isArchivedCurriculumModule(module: Pick<CurriculumModule, 'status' | 'a
 }
 
 function moduleStatus(status: string): Module['status'] {
+  if (status === 'archived') return 'archived';
   if (status === 'published' || status === 'approved' || status === 'in-review' || status === 'draft') return status;
   return status === 'review' ? 'in-review' : 'published';
+}
+
+type RecordStatusFilter = 'active' | 'archived' | 'all';
+
+function matchesRecordStatus(archived: boolean, filter: RecordStatusFilter) {
+  if (filter === 'all') return true;
+  return filter === 'archived' ? archived : !archived;
 }
 
 function sessionStatus(status: string): Session['status'] {
@@ -1277,6 +1291,9 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     const ksbRollup = componentRollup.length ? componentRollup : fallbackKsbRollup(fallbackKsbCodes, liveModule.name);
     const ksbTags = ksbRollup.map(item => item.ksb);
     const moduleOtjh = Math.round(weeksData.reduce((sum, week) => sum + Number(week.otjh || 0), 0) * 10) / 10;
+    const archived = Boolean(liveModule.isProgrammeDeleted)
+      || normalise(liveModule.status) === 'archived'
+      || normalise(liveModule.deliveryStatus) === 'archived';
 
     return {
       id: liveModule.id,
@@ -1297,7 +1314,8 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       startDate: clean(liveModule.startDate),
       endDate: clean(liveModule.endDate),
       otjh: moduleOtjh,
-      status: moduleStatus(liveModule.status),
+      status: archived ? 'archived' : moduleStatus(liveModule.status),
+      archived,
       ksbTags,
       ksbMapping: ksbRollup.map(item => ({
         ksb: item.ksb,
@@ -1344,32 +1362,40 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     return (group.modules ?? []).some(name => normalise(name) === normalise(module.name));
   };
 
-  const cohorts = programmeCohorts.map(cohort => ({
-    id: cohort.id,
-    name: cohort.name,
-    startDate: formatDateLabel(cohort.startDate),
-    endDate: formatDateLabel(cohort.endDate),
-    apprenticeshipEndDate: formatDateLabel(cohort.apprenticeshipEndDate || ''),
-    apprenticeshipEndIsManual: Boolean(cohort.apprenticeshipEndOverride),
-    epaMonths: cohort.epaMonths ?? null,
-    status: cohortStatus(cohort.status),
-    learners: cohort.learners || 0,
-    holidayIds: (cohort.holidayIds || []).map(String),
-    holidays: (cohort.holidayIds || []).map(id => holidayById.get(String(id))).filter((holiday): holiday is CurriculumHoliday => Boolean(holiday)),
-    groups: (groupsByCohort.get(cohort.id) ?? []).map(group => ({
-      id: group.id,
-      name: group.name,
-      learners: group.learners || 0,
-      coach: group.coach || 'Unassigned',
-      tutor: group.tutor || 'Unassigned',
-      startDate: formatDateLabel(group.startDate),
-      endDate: formatDateLabel(group.endDate),
-      status: groupStatus(group.status),
-      schedule: group.schedule || '',
-      mode: group.mode || 'Live',
-      modules: modules.filter(module => moduleMatchesGroup(module, cohort.name, group)),
-    })),
-  }));
+  const cohorts = programmeCohorts.map(cohort => {
+    const archived = normalise(cohort.status) === 'archived';
+    return {
+      id: cohort.id,
+      name: cohort.name,
+      startDate: formatDateLabel(cohort.startDate),
+      endDate: formatDateLabel(cohort.endDate),
+      apprenticeshipEndDate: formatDateLabel(cohort.apprenticeshipEndDate || ''),
+      apprenticeshipEndIsManual: Boolean(cohort.apprenticeshipEndOverride),
+      epaMonths: cohort.epaMonths ?? null,
+      status: cohortStatus(cohort.status),
+      archived,
+      learners: cohort.learners || 0,
+      holidayIds: (cohort.holidayIds || []).map(String),
+      holidays: (cohort.holidayIds || []).map(id => holidayById.get(String(id))).filter((holiday): holiday is CurriculumHoliday => Boolean(holiday)),
+      groups: (groupsByCohort.get(cohort.id) ?? []).map(group => {
+        const groupArchived = normalise(group.status) === 'archived';
+        return {
+          id: group.id,
+          name: group.name,
+          learners: group.learners || 0,
+          coach: group.coach || 'Unassigned',
+          tutor: group.tutor || 'Unassigned',
+          startDate: formatDateLabel(group.startDate),
+          endDate: formatDateLabel(group.endDate),
+          status: groupStatus(group.status),
+          archived: groupArchived,
+          schedule: group.schedule || 'TBD',
+          mode: group.mode || 'Live',
+          modules: modules.filter(module => moduleMatchesGroup(module, cohort.name, group)),
+        };
+      }),
+    };
+  });
 
   // Cohorts are only the programme's cohort records. A module whose stored
   // cohort is not one of them used to have a cohort synthesized for it here,
@@ -2005,12 +2031,14 @@ export default function ProgrammeDetailPage() {
   // Delivery tab: which cohort's groups are shown.
   const [selectedCohort, setSelectedCohort] = useState('');
   const [cohortSearch, setCohortSearch] = useState('');
-  const [cohortStatusFilter, setCohortStatusFilter] = useState('');
+  const [cohortStatusFilter, setCohortStatusFilter] = useState<RecordStatusFilter>('active');
   const [groupSearch, setGroupSearch] = useState('');
   const [groupCoachFilter, setGroupCoachFilter] = useState('');
+  const [groupStatusFilter, setGroupStatusFilter] = useState<RecordStatusFilter>('active');
   const [moduleSearch, setModuleSearch] = useState('');
   const [moduleCohortFilter, setModuleCohortFilter] = useState('');
   const [moduleGroupFilter, setModuleGroupFilter] = useState('');
+  const [moduleStatusFilter, setModuleStatusFilter] = useState<RecordStatusFilter>('active');
   const [sessionKind, setSessionKind] = useState<'live' | 'recorded'>('live');
   const [sessionSearch, setSessionSearch] = useState('');
   const [sessionModuleFilter, setSessionModuleFilter] = useState('');
@@ -2370,10 +2398,8 @@ export default function ProgrammeDetailPage() {
 
   // ---------------------------------------------------------------- delivery
 
-  // Archived cohorts are loaded but treated as opt-in: they stay out of the
-  // default list (and out of "All statuses", which means "all live statuses") so
-  // day-to-day delivery views are not padded with retired cohorts. Choosing
-  // "Archived" explicitly is the only way to surface them.
+  // Archived delivery records are loaded for audit/history, but remain opt-in
+  // so the default operational view only contains records people can work on.
   const archivedCohortCount = useMemo(
     () => PROGRAMME.cohorts.filter(cohortItem => normalise(cohortItem.status) === 'archived').length,
     [PROGRAMME.cohorts],
@@ -2385,21 +2411,23 @@ export default function ProgrammeDetailPage() {
     () => PROGRAMME.cohorts.flatMap(cohortItem => cohortItem.groups.map(group => ({ cohort: cohortItem, group }))),
     [PROGRAMME.cohorts],
   );
-  const totalGroups = allGroups.length;
-  const unstaffedGroupCount = allGroups.filter(({ group }) => !isStaffAssigned(group.coach)).length;
+  const archivedGroupCount = allGroups.filter(({ group }) => group.archived).length;
+  const activeGroups = allGroups.filter(({ cohort, group }) => !cohort.archived && !group.archived);
+  const totalGroups = activeGroups.length;
+  const unstaffedGroupCount = activeGroups.filter(({ group }) => !isStaffAssigned(group.coach)).length;
+  const activeModules = PROGRAMME.modules.filter(module => !module.archived);
+  const archivedModuleCount = PROGRAMME.modules.length - activeModules.length;
 
   const filteredCohorts = useMemo(() => {
     const query = normalise(cohortSearch);
     return PROGRAMME.cohorts.filter(cohortItem => {
       // Taken out the moment "Archive" is confirmed, ahead of the reload that
       // will otherwise leave it out — see `archiveCohort`.
-      if (archivedCohortIds.has(cohortItem.id)) return false;
-      const isArchived = normalise(cohortItem.status) === 'archived';
-      if (cohortStatusFilter === 'archived' ? !isArchived : isArchived) return false;
+      if (cohortStatusFilter !== 'archived' && archivedCohortIds.has(cohortItem.id)) return false;
+      if (!matchesRecordStatus(cohortItem.archived, cohortStatusFilter)) return false;
       const matchesQuery = !query || [cohortItem.name, cohortItem.status, cohortItem.startDate, cohortItem.endDate]
         .some(value => normalise(value).includes(query));
-      const matchesStatus = !cohortStatusFilter || cohortStatusFilter === 'archived' || cohortItem.status === cohortStatusFilter;
-      return matchesQuery && matchesStatus;
+      return matchesQuery;
     });
   }, [PROGRAMME.cohorts, archivedCohortIds, cohortSearch, cohortStatusFilter]);
 
@@ -2416,8 +2444,8 @@ export default function ProgrammeDetailPage() {
   }, [filteredCohorts, selectedCohort]);
 
   const groupCohorts = useMemo(
-    () => PROGRAMME.cohorts.filter(cohortItem => normalise(cohortItem.status) !== 'archived'),
-    [PROGRAMME.cohorts],
+    () => PROGRAMME.cohorts.filter(cohortItem => groupStatusFilter === 'active' ? !cohortItem.archived : true),
+    [PROGRAMME.cohorts, groupStatusFilter],
   );
   const activeCohort = useMemo(
     () => groupCohorts.find(cohortItem => cohortItem.id === selectedCohort) || groupCohorts[0] || null,
@@ -2426,8 +2454,7 @@ export default function ProgrammeDetailPage() {
   const filteredGroups = useMemo(() => {
     const query = normalise(groupSearch);
     return (activeCohort?.groups || []).filter(group => {
-      // Same immediate drop as `filteredCohorts` above, for `archiveGroup`.
-      if (archivedGroupIds.has(group.id)) return false;
+      if (!matchesRecordStatus(group.archived, groupStatusFilter)) return false;
       const matchesQuery = !query || [group.name, group.coach, group.schedule, group.mode]
         .some(value => normalise(value).includes(query));
       const hasCoach = isStaffAssigned(group.coach);
@@ -2435,7 +2462,7 @@ export default function ProgrammeDetailPage() {
         || (groupCoachFilter === 'assigned' ? hasCoach : !hasCoach);
       return matchesQuery && matchesCoach;
     });
-  }, [activeCohort, archivedGroupIds, groupCoachFilter, groupSearch]);
+  }, [activeCohort, archivedGroupIds, groupCoachFilter, groupSearch, groupStatusFilter]);
 
   // ----------------------------------------------------------------- modules
 
@@ -2450,6 +2477,7 @@ export default function ProgrammeDetailPage() {
   const filteredModules = useMemo(() => {
     const query = normalise(moduleSearch);
     return PROGRAMME.modules.filter(mod => {
+      if (!matchesRecordStatus(mod.archived, moduleStatusFilter)) return false;
       const matchesQuery = !query || [mod.name, mod.description, mod.cohort, mod.group, mod.tutor, ...mod.ksbTags]
         .some(value => normalise(value).includes(query));
       const matchesCohort = !moduleCohortFilter || clean(mod.cohort) === moduleCohortFilter;
@@ -2459,7 +2487,7 @@ export default function ProgrammeDetailPage() {
       if (archivedModuleIds.has(mod.id)) return false;
       return matchesQuery && matchesCohort && matchesGroup;
     });
-  }, [PROGRAMME.modules, archivedModuleIds, moduleSearch, moduleCohortFilter, moduleGroupFilter]);
+  }, [PROGRAMME.modules, moduleSearch, moduleCohortFilter, moduleGroupFilter, moduleStatusFilter]);
 
   // ---------------------------------------------------------------- sessions
 
@@ -2842,11 +2870,12 @@ export default function ProgrammeDetailPage() {
   // ---------------------------------------------------------------- readiness
 
   const allComponents = useMemo(
-    () => PROGRAMME.modules.flatMap(mod => mod.weeksData.flatMap(wk => wk.components || [])),
-    [PROGRAMME.modules],
+    () => activeModules.flatMap(mod => mod.weeksData.flatMap(wk => wk.components || [])),
+    [activeModules],
   );
   const publishedComponents = allComponents.filter(component => component.status === 'published').length;
-  const totalOtjh = PROGRAMME.modules.reduce((total, mod) => total + mod.otjh, 0);
+  const contentReadiness = allComponents.length ? Math.round((publishedComponents / allComponents.length) * 100) : 0;
+  const totalOtjh = activeModules.reduce((total, mod) => total + mod.otjh, 0);
   // Learner off-the-job hours: completed against targeted, both read off
   // `Learner.learners`. With no learner target recorded the programme's own
   // requirement stands in as the denominator, labelled as the programme's, since
@@ -2860,31 +2889,31 @@ export default function ProgrammeDetailPage() {
   // Capped at 100 so a learner ahead of target still reads as a full bar rather
   // than a broken one.
   const otjhProgress = otjhDenominator ? Math.min(100, Math.round((learnerOtjhCompleted / otjhDenominator) * 100)) : 0;
-  const totalLearners = PROGRAMME.cohorts.reduce((total, cohortItem) => total + cohortItem.learners, 0);
+  const totalLearners = PROGRAMME.cohorts.filter(cohortItem => !cohortItem.archived).reduce((total, cohortItem) => total + cohortItem.learners, 0);
   // Counted exactly as the Modules table's own WEEKS column counts it, falling
   // back to the module's stored week count when no week has been opened in the
   // builder yet. Summing `weeksData.length` alone made the headline stat read
   // less than the column beneath it — and less than the programme card, which
   // reads the stored count from the same rows.
-  const totalWeeks = PROGRAMME.modules.reduce((total, mod) => total + (mod.weeksData.length || mod.weeks || 0), 0);
-  const emptyWeekCount = PROGRAMME.modules
+  const totalWeeks = activeModules.reduce((total, mod) => total + (mod.weeksData.length || mod.weeks || 0), 0);
+  const emptyWeekCount = activeModules
     .flatMap(mod => mod.weeksData)
     .filter(wk => !(wk.components || []).length).length;
   // A useful first design slice is tangible rather than percentage-based: at
   // least one module, one authored week and one component learners can consume.
-  const hasMinimumDesign = PROGRAMME.modules.length > 0 && totalWeeks > 0 && allComponents.length > 0;
-  const untutoredModules = PROGRAMME.modules.filter(mod => !isStaffAssigned(mod.tutor));
+  const hasMinimumDesign = activeModules.length > 0 && totalWeeks > 0 && allComponents.length > 0;
+  const untutoredModules = activeModules.filter(mod => !isStaffAssigned(mod.tutor));
   // Modules whose stored cohort is not one of this programme's cohort records.
   // This page used to invent a cohort row for them, which is why its cohort count
   // could disagree with the Cohorts page; now it reports them as the data problem
   // they are and leaves the count honest.
   const unlinkedModules = useMemo(() => {
     const cohortKeys = new Set(PROGRAMME.cohorts.flatMap(cohortItem => [normalise(cohortItem.id), normalise(cohortItem.name)]).filter(Boolean));
-    return PROGRAMME.modules.filter(mod => {
+    return activeModules.filter(mod => {
       const key = normalise(mod.cohortId || mod.cohort);
       return !key || !cohortKeys.has(key);
     });
-  }, [PROGRAMME.cohorts, PROGRAMME.modules]);
+  }, [PROGRAMME.cohorts, activeModules]);
 
   // ------------------------------------------------------------------ drawers
 
@@ -2897,7 +2926,7 @@ export default function ProgrammeDetailPage() {
     name: PROGRAMME.name,
     standard: PROGRAMME.standard,
     level: PROGRAMME.level,
-    modules: PROGRAMME.modules.length,
+    modules: activeModules.length,
     weeks: totalWeeks,
     ksbMapped: mappedKsbCount,
     ksbTotal: PROGRAMME.ksbHeatmap.length,
@@ -2910,7 +2939,7 @@ export default function ProgrammeDetailPage() {
     description: PROGRAMME.description,
     ksbProfileSourceId: PROGRAMME.ksbProfileSourceId,
     structureType: PROGRAMME.structureType,
-  }), [PROGRAMME, liveCohortCount, mappedKsbCount, totalGroups, totalLearners, totalWeeks]);
+  }), [PROGRAMME, activeModules.length, liveCohortCount, mappedKsbCount, totalGroups, totalLearners, totalWeeks]);
 
   // What the shared Cohort / Group / Module drawers need. The programme list is
   // this programme alone, which is what fixes the parent for every record added
@@ -3104,7 +3133,7 @@ export default function ProgrammeDetailPage() {
     { key: 'overview', label: TAB_LABELS.overview, icon: 'ri-dashboard-line' },
     { key: 'cohorts', label: TAB_LABELS.cohorts, icon: 'ri-group-line', count: liveCohortCount },
     { key: 'groups', label: TAB_LABELS.groups, icon: 'ri-team-line', count: totalGroups },
-    { key: 'modules', label: TAB_LABELS.modules, icon: 'ri-stack-line', count: PROGRAMME.modules.length },
+    { key: 'modules', label: TAB_LABELS.modules, icon: 'ri-stack-line', count: activeModules.length },
     { key: 'sessions', label: TAB_LABELS.sessions, icon: 'ri-time-line', count: deliverySessions.length || undefined },
     { key: 'coverage', label: TAB_LABELS.coverage, icon: 'ri-node-tree', count: missingKsbCount || undefined },
     { key: 'achievement', label: TAB_LABELS.achievement, icon: 'ri-medal-line' },
@@ -3118,7 +3147,7 @@ export default function ProgrammeDetailPage() {
       navItems={curriculumNavItems}
       workspaceLabel="Curriculum Studio"
       pageTitle={PROGRAMME.name}
-      pageSubtitle={`${PROGRAMME.duration} · ${liveCohortCount} cohort${liveCohortCount === 1 ? '' : 's'} · ${PROGRAMME.modules.length} module${PROGRAMME.modules.length === 1 ? '' : 's'}`}
+      pageSubtitle={`${PROGRAMME.duration} · ${liveCohortCount} cohorts · ${activeModules.length} modules`}
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
@@ -3139,9 +3168,9 @@ export default function ProgrammeDetailPage() {
           stats={[
             { icon: 'ri-group-line', label: 'Cohorts', value: liveCohortCount, detail: archivedCohortCount ? `${archivedCohortCount} archived` : undefined },
             { icon: 'ri-team-line', label: 'Groups', value: totalGroups, detail: unstaffedGroupCount ? `${unstaffedGroupCount} need a coach` : 'All coached' },
-            { icon: 'ri-stack-line', label: 'Modules', value: PROGRAMME.modules.length, detail: untutoredModules.length ? `${untutoredModules.length} need a tutor` : 'All tutored' },
+            { icon: 'ri-stack-line', label: 'Modules', value: activeModules.length, detail: archivedModuleCount ? `${archivedModuleCount} archived` : untutoredModules.length ? `${untutoredModules.length} need a tutor` : 'All tutored' },
             { icon: 'ri-calendar-line', label: 'Weeks', value: totalWeeks, detail: `${allComponents.length} components` },
-            { icon: 'ri-time-line', label: 'OTJH', value: `${formatHours(totalOtjh)}h` },
+            { icon: 'ri-time-line', label: 'OTJH', value: formatHoursMinutes(totalOtjh) },
             {
               icon: 'ri-node-tree',
               label: 'KSB coverage',
@@ -3299,7 +3328,7 @@ export default function ProgrammeDetailPage() {
                       { label: 'Weeks', value: totalWeeks },
                       { label: 'Components', value: allComponents.length },
                       { label: 'KSBs unmapped', value: missingKsbCount },
-                      { label: 'Authored OTJH', value: `${formatHours(totalOtjh)}h` },
+                      { label: 'Authored OTJH', value: formatHoursMinutes(totalOtjh) },
                     ].map(stat => (
                       <div key={stat.label} className="rounded-xl border border-background-200 bg-background-100/60 px-3 py-2">
                         <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">{stat.label}</p>
@@ -3443,8 +3472,8 @@ export default function ProgrammeDetailPage() {
                 />
                 <RecordHomeLink
                   icon="ri-stack-line"
-                  label={PROGRAMME.modules.length === 1 ? 'module' : 'modules'}
-                  count={PROGRAMME.modules.length}
+                  label={activeModules.length === 1 ? 'module' : 'modules'}
+                  count={activeModules.length}
                   hint="Module Builder catalogue, filtered to this programme"
                   to={moduleBuilderProgrammeUrl}
                 />
@@ -3463,22 +3492,20 @@ export default function ProgrammeDetailPage() {
               onSearch={setCohortSearch}
               placeholder="Search cohorts, dates, status..."
               selects={[{
-                label: 'Status',
+                label: 'Record status',
                 value: cohortStatusFilter,
-                onChange: setCohortStatusFilter,
+                onChange: value => setCohortStatusFilter(value as RecordStatusFilter),
                 options: [
-                  { value: '', label: 'All statuses' },
-                  { value: 'planned', label: 'Planned' },
-                  { value: 'active', label: 'Active' },
-                  { value: 'completed', label: 'Completed' },
-                  // Surfaced with its count so an archived cohort is discoverable
-                  // instead of looking like missing data.
-                  ...(archivedCohortCount > 0 ? [{ value: 'archived', label: `Archived (${archivedCohortCount})` }] : []),
+                  { value: 'active', label: `Active (${liveCohortCount})` },
+                  { value: 'archived', label: `Archived (${archivedCohortCount})` },
+                  { value: 'all', label: `All records (${PROGRAMME.cohorts.length})` },
                 ],
               }]}
-              onReset={() => { setCohortSearch(''); setCohortStatusFilter(''); }}
+              onReset={() => { setCohortSearch(''); setCohortStatusFilter('active'); }}
               disabled={!PROGRAMME.cohorts.length}
-              summary={cohortStatusFilter === 'archived'
+              summary={cohortStatusFilter === 'all'
+                ? `Showing ${filteredCohorts.length} of ${PROGRAMME.cohorts.length} cohort records`
+                : cohortStatusFilter === 'archived'
                 ? `Showing ${filteredCohorts.length} of ${archivedCohortCount} archived cohorts`
                 : `Showing ${filteredCohorts.length} of ${liveCohortCount} cohorts${archivedCohortCount > 0 ? ` · ${archivedCohortCount} archived` : ''}`}
               trailing={PROGRAMME.cohorts.length ? (
@@ -3523,11 +3550,12 @@ export default function ProgrammeDetailPage() {
                 return (
                   <>
                     <StackedCell
-                      href={`/curriculum/cohorts/${encodeURIComponent(cohortItem.id)}`}
+                      href={cohortItem.archived ? undefined : `/curriculum/cohorts/${encodeURIComponent(cohortItem.id)}`}
                       primary={(
                         <span className="flex items-center gap-2">
                           {selected && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary-600" aria-hidden="true" />}
                           {cohortItem.name}
+                          {cohortItem.archived && <StatusBadge status="archived" />}
                         </span>
                       )}
                     />
@@ -3551,7 +3579,6 @@ export default function ProgrammeDetailPage() {
                           primary: selected,
                           onClick: () => {
                             setSelectedCohort(cohortItem.id);
-                            setSelectedGroup('');
                             setTab('groups');
                           },
                         }]}
@@ -3578,9 +3605,19 @@ export default function ProgrammeDetailPage() {
               placeholder="Search groups, coaches, days or mode..."
               selects={[
                 {
+                  label: 'Record status',
+                  value: groupStatusFilter,
+                  onChange: value => setGroupStatusFilter(value as RecordStatusFilter),
+                  options: [
+                    { value: 'active', label: `Active (${totalGroups})` },
+                    { value: 'archived', label: `Archived (${archivedGroupCount})` },
+                    { value: 'all', label: `All records (${allGroups.length})` },
+                  ],
+                },
+                {
                   label: 'Cohort',
                   value: activeCohort?.id || '',
-                  onChange: value => { setSelectedCohort(value); setSelectedGroup(''); },
+                  onChange: value => { setSelectedCohort(value); },
                   options: groupCohorts.length
                     ? groupCohorts.map(item => ({ value: item.id, label: `${item.name} · ${item.groups.length} groups` }))
                     : [{ value: '', label: 'No cohorts yet' }],
@@ -3602,13 +3639,13 @@ export default function ProgrammeDetailPage() {
                     : 'Choose or create a cohort first.',
                 },
               ]}
-              onReset={() => { setGroupSearch(''); setGroupCoachFilter(''); }}
+              onReset={() => { setGroupSearch(''); setGroupCoachFilter(''); setGroupStatusFilter('active'); }}
               searchDisabled={!activeCohort?.groups.length}
-              isDirty={Boolean(activeCohort?.groups.length && (groupSearch || groupCoachFilter))}
+              isDirty={Boolean(activeCohort?.groups.length && (groupSearch || groupCoachFilter || groupStatusFilter !== 'active'))}
               summary={activeCohort
                 ? `Showing ${filteredGroups.length} of ${activeCohort.groups.length} groups in ${activeCohort.name}`
                 : 'Showing 0 groups · add a cohort first'}
-              trailing={activeCohort && activeCohort.groups.length ? (
+              trailing={activeCohort && !activeCohort.archived && activeCohort.groups.length ? (
                 <button
                   type="button"
                   onClick={() => setGroupDrawerCohortId(activeCohort.id)}
@@ -3651,7 +3688,9 @@ export default function ProgrammeDetailPage() {
                       message={activeCohort.groups.length
                         ? 'Clear a filter, or search for a different group.'
                         : 'Groups carry the weekly timetable and the coach who supports it. Add the first one to start scheduling.'}
-                      action={activeCohort.groups.length ? undefined : { label: 'Add group', onClick: () => setGroupDrawerCohortId(activeCohort.id) }}
+                      action={activeCohort.archived || activeCohort.groups.length
+                        ? undefined
+                        : { label: 'Add group', onClick: () => setGroupDrawerCohortId(activeCohort.id) }}
                     />
                   ) : (
                     <EntityEmptyState
@@ -3664,8 +3703,13 @@ export default function ProgrammeDetailPage() {
                   renderRow={group => (
                     <>
                       <StackedCell
-                        href={namedCurriculumWorkspacePath('groups', group.id, group.name)}
-                        primary={group.name}
+                        href={group.archived || activeCohort?.archived ? undefined : namedCurriculumWorkspacePath('groups', group.id, group.name)}
+                        primary={(
+                          <span className="flex items-center gap-2">
+                            {group.name}
+                            {group.archived && <StatusBadge status="archived" />}
+                          </span>
+                        )}
                         secondary={activeCohort ? groupDatesLabel(activeCohort) : undefined}
                       />
                       <StaffSlot
@@ -3674,7 +3718,7 @@ export default function ProgrammeDetailPage() {
                         name={group.coach}
                         options={data?.coaches || []}
                         saving={savingAction === `coach:${group.id}`}
-                        onAssign={value => assignGroupCoach(group.id, value)}
+                        onAssign={group.archived || activeCohort?.archived ? undefined : value => assignGroupCoach(group.id, value)}
                       />
                       {/* The mode alone is not a delivery pattern: every group
                           defaults to Live, so "Live" on its own read as though a
@@ -3693,6 +3737,7 @@ export default function ProgrammeDetailPage() {
                               label: group.modules.length ? 'Add module' : 'Add first module',
                               title: `Create a module for ${group.name}`,
                               primary: group.modules.length === 0,
+                              disabled: group.archived || Boolean(activeCohort?.archived),
                               onClick: () => navigate(moduleBuilderGroupUrl(activeCohort?.id || '', group.id)),
                             },
                             {
@@ -3736,6 +3781,16 @@ export default function ProgrammeDetailPage() {
               placeholder="Search modules, cohort, group, tutor, KSB..."
               selects={[
                 {
+                  label: 'Record status',
+                  value: moduleStatusFilter,
+                  onChange: value => setModuleStatusFilter(value as RecordStatusFilter),
+                  options: [
+                    { value: 'active', label: `Active (${activeModules.length})` },
+                    { value: 'archived', label: `Archived (${archivedModuleCount})` },
+                    { value: 'all', label: `All records (${PROGRAMME.modules.length})` },
+                  ],
+                },
+                {
                   label: 'Cohort',
                   value: moduleCohortFilter,
                   onChange: setModuleCohortFilter,
@@ -3748,9 +3803,9 @@ export default function ProgrammeDetailPage() {
                   options: [{ value: '', label: 'All groups' }, ...moduleGroups.map(name => ({ value: name, label: name }))],
                 },
               ]}
-              onReset={() => { setModuleSearch(''); setModuleCohortFilter(''); setModuleGroupFilter(''); }}
+              onReset={() => { setModuleSearch(''); setModuleCohortFilter(''); setModuleGroupFilter(''); setModuleStatusFilter('active'); }}
               disabled={!PROGRAMME.modules.length}
-              summary={`Showing ${filteredModules.length} of ${PROGRAMME.modules.length} modules · content, Teams meetings and KSB weights open in the module · Archive takes a module off this list and keeps its content — modules are never deleted`}
+              summary={`Showing ${filteredModules.length} of ${moduleStatusFilter === 'active' ? activeModules.length : moduleStatusFilter === 'archived' ? archivedModuleCount : PROGRAMME.modules.length} ${moduleStatusFilter === 'archived' ? 'archived ' : ''}modules`}
             />
 
             <EntityTable
@@ -3788,8 +3843,13 @@ export default function ProgrammeDetailPage() {
                 return (
                   <>
                     <StackedCell
-                      href={workspaceUrl || undefined}
-                      primary={mod.name}
+                      href={mod.archived ? undefined : workspaceUrl || undefined}
+                      primary={(
+                        <span className="flex items-center gap-2">
+                          {mod.name}
+                          {mod.archived && <StatusBadge status="archived" />}
+                        </span>
+                      )}
                       secondary={moduleDatesLabel(mod)}
                     />
                     <StackedCell
@@ -3815,14 +3875,17 @@ export default function ProgrammeDetailPage() {
                     </PlainCell>
                     <PlainCell align="center">{mod.weeksData.length || mod.weeks || 0}</PlainCell>
                     <PlainCell align="center">{componentCount}</PlainCell>
-                    <PlainCell align="center">{formatHours(mod.otjh)}h</PlainCell>
+                    <PlainCell align="center">{formatHoursMinutes(mod.otjh)}</PlainCell>
                     <PlainCell align="center">{ksbCount}</PlainCell>
                     <span className="flex items-center justify-end gap-1.5">
                       <NamedActions
                         actions={[{
                           icon: 'ri-tools-line',
                           label: 'Builder',
-                          title: `Author ${mod.name}'s weeks and components in the Module Builder`,
+                          title: mod.archived
+                            ? 'Archived modules cannot be opened in Module Builder'
+                            : `Author ${mod.name}'s weeks and components in the Module Builder`,
+                          disabled: mod.archived,
                           onClick: () => navigate(moduleBuilderUrl(mod, PROGRAMME)),
                         }]}
                       />
@@ -3957,9 +4020,7 @@ export default function ProgrammeDetailPage() {
               <SessionsTree
                 sessions={filteredSessions}
                 moduleHrefFor={sessionModuleHref}
-                // Skip the cache: the sync has just written new occurrence rows,
-                // and a cached read would answer with the pre-sync ones.
-                onSynced={() => { void loadLiveOccurrences({ skipCache: true }); }}
+                onSynced={() => loadLiveOccurrences({ skipCache: true })}
                 empty={(
                   <EntityEmptyState
                     icon={activeSessions.length ? 'ri-filter-off-line' : sessionKind === 'live' ? 'ri-broadcast-line' : 'ri-film-line'}

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { jsPDF } from 'jspdf';
 import * as XLSX from 'xlsx';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { formatHoursMinutes } from '@/lib/format';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionHeader } from '@/components/ui/SectionHeader';
@@ -481,7 +482,7 @@ function formatReportPeriod(fromDate: string, toDate: string): string {
 
 function formatHours(value?: number | null) {
   if (value === null || value === undefined || !Number.isFinite(value)) return EMPTY_VALUE;
-  return `${Number(value).toFixed(value % 1 === 0 ? 0 : 2)}h`;
+  return formatHoursMinutes(value);
 }
 
 function isPlaceholderDate(value?: string | null) {

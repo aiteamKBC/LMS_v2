@@ -1319,12 +1319,12 @@ export function RealLearningJourneyView({
     },
     {
       icon: 'ri-briefcase-4-line', label: 'OTJ Hours', value: formatHoursMinutes(completedHours),
-      detail: plannedHours ? `Target: ${plannedHours}h` : 'Logged hours',
+      detail: plannedHours ? `Target: ${formatHoursMinutes(plannedHours)}` : 'Logged hours',
       description: 'Off-the-job training hours logged against your programme target.',
       progress: plannedHours ? Math.min(100, Math.round((completedHours / plannedHours) * 100)) : 0,
       rows: [
         { label: 'Hours logged', value: formatHoursMinutes(completedHours) },
-        { label: 'Programme target', value: plannedHours ? `${plannedHours}h` : 'Not set' },
+        { label: 'Programme target', value: plannedHours ? formatHoursMinutes(plannedHours) : 'Not set' },
         { label: 'Hours remaining', value: plannedHours ? formatHoursMinutes(Math.max(0, plannedHours - completedHours)) : '—' },
       ],
     },

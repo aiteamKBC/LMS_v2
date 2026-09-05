@@ -1564,14 +1564,14 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
         )}
         {(liveSessionModule || restoreTeamsMeeting) && (
           <div className="mt-3 flex flex-wrap justify-end gap-2">
-            {liveSessionModule && (
+            {liveSessionModule && !hasMeeting && (
               <button
                 type="button"
                 onClick={() => setTeamsMeetingOpen(true)}
                 className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600"
               >
                 <AppIcon className="ri-calendar-event-line"></AppIcon>
-                {s('liveSessionUrl') ? 'Create another meeting' : 'Create Teams meeting'}
+                Create Teams meeting
               </button>
             )}
             {restoreTeamsMeeting && (

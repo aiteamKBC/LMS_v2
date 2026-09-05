@@ -9,6 +9,7 @@ import { useCurriculumKsbSets } from '@/hooks/useCurriculumKsbSets';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { curriculumNavItems } from '@/mocks/navigation';
+import { formatHoursMinutes } from '@/lib/format';
 import {
   fetchCurriculumHolidays,
   fetchCurriculumOverview,
@@ -1673,7 +1674,7 @@ export default function ModuleBuilder() {
                 updateWorkingModule(generateMissingLiveSessions);
                 void showCurriculumAlert({
                   title: 'Live sessions added',
-                  text: `${addedCount} live-session component${addedCount === 1 ? '' : 's'} added across ${weekCount} week${weekCount === 1 ? '' : 's'}. Open each one and use "Create Teams meeting" to schedule it in Teams.`,
+                  text: `${addedCount} live-session component${addedCount === 1 ? '' : 's'} added across ${weekCount} week${weekCount === 1 ? '' : 's'}. Use "Create all Teams meetings" once to create the module calendar and link every session.`,
                   timer: 3200,
                 });
               }}
@@ -2362,7 +2363,7 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
   const moduleMetrics = [
     { label: 'Weeks', value: String(module.weekStructure.length), icon: 'ri-stack-line' },
     { label: 'Components', value: String(module.lessonCount), icon: 'ri-layout-grid-line' },
-    { label: 'OTJH', value: module.totalOtjh.toFixed(1), icon: 'ri-time-line' },
+    { label: 'OTJH', value: formatHoursMinutes(module.totalOtjh), icon: 'ri-time-line' },
   ];
   const programmeLocked = Boolean(scopeLock?.locked);
   const lockedKsbLabel = scopeLock?.ksbSourceLabel || (ksbProfileValue ? ksbProfileValue.replace(/^(profile|standard):/, '') : 'No source selected');
@@ -2578,7 +2579,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
         )}
         <div className="mt-3 grid grid-cols-3 gap-1.5">
           <MiniStructureMetric label="Items" value={String(totalComponents)} />
-          <MiniStructureMetric label="OTJH" value={module.totalOtjh.toFixed(1)} />
+          <MiniStructureMetric label="OTJH" value={formatHoursMinutes(module.totalOtjh)} />
           <MiniStructureMetric label="KSBs" value={String(module.ksbCount)} />
         </div>
         <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background-200">
@@ -2600,7 +2601,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
               <div className="flex items-baseline justify-between gap-2 px-1 pb-0.5 pt-2 first:pt-0">
                 <p className="text-[11px] font-heading font-bold uppercase tracking-wider text-primary-700">{monthHeading.label}</p>
                 <p className="text-[10px] font-semibold text-foreground-400">
-                  {monthHeading.weeks} {monthHeading.weeks === 1 ? 'week' : 'weeks'} · {monthHeading.otjh.toFixed(1)}h
+                  {monthHeading.weeks} {monthHeading.weeks === 1 ? 'week' : 'weeks'} · {formatHoursMinutes(monthHeading.otjh)}
                 </p>
               </div>
             )}
@@ -2631,7 +2632,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                   <p className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium text-foreground-400">
                     <span>{week.components.length} components</span>
                     <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
-                    <span>{totalOtjh.toFixed(1)}h</span>
+                    <span>{formatHoursMinutes(totalOtjh)}</span>
                     {week.sessionDate && (
                       <>
                         <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
@@ -2935,7 +2936,7 @@ function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson,
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex rounded-full bg-primary-100 px-2.5 py-1 text-[10px] font-bold text-primary-700">Week {week.weekNumber}</span>
             <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{week.components.length} components</span>
-            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">{totalOtjh.toFixed(1)}h OTJH</span>
+            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">{formatHoursMinutes(totalOtjh)} OTJH</span>
           </div>
           <div className="mt-1.5">
             <TextInput label="Week title" value={week.title} onChange={value => onChange({ title: value })} />
@@ -2998,7 +2999,7 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <MiniMetric label="OTJH" value={Number(component.expectedOtjh || 0).toFixed(1)} />
+            <MiniMetric label="OTJH" value={formatHoursMinutes(Number(component.expectedOtjh || 0))} />
             <MiniMetric label="Points" value={String(component.points || 0)} />
           </div>
         </div>
@@ -3219,7 +3220,7 @@ function TypeSpecificFields({
               className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600"
             >
               <AppIcon className="ri-calendar-event-line"></AppIcon>
-              {getString('liveSessionUrl') ? 'Create another meeting' : 'Create Teams meeting'}
+              {getString('liveSessionUrl') ? 'Meeting already created' : 'Create Teams meeting'}
             </button>
           </div>
           {getString('liveSessionUrl') && (
@@ -3884,7 +3885,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
     const weekWeightSummary = ksbWeightSummary(mappedKsbs);
     const readinessItems = [
       { label: 'Components', ready: week.components.length > 0, value: week.components.length ? `${week.components.length} added` : 'Missing' },
-      { label: 'OTJH', ready: totalOtjh > 0, value: totalOtjh > 0 ? `${totalOtjh.toFixed(1)} h` : 'Missing' },
+      { label: 'OTJH', ready: totalOtjh > 0, value: totalOtjh > 0 ? formatHoursMinutes(totalOtjh) : 'Missing' },
       { label: 'KSBs', ready: mappedKsbs.length > 0, value: mappedKsbs.length ? `${mappedKsbs.length} mapped` : 'Needs mapping' },
     ];
     const readyCount = readinessItems.filter(item => item.ready).length;
@@ -3973,7 +3974,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
           ))}
         </div>
         <div className="grid grid-cols-2 gap-2">
-          <MiniMetric label="OTJH" value={Number(component.expectedOtjh || 0).toFixed(1)} />
+          <MiniMetric label="OTJH" value={formatHoursMinutes(Number(component.expectedOtjh || 0))} />
           <MiniMetric label="Points" value={String(component.points || 0)} />
         </div>
         <KsbWeightSummary summary={componentWeightSummary} />
@@ -4983,7 +4984,7 @@ function PreviewModal({ module, onClose }: { module: ModuleCatalogueItem; onClos
               <h3 className="text-sm font-bold text-foreground-900">{weekPlacementLabel(week, ': ')}</h3>
               <p className="text-[11px] text-foreground-500 mt-1">{week.summary}</p>
               <div className="mt-3 space-y-2">
-                {week.components.map(component => <div key={component.id} className="rounded-lg bg-background-50 border border-background-200 px-3 py-2 text-[12px] text-foreground-700">{readableComponentTitle(component.title)} - {component.expectedOtjh} OTJH - {component.points} pts</div>)}
+                {week.components.map(component => <div key={component.id} className="rounded-lg bg-background-50 border border-background-200 px-3 py-2 text-[12px] text-foreground-700">{readableComponentTitle(component.title)} - {formatHoursMinutes(component.expectedOtjh)} OTJH - {component.points} pts</div>)}
               </div>
             </div>
           ))}
@@ -7013,8 +7014,7 @@ function uniquePlacementOtjh(rows: ModuleKsbMapRow[]) {
 }
 
 function formatKsbOtjh(value: number) {
-  const amount = Number(value || 0);
-  return `${Number.isInteger(amount) ? amount.toFixed(0) : amount.toFixed(1)}h`;
+  return formatHoursMinutes(Number(value || 0));
 }
 
 function formatKsbWeight(value: number) {

@@ -6,6 +6,7 @@
 // each module carries the programme it came from.
 // Persisted on enrolment."Created_users"."Learning_plan" (jsonb).
 // ============================================================================
+import { formatHoursMinutes } from '@/lib/format';
 const BASE = '/learner_api/learning-plan';
 
 export interface LearningPlanModule {
@@ -109,5 +110,5 @@ export function formatPlanDate(value?: string): string {
 }
 
 export function formatHours(hours: number): string {
-  return `${Number(hours || 0).toFixed(2).replace(/\.00$/, '')} h`;
+  return formatHoursMinutes(Number(hours || 0));
 }
