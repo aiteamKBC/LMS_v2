@@ -5632,18 +5632,6 @@ function ReadOnlyMetricChip({ label, value, suffix, tone }: {
   );
 }
 
-/**
- * Only the states that ask for something are badged. Published is what a
- * finished module is supposed to be, so it carries no badge: on a list where
- * nearly everything is published, the badge said nothing and cost a line.
- */
-function StatusBadge({ status }: { status: string }) {
-  if (status === 'published') return null;
-  const classes = status === 'draft' ? 'bg-amber-100 text-amber-700' : 'bg-primary-100 text-primary-700';
-  const label = status === 'review' ? 'in review' : status;
-  return <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${classes}`}>{label}</span>;
-}
-
 function ModuleCatalogueCard({
   module,
   teamsSummary,
@@ -5689,7 +5677,6 @@ function ModuleCatalogueCard({
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <h3 className="truncate text-[14px] font-heading font-bold text-foreground-950">{module.title}</h3>
-                <StatusBadge status={module.status} />
               </div>
               {subLabel && <p className="mt-1 text-[11px] text-foreground-500">{subLabel}</p>}
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
