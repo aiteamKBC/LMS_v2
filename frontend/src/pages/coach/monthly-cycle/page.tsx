@@ -19,6 +19,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { MetricCard } from '@/components/ui/MetricCard';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
@@ -30,17 +31,16 @@ import { formatHoursMinutes } from '@/lib/format';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 
-import { MetricCard } from '@/components/ui/MetricCard';
 import { ActivityTimelinePanel } from './components/ActivityTimelinePanel';
 import { CoachingDeliveryPanel } from './components/CoachingDeliveryPanel';
 import { EngagementOverviewChart } from './components/EngagementOverviewChart';
-import { StatusBreakdownPanel } from './components/StatusBreakdownPanel';
-import { TopLearnerActionsPanel } from './components/TopLearnerActionsPanel';
 import { LearnerMonthCard } from './components/LearnerMonthCard';
 import { LearnerOverviewPanel } from './components/LearnerOverviewPanel';
 import { MonthHeroTiles } from './components/MonthHeroTiles';
 import { MonthNavigator } from './components/MonthNavigator';
 import { MonthlyCycleError, MonthlyCycleLoading, NoActiveLearners, NoLearnerMatches } from './components/MonthlyCycleStates';
+import { StatusBreakdownPanel } from './components/StatusBreakdownPanel';
+import { TopLearnerActionsPanel } from './components/TopLearnerActionsPanel';
 import { COACHING_DELIVERY_CONFIG, COACHING_DELIVERY_ORDER, EMPTY_LEARNERS, EMPTY_SUMMARY, LEARNERS_PER_PAGE } from './lib/constants';
 import {
   coachingDeliveryEventKey,
