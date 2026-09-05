@@ -1576,6 +1576,9 @@ export interface TeamsAttendanceRecord {
   display_name: string;
   role: string;
   total_attendance_seconds: number;
+  /** Graph reports a row per invitee; `false` means invited but never joined.
+   *  Absent on rows written before attendance tracking, which count as present. */
+  attended?: boolean;
   intervals?: Array<{
     joinDateTime?: string;
     leaveDateTime?: string;
