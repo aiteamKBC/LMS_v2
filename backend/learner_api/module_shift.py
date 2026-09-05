@@ -53,6 +53,8 @@ from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from login.permissions import learner_self_or_staff
+
 from .active_users import (
     _component_learning_context,
     _decimal,
@@ -416,6 +418,7 @@ def _progress_pairing(learner, from_id, to_id):
     return pairs, suggested, ""
 
 
+@learner_self_or_staff(kwarg="pk")
 def module_shift_progress(request, pk):
     """The week-by-week pairing behind the progress step of a shift."""
     if request.method != "GET":
@@ -681,6 +684,9 @@ def _base_plan(learner):
 
 
 @csrf_exempt
+# Shifting a module rewrites the learner's plan and repoints their progress
+# entries; only the learner themselves or staff may write it.
+@learner_self_or_staff(kwarg="pk")
 def module_shift(request, pk):
     """Move a learner from one module to another taught to the same cohort."""
     if request.method not in ("PATCH", "POST"):

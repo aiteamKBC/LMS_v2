@@ -24,6 +24,8 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from coach_api.models import CoachCalendarEvent
+from login.permissions import _auth_gate_enabled, learner_self_or_staff
+from login.sessions import authenticate_request
 
 from .constants import PROGRAMME_STATUS_CHOICES
 from .learner_detail import SOURCE_MODELS
@@ -341,6 +343,11 @@ def _lookup(kind, pk, event_key):
 
 
 @csrf_exempt
+# Completing a review sets Form_completed and moves the status to Completed,
+# which is a claim about the learner's own onboarding. Only the learner or the
+# staff conducting the review may write it; a reader (another learner, an
+# employer) is refused. Reads stay open — see learner_self_or_staff.
+@learner_self_or_staff(kwarg="pk")
 def enrolment_review_form(request, kind, pk, event_key):
     if request.method not in ("GET", "PATCH", "POST"):
         return _error("Method not allowed.", 405)
@@ -430,6 +437,62 @@ def enrolment_review_form(request, kind, pk, event_key):
 MAX_SIGNATURE_CHARS = 400_000
 SIGNATURE_PARTIES = ("learner", "admin", "employer")
 
+#: Which account roles may legitimately sign as each party. A caller can only
+#: attach the signature of a party they actually are.
+_PARTY_ROLES = {
+    "learner": frozenset({"learner"}),
+    "admin": frozenset({"admin", "staff"}),
+    "employer": frozenset({"employer"}),
+}
+
+
+def _sign_authorization_error(request, pk, learner, party):
+    """Authorise a review signature before any signature is written, or None.
+
+    Unlike the rest of this module, signing is not a plain decorator: the caller
+    must clear *two* independent checks, and both fail closed.
+
+    Relationship — may this caller act on *this* learner's review at all? A
+    learner may reach only their own (id mismatch -> 404, so another learner's
+    review is not confirmed to exist); staff and admin may reach any; an employer
+    only one of their own learners (``learner.employer_id`` must be the
+    employer's own id, mismatch -> 404); anyone else is refused.
+
+    Party — may this caller sign *as* the party they named? A learner signs only
+    as ``learner``, staff/admin only as ``admin``, an employer only as
+    ``employer`` (see ``_PARTY_ROLES``). Signing as a party you are not is 403.
+
+    Honours ``LEARNER_API_REQUIRE_AUTH=0`` like every other login gate, so local
+    development toggles them all together.
+    """
+    if not _auth_gate_enabled():
+        authenticate_request(request)
+        return None
+
+    account = authenticate_request(request)
+    if account is None:
+        return _error("Authentication required.", 401)
+
+    # Relationship gate. 404 (not 403) on a learner/employer reaching outside
+    # their own records, matching login.permissions — a 403 would confirm the
+    # review exists.
+    if account.role == "learner":
+        if account.subject_id != pk:
+            return JsonResponse({"error": "Not found."}, status=404)
+    elif account.role in ("admin", "staff"):
+        pass
+    elif account.role == "employer":
+        if getattr(learner, "employer_id", None) != account.subject_id:
+            return JsonResponse({"error": "Not found."}, status=404)
+    else:
+        return _error("You do not have permission to sign this review.", 403)
+
+    # Party gate.
+    if account.role not in _PARTY_ROLES[party]:
+        return _error(f"You cannot sign this review as '{party}'.", 403)
+
+    return None
+
 
 @csrf_exempt
 def enrolment_review_sign(request, kind, pk, event_key):
@@ -462,6 +525,13 @@ def enrolment_review_sign(request, kind, pk, event_key):
     if party not in SIGNATURE_PARTIES:
         allowed = "', '".join(SIGNATURE_PARTIES)
         return _error(f"party must be one of '{allowed}'.", 400)
+
+    # Authorise before anything about the review's state is revealed or written:
+    # a caller who may not sign must not learn whether it is completed either.
+    auth_error = _sign_authorization_error(request, pk, learner, party)
+    if auth_error is not None:
+        return auth_error
+
     if not review.form_completed:
         return _error("This review can only be signed once the form is completed.", 400)
 
@@ -514,6 +584,7 @@ def _progress(review):
     return sum(1 for name in sections if status.get(name)), len(sections)
 
 
+@learner_self_or_staff(kwarg="pk")
 def enrolment_review_documents(request, kind, pk):
     """Reviews a learner has started or finished, for the board's Review documents.
 

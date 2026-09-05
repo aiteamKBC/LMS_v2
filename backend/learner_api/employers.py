@@ -60,7 +60,7 @@ def _resolve_groups(ids):
 
 
 @csrf_exempt
-@staff_only(writes_only=True)
+@staff_only()  # A4: organisation directory — staff/admin only, reads too.
 def organisations(request):
     """Organisation profiles — enrolment."Organisations".
 
@@ -119,7 +119,7 @@ def organisations(request):
 
 
 @csrf_exempt
-@staff_only(writes_only=True)
+@staff_only()  # A4: organisation detail — staff/admin only, reads too.
 def organisation_detail(request, pk):
     try:
         org = Organisation.objects.get(pk=pk)
@@ -172,7 +172,7 @@ def _resync_group_names(org):
 
 
 @csrf_exempt
-@staff_only(writes_only=True)
+@staff_only()  # A4: employer directory (PII) — staff/admin only, reads too.
 def employers(request):
     """Employer profiles — enrolment."Employers".
 
@@ -230,7 +230,7 @@ def employers(request):
 
 
 @csrf_exempt
-@staff_only(writes_only=True)
+@staff_only()  # A4: employer detail (PII) — staff/admin only, reads too.
 def employer_detail(request, pk):
     try:
         emp = Employer.objects.get(pk=pk)
@@ -264,6 +264,7 @@ def employer_detail(request, pk):
     return _error("Method not allowed.", 405)
 
 
+@staff_only()  # A4: `owners` discloses every staff username — staff/admin only.
 def employer_options(request):
     """Canonical dropdown lists for the organisation and employer forms.
 
@@ -271,6 +272,11 @@ def employer_options(request):
     drift. `owners` is every staff account — an organisation is owned by a member
     of staff, whatever their position, so this is deliberately unfiltered rather
     than restricted to the Caseowner/Admin positions a learner's case owner is.
+
+    Staff/admin only: these are the console's organisation/employer authoring
+    forms (only staff create organisations), and `owners` leaks the full staff
+    username list, so an open GET is the same staff-directory disclosure class as
+    A4. Learner/employer callers get 403.
     """
     if request.method != "GET":
         return _error("Method not allowed.", 405)

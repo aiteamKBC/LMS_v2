@@ -1,5 +1,6 @@
 import type { RouteObject } from "react-router-dom";
 import { Navigate } from "react-router-dom";
+import { CHAT_ENABLED } from "@/lib/featureFlags";
 import { RequireAuth } from "@/components/feature/RequireAuth";
 import { lazyRoute } from "./lazyRoute";
 
@@ -601,8 +602,10 @@ const routes: RouteObject[] = [
     element: <SupportPage />,
   },
   {
+    // Chat disabled (audit A10). Redirect away while CHAT_ENABLED is false so a
+    // bookmarked/deep link cannot reach the known-broken chat page.
     path: "/learner/messages",
-    element: <GeneralMessagesPage />,
+    element: CHAT_ENABLED ? <GeneralMessagesPage /> : <Navigate to="/" replace />,
   },
   {
     path: "/workspace/employer",
@@ -1372,8 +1375,9 @@ const routes: RouteObject[] = [
     element: <GeneralTasksPage />,
   },
   {
+    // Chat disabled (audit A10) — redirect while CHAT_ENABLED is false.
     path: "/messages",
-    element: <GeneralMessagesPage />,
+    element: CHAT_ENABLED ? <GeneralMessagesPage /> : <Navigate to="/" replace />,
   },
   {
     path: "/user-guide",

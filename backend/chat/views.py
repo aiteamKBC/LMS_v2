@@ -1,3 +1,28 @@
+# =============================================================================
+# CHAT SUBSYSTEM DISABLED — 2026-09-02
+# -----------------------------------------------------------------------------
+# The entire chat feature (this module, chat/consumers.py, chat/services.py and
+# the /api/chat/ routes) is deliberately turned OFF and is known-broken.
+#
+# Reason: the session-bootstrap endpoint (ChatSessionView below) was an
+# unauthenticated identity bootstrap — security audit finding A10. Product-owner
+# decision on 2026-09-02 was to DISABLE chat, not fix it.
+#
+# Mitigation applied: CHAT_DEMO_BOOTSTRAP_ENABLED=false (backend/.env) so the
+# bootstrap returns 404 and mints nothing, and the already-minted chat_demo_*
+# auth_user rows were deactivated so their existing cookies stop authenticating.
+# The code default of CHAT_DEMO_BOOTSTRAP_ENABLED in backend/config/settings.py
+# is now also "false", so a deployment lacking the .env line is closed too.
+#
+# NO chat code was deleted. This subsystem is DISABLED, not removed: every
+# module (this view, chat/consumers.py, chat/services.py, chat/routing.py, the
+# routes) is intact and can be re-enabled once A18 is done. "Don't delete it"
+# was an explicit instruction — the code is off, present, and recoverable.
+#
+# Do NOT re-enable by flipping the flag — that reopens A10. The correct rebuild
+# is audit finding A18 (a kbc_session-backed DRF/Channels auth class). See the
+# ChatSessionView docstring and SECURITY_AUDIT.md (A10, A18).
+# =============================================================================
 from django.conf import settings
 from django.contrib.auth import get_user_model, login, logout
 from django.db import IntegrityError, router, transaction
@@ -12,6 +37,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from learner_api.models import EnrolmentUser, LearnerProfile
+from login.sessions import authenticate_request
 
 from .models import ChatCoach, ChatLearner, Conversation
 from .permissions import IsConversationParticipant, IsMessageParticipant
@@ -209,7 +235,37 @@ def _ensure_assigned_coach_conversation(learner):
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
 class ChatSessionView(APIView):
-    """Create the Django session used by the local frontend demo accounts."""
+    """DISABLED 2026-09-02 — the chat subsystem is known-broken and off.
+
+    ================= DO NOT SIMPLY RE-ENABLE THIS =================
+    The whole chat subsystem is deliberately disabled as of 2026-09-02.
+
+    Why: this endpoint was an unauthenticated identity bootstrap (security
+    audit finding A10). It is `AllowAny` and, when the flag below is on, mints
+    a real Django login session for a caller-chosen identity — originally with
+    no session check at all, so any anonymous stranger could become any learner
+    (and one hardcoded demo coach). A minted session then satisfies every
+    ``ANY``-prefix gate. It is also the ONLY place in the app that creates a
+    Django-auth session, so it is the sole login bridge the rest of chat
+    depends on.
+
+    The product owner's decision (2026-09-02) was to DISABLE chat, not fix it:
+      * ``CHAT_DEMO_BOOTSTRAP_ENABLED`` is set to ``false`` (backend/.env), so
+        this endpoint returns 404 to everyone and mints nothing.
+      * The six ``chat_demo_*`` auth_user rows already minted were deactivated
+        (``is_active=False``) so their existing session cookies no longer
+        authenticate.
+    Still outstanding: flip the CODE default of ``CHAT_DEMO_BOOTSTRAP_ENABLED``
+    in backend/config/settings.py from ``"true"`` to ``"false"`` so a fresh
+    deployment without the .env line is also closed.
+
+    This is known-broken and intentionally NOT fixed. Do not "switch it back on"
+    by flipping the flag — that reopens A10. The proper rebuild is audit finding
+    A18: a custom DRF/Channels authentication class that reads ``kbc_session``
+    and populates ``request.user`` directly, removing session-minting entirely.
+    See SECURITY_AUDIT.md (A10 status: MITIGATED BY DISABLING; A18: the rebuild).
+    ===============================================================
+    """
 
     authentication_classes = ()
     permission_classes = (AllowAny,)
@@ -221,8 +277,18 @@ class ChatSessionView(APIView):
         })
 
     def post(self, request):
+        # Flag check FIRST: a disabled endpoint returns a uniform 404 to every
+        # caller and discloses nothing about session state. With the subsystem
+        # off (see the class docstring) this is the only branch that runs.
         if not settings.CHAT_DEMO_BOOTSTRAP_ENABLED:
             return Response({"detail": "Demo chat session bootstrap is disabled."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Kept below the flag as defence-in-depth for the day someone re-enables
+        # the flag: a chat session may only be minted for a caller who already
+        # holds a valid platform session (the ``kbc_session`` cookie). It costs
+        # nothing while the endpoint is disabled.
+        if authenticate_request(request) is None:
+            return Response({"detail": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
 
         demo_email = str(request.data.get("email", "")).strip().lower()
         try:

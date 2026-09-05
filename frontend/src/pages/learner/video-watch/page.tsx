@@ -1295,7 +1295,7 @@ function InlineAttachmentPreview({ url, title, fileName }: { url: string; title:
 
         if (isWord) {
           const arrayBuffer = await response.arrayBuffer();
-          const mammoth = await import('mammoth/mammoth.browser');
+          const mammoth = await import('mammoth');
           const result = await mammoth.convertToHtml({ arrayBuffer });
           if (!cancelled) {
             setPreview({ status: 'ready', kind: 'html', html: DOMPurify.sanitize(result.value || '<p>No preview content found.</p>') });
