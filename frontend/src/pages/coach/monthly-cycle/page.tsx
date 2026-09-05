@@ -19,6 +19,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { MetricCard } from '@/components/ui/MetricCard';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
@@ -30,12 +31,16 @@ import { formatHoursMinutes } from '@/lib/format';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 
+import { ActivityTimelinePanel } from './components/ActivityTimelinePanel';
 import { CoachingDeliveryPanel } from './components/CoachingDeliveryPanel';
+import { EngagementOverviewChart } from './components/EngagementOverviewChart';
 import { LearnerMonthCard } from './components/LearnerMonthCard';
 import { LearnerOverviewPanel } from './components/LearnerOverviewPanel';
 import { MonthHeroTiles } from './components/MonthHeroTiles';
 import { MonthNavigator } from './components/MonthNavigator';
 import { MonthlyCycleError, MonthlyCycleLoading, NoActiveLearners, NoLearnerMatches } from './components/MonthlyCycleStates';
+import { StatusBreakdownPanel } from './components/StatusBreakdownPanel';
+import { TopLearnerActionsPanel } from './components/TopLearnerActionsPanel';
 import { COACHING_DELIVERY_CONFIG, COACHING_DELIVERY_ORDER, EMPTY_LEARNERS, EMPTY_SUMMARY, LEARNERS_PER_PAGE } from './lib/constants';
 import {
   coachingDeliveryEventKey,
@@ -47,6 +52,7 @@ import {
   currentMonthKey,
   emptyCoachingDeliverySummary,
   formatMonthLabel,
+  formatNumber,
   monthlyActivityEndpoint,
   normalizeSearch,
   readJson,
@@ -150,6 +156,22 @@ export default function CoachMonthlyCycle() {
   const paginatedLearners = useMemo(
     () => filteredLearners.slice(pageStartIndex, pageEndIndex),
     [filteredLearners, pageEndIndex, pageStartIndex],
+  );
+  const latestActivities = useMemo(
+    () => learners
+      .flatMap((learner) => learner.activities.map((activity) => ({ ...activity, learnerId: learner.id, learnerName: learner.name })))
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 6),
+    [learners],
+  );
+  const learnerActionCounts = useMemo(
+    () => learners.map((learner) => ({
+      id: learner.id,
+      name: learner.name,
+      initials: learner.initials,
+      actionCount: learner.activities.length,
+    })),
+    [learners],
   );
   const coachingDelivery = useMemo<CoachingDeliverySummary>(() => {
     const delivery = emptyCoachingDeliverySummary();
