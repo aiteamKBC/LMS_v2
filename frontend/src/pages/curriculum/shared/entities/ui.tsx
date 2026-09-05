@@ -122,6 +122,20 @@ function slug(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'filter';
 }
 
+/**
+ * The order control the entity pages share. `options` is an
+ * `EntitySortOption` list from `model` -- only its value/label are read here, so
+ * the bar never needs to know what any of them actually sort on.
+ */
+export interface EntitySortSelect {
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string }>;
+  /** The value that means "unsorted", so Reset knows where to put it back. */
+  defaultValue?: string;
+  label?: string;
+}
+
 export interface FilterSelect {
   label: string;
   value: string;
@@ -142,6 +156,7 @@ export function EntityFilterBar({
   onSearch,
   placeholder,
   selects,
+  sort,
   onReset,
   summary,
   trailing,
@@ -153,6 +168,13 @@ export function EntityFilterBar({
   onSearch: (value: string) => void;
   placeholder: string;
   selects: FilterSelect[];
+  /**
+   * Which order the list is in. Rendered after the filters and next to them
+   * because it is chosen the same way, but it narrows nothing -- so it counts
+   * towards "dirty" only once it has moved off its default, and Reset returns
+   * it there with the rest.
+   */
+  sort?: EntitySortSelect;
   onReset: () => void;
   summary?: string;
   trailing?: ReactNode;
@@ -163,7 +185,8 @@ export function EntityFilterBar({
   /** Disable search while leaving contextual selects, such as Cohort, usable. */
   searchDisabled?: boolean;
 }) {
-  const dirty = !disabled && (isDirty ?? (Boolean(search) || selects.some(select => select.value)));
+  const sortDirty = Boolean(sort) && sort!.value !== (sort!.defaultValue ?? '');
+  const dirty = !disabled && (isDirty ?? (Boolean(search) || selects.some(select => select.value) || sortDirty));
   return (
     <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-3.5">
       <div className="flex flex-col gap-2.5 xl:flex-row xl:items-end xl:justify-between">
@@ -198,6 +221,23 @@ export function EntityFilterBar({
               />
             </div>
           ))}
+          {sort && (
+            <div className="block">
+              <span id="filter-sort" className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-foreground-400">
+                {sort.label || 'Sort by'}
+              </span>
+              <SelectMenu
+                size="sm"
+                value={sort.value}
+                onChange={sort.onChange}
+                options={sort.options.map(option => ({ value: option.value, label: option.label }))}
+                disabled={disabled}
+                disabledHint={disabled ? 'Sorting becomes available when this list has records.' : undefined}
+                ariaLabelledBy="filter-sort"
+                placeholder={sort.options[0]?.label || 'Default order'}
+              />
+            </div>
+          )}
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:shrink-0 xl:justify-end">
           {trailing}
@@ -783,6 +823,88 @@ export function ColorControl({ value, onChange }: { value: string; onChange: (va
           className={`h-7 w-7 rounded-lg border-2 transition-smooth ${value.toLowerCase() === preset ? 'border-foreground-900' : 'border-transparent'}`}
         />
       ))}
+    </div>
+  );
+}
+
+/** Anything larger than this is refused: the image is stored on the record itself. */
+const COVER_IMAGE_MAX_BYTES = 3 * 1024 * 1024;
+
+/**
+ * An optional picture for a record, picked from the device. The file is read
+ * into a data: URL and saved on the record itself, so there is no upload to wait
+ * for and nothing to clean up when the record is deleted.
+ *
+ * One way in on purpose: a pasted address is someone else's file, and the card
+ * quietly loses its picture the day that address stops answering. Records saved
+ * before this still hold a URL and go on rendering it.
+ */
+export function CoverImageControl({ value, onChange, onError, alt = '' }: {
+  value: string;
+  onChange: (value: string) => void;
+  /** Told why a picked file was refused, so the caller can say so its own way. */
+  onError?: (message: string) => void;
+  alt?: string;
+}) {
+  const [broken, setBroken] = useState(false);
+  useEffect(() => { setBroken(false); }, [value]);
+  const showImage = Boolean(value) && !broken;
+
+  const readFile = (file?: File) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      onError?.('That file is not an image. Choose a PNG, JPG, SVG or WebP.');
+      return;
+    }
+    if (file.size > COVER_IMAGE_MAX_BYTES) {
+      onError?.('That image is over 3 MB. Choose a smaller one so the record saves quickly.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => { onChange(String(reader.result || '')); };
+    reader.onerror = () => { onError?.('That image could not be read. Try another file.'); };
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div className="grid gap-3 rounded-lg border border-background-200 bg-background-50 p-3 sm:grid-cols-[160px_minmax(0,1fr)]">
+      <div className="overflow-hidden rounded-lg border border-background-200 bg-background-50">
+        {showImage ? (
+          <img src={value} alt={alt} className="h-24 w-full object-cover" onError={() => setBroken(true)} />
+        ) : (
+          <div className="flex h-24 items-center justify-center bg-background-100 text-foreground-300">
+            <AppIcon className="ri-image-add-line text-2xl"></AppIcon>
+          </div>
+        )}
+      </div>
+      <div className="flex min-w-0 flex-col justify-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100">
+            <AppIcon className="ri-upload-cloud-2-line text-sm"></AppIcon>
+            {value ? 'Replace image' : 'Upload image'}
+            <input
+              type="file"
+              accept="image/*"
+              className="sr-only"
+              onChange={event => { readFile(event.target.files?.[0]); event.target.value = ''; }}
+            />
+          </label>
+          {value && (
+            <button
+              type="button"
+              onClick={() => onChange('')}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-red-200 bg-background-50 px-3 text-[12px] font-bold text-red-600 transition-smooth hover:bg-red-50"
+            >
+              <AppIcon className="ri-delete-bin-line text-sm"></AppIcon>
+              Remove
+            </button>
+          )}
+        </div>
+        <p className="text-[11px] font-medium text-foreground-400">PNG, JPG, SVG or WebP, up to 3 MB.</p>
+        {broken && Boolean(value) && (
+          <p className="text-[11px] font-semibold text-amber-600">This image did not load. The record keeps its icon until another is uploaded.</p>
+        )}
+      </div>
     </div>
   );
 }

@@ -57,6 +57,7 @@ import {
 } from './model';
 import {
   ColorControl,
+  CoverImageControl,
   EntityDrawer,
   FormField,
   MultiSelectControl,
@@ -110,6 +111,8 @@ export interface ModuleFormTarget {
   status?: string;
   notes?: string;
   color?: string;
+  /** The stored cover image: a URL, or a data: URL for an uploaded file. */
+  coverImage?: string;
   deliveryUsages?: ModuleFormDeliveryRef[];
 }
 
@@ -139,6 +142,7 @@ export function moduleFormTarget(module: CurriculumModule | undefined | null): M
     status: module.status,
     notes: module.notes,
     color: module.color,
+    coverImage: module.coverImage,
   };
 }
 
@@ -243,6 +247,10 @@ export function ModuleFormDrawer({
   const [status, setStatus] = useState('draft');
   const [description, setDescription] = useState('');
   const [color, setColor] = useState('#2563eb');
+  // Optional module artwork. Either a pasted URL or a data: URL read off the
+  // picked file -- the same two shapes a free course's cover takes, stored on
+  // the module row rather than uploaded anywhere.
+  const [coverImage, setCoverImage] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // A group whose attach was refused for a tutor double-booking, offered a
@@ -292,7 +300,7 @@ export function ModuleFormDrawer({
   }, [onSavingChange, saving]);
 
   const dirty = !sameFormValues(
-    { name, programmeId, cohortId, groupIds, sessionsNumber, startDate, targetEndDate, tutor, status, description, color },
+    { name, programmeId, cohortId, groupIds, sessionsNumber, startDate, targetEndDate, tutor, status, description, color, coverImage },
     baseline.current,
   );
   // The seeding effect below has to depend on `groups`, `cohorts` and
@@ -377,6 +385,7 @@ export function ModuleFormDrawer({
       status: cleanText(module?.status) || 'draft',
       description: visibleNotes(module?.notes),
       color: module?.color || parentGroup?.color || '#2563eb',
+      coverImage: cleanText(module?.coverImage),
     };
     baseline.current = initial;
     console.log('[TEMP-DEBUG moduleForm] drawer (re)initialised. module prop =', module, 'initial state =', initial);
@@ -391,6 +400,7 @@ export function ModuleFormDrawer({
     setStatus(initial.status);
     setDescription(initial.description);
     setColor(initial.color);
+    setCoverImage(initial.coverImage);
   }, [allowSeed, attachedGroupIds, cohorts, defaults?.cohortId, defaults?.groupId, defaults?.programmeId, groups, module, open, selectableProgrammes]);
 
   const programmeOptions = useMemo(
@@ -401,8 +411,14 @@ export function ModuleFormDrawer({
     () => cohortsForProgramme(cohorts, programmes, programmeId),
     [cohorts, programmeId, programmes],
   );
+  // The cohort is what makes this list answerable: a group carries its cohort's
+  // dates and holidays, so the placement only means something once the cohort is
+  // named. `groupsForScope` would answer a programme-only scope with every group
+  // under it -- right for a filter toolbar reading "All cohorts", wrong for a
+  // picker where ticking one of them would place the module in a cohort the form
+  // above has not chosen.
   const availableGroups = useMemo(
-    () => groupsForScope(groups, cohorts, programmes, { programmeId, cohortId }),
+    () => (cohortId ? groupsForScope(groups, cohorts, programmes, { programmeId, cohortId }) : []),
     [cohortId, cohorts, groups, programmeId, programmes],
   );
   // The delivery the previews, the tutor check and (when editing) the PATCH are
@@ -501,7 +517,7 @@ export function ModuleFormDrawer({
     ? manualEndDate
       ? calculatedEndDate && calculatedEndDate !== manualEndDate
         ? `Set by hand. Generated sessions currently finish ${formatDateLabel(calculatedEndDate)}.`
-        : 'Set by hand. Clear it, or change the start date or the weeks, to recalculate it.'
+        : 'Set by hand. The weeks above were counted from it; change the weeks to recalculate the date instead.'
       : `The last of ${totalSessions} session${totalSessions === 1 ? '' : 's'} across ${sessionsNumber} week${Number(sessionsNumber) === 1 ? '' : 's'}${weekDays ? ` on ${weekDays}` : ''}${cohortHolidays.length ? `, skipping ${cohortHolidays.length} holiday${cohortHolidays.length === 1 ? '' : 's'}` : ''}.`
     : plan?.warnings?.[0] || 'Set the start date, the weeks and the group delivery day to calculate it.';
   // The cohort's delivery window is the module's boundary, and the end date is
@@ -662,17 +678,37 @@ export function ModuleFormDrawer({
     setCohortId('');
     setGroupIds([]);
   };
-  // The two inputs the end date is made of. Moving either drops whatever end date
-  // was being held by hand -- including the stored one an edit opens with -- so
-  // the field recalculates from what is now typed instead of showing the answer
-  // to the previous weeks value.
+  // Weeks and dates are two views of the same span, and either one can be the
+  // one the user knows: a module planned as "eight weeks from the 3rd" is typed
+  // as weeks, one contracted to finish on a fixed date is typed as dates. So the
+  // drawer solves for whichever field was not just touched.
+  //
+  //   * weeks moved      -> the end date is recalculated (the manual one drops);
+  //   * end date moved   -> the weeks are recalculated from start -> end;
+  //   * start date moved -> with an end date held by hand, the weeks are
+  //                         recalculated and that end date stays put; with none,
+  //                         the end date is recalculated from the weeks as before.
+  const weeksBetweenDates = (from: string, to: string) => (
+    projectModuleWeeks(from, to, weekDays, cohortHolidays, deliveryDaysPerWeek)
+  );
   const changeStartDate = (value: string) => {
     setStartDate(value);
-    setTargetEndDate('');
+    const held = cleanText(targetEndDate);
+    const recalculated = held ? weeksBetweenDates(value, held) : 0;
+    // Only when the span is still readable forwards: a start date dragged past
+    // the end date has no week count, and clearing the end date is the honest
+    // answer rather than inventing one.
+    if (recalculated > 0) setSessionsNumber(String(recalculated));
+    else setTargetEndDate('');
   };
   const changeWeeks = (value: string) => {
     setSessionsNumber(value);
     setTargetEndDate('');
+  };
+  const changeEndDate = (value: string) => {
+    setTargetEndDate(value);
+    const recalculated = weeksBetweenDates(startDate, value);
+    if (recalculated > 0) setSessionsNumber(String(recalculated));
   };
   const changeCohort = (value: string) => {
     setCohortId(value);
@@ -781,6 +817,7 @@ export function ModuleFormDrawer({
         startTime: cleanText(group.startTime) || undefined,
         endTime: cleanText(group.endTime) || undefined,
         color,
+        coverImage,
         notes: description,
         holidays: holidays.filter(holiday => groupHolidayIds.has(normaliseKey(holiday.id))),
       }) as Promise<{ created?: Array<Record<string, unknown>>; updatedModules?: Array<Record<string, unknown>> }>;
@@ -797,6 +834,7 @@ export function ModuleFormDrawer({
           notes: description,
           status,
           color,
+          coverImage,
           // The two counts are sent apart, because they mean different things and
           // different features read them: `weeks` is what the week builder
           // authors and what the catalogue shows as "N weeks"; `sessionsNumber`
@@ -908,6 +946,7 @@ export function ModuleFormDrawer({
         startDate: startDate || '',
         endDate: endDate || '',
         status: 'draft',
+        coverImage,
       });
       if (!chained) onClose();
       await onSaved({ catalogueId: created.catalogueId || created.id, name: trimmed, created: true, ...savedParents() });
@@ -937,7 +976,7 @@ export function ModuleFormDrawer({
       ? 'Saved against this group, with its delivery days and holidays. Tick another group to run the same module for it too.'
       : cohortId
         ? 'Saved against this cohort. Tick one or more groups to give it delivery dates and a tutor.'
-        : 'No group yet - the module is created as a catalogue draft.';
+        : 'Groups appear once a cohort is chosen. Without one the module is created as a catalogue draft.';
 
   return (
     <EntityDrawer
@@ -987,7 +1026,13 @@ export function ModuleFormDrawer({
               onChange={changeGroups}
               options={groupOptions}
               selectAllLabel="groups"
-              emptyMessage={cohortId ? 'No groups for this cohort.' : 'No groups for this programme.'}
+              emptyMessage={
+                cohortId
+                  ? 'No groups for this cohort.'
+                  : programmeId
+                    ? 'Select a cohort above to see its groups.'
+                    : 'Select a programme and cohort above to see its groups.'
+              }
             />
           </FormField>
           {otherGroupCount > 0 && (
@@ -1008,8 +1053,8 @@ export function ModuleFormDrawer({
         label="Weeks"
         hint={
           deliveryDaysPerWeek > 1
-            ? `= ${totalSessions} sessions (${deliveryDaysPerWeek} delivery days x ${sessionsNumber || 1} weeks). Each week is authored in the Module Builder.`
-            : 'How long the module runs. Each week is authored in the Module Builder.'
+            ? `= ${totalSessions} sessions (${deliveryDaysPerWeek} delivery days x ${sessionsNumber || 1} weeks). Counted from the dates below when you set them; each week is authored in the Module Builder.`
+            : 'How long the module runs, counted from the dates below when you set them. Each week is authored in the Module Builder.'
         }
       >
         <TextControl type="number" min={1} max={104} value={sessionsNumber} onChange={changeWeeks} />
@@ -1032,7 +1077,7 @@ export function ModuleFormDrawer({
         <DatePickerField
           label="End date"
           value={endDate}
-          onChange={setTargetEndDate}
+          onChange={changeEndDate}
           min={startDate || selectedCohort?.startDate || undefined}
           max={selectedCohort?.practicalEndDate || selectedCohort?.endDate || undefined}
           placeholder="Calculated or target"
@@ -1099,6 +1144,17 @@ export function ModuleFormDrawer({
       </FormField>
       <FormField label="Colour">
         <ColorControl value={color} onChange={setColor} />
+      </FormField>
+      <FormField
+        label="Cover image"
+        hint="Optional. The Module Builder card shows it in place of the module icon; leave it empty to keep the icon."
+      >
+        <CoverImageControl
+          value={coverImage}
+          onChange={setCoverImage}
+          onError={setError}
+          alt={`${name || 'Module'} cover`}
+        />
       </FormField>
       {sessionPreviewOpen && plan && (
         <ModuleSessionPreviewModal
@@ -1212,6 +1268,61 @@ function projectModuleEndDate(
     guardDays -= 1;
   }
   return '';
+}
+
+/**
+ * How many weeks a start and an end date span -- `projectModuleEndDate` run
+ * backwards, so the Weeks box answers a date the user picked rather than the
+ * other way round.
+ *
+ * Counted in delivery days, not calendar days: the same walk, stepping a day at
+ * a time from the start to the end, counting the days this group actually runs
+ * and skipping the ones a ticked holiday covers. A group teaching Mon + Wed that
+ * runs 11 sessions is 6 weeks, not 5.5 -- a part-week is still a week the
+ * builder has to author, so the division rounds up.
+ *
+ * With no group chosen yet there are no delivery days to count, and the span
+ * falls back to whole calendar weeks. Returns 0 whenever there is nothing to
+ * count -- a missing date, or an end date before the start.
+ */
+function projectModuleWeeks(
+  startDate: string,
+  endDate: string,
+  weekDays: string,
+  holidays: CurriculumHoliday[],
+  deliveryDaysPerWeek: number,
+): number {
+  const start = dateFromYmd(startDate);
+  const end = dateFromYmd(endDate);
+  if (!start || !end || end < start) return 0;
+
+  const days = deliveryDayIndexes(weekDays);
+  const perWeek = Math.max(1, deliveryDaysPerWeek || days.length);
+  if (!days.length) {
+    // No delivery pattern to count against: the span in whole calendar weeks,
+    // inclusive of both ends, which is what the box would have been typed with.
+    const calendarDays = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
+    return clampModuleWeeks(Math.ceil(calendarDays / 7));
+  }
+
+  const blocked = holidayDateKeys(holidays);
+  const cursor = new Date(start);
+  let sessions = 0;
+  let guardDays = 3650;
+  while (cursor <= end && guardDays > 0) {
+    const weekday = (cursor.getDay() + 6) % 7;
+    if (days.includes(weekday) && !blocked.has(ymdOf(cursor))) sessions += 1;
+    cursor.setDate(cursor.getDate() + 1);
+    guardDays -= 1;
+  }
+  if (!sessions) return 0;
+  return clampModuleWeeks(Math.ceil(sessions / perWeek));
+}
+
+/** The Weeks input's own bounds, so a computed count is never one it refuses. */
+function clampModuleWeeks(weeks: number): number {
+  if (!Number.isFinite(weeks) || weeks <= 0) return 0;
+  return Math.min(104, Math.max(1, Math.round(weeks)));
 }
 
 function dateFromYmd(value: string): Date | null {

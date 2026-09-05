@@ -1646,6 +1646,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
                 teamsOrganizerEmail: meeting.organizerEmail,
                 teamsAttendees: meeting.attendees,
                 teamsPresenters: meeting.presenters,
+                teamsCoOrganizers: meeting.coOrganizers || [],
                 ...(scheduled ? { teamsSessionNumber: scheduled.sessionNumber } : {}),
                 ...(scheduled && !hasExplicitSchedule ? {
                   sessionDateTimeUtc: scheduled.startDateTimeUtc,

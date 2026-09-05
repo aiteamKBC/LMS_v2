@@ -15,8 +15,9 @@ import { useSearchParams, Link } from 'react-router-dom';
 import { AdminPage, DataPanel, Pager, SourceNote, StatusBadge } from '../_shared/AdminPage';
 import { useAdminData } from '../_shared/useAdminData';
 import { accountAction, fetchAccounts, type AccountStatus, type PlatformAccount } from '@/api/platformAdmin';
-import { accessLabel } from '@/api/staffUsers';
+import { accessLabel, fetchStaffUser, type StaffUserRow } from '@/api/staffUsers';
 import { useAuth } from '@/hooks/useAuth';
+import { EditStaffModal } from '@/pages/users/components/EditStaffModal';
 import { AccessPanel } from './AccessPanel';
 
 const ROLE_FILTERS = [
@@ -60,8 +61,14 @@ export default function AdminAccountsPage() {
   const [term, setTerm] = useState('');
   const [page, setPage] = useState(1);
   const [busy, setBusy] = useState<number | null>(null);
-  // The account whose access panel is open, from clicking their name.
+  // The account whose access panel is open, from clicking its Access badge.
   const [editingAccess, setEditingAccess] = useState<PlatformAccount | null>(null);
+  // The person record behind an account, open for editing from clicking their
+  // name. A login account holds almost none of this — name, email, position and
+  // contact details live on the staff row it points at — so the record is
+  // fetched by `subjectId` and handed to the directory's own edit form.
+  const [editingRecord, setEditingRecord] = useState<StaffUserRow | null>(null);
+  const [openingRecord, setOpeningRecord] = useState<number | null>(null);
   const { auth } = useAuth();
   const [actionError, setActionError] = useState<string | null>(null);
   // Mail actions need a positive result, not just the absence of an error:
@@ -109,6 +116,19 @@ export default function AdminAccountsPage() {
       setActionError(err instanceof Error ? err.message : 'Action failed.');
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function openRecord(account: PlatformAccount) {
+    setOpeningRecord(account.id);
+    setActionError(null);
+    setActionNotice(null);
+    try {
+      setEditingRecord(await fetchStaffUser(String(account.subjectId)));
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not open this account’s record.');
+    } finally {
+      setOpeningRecord(null);
     }
   }
 
@@ -207,16 +227,37 @@ export default function AdminAccountsPage() {
                           </span>
                         </div>
                         <div className="min-w-0">
-                          {/* Clicking the name opens the access editor. Staff only:
-                              a learner or employer has no grant to edit. */}
+                          {/* Clicking the name opens the person record behind the
+                              account — the same form the user directory edits, not
+                              a second one. The Access badge stays its own editor,
+                              because granting access is an admin-only act with
+                              rules of its own. A learner's record is not a form
+                              but a whole board — programme, documents, coach — so
+                              their name links to it at /users/:id rather than
+                              re-drawing it here; ?source=commercial goes with it
+                              because the board reads its documents by learner
+                              kind. An employer account is left plain: its record
+                              is the employer's, not a person's. */}
                           {account.subjectType === 'staff' ? (
                             <button
-                              onClick={() => setEditingAccess(account)}
-                              className="font-medium text-primary-600 hover:text-primary-700 hover:underline truncate cursor-pointer text-left block max-w-full"
-                              title="Set this account's access"
+                              onClick={() => openRecord(account)}
+                              disabled={openingRecord === account.id}
+                              className="font-medium text-primary-600 hover:text-primary-700 hover:underline truncate cursor-pointer text-left block max-w-full disabled:opacity-50 disabled:cursor-wait"
+                              title="Edit this person's record — name, email, contact details and position"
                             >
+                              {openingRecord === account.id && (
+                                <AppIcon className="ri-loader-4-line animate-spin mr-1 text-[11px]"></AppIcon>
+                              )}
                               {account.displayName || account.email}
                             </button>
+                          ) : account.subjectType === 'learner' ? (
+                            <Link
+                              to={`/users/${account.subjectId}${account.learnerType === 'commercial' ? '?source=commercial' : ''}`}
+                              className="font-medium text-primary-600 hover:text-primary-700 hover:underline truncate block max-w-full"
+                              title="Open this learner's record — programme, details, documents and coach"
+                            >
+                              {account.displayName || account.email}
+                            </Link>
                           ) : (
                             <p className="font-medium text-foreground-800 truncate">{account.displayName || '—'}</p>
                           )}
@@ -229,12 +270,34 @@ export default function AdminAccountsPage() {
                       <p className="text-[10px] text-foreground-300 capitalize">via {account.subjectType}</p>
                     </td>
                     <td className="px-4 py-2.5">
-                      {account.subjectType !== 'staff' ? (
-                        <span className="text-[11px] text-foreground-300">n/a</span>
-                      ) : account.access ? (
-                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary-50 text-primary-700 border border-primary-200/50 whitespace-nowrap">
-                          {accessLabel(account.access)}
+                      {/* Only staff have a grant. A learner's reach is fixed by
+                          being a learner — their own workspace and nothing else,
+                          enforced by login.permissions.learner_self_only — so
+                          there is no value here to edit. Rather than a bare
+                          "n/a", say that, and send the click to the thing that
+                          *does* decide what this person can reach: their
+                          enrolment status, on their record. */}
+                      {account.subjectType === 'learner' ? (
+                        <Link
+                          to={`/users/${account.subjectId}${account.learnerType === 'commercial' ? '?source=commercial' : ''}`}
+                          className="text-[11px] text-foreground-400 hover:text-primary-600 hover:underline whitespace-nowrap"
+                          title="Learners have no access grant — their reach is fixed by being a learner. Their enrolment status is edited on their record."
+                        >
+                          Set by enrolment
+                        </Link>
+                      ) : account.subjectType !== 'staff' ? (
+                        <span className="text-[11px] text-foreground-300" title="Employer accounts have no access grant — their reach comes from the employer record.">
+                          Set by employer record
                         </span>
+                      ) : account.access ? (
+                        <button
+                          onClick={() => setEditingAccess(account)}
+                          className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary-50 text-primary-700 border border-primary-200/50 whitespace-nowrap cursor-pointer hover:bg-primary-100 hover:border-primary-300"
+                          title="Change this account's access"
+                        >
+                          {accessLabel(account.access)}
+                          <AppIcon className="ri-pencil-line ml-1 text-[9px] opacity-60"></AppIcon>
+                        </button>
                       ) : (
                         <button
                           onClick={() => setEditingAccess(account)}
@@ -285,6 +348,27 @@ export default function AdminAccountsPage() {
         </div>
       </DataPanel>
 
+      {editingRecord && (
+        <EditStaffModal
+          row={editingRecord}
+          onClose={() => setEditingRecord(null)}
+          onSaved={updated => {
+            // Name, email and access come straight back, so the row repaints
+            // now. Role is derived from position and access on the server, so
+            // the list is refreshed behind that rather than guessed at here.
+            setData(prev => prev && ({
+              ...prev,
+              results: prev.results.map(r => (
+                r.subjectType === 'staff' && String(r.subjectId) === String(updated.id)
+                  ? { ...r, displayName: updated.name, email: updated.email, access: updated.access }
+                  : r
+              )),
+            }));
+            reload();
+          }}
+        />
+      )}
+
       {editingAccess && (
         <AccessPanel
           account={editingAccess}
@@ -303,8 +387,10 @@ export default function AdminAccountsPage() {
 
       <SourceNote>
         Suspending an account revokes its live sessions immediately and is recorded in the access log.
-        A role cannot be changed here — it is derived from the person&apos;s enrolment record each request,
-        so change their position in the staff form instead.
+        A role cannot be changed here — it is derived from the person&apos;s enrolment record each request.
+        Click a name to edit that record: its position and access are what the role is computed from.
+        Access itself is a staff grant only — a learner or employer has none, because what they can
+        reach follows from being a learner or an employer.
       </SourceNote>
     </AdminPage>
   );
