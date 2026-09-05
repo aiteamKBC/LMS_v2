@@ -366,6 +366,7 @@ export default function ComponentViewPage() {
 
   const contentKind = componentContentKind(component?.type);
   const isVideo = contentKind === 'video';
+  const isAudio = contentKind === 'audio';
   // Live sessions and assignments use learner-entered time instead of exposing
   // a page timer. The signed session still runs invisibly so the server can cap
   // and verify the submitted duration.
@@ -569,21 +570,31 @@ export default function ComponentViewPage() {
     return () => { cancelled = true; };
   }, [phase, openable, componentId, kind, id, canProgress, isVideo, trackingMode, timerStorageKey]);
 
-  // Only visible time counts. Supported videos must also actually be playing;
-  // iframe-only players use the explicit visible-page fallback.
+  // Only visible time counts for ordinary page content. Audio is intentionally
+  // allowed to keep counting in a background tab because playback can continue
+  // while the learner works elsewhere. Hidden tabs throttle intervals, so audio
+  // uses the real wall-clock delta instead of assuming every callback is exactly
+  // one second apart.
   useEffect(() => {
     if (phase !== 'consume' || (!unsupported && !playerPlaying)) return;
+    let lastAudioTickAt = Date.now();
     timerRef.current = setInterval(() => {
-      if (document.visibilityState === 'visible') {
+      if (isAudio || document.visibilityState === 'visible') {
+        const now = Date.now();
+        const increment = isAudio
+          ? Math.floor((now - lastAudioTickAt) / 1000)
+          : 1;
+        if (increment < 1) return;
+        if (isAudio) lastAudioTickAt += increment * 1000;
         setWallElapsed((seconds) => {
-          const next = seconds + 1;
+          const next = seconds + increment;
           saveActivityTimerElapsed(timerStorageKey, next);
           return next;
         });
       }
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [phase, unsupported, playerPlaying, timerStorageKey]);
+  }, [phase, unsupported, playerPlaying, isAudio, timerStorageKey]);
 
   const finishConsuming = () => {
     if (timerRef.current) clearInterval(timerRef.current);
