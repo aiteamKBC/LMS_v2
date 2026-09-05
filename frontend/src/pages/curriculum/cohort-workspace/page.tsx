@@ -118,7 +118,7 @@ export default function CohortWorkspacePage() {
     { key: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
     { key: 'groups', label: 'Groups', icon: 'ri-team-line', count: cohortGroups.length },
     { key: 'modules', label: 'Modules', icon: 'ri-stack-line', count: cohortModules.length },
-    { key: 'learners', label: 'Learners', icon: 'ri-graduation-cap-line', count: cohort?.learners || undefined },
+    { key: 'learners', label: 'Learners and KSBs & activities', icon: 'ri-graduation-cap-line', count: cohort?.learners || undefined },
     { key: 'holidays', label: 'Holidays', icon: 'ri-calendar-close-line', count: selectedHolidays.length },
   ];
 
@@ -340,6 +340,12 @@ export default function CohortWorkspacePage() {
             title={`Learners and achievement in ${cohort?.name || 'this cohort'}`}
             learnerStatus="all"
             active={tab === 'learners'}
+            groupScopes={cohortGroups.map(group => ({ id: group.id, name: group.name }))}
+            moduleScopes={cohortModules.map(module => ({
+              id: moduleIdentity(module) || module.id,
+              name: module.name,
+              groupId: module.groupId,
+            }))}
           />
         )}
 

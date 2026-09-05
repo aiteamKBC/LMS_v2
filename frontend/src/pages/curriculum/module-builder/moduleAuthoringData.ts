@@ -325,6 +325,15 @@ export interface ModuleCatalogueItem {
   title: string;
   description: string;
   color?: string;
+  /**
+   * Optional module artwork — a pasted image URL, or a data: URL read off the
+   * picked file. The catalogue card shows it in place of the generic icon;
+   * empty keeps the icon.
+   */
+  coverImage?: string;
+  /** When the module row was written, and when it was last touched. */
+  createdAt?: string;
+  lastUpdated?: string;
   status: ModuleStatus;
   authoringStatus?: ModuleStatus;
   sourceType?: string;
@@ -490,7 +499,7 @@ function isGeneratedWeekPlaceholderComponent(component: ModuleComponent, week: P
   return !hasKsbMappings && weekKeys.includes(titleKey) && (typeKey.includes('live') || typeKey.includes('session'));
 }
 
-export function createLocalModuleDraft(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; catalogueId?: string; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string }): ModuleCatalogueItem {
+export function createLocalModuleDraft(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; catalogueId?: string; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string }): ModuleCatalogueItem {
   const catalogueId = input.catalogueId || makeAuthoringId('MOD');
   const id = `local-${catalogueId}`;
   const weekCount = Math.max(0, Math.round(Number(input.weeks) || 0));
@@ -511,6 +520,7 @@ export function createLocalModuleDraft(input: { programme: string; title: string
     group: input.groupName || '',
     title: input.title,
     description: input.description,
+    coverImage: input.coverImage || '',
     status: input.status || 'draft',
     ksbProfileSourceId: input.ksbProfileSourceId || '',
     sessionsNumber: Math.max(0, Math.round(Number(input.sessionsNumber ?? input.weeks) || 0)),
@@ -538,7 +548,7 @@ export function createLocalModuleDraft(input: { programme: string; title: string
   });
 }
 
-export async function createNewModule(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string }) {
+export async function createNewModule(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string }) {
   const draft = createLocalModuleDraft(input);
   try {
     const response = await apiJson<{ created: boolean; moduleCatalogueId?: string; module?: ModuleCatalogueItem }>('/curriculum/modules/', {
@@ -548,6 +558,7 @@ export async function createNewModule(input: { programme: string; title: string;
         moduleType: 'authoring',
         sourceType: 'authoring',
         description: draft.description,
+        coverImage: draft.coverImage || '',
         programmeId: draft.programmeId,
         programmeStatus: draft.programmeStatus,
         programme: draft.programmeName,
@@ -927,6 +938,9 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     isProgrammeDeleted: Boolean(module.isProgrammeDeleted),
     title,
     description,
+    coverImage: String(module.coverImage || '').trim(),
+    createdAt: module.createdAt || '',
+    lastUpdated: module.lastUpdated || '',
     status: module.status || 'draft',
     authoringStatus: module.authoringStatus || module.status || 'draft',
     sourceType: undefined,
@@ -1213,6 +1227,9 @@ export interface TeamsMeetingInput {
   organizerEmail: string;
   attendees: string[];
   presenters?: string[];
+  /** Given the Teams `coorganizer` role: they can start and manage the
+   *  recording, admit people from the lobby and edit the meeting options. */
+  coOrganizers?: string[];
   localStartDateTime: string;
   startDateTimeUtc: string;
   durationMinutes: number;
@@ -1249,6 +1266,7 @@ export interface TeamsMeetingResult {
     organizerEmail: string;
     attendees: string[];
     presenters: string[];
+    coOrganizers: string[];
     startDateTimeUtc: string;
     durationMinutes: number;
     repeat: string;
@@ -1508,11 +1526,11 @@ export function createTeamsMeeting(input: TeamsMeetingInput) {
 }
 
 /**
- * Send a module's own session dates to its Teams series. `attendees`/`presenters`
- * are optional: omit them to move dates only, pass them to correct who is invited
- * and who presents without recreating the meeting.
+ * Send a module's own session dates to its Teams series. `attendees`/`presenters`/
+ * `coOrganizers` are optional: omit them to move dates only, pass them to correct
+ * who is invited, who presents and who co-runs it without recreating the meeting.
  */
-export function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & { eventId?: string; attendees?: string[]; presenters?: string[] }) {
+export function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[] }) {
   return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }> }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
     method: 'PATCH',
     body: JSON.stringify(input),

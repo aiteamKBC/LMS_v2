@@ -62,6 +62,7 @@ from .mappers import (
     restrict_to_self_writable,
     to_board,
     to_commercial_row,
+    to_edit_fields,
     to_list_row,
     to_staff_row,
     write_commercial_fields,
@@ -835,6 +836,33 @@ def enrolment_user_detail(request, pk):
 
 
 @csrf_exempt
+# Staff only on GET too, unlike its neighbours: the response carries a national
+# insurance number, a date of birth and a home address. The board GET next door
+# is ungated because what it returns is programme progress, which is not the
+# same thing.
+@staff_only()
+def enrolment_user_fields(request, pk):
+    """The editable columns of one learner, to prefill the edit form.
+
+        GET /learner_api/enrolment-users/<id>/fields/  -> {field: value}
+
+    Saving goes back to ``enrolment_user_detail`` (PATCH), which validates the
+    choice lists and re-stamps the delivery window when a learner's placement
+    moves. This endpoint only reads.
+    """
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    try:
+        # all_learners for the same reason as enrolment_user_detail: ids are
+        # unique across the single table but `objects` hides commercial rows.
+        user = EnrolmentUser.all_learners.filter(pk=pk).first()
+    except DatabaseError as exc:
+        return _error(f"Database error: {exc}", 502)
+    if user is None:
+        return _error("User not found.", 404)
+    return JsonResponse(to_edit_fields(user))
+
+
 # Same reason as enrolment_user_detail: the learner presses Finish themselves.
 @staff_only(writes_only=True, allow_own_learner="pk")
 def enrolment_user_finish(request, pk):
