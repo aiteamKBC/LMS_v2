@@ -1118,6 +1118,56 @@ export interface WorkspaceTab {
   count?: number;
 }
 
+/**
+ * What kind of record a {@link ParentBadge} names.
+ *
+ * A colour per *record type*, not a cycling one like {@link STAT_TONES}. The
+ * stat rail cycles because its figures differ from page to page and only need to
+ * be told apart from each other; a parent chain is the same four kinds of thing
+ * everywhere, so the colour can carry which kind it is. A programme is violet on
+ * the group page, the module page and the cohort page alike — cycling would have
+ * given one programme a different colour on each, which is worse than grey.
+ */
+export type ParentBadgeTone = 'programme' | 'cohort' | 'group' | 'module' | 'neutral';
+
+/** Hover tones are held apart so an unlinked badge is not styled as clickable. */
+const PARENT_BADGE_TONES: Record<ParentBadgeTone, { base: string; hover: string }> = {
+  // Violet at the top of the chain, matching the purple the studio already uses
+  // for the programme itself, then cooling down through the levels below it.
+  programme: { base: 'border-violet-200 bg-violet-50 text-violet-700', hover: 'hover:bg-violet-100 hover:text-violet-900' },
+  cohort: { base: 'border-sky-200 bg-sky-50 text-sky-700', hover: 'hover:bg-sky-100 hover:text-sky-900' },
+  group: { base: 'border-emerald-200 bg-emerald-50 text-emerald-700', hover: 'hover:bg-emerald-100 hover:text-emerald-900' },
+  module: { base: 'border-amber-200 bg-amber-50 text-amber-800', hover: 'hover:bg-amber-100 hover:text-amber-900' },
+  neutral: { base: 'border-background-200 bg-background-100 text-foreground-600', hover: 'hover:bg-background-200 hover:text-foreground-900' },
+};
+
+/**
+ * A parent record named as a pill in a workspace subtitle — the group a module
+ * runs for, the cohort above it, the programme above that.
+ *
+ * A badge rather than a bold word because the subtitle is a chain of records,
+ * each one somewhere you can go. Set as prose with emphasised words, nothing
+ * separated the names from the joining text: "in Cohort C1 in programme
+ * Osama-Final-Prog" read as one sentence, and which parts were parents and which
+ * were labels had to be worked out. The Cohort workspace already framed its
+ * programme this way; this is that pill, shared, so the three workspaces cannot
+ * drift apart.
+ *
+ * `href` is optional. A parent that could not be resolved is still named — just
+ * not linked — so the chain never quietly drops a link and reads as complete.
+ */
+export function ParentBadge({ label, href, tone = 'neutral' }: {
+  label: ReactNode;
+  href?: string;
+  /** The kind of record being named, which is what picks the colour. */
+  tone?: ParentBadgeTone;
+}) {
+  const palette = PARENT_BADGE_TONES[tone] || PARENT_BADGE_TONES.neutral;
+  const shape = `inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${palette.base}`;
+  if (!href) return <span className={shape}>{label}</span>;
+  return <Link to={href} className={`${shape} transition-smooth ${palette.hover}`}>{label}</Link>;
+}
+
 /** Breadcrumb + title + KPI rail + tab strip, shared by the three workspaces. */
 export function WorkspaceHeader({
   breadcrumbs,
