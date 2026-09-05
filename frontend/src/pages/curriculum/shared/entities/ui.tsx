@@ -324,7 +324,13 @@ export function EntityTable<T>({
                       if (node) rowNodes.current.set(key, node);
                       else rowNodes.current.delete(key);
                     }}
-                    className={`${gridClass} gap-3 px-4 py-2.5 transition-smooth hover:bg-background-100/60${
+                    role={href ? 'button' : undefined}
+                    tabIndex={href ? 0 : undefined}
+                    onClick={href ? () => navigate(href) : undefined}
+                    onKeyDown={href ? event => {
+                      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigate(href); }
+                    } : undefined}
+                    className={`${gridClass} gap-3 px-4 py-2.5 transition-smooth hover:bg-background-100/60${href ? ' cursor-pointer' : ''}${
                       flashKey === key ? (reduceMotion ? ' bg-primary-100/70' : ' animate-row-flash') : ''
                     }`}
                   >
