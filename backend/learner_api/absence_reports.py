@@ -9,6 +9,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from coach_api.models import CoachAbsenceReport
+from login.permissions import learner_self_only
 
 from .evidence_storage import (
     azure_configured,
@@ -177,6 +178,10 @@ def _serialize(report):
 
 
 @csrf_exempt
+# Learners report their own absences here; staff/coaches file absences through
+# coach_api's own endpoint, so this is learner-self-only (staff write -> 403).
+# GET reads stay open (A5, later group).
+@learner_self_only(kwarg="learner_id")
 def learner_absence_reports(request, kind, learner_id):
     try:
         learner = _source_learner(kind, learner_id)

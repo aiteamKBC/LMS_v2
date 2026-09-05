@@ -1,6 +1,8 @@
 from django.db import DatabaseError
 from django.http import JsonResponse
 
+from login.permissions import learner_self_or_staff
+
 from .learner_detail import SOURCE_MODELS
 from .identity import learner_profile_for_source
 from .teams_attendance import fetch_verified_teams_attendance_rows
@@ -86,6 +88,7 @@ def _summarize_attendance(rows):
     }
 
 
+@learner_self_or_staff(kwarg="learner_id")
 def learner_attendance(request, kind, learner_id):
     if request.method != 'GET':
         return _error('Method not allowed.', 405)

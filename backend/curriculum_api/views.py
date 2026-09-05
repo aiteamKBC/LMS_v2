@@ -623,7 +623,7 @@ def json_body(request):
 
 
 COMPONENT_UPLOAD_ROOT = 'curriculum_component_uploads'
-COMPONENT_UPLOAD_MAX_BYTES = 5 * 1024 * 1024
+COMPONENT_UPLOAD_MAX_BYTES = 300 * 1024 * 1024
 COMPONENT_UPLOAD_EXTENSIONS = {
     'podcast': {'.mp3', '.m4a', '.mp4', '.wav', '.aac', '.ogg', '.oga', '.webm'},
     'powerpoint': {'.ppt', '.pptx', '.pps', '.ppsx', '.pdf'},
@@ -649,7 +649,7 @@ def component_upload_metadata(module_catalogue_id, component_id, component_type,
     if suffix not in allowed:
         return None, f'{component_type} uploads must use one of: {", ".join(sorted(allowed))}.'
     if uploaded_file.size > COMPONENT_UPLOAD_MAX_BYTES:
-        return None, 'File is too large. Maximum upload size is 5 MB.'
+        return None, 'File is too large. Maximum upload size is 300 MB.'
 
     # Microseconds make the path unique even when the same component retries or
     # replaces a same-named resource within one second.

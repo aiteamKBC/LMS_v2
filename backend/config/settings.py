@@ -125,6 +125,67 @@ def database_from_url(database_url):
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
 USE_SQLITE_FOR_TESTS = os.environ.get("DJANGO_USE_SQLITE", "false").lower() == "true"
 
+# Opt-in, test-only "security test branch" mode (A17). Defined here — before the
+# MIGRATION_MODULES and DATABASES blocks that both consult it — and fully wired
+# further down (host-inequality assertion, alias removal, hermetic env). The
+# branch is a schema clone of production where every table and the whole
+# migration graph already exist, so the test-mode migration nulling below must
+# NOT apply in this mode: nulling chat's migrations would make run-syncdb try to
+# CREATE its already-present managed table.
+USE_SECURITY_TEST_BRANCH = (
+    "test" in sys.argv
+    and os.environ.get("USE_SECURITY_TEST_BRANCH", "").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
+
+# Opt-in app-server mode for the Playwright baseline: run `runserver` against the
+# sanitised Neon test branch, never production. Fails CLOSED before any DATABASES
+# entry is built: it asserts that `default` and `enrolment` both resolve to the
+# branch host and that the audit/attendance alias env vars are blank (so those
+# aliases are never created). Guarded off `test` so it never affects the runner.
+RUN_APP_ON_TEST_BRANCH = (
+    "test" not in sys.argv
+    and os.environ.get("RUN_APP_ON_TEST_BRANCH", "").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
+if RUN_APP_ON_TEST_BRANCH:
+    _branch_url = os.environ.get("security_Database_url")  # case-sensitive key
+    if not _branch_url:
+        raise ImproperlyConfigured(
+            "RUN_APP_ON_TEST_BRANCH is set but 'security_Database_url' is absent."
+        )
+    _branch_host = (urlparse(_branch_url).hostname or "").lower()
+    if not _branch_host:
+        raise ImproperlyConfigured(
+            "security_Database_url has no parseable host; refusing to start."
+        )
+    # `default` and `enrolment` must BOTH resolve to the branch host. Fail closed
+    # on unset/unparseable, before any connection is opened.
+    for _key in ("DATABASE_URL", "Database_url"):
+        _u = os.environ.get(_key)
+        _h = (urlparse(_u).hostname or "").lower() if _u else ""
+        if not _h:
+            raise ImproperlyConfigured(
+                f"RUN_APP_ON_TEST_BRANCH: {_key} is unset or unparseable; refusing to start."
+            )
+        if _h != _branch_host:
+            raise ImproperlyConfigured(
+                f"RUN_APP_ON_TEST_BRANCH: {_key} host ({_h!r}) is not the test branch "
+                f"({_branch_host!r}); refusing to run the app against a non-branch database."
+            )
+    # The audit / audit_clone / attendance databases must be UNREACHABLE: their
+    # env vars must be blank so those aliases are never built at all.
+    for _key in ("AUDIT_DATABASE_URL", "AUDIT_CLONE_DATABASE_URL", "LASR-ADUTIOD-CLNE",
+                 "KBC_ATTENDANCE_DATABASE_URL"):
+        if os.environ.get(_key):
+            raise ImproperlyConfigured(
+                f"RUN_APP_ON_TEST_BRANCH: {_key} must be empty so its production alias "
+                f"is never created; refusing to start."
+            )
+    # Hermetic: no outbound third-party calls from the baseline (WordPress / AI).
+    os.environ["KBC_LMS_API_KEY"] = ""
+    os.environ["OPENAI_API_KEY"] = ""
+
 # Curriculum schema is owned by migrations. When this is false (the production
 # default) request handlers only VERIFY that the expected tables exist and raise
 # a controlled configuration error if they do not — they never run CREATE/ALTER
@@ -169,11 +230,13 @@ if "test" in sys.argv:
 
 CHAT_DEMO_BOOTSTRAP_ENABLED = os.environ.get(
     "CHAT_DEMO_BOOTSTRAP_ENABLED",
-    # The current frontend authentication is local/demo authentication and
-    # therefore cannot create a Django session by itself. The deployed
-    # frontend uses tightly scoped local demo identities and needs this
-    # bridge until the main application login is replaced by real Django auth.
-    "true",
+    # Defaults to OFF: this bridge mints a Django session for an anonymous caller
+    # by email, so a deployment that has not deliberately opted in must resolve
+    # to disabled rather than silently enabling it. Environments that still need
+    # the demo bridge set CHAT_DEMO_BOOTSTRAP_ENABLED=true explicitly (the local
+    # .env does). Kept until the main application login is replaced by real
+    # Django auth.
+    "false",
 ).lower() == "true"
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
@@ -369,6 +432,22 @@ if USE_SQLITE_FOR_TESTS:
         'chat': None,
         'coach_api': None,
     }
+elif "test" in sys.argv and not USE_SECURITY_TEST_BRANCH:
+    # Neon test build only. Some apps' migrations DDL or query their externally
+    # owned (managed = False) Neon tables during ``migrate``; those tables do not
+    # exist on a fresh test database, so the build aborts before any test runs
+    # (see SECURITY_AUDIT.md finding A17). Skip exactly the apps whose migrations
+    # are broken this way: chat (0006 queries chat."conversations") and
+    # curriculum_api (0054 alters curriculum.components, plus siblings). Both are
+    # all-``managed = False`` here, so skipping their migrations creates no tables
+    # and needs no schema. coach_api's migrations correctly self-create the
+    # "Coach" schema and its tables, so they are kept and run normally. Guarded on
+    # ``"test" in sys.argv`` so it can never take effect outside ``manage.py test``.
+    MIGRATION_MODULES = {
+        'chat': None,
+        'curriculum_api': None,
+    }
+if USE_SQLITE_FOR_TESTS:
     # Password strength is not under test in these suites. A fast hasher keeps
     # tests that create many authenticated chat users from spending most of
     # their runtime in PBKDF2 while production retains the secure defaults.
@@ -456,6 +535,82 @@ if _audit_clone_database_url and not USE_SQLITE_FOR_TESTS:
 _kbc_attendance_database_url = os.environ.get('KBC_ATTENDANCE_DATABASE_URL')
 if _kbc_attendance_database_url and not USE_SQLITE_FOR_TESTS:
     DATABASES['kbc_attendance'] = database_from_url(_kbc_attendance_database_url)
+
+# --- Security test branch (A17) ---------------------------------------------
+# Opt-in, test-only path that runs the suite against a dedicated Neon branch —
+# a schema clone of production in which every managed=False table and the full
+# migration history already exist, so the suite is buildable without the
+# from-scratch DDL that A17 blocks. Default `manage.py test` is unaffected: this
+# activates ONLY when USE_SECURITY_TEST_BRANCH is truthy AND "test" is the
+# command. See SECURITY_AUDIT.md (A17) and login.test_runner.
+#
+# Safety model (see the four barriers below): opt-in flag, a hard host-inequality
+# assertion vs production, removal of the three other production databases, and a
+# --keepdb requirement enforced in the runner so Django never drops/creates the
+# branch. Nothing here can reach the production database. USE_SECURITY_TEST_BRANCH
+# is defined near the top of this file (the MIGRATION_MODULES block consults it).
+SECURITY_TEST_BRANCH_HOST = ""
+if USE_SECURITY_TEST_BRANCH:
+    _branch_url = os.environ.get("security_Database_url")  # case-sensitive key
+    if not _branch_url:
+        raise ImproperlyConfigured(
+            "USE_SECURITY_TEST_BRANCH is set but 'security_Database_url' is absent "
+            "from the environment."
+        )
+    # BARRIER 2 — hard, early host-inequality assertion, before any connection is
+    # opened. Case-insensitive. Fails closed if either host is missing/unparseable
+    # rather than passing by default.
+    _branch_host = (urlparse(_branch_url).hostname or "").lower()
+    _prod_host = (urlparse(DATABASE_URL).hostname or "").lower() if DATABASE_URL else ""
+    if not _branch_host:
+        raise ImproperlyConfigured(
+            "security_Database_url has no parseable host; refusing to run branch-mode tests."
+        )
+    if not _prod_host:
+        raise ImproperlyConfigured(
+            "DATABASE_URL is unset or unparseable, so the test branch cannot be proven "
+            "distinct from production; refusing to run branch-mode tests."
+        )
+    if _branch_host == _prod_host:
+        raise ImproperlyConfigured(
+            "The security test branch host equals the production host; refusing to run "
+            "tests against production."
+        )
+    # default AND enrolment both map to the branch — they are the same physical
+    # database in production too, and enrolment is the alias login.test_runner
+    # provisions/serves. TEST['NAME'] is the branch's real database name; --keepdb
+    # (enforced in the runner) makes Django reuse it and never create or drop it.
+    _branch_config = database_from_url(_branch_url)
+    # Connect to the DIRECT compute endpoint, not the "-pooler" (PgBouncer) host.
+    # PgBouncer runs in transaction-pooling mode, which breaks the session-level
+    # guarantees Django's TestCase relies on (savepoints spanning statements, SET),
+    # and shows up as intermittent "server closed the connection" mid-suite. The
+    # direct endpoint keeps a stable session for the whole run.
+    if _branch_config.get("HOST"):
+        _branch_config["HOST"] = _branch_config["HOST"].replace("-pooler.", ".")
+    # The runner reconfirms the enrolment connection host against this value, so it
+    # must be the host actually configured above (the direct endpoint).
+    SECURITY_TEST_BRANCH_HOST = (_branch_config.get("HOST") or "").lower()
+    _branch_name = _branch_config["NAME"]
+    DATABASES["default"] = dict(_branch_config)
+    DATABASES["default"]["TEST"] = {"NAME": _branch_name}
+    DATABASES["enrolment"] = dict(_branch_config)
+    DATABASES["enrolment"]["TEST"] = {"NAME": _branch_name}
+    # BARRIER 3 — CONDITION 1: the three other databases are separate production
+    # systems and must be UNREACHABLE in branch mode. Remove them so Django never
+    # provisions or queries them; any code path that touches them then fails
+    # loudly with ConnectionDoesNotExist instead of silently hitting production.
+    for _alias in ("audit", "audit_clone", "kbc_attendance"):
+        DATABASES.pop(_alias, None)
+    # CONDITION 4 — hermetic: no outbound third-party calls from a test run.
+    # Clear the paid/live-API keys so those endpoints fail closed (503) rather
+    # than making a real call, and route Django mail to memory. (The runner also
+    # forces AZURE_MAIL_ENABLED=false for the Azure Graph path.)
+    OPENAI_API_KEY = ""
+    KBC_LMS_API_KEY = ""
+    os.environ.pop("OPENAI_API_KEY", None)
+    os.environ.pop("KBC_LMS_API_KEY", None)
+    EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 
 DATABASE_ROUTERS = ['learner_api.routers.EnrolmentRouter']
 
@@ -577,6 +732,37 @@ SESSION_COOKIE_SECURE = os.environ.get(
     "SESSION_COOKIE_SECURE", "false" if DEBUG else "true"
 ).lower() == "true"
 SESSION_COOKIE_SAMESITE = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
+
+# --- Transport / response security headers (deployed environments only) ------
+# All of these are gated on `not DEBUG` so local HTTP development is unchanged:
+# HSTS over plain http is ignored by browsers anyway, and forcing https scheme
+# resolution locally would break request.build_absolute_uri over http.
+if not DEBUG:
+    # Stop browsers from MIME-sniffing responses away from their declared type.
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+
+    # Trust the reverse proxy's X-Forwarded-Proto so request.is_secure() and
+    # request.scheme reflect the real client scheme behind TLS termination.
+    # SECURITY: this is only safe if the proxy STRIPS any client-supplied
+    # X-Forwarded-Proto (see the deployment handover) — otherwise a client can
+    # spoof is_secure(). It also drives whether HSTS is emitted below.
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+    # HSTS max-age is 1 hour, not a year, on purpose: this is the first time
+    # the header is emitted for this origin and we want a short, reversible
+    # commitment window while confirming every path is genuinely https-only.
+    # INCLUDE_SUBDOMAINS and PRELOAD are deliberately left unset — browsers
+    # cache both for the full max-age, so an over-broad value is not cleanly
+    # revocable within the window. Raise once the policy is proven.
+    SECURE_HSTS_SECONDS = 3600
+
+    # Refuse to be framed anywhere. Explicit even though Django's default is
+    # already DENY, so the policy is stated rather than inherited.
+    X_FRAME_OPTIONS = "DENY"
+
+    # NOTE: SECURE_SSL_REDIRECT is intentionally NOT set — https redirection is
+    # owned by the reverse proxy / Cloudflare, not Django (see W008 in
+    # `check --deploy`, accepted).
 
 # Whether X-Forwarded-For may be believed when identifying the client. That value
 # feeds login throttling, and it is attacker-controlled unless a reverse proxy is

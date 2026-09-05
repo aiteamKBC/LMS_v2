@@ -33,6 +33,8 @@ from django.db import DatabaseError, connection
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from login.permissions import learner_self_or_staff
+
 from .constants import DELIVERY_PROGRAMME_STATUS
 from .learner_progression import advance_learner
 from .mappers import _s
@@ -262,6 +264,9 @@ def _serialize(learner):
 
 
 @csrf_exempt
+# Saving the plan rewrites the learner's modules and can advance their
+# programme; only the learner themselves or staff may write it. Reads stay open.
+@learner_self_or_staff(kwarg="pk")
 def learning_plan(request, pk):
     """GET the learner's plan (with preset + pickable modules), or PATCH to save."""
     try:

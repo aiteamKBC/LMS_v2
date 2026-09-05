@@ -403,10 +403,15 @@ def _learner_progress_gate(view, *, kwarg, query_param, body_field, allow_staff)
             authenticate_request(request)
             return view(request, *args, **kwargs)
 
-        # Reads stay open. Staff reviewing a learner's plan hit the same URLs
-        # with GET (reflection submissions serve their read that way), and
-        # nothing about reading is what this gate exists to stop.
-        if request.method in _SAFE_METHODS:
+        # OPTIONS is a CORS/preflight probe: it carries no identity and returns no
+        # data, and ChatCorsMiddleware answers real cross-origin preflights before
+        # the view is reached. Leave it to the view. GET and HEAD are now
+        # ownership-scoped below, exactly like writes: reading another learner's
+        # record by changing the id in the URL is the A5 read-path IDOR
+        # (SECURITY_AUDIT.md A5), so a safe method is no longer a free pass. Staff
+        # keep read access wherever the endpoint uses ``learner_self_or_staff``
+        # (``allow_staff`` below); ``learner_self_only`` reads are the owner's alone.
+        if request.method == "OPTIONS":
             authenticate_request(request)
             return view(request, *args, **kwargs)
 
@@ -462,10 +467,13 @@ def learner_self_only(*, kwarg=None, query_param=None, body_field=None):
     auditor could tell it apart from the real thing.
 
     So: **staff and admin get 403 here, deliberately**, unlike every other gate
-    in this module where they are the privileged case. Reading is untouched (see
-    ``_SAFE_METHODS``) — staff still review the plan, they just cannot act as the
-    learner in it. Booking a coaching session is the one write they keep, and it
-    uses ``learner_self_or_staff`` instead.
+    in this module where they are the privileged case — for BOTH writes and reads.
+    A ``learner_self_only`` endpoint is the owner's alone: its GET is scoped to the
+    learner too (private data such as calendar credentials), so staff do not read
+    it here. Staff still review a learner's plan and evidence, but through the
+    endpoints that use ``learner_self_or_staff`` (which admits them on read).
+    Booking a coaching session is the one write staff keep, and it uses
+    ``learner_self_or_staff`` instead. Only ``OPTIONS`` (CORS preflight) is exempt.
 
     ``kwarg`` / ``query_param`` / ``body_field`` name where the learner id is
     found; exactly one applies per endpoint. A learner naming somebody else's id

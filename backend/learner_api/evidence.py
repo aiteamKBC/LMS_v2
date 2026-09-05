@@ -30,7 +30,7 @@ from .evidence_tables import ensure_evidence_tables
 from .evidence_storage import (
     azure_configured, upload_to_quarantine, move_blob, blob_url, get_download_sas,
 )
-from login.permissions import learner_self_only
+from login.permissions import learner_self_only, learner_self_or_staff
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +234,8 @@ def upload_evidence(request, kind, pk):
     )
 
 
+# The learner's own evidence portfolio; staff assess it, so both may read (A5).
+@learner_self_or_staff(kwarg="pk")
 def list_evidence(request, kind, pk):
     """The learner's evidence, newest first. Optional ?section_ref= & ?status= filters."""
     if request.method != "GET":
@@ -281,6 +283,8 @@ def list_evidence(request, kind, pk):
     ]})
 
 
+# Mints a short-lived SAS URL to the learner's file; owner or staff only (A5).
+@learner_self_or_staff(kwarg="pk")
 def download_evidence(request, kind, pk, file_id):
     """Short-lived SAS URL for an APPROVED file, from the approved container only."""
     if request.method != "GET":

@@ -1,6 +1,8 @@
-export const COMPONENT_UPLOAD_MAX_BYTES = 5 * 1024 * 1024;
-export const COMPONENT_UPLOAD_MAX_LABEL = '5 MB';
-export const COMPONENT_UPLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+export const COMPONENT_UPLOAD_MAX_BYTES = 300 * 1024 * 1024;
+export const COMPONENT_UPLOAD_MAX_LABEL = '300 MB';
+// Files are now up to 300 MB, so allow far longer than the old 5-minute window
+// before the client aborts (300 MB at ~1 MB/s is already 5 minutes).
+export const COMPONENT_UPLOAD_TIMEOUT_MS = 20 * 60 * 1000;
 
 export function assertComponentUploadAllowed(file: File) {
   if (file.size > COMPONENT_UPLOAD_MAX_BYTES) {

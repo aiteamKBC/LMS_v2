@@ -24,6 +24,8 @@ from django.db.models import prefetch_related_objects
 from django.http import JsonResponse
 from django.utils import timezone
 
+from login.permissions import learner_self_or_staff
+
 from .active_users import completed_hours_from_progress, fmt_hours, hydrate_source_training_plan, target_by_elapsed_time, week_by_elapsed_time
 from .identity import learner_profile_for_source
 from .learner_progression import advance_learner
@@ -1596,6 +1598,7 @@ def build_learner_detail(source, pk):
     return detail
 
 
+@learner_self_or_staff(kwarg="pk")
 def learner_detail(request, kind, pk):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
