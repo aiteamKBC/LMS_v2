@@ -1228,6 +1228,10 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     weekStructure?: Array<{ id?: string; weekNumber?: number; number?: number; title?: string; displayOrder?: number }>;
     startDate?: string;
     endDate?: string;
+    /** Carried through from CurriculumModule: a module whose programme was
+     *  deleted, or whose delivery was retired, reads as archived below. */
+    isProgrammeDeleted?: boolean;
+    deliveryStatus?: string;
   }> = liveModules.length > 0
     ? liveModules
     : [...moduleNamesFromStructure].map((name, index) => ({

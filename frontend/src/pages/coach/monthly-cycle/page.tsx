@@ -30,7 +30,12 @@ import { formatHoursMinutes } from '@/lib/format';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 
+import { MetricCard } from '@/components/ui/MetricCard';
+import { ActivityTimelinePanel } from './components/ActivityTimelinePanel';
 import { CoachingDeliveryPanel } from './components/CoachingDeliveryPanel';
+import { EngagementOverviewChart } from './components/EngagementOverviewChart';
+import { StatusBreakdownPanel } from './components/StatusBreakdownPanel';
+import { TopLearnerActionsPanel } from './components/TopLearnerActionsPanel';
 import { LearnerMonthCard } from './components/LearnerMonthCard';
 import { LearnerOverviewPanel } from './components/LearnerOverviewPanel';
 import { MonthHeroTiles } from './components/MonthHeroTiles';
@@ -47,6 +52,7 @@ import {
   currentMonthKey,
   emptyCoachingDeliverySummary,
   formatMonthLabel,
+  formatNumber,
   monthlyActivityEndpoint,
   normalizeSearch,
   readJson,
@@ -150,6 +156,22 @@ export default function CoachMonthlyCycle() {
   const paginatedLearners = useMemo(
     () => filteredLearners.slice(pageStartIndex, pageEndIndex),
     [filteredLearners, pageEndIndex, pageStartIndex],
+  );
+  const latestActivities = useMemo(
+    () => learners
+      .flatMap((learner) => learner.activities.map((activity) => ({ ...activity, learnerId: learner.id, learnerName: learner.name })))
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 6),
+    [learners],
+  );
+  const learnerActionCounts = useMemo(
+    () => learners.map((learner) => ({
+      id: learner.id,
+      name: learner.name,
+      initials: learner.initials,
+      actionCount: learner.activities.length,
+    })),
+    [learners],
   );
   const coachingDelivery = useMemo<CoachingDeliverySummary>(() => {
     const delivery = emptyCoachingDeliverySummary();

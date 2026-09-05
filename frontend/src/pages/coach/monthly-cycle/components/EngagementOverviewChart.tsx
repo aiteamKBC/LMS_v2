@@ -48,7 +48,7 @@ export function EngagementOverviewChart({ learners, monthKey }: { learners: Mont
         if (activityDate.getFullYear() !== year || activityDate.getMonth() !== month - 1) return;
 
         const category = inlineActivityCategory(activity.type);
-        const seriesKey: SeriesKey | null = category === 'coaching' ? 'reviews' : category === 'evidence' ? 'evidence' : 'completions';
+        const seriesKey: SeriesKey = category === 'meeting' ? 'reviews' : category === 'assignment' ? 'evidence' : 'completions';
         const bucket = dailyCounts.get(activityDate.getDate());
         if (bucket) bucket[seriesKey] += 1;
       });

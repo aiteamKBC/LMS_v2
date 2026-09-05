@@ -542,7 +542,6 @@ function SessionRow({
   onSync,
   syncing,
   expanded,
-  onSynced,
 }: {
   session: DeliverySession;
   moduleHref: string;
@@ -551,9 +550,6 @@ function SessionRow({
   onSync: () => void;
   syncing: boolean;
   expanded: boolean;
-  /** Re-read the occurrences after a sync, so the row leaves its unsynced state
-   *  on the same data every other row is drawn from rather than a local guess. */
-  onSynced: () => void;
 }) {
   const hasLoadedOccurrence = artifactState?.status === 'ready' && Boolean(artifactState.occurrence);
   const isCompleted = statusClass(session.status) === 'completed';
@@ -892,7 +888,6 @@ export function SessionsTree({
   moduleHrefFor,
   empty,
   onSynced,
-  onSynced,
 }: {
   sessions: DeliverySession[];
   moduleHrefFor: (session: DeliverySession) => string;
@@ -989,7 +984,7 @@ export function SessionsTree({
   // would redraw the empty payload fetched before the pull.
   const handleSynced = useCallback(() => {
     setArtifacts(new Map());
-    onSynced();
+    onSynced?.();
   }, [onSynced]);
 
   if (!sessions.length) {
