@@ -43,7 +43,6 @@ import { resolveDocEmbed } from '@/lib/docEmbed';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 import {
   loadTeamsMeetingArtifacts,
-  syncTeamsMeetingArtifacts,
   teamsMeetingArtifactContentUrl,
   type TeamsMeetingArtifactsResult,
 } from '@/pages/curriculum/module-builder/moduleAuthoringData';
@@ -1708,15 +1707,7 @@ function LiveSessionResultsCard({
 }) {
   const [data, setData] = useState<TeamsMeetingArtifactsResult | null>(null);
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-
-  const loadResults = useCallback(async () => {
-    const result = await loadTeamsMeetingArtifacts(liveSessionId);
-    setData(result);
-    return result;
-  }, [liveSessionId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1730,26 +1721,6 @@ function LiveSessionResultsCard({
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [liveSessionId]);
-
-  const handleSync = async () => {
-    if (syncing) return;
-    setSyncing(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const result = await syncTeamsMeetingArtifacts(liveSessionId);
-      await loadResults();
-      setNotice(
-        `Synced ${result.synced.attendanceRecords} attendance record${result.synced.attendanceRecords === 1 ? '' : 's'}`
-        + ` and ${result.synced.recordings} recording${result.synced.recordings === 1 ? '' : 's'}.`,
-      );
-      if (result.errors.length) setError(result.errors.join(' · '));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Unable to sync Teams results.');
-    } finally {
-      setSyncing(false);
-    }
-  };
 
   const occurrence = data?.occurrences.find((item) => Number(item.session_number) === sessionNumber)
     || data?.occurrences[sessionNumber - 1]
@@ -1785,20 +1756,11 @@ function LiveSessionResultsCard({
 
   return (
     <section className="mt-4 overflow-hidden rounded-2xl border border-primary-200 bg-white shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-primary-100 bg-primary-50/70 px-5 py-4">
+      <div className="border-b border-primary-100 bg-primary-50/70 px-5 py-4">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-primary-600">Microsoft Teams results</p>
           <h2 className="mt-1 text-sm font-heading font-black text-foreground-900">Attendance, absence and recording</h2>
         </div>
-        <button
-          type="button"
-          onClick={handleSync}
-          disabled={syncing}
-          className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[11px] font-black text-white shadow-sm transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <AppIcon className={`${syncing ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} text-sm`} />
-          {syncing ? 'Syncing…' : 'Sync Teams results'}
-        </button>
       </div>
 
       <div className="p-5">
@@ -1840,7 +1802,6 @@ function LiveSessionResultsCard({
           </div>
         )}
 
-        {notice && <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-[10px] font-bold text-emerald-700">{notice}</p>}
         {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-[10px] font-bold text-red-700">{error}</p>}
       </div>
     </section>
