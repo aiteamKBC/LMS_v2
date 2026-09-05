@@ -62,6 +62,7 @@ import {
   saveModuleStructure,
   uploadComponentResource,
   utcIsoToCalendarParts,
+  weekPlacementLabel,
   type AdvancedModuleDetails,
   type CompletionCriteria,
   type KsbMapping,
@@ -1903,7 +1904,7 @@ export default function ModuleBuilder() {
           <ComponentLibraryModal
             weekLabel={(() => {
               const week = workingModule.weekStructure.find(item => item.id === reusePickerWeekId);
-              return week ? `Week ${week.weekNumber}${week.title ? ` — ${week.title}` : ''}` : 'this week';
+              return week ? weekPlacementLabel(week, ' — ') : 'this week';
             })()}
             onClose={() => setReusePickerWeekId(null)}
             onAddMany={picked => addLibraryComponentsToWeek(reusePickerWeekId, picked)}
@@ -4980,7 +4981,7 @@ function PreviewModal({ module, onClose }: { module: ModuleCatalogueItem; onClos
           </div>
           {module.weekStructure.map(week => (
             <div key={week.id} className="rounded-xl border border-background-200 bg-background-100/50 p-4">
-              <h3 className="text-sm font-bold text-foreground-900">Week {week.weekNumber}: {week.title}</h3>
+              <h3 className="text-sm font-bold text-foreground-900">{weekPlacementLabel(week, ': ')}</h3>
               <p className="text-[11px] text-foreground-500 mt-1">{week.summary}</p>
               <div className="mt-3 space-y-2">
                 {week.components.map(component => <div key={component.id} className="rounded-lg bg-background-50 border border-background-200 px-3 py-2 text-[12px] text-foreground-700">{readableComponentTitle(component.title)} - {formatHoursMinutes(component.expectedOtjh)} OTJH - {component.points} pts</div>)}

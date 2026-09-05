@@ -40,7 +40,7 @@ import {
   type CurriculumSessionPlanPreview,
 } from '@/lib/curriculumApi';
 import type { SelectOption } from '@/components/feature/SelectField';
-import { createNewModule } from '../../module-builder/moduleAuthoringData';
+import { createNewModule, liveSessionNamesByNumber, loadModuleStructure } from '../../module-builder/moduleAuthoringData';
 import {
   cleanText,
   cohortsForProgramme,
@@ -269,6 +269,14 @@ export function ModuleFormDrawer({
   // or the start date move, so a save can never carry the previous value's date.
   const [planLoading, setPlanLoading] = useState(false);
   const [sessionPreviewOpen, setSessionPreviewOpen] = useState(false);
+  // Closed on a genuine open/close or a different module only -- never on the
+  // main seeding effect below, which also re-fires on a clean background
+  // refresh (a new `module` object identity with the same content). Sharing
+  // that reset used to yank the preview shut, and its session-names fetch,
+  // mid-flight; nothing then reopened it, so the names stayed "loading" forever.
+  useEffect(() => {
+    setSessionPreviewOpen(false);
+  }, [open, cleanText(module?.id)]);
   // What the drawer opened with, for the unsaved-changes check below.
   const baseline = useRef<Record<string, unknown>>({});
   const selectableProgrammes = useMemo(
@@ -315,7 +323,6 @@ export function ModuleFormDrawer({
     setSaving(false);
     setPlan(null);
     setPlanFor('');
-    setSessionPreviewOpen(false);
     setTutorConflictGroup(null);
     attachedThisSession.current = new Set();
     overrideGroupIds.current = new Set();
@@ -518,6 +525,53 @@ export function ModuleFormDrawer({
     [plan],
   );
   const canOpenSessionPreview = Boolean(plan?.sessions?.length);
+
+  // A planned date is only half of a session; the other half is what is taught
+  // on it, which lives on the week's live-session component. The dates come
+  // from the plan preview, which knows nothing about this module, so the names
+  // are read from the module's authored weeks and matched by session number.
+  //
+  // Asked for when the preview is opened rather than when the drawer is: every
+  // other field here is editable without it, and the structure read is the
+  // module's whole authoring payload.
+  const moduleCatalogueId = cleanText(module?.id);
+  const [sessionNames, setSessionNames] = useState<Array<string | null>>([]);
+  const [sessionNamesLoading, setSessionNamesLoading] = useState(false);
+  // A failed read is not an unauthored week: the timeline has to say the names
+  // could not be read rather than report every session as missing one.
+  const [sessionNamesError, setSessionNamesError] = useState(false);
+  // Which module has already been asked for, held in a ref rather than in state
+  // on purpose. As state it had to be a dependency of the effect below, and the
+  // effect's own success set it -- so the re-render that followed re-ran the
+  // effect, and the cleanup marked the still-settling request stale before the
+  // handler that clears `sessionNamesLoading` had run. The flag stayed true and
+  // every row read "Reading the weeks..." for good. A ref keeps the effect's
+  // dependencies to things the effect does not itself write.
+  const sessionNamesRequestedFor = useRef('');
+  useEffect(() => {
+    if (!sessionPreviewOpen || !moduleCatalogueId) return undefined;
+    if (sessionNamesRequestedFor.current === moduleCatalogueId) return undefined;
+    sessionNamesRequestedFor.current = moduleCatalogueId;
+    let active = true;
+    setSessionNamesLoading(true);
+    setSessionNamesError(false);
+    loadModuleStructure(moduleCatalogueId)
+      .then(structure => {
+        if (!active) return;
+        setSessionNames(liveSessionNamesByNumber(structure));
+        setSessionNamesLoading(false);
+      })
+      .catch(() => {
+        if (!active) return;
+        // Cleared so re-opening the preview asks again: a failed read is worth
+        // retrying, an answered one is not.
+        sessionNamesRequestedFor.current = '';
+        setSessionNames([]);
+        setSessionNamesError(true);
+        setSessionNamesLoading(false);
+      });
+    return () => { active = false; };
+  }, [moduleCatalogueId, sessionPreviewOpen]);
 
   // ==========================================================================
   // Tutor availability, asked while the tutor is still being picked.
@@ -1051,6 +1105,9 @@ export function ModuleFormDrawer({
           moduleName={name || module?.name || 'Module'}
           plan={plan}
           holidays={cohortHolidays}
+          sessionNames={sessionNames}
+          sessionNamesLoading={sessionNamesLoading}
+          sessionNamesError={sessionNamesError}
           onClose={() => setSessionPreviewOpen(false)}
         />
       )}
@@ -1185,14 +1242,37 @@ function ModuleSessionPreviewModal({
   moduleName,
   plan,
   holidays,
+  sessionNames,
+  sessionNamesLoading,
+  sessionNamesError,
   onClose,
 }: {
   moduleName: string;
   plan: CurriculumSessionPlanPreview;
   holidays: CurriculumHoliday[];
+  /** The live-session component titles, by session number. See `liveSessionNamesByNumber`. */
+  sessionNames: Array<string | null>;
+  sessionNamesLoading: boolean;
+  sessionNamesError: boolean;
   onClose: () => void;
 }) {
   const shifted = plan.sessions.filter(session => session.skippedHolidays?.length);
+  // No weeks at all: a module being created has none yet, and cannot have any
+  // until it is saved. That is one fact about the module, not ten facts about
+  // its dates, so it is said once above the timeline and the rows stay dates.
+  const noWeeksAuthored = !sessionNamesLoading && !sessionNamesError && !sessionNames.length;
+  // The name of the live session that runs on this date, or the reason this
+  // particular date has none -- a week that holds no live session, or one whose
+  // live session was never named. Both are gaps the person can go and close.
+  const sessionNameOf = (sessionNumber: number): { text: string; authored: boolean } => {
+    if (sessionNamesLoading) return { text: 'Reading the weeks...', authored: false };
+    if (sessionNamesError) return { text: 'Session names could not be read', authored: false };
+    if (noWeeksAuthored) return { text: '', authored: false };
+    const name = sessionNames[sessionNumber - 1];
+    if (name === undefined) return { text: 'No week authored for this session', authored: false };
+    if (name === null) return { text: 'This week holds no live session', authored: false };
+    return name ? { text: name, authored: true } : { text: 'Live session not named', authored: false };
+  };
   const holidayLabel = (date: string) => {
     const value = new Date(date);
     if (Number.isNaN(value.getTime())) return 'Selected holiday';
@@ -1284,6 +1364,15 @@ function ModuleSessionPreviewModal({
             </span>
           </div>
         )}
+        {noWeeksAuthored && (
+          <div className="flex shrink-0 items-start gap-2 border-b border-background-200 bg-background-100 px-5 py-3 text-[12px] text-foreground-600">
+            <AppIcon className="ri-information-line mt-0.5 shrink-0 text-sm"></AppIcon>
+            <span>
+              These are the dates. Each session is named after the live session in its week,
+              authored in the Module Builder once this module is saved.
+            </span>
+          </div>
+        )}
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
           {monthGroups.map(group => {
             const delivered = group.entries.filter(entry => entry.kind !== 'blocked').length;
@@ -1302,6 +1391,7 @@ function ModuleSessionPreviewModal({
                 </div>
                 <div className="min-w-0 flex-1 space-y-2">
                   {group.entries.map((entry, index) => {
+                    const sessionName = sessionNameOf(entry.sessionNumber);
                     if (entry.kind === 'blocked') {
                       return (
                         <div key={`${entry.sessionNumber}-blocked-${index}`} className="overflow-hidden rounded-lg border border-red-200 bg-red-50">
@@ -1309,7 +1399,11 @@ function ModuleSessionPreviewModal({
                             <span className="flex items-center gap-2 text-[12px]">
                               <AppIcon className="ri-close-circle-fill shrink-0 text-sm text-red-600"></AppIcon>
                               <span className="font-bold text-red-700">{formatDateLabel(entry.date)}</span>
-                              <span className="italic text-foreground-400">Not named yet</span>
+                              {sessionName.text && (
+                                <span className={sessionName.authored ? 'font-semibold text-red-700' : 'italic text-foreground-400'}>
+                                  {sessionName.text}
+                                </span>
+                              )}
                             </span>
                             <span className="rounded-full bg-red-100 px-2.5 py-1 text-[11px] font-semibold text-red-700">
                               Shifted to replacement
@@ -1334,7 +1428,14 @@ function ModuleSessionPreviewModal({
                             {formatDateLabel(entry.date)}
                           </span>
                           <span className="text-foreground-400">({entry.day})</span>
-                          <span className="italic text-foreground-400">Not named yet</span>
+                          {sessionName.text && (
+                            <span className={sessionName.authored
+                              ? `font-semibold ${isReplacement ? 'text-emerald-700' : 'text-foreground-700'}`
+                              : 'italic text-foreground-400'}
+                            >
+                              {sessionName.text}
+                            </span>
+                          )}
                         </span>
                         {isReplacement && (
                           <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">

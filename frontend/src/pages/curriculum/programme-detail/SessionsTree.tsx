@@ -17,8 +17,8 @@ import {
   type LiveSessionArtifactOccurrence,
 } from '@/lib/curriculumApi';
 import { syncTeamsMeetingArtifacts } from '../module-builder/moduleAuthoringData';
+import { formatDateLabel } from '../shared/entities/model';
 import { StatusBadge } from '../shared/entities/ui';
-import { syncTeamsMeetingArtifacts } from '../module-builder/moduleAuthoringData';
 import type { DeliverySession } from './page';
 
 // --------------------------------------------------------------- date helpers
@@ -184,6 +184,7 @@ interface WeekGroup {
   key: string;
   week: number;
   weekTitle: string;
+  weekStartDate: string;
   sessions: DeliverySession[];
 }
 interface MonthGroup {
@@ -249,7 +250,7 @@ export function buildSessionTree(sessions: DeliverySession[]): ModuleGroup[] {
     const weekKey = String(session.week);
     let weekGroup = monthGroup.weeks.find(item => item.key === weekKey);
     if (!weekGroup) {
-      weekGroup = { key: weekKey, week: session.week, weekTitle: session.weekTitle, sessions: [] };
+      weekGroup = { key: weekKey, week: session.week, weekTitle: session.weekTitle, weekStartDate: session.weekStartDate, sessions: [] };
       monthGroup.weeks.push(weekGroup);
     }
     weekGroup.sessions.push(session);
@@ -556,6 +557,8 @@ function SessionRow({
 }) {
   const hasLoadedOccurrence = artifactState?.status === 'ready' && Boolean(artifactState.occurrence);
   const isCompleted = statusClass(session.status) === 'completed';
+  const isMissing = statusClass(session.status) === 'missing';
+  const isUnsynced = session.kind === 'live' && isCompleted && !session.artifactsSyncedAt;
   const canExpand = session.kind === 'live' && Boolean(session.liveSessionId) && (isCompleted || hasLoadedOccurrence);
   const [copied, setCopied] = useState(false);
   const launchUrl = session.kind === 'live' && session.liveSessionId && session.occurrenceId
@@ -664,13 +667,11 @@ function SessionRow({
         <div className="flex flex-wrap items-center gap-3 bg-amber-50/60 px-4 py-2.5 text-[12px] text-amber-800">
           <AppIcon className="ri-time-line shrink-0 text-sm"></AppIcon>
           <span className="flex-1">
-            {syncError
-              || syncNotice
-              || 'This session ended, but its recording, transcript and attendance have not been pulled from Microsoft Teams yet.'}
+            This session ended, but its recording, transcript and attendance have not been pulled from Microsoft Teams yet.
           </span>
           <button
             type="button"
-            onClick={runSync}
+            onClick={onSync}
             disabled={syncing}
             className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg bg-amber-600 px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-amber-700 disabled:opacity-70"
           >
@@ -720,6 +721,10 @@ function WeekBlock({
   syncingSessionIds: Set<string>;
 }) {
   const [open, setOpen] = useState(true);
+  const weekDateLabel = useMemo(() => {
+    const label = formatDateLabel(group.weekStartDate);
+    return label === '—' ? '' : label;
+  }, [group.weekStartDate]);
   return (
     <div className="rounded-lg border border-background-200 bg-background-50">
       <button
@@ -729,9 +734,23 @@ function WeekBlock({
         className="flex w-full items-center gap-2 px-3 py-2 text-left"
       >
         <AppIcon className={`${open ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-sm text-foreground-400`}></AppIcon>
-        <span className="text-[12px] font-bold text-foreground-700">
-          Week {group.week}{group.weekTitle ? ` · ${group.weekTitle}` : ''}
+        {/* The number lives in its own badge, exactly as the Module Builder's
+            week rail carries it, so the heading is the authored title alone --
+            "Week 1 · Week name Test" printed the number twice, and read as two
+            names for one week. An untitled week falls back to "Week N", which is
+            the Builder's own fallback (`weekHeadingTitle`). */}
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary-600 text-[10px] font-extrabold text-white">
+          {group.week}
         </span>
+        <span className="min-w-0 truncate text-[12px] font-bold text-foreground-700">
+          {group.weekTitle || `Week ${group.week}`}
+        </span>
+        {/* `formatDateLabel` answers "—" for a week whose module has no dated
+            session yet; a dash beside the title says nothing, so it is left off
+            entirely and the rows below carry their own dates. */}
+        {weekDateLabel && (
+          <span className="shrink-0 text-[11px] font-semibold text-foreground-400">{weekDateLabel}</span>
+        )}
         <span className="ml-auto rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-semibold text-foreground-500">{group.sessions.length}</span>
       </button>
       {open && (
