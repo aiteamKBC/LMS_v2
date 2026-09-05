@@ -110,6 +110,7 @@ const definitions: ComponentAuthoringDefinition[] = [
       teamsOrganizerEmail: '',
       teamsAttendees: [],
       teamsPresenters: [],
+      teamsCoOrganizers: [],
       teamsProvider: '',
       teamsRepeat: 'none',
       teamsRepeatOccurrences: 1,

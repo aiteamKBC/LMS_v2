@@ -171,6 +171,8 @@ export interface CurriculumProgramme {
   cohorts: number;
   groups?: number;
   lastUpdated: string;
+  /** When the record was first written. Blank on rows predating the column. */
+  createdAt?: string;
   owner: string;
   color: string;
   description: string;
@@ -239,7 +241,15 @@ export interface CurriculumModule {
   tutor?: string;
   coach?: string;
   lastUpdated: string;
+  /** When the record was first written. Blank on rows predating the column. */
+  createdAt?: string;
   color: string;
+  /**
+   * Optional module artwork — a pasted image URL, or a data: URL read off the
+   * picked file, exactly as a free course stores its cover. Empty means the
+   * Module Builder card keeps its generic icon.
+   */
+  coverImage?: string;
   notes: string;
   sessionNames: string[];
   ksbCodes: string[];
@@ -1098,6 +1108,9 @@ export interface CurriculumCohort {
   progress: number;
   attendance: number;
   holidayIds?: Array<string | number>;
+  /** When the record was first written. Blank on rows predating the column. */
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface CurriculumGroup {
@@ -1122,6 +1135,9 @@ export interface CurriculumGroup {
   moduleIds?: string[];
   modules: string[];
   sessions: number;
+  /** When the record was first written. Blank on rows predating the column. */
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface CurriculumSession {
@@ -1178,6 +1194,9 @@ export interface CurriculumTeamsMeetingSummary {
   onlineMeetingId?: string;
   organizerEmail: string;
   presenters?: string[];
+  /** People who run the meeting alongside the organizer: they can manage the
+   *  recording, the lobby and the meeting options without owning the calendar. */
+  coOrganizers?: string[];
   attendees?: string[];
   repeatPattern: string;
   startDateTime: string;
@@ -2423,7 +2442,7 @@ export type CurriculumProgrammeInput = Partial<Pick<CurriculumProgramme, 'name' 
    */
   requiredOtjh?: number | string | null;
 };
-export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'weeks' | 'color' | 'notes'>> & {
+export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'weeks' | 'color' | 'notes' | 'coverImage'>> & {
   programmeId?: string;
   programmeName?: string;
   programme?: string;
@@ -2468,6 +2487,8 @@ export type CurriculumModuleAttachmentInput = {
   groupId?: string;
   catalogueId?: string | number;
   color?: string;
+  /** See CurriculumModule.coverImage. */
+  coverImage?: string;
   startDate?: string;
   endDate?: string;
   coach?: string;

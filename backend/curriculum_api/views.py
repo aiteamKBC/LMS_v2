@@ -794,6 +794,7 @@ def provision_live_sessions_table():
                 organizer_email varchar(320) not null,
                 attendees {json_type},
                 presenters {json_type},
+                co_organizers {json_type},
                 start_datetime timestamp,
                 timezone varchar(128) not null default '',
                 duration_minutes integer not null default 60,
@@ -876,10 +877,13 @@ def provision_live_session_tracking_tables():
         if connection.vendor == 'postgresql':
             cursor.execute(f"alter table {live_sessions} add column if not exists online_meeting_id text not null default ''")
             cursor.execute(f"alter table {live_sessions} add column if not exists presenters {json_type} not null default '[]'")
+            cursor.execute(f"alter table {live_sessions} add column if not exists co_organizers {json_type} not null default '[]'")
         elif 'online_meeting_id' not in column_names(LIVE_SESSIONS_TABLE):
             cursor.execute(f"alter table {live_sessions} add column online_meeting_id text not null default ''")
         if connection.vendor != 'postgresql' and 'presenters' not in column_names(LIVE_SESSIONS_TABLE):
             cursor.execute(f"alter table {live_sessions} add column presenters {json_type} not null default '[]'")
+        if connection.vendor != 'postgresql' and 'co_organizers' not in column_names(LIVE_SESSIONS_TABLE):
+            cursor.execute(f"alter table {live_sessions} add column co_organizers {json_type} not null default '[]'")
         cursor.execute(f'''
             create table if not exists {occurrences} (
                 id varchar(128) primary key, live_session_id varchar(128) not null,
@@ -1115,7 +1119,7 @@ def replace_live_session_occurrences(live_session_id, payload, utc_start, durati
     return rows
 
 
-def persist_live_session_series(payload, event, warnings, graph_settings, organizer, attendees, presenters, online_meeting_id=''):
+def persist_live_session_series(payload, event, warnings, graph_settings, organizer, attendees, presenters, co_organizers=(), online_meeting_id=''):
     ensure_module_authoring_tables()
     ensure_live_session_tracking_tables()
     module_catalogue_id = clean_str(payload.get('moduleCatalogueId'))
@@ -1161,6 +1165,7 @@ def persist_live_session_series(payload, event, warnings, graph_settings, organi
         'organizer_email': organizer,
         'attendees': json_db_value(attendees),
         'presenters': json_db_value(presenters),
+        'co_organizers': json_db_value(list(co_organizers)),
         'start_datetime': start_datetime,
         'timezone': graph_settings.get('timezone') or '',
         'duration_minutes': max(15, min(1440, int(payload.get('durationMinutes') or 60))),
@@ -1349,7 +1354,12 @@ def teams_event_payload(payload, graph_settings):
     occurrences = max(2, min(52, int(payload.get('repeatOccurrences') or 12)))
     attendees = teams_attendee_emails(payload.get('attendees'))
     presenters = teams_attendee_emails(payload.get('presenters'))
-    invited_people = list(dict.fromkeys([*presenters, *attendees]))
+    # Co-organizers run the meeting alongside the organizer -- they can start and
+    # manage the recording, admit people from the lobby and change the meeting
+    # options -- so they are invited like anyone else and given their own role on
+    # the online meeting below.
+    co_organizers = teams_attendee_emails(payload.get('coOrganizers'))
+    invited_people = list(dict.fromkeys([*co_organizers, *presenters, *attendees]))
     details = clean_str(payload.get('details'))
 
     # Anchor the series to the same UTC instant the per-session occurrences are
@@ -1394,7 +1404,7 @@ def teams_event_payload(payload, graph_settings):
     if recurrence:
         event['recurrence'] = recurrence
     # Return normalized timing too, for the component settings response.
-    return event, invited_people, presenters, utc_start, duration, repeat, occurrences
+    return event, invited_people, presenters, co_organizers, utc_start, duration, repeat, occurrences
 
 
 def teams_single_occurrence_payload(title, target, attendees, transaction_id=''):
@@ -1772,6 +1782,7 @@ def apply_teams_meeting_options(
     spoken_language='en-GB',
     attendees=(),
     presenters=(),
+    co_organizers=(),
     online_meeting_id='',
     meeting=None,
 ):
@@ -1824,7 +1835,8 @@ def apply_teams_meeting_options(
         lobby_choice = 'invited'
     recording_choice = clean_str(recording).lower() or 'none'
     presenter_emails = teams_series_email_list(list(presenters))
-    roster = teams_series_email_list(presenter_emails, list(attendees))
+    co_organizer_emails = teams_series_email_list(list(co_organizers))
+    roster = teams_series_email_list(co_organizer_emails, presenter_emails, list(attendees))
     patch = {
         'lobbyBypassSettings': {
             'scope': TEAMS_LOBBY_VALUES[lobby_choice],
@@ -1841,13 +1853,23 @@ def apply_teams_meeting_options(
     # presenter is actually named, because naming nobody would mute the tutor too.
     if roster:
         presenter_set = set(presenter_emails)
+        co_organizer_set = set(co_organizer_emails)
+
+        def participant_role(email):
+            # Co-organizer outranks presenter for anyone named in both lists: they
+            # were named to run the meeting, and the weaker role would take back
+            # the recording and lobby controls that is the whole point of it.
+            if email in co_organizer_set:
+                return 'coorganizer'
+            return 'presenter' if email in presenter_set else 'attendee'
+
         patch['participants'] = {
             'attendees': [
-                {'upn': email, 'role': 'presenter' if email in presenter_set else 'attendee'}
+                {'upn': email, 'role': participant_role(email)}
                 for email in roster
             ],
         }
-    if presenter_emails:
+    if presenter_emails or co_organizer_emails:
         patch['allowedPresenters'] = 'roleIsPresenter'
     meeting_path = teams_meeting_base_path(organizer, meeting_id, join_url)
     organizer_object_id = teams_online_meeting_owner_id(organizer, join_url)
@@ -1914,6 +1936,7 @@ def teams_standalone_occurrence_meeting(owner_key, event, target, invited_people
             spoken_language=options.get('spoken_language', 'en-GB'),
             attendees=invited_people,
             presenters=options.get('presenters') or [],
+            co_organizers=options.get('co_organizers') or [],
         )
         warnings.extend(option_warnings)
         online_meeting_id = clean_str((meeting or {}).get('id'))
@@ -2069,7 +2092,7 @@ def curriculum_teams_meeting(request):
         )
 
     try:
-        event_payload, attendees, presenters, utc_start, duration, repeat, occurrences = teams_event_payload(payload, graph_settings)
+        event_payload, attendees, presenters, co_organizers, utc_start, duration, repeat, occurrences = teams_event_payload(payload, graph_settings)
     except (TypeError, ValueError) as exc:
         return json_error(str(exc), status=400)
 
@@ -2104,6 +2127,7 @@ def curriculum_teams_meeting(request):
         'lobby_bypass': lobby_choice,
         'spoken_language': spoken_language,
         'presenters': presenters,
+        'co_organizers': co_organizers,
     }
     recreated_details = []
     # Graph has just built a plain weekly series. Move its occurrences onto the
@@ -2134,6 +2158,7 @@ def curriculum_teams_meeting(request):
         spoken_language=spoken_language,
         attendees=attendees,
         presenters=presenters,
+        co_organizers=co_organizers,
     )
     for option_warning in option_warnings:
         message = clean_str(option_warning.get('message'))
@@ -2154,7 +2179,8 @@ def curriculum_teams_meeting(request):
             organizer,
             attendees,
             presenters,
-            clean_str(graph_meeting.get('id')),
+            co_organizers=co_organizers,
+            online_meeting_id=clean_str(graph_meeting.get('id')),
         )
         persist_recreated_occurrence_details(live_session_id, recreated_details)
     except Exception:
@@ -2179,6 +2205,7 @@ def curriculum_teams_meeting(request):
             'organizerEmail': organizer,
             'attendees': attendees,
             'presenters': presenters,
+            'coOrganizers': co_organizers,
             'startDateTimeUtc': utc_start.isoformat(),
             'durationMinutes': duration,
             'repeat': repeat,
@@ -2348,6 +2375,8 @@ def attendance_roster(series, actual_rows, include_absent=False):
         expected_roles.setdefault(email, 'Attendee')
     for email in teams_series_email_list(series.get('presenters')):
         expected_roles[email] = 'Presenter'
+    for email in teams_series_email_list(series.get('co_organizers')):
+        expected_roles[email] = 'Co-organizer'
 
     rows = []
     actual_emails = set()
@@ -2475,13 +2504,15 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     # recreate the meeting to do it. Absent keys keep the stored lists.
     stored_attendees = teams_series_email_list(series.get('attendees'))
     stored_presenters = teams_series_email_list(series.get('presenters'))
-    people_changed = 'attendees' in payload or 'presenters' in payload
+    stored_co_organizers = teams_series_email_list(series.get('co_organizers'))
+    people_changed = 'attendees' in payload or 'presenters' in payload or 'coOrganizers' in payload
     try:
         attendees = teams_attendee_emails(payload['attendees']) if 'attendees' in payload else stored_attendees
         presenters = teams_attendee_emails(payload['presenters']) if 'presenters' in payload else stored_presenters
+        co_organizers = teams_attendee_emails(payload['coOrganizers']) if 'coOrganizers' in payload else stored_co_organizers
     except (TypeError, ValueError) as exc:
         return json_error(str(exc), status=400)
-    invited_people = list(dict.fromkeys([*presenters, *attendees]))
+    invited_people = list(dict.fromkeys([*co_organizers, *presenters, *attendees]))
 
     duration = max(15, min(1440, int(payload.get('durationMinutes') or series.get('duration_minutes') or 60)))
     repeat = clean_str(payload.get('repeat') or series.get('repeat_pattern')).lower() or 'none'
@@ -2527,6 +2558,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         'lobby_bypass': clean_str(series.get('lobby_bypass')).lower() or 'invited',
         'spoken_language': clean_str(series.get('spoken_language')) or 'en-GB',
         'presenters': presenters,
+        'co_organizers': co_organizers,
     }
     warnings, recreated_details = apply_teams_occurrence_shifts(
         owner_key,
@@ -2550,6 +2582,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         spoken_language=meeting_options['spoken_language'],
         attendees=invited_people,
         presenters=presenters,
+        co_organizers=co_organizers,
         online_meeting_id=series.get('online_meeting_id'),
     )
     warnings.extend(option_warnings)
@@ -2578,6 +2611,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     if people_changed:
         series_update['attendees'] = json_db_value(attendees)
         series_update['presenters'] = json_db_value(presenters)
+        series_update['co_organizers'] = json_db_value(co_organizers)
     update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], series_update)
     return JsonResponse({
         'updated': True,
@@ -2593,6 +2627,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             'trackedOccurrences': len(occurrence_rows),
             'attendees': attendees,
             'presenters': presenters,
+            'coOrganizers': co_organizers,
         },
         'warnings': warnings,
     })
@@ -2840,6 +2875,7 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                 spoken_language=clean_str(series.get('spoken_language')) or 'en-GB',
                 attendees=teams_series_email_list(series.get('attendees')),
                 presenters=teams_series_email_list(series.get('presenters')),
+                co_organizers=teams_series_email_list(series.get('co_organizers')),
                 online_meeting_id=meeting_id,
             )
             if not reapplied:
@@ -3629,6 +3665,27 @@ def parse_date(value):
 def format_date(value):
     parsed = parse_date(value)
     return parsed.isoformat() if parsed else ''
+
+
+def format_created_at(value):
+    """A created-at stamp as a sortable ISO string, keeping the time of day.
+
+    `format_date` would do for a display date, but "recently added" is read on a
+    day when several records were added: dropping the time makes every one of
+    them a tie, and the list stops answering the question it was sorted for.
+    Non-datetime values fall through to the date-only answer, and anything
+    unreadable to '' -- which sorts last, never first.
+    """
+    if isinstance(value, datetime):
+        return value.isoformat()
+    text = clean_str(value)
+    if not text:
+        return ''
+    # Already an ISO-ish timestamp from the driver: kept as it is, since it
+    # compares correctly as text.
+    if re.match(r'^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}', text):
+        return text.replace(' ', 'T', 1)
+    return format_date(text)
 
 
 def calculate_cohort_end_date(start_value, duration_months):
@@ -7118,6 +7175,9 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
             ),
             'cohorts': programme_cohorts_count,
             'lastUpdated': format_date((profile or config or {}).get('updated_at') or (profile or config or {}).get('created_at')),
+            # When the record was first written, for a "recently added" sort. Blank
+            # for rows predating the column, which sort last rather than first.
+            'createdAt': format_created_at((config or {}).get('created_at') or (profile or {}).get('created_at')),
             'owner': (profile or {}).get('created_by') or '',
             'color': (config or {}).get('color') or (rows[0].get('_meta', {}).get('cohort_color') if rows else '#6941c6'),
             'description': (config or {}).get('description') or (profile or {}).get('description') or '',
@@ -7461,6 +7521,8 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
             'sessions': session_total(cohort_modules),
             'color': detail.get('color') or '#6941c6',
             'holidayIds': [clean_str(value) for value in (detail.get('holidayIds') or []) if clean_str(value)],
+            'createdAt': clean_str(detail.get('createdAt')),
+            'updatedAt': clean_str(detail.get('updatedAt')),
             'progress': 0,
             'attendance': 0,
         })
@@ -7510,6 +7572,8 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
             'moduleIds': module_ids(group_modules) or stored_module_ids,
             'modules': module_names(group_modules) or stored_module_names,
             'sessions': session_total(group_modules),
+            'createdAt': clean_str(detail.get('createdAt')),
+            'updatedAt': clean_str(detail.get('updatedAt')),
             'isProgrammeDeleted': programme_deleted_row(detail),
         })
 
@@ -7545,6 +7609,10 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
             'moduleIds': module_ids(group_modules),
             'modules': module_names(group_modules),
             'sessions': session_total(group_modules),
+            # Reconstructed from module rows, so the earliest module's creation is
+            # the closest thing this group has to one of its own.
+            'createdAt': min([format_created_at(row.get('created_at')) for row in group_modules if row.get('created_at')] or ['']),
+            'updatedAt': max([format_created_at(row.get('updated_at')) for row in group_modules if row.get('updated_at')] or ['']),
             'isProgrammeDeleted': programme_deleted_row(first_module),
         })
 
@@ -9710,6 +9778,7 @@ def serialize_cohort_authoring_detail(row):
         'sourceType': row.get('source_type') or 'curriculum_authoring',
         'sourceId': row.get('source_id') or '',
         'updatedAt': format_date(row.get('updated_at')),
+        'createdAt': format_created_at(row.get('created_at')),
     }
 
 
@@ -9862,6 +9931,7 @@ def serialize_group_authoring_detail(row):
         'sourceType': row.get('source_type') or 'curriculum_authoring',
         'sourceId': row.get('source_id') or '',
         'updatedAt': format_date(row.get('updated_at')),
+        'createdAt': format_created_at(row.get('created_at')),
     }
 
 
@@ -10533,6 +10603,7 @@ def provision_module_authoring_tables():
                 title varchar(500) not null,
                 description text,
                 color varchar(32),
+                cover_image_url text,
                 sessions_number integer not null default 0,
                 weeks_number integer,
                 start_date date,
@@ -10567,6 +10638,7 @@ def provision_module_authoring_tables():
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists tutor_name varchar(255)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists tutor_email varchar(320)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists is_programme_deleted boolean not null default false')
+            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists cover_image_url text')
         else:
             cursor.execute(f'pragma table_info({quote_ident(AUTHORING_MODULES_TABLE)})')
             columns = {row[1] for row in cursor.fetchall()}
@@ -10604,6 +10676,8 @@ def provision_module_authoring_tables():
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column tutor_email varchar(320)')
             if 'is_programme_deleted' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column is_programme_deleted boolean not null default false')
+            if 'cover_image_url' not in columns:
+                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column cover_image_url text')
         cursor.execute(f'''
             create table if not exists {authoring_table_name(AUTHORING_WEEKS_TABLE)} (
                 id varchar(128) primary key,
@@ -13478,6 +13552,7 @@ def teams_delivery_metadata_from_weeks(weeks):
                 'teamsOrganizerEmail': clean_str(settings.get('teamsOrganizerEmail')),
                 'teamsAttendees': settings.get('teamsAttendees') or [],
                 'teamsPresenters': settings.get('teamsPresenters') or [],
+                'teamsCoOrganizers': settings.get('teamsCoOrganizers') or [],
                 'teamsStartDateTimeUtc': clean_str(settings.get('teamsStartDateTimeUtc') or settings.get('sessionDateTimeUtc')),
                 'teamsDurationMinutes': clean_str(settings.get('teamsDurationMinutes') or settings.get('durationMinutes')),
                 'teamsRepeat': clean_str(settings.get('teamsRepeat')),
@@ -13514,6 +13589,7 @@ def teams_delivery_metadata_from_live_session_row(session_row):
         'teamsOrganizerEmail': settings.get('teamsOrganizerEmail') or '',
         'teamsAttendees': settings.get('teamsAttendees') or [],
         'teamsPresenters': settings.get('teamsPresenters') or [],
+        'teamsCoOrganizers': settings.get('teamsCoOrganizers') or [],
         'teamsStartDateTimeUtc': settings.get('teamsStartDateTimeUtc') or '',
         'teamsDurationMinutes': settings.get('teamsDurationMinutes') or '',
         'teamsRepeat': settings.get('teamsRepeat') or '',
@@ -13555,6 +13631,7 @@ def live_session_row_to_component_settings(row):
         'teamsOrganizerEmail': clean_str(row.get('organizer_email')),
         'teamsAttendees': as_json_value(row.get('attendees'), []),
         'teamsPresenters': as_json_value(row.get('presenters'), []),
+        'teamsCoOrganizers': as_json_value(row.get('co_organizers'), []),
         'teamsStartDateTimeUtc': start_value,
         'sessionDateTimeUtc': start_value,
         'teamsDurationMinutes': parse_int(row.get('duration_minutes'), 60),
@@ -13970,6 +14047,7 @@ def curriculum_teams_meeting_summary(request):
             'onlineMeetingId': clean_str(row.get('online_meeting_id')),
             'organizerEmail': clean_str(row.get('organizer_email')),
             'presenters': teams_series_email_list(row.get('presenters')),
+            'coOrganizers': teams_series_email_list(row.get('co_organizers')),
             'attendees': teams_series_email_list(row.get('attendees')),
             'repeatPattern': clean_str(row.get('repeat_pattern')) or 'none',
             'startDateTime': iso_value(row.get('start_datetime')),
@@ -14259,6 +14337,7 @@ def get_authoring_structure_payload(module_catalogue_id):
         'title': module.get('title') or '',
         'description': module.get('description') or '',
         'color': module.get('color') or '#6941c6',
+        'coverImage': module.get('cover_image_url') or '',
         'status': module.get('status') or 'draft',
         'sourceType': module.get('source_type') or '',
         'sourceId': module.get('source_id') or '',
@@ -14479,6 +14558,7 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
             'title': module.get('title') or '',
             'description': module.get('description') or '',
             'color': module.get('color') or '#6941c6',
+            'coverImage': module.get('cover_image_url') or '',
             'status': module.get('status') or 'draft',
             'sourceType': module.get('source_type') or '',
             'sourceId': module.get('source_id') or '',
@@ -14606,6 +14686,7 @@ def authoring_catalogue_summaries(include_programme_deleted=False):
             'groupId': row.get('group_id') or '',
             'group': row.get('group_name') or '',
             'description': row.get('description') or '',
+            'coverImage': row.get('cover_image_url') or '',
             'status': row.get('status') or 'draft',
             'sourceType': row.get('source_type') or '',
             'sourceId': row.get('source_id') or '',
@@ -14618,6 +14699,7 @@ def authoring_catalogue_summaries(include_programme_deleted=False):
             'qualityScore': parse_int(row.get('quality_score'), 0),
             'isProgrammeDeleted': is_programme_deleted,
             'lastUpdated': format_date(row.get('updated_at')),
+            'createdAt': format_created_at(row.get('created_at')),
             # Seeded at zero because the week loop below counts up as it appends,
             # and uses the running total as the week-number/display-order fallback.
             # The stored count is applied once, after the loop -- seeding it here
@@ -14752,7 +14834,9 @@ def authoring_summary_catalogue_item(summary):
         'deliveryStatus': summary.get('deliveryStatus') or 'unknown',
         'author': '',
         'lastUpdated': summary['lastUpdated'],
+        'createdAt': summary.get('createdAt') or '',
         'color': '#6941c6',
+        'coverImage': summary.get('coverImage') or '',
         'notes': summary['description'],
         'startDate': summary['startDate'],
         'endDate': summary['endDate'],
@@ -14815,6 +14899,7 @@ def enrich_curriculum_modules_with_authoring_details(modules):
             'structureId': authoring.get('catalogueId') or module.get('structureId') or module_id,
             'name': authoring.get('title') or module.get('name'),
             'notes': authoring.get('description') if authoring.get('description') is not None else module.get('notes'),
+            'coverImage': authoring.get('coverImage') or module.get('coverImage') or '',
             'startDate': authoring.get('startDate') or module.get('startDate'),
             'endDate': authoring.get('endDate') or module.get('endDate'),
             'sessionsNumber': authoring.get('sessionsNumber') or module.get('sessionsNumber'),
@@ -14951,6 +15036,8 @@ def enrich_modules_with_authoring(modules, include_programme_deleted=False):
                     'ksbProfileSourceId': saved.get('ksbProfileSourceId') or module.get('ksbProfileSourceId') or '',
                     'deliveryStatus': module.get('deliveryStatus') or saved.get('deliveryStatus') or 'unknown',
                     'notes': saved['description'],
+                    'coverImage': saved.get('coverImage') or module.get('coverImage') or '',
+                    'createdAt': saved.get('createdAt') or module.get('createdAt') or '',
                     'startDate': saved.get('startDate') or module.get('startDate') or '',
                     'endDate': saved.get('endDate') or module.get('endDate') or '',
                     'sessionsNumber': saved.get('sessionsNumber') or module.get('sessionsNumber') or module.get('weeks') or 0,
@@ -15645,6 +15732,15 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
             'title': payload.get('title') or payload.get('name') or existing_module_row.get('title') or f'Module {module_catalogue_id}',
             'description': payload.get('description') if 'description' in payload else existing_module_row.get('description') or '',
             'color': payload.get('color') if 'color' in payload else delivery_metadata.get('color') or existing_module_row.get('color') or '',
+            # Optional module artwork, stored exactly the way a free course
+            # stores its cover: either a pasted URL or a data: URL read off the
+            # picked file. An absent key keeps whatever is stored; an explicit
+            # '' clears it, which is what the drawer's Remove sends.
+            'cover_image_url': clean_str(
+                payload.get('coverImage') if 'coverImage' in payload
+                else payload.get('cover_image_url') if 'cover_image_url' in payload
+                else existing_module_row.get('cover_image_url')
+            ),
             'status': clean_str(payload.get('status') or existing_module_row.get('status') or 'draft').lower(),
             'sessions_number': stored_sessions_number,
             'weeks_number': authored_week_count or None,
@@ -17699,6 +17795,7 @@ def curriculum_module_collection(request):
             'title': payload.get('title') or payload.get('name'),
             'description': payload.get('description') or '',
             'color': payload.get('color') or '',
+            'coverImage': payload.get('coverImage') or payload.get('cover_image_url') or '',
             'status': payload.get('status') or 'draft',
             'sessionsNumber': payload.get('sessionsNumber') or payload.get('sessions_number') or 0,
             'weeksNumber': payload.get('weeks') or payload.get('weeksNumber') or 0,
@@ -21523,6 +21620,7 @@ def curriculum_module_detail(request, identifier):
             'title': payload.get('title') or payload.get('name') or current.get('title') or current.get('name'),
             'description': payload.get('description') if 'description' in payload else payload.get('notes') if 'notes' in payload else current.get('description'),
             'color': payload.get('color') or current.get('color') or '',
+            'coverImage': payload.get('coverImage') if 'coverImage' in payload else current.get('coverImage') or '',
             'status': payload.get('status') or current.get('status') or 'draft',
             # Kept apart: `weeks` is the authored week count the week builder
             # owns, `sessionsNumber` is the calendar/Teams session count. Folding
@@ -21801,6 +21899,8 @@ def curriculum_cohort_from_authoring_detail(detail):
         'color': detail.get('color') or '',
         'holidayIds': detail.get('holidayIds') or detail.get('holiday_ids') or [],
         'status': detail.get('status') or 'planned',
+        'createdAt': detail.get('createdAt') or detail.get('created_at') or '',
+        'updatedAt': detail.get('updatedAt') or detail.get('updated_at') or '',
     }
 
 
@@ -21840,6 +21940,8 @@ def curriculum_group_from_authoring_detail(detail):
         'status': detail.get('status') or 'planned',
         'modules': detail.get('modules') or detail.get('module_names') or [],
         'moduleIds': detail.get('moduleIds') or detail.get('module_ids') or [],
+        'createdAt': detail.get('createdAt') or detail.get('created_at') or '',
+        'updatedAt': detail.get('updatedAt') or detail.get('updated_at') or '',
     }
 
 
@@ -22614,6 +22716,7 @@ def module_attachment_authoring_payload(item, group, cohort, catalogue_id, modul
         'title': module_name,
         'description': visible_notes(item.get('notes') or current_structure.get('description') or ''),
         'color': item.get('color') or current_structure.get('color') or '',
+        'coverImage': item.get('coverImage') if 'coverImage' in item else current_structure.get('coverImage') or '',
         'status': item.get('status') or current_structure.get('status') or 'draft',
         'sessionsNumber': session_count,
         # The authored week count travels apart from the calendar session count:
