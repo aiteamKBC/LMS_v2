@@ -43,7 +43,6 @@ import { resolveDocEmbed } from '@/lib/docEmbed';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 import {
   loadTeamsMeetingArtifacts,
-  syncTeamsMeetingArtifacts,
   teamsMeetingArtifactContentUrl,
   type TeamsMeetingArtifactsResult,
 } from '@/pages/curriculum/module-builder/moduleAuthoringData';
@@ -367,10 +366,10 @@ export default function ComponentViewPage() {
 
   const contentKind = componentContentKind(component?.type);
   const isVideo = contentKind === 'video';
-  // A live session is attended in Teams, not on this page, so a clock counting
-  // how long the tab has been open measures nothing the learner did. The timer
-  // itself keeps running — it is still what gets submitted when no time is
-  // typed in — only the readout is hidden.
+  const isAudio = contentKind === 'audio';
+  // Live sessions and assignments use learner-entered time instead of exposing
+  // a page timer. The signed session still runs invisibly so the server can cap
+  // and verify the submitted duration.
   const isLiveSession = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session';
   const noun = componentNoun(component?.type);
   const openable = component ? isOpenableComponent(component) : false;
@@ -379,6 +378,13 @@ export default function ComponentViewPage() {
   // uploader) because the completion gate depends on it.
   const [evidenceCount, setEvidenceCount] = useState(0);
   const needsEvidence = componentRequiresEvidence(component?.type);
+  const usesManualTimeOnly = isLiveSession || needsEvidence;
+  const manualTimeMissing = usesManualTimeOnly && (manualTimeSeconds == null || manualTimeSeconds <= 0);
+
+  useEffect(() => {
+    if (usesManualTimeOnly) setTimeSource('input');
+  }, [usesManualTimeOnly]);
+
   useEffect(() => {
     // Only assignments collect evidence — nothing to look up elsewhere.
     if (!needsEvidence || !kind || !id || !componentId) return;
@@ -490,7 +496,11 @@ export default function ComponentViewPage() {
 
   // Seeking changes the playhead/duration metadata, but cannot add watched time.
   const elapsedSeconds = wallElapsed;
-  const submittedTimeSeconds = timeSource === 'input' && manualTimeSeconds != null ? manualTimeSeconds : elapsedSeconds;
+  const submittedTimeSeconds = usesManualTimeOnly
+    ? manualTimeSeconds ?? 0
+    : timeSource === 'input' && manualTimeSeconds != null
+      ? manualTimeSeconds
+      : elapsedSeconds;
   // Planned time preset in the reflection window: always the component's
   // authored expected_otjh (its OTJ hours) when set, so "the planned time"
   // means the same thing for every component type in the training plan.
@@ -560,21 +570,31 @@ export default function ComponentViewPage() {
     return () => { cancelled = true; };
   }, [phase, openable, componentId, kind, id, canProgress, isVideo, trackingMode, timerStorageKey]);
 
-  // Only visible time counts. Supported videos must also actually be playing;
-  // iframe-only players use the explicit visible-page fallback.
+  // Only visible time counts for ordinary page content. Audio is intentionally
+  // allowed to keep counting in a background tab because playback can continue
+  // while the learner works elsewhere. Hidden tabs throttle intervals, so audio
+  // uses the real wall-clock delta instead of assuming every callback is exactly
+  // one second apart.
   useEffect(() => {
     if (phase !== 'consume' || (!unsupported && !playerPlaying)) return;
+    let lastAudioTickAt = Date.now();
     timerRef.current = setInterval(() => {
-      if (document.visibilityState === 'visible') {
+      if (isAudio || document.visibilityState === 'visible') {
+        const now = Date.now();
+        const increment = isAudio
+          ? Math.floor((now - lastAudioTickAt) / 1000)
+          : 1;
+        if (increment < 1) return;
+        if (isAudio) lastAudioTickAt += increment * 1000;
         setWallElapsed((seconds) => {
-          const next = seconds + 1;
+          const next = seconds + increment;
           saveActivityTimerElapsed(timerStorageKey, next);
           return next;
         });
       }
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [phase, unsupported, playerPlaying, timerStorageKey]);
+  }, [phase, unsupported, playerPlaying, isAudio, timerStorageKey]);
 
   const finishConsuming = () => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -628,7 +648,7 @@ export default function ComponentViewPage() {
       }
       setWallElapsed(0);
       setManualTimeSeconds(null);
-      setTimeSource('timer');
+      setTimeSource(usesManualTimeOnly ? 'input' : 'timer');
       const refreshed = await fetchLearnerDetail(kind as LearnerKind, id);
       setDetail(refreshed);
       setPhase('consume');
@@ -739,15 +759,16 @@ export default function ComponentViewPage() {
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
-                  {!isLiveSession && (
+                  {!usesManualTimeOnly && (
                     <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-mono text-sm font-semibold tabular-nums bg-background-100 text-foreground-700" title="Time on this activity">
                       <AppIcon className="ri-timer-line" /> {formatClock(elapsedSeconds)}
                     </div>
                   )}
                   <ActivityTimeSpentInput
+                    key={timerStorageKey}
                     onChange={(seconds) => {
                       setManualTimeSeconds(seconds);
-                      setTimeSource(seconds == null ? 'timer' : 'input');
+                      setTimeSource(seconds == null && !usesManualTimeOnly ? 'timer' : 'input');
                     }}
                   />
                   {activityEvidenceContext && canProgress && (
@@ -816,15 +837,21 @@ export default function ComponentViewPage() {
                   )}
                   <button
                     onClick={finishConsuming}
-                    disabled={!!criteria && !criteria.met}
-                    title={criteria && !criteria.met ? 'Complete the criteria below before finishing.' : undefined}
-                    className={`inline-flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-xl transition-colors ${
+                    disabled={(!!criteria && !criteria.met) || manualTimeMissing}
+                    title={
                       criteria && !criteria.met
+                        ? 'Complete the criteria below before finishing.'
+                        : manualTimeMissing
+                          ? 'Enter the time spent before finishing.'
+                          : undefined
+                    }
+                    className={`inline-flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-xl transition-colors ${
+                      (criteria && !criteria.met) || manualTimeMissing
                         ? 'bg-background-200 text-foreground-400 cursor-not-allowed'
                         : 'bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer'
                     }`}
                   >
-                    <AppIcon className={criteria && !criteria.met ? 'ri-lock-line' : 'ri-check-line'} />
+                    <AppIcon className={(criteria && !criteria.met) || manualTimeMissing ? 'ri-lock-line' : 'ri-check-line'} />
                     Finish
                   </button>
                 </div>
@@ -933,6 +960,7 @@ export default function ComponentViewPage() {
             timerLabel={formatClock(elapsedSeconds)}
             inputLabel={manualTimeSeconds == null ? null : formatClock(manualTimeSeconds)}
             selectedSource={timeSource}
+            manualTimeOnly={usesManualTimeOnly}
             evidenceFileName={evidenceFileLabel}
             submitting={submitting}
             error={submitError}
@@ -955,6 +983,7 @@ function CompletionConfirmPopup({
   timerLabel,
   inputLabel,
   selectedSource,
+  manualTimeOnly,
   evidenceFileName,
   submitting,
   error,
@@ -962,11 +991,13 @@ function CompletionConfirmPopup({
   onCancel,
   onConfirm,
 }: {
-  title: string; noun: string; timerLabel: string; inputLabel: string | null; selectedSource: TimeSource; evidenceFileName?: string | null;
+  title: string; noun: string; timerLabel: string; inputLabel: string | null; selectedSource: TimeSource; manualTimeOnly: boolean; evidenceFileName?: string | null;
   submitting: boolean; error: string | null;
   onSelectSource: (source: TimeSource) => void; onCancel: () => void; onConfirm: () => void;
 }) {
-  const selectedTimeLabel = selectedSource === 'input' && inputLabel ? inputLabel : timerLabel;
+  const selectedTimeLabel = selectedSource === 'input'
+    ? inputLabel || '--:--:--'
+    : timerLabel;
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-foreground-950/35 px-4 py-6 backdrop-blur-[2px]">
@@ -993,22 +1024,24 @@ function CompletionConfirmPopup({
               </span>
             </div>
           )}
-          <button
-            type="button"
-            onClick={() => onSelectSource('timer')}
-            disabled={submitting}
-            className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-colors ${
-              selectedSource === 'timer'
-                ? 'border-primary-300 bg-primary-50 text-primary-800'
-                : 'border-background-300 bg-white text-foreground-700 hover:bg-background-50'
-            } disabled:cursor-not-allowed disabled:opacity-60`}
-          >
-            <span className="inline-flex items-center gap-2 text-sm font-semibold">
-              <AppIcon className="ri-timer-line" />
-              Timer
-            </span>
-            <span className="font-mono text-sm font-bold tabular-nums">{timerLabel}</span>
-          </button>
+          {!manualTimeOnly && (
+            <button
+              type="button"
+              onClick={() => onSelectSource('timer')}
+              disabled={submitting}
+              className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-colors ${
+                selectedSource === 'timer'
+                  ? 'border-primary-300 bg-primary-50 text-primary-800'
+                  : 'border-background-300 bg-white text-foreground-700 hover:bg-background-50'
+              } disabled:cursor-not-allowed disabled:opacity-60`}
+            >
+              <span className="inline-flex items-center gap-2 text-sm font-semibold">
+                <AppIcon className="ri-timer-line" />
+                Timer
+              </span>
+              <span className="font-mono text-sm font-bold tabular-nums">{timerLabel}</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => inputLabel && onSelectSource('input')}
@@ -1045,7 +1078,7 @@ function CompletionConfirmPopup({
           <button
             type="button"
             onClick={onConfirm}
-            disabled={submitting}
+            disabled={submitting || (manualTimeOnly && !inputLabel)}
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <AppIcon className={submitting ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} />
@@ -1708,48 +1741,17 @@ function LiveSessionResultsCard({
 }) {
   const [data, setData] = useState<TeamsMeetingArtifactsResult | null>(null);
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-
-  const loadResults = useCallback(async () => {
-    const result = await loadTeamsMeetingArtifacts(liveSessionId);
-    setData(result);
-    return result;
-  }, [liveSessionId]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setError(null);
+    setData(null);
     loadTeamsMeetingArtifacts(liveSessionId)
       .then((result) => { if (!cancelled) setData(result); })
-      .catch((reason) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : 'Unable to load Teams results.');
-      })
+      .catch(() => undefined)
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [liveSessionId]);
-
-  const handleSync = async () => {
-    if (syncing) return;
-    setSyncing(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const result = await syncTeamsMeetingArtifacts(liveSessionId);
-      await loadResults();
-      setNotice(
-        `Synced ${result.synced.attendanceRecords} attendance record${result.synced.attendanceRecords === 1 ? '' : 's'}`
-        + ` and ${result.synced.recordings} recording${result.synced.recordings === 1 ? '' : 's'}.`,
-      );
-      if (result.errors.length) setError(result.errors.join(' · '));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Unable to sync Teams results.');
-    } finally {
-      setSyncing(false);
-    }
-  };
 
   const occurrence = data?.occurrences.find((item) => Number(item.session_number) === sessionNumber)
     || data?.occurrences[sessionNumber - 1]
@@ -1785,20 +1787,11 @@ function LiveSessionResultsCard({
 
   return (
     <section className="mt-4 overflow-hidden rounded-2xl border border-primary-200 bg-white shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-primary-100 bg-primary-50/70 px-5 py-4">
+      <div className="border-b border-primary-100 bg-primary-50/70 px-5 py-4">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-primary-600">Microsoft Teams results</p>
           <h2 className="mt-1 text-sm font-heading font-black text-foreground-900">Attendance, absence and recording</h2>
         </div>
-        <button
-          type="button"
-          onClick={handleSync}
-          disabled={syncing}
-          className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[11px] font-black text-white shadow-sm transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <AppIcon className={`${syncing ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} text-sm`} />
-          {syncing ? 'Syncing…' : 'Sync Teams results'}
-        </button>
       </div>
 
       <div className="p-5">
@@ -1839,9 +1832,6 @@ function LiveSessionResultsCard({
             </div>
           </div>
         )}
-
-        {notice && <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-[10px] font-bold text-emerald-700">{notice}</p>}
-        {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-[10px] font-bold text-red-700">{error}</p>}
       </div>
     </section>
   );
