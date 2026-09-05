@@ -560,13 +560,11 @@ export default function LearnerOverview() {
 
   const otjPercent = isRealMode ? (otj.targetHours > 0 ? otj.targetPercent : otj.percent) : Math.round((p.otjhCompleted / p.otjhTarget) * 100);
   const otjValue = isRealMode
-    ? formatHoursMinutes(otj.activities > 0 ? otj.completedHours : otj.plannedHours)
-    : formatHoursMinutes(p.otjhCompleted);
     // Always the hours actually logged. Falling back to the planned total when
     // nothing had been submitted yet showed a learner the programme's whole
     // OTJ allocation as though they had already done it.
     ? formatHoursMinutes(otj.completedHours)
-    : `${p.otjhCompleted}h`;
+    : formatHoursMinutes(p.otjhCompleted);
   const otjCaption = isRealMode
     ? (otj.targetHours > 0 ? `Target ${formatHoursMinutes(otj.targetHours)}${otj.status ? ` · ${otj.status}` : ''}` : `${otj.activities} ${otj.activities === 1 ? 'activity' : 'activities'} logged`)
     : `${formatHoursMinutes(p.otjhCompleted)} / ${formatHoursMinutes(p.otjhTarget)} planned`;
