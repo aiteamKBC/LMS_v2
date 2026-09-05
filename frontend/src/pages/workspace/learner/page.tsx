@@ -421,8 +421,16 @@ export default function LearnerOverview() {
      lib/demoProgrammeMaterials.ts — nothing here string-matches a title. */
   const { auth, logout } = useAuth();
   const [demoSignOutOpen, setDemoSignOutOpen] = useState(false);
-  const demoProgramme = useMemo(() => demoProgrammeFor(auth.account?.email), [auth.account?.email]);
-  const isDemoAccount = isRealMode && isInspectionDemoAccount(auth.account?.email) && demoProgramme != null;
+  const demoProgramme = useMemo(
+    () => demoProgrammeFor(auth.account?.email, real?.programme),
+    [auth.account?.email, real?.programme],
+  );
+  // Keep the focused Materials-only presentation limited to the three
+  // dedicated inspection accounts. Every ordinary learner, including people
+  // enrolled on ME/MM/PCP, keeps the standard Overview workspace.
+  const isDemoAccount = isRealMode
+    && isInspectionDemoAccount(auth.account?.email)
+    && demoProgramme != null;
   const [demoMaterialTables, setDemoMaterialTables] = useState<DemoMaterialTable[]>([]);
   useEffect(() => {
     if (!isDemoAccount || !demoProgramme) {

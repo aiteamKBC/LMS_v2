@@ -17,7 +17,7 @@ import {
   componentCriteria, componentRequiresEvidence, completedComponentIds, isComponentComplete,
   type JourneyComponent,
 } from '@/utils/learnerJourney';
-import { fetchEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
+import { fetchEvidence, uploadEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
 import { ReflectionWindow, formatClock, formatRecordedClock, parseClockSeconds } from '@/components/feature/ReflectionWindow';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
@@ -378,6 +378,11 @@ export default function ComponentViewPage() {
   // uploader) because the completion gate depends on it.
   const [evidenceCount, setEvidenceCount] = useState(0);
   const needsEvidence = componentRequiresEvidence(component?.type);
+  const hasEditableAssignmentDocument = Boolean(
+    needsEvidence
+    && component?.resourceUrl
+    && WORD_FILE_RE.test(fileProbe(component.resourceUrl, component.fileName)),
+  );
   const usesManualTimeOnly = isLiveSession || needsEvidence;
   const manualTimeMissing = usesManualTimeOnly && (manualTimeSeconds == null || manualTimeSeconds <= 0);
 
@@ -728,7 +733,7 @@ export default function ComponentViewPage() {
                 onPlayingChange={setPlayerPlaying}
                 onEnded={finishConsuming}
                 onUnsupported={() => setUnsupported(true)}
-                evidenceContext={null}
+                evidenceContext={activityEvidenceContext}
               />
               {(component.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session' && component.teamsLiveSessionId && (
                 <LiveSessionResultsCard
@@ -864,7 +869,7 @@ export default function ComponentViewPage() {
                 </div>
               )}
 
-              {criteria?.gated && (
+              {criteria?.gated && !hasEditableAssignmentDocument && (
                 <div className={`mt-4 rounded-xl border p-4 ${
                   criteria.met ? 'border-emerald-200 bg-emerald-50/60' : 'border-amber-200 bg-amber-50/60'
                 }`}>
@@ -1712,21 +1717,196 @@ interface EvidenceContext {
 function ComponentContent({ evidenceContext, ...props }: Parameters<typeof ComponentBody>[0] & {
   evidenceContext: EvidenceContext | null;
 }) {
+  return <ComponentBody {...props} assignmentEditorContext={evidenceContext} />;
+}
+
+function completedAssignmentName(fileName?: string | null): string {
+  const stem = (fileName || 'assignment').replace(/\.[^.]+$/, '').replace(/[^a-z0-9 _-]+/gi, '').trim() || 'assignment';
+  return `${stem}-completed-${new Date().toISOString().slice(0, 10)}.doc`;
+}
+
+function wordCompatibleDocument(body: string, title: string): string {
+  const safeTitle = DOMPurify.sanitize(title, { ALLOWED_TAGS: [] });
+  const safeBody = DOMPurify.sanitize(body);
+  return `<!doctype html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
+<head><meta charset="utf-8"><title>${safeTitle}</title>
+<style>
+body{font-family:Arial,sans-serif;font-size:11pt;line-height:1.45;color:#111827}
+table{width:100%;border-collapse:collapse;margin:12px 0}td,th{border:1px solid #9ca3af;padding:7px;vertical-align:top}th{background:#f3f4f6}
+h1,h2,h3{page-break-after:avoid}p{margin:0 0 9px}ul,ol{margin:0 0 9px 22px}
+</style></head><body>${safeBody}</body></html>`;
+}
+
+function EditableAssignmentDocument({
+  url, fileName, title, evidenceContext,
+}: {
+  url: string;
+  fileName?: string | null;
+  title: string;
+  evidenceContext: EvidenceContext;
+}) {
+  const editorRef = useRef<HTMLDivElement>(null);
+  const [ready, setReady] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [submittedName, setSubmittedName] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    editor.replaceChildren();
+    setLoading(true);
+    setReady(false);
+    setError(null);
+    setDirty(false);
+    setSubmittedName(null);
+
+    async function loadDocument() {
+      try {
+        const response = await fetch(proxiedMaterialUrl(url), { credentials: 'same-origin' });
+        if (!response.ok) throw new Error(`File request failed (${response.status})`);
+
+        const arrayBuffer = await response.arrayBuffer();
+        if (cancelled) return;
+
+        // Mammoth intentionally produces semantic HTML and drops Word's page
+        // layout. docx-preview renders the original document relationships,
+        // headers, images, fonts and page geometry so the editable copy keeps
+        // the authored template's appearance.
+        const { renderAsync } = await import('docx-preview');
+        await renderAsync(arrayBuffer, editor, editor, {
+          className: 'assignment-docx',
+          inWrapper: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          ignoreFonts: false,
+          breakPages: true,
+          ignoreLastRenderedPageBreak: false,
+          experimental: true,
+          useBase64URL: true,
+          renderHeaders: true,
+          renderFooters: true,
+          renderFootnotes: true,
+          renderEndnotes: true,
+        });
+
+        if (cancelled) return;
+        editor.querySelectorAll('td').forEach((cell) => {
+          if ((cell.textContent || '').trim()) return;
+          cell.setAttribute('data-assignment-field', 'true');
+          if (!cell.childNodes.length) cell.innerHTML = '<p><br></p>';
+        });
+        editor.querySelectorAll('table').forEach((table) => {
+          // Word templates frequently store an absolute table width. That can
+          // leave the answer column squeezed or clipped in the narrower LMS
+          // workspace, so fit authored form tables to the visible page.
+          table.style.setProperty('width', '100%', 'important');
+          table.style.setProperty('max-width', '100%', 'important');
+          table.style.tableLayout = 'fixed';
+        });
+        setReady(true);
+      } catch (loadError) {
+        if (!cancelled) {
+          editor.replaceChildren();
+          setError(loadError instanceof Error ? loadError.message : 'Could not open the assignment editor.');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    void loadDocument();
+    return () => { cancelled = true; };
+  }, [url, evidenceContext.componentId]);
+
+  const saveAndSubmit = async () => {
+    if (!editorRef.current || !dirty || saving) return;
+    if (!window.confirm('Save this as your final evidence submission? You will not be able to edit this submitted copy.')) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const outputName = completedAssignmentName(fileName);
+      const output = wordCompatibleDocument(editorRef.current.innerHTML, title);
+      const file = new File([output], outputName, { type: 'application/msword' });
+      await uploadEvidence(
+        evidenceContext.kind,
+        evidenceContext.learnerId,
+        file,
+        evidenceContext.componentId,
+        evidenceContext.trainingPlanDetails,
+      );
+      setDirty(false);
+      setSubmittedName(outputName);
+      try {
+        const files = await fetchEvidence(evidenceContext.kind, evidenceContext.learnerId, {
+          sectionRef: evidenceContext.componentId,
+        });
+        evidenceContext.onUploaded(files);
+      } catch {
+        // The upload itself succeeded. Do not invite a duplicate submission
+        // just because refreshing the evidence list had a transient failure.
+        setError('Your document was submitted, but the evidence list could not refresh. Reload the page to see it.');
+      }
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Could not save and submit this assignment.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!loading && !ready) {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+        <p className="font-bold">Could not open the editable document.</p>
+        <p className="mt-1 text-xs">{error || 'Download the template and upload the completed file instead.'}</p>
+      </div>
+    );
+  }
+
   return (
-    <>
-      <ComponentBody {...props} />
-      {evidenceContext && (
-        <div className="mt-4 rounded-2xl border border-background-300 bg-white p-6">
-          <AssignmentEvidence
-            kind={evidenceContext.kind}
-            learnerId={evidenceContext.learnerId}
-            componentId={evidenceContext.componentId}
-            trainingPlanDetails={evidenceContext.trainingPlanDetails}
-            onUploaded={evidenceContext.onUploaded}
-          />
+    <div className="overflow-hidden rounded-xl border border-background-300 bg-background-100 shadow-sm">
+      <div className="flex flex-col gap-3 border-b border-background-300 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-bold text-foreground-900">Editable assignment document</p>
+          <p className="mt-0.5 text-xs text-foreground-500">Click in the document, replace the example text, and complete the blank cells.</p>
         </div>
+        <button
+          type="button"
+          onClick={saveAndSubmit}
+          disabled={!dirty || saving || Boolean(submittedName)}
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white transition-colors enabled:hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : submittedName ? 'ri-checkbox-circle-line' : 'ri-save-3-line'} />
+          {saving ? 'Saving & submitting...' : submittedName ? 'Submitted' : 'Save & submit as evidence'}
+        </button>
+      </div>
+      {error && <p className="border-b border-red-200 bg-red-50 px-4 py-2 text-xs font-semibold text-red-700">{error}</p>}
+      {submittedName && (
+        <p className="border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800">
+          <AppIcon className="ri-checkbox-circle-line mr-1" />{submittedName} was saved and uploaded as evidence.
+        </p>
       )}
-    </>
+      <div className="relative min-h-[520px] bg-background-100">
+        {loading && (
+          <div className="absolute inset-0 z-10 grid place-items-center bg-white text-sm font-semibold text-foreground-500">
+            <span className="inline-flex items-center gap-2"><AppIcon className="ri-loader-4-line animate-spin" />Opening editable document...</span>
+          </div>
+        )}
+        <div
+          ref={editorRef}
+          contentEditable={ready && !saving && !submittedName}
+          suppressContentEditableWarning
+          spellCheck
+          onInput={() => { setDirty(true); setSubmittedName(null); }}
+          className="learner-assignment-editor max-h-[75vh] min-h-[520px] overflow-auto outline-none [&_.assignment-docx-wrapper]:min-h-full [&_.assignment-docx-wrapper]:py-6 [&_[data-assignment-field=true]]:bg-amber-50/60"
+        />
+      </div>
+    </div>
   );
 }
 
@@ -1837,7 +2017,7 @@ function LiveSessionResultsCard({
   );
 }
 
-function ComponentBody({ component, contentKind, parsed, title, onDuration, onProgress, onPlayingChange, onEnded, onUnsupported }: {
+function ComponentBody({ component, contentKind, parsed, title, onDuration, onProgress, onPlayingChange, onEnded, onUnsupported, assignmentEditorContext }: {
   component: JourneyComponent;
   contentKind: ReturnType<typeof componentContentKind>;
   parsed: ReturnType<typeof parseVideoUrl> | null;
@@ -1847,6 +2027,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
   onPlayingChange: (playing: boolean) => void;
   onEnded: () => void;
   onUnsupported: () => void;
+  assignmentEditorContext?: EvidenceContext | null;
 }) {
   if (contentKind === 'video' && parsed) {
     return (
@@ -2042,6 +2223,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
   }
 
   /* resource / activity / evidence / live session / recording */
+  const isAssignment = (component.type || '').trim().toLowerCase().replace(/-/g, '_') === 'assignment';
   return (
     <div className="rounded-2xl border border-background-300 bg-white p-6">
       <div className="flex items-center gap-3 mb-3">
@@ -2075,9 +2257,27 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
           <p className="text-sm text-foreground-700 leading-relaxed whitespace-pre-line">{component.reflectionPrompt}</p>
         </div>
       )}
+      {isAssignment && component.resourceUrl && (
+        <div className="mb-4 flex flex-col gap-3 rounded-xl border border-primary-200 bg-primary-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-bold text-primary-900">Download, complete, then upload</p>
+            <p className="mt-1 text-xs text-primary-700">Save this Word template, fill it in, then upload your completed copy as evidence below.</p>
+          </div>
+          <DownloadFileButton url={component.resourceUrl} fileName={component.fileName} label="Download template" />
+        </div>
+      )}
       {component.resourceUrl && (
         <div className="space-y-3">
-          <InlineAttachmentPreview url={component.resourceUrl} title={title} fileName={component.fileName} />
+          {isAssignment && assignmentEditorContext && WORD_FILE_RE.test(fileProbe(component.resourceUrl, component.fileName)) ? (
+            <EditableAssignmentDocument
+              url={component.resourceUrl}
+              fileName={component.fileName}
+              title={title}
+              evidenceContext={assignmentEditorContext}
+            />
+          ) : (
+            <InlineAttachmentPreview url={component.resourceUrl} title={title} fileName={component.fileName} />
+          )}
         </div>
       )}
     </div>

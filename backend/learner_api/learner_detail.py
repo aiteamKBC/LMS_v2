@@ -35,6 +35,117 @@ logger = logging.getLogger(__name__)
 #: An uploaded file only counts as a component's audio when it is one of these.
 AUDIO_FILE_SUFFIXES = {'.mp3', '.wav', '.ogg', '.oga', '.m4a', '.aac', '.flac', '.opus', '.wma'}
 
+# Programme-wide portfolio templates. These live in the curriculum uploads
+# container and are deliberately defaults rather than authored component data:
+# a tutor can still attach a more specific brief to an individual assignment,
+# while every otherwise-empty assignment gives the learner the correct monthly
+# workbook to download, complete, and upload as evidence.
+PROGRAMME_ASSIGNMENT_TEMPLATES = {
+    "pcp": {
+        "fileName": "PCP.docx",
+        "resourceUrl": "/curriculum_api/curriculum/uploads/assignment-templates/PCP.docx",
+    },
+    "mm": {
+        "fileName": "MM.docx",
+        "resourceUrl": "/curriculum_api/curriculum/uploads/assignment-templates/MM.docx",
+    },
+    "me": {
+        "fileName": "ME.docx",
+        "resourceUrl": "/curriculum_api/curriculum/uploads/assignment-templates/ME.docx",
+    },
+}
+
+ASSIGNMENT_MODULE_TEMPLATE_IDS = {
+    "me": {
+        "MOD-202608228DDFCB53074A",
+        "MOD-2026082243BD5ED0A8EA",
+        "MOD-2026082273BF1B44335F",
+    },
+    "mm": {
+        "MOD-202608223E23693425BC",
+        "MOD-20260822222D7B9190AA",
+        "MOD-20260822BFA56444DE10",
+        "MOD-AI-IN-MARKETING-MM",
+    },
+    "pcp": {
+        "MOD-2026082245779A87FE0C",
+        "MOD-20260822B2177D2C4599",
+        "MOD-202608223894BBCBCF5F",
+        "MOD-202608227739EC14E0CC",
+        "MOD-202608226F0A69EDAD30",
+        "MOD-20260822007072C8A616",
+        "MOD-2026082281333774FD28",
+        "MOD-20260822C8C4CF8F9D6F",
+        # The existing PMI SP module used by Mohamed El Masry's original plan.
+        "MOD-202608220A1D2C26A3E5",
+    },
+}
+
+
+def _programme_assignment_template(programme):
+    """Return the portfolio workbook for one of the three taught programmes."""
+    normalised = re.sub(r"[^a-z0-9]+", " ", _s(programme).lower()).strip()
+    words = set(normalised.split())
+    if "pcp" in words or (
+        "project" in words
+        and bool({"control", "controls"} & words)
+        and "professional" in words
+    ):
+        return PROGRAMME_ASSIGNMENT_TEMPLATES["pcp"]
+    if "mm" in words or ("marketing" in words and "manager" in words):
+        return PROGRAMME_ASSIGNMENT_TEMPLATES["mm"]
+    if "me" in words or ("marketing" in words and "executive" in words):
+        return PROGRAMME_ASSIGNMENT_TEMPLATES["me"]
+    return None
+
+
+def _component_assignment_template(component):
+    """Return a workbook only when this Assignment belongs to ME/MM/PCP material."""
+    module_id = _s(component.get("moduleId"))
+    for code, module_ids in ASSIGNMENT_MODULE_TEMPLATE_IDS.items():
+        if module_id in module_ids:
+            return PROGRAMME_ASSIGNMENT_TEMPLATES[code]
+
+    module_title = re.sub(
+        r"[^a-z0-9]+", " ", _s(component.get("module")).lower()
+    ).strip()
+    if not module_title:
+        return None
+
+    pcp_markers = (
+        "pmi sp", "schedule professional", "scheduling professional",
+        "project planning", "project control", "project management office",
+        "project management professional", "risk management", "earned value",
+        "portfolio management", "managing successful programmes",
+    )
+    mm_markers = (
+        "strategy planning", "customer journey", "commercial intelligence",
+        "ai in marketing", "marketing manager",
+    )
+    me_markers = (
+        "impact planning", "social media", "marketing technology", "martech",
+        "marketing executive",
+    )
+    for code, markers in (("pcp", pcp_markers), ("mm", mm_markers), ("me", me_markers)):
+        if any(marker in module_title for marker in markers):
+            return PROGRAMME_ASSIGNMENT_TEMPLATES[code]
+    return None
+
+
+def _apply_programme_assignment_template(components, programme):
+    """Fill blank ME/MM/PCP material assignments without changing other content."""
+    for component in components:
+        component_type = _s(component.get("type")).strip().lower().replace("-", "_")
+        if component_type != "assignment" or _s(component.get("resourceUrl")):
+            continue
+        template = _component_assignment_template(component)
+        if not template:
+            continue
+        component["resourceUrl"] = template["resourceUrl"]
+        component["fileName"] = template["fileName"]
+        component["downloadAllowed"] = True
+    return components
+
 
 def component_audio_url(settings, component_type):
     """The audio a component should offer, or None.
@@ -1660,6 +1771,9 @@ def build_learner_detail(source, pk):
     # edits in Module Builder reflect here immediately (structured-plan learners).
     detail["modules"], detail["week"], detail["components"] = _resolve_from_master(
         detail["modules"], detail["week"], detail["components"]
+    )
+    detail["components"] = _apply_programme_assignment_template(
+        detail["components"], getattr(source, "programme", "")
     )
     detail["components"], detail["totalExpectedOtjh"] = _annotate_otjh(detail["components"])
     detail["week"], detail["components"] = _append_week_quizzes(detail["week"], detail["components"])
