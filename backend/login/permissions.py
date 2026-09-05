@@ -14,14 +14,41 @@ import functools
 
 from django.http import JsonResponse
 
-from .sessions import authenticate_request
+from .sessions import authenticate_request, session_unreadable
 
 
-def _unauthenticated():
+def _unauthenticated(request=None):
+    """Refuse a caller with no session.
+
+    ``request`` is optional only for callers predating the distinction. Pass it:
+    a request whose session could not be *read* gets ``_unavailable`` instead,
+    because 401 is the status the SPA acts on by signing the person out and
+    navigating to /login. A database that blinked is not a session that ended,
+    and telling the browser it was loses somebody's working session.
+    """
+    if request is not None and session_unreadable(request):
+        return _unavailable()
     return JsonResponse(
         {"error": "Authentication required.", "code": "unauthenticated"},
         status=401,
     )
+
+
+def _unavailable():
+    """Fail closed on an unreadable session without claiming it ended.
+
+    Mirrors ``api_gate._unavailable`` -- same code and status, so the SPA does
+    not have to learn a second shape for "ask again shortly" per endpoint.
+    """
+    response = JsonResponse(
+        {
+            "error": "The sign-in service is temporarily unavailable.",
+            "code": "session_unavailable",
+        },
+        status=503,
+    )
+    response["Retry-After"] = "5"
+    return response
 
 
 def _forbidden(required):
@@ -41,7 +68,7 @@ def login_required(view):
     @functools.wraps(view)
     def wrapped(request, *args, **kwargs):
         if authenticate_request(request) is None:
-            return _unauthenticated()
+            return _unauthenticated(request)
         return view(request, *args, **kwargs)
 
     return wrapped
@@ -62,7 +89,7 @@ def require_role(*roles):
         def wrapped(request, *args, **kwargs):
             account = authenticate_request(request)
             if account is None:
-                return _unauthenticated()
+                return _unauthenticated(request)
             if account.role not in allowed:
                 return _forbidden(allowed)
             return view(request, *args, **kwargs)
@@ -142,7 +169,7 @@ def staff_only(*, writes_only=False, allow_own_learner=None):
 
             account = authenticate_request(request)
             if account is None:
-                return _unauthenticated()
+                return _unauthenticated(request)
 
             if account.role in allowed:
                 return view(request, *args, **kwargs)
@@ -204,7 +231,7 @@ def employer_or_staff(employer_kwarg="employer_id"):
 
             account = authenticate_request(request)
             if account is None:
-                return _unauthenticated()
+                return _unauthenticated(request)
 
             if account.role in allowed:
                 return view(request, *args, **kwargs)
@@ -259,7 +286,7 @@ def require_access(*accesses):
 
             account = authenticate_request(request)
             if account is None:
-                return _unauthenticated()
+                return _unauthenticated(request)
             if account.role not in {"admin", "staff"}:
                 return _forbidden(required)
 
@@ -311,7 +338,7 @@ def require_permission(*permissions):
 
             account = authenticate_request(request)
             if account is None:
-                return _unauthenticated()
+                return _unauthenticated(request)
             if not needed.issubset(set(permissions_for(account.role))):
                 return _forbidden(needed)
             return view(request, *args, **kwargs)
@@ -417,7 +444,7 @@ def _learner_progress_gate(view, *, kwarg, query_param, body_field, allow_staff)
 
         account = authenticate_request(request)
         if account is None:
-            return _unauthenticated()
+            return _unauthenticated(request)
 
         if account.role == "learner":
             target_id = _target_learner_id(

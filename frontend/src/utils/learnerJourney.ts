@@ -1,4 +1,5 @@
 import type { ComponentKsbMapping, LearnerDetail, LearnerQuizAttempt } from '@/api/learnerDetail';
+export { formatHoursMinutes } from '@/lib/format';
 
 export interface JourneyComponent {
   title: string;
@@ -11,6 +12,8 @@ export interface JourneyComponent {
   componentId?: string | null;
   type?: string | null;
   description?: string | null;
+  assignmentBrief?: string | null;
+  assignmentBriefHtml?: string | null;
   videoUrl?: string | null;
   audioUrl?: string | null;
   contentHtml?: string | null;
@@ -315,7 +318,11 @@ export function hasComponentContent(c: JourneyComponent): boolean {
   if (type === 'podcast' || type === 'audio') return hasUrl(c.audioUrl) || hasUrl(c.resourceUrl) || hasDescription;
   if (type === 'reading') return hasText(c.contentHtml) || hasUrl(c.resourceUrl) || hasUrl(c.audioUrl) || hasDescription;
   if (type === 'powerpoint' || type === 'presentation' || type === 'slides') return hasUrl(c.resourceUrl) || hasDescription;
-  if (type === 'reflection') return hasText(c.reflectionPrompt) || hasText(c.reflectionQuestion) || hasDescription;
+  // A reflection's content *is* the reflection form the runner always renders,
+  // so it stays openable even with nothing authored around it. (The API now
+  // drops the boilerplate prompt every component is seeded with, which would
+  // otherwise have made an unedited reflection look empty.)
+  if (type === 'reflection') return true;
   if (type === 'live_session') {
     return hasUrl(c.liveSessionUrl) || hasText(c.sessionDateTimeUtc) || hasText(c.sessionDate) || Boolean(c.teamsLiveSessionId) || hasDescription;
   }
@@ -324,6 +331,10 @@ export function hasComponentContent(c: JourneyComponent): boolean {
     || hasText(c.reflectionQuestion)
     || hasText(c.contentHtml)
     || hasUrl(c.audioUrl)
+    // An assignment carries no description column — its brief is the only text
+    // it has, so a brief-only assignment is still something to consume.
+    || hasText(c.assignmentBrief)
+    || hasText(c.assignmentBriefHtml)
     || hasDescription;
 }
 
@@ -340,6 +351,44 @@ export interface JourneyWeek {
 export interface JourneyModule {
   module: string;
   weeks: JourneyWeek[];
+}
+
+export interface TrainingPlanWeekPosition {
+  current: number | null;
+  total: number;
+  state: 'upcoming' | 'active' | 'complete';
+}
+
+function parsePlanDate(value?: string): Date | null {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const isoDate = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const parsed = isoDate
+    ? new Date(Number(isoDate[1]), Number(isoDate[2]) - 1, Number(isoDate[3]))
+    : new Date(text);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/** Calendar position in the learner's complete module/week training plan. */
+export function trainingPlanWeekPosition(
+  real: LearnerDetail | null,
+  today = new Date(),
+): TrainingPlanWeekPosition | null {
+  if (!real) return null;
+  const total = buildLearnerJourney(real).reduce((count, module) => count + module.weeks.length, 0);
+  const start = parsePlanDate(real.programmeStartDate || real.cohortStartDate);
+  if (!start || total === 0 || Number.isNaN(today.getTime())) return null;
+
+  const startDay = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
+  const todayDay = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  const elapsedDays = Math.floor((todayDay - startDay) / 86_400_000);
+  if (elapsedDays < 0) return { current: null, total, state: 'upcoming' };
+  if (elapsedDays >= total * 7) return { current: total, total, state: 'complete' };
+  return {
+    current: Math.min(total, Math.floor(elapsedDays / 7) + 1),
+    total,
+    state: 'active',
+  };
 }
 
 /**
@@ -395,18 +444,6 @@ export function gradePercent(grade: string | number | undefined): number {
 function parseMinutes(text: string | undefined): number | null {
   const m = String(text ?? '').match(/\d+(\.\d+)?/);
   return m ? parseFloat(m[0]) : null;
-}
-
-/** Decimal hours -> "1h 30m" (drops the minutes part when it's a whole hour,
- * and the hours part when under an hour: 0.5 -> "30m", 2 -> "2h", 1.25 -> "1h 15m"). */
-export function formatHoursMinutes(hours: number): string {
-  const totalMin = Math.round(hours * 60);
-  const h = Math.floor(totalMin / 60);
-  const m = totalMin % 60;
-  if (h === 0 && m === 0) return '0h';
-  if (h === 0) return `${m}m`;
-  if (m === 0) return `${h}h`;
-  return `${h}h ${m}m`;
 }
 
 /** Parse a stored hours string ("1.5", "48") to a number. 0 on garbage. */
@@ -500,6 +537,7 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             ksbWeightTotal: c.ksbWeightTotal, ksbMappingCount: c.ksbMappingCount,
             ksbMappings: c.ksbMappings,
             componentId: c.componentId, type: c.type, description: c.description,
+            assignmentBrief: c.assignmentBrief, assignmentBriefHtml: c.assignmentBriefHtml,
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt,
@@ -518,7 +556,12 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
           }));
         return {
           week: w.week,
-          otjh: components.reduce((n, c) => n + (c.expectedOtjh || 0), 0),
+          // Quiz duration remains available to the quiz runner and is credited
+          // as actual learner time after submission. It is not planned OTJH.
+          otjh: components.reduce(
+            (n, c) => n + (c.isQuiz || (c.type || '').toLowerCase() === 'quiz' ? 0 : (c.expectedOtjh || 0)),
+            0,
+          ),
           components,
         };
       }),

@@ -16,9 +16,13 @@ export function useCurriculumStaffProfiles({ autoLoad = true }: UseCurriculumSta
     let mounted = true;
 
     if (!options.silent) setLoading(true);
+    // `revalidate`, not `skipCache`: curriculum never writes staff -- tutors and
+    // coaches come from the enrolment directory -- so there is no write of ours
+    // to read back, and forcing the backend to rebuild its payload cost these
+    // two requests seconds each on every mount.
     Promise.all([
-      fetchCurriculumTutors(controller.signal, { skipCache: true }),
-      fetchCurriculumCoaches(controller.signal, { skipCache: true }),
+      fetchCurriculumTutors(controller.signal, { revalidate: true }),
+      fetchCurriculumCoaches(controller.signal, { revalidate: true }),
     ])
       .then(([nextTutors, nextCoaches]) => {
         if (!mounted) return;

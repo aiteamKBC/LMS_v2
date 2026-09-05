@@ -226,7 +226,7 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     expect(strip.queryByRole('button', { name: /^Review/ })).not.toBeInTheDocument();
   });
 
-  it('puts Modules after the delivery hierarchy and hands completed design on to KSB Coverage', async () => {
+  it('puts Modules after the delivery hierarchy and reports completed design without a second way into KSB Coverage', async () => {
     await renderWorkspace();
     await openTab(/Modules/);
 
@@ -235,8 +235,11 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     expect(screen.queryByRole('button', { name: /^Add cohort$/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Add module$/ })).not.toBeInTheDocument();
     expect(await screen.findByText('Design foundation ready')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /Continue to KSB Coverage/ }));
+    // The banner reports the state and stops there: KSB Coverage is a tab in the
+    // strip above, so a second button into it was a duplicate door.
+    expect(screen.queryByRole('button', { name: /Continue to KSB Coverage/ })).not.toBeInTheDocument();
 
+    await openTab(/KSB Coverage/);
     expect(await screen.findByText('KSB coverage heatmap')).toBeInTheDocument();
   });
 
@@ -379,7 +382,7 @@ describe('Programme workspace', { timeout: 15000 }, () => {
 
     expect(screen.getAllByRole('button', { name: /^Add cohort$/ })).toHaveLength(1);
     expect(screen.getByPlaceholderText('Search cohorts, dates, status...')).toBeDisabled();
-    expect(screen.getByRole('combobox', { name: 'Status' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Record status' })).toBeDisabled();
 
     await openTab(/Groups/);
     expect(screen.getByText('Coach')).toBeInTheDocument();

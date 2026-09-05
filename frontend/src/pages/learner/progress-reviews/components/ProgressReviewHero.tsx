@@ -8,7 +8,7 @@ export default function ProgressReviewHero() {
   return (
     <>
       {/* ── SECTION 1: HERO ── */}
-      <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
+      <div className="learner-super-admin-hero relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
         <div className="absolute top-0 left-0 right-0 h-px bg-white/10"></div>
         <div className="absolute bottom-0 left-0 right-0 h-px bg-black/10"></div>
         <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
@@ -21,20 +21,20 @@ export default function ProgressReviewHero() {
               Progress Reviews are formal meetings between you, your coach and your line manager. They review your progress, workplace application, KSB development and readiness for progression.
             </p>
           </div>
-          <div className="flex items-center gap-3 shrink-0">
-            <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
+          <div className="grid w-full grid-cols-2 items-center gap-2 shrink-0 sm:flex sm:w-auto sm:gap-3">
+            <div className="learner-hero-kpi bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
               <p className="text-2xl font-bold text-white">{d.hero.totalPlanned}</p>
               <p className="text-xs text-white/70 font-medium uppercase tracking-wide">Planned</p>
             </div>
-            <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
+            <div className="learner-hero-kpi bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
               <p className="text-2xl font-bold text-white">{d.hero.completed}</p>
               <p className="text-xs text-white/70 font-medium uppercase tracking-wide">Completed</p>
             </div>
-            <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
+            <div className="learner-hero-kpi bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
               <p className="text-2xl font-bold text-white">#{d.hero.currentReviewNumber}</p>
               <p className="text-xs text-white/70 font-medium uppercase tracking-wide">Upcoming</p>
             </div>
-            <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
+            <div className="learner-hero-kpi bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
               <p className="text-2xl font-bold text-white">{d.hero.daysUntilReview}</p>
               <p className="text-xs text-white/70 font-medium uppercase tracking-wide">Days</p>
             </div>

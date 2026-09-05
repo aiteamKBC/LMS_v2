@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { formatHoursMinutes } from '@/lib/format';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { VideoPlayerModal } from '@/pages/learner/this-week/components/VideoPlayerModal';
 import { QuizModal } from '@/pages/learner/this-week/components/QuizModal';
@@ -297,7 +298,7 @@ export default function WeekDetailPage() {
         {/* ═══════════════════════════════════════════════════
             SECTION 1 — WEEK HERO
             ═══════════════════════════════════════════════════ */}
-        <section className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
+        <section className="learner-super-admin-hero relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute animate-liquid-blob-1 opacity-25" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
             <div className="absolute animate-liquid-blob-2 opacity-15" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
@@ -471,8 +472,8 @@ export default function WeekDetailPage() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-5">
               <OTJHStatCard label="Planned" value={`${stats.totalPlanned}h`} icon="ri-calendar-line" color="primary" />
               <OTJHStatCard label="Claimed" value={`${stats.totalClaimed}h`} icon="ri-time-line" color="accent" />
-              <OTJHStatCard label="Validated" value={`${(stats.totalClaimed * 0.75).toFixed(1)}h`} icon="ri-check-double-line" color="emerald" />
-              <OTJHStatCard label="Remaining" value={`${(stats.totalPlanned - stats.totalClaimed).toFixed(1)}h`} icon="ri-hourglass-line" color={stats.totalPlanned - stats.totalClaimed > 2 ? 'amber' : 'emerald'} />
+              <OTJHStatCard label="Validated" value={formatHoursMinutes(stats.totalClaimed * 0.75)} icon="ri-check-double-line" color="emerald" />
+              <OTJHStatCard label="Remaining" value={formatHoursMinutes(stats.totalPlanned - stats.totalClaimed)} icon="ri-hourglass-line" color={stats.totalPlanned - stats.totalClaimed > 2 ? 'amber' : 'emerald'} />
             </div>
 
             <div className="mb-3">
@@ -548,9 +549,9 @@ export default function WeekDetailPage() {
                       <td className="px-4 py-3 text-right text-foreground-700">{stats.totalPlanned}h</td>
                       <td className="px-4 py-3 text-right text-emerald-600 font-semibold">{stats.totalClaimed.toFixed(2)}h</td>
                       <td className="px-4 py-3 text-xs text-foreground-500">
-                        Validated {components.filter(c => c.status === 'Completed').reduce((s, c) => s + c.actualOTJH, 0).toFixed(1)}h
+                        Validated {formatHoursMinutes(components.filter(c => c.status === 'Completed').reduce((s, c) => s + c.actualOTJH, 0))}
                         {components.filter(c => c.status === 'Evidence Submitted').reduce((s, c) => s + c.actualOTJH, 0) > 0 && (
-                          <span> · Pending {components.filter(c => c.status === 'Evidence Submitted').reduce((s, c) => s + c.actualOTJH, 0).toFixed(1)}h</span>
+                          <span> · Pending {formatHoursMinutes(components.filter(c => c.status === 'Evidence Submitted').reduce((s, c) => s + c.actualOTJH, 0))}</span>
                         )}
                       </td>
                     </tr>
@@ -568,7 +569,7 @@ export default function WeekDetailPage() {
           <section className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-base font-heading font-semibold text-foreground-900">KSB Development</h2>
-              <Link to="/learner/ksbs" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+              <Link to="/learner/ksbs" className="compact-action text-sm text-primary-600 hover:text-primary-700 font-medium transition-smooth">
                 View all KSBs <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
               </Link>
             </div>
@@ -800,11 +801,11 @@ function CompactComponentCard({
             if (navigator.share) {
               navigator.share({
                 title: c.title,
-                text: `${c.type} — ${c.title} (${c.plannedOTJH}h OTJH)`,
+                text: `${c.type} — ${c.title} (${formatHoursMinutes(c.plannedOTJH)} OTJH)`,
                 url: window.location.href,
               });
             } else {
-              navigator.clipboard.writeText(`${c.title} — ${c.type} (${c.plannedOTJH}h OTJH)`);
+              navigator.clipboard.writeText(`${c.title} — ${c.type} (${formatHoursMinutes(c.plannedOTJH)} OTJH)`);
             }
           }}
           title="Share"
@@ -998,7 +999,7 @@ function ComponentDetailPanel({ component: c, onCtaClick }: { component: ReturnT
             <SummaryRow label="Coach Approval Date" value={c.coachApprovedDate || '—'} />
             <SummaryRow label="QA Approval Date" value={c.qaApprovedDate || '—'} />
             <SummaryRow label="Assessment Method" value={c.assessmentMethod === 'ai-assisted' ? 'AI Assisted Assessment' : c.assessmentMethod === 'tutor-assessed' ? 'Tutor Assessed' : 'Standard'} />
-            <SummaryRow label="OTJH Awarded" value={`${c.otjhAwarded} hours`} />
+            <SummaryRow label="OTJH Awarded" value={formatHoursMinutes(c.otjhAwarded)} />
             <SummaryRow label="Points Earned" value={`${c.pointsEarned} pts`} />
             {c.score !== null && c.score !== undefined && (
               <div className="flex items-center justify-between text-sm py-1 px-2 rounded-lg bg-emerald-100/50">
@@ -1110,7 +1111,7 @@ function SnapshotCard({ icon, label, value, detail, color }: { icon: string; lab
   const c = colorMap[color];
 
   return (
-    <div className={`rounded-xl border ${c.border} ${c.bg} p-4 card-premium`}>
+    <div className={`coach-metric-card ${c.border} ${c.bg}`}>
       <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${c.iconBg} ${c.iconText} mb-3`}>
         <AppIcon className={`${icon} text-sm`}></AppIcon>
       </span>
@@ -1130,7 +1131,7 @@ function OTJHStatCard({ label, value, icon, color }: { label: string; value: str
   }[color] || { bg: 'bg-background-50', border: 'border-foreground-200/50', iconBg: 'bg-background-100', iconText: 'text-foreground-500', accent: 'text-foreground-700' };
 
   return (
-    <div className={`rounded-xl border ${c.border} ${c.bg} p-4`}>
+    <div className={`coach-metric-card ${c.border} ${c.bg}`}>
       <div className="flex items-center gap-2.5 mb-2">
         <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${c.iconBg} ${c.iconText}`}>
           <AppIcon className={`${icon} text-sm`}></AppIcon>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { formatHoursMinutes } from '@/lib/format';
 import {
   fetchLearnerDetail,
   type LearnerActivityEntry,
@@ -453,7 +454,7 @@ export function formatHours(value: number | null) {
   if (value === null || Number.isNaN(value)) {
     return '--';
   }
-  return `${roundNumber(value)}h`;
+  return formatHoursMinutes(value);
 }
 
 export function formatFraction(current: number | null, total: number | null) {

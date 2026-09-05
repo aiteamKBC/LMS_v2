@@ -27,10 +27,10 @@ interface ReportMeta {
 }
 
 const REPORTS: ReportMeta[] = [
-  { id: 'engagement-scoreboard', name: 'Engagement Scoreboard', description: 'Live engagement scores across all learners, with risk categorisation', type: 'dashboard', category: 'Overview', icon: 'ri-dashboard-line', bg: 'bg-primary-100', text: 'text-primary-700' },
-  { id: 'points-rewards', name: 'Points & Rewards Summary', description: 'Points awarded by category, plus voucher claim and redemption status', type: 'summary', category: 'Rewards', icon: 'ri-file-list-line', bg: 'bg-secondary-100', text: 'text-secondary-700' },
-  { id: 'club-activity', name: 'Club Activity Report', description: 'Membership, meetings, and marked attendance across every club', type: 'detailed', category: 'Clubs', icon: 'ri-file-chart-line', bg: 'bg-accent-100', text: 'text-accent-700' },
-  { id: 'event-attendance', name: 'Event Attendance Report', description: 'Bookings, attendance, and no-shows for every event', type: 'detailed', category: 'Events', icon: 'ri-file-chart-line', bg: 'bg-accent-100', text: 'text-accent-700' },
+  { id: 'engagement-scoreboard', name: 'Engagement Scoreboard', description: 'Live engagement scores across all learners, with risk categorisation', type: 'dashboard', category: 'Overview', icon: 'ri-dashboard-line', bg: 'bg-[#F3E8FF]', text: 'text-[#7C3AED]' },
+  { id: 'points-rewards', name: 'Points & Rewards Summary', description: 'Points awarded by category, plus voucher claim and redemption status', type: 'summary', category: 'Rewards', icon: 'ri-file-list-line', bg: 'bg-[#FEF3C7]', text: 'text-[#D97706]' },
+  { id: 'club-activity', name: 'Club Activity Report', description: 'Membership, meetings, and marked attendance across every club', type: 'detailed', category: 'Clubs', icon: 'ri-file-chart-line', bg: 'bg-[#F3E8FF]', text: 'text-[#7C3AED]' },
+  { id: 'event-attendance', name: 'Event Attendance Report', description: 'Bookings, attendance, and no-shows for every event', type: 'detailed', category: 'Events', icon: 'ri-file-chart-line', bg: 'bg-[#FEF3C7]', text: 'text-[#D97706]' },
 ];
 
 // Minimal CSV builder — one flat table of rows sharing the same keys.
@@ -227,7 +227,7 @@ export default function EngagementReportsPage() {
                   <div className="flex-1 min-w-[220px]">
                     <div className="flex items-center gap-2 flex-wrap mb-1">
                       <span className="text-[13px] font-semibold text-foreground-900">{report.name}</span>
-                      <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-secondary-100 text-secondary-700">{report.category}</span>
+                      <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-[#F5F3FF] text-[#6D28D9]">{report.category}</span>
                     </div>
                     <p className="text-[11px] text-foreground-500">{report.description}</p>
                     <p className="text-[10px] text-foreground-400 mt-1">Last generated: {lastGenerated[report.id] ?? 'Never'}</p>
@@ -272,11 +272,11 @@ export default function EngagementReportsPage() {
                     <button
                       onClick={() => generate(report)}
                       disabled={generatingId === report.id}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#B27715] text-white text-[10px] font-semibold hover:bg-[#986511] active:bg-[#80540E] transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <AppIcon className="ri-play-line"></AppIcon> {generatingId === report.id ? 'Generating…' : 'Generate'}
                     </button>
-                    <button onClick={() => downloadReport(report)} className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap">
+                    <button onClick={() => downloadReport(report)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#A7F3D0] bg-[#ECFDF5] text-[#059669] text-[10px] font-semibold hover:bg-[#D1FAE5] active:bg-[#A7F3D0] transition-smooth cursor-pointer whitespace-nowrap">
                       <AppIcon className="ri-download-line"></AppIcon> Download CSV
                     </button>
                   </div>

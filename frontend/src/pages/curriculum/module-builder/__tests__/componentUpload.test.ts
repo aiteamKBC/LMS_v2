@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { uploadComponentResource } from '../moduleAuthoringData';
 import { uploadWeekComponentResource } from '../../week-builder/weekTemplateData';
+import { COMPONENT_UPLOAD_MAX_BYTES, COMPONENT_UPLOAD_MAX_LABEL } from '../../shared/componentUploadPolicy';
 
 const input = () => ({
   moduleCatalogueId: 'MOD-1',
@@ -38,13 +39,14 @@ describe('component uploads', () => {
     );
   });
 
-  it('rejects files over 5 MB before making a network request', async () => {
+  it(`rejects files over ${COMPONENT_UPLOAD_MAX_LABEL} before making a network request`, async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
-    const oversized = new File([new Uint8Array((5 * 1024 * 1024) + 1)], 'large.pptx');
+    const oversized = new File([], 'large.pptx');
+    Object.defineProperty(oversized, 'size', { value: COMPONENT_UPLOAD_MAX_BYTES + 1 });
 
     await expect(uploadComponentResource({ ...input(), file: oversized })).rejects.toThrow(
-      'File is too large. Maximum upload size is 5 MB.',
+      `File is too large. Maximum upload size is ${COMPONENT_UPLOAD_MAX_LABEL}.`,
     );
     expect(fetchMock).not.toHaveBeenCalled();
   });

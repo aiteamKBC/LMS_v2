@@ -15,9 +15,11 @@ adapted to plain CSRF-exempt JSON views keyed on kind+id.
     POST /learner_api/evidence/<kind>/<pk>/upload/   (multipart: file, section_ref)
     GET  /learner_api/evidence/<kind>/<pk>/          (optional ?section_ref= &status=)
     GET  /learner_api/evidence/<kind>/<pk>/<file_id>/download/
+    DELETE /learner_api/evidence/<kind>/<pk>/<file_id>/   (own file, pre-submission)
 """
 import json
 import logging
+from pathlib import Path
 import uuid
 
 from django.conf import settings
@@ -29,13 +31,59 @@ from django.views.decorators.csrf import csrf_exempt
 from .evidence_tables import ensure_evidence_tables
 from .evidence_storage import (
     azure_configured, upload_to_quarantine, move_blob, blob_url, get_download_sas,
+    delete_blob,
 )
 from login.permissions import learner_self_only, learner_self_or_staff
 
 logger = logging.getLogger(__name__)
 
 VALID_KINDS = {"commercial", "apprenticeship"}
-ALLOWED_TYPES = {"application/pdf", "image/png", "image/jpeg", "video/mp4"}
+#: What a learner may upload as evidence. Browsers send the type, so this is
+#: keyed on it — but a browser with no mapping for .docx sends
+#: application/octet-stream, and Windows sometimes sends the legacy
+#: application/msword for a .docx, so the extension is accepted as corroboration
+#: in _evidence_type_allowed rather than trusting the header alone.
+ALLOWED_TYPES = {
+    "application/pdf",
+    "image/png",
+    "image/jpeg",
+    "video/mp4",
+    # Word
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    # PowerPoint
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
+}
+
+#: Extensions matching ALLOWED_TYPES, for the upload whose declared type is
+#: missing or generic. Both have to line up with the accept list the learner
+#: page offers (frontend AssignmentEvidence).
+ALLOWED_EXTENSIONS = {
+    ".pdf", ".png", ".jpg", ".jpeg", ".mp4",
+    ".doc", ".docx", ".ppt", ".pptx", ".ppsx",
+}
+
+#: Types a browser sends when it does not recognise the file, which on their own
+#: say nothing — accepted only when the extension is one of ours.
+GENERIC_TYPES = {"", "application/octet-stream", "binary/octet-stream"}
+
+
+def _evidence_type_allowed(uploaded):
+    """Whether this upload is a kind of evidence we accept.
+
+    A declared type we know is enough. A generic or absent type is accepted on
+    the strength of the extension, because otherwise a learner on a machine with
+    no .docx mapping simply cannot submit their assignment.
+    """
+    content_type = (getattr(uploaded, "content_type", "") or "").split(";")[0].strip().lower()
+    suffix = Path(getattr(uploaded, "name", "") or "").suffix.lower()
+    if content_type in ALLOWED_TYPES:
+        return True
+    if content_type in GENERIC_TYPES and suffix in ALLOWED_EXTENSIONS:
+        return True
+    return False
 MAX_BYTES = 50 * 1024 * 1024  # 50 MB
 
 
@@ -150,8 +198,12 @@ def upload_evidence(request, kind, pk):
     section_ref = (request.POST.get("section_ref") or "").strip()
     if not f or not section_ref:
         return _error("file and section_ref are required.", 400)
-    if f.content_type not in ALLOWED_TYPES:
-        return _error("Unsupported file type.", 400)
+    if not _evidence_type_allowed(f):
+        return _error(
+            "Unsupported file type. Upload a PDF, Word or PowerPoint document, "
+            "an image (PNG/JPEG) or an MP4 video.",
+            400,
+        )
     if f.size > MAX_BYTES:
         return _error("File exceeds the 50 MB size limit.", 400)
 
@@ -315,3 +367,106 @@ def download_evidence(request, kind, pk, file_id):
 
     url = get_download_sas(settings.AZURE_APPROVED_CONTAINER, blob_name)
     return JsonResponse({"url": url})
+
+
+def _is_submitted_for_marking(progress_entry_id):
+    """Has this progress entry actually been handed in?
+
+    Today only `submit_component_progress` writes these rows and it always sets
+    `submitted_at`, so the mere existence of an entry means "submitted". Asking
+    about `submitted_at` directly states what the evidence gate actually cares
+    about, so a future draft/in-progress row would not silently start locking
+    learners out of files they have not handed in. Unreadable => treat as
+    submitted: refusing a delete is the safe direction.
+    """
+    try:
+        with _conn().cursor() as cur:
+            cur.execute(
+                'select submitted_at is not null '
+                'from "Learner"."learner_progress_entries" where id = %s',
+                [progress_entry_id],
+            )
+            row = cur.fetchone()
+    except DatabaseError as exc:
+        logger.warning("Could not check progress entry %s: %s", progress_entry_id, exc)
+        return True
+    return bool(row[0]) if row else False
+
+
+@csrf_exempt
+# Same rule as upload: a learner curates their own portfolio. Staff assess what
+# is there, they do not remove a learner's file from the learner's own page.
+@learner_self_only(kwarg="pk")
+def delete_evidence(request, kind, pk, file_id):
+    """Remove one of the learner's own evidence files.
+
+    Lets a learner correct a mistaken upload — the frontend's "reupload" is this
+    delete followed by an ordinary upload, so there is no separate replace path.
+
+    Refused once the file is attached to a submitted progress entry: from that
+    point an assessor may be marking against it, and deleting it would pull the
+    evidence out from under the marking queue. That link is re-derived here as
+    well as read off the row, because the row's `progress_entry_id` is captured
+    at upload time — null for the normal case of uploading *before* finishing
+    the component, which is exactly the case that must stay deletable.
+    """
+    if request.method != "DELETE":
+        return _error("Method not allowed.", 405)
+    if kind not in VALID_KINDS:
+        return _error("Unknown learner kind.", 400)
+    ensure_evidence_tables()
+
+    # Scoping the lookup by learner is the ownership check: another learner's
+    # file id simply does not resolve here.
+    try:
+        with _conn().cursor() as cur:
+            cur.execute(
+                'select blob_name, container, section_ref, progress_entry_id '
+                'from "Learner"."evidence_files" '
+                "where id = %s and learner_kind = %s and learner_id = %s",
+                [str(file_id), kind, str(pk)],
+            )
+            row = cur.fetchone()
+    except DatabaseError as exc:
+        logger.warning("Could not look up evidence for delete: %s", exc)
+        return _error("Could not load evidence.", 502)
+
+    if not row:
+        return _error("Evidence not found.", 404)
+    blob_name, container, section_ref, progress_entry_id = row
+
+    if progress_entry_id is None:
+        progress_entry_id = _evidence_lineage(kind, pk, section_ref).get("progress_entry_id")
+    if progress_entry_id is not None and _is_submitted_for_marking(progress_entry_id):
+        return _error(
+            "This file has been submitted for marking and can no longer be removed. "
+            "Ask your tutor if it needs to be replaced.",
+            409,
+        )
+
+    # Blob first: a delete that removed the row but left the blob would strand
+    # a file nothing points at any more. A blob that has already gone is not a
+    # failure — the row still has to go.
+    if azure_configured() and blob_name and container:
+        try:
+            delete_blob(container, blob_name)
+        except Exception as exc:  # already deleted / SDK / network
+            logger.warning("Evidence blob delete failed for %s/%s: %s", container, blob_name, exc)
+
+    try:
+        with _conn().cursor() as cur:
+            cur.execute(
+                'delete from "Learner"."evidence_files" '
+                "where id = %s and learner_kind = %s and learner_id = %s",
+                [str(file_id), kind, str(pk)],
+            )
+            # Approved uploads are also indexed in "Learner"."Evidence" by blob
+            # name (see _record_approved_evidence); drop that entry too rather
+            # than leave it pointing at a blob that no longer exists.
+            if blob_name:
+                cur.execute('delete from "Learner"."Evidence" where "Azure_id" = %s', [blob_name])
+    except DatabaseError as exc:
+        logger.warning("Could not delete evidence row: %s", exc)
+        return _error("Could not remove the evidence record.", 502)
+
+    return JsonResponse({"id": str(file_id), "deleted": True})

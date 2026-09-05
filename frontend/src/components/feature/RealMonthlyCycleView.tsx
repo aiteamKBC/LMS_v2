@@ -10,6 +10,7 @@ import {
   fetchLearnerCalendarEvents,
   type LearnerCalendarEvent,
 } from '@/api/learnerCalendar';
+import { MetricCard } from '@/components/ui/MetricCard';
 
 const learnerNav = roleNavMap.learner;
 const MONTHS = [
@@ -403,6 +404,12 @@ export function RealMonthlyCycleView({
   const ksbCount = new Set(monthActivities.flatMap((activity) => activity.ksbs)).size;
   const activeDays = new Set(monthActivities.map((activity) => activity.at.slice(0, 10))).size;
   const busy = loading || eventsLoading;
+  const summaryMetrics = [
+    { label: 'Total events', value: monthActivities.length, icon: 'ri-pulse-line', tone: 'brand' as const, iconClassName: 'bg-violet-100 text-violet-700' },
+    { label: 'Active days', value: activeDays, icon: 'ri-calendar-check-line', tone: 'positive' as const, iconClassName: 'bg-emerald-100 text-emerald-700' },
+    { label: 'Time logged', value: formatMinutes(loggedMinutes), icon: 'ri-time-line', tone: 'neutral' as const, iconClassName: 'bg-amber-100 text-amber-700' },
+    { label: 'KSBs evidenced', value: ksbCount, icon: 'ri-award-line', tone: 'upcoming' as const, iconClassName: 'bg-pink-100 text-pink-700' },
+  ];
 
   return (
     <WorkspaceShell
@@ -416,7 +423,7 @@ export function RealMonthlyCycleView({
       userRole={real?.programme ? `${real.programme} Apprentice` : 'Apprentice'}
     >
       <main className="w-full space-y-5 p-3 sm:p-4 md:p-6">
-        <section className="relative z-20 rounded-2xl bg-gradient-to-br from-[#17052f] via-[#2d0b57] to-[#54208a] p-4 text-white shadow-xl shadow-primary-950/10 sm:rounded-3xl sm:p-5 md:p-7">
+        <section className="learner-super-admin-hero relative z-20 rounded-2xl bg-gradient-to-br from-[#17052f] via-[#2d0b57] to-[#54208a] p-4 text-white shadow-xl shadow-primary-950/10 sm:rounded-3xl sm:p-5 md:p-7">
           <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-3xl" aria-hidden="true">
             <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-secondary-400/15 blur-2xl"></div>
             <div className="absolute -bottom-24 left-1/3 h-52 w-52 rounded-full bg-primary-400/15 blur-3xl"></div>
@@ -482,18 +489,8 @@ export function RealMonthlyCycleView({
             </div>
           </div>
 
-          <div className="relative z-0 mt-5 grid grid-cols-2 gap-2 border-t border-white/10 pt-4 sm:mt-6 sm:grid-cols-4 sm:pt-5 md:gap-3">
-            {[
-              { value: monthActivities.length, label: 'Total events', icon: 'ri-pulse-line', accent: 'text-secondary-300' },
-              { value: activeDays, label: 'Active days', icon: 'ri-calendar-check-line', accent: 'text-emerald-300' },
-              { value: formatMinutes(loggedMinutes), label: 'Time logged', icon: 'ri-time-line', accent: 'text-amber-300' },
-              { value: ksbCount, label: 'KSBs evidenced', icon: 'ri-award-line', accent: 'text-pink-300' },
-            ].map((stat) => (
-              <div key={stat.label} className="flex min-w-0 items-center gap-3 rounded-xl border border-white/[0.08] bg-white/[0.07] p-2.5 backdrop-blur-sm sm:rounded-2xl sm:p-3 md:p-4">
-                <span className={`hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/10 sm:flex ${stat.accent}`}><AppIcon className={stat.icon}></AppIcon></span>
-                <div className="min-w-0"><p className="text-lg font-bold text-white sm:text-xl md:text-2xl">{stat.value}</p><p className="truncate text-[10px] text-white/60 sm:text-[11px]">{stat.label}</p></div>
-              </div>
-            ))}
+          <div className="relative z-0 mt-5 grid grid-cols-2 gap-2 border-t border-white/10 pt-4 sm:mt-6 sm:grid-cols-2 sm:pt-5 md:gap-3 lg:grid-cols-4">
+            {summaryMetrics.map((metric) => <MetricCard key={metric.label} {...metric} className="progress-review-hero-metric" />)}
           </div>
         </section>
 

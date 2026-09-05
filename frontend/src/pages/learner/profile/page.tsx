@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { formatHoursMinutes } from '@/lib/format';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
@@ -71,7 +72,7 @@ export default function LearnerProfilePage() {
         <button type="button" onClick={() => navigate(-1)} className="inline-flex items-center gap-2 text-xs font-semibold text-foreground-500 transition hover:text-primary-700"><span className="flex h-8 w-8 items-center justify-center rounded-xl bg-white shadow-sm"><AppIcon className="ri-arrow-left-line"></AppIcon></span>Back to overview</button>
 
         {loading ? <Loading /> : error ? <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2"></AppIcon>{error}</div> : learner && <>
-          <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#17032d] via-[#33105e] to-[#6a2ca0] p-6 text-white shadow-[0_18px_50px_rgba(39,12,73,0.18)] md:p-7">
+        <section className="learner-super-admin-hero relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#17032d] via-[#33105e] to-[#6a2ca0] p-6 text-white shadow-[0_18px_50px_rgba(39,12,73,0.18)] md:p-7">
             <div className="pointer-events-none absolute -right-20 -top-32 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>
             <div className="relative flex flex-col gap-5 md:flex-row md:items-center">
               <button type="button" onClick={() => fileInputRef.current?.click()} className="group relative h-20 w-20 shrink-0 overflow-hidden rounded-2xl bg-amber-400 text-2xl font-bold text-primary-950 ring-2 ring-white/15">
@@ -86,7 +87,7 @@ export default function LearnerProfilePage() {
 
           <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <StatCard icon="ri-calendar-check-line" label="Attendance" value={attendance ? `${attendance.attendanceRate}%` : '–'} detail={attendance ? `${attendance.present} of ${attendance.sessions} sessions` : 'No record'} progress={attendance?.attendanceRate || 0} colour="bg-amber-50 text-amber-600" bar="bg-amber-500" />
-            <StatCard icon="ri-time-line" label="OTJ hours" value={`${completedHours} / ${plannedHours}`} detail={`${otjProgress}% of plan`} progress={otjProgress} colour="bg-primary-50 text-primary-600" bar="bg-primary-600" />
+            <StatCard icon="ri-time-line" label="OTJ hours" value={`${formatHoursMinutes(completedHours)} / ${formatHoursMinutes(plannedHours)}`} detail={`${otjProgress}% of plan`} progress={otjProgress} colour="bg-primary-50 text-primary-600" bar="bg-primary-600" />
             <StatCard icon="ri-stack-line" label="Modules" value={String(learner.modules.length)} detail="Assigned modules" colour="bg-secondary-50 text-secondary-600" />
             <StatCard icon="ri-calendar-todo-line" label="Weeks" value={String(learner.week.length)} detail="Planned weeks" colour="bg-blue-50 text-blue-600" />
             <StatCard icon="ri-checkbox-multiple-line" label="Activities" value={String(completedActivities)} detail="Recorded completions" colour="bg-emerald-50 text-emerald-600" />
@@ -115,8 +116,8 @@ export default function LearnerProfilePage() {
             <ProfileSection icon="ri-route-line" title="Learning plan">
               <DetailRow label="Assigned modules" value={String(learner.modules.length)} />
               <DetailRow label="Assigned components" value={String(learner.components.length)} />
-              <DetailRow label="Planned OTJ hours" value={String(plannedHours)} />
-              <DetailRow label="Completed OTJ hours" value={String(completedHours)} />
+              <DetailRow label="Planned OTJ hours" value={formatHoursMinutes(plannedHours)} />
+              <DetailRow label="Completed OTJ hours" value={formatHoursMinutes(completedHours)} />
             </ProfileSection>
           </div>
         </>}
@@ -125,7 +126,7 @@ export default function LearnerProfilePage() {
   );
 }
 
-function StatCard({ icon, label, value, detail, progress, colour, bar }: { icon: string; label: string; value: string; detail: string; progress?: number; colour: string; bar?: string }) { return <article className="rounded-2xl border border-background-200 bg-white p-4 shadow-sm"><div className="flex items-center gap-3"><span className={`flex h-10 w-10 items-center justify-center rounded-xl ${colour}`}><AppIcon className={icon}></AppIcon></span><div><p className="text-[10px] text-foreground-400">{label}</p><p className="mt-0.5 text-base font-bold text-foreground-900">{value}</p></div></div>{progress !== undefined && <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background-200"><div className={`h-full rounded-full ${bar}`} style={{ width: `${Math.min(progress, 100)}%` }}></div></div>}<p className="mt-2 text-[10px] text-foreground-400">{detail}</p></article>; }
+function StatCard({ icon, label, value, detail, progress, colour, bar }: { icon: string; label: string; value: string; detail: string; progress?: number; colour: string; bar?: string }) { return <article className="coach-metric-card"><div className="flex items-start gap-3"><span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${colour}`}><AppIcon className={icon}></AppIcon></span><div className="min-w-0"><p className="truncate text-[11px] font-medium text-foreground-500">{label}</p><p className="mt-1 text-[25px] font-semibold leading-none tabular-nums text-foreground-900">{value}</p></div></div>{progress !== undefined && <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background-200"><div className={`h-full rounded-full ${bar}`} style={{ width: `${Math.min(progress, 100)}%` }}></div></div>}<p className="mt-1.5 truncate text-[11px] leading-snug text-foreground-500">{detail}</p></article>; }
 function ProfileSection({ icon, title, children }: { icon: string; title: string; children: React.ReactNode }) { return <section className="overflow-hidden rounded-3xl border border-background-200 bg-white shadow-[0_5px_24px_rgba(28,10,55,0.05)]"><div className="flex items-center gap-3 border-b border-background-200 px-5 py-4"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-50 text-primary-600"><AppIcon className={icon}></AppIcon></span><h2 className="text-sm font-bold text-foreground-900">{title}</h2></div><div className="divide-y divide-background-200 px-5">{children}</div></section>; }
 function DetailRow({ label, value }: { label: string; value?: string }) { return <div className="grid gap-1 py-3.5 sm:grid-cols-[150px_1fr]"><p className="text-xs text-foreground-400">{label}</p><p className="break-words text-sm font-semibold text-foreground-700">{value || 'Not set'}</p></div>; }
 function Loading() {

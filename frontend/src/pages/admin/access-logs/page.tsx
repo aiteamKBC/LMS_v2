@@ -161,7 +161,7 @@ export default function AdminAccessLogsPage() {
         emptyMessage={term || event || outcome || days ? 'No events match these filters.' : 'No access events recorded yet.'}
         onRetry={reload}
       >
-        <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+        <div className="admin-cool-table bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-[13px]">
               <thead>

@@ -85,7 +85,7 @@ export function InitialAssessmentHeader({ record }: InitialAssessmentHeaderProps
 
 function QuickStat({ label, value, icon }: { label: string; value: string; icon: string }) {
   return (
-    <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-background-50 border border-background-200/40">
+    <div className="coach-metric-card flex items-center gap-2.5">
       <span className="w-7 h-7 rounded-md bg-background-100 flex items-center justify-center shrink-0">
         <AppIcon className={`${icon} text-[11px] text-foreground-400`}></AppIcon>
       </span>

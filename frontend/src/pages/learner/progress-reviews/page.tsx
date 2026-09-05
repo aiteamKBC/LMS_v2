@@ -7,6 +7,7 @@ import { fetchLearnerCalendarEvents, type LearnerCalendarEvent } from '@/api/lea
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { responsesForSection, type ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { MetricCard } from '@/components/ui/MetricCard';
 
 const learnerNav = roleNavMap.learner;
 
@@ -57,28 +58,6 @@ function asNumber(value?: string | number | null): number | null {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
-}
-
-function reportedMinutes(value?: string | null): number {
-  if (!value) return 0;
-  const text = value.trim().toLowerCase();
-  const hours = Number(text.match(/([\d.]+)\s*(?:hours?|hrs?|h)\b/i)?.[1] || 0);
-  const minutes = Number(text.match(/([\d.]+)\s*(?:minutes?|mins?|m)\b/i)?.[1] || 0);
-  if (hours || minutes) return (hours * 60) + minutes;
-  const numeric = Number.parseFloat(text.match(/\d+(?:\.\d+)?/)?.[0] || '0');
-  return Number.isFinite(numeric) ? numeric * 60 : 0;
-}
-
-function formatMinutes(minutes: number): string {
-  if (!minutes) return '0 hrs';
-  const hours = Math.round((minutes / 60) * 10) / 10;
-  return `${hours} ${hours === 1 ? 'hr' : 'hrs'}`;
-}
-
-function withinWindow(value: string | null | undefined, from: Date | null, to: Date): boolean {
-  if (!value) return false;
-  const date = new Date(value);
-  return !Number.isNaN(date.getTime()) && (!from || date > from) && date <= to;
 }
 
 function Empty({ children = 'No information has been recorded for this review.' }: { children?: ReactNode }) {
@@ -144,15 +123,14 @@ function Accordion({
   id: string; title: string; icon: string; open: boolean; onToggle: (id: string) => void; children: ReactNode;
 }) {
   const steps: Record<string, number> = {
-    learning: 1,
-    'progress-checks': 2,
-    'learner-reflection': 3,
-    'manager-reflection': 4,
-    'tutor-reflection': 5,
-    safeguarding: 6,
-    'additional-support': 7,
-    actions: 8,
-    rag: 9,
+    'progress-checks': 1,
+    'learner-reflection': 2,
+    'manager-reflection': 3,
+    'tutor-reflection': 4,
+    safeguarding: 5,
+    'additional-support': 6,
+    actions: 7,
+    rag: 8,
   };
   const step = steps[id];
   return (
@@ -163,7 +141,7 @@ function Accordion({
           <span className={`absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-white px-1 text-[8px] font-extrabold ${open ? 'bg-secondary-500' : 'bg-primary-700'} text-white`}>{step}</span>
         </span>
         <span className="min-w-0 flex-1">
-          <span className={`block text-[9px] font-bold uppercase tracking-[0.12em] ${open ? 'text-primary-600' : 'text-foreground-400'}`}>Review section {step} of 9</span>
+          <span className={`block text-[9px] font-bold uppercase tracking-[0.12em] ${open ? 'text-primary-600' : 'text-foreground-400'}`}>Review section {step} of 8</span>
           <span className="mt-0.5 block text-sm font-bold text-foreground-900 sm:text-[15px]">{title}</span>
         </span>
         <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all ${open ? 'rotate-180 bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500'}`}><AppIcon className="ri-arrow-down-s-line text-lg" /></span>
@@ -208,6 +186,12 @@ export function ProgressReviewsListPage() {
   const scheduledCount = reviews.filter((review) => ['scheduled', 'in-progress'].includes(review.status)).length;
   const planningCount = reviews.filter((review) => review.status === 'not-scheduled').length;
   const reviewerName = reviews.find((review) => review.coachName)?.coachName || 'Your reviewer';
+  const summaryMetrics = [
+    { label: 'Total', value: reviews.length, icon: 'ri-stack-line', tone: 'brand' as const, iconClassName: 'bg-violet-100 text-violet-700' },
+    { label: 'Scheduled', value: scheduledCount, icon: 'ri-calendar-check-line', tone: 'info' as const, iconClassName: 'bg-blue-100 text-blue-700' },
+    { label: 'Completed', value: completedCount, icon: 'ri-checkbox-circle-line', tone: 'positive' as const, iconClassName: 'bg-emerald-100 text-emerald-700' },
+    { label: 'To plan', value: planningCount, icon: 'ri-time-line', tone: 'neutral' as const, iconClassName: 'bg-amber-100 text-amber-700' },
+  ];
 
   return (
     <WorkspaceShell
@@ -223,7 +207,7 @@ export function ProgressReviewsListPage() {
       <main className="w-full space-y-5 p-3 sm:p-4 md:p-6">
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}</div>}
 
-        <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-4 text-white shadow-xl shadow-primary-950/10 sm:rounded-3xl sm:p-6 md:p-7">
+        <section className="learner-super-admin-hero relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-4 text-white shadow-xl shadow-primary-950/10 sm:rounded-3xl sm:p-6 md:p-7">
           <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>
           <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
@@ -231,13 +215,8 @@ export function ProgressReviewsListPage() {
               <h1 className="mt-3 text-[22px] font-bold leading-tight text-white sm:text-2xl md:text-3xl">Progress reviews</h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">Review your learning, progress and next actions with {reviewerName} and your line manager.</p>
             </div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[520px]">
-              {[
-                ['Total', reviews.length, 'ri-stack-line', 'text-secondary-300'],
-                ['Scheduled', scheduledCount, 'ri-calendar-check-line', 'text-blue-300'],
-                ['Completed', completedCount, 'ri-checkbox-circle-line', 'text-emerald-300'],
-                ['To plan', planningCount, 'ri-time-line', 'text-amber-300'],
-              ].map(([label, value, icon, colour]) => <div key={String(label)} className="rounded-xl border border-white/[0.08] bg-white/[0.07] p-3 backdrop-blur sm:rounded-2xl"><AppIcon className={`${icon} ${colour} text-sm`} /><p className="mt-1 text-xl font-bold text-white">{value}</p><p className="text-[10px] text-white/55">{label}</p></div>)}
+            <div className="grid grid-cols-2 gap-2 lg:min-w-[520px] lg:grid-cols-4">
+              {summaryMetrics.map((metric) => <MetricCard key={metric.label} {...metric} className="progress-review-hero-metric" />)}
             </div>
           </div>
         </section>
@@ -314,7 +293,7 @@ export function ProgressReviewsListPage() {
                 <div className="flex items-center gap-1.5">
                   <button type="button" onClick={() => setPage(1)} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-left-line" /></button>
                   <button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-left-s-line" /></button>
-                  {Array.from({ length: totalPages }, (_, index) => index + 1).slice(0, 5).map((number) => <button key={number} type="button" onClick={() => setPage(number)} className={`h-8 min-w-8 rounded-lg border px-2 text-xs font-bold ${page === number ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300 bg-white text-foreground-600'}`}>{number}</button>)}
+                  {Array.from({ length: totalPages }, (_, index) => index + 1).slice(0, 5).map((number) => <button key={number} type="button" onClick={() => setPage(number)} aria-current={page === number ? 'page' : undefined} className={`h-8 min-w-8 rounded-lg border px-2 text-xs font-bold ${page === number ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300 bg-white text-foreground-600'}`}>{number}</button>)}
                   <button type="button" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-right-s-line" /></button>
                   <button type="button" onClick={() => setPage(totalPages)} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-right-line" /></button>
                   <span className="ml-2 hidden text-[10px] text-foreground-400 sm:inline">10 items per page</span>
@@ -336,7 +315,7 @@ export default function ProgressReviewsPage() {
   const [learner, setLearner] = useState<LearnerDetail | null>(null);
   const [events, setEvents] = useState<LearnerCalendarEvent[]>([]);
   const [selectedId, setSelectedId] = useState(reviewId || '');
-  const [openSections, setOpenSections] = useState<string[]>(['learning']);
+  const [openSections, setOpenSections] = useState<string[]>(['progress-checks']);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -380,52 +359,6 @@ export default function ProgressReviewsPage() {
   const selectedIndex = selected ? reviews.findIndex((review) => review.id === selected.id) : -1;
   const previousReview = selectedIndex > 0 ? reviews[selectedIndex - 1] : null;
 
-  const learningWindow = useMemo(() => {
-    const previousValue = reviewDate(previousReview);
-    const selectedValue = reviewDate(selected);
-    const from = previousValue ? new Date(`${previousValue}T23:59:59`) : null;
-    const reviewEnd = selectedValue ? new Date(`${selectedValue}T23:59:59`) : new Date();
-    const to = reviewEnd > new Date() ? new Date() : reviewEnd;
-    return { from, to };
-  }, [previousReview, selected]);
-
-  const progressRecords = useMemo(() => {
-    if (!learner) return [];
-    return [
-      ...learner.quizAttempts.filter((item) => item.passed),
-      ...(learner.videoProgress || []),
-      ...(learner.componentProgress || []),
-    ].filter((item) => withinWindow(item.submittedAt, learningWindow.from, learningWindow.to));
-  }, [learner, learningWindow]);
-
-  const learnedKsbCodes = useMemo(() => {
-    const values = new Set<string>();
-    progressRecords.forEach((record) => (record.ksbs || []).forEach((code) => values.add(code)));
-    return [...values].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  }, [progressRecords]);
-  const loggedMinutes = progressRecords.reduce((sum, record) => sum + reportedMinutes(record.reportedTime), 0);
-  const completedActivityIds = new Set(progressRecords.map((record) => 'quizId' in record ? `quiz:${record.quizId}` : `component:${record.componentId}`));
-  const learningItems = useMemo(() => progressRecords.map((record) => {
-    if ('quizId' in record) {
-      const component = learner?.components.find((item) => item.quizMeta?.quizId === record.quizId);
-      return {
-        key: `quiz:${record.quizId}:${record.submittedAt}`,
-        title: component?.component || `Quiz #${record.quizId}`,
-        detail: record.totalScore ? `Passed quiz · ${record.achievedScore || 0}/${record.totalScore}` : 'Passed quiz',
-        at: record.submittedAt,
-      };
-    }
-    const component = learner?.components.find((item) => item.componentId === record.componentId);
-    const type = 'componentType' in record ? record.componentType : 'Video';
-    return {
-      key: `component:${record.componentId}:${record.submittedAt}`,
-      title: component?.component || type,
-      detail: `${type} completed${record.reportedTime ? ` · ${record.reportedTime}` : ''}`,
-      at: record.submittedAt,
-    };
-  }), [learner, progressRecords]);
-  const totalActivities = learner?.components.length || 0;
-  const overallLearningPercent = totalActivities ? Math.round((completedActivityIds.size / totalActivities) * 100) : null;
   const progressVariance = asNumber(learner?.progressVariance);
 
   const toggleSection = (id: string) => {
@@ -466,7 +399,7 @@ export default function ProgressReviewsPage() {
           <AppIcon className="ri-arrow-left-line" /> Back to progress reviews
         </button>
 
-        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-5 text-white shadow-xl shadow-primary-950/10 sm:p-6">
+        <section className="learner-super-admin-hero relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-5 text-white shadow-xl shadow-primary-950/10 sm:p-6">
           <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>
           <div className="relative flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex items-start gap-4">
@@ -504,7 +437,7 @@ export default function ProgressReviewsPage() {
           <div>
             <main className="space-y-4">
               <section className="overflow-hidden rounded-3xl border border-background-200 bg-background-50 shadow-[0_10px_35px_rgba(25,12,50,0.07)]">
-                <div className="relative overflow-hidden border-b border-white/10 bg-gradient-to-r from-[#10021f] via-primary-950 to-[#35105e] p-5 text-white sm:p-6">
+                <div className="learner-super-admin-hero relative overflow-hidden border-b border-white/10 bg-gradient-to-r from-[#10021f] via-primary-950 to-[#35105e] p-5 text-white sm:p-6">
                   <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-secondary-400/10 blur-3xl"></div>
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                     <div className="relative">
@@ -545,45 +478,6 @@ export default function ProgressReviewsPage() {
                   </div>
                 </div>
               </section>
-
-              <Accordion id="learning" title="Learning Progress & Summary" icon="ri-graduation-cap-line" open={openSections.includes('learning')} onToggle={toggleSection}>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-xl bg-primary-50 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-primary-500">Completed activities</p><p className="mt-1 text-2xl font-bold text-primary-800">{completedActivityIds.size}</p><p className="text-xs text-primary-600/70">during this review period</p></div>
-                  <div className="rounded-xl bg-accent-50 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-accent-600">Completed activity time</p><p className="mt-1 text-2xl font-bold text-accent-800">{formatMinutes(loggedMinutes)}</p><p className="text-xs text-accent-600/70">during this review period</p></div>
-                  <div className="rounded-xl bg-emerald-50 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600">KSBs evidenced</p><p className="mt-1 text-2xl font-bold text-emerald-800">{learnedKsbCodes.length}</p><p className="text-xs text-emerald-600/70">during this review period</p></div>
-                </div>
-
-                <div className="mt-4 rounded-xl border border-background-200 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div><p className="text-sm font-bold text-foreground-900">Overall learning plan</p><p className="text-xs text-foreground-400">Successful unique activities against the current plan</p></div>
-                    <span className="text-sm font-bold text-primary-700">{overallLearningPercent === null ? '-' : `${overallLearningPercent}%`}</span>
-                  </div>
-                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-background-200"><div className="h-full rounded-full bg-primary-500" style={{ width: `${overallLearningPercent || 0}%` }} /></div>
-                </div>
-
-                <div className="mt-4">
-                  <div className="mb-2 flex items-center justify-between"><h3 className="text-xs font-bold text-foreground-800">What the learner completed</h3><span className="text-[10px] text-foreground-400">{learningItems.length} {learningItems.length === 1 ? 'record' : 'records'}</span></div>
-                  {learningItems.length === 0 ? <Empty>No completed learning was recorded in this review period.</Empty> : (
-                    <div className="divide-y divide-background-200 rounded-xl border border-background-200">
-                      {learningItems.slice(0, 8).map((activity) => (
-                        <div key={activity.key} className="flex items-start gap-3 p-3.5">
-                          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><AppIcon className="ri-checkbox-circle-line" /></span>
-                          <div className="min-w-0 flex-1"><p className="text-sm font-semibold text-foreground-800">{activity.title}</p><p className="mt-0.5 text-xs text-foreground-400">{activity.detail}</p></div>
-                          <span className="shrink-0 text-[10px] text-foreground-400">{new Date(activity.at).toLocaleDateString('en-GB')}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {learnedKsbCodes.length > 0 && <div className="mt-4"><p className="mb-2 text-xs font-bold text-foreground-800">KSBs covered</p><div className="flex flex-wrap gap-1.5">{learnedKsbCodes.map((code) => <span key={code} className="rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">{code}</span>)}</div></div>}
-                {responsesForSection(selected?.reviewResponses, 'learning').length > 0 && (
-                  <div className="mt-4">
-                    <p className="mb-2 text-xs font-bold text-foreground-800">Coach review summary</p>
-                    <SavedReviewAnswers sectionId="learning" responses={selected?.reviewResponses} emptyMessage="No coach summary has been recorded for this PR." />
-                  </div>
-                )}
-              </Accordion>
 
               <Accordion id="progress-checks" title="Progress Checks" icon="ri-check-double-line" open={openSections.includes('progress-checks')} onToggle={toggleSection}>
                 <SavedReviewAnswers sectionId="progress-checks" responses={selected?.reviewResponses} emptyMessage="No progress checks have been recorded for this PR." />

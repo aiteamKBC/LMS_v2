@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
-import { archiveCurriculumCohort, type CurriculumCohort } from '@/lib/curriculumApi';
+import { type CurriculumCohort } from '@/lib/curriculumApi';
 import {
   cohortsForProgramme,
   cohortYear,
@@ -14,9 +13,12 @@ import {
   programmeIdentity,
   removeById,
   sameIdentifier,
+  sortEntities,
   upsertById,
+  COHORT_SORT_OPTIONS,
 } from '../shared/entities/model';
 import { CohortFormDrawer } from '../shared/entities/forms';
+import { archiveCohortWithConfirm } from '../shared/entities/archive';
 import { CurriculumStructureWizard, withoutDiscardedRecords, type StructureWizardCreated } from '../shared/entities/structureWizard';
 import {
   EntityEmptyState,
@@ -56,6 +58,7 @@ export default function CurriculumCohortsPage() {
   const [search, setSearch] = useState('');
   const [programmeFilter, setProgrammeFilter] = useState(searchParams.get('programme') || '');
   const [yearFilter, setYearFilter] = useState('');
+  const [sort, setSort] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<CurriculumCohort | null>(null);
   // The guided run: this same cohort form, then the group and module ones, for a
@@ -95,13 +98,14 @@ export default function CurriculumCohortsPage() {
 
   const visibleCohorts = useMemo(() => {
     const scoped = cohortsForProgramme(cohorts, programmes, programmeFilter);
-    return scoped.filter(cohort => {
+    const matched = scoped.filter(cohort => {
       if (yearFilter && cohortYear(cohort) !== yearFilter) return false;
       return matchesSearch(search, [
         cohort.name, cohort.programme, cohort.startDate, cohort.endDate, cohort.id,
       ]);
     });
-  }, [cohorts, programmes, programmeFilter, search, yearFilter]);
+    return sortEntities(matched, COHORT_SORT_OPTIONS, sort);
+  }, [cohorts, programmes, programmeFilter, search, sort, yearFilter]);
 
   const totals = useMemo(() => ({
     cohorts: cohorts.length,
@@ -115,22 +119,12 @@ export default function CurriculumCohortsPage() {
 
   const archive = async (cohort: CurriculumCohort) => {
     const groupCount = groupsByCohort.get(normaliseKey(cohort.id)) || 0;
-    await showCurriculumConfirm({
-      title: 'Archive cohort?',
-      text: groupCount
-        ? `${cohort.name} has ${groupCount} group${groupCount === 1 ? '' : 's'}. Archiving hides the cohort and its groups; nothing is deleted.`
-        : `${cohort.name} will be hidden from the active list. Nothing is deleted.`,
-      icon: 'warning',
-      confirmButtonText: 'Archive cohort',
-      onConfirm: async () => {
-        await archiveCurriculumCohort(cohort.id);
-        // Drop the row now, for the same reason a create paints one now: the
-        // refresh behind this takes seconds, and a cohort still sitting in the
-        // list after "Archive" reads as an archive that did not happen.
-        applyLocal(previous => ({ ...previous, cohorts: removeById(previous.cohorts, cohort.id) }));
-        await reload({ silent: true });
-      },
-      successTitle: 'Cohort archived',
+    await archiveCohortWithConfirm(cohort, groupCount, async () => {
+      // Drop the row now, for the same reason a create paints one now: the
+      // refresh behind this takes seconds, and a cohort still sitting in the
+      // list after "Archive" reads as an archive that did not happen.
+      applyLocal(previous => ({ ...previous, cohorts: removeById(previous.cohorts, cohort.id) }));
+      await reload({ silent: true });
     });
   };
 
@@ -182,7 +176,7 @@ export default function CurriculumCohortsPage() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <div className="min-h-full space-y-5 bg-background-50 p-4 sm:p-6">
+      <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
         <EntityHero
           eyebrow="Curriculum Studio"
           title="Cohorts"
@@ -227,7 +221,8 @@ export default function CurriculumCohortsPage() {
               options: [{ value: '', label: 'All years' }, ...years.map(year => ({ value: year, label: year }))],
             },
           ]}
-          onReset={() => { setSearch(''); setProgrammeFilter(''); setYearFilter(''); }}
+          sort={{ value: sort, onChange: setSort, options: COHORT_SORT_OPTIONS }}
+          onReset={() => { setSearch(''); setProgrammeFilter(''); setYearFilter(''); setSort(''); }}
           summary={loaded
             ? `Showing ${visibleCohorts.length} of ${cohorts.length} cohorts${refreshing ? ' · updating…' : ''}`
             : undefined}
@@ -238,6 +233,7 @@ export default function CurriculumCohortsPage() {
           gridClass={GRID}
           rows={visibleCohorts}
           rowKey={cohort => cohort.id}
+          getRowHref={cohort => `/curriculum/cohorts/${encodeURIComponent(cohort.id)}`}
           loading={loading && !loaded}
           refreshing={refreshing}
           highlightKey={highlightId}

@@ -40,6 +40,20 @@ type DirectoryRow = UserListRow & Partial<StaffUserRow> & { employer?: EmployerR
 type SummaryFilter = 'all' | 'learners' | 'admins' | 'employers' | 'active';
 
 /**
+ * Whether a directory row is a learner record.
+ *
+ * Keyed on `source` — which table the row came from — and never on the Type
+ * column. Type is an editable label on the learner row (User, Referrer,
+ * Caseowner...), so reading "is this a learner" off it meant relabelling
+ * somebody silently took away their programme, their learning plan, their
+ * status badge and every action on the row, including the Edit button needed to
+ * put it back. What a row *is* cannot be a field somebody can type over.
+ */
+function isLearnerRow(row: Pick<UserListRow, 'source'>): boolean {
+  return row.source !== 'staff' && row.source !== 'employer';
+}
+
+/**
  * An employer contact, shaped like a UserListRow so the directory can list them
  * alongside learners and staff.
  *
@@ -144,16 +158,16 @@ function UserMetricCard({ icon, label, value, detail, tone, onClick, active = fa
     emerald: 'border-white/30 bg-gradient-to-br from-[#b9f6db] via-[#34d399] to-[#059669] text-white shadow-md shadow-emerald-500/25',
   }[tone];
 
-  const surface = `flex min-h-[132px] items-start gap-4 rounded-2xl border border-primary-100/70 bg-white/90 p-5 text-left shadow-sm transition ${active ? 'ring-2 ring-primary-300' : 'hover:-translate-y-0.5 hover:shadow-md'} ${onClick ? 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400' : ''}`;
+  const surface = `coach-metric-card flex min-h-[112px] items-start gap-3 text-left transition ${active ? 'ring-2 ring-primary-300' : 'hover:-translate-y-0.5 hover:shadow-md'} ${onClick ? 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400' : ''}`;
   const content = (
     <>
-      <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border text-[20px] ring-1 ring-black/5 ${iconStyles}`}>
+      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-[18px] ring-1 ring-black/5 ${iconStyles}`}>
         <i className={icon} />
       </span>
       <div className="min-w-0">
-        <p className="text-[28px] font-semibold leading-none tracking-tight text-foreground-950">{value}</p>
-        <p className="mt-2 text-[13px] font-semibold text-foreground-800">{label}</p>
-        <p className="mt-1 text-[12px] text-foreground-500">{detail}</p>
+        <p className="truncate text-[11px] font-medium text-foreground-500">{label}</p>
+        <p className="mt-1 text-[25px] font-semibold leading-none tabular-nums text-foreground-950">{value}</p>
+        <p className="mt-1.5 truncate text-[11px] leading-snug text-foreground-500">{detail}</p>
       </div>
     </>
   );
@@ -248,6 +262,10 @@ export default function UsersListPage() {
   const [error, setError] = useState<string | null>(null);
   // The staff row currently being edited, if any.
   const [editStaff, setEditStaff] = useState<StaffUserRow | null>(null);
+  // The learner whose details form is open. Staff and employers each have their
+  // own edit modal already; this is the learner's, and it is the same form that
+  // creates one.
+  const [editLearner, setEditLearner] = useState<UserListRow | null>(null);
   // Likewise for employer contacts.
   const [editEmployer, setEditEmployer] = useState<EmployerRow | null>(null);
   // The learner whose learning plan is open, if any. Only offered once a learner
@@ -386,7 +404,7 @@ export default function UsersListPage() {
 
   const filtered = useMemo(() => rows.filter((r) => {
     if (!matches(r, applied)) return false;
-    if (summaryFilter === 'learners') return r.type === 'User';
+    if (summaryFilter === 'learners') return isLearnerRow(r);
     if (summaryFilter === 'admins') return r.source === 'staff';
     if (summaryFilter === 'employers') return r.source === 'employer';
     if (summaryFilter === 'active') return r.programmeStatus === 'Active';
@@ -397,7 +415,10 @@ export default function UsersListPage() {
   const showingStart = filtered.length ? (page - 1) * PAGE_SIZE + 1 : 0;
   const showingEnd = filtered.length ? Math.min(page * PAGE_SIZE, filtered.length) : 0;
 
-  const learners = rows.filter((r) => r.type === 'User').length;
+  // By source, like the two counts below it: a learner whose Type has been set
+  // to Referrer or Caseowner is still a learner, and dropping them out of this
+  // count made the three tiles stop adding up to the table.
+  const learners = rows.filter(isLearnerRow).length;
   // Counted by source, not "not a learner": employers are in the table too now,
   // and lumping them under Admins would misreport both.
   const admins = rows.filter((r) => r.source === 'staff').length;
@@ -422,7 +443,7 @@ export default function UsersListPage() {
   // Staff and employers live in their own tables and have no learner
   // profile/wizard, so their rows aren't links — routing one to /users/<id>
   // would read a learner record with a colliding id.
-  const isNonLearner = (row: UserListRow) => row.source === 'staff' || row.source === 'employer';
+  const isNonLearner = (row: UserListRow) => !isLearnerRow(row);
 
   const openUser = (row: UserListRow) => {
     if (isNonLearner(row)) return;
@@ -449,6 +470,17 @@ export default function UsersListPage() {
         r.source === 'staff' && r.id === updated.id ? { ...updated, source: 'staff' as const } : r,
       ),
     );
+  };
+
+  // Same in-place patch for a learner. `load()` follows behind, because the
+  // server derives things this row cannot: Subscription verified follows
+  // Status, and moving a learner's programme, cohort or group re-stamps their
+  // delivery window and can advance their programme status.
+  const applyLearnerUpdate = (updated: UserListRow) => {
+    setRows((prev) =>
+      prev.map((r) => (r.source === updated.source && r.id === updated.id ? { ...r, ...updated } : r)),
+    );
+    load();
   };
 
   // Employers have no profile page either, so the row's Edit action is their
@@ -568,7 +600,7 @@ export default function UsersListPage() {
         </div>
 
         {/* Results table */}
-        <div className="overflow-hidden rounded-2xl border border-foreground-100 bg-background-50 shadow-sm">
+        <div className="admin-cool-table overflow-hidden rounded-2xl border border-foreground-100 bg-background-50 shadow-sm">
           <div className="flex items-center justify-between gap-4 px-5 py-4">
             <div className="flex items-center gap-3">
               <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary-600"><i className="ri-group-line" /></span>
@@ -602,7 +634,7 @@ export default function UsersListPage() {
                   </td></tr>
                 )}
                 {!loading && !error && pageRows.map((row, i) => {
-                  const isLearner = row.type === 'User';
+                  const isLearner = isLearnerRow(row);
                   const isStaff = row.source === 'staff';
                   const isEmployer = row.source === 'employer';
                   // Neither has a learner record, so their name never routes to
@@ -712,13 +744,27 @@ export default function UsersListPage() {
                           )}
                         </span>
                       ) : isLearner ? (
-                        <button
-                          onClick={() => openLearnerPage(row)}
-                          title={`Open ${row.name}'s learner page`}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
-                        >
-                          <i className="ri-external-link-line text-[13px]" />View
-                        </button>
+                        <span className="flex items-center gap-2">
+                          <button
+                            onClick={() => openLearnerPage(row)}
+                            title={`Open ${row.name}'s learner page`}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
+                          >
+                            <i className="ri-external-link-line text-[13px]" />View
+                          </button>
+                          {/* The columns of this table — group, programme and
+                              both statuses — are fields on the learner record,
+                              so they are corrected in the record's own form
+                              rather than in the cells. Secondary to View, which
+                              is where the learner's work lives. */}
+                          <button
+                            onClick={() => setEditLearner(row)}
+                            title={`Edit ${row.name}'s details, placement and status`}
+                            className="text-[12px] text-foreground-400 hover:text-primary-600 hover:underline cursor-pointer whitespace-nowrap"
+                          >
+                            Edit
+                          </button>
+                        </span>
                       ) : null}
                     </td>
                   </tr>
@@ -745,6 +791,16 @@ export default function UsersListPage() {
       {createAdminOpen && <CreateStaffModal variant="admin" onClose={() => setCreateAdminOpen(false)} onCreated={load} />}
       {createTutorOpen && <CreateStaffModal variant="tutor" onClose={() => setCreateTutorOpen(false)} onCreated={load} />}
       {editStaff && <EditStaffModal row={editStaff} onClose={() => setEditStaff(null)} onSaved={applyStaffUpdate} />}
+      {/* The create form again, in edit mode — one form per record, so the
+          fields cannot drift apart between adding a learner and correcting one. */}
+      {editLearner && (
+        <CreateUserModal
+          editing={editLearner}
+          onClose={() => setEditLearner(null)}
+          onCreated={load}
+          onSaved={applyLearnerUpdate}
+        />
+      )}
       {shiftFor && (
         <ShiftModuleModal
           learnerId={shiftFor.id}

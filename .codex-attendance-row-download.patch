@@ -1,0 +1,70 @@
+﻿*** Begin Patch
+*** Update File: frontend/src/pages/curriculum/programme-detail/SessionsTree.tsx
+@@
+ async function downloadAttendanceSheet(session: DeliverySession, attendance: LiveSessionAttendance[]) {
+   const XLSX = await import('xlsx');
+   const workbook = XLSX.utils.book_new();
+-  attendanceSheetGroups(attendance).forEach(group => {
++  const sheetGroups = attendanceSheetGroups(attendance);
++  sheetGroups.forEach(group => {
+@@
+   });
+   const safeTitle = (session.title || 'teams-session').replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '');
+-  const date = (session.dateIso || session.date || '').slice(0, 10);
++  const onlyRunDate = sheetGroups.length === 1 && sheetGroups[0].dateKey !== 'undated'
++    ? sheetGroups[0].dateKey
++    : '';
++  const date = onlyRunDate || (session.dateIso || session.date || '').slice(0, 10);
+@@
+       <div>
+-        <div className="mb-1.5 flex items-center justify-between gap-3">
++        <div className="mb-1.5">
+           <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-400">Attendance</p>
+-          {attendance.length > 0 && (
+-            <button
+-              type="button"
+-              onClick={() => {
+-                setSheetError('');
+-                void downloadAttendanceSheet(session, attendance).catch(error => {
+-                  setSheetError(error instanceof Error ? error.message : 'Attendance sheet could not be downloaded.');
+-                });
+-              }}
+-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 text-[11px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100"
+-            >
+-              <AppIcon className="ri-file-excel-2-line text-sm"></AppIcon>
+-              Download attendance sheet
+-            </button>
+-          )}
+         </div>
+@@
+                     <tr className="border-t border-primary-100 bg-primary-50/70">
+                       <td colSpan={5} className="px-3 py-2 text-[11px] font-bold text-primary-800">
+-                        <AppIcon className="ri-calendar-event-line mr-1.5"></AppIcon>
+-                        {run.startedAt ? formatSessionDate(run.startedAt, run.startedAt) : 'Attendance report'}
+-                        <span className="ml-2 font-semibold text-primary-600">
+-                          {run.rows.filter(person => person.attended !== false).length} attended / {run.rows.filter(person => person.expected !== false).length} expected
+-                        </span>
++                        <div className="flex items-center justify-between gap-3">
++                          <div>
++                            <AppIcon className="ri-calendar-event-line mr-1.5"></AppIcon>
++                            {run.startedAt ? formatSessionDate(run.startedAt, run.startedAt) : 'Attendance report'}
++                            <span className="ml-2 font-semibold text-primary-600">
++                              {run.rows.filter(person => person.attended !== false).length} attended / {run.rows.filter(person => person.expected !== false).length} expected
++                            </span>
++                          </div>
++                          <button
++                            type="button"
++                            onClick={() => {
++                              setSheetError('');
++                              void downloadAttendanceSheet(session, run.rows).catch(error => {
++                                setSheetError(error instanceof Error ? error.message : 'Attendance sheet could not be downloaded.');
++                              });
++                            }}
++                            className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 text-[10px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100"
++                          >
++                            <AppIcon className="ri-file-excel-2-line text-sm"></AppIcon>
++                            Download
++                          </button>
++                        </div>
+                       </td>
+*** End Patch

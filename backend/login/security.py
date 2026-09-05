@@ -56,9 +56,12 @@ from django.utils import timezone
 # Renewal is ``min(now + rolling, Created_at + absolute)``. See
 # ``sessions.touch_session``.
 
-#: Rolling window without "remember me". Unchanged from the previous absolute
-#: TTL, so nobody is signed out *earlier* than they were before this feature.
-SESSION_TTL = timedelta(hours=12)
+#: Rolling window without "remember me": how long a device can sit with no
+#: request before it is signed out. Five hours so a full working sitting --
+#: including a long lunch or a morning of meetings with the console left open
+#: and untouched -- is never interrupted, while an unattended machine still
+#: signs itself out the same day.
+SESSION_TTL = timedelta(hours=5)
 #: Rolling window with "remember me" ticked. Deliberately **shorter** than the
 #: 30-day absolute TTL it replaces: 30 days was a hard cap, and reusing it as a
 #: rolling window would let a stolen cookie survive indefinitely on one request

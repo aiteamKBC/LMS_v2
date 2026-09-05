@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
-import { archiveCurriculumGroup, type CurriculumGroup, type CurriculumStaffProfile } from '@/lib/curriculumApi';
+import { type CurriculumGroup, type CurriculumStaffProfile } from '@/lib/curriculumApi';
 import {
   cleanText,
   cohortsForProgramme,
@@ -18,9 +17,12 @@ import {
   resolveGroupContext,
   sameIdentifier,
   scheduleLabel,
+  sortEntities,
   upsertById,
+  GROUP_SORT_OPTIONS,
 } from '../shared/entities/model';
 import { GroupFormDrawer } from '../shared/entities/forms';
+import { archiveGroupWithConfirm } from '../shared/entities/archive';
 import { CurriculumStructureWizard, withoutDiscardedRecords, type StructureWizardCreated } from '../shared/entities/structureWizard';
 import {
   EntityEmptyState,
@@ -63,6 +65,7 @@ export default function CurriculumGroupsPage() {
   const [programmeFilter, setProgrammeFilter] = useState(searchParams.get('programme') || '');
   const [cohortFilter, setCohortFilter] = useState(searchParams.get('cohort') || '');
   const [coachFilter, setCoachFilter] = useState('');
+  const [sort, setSort] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<CurriculumGroup | null>(null);
   // The guided run: the same group form, followed straight on by the module one,
@@ -117,7 +120,7 @@ export default function CurriculumGroupsPage() {
       programmeId: programmeFilter,
       cohortId: cohortFilter,
     });
-    return scoped.filter(group => {
+    const matched = scoped.filter(group => {
       if (coachFilter && normaliseKey(group.coach) !== normaliseKey(coachFilter)) return false;
       const context = resolveGroupContext(group, cohorts, programmes);
       return matchesSearch(search, [
@@ -125,25 +128,16 @@ export default function CurriculumGroupsPage() {
         group.coach, group.tutor, scheduleLabel(group),
       ]);
     });
-  }, [cohortFilter, coachFilter, cohorts, groups, programmeFilter, programmes, search]);
+    return sortEntities(matched, GROUP_SORT_OPTIONS, sort);
+  }, [cohortFilter, coachFilter, cohorts, groups, programmeFilter, programmes, search, sort]);
 
   const archive = async (group: CurriculumGroup) => {
     const moduleCount = modulesByGroup.get(normaliseKey(group.id)) || 0;
-    await showCurriculumConfirm({
-      title: 'Archive group?',
-      text: moduleCount
-        ? `${group.name} has ${moduleCount} module${moduleCount === 1 ? '' : 's'}. Archiving detaches them from the group; the module content is kept.`
-        : `${group.name} will be hidden from the active list. Nothing is deleted.`,
-      icon: 'warning',
-      confirmButtonText: 'Archive group',
-      onConfirm: async () => {
-        await archiveCurriculumGroup(group.id);
-        // Drop the row now; the refresh behind this takes seconds and a group
-        // still listed after "Archive" reads as an archive that did not happen.
-        applyLocal(previous => ({ ...previous, groups: removeById(previous.groups, group.id) }));
-        await reload({ silent: true });
-      },
-      successTitle: 'Group archived',
+    await archiveGroupWithConfirm(group, moduleCount, async () => {
+      // Drop the row now; the refresh behind this takes seconds and a group
+      // still listed after "Archive" reads as an archive that did not happen.
+      applyLocal(previous => ({ ...previous, groups: removeById(previous.groups, group.id) }));
+      await reload({ silent: true });
     });
   };
 
@@ -198,7 +192,7 @@ export default function CurriculumGroupsPage() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <div className="min-h-full space-y-5 bg-background-50 p-4 sm:p-6">
+      <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
         <EntityHero
           eyebrow="Curriculum Studio"
           title="Groups"
@@ -252,7 +246,8 @@ export default function CurriculumGroupsPage() {
               options: [{ value: '', label: 'All coaches' }, ...coachNames.map(name => ({ value: name, label: name }))],
             },
           ]}
-          onReset={() => { setSearch(''); setProgrammeFilter(''); setCohortFilter(''); setCoachFilter(''); }}
+          sort={{ value: sort, onChange: setSort, options: GROUP_SORT_OPTIONS }}
+          onReset={() => { setSearch(''); setProgrammeFilter(''); setCohortFilter(''); setCoachFilter(''); setSort(''); }}
           summary={loaded
             ? `Showing ${visibleGroups.length} of ${groups.length} groups${refreshing ? ' · updating…' : ''}`
             : undefined}
@@ -263,6 +258,7 @@ export default function CurriculumGroupsPage() {
           gridClass={GRID}
           rows={visibleGroups}
           rowKey={group => group.id}
+          getRowHref={group => namedCurriculumWorkspacePath('groups', group.id, group.name)}
           loading={loading && !loaded}
           refreshing={refreshing}
           highlightKey={highlightId}

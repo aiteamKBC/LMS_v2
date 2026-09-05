@@ -7,6 +7,7 @@ urlpatterns = [
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
     path("enrolment-users/options/", views.enrolment_user_options, name="enrolment-user-options"),
     path("enrolment-users/<int:pk>/", views.enrolment_user_detail, name="enrolment-user-detail"),
+    path("enrolment-users/<int:pk>/fields/", views.enrolment_user_fields, name="enrolment-user-fields"),
     path("enrolment-users/<int:pk>/finish/", views.enrolment_user_finish, name="enrolment-user-finish"),
     # The learner's learning plan: their group's modules, editable within the
     # same programme. Offered once the learner reaches Delivery.
@@ -135,4 +136,5 @@ urlpatterns = [
     path("evidence/<str:kind>/<int:pk>/upload/", evidence.upload_evidence, name="evidence-upload"),
     path("evidence/<str:kind>/<int:pk>/", evidence.list_evidence, name="evidence-list"),
     path("evidence/<str:kind>/<int:pk>/<uuid:file_id>/download/", evidence.download_evidence, name="evidence-download"),
+    path("evidence/<str:kind>/<int:pk>/<uuid:file_id>/", evidence.delete_evidence, name="evidence-delete"),
 ]

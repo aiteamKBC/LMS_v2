@@ -4,15 +4,17 @@ import { fetchCurriculumProgrammes, type CurriculumProgramme } from '@/lib/curri
 type LoadOptions = {
   silent?: boolean;
   skipCache?: boolean;
+  revalidate?: boolean;
   visibility?: 'all' | 'operational';
 };
 
 type UseCurriculumProgrammesOptions = {
   skipCache?: boolean;
+  revalidate?: boolean;
   visibility?: 'all' | 'operational';
 };
 
-export function useCurriculumProgrammes({ skipCache = false, visibility }: UseCurriculumProgrammesOptions = {}) {
+export function useCurriculumProgrammes({ skipCache = false, revalidate = false, visibility }: UseCurriculumProgrammesOptions = {}) {
   const [programmes, setProgrammes] = useState<CurriculumProgramme[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +25,7 @@ export function useCurriculumProgrammes({ skipCache = false, visibility }: UseCu
     requestIdRef.current = requestId;
     if (!options.silent) setLoading(true);
     try {
-      const programmeResult = await fetchCurriculumProgrammes(signal, { skipCache: options.skipCache ?? skipCache, visibility: options.visibility ?? visibility });
+      const programmeResult = await fetchCurriculumProgrammes(signal, { skipCache: options.skipCache ?? skipCache, revalidate: options.revalidate ?? revalidate, visibility: options.visibility ?? visibility });
       if (signal?.aborted || requestId !== requestIdRef.current) return [];
       setProgrammes(programmeResult);
       setError(null);
@@ -35,7 +37,7 @@ export function useCurriculumProgrammes({ skipCache = false, visibility }: UseCu
     } finally {
       if (!options.silent && !signal?.aborted && requestId === requestIdRef.current) setLoading(false);
     }
-  }, [skipCache, visibility]);
+  }, [skipCache, revalidate, visibility]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -66,10 +68,9 @@ export function useCurriculumProgrammes({ skipCache = false, visibility }: UseCu
    *
    * The collection is rebuilt from several tables and can take seconds, so a
    * create that only triggered a refetch left the page looking unchanged for
-   * long enough to read as "it didn't save". A new programme goes to the front
-   * rather than the end: the list is paginated, and appending can drop it onto a
-   * page the reader is not looking at. The reload behind it restores the
-   * server's own ordering.
+   * long enough to read as "it didn't save". A new programme goes to the end,
+   * matching where the server's own ordering puts it once the reload behind
+   * this lands: the list reads newest-last, like any other list here.
    */
   const upsertProgramme = (programme: CurriculumProgramme) => {
     const key = programme.sourceId || programme.id;
@@ -78,7 +79,7 @@ export function useCurriculumProgrammes({ skipCache = false, visibility }: UseCu
       const known = prev.some(p => (p.sourceId || p.id) === key);
       return known
         ? prev.map(p => ((p.sourceId || p.id) === key ? { ...p, ...programme } : p))
-        : [programme, ...prev];
+        : [...prev, programme];
     });
   };
 

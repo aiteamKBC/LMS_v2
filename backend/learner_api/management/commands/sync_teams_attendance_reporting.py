@@ -10,7 +10,7 @@ from learner_api.teams_attendance import (
 
 
 class Command(BaseCommand):
-    help = "Backfill the flat learner attendance reporting table from verified Teams reports."
+    help = "Rebuild the learner attendance read model from verified Teams reports."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -21,9 +21,9 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         database = router.db_for_write(LearnerProfile) or "default"
-        ensure_teams_attendance_reporting_columns(database)
 
         if options["replace_legacy"]:
+            ensure_teams_attendance_reporting_columns(database)
             with transaction.atomic(using=database):
                 with connections[database].cursor() as cursor:
                     cursor.execute(

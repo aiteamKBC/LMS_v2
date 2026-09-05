@@ -76,7 +76,7 @@ export default function SupportDashboard() {
         {/* Stats Row */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           {TICKET_STATS.map(stat => (
-            <div key={stat.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4">
+            <div key={stat.label} className="coach-metric-card">
               <span className={`w-7 h-7 rounded-lg flex items-center justify-center mb-2 ${
                 stat.colour === 'red' ? 'bg-red-50 text-red-600' :
                 stat.colour === 'amber' ? 'bg-amber-50 text-amber-600' :

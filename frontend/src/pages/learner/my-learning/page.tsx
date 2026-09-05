@@ -297,7 +297,7 @@ function NextActivityRow({ c }: { c: JourneyComponent }) {
         <span className="block truncate text-[13px] font-semibold leading-snug text-foreground-900">{meta.detail || meta.label}</span>
       </div>
       {c.expectedOtjh != null && c.expectedOtjh > 0 && (
-        <span className="shrink-0 text-[11px] text-foreground-400">{c.expectedOtjh}h</span>
+        <span className="shrink-0 text-[11px] text-foreground-400">{formatHoursMinutes(c.expectedOtjh)}</span>
       )}
     </div>
   );
@@ -309,7 +309,7 @@ function ProgressStat({ icon, label, value, percent, caption, tone = 'neutral' }
 }) {
   const style = toneStyle(tone);
   return (
-    <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
+    <div className="coach-metric-card flex min-w-0 items-center gap-3">
       <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-sm ring-1 ring-black/5 ${style.bg} ${tone === 'neutral' ? 'text-foreground-400' : style.text}`}>
         <AppIcon className={`${icon} text-xl`} />
       </span>

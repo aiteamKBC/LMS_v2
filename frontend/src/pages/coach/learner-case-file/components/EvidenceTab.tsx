@@ -3,6 +3,7 @@ import { MetricCard } from '@/components/ui/MetricCard';
 import { Panel } from '@/components/ui/Panel';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
+import { formatHoursMinutes } from '@/lib/format';
 import { componentTypeMeta } from '@/utils/learnerJourney';
 import {
   flattenJourney,
@@ -116,7 +117,7 @@ export default function EvidenceTab({ data }: CaseFileTabProps) {
                         </div>
                         <p className="text-[12px] text-foreground-500 mt-1">
                           {item.module} - {item.week}
-                          {item.expectedOtjh ? ` - ${item.expectedOtjh}h planned OTJH` : ''}
+                          {item.expectedOtjh ? ` - ${formatHoursMinutes(item.expectedOtjh)} planned OTJH` : ''}
                         </p>
                       </div>
                     </div>

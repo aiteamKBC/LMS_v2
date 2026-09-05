@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
+import { formatHoursMinutes } from '@/lib/format';
 
 // ─────────────────── Types ───────────────────
 
@@ -292,7 +293,7 @@ export default function CohortDetailPage() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle={`${data.name} — ${data.programme}`} pageSubtitle={`${data.standard} · ${data.level} · ${data.startDate} — ${data.endDate} · ${data.totalLearners} learners`} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="p-6 space-y-6">
+      <div className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
         {/* ── Breadcrumb ── */}
         <div className="flex items-center gap-2 text-[12px] text-foreground-400">
           <Link to="/curriculum/programmes" className="hover:text-foreground-700 transition-smooth">Programmes</Link>
@@ -326,7 +327,7 @@ export default function CohortDetailPage() {
             <StatCard icon="ri-team-line" value={data.groups.length} label="Groups" color="accent" />
             <StatCard icon="ri-bar-chart-2-line" value={`${data.progress}%`} label="Avg Progress" color="secondary" />
             <StatCard icon="ri-check-double-line" value={`${data.attendance}%`} label="Attendance" color="emerald" />
-            <StatCard icon="ri-time-line" value={`${data.otjhAvg}h`} label="Avg OTJH" color="amber" />
+            <StatCard icon="ri-time-line" value={formatHoursMinutes(data.otjhAvg)} label="Avg OTJH" color="amber" />
             <StatCard icon="ri-pie-chart-line" value={`${data.ksbAvgProgress}%`} label="KSB Progress" color="sky" />
             <StatCard icon="ri-alert-line" value={atRiskCount} label="At Risk" color="red" sub={amberCount > 0 ? `+${amberCount} amber` : undefined} />
             <StatCard icon="ri-trophy-line" value={`${data.completionRate}%`} label="Completion" color="emerald" />
@@ -434,7 +435,7 @@ export default function CohortDetailPage() {
                   <MiniBar label="Progress" value={selectedLearner.progress} color="primary" />
                   <MiniBar label="Attendance" value={selectedLearner.attendance} color="emerald" />
                   <MiniBar label="KSB Progress" value={selectedLearner.ksbProgress} color="accent" />
-                  <MiniBar label="OTJH" value={Math.round(selectedLearner.otjh / selectedLearner.otjhRequired * 100)} color="amber" suffix={`${selectedLearner.otjh}/${selectedLearner.otjhRequired}h`} />
+                  <MiniBar label="OTJH" value={Math.round(selectedLearner.otjh / selectedLearner.otjhRequired * 100)} color="amber" suffix={`${formatHoursMinutes(selectedLearner.otjh)} / ${formatHoursMinutes(selectedLearner.otjhRequired)}`} />
                 </div>
                 <p className="text-[11px] text-foreground-400 mt-3">Last Review: {selectedLearner.lastReview} · Status: {selectedLearner.status}</p>
               </div>
@@ -675,7 +676,7 @@ function StatCard({ icon, value, label, color, sub }: { icon: string; value: num
     sky: 'bg-sky-50 text-sky-700',
   };
   return (
-    <div className="bg-background-100 rounded-xl p-3">
+    <div className="coach-metric-card">
       <div className="flex items-center gap-2 mb-1">
         <AppIcon className={`${icon} ${colorMap[color] || 'text-foreground-400'} text-xs`}></AppIcon>
         <span className="text-[10px] text-foreground-400 uppercase">{label}</span>

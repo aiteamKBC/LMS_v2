@@ -582,7 +582,7 @@ export function KsbFrameworkManager({
               <h2 className="text-sm font-heading font-bold text-foreground-900">KSB Frameworks</h2>
               <p className="text-xs text-foreground-400">{frameworkCountLabel}</p>
             </div>
-            <button onClick={() => { setCreating(true); setSelectedId(''); }} className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary-700 text-white transition-smooth hover:bg-primary-600">
+            <button onClick={() => { setCreating(true); setSelectedId(''); }} className="primary-action inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary-700 text-white transition-smooth hover:bg-primary-600">
               <AppIcon className="ri-add-line" size={16}></AppIcon>
             </button>
           </div>
@@ -714,7 +714,7 @@ export function KsbFrameworkManager({
                   <h4 className="text-sm font-bold text-foreground-900 mr-auto">KSB Definitions</h4>
                   <button onClick={() => downloadTemplate(items, form.name || form.programmeName)} title={items.length ? `Downloads the ${items.length} definitions in this framework` : 'Downloads an example template'} className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-background-200 px-3 py-2 text-[11px] font-semibold transition-smooth hover:bg-background-100"><AppIcon className="shrink-0" name="ri-download-line" size={15}></AppIcon>{items.length ? 'Download Definitions' : 'Download Template'}</button>
                   <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-background-200 px-3 py-2 text-[11px] font-semibold transition-smooth hover:bg-background-100 disabled:opacity-50"><AppIcon className="shrink-0" name="ri-upload-line" size={15}></AppIcon>{uploading ? 'Uploading...' : 'Upload Template'}</button>
-                  <button onClick={addDefaultKsb} className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-primary-700 px-3 py-2 text-[11px] font-semibold text-white transition-smooth hover:bg-primary-600"><AppIcon className="shrink-0" name="ri-add-line" size={15}></AppIcon>Add KSB</button>
+                  <button onClick={addDefaultKsb} className="primary-action inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-primary-700 px-3 py-2 text-[11px] font-semibold text-white transition-smooth hover:bg-primary-600"><AppIcon className="shrink-0" name="ri-add-line" size={15}></AppIcon>Add KSB</button>
                   <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleUpload} className="hidden" />
                 </div>
                 {importResult && (
@@ -730,7 +730,7 @@ export function KsbFrameworkManager({
                       </div>
                     )}
                     {pendingImport && pendingImport.length > 0 && (
-                      <button onClick={() => void confirmImport(pendingImport, importResult)} className="mt-2 inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary-700 px-3 py-2 text-[11px] font-semibold text-white transition-smooth hover:bg-primary-600">
+                      <button onClick={() => void confirmImport(pendingImport, importResult)} className="primary-action mt-2 inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary-700 px-3 py-2 text-[11px] font-semibold text-white transition-smooth hover:bg-primary-600">
                         <AppIcon className="shrink-0" name="ri-check-line" size={15}></AppIcon>Import the {pendingImport.length} rows that are ready
                       </button>
                     )}
@@ -761,7 +761,7 @@ export function KsbFrameworkManager({
           <p className="text-xs font-semibold text-foreground-400 mr-auto">{items.length} required KSB codes</p>
           <div className="flex shrink-0 items-center gap-3">
             {!creating && selectedFramework && <button onClick={() => void requestDeleteFramework(selectedFramework)} className="px-4 py-2 rounded-lg text-red-600 text-xs font-bold hover:bg-red-50">Delete</button>}
-            <button onClick={saveFramework} disabled={!canSave || saving} className="px-5 py-2.5 rounded-lg bg-primary-700 text-white text-xs font-bold hover:bg-primary-600 disabled:bg-foreground-300 disabled:cursor-not-allowed">{saving ? 'Saving...' : 'Save Framework'}</button>
+            <button onClick={saveFramework} disabled={!canSave || saving} className="primary-action px-5 py-2.5 rounded-lg bg-primary-700 text-white text-xs font-bold hover:bg-primary-600 disabled:bg-foreground-300 disabled:cursor-not-allowed">{saving ? 'Saving...' : 'Save Framework'}</button>
           </div>
         </div>
       </section>
@@ -935,7 +935,7 @@ function KsbRow({ item, errors, parent, onAddChild, onUpdate, onDelete }: {
           {rowError('title') && <p className="mt-1 text-[10px] text-red-600">{rowError('title')}</p>}
         </div>
         <div className="flex gap-1">
-          {parent && <button onClick={onAddChild} className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary-700 px-3 text-xs font-bold text-white hover:bg-primary-600"><AppIcon className="shrink-0" name="ri-add-line" size={15}></AppIcon>Add point</button>}
+          {parent && <button onClick={onAddChild} className="primary-action inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary-700 px-3 text-xs font-bold text-white hover:bg-primary-600"><AppIcon className="shrink-0" name="ri-add-line" size={15}></AppIcon>Add point</button>}
           <button onClick={onDelete} className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-red-500 hover:bg-red-50" aria-label={`Delete ${item.code || 'KSB point'}`}><AppIcon name="ri-delete-bin-line" size={16}></AppIcon></button>
         </div>
       </div>

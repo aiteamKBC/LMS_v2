@@ -530,7 +530,7 @@ function CourseChampionsPodium({ champions, onViewAll, onOpenProfile }: { champi
         </div>
 
         <div className="text-center mt-6">
-          <button onClick={onViewAll} className="text-[11px] font-medium text-accent-200 hover:text-white transition-smooth cursor-pointer">
+          <button onClick={onViewAll} className="compact-action text-[11px] font-medium text-accent-200 hover:text-white transition-smooth cursor-pointer">
             View full leaderboard <AppIcon className="ri-arrow-right-line ml-1"></AppIcon>
           </button>
         </div>

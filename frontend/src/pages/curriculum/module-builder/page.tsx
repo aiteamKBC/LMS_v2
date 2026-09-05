@@ -9,6 +9,7 @@ import { useCurriculumKsbSets } from '@/hooks/useCurriculumKsbSets';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { curriculumNavItems } from '@/mocks/navigation';
+import { formatHoursMinutes } from '@/lib/format';
 import {
   fetchCurriculumHolidays,
   fetchCurriculumOverview,
@@ -29,7 +30,13 @@ import {
 // and whether its Teams series exists -- used to live on a separate Curriculum
 // -> Modules page. This catalogue lists it now, and each delivery row opens the
 // module workspace where that delivery (tutor included) is edited.
-import { formatDateLabel, moduleIdentity, namedCurriculumWorkspacePath } from '../shared/entities/model';
+import {
+  formatDateLabel,
+  moduleIdentity,
+  namedCurriculumWorkspacePath,
+  sortEntities,
+  MODULE_SORT_OPTIONS,
+} from '../shared/entities/model';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
 // Creating a module and moving it between programmes, cohorts and groups is one
 // dedicated form, shared with the Group and Module workspaces. It replaced the
@@ -61,6 +68,7 @@ import {
   saveModuleStructure,
   uploadComponentResource,
   utcIsoToCalendarParts,
+  weekPlacementLabel,
   type AdvancedModuleDetails,
   type CompletionCriteria,
   type KsbMapping,
@@ -237,6 +245,8 @@ export default function ModuleBuilder() {
     groupId: (searchParams.get('group') || '').trim(),
   });
   const [search, setSearch] = useState('');
+  // Which order the catalogue is in. Empty is the order the endpoint returned.
+  const [sort, setSort] = useState('');
   const [programmeFilter, setProgrammeFilter] = useState<string>(() => requestedCreateScopeRef.current.programmeName || 'All');
   // The delivery filters the Modules page used to carry. They read the module's
   // own deliveries rather than a second fetch of cohorts and groups, so the
@@ -304,8 +314,13 @@ export default function ModuleBuilder() {
   const savedModuleSnapshotRef = useRef('');
   const saveRequestRef = useRef(0);
   const ksbImportInputRef = useRef<HTMLInputElement>(null);
-  const { modules, loading, error, reload } = useCurriculumModules({ compact: true, skipCache: true });
-  const { programmes: curriculumProgrammes } = useCurriculumProgrammes({ skipCache: true, visibility: 'all' });
+  // Both revalidate rather than skipCache. The request still goes to the network
+  // every time, and every curriculum write calls invalidate_curriculum_cache() on
+  // the backend, so a reload after a save still rebuilds and returns our write.
+  // What it no longer does is send Cache-Control: no-cache on the *mount* read,
+  // which forced a rebuild from Neon and cost these two ~9s and ~14s.
+  const { modules, loading, error, reload } = useCurriculumModules({ compact: true, revalidate: true });
+  const { programmes: curriculumProgrammes } = useCurriculumProgrammes({ revalidate: true, visibility: 'all' });
   const programmeDesignUrl = useMemo(() => {
     const requested = (searchParams.get('programme') || searchParams.get('programmeId') || '').trim();
     if (!requested) return '';
@@ -362,15 +377,51 @@ export default function ModuleBuilder() {
       ));
   }, [modules, storageVersion, hiddenModuleIds, curriculumProgrammes]);
 
+  // Every programme identifier at least one catalogue module answers to. A
+  // programme with no modules only ever renders "no modules match", so it is
+  // not worth offering in the filter.
+  const programmeKeysWithModules = useMemo(() => new Set(
+    catalogueModules
+      .flatMap(module => [
+        module.programmeName,
+        module.programmeId,
+        module.sourceModule?.programme,
+        module.sourceModule?.programmeId,
+        ...(module.deliveryUsages || []).flatMap(usage => [usage.programme, usage.programmeId]),
+      ])
+      .map(normaliseDeepLinkValue)
+      .filter(Boolean),
+  ), [catalogueModules]);
+
   const programmeOptions = useMemo(() => {
+    // The programme the page was deep linked into, and whatever is currently
+    // selected, stay listed even if archived after the fact - so the <select>
+    // never holds a value with no matching option, and an explicit deep link
+    // is honoured rather than silently dropped.
+    const stickyKeys = [
+      requestedCreateScopeRef.current.programmeId,
+      requestedCreateScopeRef.current.programmeName,
+      programmeFilter === 'All' ? '' : programmeFilter,
+    ].map(normaliseDeepLinkValue).filter(Boolean);
     const byName = new Map<string, string>();
     curriculumProgrammes.forEach(programme => {
       const name = String(programme.name || programme.sourceId || programme.id || '').trim();
       if (!name) return;
+      const keys = [programme.name, programme.id, programme.sourceId, programme.standard]
+        .map(normaliseDeepLinkValue)
+        .filter(Boolean);
+      const isSticky = keys.some(key => stickyKeys.includes(key));
+      // curriculumProgrammes is fetched with visibility: 'all' so a module whose
+      // programme was archived can still resolve its identity. The picker itself
+      // is for choosing where to work next, so an archived programme is left out
+      // of it the same way the Programmes page hides it from the active list. An
+      // active programme is offered even with zero modules yet - the catalogue
+      // then says so plainly (see emptyProgrammeScope) instead of hiding it.
+      if (programmeIsArchived(programme) && !isSticky) return;
       byName.set(normaliseDeepLinkValue(name) || name.toLowerCase(), name);
     });
     return ['All', ...Array.from(byName.values()).sort((a, b) => a.localeCompare(b))];
-  }, [curriculumProgrammes]);
+  }, [curriculumProgrammes, programmeFilter]);
 
   const programmeLookup = useMemo(() => {
     const lookup = new Map<string, { id: string; name: string }>();
@@ -802,7 +853,15 @@ export default function ModuleBuilder() {
 
   const deliveryFiltersActive = Boolean(cohortFilter || groupFilter || tutorFilter);
 
-  const filtered = catalogueModules.filter(module => {
+  // A programme scope that genuinely holds nothing - reached by deep link from
+  // its workspace, since the filter no longer offers empty programmes. The
+  // empty state should name it and offer a module, not blame the filters.
+  const emptyProgrammeScope = programmeFilter !== 'All'
+    && !search.trim()
+    && !deliveryFiltersActive
+    && !programmeFilterKeys(programmeFilter, curriculumProgrammes).some(key => programmeKeysWithModules.has(key));
+
+  const filteredModules = catalogueModules.filter(module => {
     const text = `${module.title} ${module.catalogueId} ${module.programmeName} ${moduleIdentityText(module)} ${moduleDeliverySearchText(module)}`.toLowerCase();
     if (search && !text.includes(search.toLowerCase())) return false;
     if (programmeFilter !== 'All' && !moduleBelongsToProgrammeFilter(module, programmeFilter, curriculumProgrammes)) return false;
@@ -816,6 +875,9 @@ export default function ModuleBuilder() {
       && (!tutorFilter || normaliseDeepLinkValue(usage.tutor) === normaliseDeepLinkValue(tutorFilter))
     ));
   });
+  // Sorted after filtering, so the chosen order applies to what is on screen
+  // rather than to the whole catalogue behind it.
+  const filtered = sortEntities(filteredModules, MODULE_SORT_OPTIONS, sort);
 
   const deliveryStats = useMemo(() => ({
     deliveries: deliveryUsages.length,
@@ -896,7 +958,14 @@ export default function ModuleBuilder() {
       const deepLinkTarget = moduleBuilderDeepLinkTarget(next, new URLSearchParams(window.location.search));
       savedModuleSnapshotRef.current = moduleSnapshot(next);
       setWorkingModule(next);
-      setSelection(deepLinkTarget.selection || (next.weekStructure[0] ? { kind: 'week', weekId: next.weekStructure[0].id } : null));
+      const firstWeek = next.weekStructure[0];
+      const firstComponent = firstWeek?.components[0];
+      const defaultSelection: Selection | null = firstComponent
+        ? { kind: 'component', weekId: firstWeek.id, componentId: firstComponent.id }
+        : firstWeek
+          ? { kind: 'week', weekId: firstWeek.id }
+          : null;
+      setSelection(deepLinkTarget.selection || defaultSelection);
       setSettingsOpen(openSettings || deepLinkTarget.openSettings);
       await finishLoadingProgress(setOpeningModuleComplete);
     } catch (err) {
@@ -1230,9 +1299,12 @@ export default function ModuleBuilder() {
       savedModuleSnapshotRef.current = moduleSnapshot(saved);
       setStorageVersion(version => version + 1);
       setActionMessage(null);
-      // No dialog on a successful save. The footer already reads "All changes
-      // saved" with a green Saved button, and a modal on every save is an
-      // interruption in a screen people save constantly.
+      // A brief, self-dismissing confirmation rather than a click-to-close modal:
+      // the footer already reads "All changes saved" with a green Saved button, and
+      // a dialog that waits on the reader is an interruption in a screen people save
+      // constantly. This only confirms the save landed — it is not a readiness
+      // check, so it shows the same "Saved" on a week that still has unmapped KSBs.
+      void showCurriculumAlert({ title: 'Saved', icon: 'success', timer: 1200 });
       reload();
       return saved;
     } catch (err) {
@@ -1613,7 +1685,7 @@ export default function ModuleBuilder() {
                 updateWorkingModule(generateMissingLiveSessions);
                 void showCurriculumAlert({
                   title: 'Live sessions added',
-                  text: `${addedCount} live-session component${addedCount === 1 ? '' : 's'} added across ${weekCount} week${weekCount === 1 ? '' : 's'}. Open each one and use "Create Teams meeting" to schedule it in Teams.`,
+                  text: `${addedCount} live-session component${addedCount === 1 ? '' : 's'} added across ${weekCount} week${weekCount === 1 ? '' : 's'}. Use "Create all Teams meetings" once to create the module calendar and link every session.`,
                   timer: 3200,
                 });
               }}
@@ -1684,7 +1756,7 @@ export default function ModuleBuilder() {
                   uploadResource={uploadComponentForModule}
                   restoreTeamsMeeting={selectedComponent.type === 'live-session' ? restoreTeamsMeetingForWorkingModule : undefined}
                   restoringTeamsMeeting={restoringTeamsModuleId === workingModule.catalogueId}
-                  liveSessionModule={{ catalogueId: workingModule.catalogueId, title: workingModule.title }}
+                  liveSessionModule={{ catalogueId: workingModule.catalogueId, title: workingModule.title, programmeName: workingModule.programmeName, cohort: workingModule.cohort, group: workingModule.group }}
                 />
               ) : selectedWeek ? (
                 <ModuleWeekPanel
@@ -1824,7 +1896,7 @@ export default function ModuleBuilder() {
           return (
             <TeamsMeetingModal
               component={{ ...base, title: workingModule.title }}
-              module={{ catalogueId: workingModule.catalogueId, title: workingModule.title }}
+              module={{ catalogueId: workingModule.catalogueId, title: workingModule.title, programmeName: workingModule.programmeName, cohort: workingModule.cohort, group: workingModule.group }}
               onClose={() => setBulkTeamsMeetingOpen(false)}
               // The series is now tracked against this module, so re-attaching pulls
               // its join link into every live-session component and saves them — the
@@ -1843,7 +1915,7 @@ export default function ModuleBuilder() {
           <ComponentLibraryModal
             weekLabel={(() => {
               const week = workingModule.weekStructure.find(item => item.id === reusePickerWeekId);
-              return week ? `Week ${week.weekNumber}${week.title ? ` — ${week.title}` : ''}` : 'this week';
+              return week ? weekPlacementLabel(week, ' — ') : 'this week';
             })()}
             onClose={() => setReusePickerWeekId(null)}
             onAddMany={picked => addLibraryComponentsToWeek(reusePickerWeekId, picked)}
@@ -1890,7 +1962,7 @@ export default function ModuleBuilder() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Module Builder" pageSubtitle={`${catalogueModules.length} modules - ${published} published - ${draftCount} draft - ${totalComponents} components`} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="p-4 sm:p-5 space-y-4">
+      <div className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
         {catalogueHierarchy && <CurriculumHierarchyNav {...catalogueHierarchy} />}
         <div className="rounded-2xl border border-foreground-200/70 bg-background-50 px-5 py-4 shadow-sm">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1992,15 +2064,26 @@ export default function ModuleBuilder() {
                 <option value="">All tutors</option>
                 {tutorNames.map(name => <option key={name} value={name}>{name}</option>)}
               </select>
+              <select
+                aria-label="Sort modules"
+                value={sort}
+                onChange={event => setSort(event.target.value)}
+                className={FILTER_SELECT_CLASS}
+              >
+                {MODULE_SORT_OPTIONS.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
               <button
                 type="button"
-                disabled={!search && programmeFilter === 'All' && !deliveryFiltersActive}
+                disabled={!search && programmeFilter === 'All' && !deliveryFiltersActive && !sort}
                 onClick={() => changeFilter(() => {
                   setSearch('');
                   setProgrammeFilter('All');
                   setCohortFilter('');
                   setGroupFilter('');
                   setTutorFilter('');
+                  setSort('');
                 })}
                 className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-40 disabled:hover:bg-background-50"
               >
@@ -2040,6 +2123,35 @@ export default function ModuleBuilder() {
                   />
                 ))}
               </div>
+            ) : emptyProgrammeScope ? (
+              <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
+                <span className="grid h-14 w-14 place-items-center rounded-full bg-primary-50 text-primary-500">
+                  <AppIcon className="ri-book-open-line text-2xl"></AppIcon>
+                </span>
+                <div>
+                  <p className="text-[13px] font-semibold text-foreground-700">{programmeFilter} has no modules yet</p>
+                  <p className="mt-1 max-w-xs text-[12px] text-foreground-400">Create the first module for this programme to start mapping its delivery, weeks and KSBs.</p>
+                </div>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCreateOpen(true)}
+                    disabled={saving}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:cursor-wait disabled:opacity-70"
+                  >
+                    <AppIcon className="ri-add-line text-sm"></AppIcon>
+                    New module
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => changeFilter(() => setProgrammeFilter('All'))}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
+                  >
+                    <AppIcon className="ri-apps-2-line text-sm"></AppIcon>
+                    Show all programmes
+                  </button>
+                </div>
+              </div>
             ) : catalogueModules.length > 0 ? (
               <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
                 <span className="grid h-14 w-14 place-items-center rounded-full bg-background-100 text-foreground-300">
@@ -2057,6 +2169,7 @@ export default function ModuleBuilder() {
                     setCohortFilter('');
                     setGroupFilter('');
                     setTutorFilter('');
+                    setSort('');
                   })}
                   className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
                 >
@@ -2273,7 +2386,7 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
   const moduleMetrics = [
     { label: 'Weeks', value: String(module.weekStructure.length), icon: 'ri-stack-line' },
     { label: 'Components', value: String(module.lessonCount), icon: 'ri-layout-grid-line' },
-    { label: 'OTJH', value: module.totalOtjh.toFixed(1), icon: 'ri-time-line' },
+    { label: 'OTJH', value: formatHoursMinutes(module.totalOtjh), icon: 'ri-time-line' },
   ];
   const programmeLocked = Boolean(scopeLock?.locked);
   const lockedKsbLabel = scopeLock?.ksbSourceLabel || (ksbProfileValue ? ksbProfileValue.replace(/^(profile|standard):/, '') : 'No source selected');
@@ -2489,7 +2602,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
         )}
         <div className="mt-3 grid grid-cols-3 gap-1.5">
           <MiniStructureMetric label="Items" value={String(totalComponents)} />
-          <MiniStructureMetric label="OTJH" value={module.totalOtjh.toFixed(1)} />
+          <MiniStructureMetric label="OTJH" value={formatHoursMinutes(module.totalOtjh)} />
           <MiniStructureMetric label="KSBs" value={String(module.ksbCount)} />
         </div>
         <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background-200">
@@ -2511,7 +2624,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
               <div className="flex items-baseline justify-between gap-2 px-1 pb-0.5 pt-2 first:pt-0">
                 <p className="text-[11px] font-heading font-bold uppercase tracking-wider text-primary-700">{monthHeading.label}</p>
                 <p className="text-[10px] font-semibold text-foreground-400">
-                  {monthHeading.weeks} {monthHeading.weeks === 1 ? 'week' : 'weeks'} · {monthHeading.otjh.toFixed(1)}h
+                  {monthHeading.weeks} {monthHeading.weeks === 1 ? 'week' : 'weeks'} · {formatHoursMinutes(monthHeading.otjh)}
                 </p>
               </div>
             )}
@@ -2542,7 +2655,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                   <p className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium text-foreground-400">
                     <span>{week.components.length} components</span>
                     <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
-                    <span>{totalOtjh.toFixed(1)}h</span>
+                    <span>{formatHoursMinutes(totalOtjh)}</span>
                     {week.sessionDate && (
                       <>
                         <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
@@ -2846,7 +2959,7 @@ function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson,
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex rounded-full bg-primary-100 px-2.5 py-1 text-[10px] font-bold text-primary-700">Week {week.weekNumber}</span>
             <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{week.components.length} components</span>
-            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">{totalOtjh.toFixed(1)}h OTJH</span>
+            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">{formatHoursMinutes(totalOtjh)} OTJH</span>
           </div>
           <div className="mt-1.5">
             <TextInput label="Week title" value={week.title} onChange={value => onChange({ title: value })} />
@@ -2909,7 +3022,7 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <MiniMetric label="OTJH" value={Number(component.expectedOtjh || 0).toFixed(1)} />
+            <MiniMetric label="OTJH" value={formatHoursMinutes(Number(component.expectedOtjh || 0))} />
             <MiniMetric label="Points" value={String(component.points || 0)} />
           </div>
         </div>
@@ -3130,7 +3243,7 @@ function TypeSpecificFields({
               className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600"
             >
               <AppIcon className="ri-calendar-event-line"></AppIcon>
-              {getString('liveSessionUrl') ? 'Create another meeting' : 'Create Teams meeting'}
+              {getString('liveSessionUrl') ? 'Meeting already created' : 'Create Teams meeting'}
             </button>
           </div>
           {getString('liveSessionUrl') && (
@@ -3167,6 +3280,7 @@ function TypeSpecificFields({
               onSettingChange('teamsOrganizerEmail', meeting.organizerEmail);
               onSettingChange('teamsAttendees', meeting.attendees);
               onSettingChange('teamsPresenters', meeting.presenters);
+              onSettingChange('teamsCoOrganizers', meeting.coOrganizers || []);
               if (scheduled) {
                 onSettingChange('teamsSessionNumber', scheduled.sessionNumber);
                 if (!hasExplicitSchedule) {
@@ -3795,7 +3909,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
     const weekWeightSummary = ksbWeightSummary(mappedKsbs);
     const readinessItems = [
       { label: 'Components', ready: week.components.length > 0, value: week.components.length ? `${week.components.length} added` : 'Missing' },
-      { label: 'OTJH', ready: totalOtjh > 0, value: totalOtjh > 0 ? `${totalOtjh.toFixed(1)} h` : 'Missing' },
+      { label: 'OTJH', ready: totalOtjh > 0, value: totalOtjh > 0 ? formatHoursMinutes(totalOtjh) : 'Missing' },
       { label: 'KSBs', ready: mappedKsbs.length > 0, value: mappedKsbs.length ? `${mappedKsbs.length} mapped` : 'Needs mapping' },
     ];
     const readyCount = readinessItems.filter(item => item.ready).length;
@@ -3884,7 +3998,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
           ))}
         </div>
         <div className="grid grid-cols-2 gap-2">
-          <MiniMetric label="OTJH" value={Number(component.expectedOtjh || 0).toFixed(1)} />
+          <MiniMetric label="OTJH" value={formatHoursMinutes(Number(component.expectedOtjh || 0))} />
           <MiniMetric label="Points" value={String(component.points || 0)} />
         </div>
         <KsbWeightSummary summary={componentWeightSummary} />
@@ -4891,10 +5005,10 @@ function PreviewModal({ module, onClose }: { module: ModuleCatalogueItem; onClos
           </div>
           {module.weekStructure.map(week => (
             <div key={week.id} className="rounded-xl border border-background-200 bg-background-100/50 p-4">
-              <h3 className="text-sm font-bold text-foreground-900">Week {week.weekNumber}: {week.title}</h3>
+              <h3 className="text-sm font-bold text-foreground-900">{weekPlacementLabel(week, ': ')}</h3>
               <p className="text-[11px] text-foreground-500 mt-1">{week.summary}</p>
               <div className="mt-3 space-y-2">
-                {week.components.map(component => <div key={component.id} className="rounded-lg bg-background-50 border border-background-200 px-3 py-2 text-[12px] text-foreground-700">{readableComponentTitle(component.title)} - {component.expectedOtjh} OTJH - {component.points} pts</div>)}
+                {week.components.map(component => <div key={component.id} className="rounded-lg bg-background-50 border border-background-200 px-3 py-2 text-[12px] text-foreground-700">{readableComponentTitle(component.title)} - {formatHoursMinutes(component.expectedOtjh)} OTJH - {component.points} pts</div>)}
               </div>
             </div>
           ))}
@@ -5489,7 +5603,7 @@ function ComponentResourceUpload({
               if (file) void onUpload(file);
             }}
           />
-          <label htmlFor={inputId} className={`inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold text-white transition-smooth ${uploading ? 'bg-foreground-300' : 'bg-primary-500 hover:bg-primary-600'}`}>
+          <label htmlFor={inputId} className={`primary-action inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold text-white transition-smooth ${uploading ? 'bg-foreground-300' : 'bg-primary-500 hover:bg-primary-600'}`}>
             <AppIcon className={uploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-cloud-2-line'}></AppIcon>
             {uploading ? 'Uploading...' : 'Upload from device'}
           </label>
@@ -5542,18 +5656,6 @@ function ReadOnlyMetricChip({ label, value, suffix, tone }: {
   );
 }
 
-/**
- * Only the states that ask for something are badged. Published is what a
- * finished module is supposed to be, so it carries no badge: on a list where
- * nearly everything is published, the badge said nothing and cost a line.
- */
-function StatusBadge({ status }: { status: string }) {
-  if (status === 'published') return null;
-  const classes = status === 'draft' ? 'bg-amber-100 text-amber-700' : 'bg-primary-100 text-primary-700';
-  const label = status === 'review' ? 'in review' : status;
-  return <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${classes}`}>{label}</span>;
-}
-
 function ModuleCatalogueCard({
   module,
   teamsSummary,
@@ -5585,6 +5687,14 @@ function ModuleCatalogueCard({
   const subLabel = moduleListSubLabel(module);
   const primaryDelivery = (module.deliveryUsages || []).find(usage => usage.deliveryModuleId);
   const primaryDeliveryHref = primaryDelivery ? namedCurriculumWorkspacePath('modules', primaryDelivery.deliveryModuleId, module.title) : '';
+  // The module's own artwork replaces the generic icon when it has one. An
+  // address that fails to load falls back to the icon rather than leaving a
+  // broken frame beside the title -- a pasted URL can rot, and a card with a
+  // hole in it reads as a broken module.
+  const [coverBroken, setCoverBroken] = useState(false);
+  const coverImage = String(module.coverImage || '').trim();
+  useEffect(() => { setCoverBroken(false); }, [coverImage]);
+  const showCover = Boolean(coverImage) && !coverBroken;
   // Legacy fallbacks retained by the merge were:
   // weekCount = module.weekStructure.length || module.weeks || 0
 
@@ -5593,13 +5703,23 @@ function ModuleCatalogueCard({
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
         <div className="min-w-0">
           <div className="flex flex-wrap items-start gap-3">
-            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${hasContent ? 'bg-primary-50 text-primary-600 ring-1 ring-primary-100' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'}`}>
-              <AppIcon className={hasContent ? 'ri-layout-4-line text-base' : 'ri-draft-line text-base'}></AppIcon>
-            </span>
+            {showCover ? (
+              <span className="h-10 w-10 shrink-0 overflow-hidden rounded-lg ring-1 ring-background-200">
+                <img
+                  src={coverImage}
+                  alt=""
+                  className="h-full w-full object-cover"
+                  onError={() => setCoverBroken(true)}
+                />
+              </span>
+            ) : (
+              <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${hasContent ? 'bg-primary-50 text-primary-600 ring-1 ring-primary-100' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'}`}>
+                <AppIcon className={hasContent ? 'ri-layout-4-line text-base' : 'ri-draft-line text-base'}></AppIcon>
+              </span>
+            )}
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <h3 className="truncate text-[14px] font-heading font-bold text-foreground-950">{module.title}</h3>
-                <StatusBadge status={module.status} />
               </div>
               {subLabel && <p className="mt-1 text-[11px] text-foreground-500">{subLabel}</p>}
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
@@ -6144,6 +6264,12 @@ function moduleDefinitionKey(module: ModuleCatalogueItem) {
   return `${programme || 'programme'}::${title || module.catalogueId}`;
 }
 
+/** Same rule the Programmes page uses to split its active list from its archive. */
+function programmeIsArchived(programme: CurriculumProgramme) {
+  if (typeof programme.isArchived === 'boolean') return programme.isArchived;
+  return String(programme.status || 'active').trim().toLowerCase() === 'archived';
+}
+
 /** Every identifier the selected programme answers to: name, id, source id, standard. */
 function programmeFilterKeys(programmeName: string, programmes: CurriculumProgramme[]) {
   const selected = programmes.find(programme => normaliseDeepLinkValue(programme.name) === normaliseDeepLinkValue(programmeName));
@@ -6399,6 +6525,7 @@ function moduleFormTargetFromCatalogue(module: ModuleCatalogueItem, usage?: Modu
     status: module.status,
     notes: module.description,
     color: module.color,
+    coverImage: module.coverImage,
     deliveryUsages: (module as ModuleBuilderListItem).deliveryUsages,
   };
 }
@@ -6918,8 +7045,7 @@ function uniquePlacementOtjh(rows: ModuleKsbMapRow[]) {
 }
 
 function formatKsbOtjh(value: number) {
-  const amount = Number(value || 0);
-  return `${Number.isInteger(amount) ? amount.toFixed(0) : amount.toFixed(1)}h`;
+  return formatHoursMinutes(Number(value || 0));
 }
 
 function formatKsbWeight(value: number) {

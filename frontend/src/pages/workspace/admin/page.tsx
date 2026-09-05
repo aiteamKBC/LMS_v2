@@ -75,6 +75,8 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [auditTick, setAuditTick] = useState(0);
+  const [authActivityOpen, setAuthActivityOpen] = useState(true);
+  const [recentEventsOpen, setRecentEventsOpen] = useState(true);
   // Alerts this administrator has waved away. Read once per account rather than
   // on every render, and re-read if the signed-in account changes under us —
   // dismissals belong to the person, not to the tab.
@@ -416,68 +418,98 @@ export default function AdminDashboard() {
 
             {/* Authentication activity */}
             <section className="super-admin-auth-activity bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-heading font-semibold text-foreground-900">Authentication activity</h3>
+              <div className={`flex items-center justify-between ${authActivityOpen ? 'mb-4' : ''}`}>
+                <h3 className="text-sm font-heading font-semibold text-foreground-900">
+                  <button
+                    type="button"
+                    onClick={() => setAuthActivityOpen(open => !open)}
+                    aria-expanded={authActivityOpen}
+                    aria-controls="super-admin-auth-activity-content"
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md text-left transition-colors hover:text-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+                  >
+                    <span>Authentication activity</span>
+                    <AppIcon className={authActivityOpen ? 'ri-arrow-down-s-line text-xs text-foreground-400' : 'ri-arrow-right-s-line text-xs text-foreground-400'} aria-hidden="true"></AppIcon>
+                  </button>
+                </h3>
                 <Link to="/admin/access-logs" className="super-admin-arrow-link inline-flex items-center gap-1 text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Access logs <AppIcon className="ri-arrow-right-line super-admin-arrow-icon text-[10px]"></AppIcon></Link>
               </div>
-              {overview?.authActivity.available ? (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <Figure value={overview.authActivity.signIns24h} label="Sign-ins (24h)" tone="ok" />
-                  <Figure value={overview.authActivity.failedSignIns24h} label="Failed (24h)" tone={overview.authActivity.failedSignIns24h > 0 ? 'bad' : 'neutral'} />
-                  <Figure value={overview.authActivity.distinctSignIns7d} label="Distinct users (7d)" tone="neutral" />
-                  <Figure value={overview.authActivity.events24h} label="Audit events (24h)" tone="neutral" />
-                </div>
-              ) : loading ? (
-                // Same four-up shape as the figures it replaces, so the section
-                // does not resize when the overview lands.
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {Array.from({ length: 4 }).map((_, index) => (
-                    <div key={index} className="space-y-2">
-                      <SkeletonBlock className="h-5 w-10" />
-                      <SkeletonBlock className="h-2.5 w-20" />
+              {authActivityOpen && (
+                <div id="super-admin-auth-activity-content">
+                  {overview?.authActivity.available ? (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <Figure value={overview.authActivity.signIns24h} label="Sign-ins (24h)" tone="ok" />
+                      <Figure value={overview.authActivity.failedSignIns24h} label="Failed (24h)" tone={overview.authActivity.failedSignIns24h > 0 ? 'bad' : 'neutral'} />
+                      <Figure value={overview.authActivity.distinctSignIns7d} label="Distinct users (7d)" tone="neutral" />
+                      <Figure value={overview.authActivity.events24h} label="Audit events (24h)" tone="neutral" />
                     </div>
-                  ))}
+                  ) : loading ? (
+                    // Same four-up shape as the figures it replaces, so the section
+                    // does not resize when the overview lands.
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {Array.from({ length: 4 }).map((_, index) => (
+                        <div key={index} className="space-y-2">
+                          <SkeletonBlock className="h-5 w-10" />
+                          <SkeletonBlock className="h-2.5 w-20" />
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[12px] text-foreground-400 py-4 text-center">Audit trail unavailable.</p>
+                  )}
                 </div>
-              ) : (
-                <p className="text-[12px] text-foreground-400 py-4 text-center">Audit trail unavailable.</p>
               )}
             </section>
 
             {/* Audit trail */}
             <section className="super-admin-recent-events bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-heading font-semibold text-foreground-900">Recent access events</h3>
+              <div className={`flex items-center justify-between ${recentEventsOpen ? 'mb-4' : ''}`}>
+                <h3 className="text-sm font-heading font-semibold text-foreground-900">
+                  <button
+                    type="button"
+                    onClick={() => setRecentEventsOpen(open => !open)}
+                    aria-expanded={recentEventsOpen}
+                    aria-controls="super-admin-recent-events-content"
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md text-left transition-colors hover:text-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+                  >
+                    <span>Recent access events</span>
+                    <AppIcon className={recentEventsOpen ? 'ri-arrow-down-s-line text-xs text-foreground-400' : 'ri-arrow-right-s-line text-xs text-foreground-400'} aria-hidden="true"></AppIcon>
+                  </button>
+                </h3>
                 <Link to="/admin/access-logs" className="super-admin-arrow-link inline-flex items-center gap-1 text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Full log <AppIcon className="ri-arrow-right-line super-admin-arrow-icon text-[10px]"></AppIcon></Link>
               </div>
-              {audit.length === 0 ? (
-                <p className="text-[12px] text-foreground-400 py-6 text-center">
-                  {loading ? 'Loading audit trail…' : 'No access events recorded yet.'}
-                </p>
-              ) : (
-                <div className="space-y-1">
-                  {audit.map(entry => (
-                    <div key={entry.id} className="flex items-start gap-2.5 py-2 border-b border-background-100/50 last:border-0">
-                      <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${
-                        entry.severity === 'critical' ? 'bg-red-500' : entry.severity === 'warning' ? 'bg-amber-500' : 'bg-emerald-500'
-                      }`}></span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[12px] font-medium text-foreground-800">
-                          {eventLabel(entry.event)}
-                          {!entry.succeeded && <span className="ml-1.5 text-[10px] font-semibold text-red-600">failed{entry.reason ? ` · ${entry.reason}` : ''}</span>}
-                        </p>
-                        <p className="text-[10px] text-foreground-400 truncate">{entry.email || 'unknown address'}</p>
-                      </div>
-                      <div className="text-right shrink-0 flex flex-col items-end gap-1">
-                        <p className="text-[10px] text-foreground-400 whitespace-nowrap">{timeAgo(entry.createdAt)}</p>
-                        {entry.ipAddress && <p className="text-[10px] text-foreground-300 whitespace-nowrap">{entry.ipAddress}</p>}
-                        {/* A failed invitation is the one access-log row an
-                            administrator can actually act on from here. */}
-                        {canResendInvitation(entry) && (
-                          <ResendInvitationButton entry={entry} onResent={reloadAudit} />
-                        )}
-                      </div>
+              {recentEventsOpen && (
+                <div id="super-admin-recent-events-content">
+                  {audit.length === 0 ? (
+                    <p className="text-[12px] text-foreground-400 py-6 text-center">
+                      {loading ? 'Loading audit trail…' : 'No access events recorded yet.'}
+                    </p>
+                  ) : (
+                    <div className="space-y-1">
+                      {audit.map(entry => (
+                        <div key={entry.id} className="flex items-start gap-2.5 py-2 border-b border-background-100/50 last:border-0">
+                          <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${
+                            entry.severity === 'critical' ? 'bg-red-500' : entry.severity === 'warning' ? 'bg-amber-500' : 'bg-emerald-500'
+                          }`}></span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[12px] font-medium text-foreground-800">
+                              {eventLabel(entry.event)}
+                              {!entry.succeeded && <span className="ml-1.5 text-[10px] font-semibold text-red-600">failed{entry.reason ? ` · ${entry.reason}` : ''}</span>}
+                            </p>
+                            <p className="text-[10px] text-foreground-400 truncate">{entry.email || 'unknown address'}</p>
+                          </div>
+                          <div className="text-right shrink-0 flex flex-col items-end gap-1">
+                            <p className="text-[10px] text-foreground-400 whitespace-nowrap">{timeAgo(entry.createdAt)}</p>
+                            {entry.ipAddress && <p className="text-[10px] text-foreground-300 whitespace-nowrap">{entry.ipAddress}</p>}
+                            {/* A failed invitation is the one access-log row an
+                                administrator can actually act on from here. */}
+                            {canResendInvitation(entry) && (
+                              <ResendInvitationButton entry={entry} onResent={reloadAudit} />
+                            )}
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
                 </div>
               )}
             </section>

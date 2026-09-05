@@ -6,6 +6,7 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { useAuth } from '@/hooks/useAuth';
 import { useTutorIdentity } from '@/hooks/useTutorIdentity';
 import { clearTutorViewAs, setTutorViewAs } from '@/lib/tutorViewAs';
+import { formatHoursMinutes } from '@/lib/format';
 import { TutorDirectoryPicker } from './TutorDirectoryPicker';
 import { isJoinButtonEnabled, scheduledInstant, UK_TIME_ZONE } from './meetingTiming';
 import {
@@ -235,7 +236,7 @@ function ComponentRow({ component }: { component: ModuleComponent }) {
             <div>
               <dt className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Expected OTJH</dt>
               <dd className="mt-0.5 text-[12px] font-semibold text-foreground-800">
-                {component.expectedOtjh != null ? `${component.expectedOtjh}h` : '—'}
+                {component.expectedOtjh != null ? formatHoursMinutes(component.expectedOtjh) : '—'}
               </dd>
             </div>
             <div>
@@ -409,7 +410,7 @@ function ModuleCard({ module }: { module: TutorModule }) {
         <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-foreground-100 pt-3 sm:grid-cols-4">
           <Fact label="Weekly slot" value={weeklySlot(module)} />
           <Fact label="Sessions" value={module.sessionsNumber != null ? String(module.sessionsNumber) : '—'} />
-          <Fact label="OTJ hours" value={module.totalOtjh != null && Number(module.totalOtjh) > 0 ? `${Number(module.totalOtjh)}h` : '—'} />
+          <Fact label="OTJ hours" value={module.totalOtjh != null && Number(module.totalOtjh) > 0 ? formatHoursMinutes(Number(module.totalOtjh)) : '—'} />
           <Fact label="Delivery window" value={deliveryWindow || '—'} />
         </dl>
       </button>

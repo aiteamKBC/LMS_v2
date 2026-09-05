@@ -6,7 +6,7 @@ import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import { fetchLmsSchema, type LmsCourse, type LmsMaterial, type LmsSection, type LmsStudent } from '@/api/lmsSchema';
 import {
-  buildLearnerJourney, quizAggregateStats, componentTypeMeta, gradePercent, hasComponentContent, isOpenableComponent,
+  buildLearnerJourney, quizAggregateStats, componentTypeMeta, formatHoursMinutes, gradePercent, hasComponentContent, isOpenableComponent,
   type JourneyModule, type JourneyWeek, type JourneyComponent,
 } from '@/utils/learnerJourney';
 import { EvidenceFilesButton } from '@/components/feature/EvidenceFilesButton';
@@ -62,7 +62,7 @@ export function RealThisWeekView({
     >
       <div className="p-3 md:p-6 space-y-5 md:space-y-6">
         {/* ═══════════ HERO ═══════════ */}
-        <section className="relative rounded-2xl overflow-hidden animate-in fade-in duration-300" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
+        <section className="learner-super-admin-hero relative rounded-2xl overflow-hidden animate-in fade-in duration-300" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute animate-liquid-blob-1 opacity-25" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
             <div className="absolute animate-liquid-blob-2 opacity-15" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
@@ -84,7 +84,7 @@ export function RealThisWeekView({
             {quizStats.quizzesTaken > 0 && (
               <div className="lg:w-[220px] shrink-0 px-5 md:px-7 py-5 md:py-6 border-t lg:border-t-0 lg:border-l border-accent-400/10 flex items-center justify-center">
                 <div className="flex flex-col items-center gap-1">
-                  <span className="text-3xl font-heading font-bold text-white">{quizStats.totalHours}h</span>
+                  <span className="text-3xl font-heading font-bold text-white">{formatHoursMinutes(quizStats.totalHours)}</span>
                   <span className="text-[11px] text-white/50 font-medium uppercase tracking-wider">Logged via quizzes</span>
                 </div>
               </div>
@@ -96,7 +96,7 @@ export function RealThisWeekView({
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
           <SnapshotCard icon="ri-stack-line" label="Components" value={`${totalComponents}`} detail="Learning items" color="primary" />
           <SnapshotCard icon="ri-award-line" label="KSBs Covered" value={`${ksbCount}`} detail="Knowledge, Skills & Behaviours" color="accent" />
-          <SnapshotCard icon="ri-time-line" label="Planned OTJH" value={`${totalOtjh}h`} detail="On-the-job training hours" color="secondary" />
+          <SnapshotCard icon="ri-time-line" label="Planned OTJH" value={formatHoursMinutes(totalOtjh)} detail="On-the-job training hours" color="secondary" />
           <SnapshotCard
             icon="ri-questionnaire-line"
             label="Quizzes"
@@ -159,7 +159,7 @@ function SnapshotCard({ icon, label, value, detail, color }: {
 }) {
   const c = SNAPSHOT_COLORS[color] || SNAPSHOT_COLORS.primary;
   return (
-    <div className="bg-background-50 rounded-2xl border border-foreground-200/50 p-4 md:p-5 card-premium">
+    <div className="coach-metric-card">
       <div className={`w-9 h-9 rounded-xl ${c.bg} flex items-center justify-center mb-3`}>
         <AppIcon className={`${icon} ${c.icon} text-base`} />
       </div>
@@ -464,7 +464,7 @@ function ModuleSection({ module, defaultOpen, kind, learnerId, navigate, complet
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {moduleOtjh > 0 && <span className="hidden sm:inline text-xs font-semibold text-primary-600">{Math.round(moduleOtjh * 10) / 10}h</span>}
+          {moduleOtjh > 0 && <span className="hidden sm:inline text-xs font-semibold text-primary-600">{formatHoursMinutes(moduleOtjh)}</span>}
           <div className="w-7 h-7 flex items-center justify-center rounded-lg bg-background-100">
             <AppIcon className={`ri-arrow-down-s-line text-foreground-400 transition-transform text-sm ${collapsed ? '' : 'rotate-180'}`} />
           </div>
@@ -520,7 +520,7 @@ function WeekCard({ week, module, kind, learnerId, navigate, completedIds }: {
             <p className="text-[11px] text-foreground-400 mt-0.5">{componentCount} {componentCount === 1 ? 'component' : 'components'}</p>
           </div>
           <div className="flex items-center gap-3 shrink-0">
-            {week.otjh > 0 && <span className="text-xs font-semibold text-foreground-500">{Math.round(week.otjh * 10) / 10}h</span>}
+            {week.otjh > 0 && <span className="text-xs font-semibold text-foreground-500">{formatHoursMinutes(week.otjh)}</span>}
             <div className="flex items-center justify-center rounded-lg bg-background-100 w-6 h-6">
               <AppIcon className={`ri-arrow-down-s-line text-foreground-400 transition-transform ${open ? 'rotate-180' : ''} text-xs`} />
             </div>

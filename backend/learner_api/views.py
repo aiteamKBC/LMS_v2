@@ -42,6 +42,13 @@ from .active_users import (
 )
 from .identity import learner_profile_for_source
 from .learner_progression import ACTIVE_STATUS, advance_learner
+from login.services import sync_account
+
+#: Fields on a learner row that the login account keeps a copy of. A change to
+#: any of them has to be pushed to that copy — see login.identity.ensure_account.
+ACCOUNT_IDENTITY_FIELDS = ("email", "username", "preferred_name")
+#: The same for a staff row, where the role follows position and access.
+STAFF_IDENTITY_FIELDS = ("email", "username", "preferred_name", "position", "access")
 from .constants import (
     ACCESS_SUPER_ADMIN,
     STATUS_CHOICES,
@@ -56,6 +63,7 @@ from .mappers import (
     restrict_to_self_writable,
     to_board,
     to_commercial_row,
+    to_edit_fields,
     to_list_row,
     to_staff_row,
     write_commercial_fields,
@@ -816,6 +824,14 @@ def enrolment_user_detail(request, pk):
                 setattr(user, attr, value)
             if fields:
                 user.save(update_fields=list(fields.keys()))
+                # The address and name on this row ARE the sign-in identity, and
+                # the login account keeps its own copy — which is what an
+                # invitation is sent to. Correcting an email here without this
+                # left the invitation going to the old address for ever, since
+                # the account only refreshes itself when its owner signs in and
+                # an invited learner has not yet.
+                if any(field in fields for field in ACCOUNT_IDENTITY_FIELDS):
+                    sync_account("learner", user.pk, subject=user)
                 if any(field in fields for field in PLACEMENT_SOURCE_FIELDS):
                     # A learner placed after they were created has none of the
                     # cohort's dates, and progression cannot start them without
@@ -834,6 +850,33 @@ def enrolment_user_detail(request, pk):
 
 
 @csrf_exempt
+# Staff only on GET too, unlike its neighbours: the response carries a national
+# insurance number, a date of birth and a home address. The board GET next door
+# is ungated because what it returns is programme progress, which is not the
+# same thing.
+@staff_only()
+def enrolment_user_fields(request, pk):
+    """The editable columns of one learner, to prefill the edit form.
+
+        GET /learner_api/enrolment-users/<id>/fields/  -> {field: value}
+
+    Saving goes back to ``enrolment_user_detail`` (PATCH), which validates the
+    choice lists and re-stamps the delivery window when a learner's placement
+    moves. This endpoint only reads.
+    """
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    try:
+        # all_learners for the same reason as enrolment_user_detail: ids are
+        # unique across the single table but `objects` hides commercial rows.
+        user = EnrolmentUser.all_learners.filter(pk=pk).first()
+    except DatabaseError as exc:
+        return _error(f"Database error: {exc}", 502)
+    if user is None:
+        return _error("User not found.", 404)
+    return JsonResponse(to_edit_fields(user))
+
+
 # Same reason as enrolment_user_detail: the learner presses Finish themselves.
 @staff_only(writes_only=True, allow_own_learner="pk")
 def enrolment_user_finish(request, pk):
@@ -1018,6 +1061,11 @@ def staff_user_detail(request, pk):
                 user.save(update_fields=[*fields.keys(), "updated_at"])
             except DatabaseError as exc:
                 return _error(f"Database error: {exc}", 502)
+            # Same as the learner path, plus role: a staff account's role is
+            # derived from position and access, so an edit to either has to
+            # reach the account that enforces it.
+            if any(field in fields for field in STAFF_IDENTITY_FIELDS):
+                sync_account("staff", user.pk, subject=user)
         return JsonResponse(to_staff_row(user))
 
     return _error("Method not allowed.", 405)

@@ -250,13 +250,6 @@ ATTENDANCE_INCLUDED_STATUSES = {"active", "break"}
 MARKING_OVERDUE_DAYS = 7
 TIMETABLE_SCHEDULE_SLOTS = (9, 10, 11, 13, 14, 15, 16)
 ENV_FILE_NAME = ".env"
-COACH_ATTENDANCE_DETAILS_RELATION_CANDIDATES = (
-    '"Learner"."learner_attendance_details"',
-    '"Learner"."Learner_attendance_details"',
-    '"learner"."learner_attendance_details"',
-    '"Coach"."learner_attendance_details"',
-    '"coach"."learner_attendance_details"',
-)
 LEARNER_ABSENCE_RELATION_CANDIDATES = (
     '"Learner"."Absence"',
     '"Learner"."absence"',
@@ -662,7 +655,40 @@ def microsoft_graph_request(method: str, path: str, *, payload: dict | None = No
             latency_ms=round((perf_counter() - started) * 1000, 1),
         )
         detail = exc.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(f"Microsoft Graph {method.upper()} {path} failed: {exc.code} {detail}") from exc
+        graph_code = ""
+        graph_message = ""
+        request_id = ""
+        try:
+            parsed_detail = json.loads(detail) if detail else {}
+            graph_error = parsed_detail.get("error") if isinstance(parsed_detail, dict) else {}
+            if isinstance(graph_error, dict):
+                graph_code = str(graph_error.get("code") or "").strip()
+                graph_message = str(graph_error.get("message") or "").strip()
+                inner_error = graph_error.get("innerError") or graph_error.get("innererror") or {}
+                if isinstance(inner_error, dict):
+                    request_id = str(
+                        inner_error.get("request-id")
+                        or inner_error.get("requestId")
+                        or ""
+                    ).strip()
+        except (TypeError, ValueError, json.JSONDecodeError):
+            graph_message = detail[:1500].strip()
+        if not request_id and exc.headers:
+            request_id = str(
+                exc.headers.get("request-id")
+                or exc.headers.get("client-request-id")
+                or ""
+            ).strip()
+        diagnostics = [f"HTTP {exc.code}"]
+        if graph_code:
+            diagnostics.append(f"code={graph_code}")
+        if graph_message:
+            diagnostics.append(f"message={graph_message}")
+        if request_id:
+            diagnostics.append(f"request-id={request_id}")
+        raise RuntimeError(
+            f"Microsoft Graph {method.upper()} {path} failed: {'; '.join(diagnostics)}"
+        ) from exc
     except urllib_error.URLError as exc:
         metric_event(
             "graph_call",
@@ -3056,120 +3082,6 @@ def fetch_learner_absence_data(email_keys: list[str]) -> dict:
             })
 
     return {"metrics": metrics, "records": {}, "trends": trends}
-
-
-def sync_learner_absence_counts_from_details(learner_ids: list[int], email_keys: list[str]) -> None:
-    ids = sorted({int(learner_id) for learner_id in learner_ids if learner_id})
-    emails = sorted({normalize_email(email) for email in email_keys if normalize_email(email)})
-    if not ids and not emails:
-        return
-
-    connection = connections[router.db_for_read(CoachAbsenceReport) or "default"]
-    absence_relation = find_learner_absence_relation(connection)
-    if not absence_relation:
-        return
-
-    detail_relation = find_existing_relation(connection, COACH_ATTENDANCE_DETAILS_RELATION_CANDIDATES)
-    if not detail_relation:
-        return
-
-    detail_columns = relation_columns(connection, detail_relation)
-    learner_id_column = first_existing_column(detail_columns, "learner_id", "learnerid", "Learner ID")
-    learner_email_column = first_existing_column(detail_columns, "learner_email", "email", "Email")
-    status_column = first_existing_column(detail_columns, "attendance_status", "status", "attendance", "is_present", "present", "attended")
-    if not status_column or not any([learner_id_column, learner_email_column]):
-        return
-
-    absence_columns = relation_columns(connection, absence_relation)
-    absence_learner_id_column = first_existing_column(absence_columns, "learner_id", "learnerid", "Learner ID")
-    absence_learner_email_column = first_existing_column(absence_columns, "learner_email", "email", "Email")
-    absence_present_column = first_existing_column(absence_columns, "present")
-    absence_absent_column = first_existing_column(absence_columns, "absent")
-    if not absence_present_column or not absence_absent_column or not any([absence_learner_id_column, absence_learner_email_column]):
-        return
-
-    filters = []
-    params: list = []
-    if learner_id_column and ids:
-        placeholders = ", ".join(["%s"] * len(ids))
-        filters.append(f"{quote_sql_identifier(learner_id_column)} in ({placeholders})")
-        params.extend(ids)
-    if learner_email_column and emails:
-        filters.append(f"lower(trim({quote_sql_identifier(learner_email_column)}::text)) = any(%s)")
-        params.append(emails)
-    if not filters:
-        return
-
-    learner_id_select = (
-        f"{quote_sql_identifier(learner_id_column)} as learner_id"
-        if learner_id_column
-        else "null as learner_id"
-    )
-    learner_email_select = (
-        f"{quote_sql_identifier(learner_email_column)} as learner_email"
-        if learner_email_column
-        else "null as learner_email"
-    )
-    query = f"""
-        select
-            {learner_id_select},
-            {learner_email_select},
-            {quote_sql_identifier(status_column)} as attendance_status
-        from {detail_relation}
-        where {" or ".join(filters)}
-    """
-
-    with connection.cursor() as cursor:
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
-
-    counts_by_id: dict[int, dict[str, int]] = {}
-    counts_by_email: dict[str, dict[str, int]] = {}
-    for learner_id_value, learner_email_value, status_value in rows:
-        status = normalize_attendance_detail_status(status_value)
-        if status not in {"present", "absent"}:
-            continue
-        learner_id = to_int(learner_id_value)
-        email_key = normalize_email(learner_email_value)
-        if learner_id:
-            counts = counts_by_id.setdefault(learner_id, {"present": 0, "absent": 0})
-            counts[status] += 1
-        if email_key:
-            counts = counts_by_email.setdefault(email_key, {"present": 0, "absent": 0})
-            counts[status] += 1
-
-    if not counts_by_id and not counts_by_email:
-        return
-
-    with connection.cursor() as cursor:
-        if absence_learner_id_column:
-            for learner_id, counts in counts_by_id.items():
-                cursor.execute(
-                    f"""
-                    update {absence_relation}
-                    set {quote_sql_identifier(absence_present_column)} = %s,
-                        {quote_sql_identifier(absence_absent_column)} = %s
-                    where {quote_sql_identifier(absence_learner_id_column)} = %s
-                    """,
-                    [counts["present"], counts["absent"], learner_id],
-                )
-        if absence_learner_email_column:
-            learner_id_guard = (
-                f" and {quote_sql_identifier(absence_learner_id_column)} is null"
-                if absence_learner_id_column
-                else ""
-            )
-            for email_key, counts in counts_by_email.items():
-                cursor.execute(
-                    f"""
-                    update {absence_relation}
-                    set {quote_sql_identifier(absence_present_column)} = %s,
-                        {quote_sql_identifier(absence_absent_column)} = %s
-                    where lower(trim({quote_sql_identifier(absence_learner_email_column)}::text)) = %s
-                    {learner_id_guard}
-                    """,
-                    [counts["present"], counts["absent"], email_key],
-                )
 
 
 def is_truthy_value(value) -> bool:
@@ -6092,7 +6004,7 @@ def serialize_attendance_learner(
 
 def normalize_attendance_detail_status(value) -> str:
     text = clean_text(value).lower()
-    if text in {"1", "true", "yes", "y", "present", "attended", "attend"}:
+    if text in {"1", "true", "yes", "y", "present", "attended", "attend", "late"}:
         return "present"
     if text in {"0", "false", "no", "n", "absent", "missed", "did not attend", "non-attendance"}:
         return "absent"
@@ -6628,7 +6540,6 @@ def coach_attendance(request):
             active_learner_ids,
             active_email_keys,
         )
-        sync_learner_absence_counts_from_details(learner_ids, email_keys)
         metrics_by_id = attendance_data["metricsById"]
         metrics_by_email = attendance_data["metrics"]
         missing_fallback_emails = [

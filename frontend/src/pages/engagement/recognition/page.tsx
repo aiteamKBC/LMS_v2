@@ -355,8 +355,8 @@ export default function RecognitionPage() {
                       <AppIcon className="ri-copper-coin-line"></AppIcon>{rec.points} pts
                     </span>
                     <div className="flex items-center gap-2">
-                      <button onClick={() => shareRecognition(rec)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                        <AppIcon className="ri-share-line mr-1"></AppIcon> Share
+                      <button onClick={() => shareRecognition(rec)} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                        <AppIcon className="ri-share-line text-sm"></AppIcon> Share
                       </button>
                       <button onClick={() => openEdit(rec)} className="px-3 py-1.5 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[10px] font-medium hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
                         <AppIcon className="ri-edit-line mr-1"></AppIcon> Edit

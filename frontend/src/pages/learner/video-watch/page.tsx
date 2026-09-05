@@ -17,7 +17,7 @@ import {
   componentCriteria, componentRequiresEvidence, completedComponentIds, isComponentComplete,
   type JourneyComponent,
 } from '@/utils/learnerJourney';
-import { fetchEvidence, getEvidenceDownloadUrl, type EvidenceRecord } from '@/api/evidence';
+import { fetchEvidence, uploadEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
 import { ReflectionWindow, formatClock, formatRecordedClock, parseClockSeconds } from '@/components/feature/ReflectionWindow';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
@@ -36,11 +36,13 @@ import {
 import { DemoTimeChip } from '@/components/feature/DemoTimePanel';
 import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { ActivitySidebar } from './ActivitySidebar';
+import { isNavigableComponent } from './weekPreview';
+import { componentRoute } from './componentRoute';
 import { resolveDocEmbed } from '@/lib/docEmbed';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 import {
   loadTeamsMeetingArtifacts,
-  syncTeamsMeetingArtifacts,
   teamsMeetingArtifactContentUrl,
   type TeamsMeetingArtifactsResult,
 } from '@/pages/curriculum/module-builder/moduleAuthoringData';
@@ -191,7 +193,7 @@ function ActivityTimeSpentInput({ onChange }: { onChange: (seconds: number | nul
   };
 
   const fields: { key: keyof typeof parts; label: string; ariaLabel: string }[] = [
-    { key: 'hours', label: 'hr', ariaLabel: 'Hours spent' },
+    { key: 'hours', label: 'hour', ariaLabel: 'Hours spent' },
     { key: 'minutes', label: 'min', ariaLabel: 'Minutes spent' },
     { key: 'seconds', label: 'sec', ariaLabel: 'Seconds spent' },
   ];
@@ -229,27 +231,15 @@ function ActivityTimeSpentInput({ onChange }: { onChange: (seconds: number | nul
                 aria-label={field.ariaLabel}
                 className="w-7 bg-transparent text-center font-mono text-sm font-bold tabular-nums outline-none placeholder:text-foreground-300"
               />
-              <span className="text-[8px] font-bold uppercase tracking-wide text-foreground-400">{field.label}</span>
+              {/* No tracking: "HOUR" is wider than the 00 input above it, and
+                  letter-spacing pushed it into the neighbouring field. */}
+              <span className="text-[8px] font-bold uppercase text-foreground-400">{field.label}</span>
             </label>
           </span>
         ))}
       </span>
     </div>
   );
-}
-
-/** Route a component to the right learner page (video and quiz keep their own routes). */
-function componentRoute(kind: string | undefined, id: string | undefined, c: JourneyComponent, module: string, week: string): string {
-  if (c.isQuiz && c.quizMeta?.quizId != null) {
-    return `/learner/quiz/${kind}/${id}/${c.quizMeta.quizId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`;
-  }
-  const base = (c.type || '').toLowerCase() === 'video' ? 'video' : 'component';
-  return `/learner/${base}/${kind}/${id}/${c.componentId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`;
-}
-
-/** Can this sidebar row be clicked (a quiz, or any other openable component)? */
-function isNavigableComponent(c: JourneyComponent): boolean {
-  return (c.isQuiz && hasComponentContent(c)) || isOpenableComponent(c);
 }
 
 /** Find the target component + its week/module context inside the built journey. */
@@ -326,6 +316,8 @@ export default function ComponentViewPage() {
   const [evidenceVersion, setEvidenceVersion] = useState(0);
   const [evidenceFiles, setEvidenceFiles] = useState<EvidenceRecord[]>([]);
   const [pendingEvidenceFileName, setPendingEvidenceFileName] = useState<string | null>(null);
+  const [confirmingEvidenceRemoval, setConfirmingEvidenceRemoval] = useState(false);
+  const [removingEvidence, setRemovingEvidence] = useState(false);
   const [evidencePreview, setEvidencePreview] = useState<EvidencePreview | null>(null);
   const evidenceInputId = useId();
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -341,6 +333,8 @@ export default function ComponentViewPage() {
     setPendingEvidenceFileName(null);
     setEvidenceFiles([]);
     setEvidencePreview(null);
+    // A pending "Remove this file?" must not survive onto the next activity.
+    setConfirmingEvidenceRemoval(false);
   }, [timerStorageKey]);
 
   useEffect(() => {
@@ -372,6 +366,11 @@ export default function ComponentViewPage() {
 
   const contentKind = componentContentKind(component?.type);
   const isVideo = contentKind === 'video';
+  const isAudio = contentKind === 'audio';
+  // Live sessions and assignments use learner-entered time instead of exposing
+  // a page timer. The signed session still runs invisibly so the server can cap
+  // and verify the submitted duration.
+  const isLiveSession = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session';
   const noun = componentNoun(component?.type);
   const openable = component ? isOpenableComponent(component) : false;
 
@@ -379,6 +378,18 @@ export default function ComponentViewPage() {
   // uploader) because the completion gate depends on it.
   const [evidenceCount, setEvidenceCount] = useState(0);
   const needsEvidence = componentRequiresEvidence(component?.type);
+  const hasEditableAssignmentDocument = Boolean(
+    needsEvidence
+    && component?.resourceUrl
+    && WORD_FILE_RE.test(fileProbe(component.resourceUrl, component.fileName)),
+  );
+  const usesManualTimeOnly = isLiveSession || needsEvidence;
+  const manualTimeMissing = usesManualTimeOnly && (manualTimeSeconds == null || manualTimeSeconds <= 0);
+
+  useEffect(() => {
+    if (usesManualTimeOnly) setTimeSource('input');
+  }, [usesManualTimeOnly]);
+
   useEffect(() => {
     // Only assignments collect evidence — nothing to look up elsewhere.
     if (!needsEvidence || !kind || !id || !componentId) return;
@@ -399,7 +410,7 @@ export default function ComponentViewPage() {
   const moduleTitle = ctx?.moduleTitle ?? searchParams.get('module') ?? '';
   const weekTitle = ctx?.weekTitle ?? searchParams.get('week') ?? '';
   const backHref = kind && id ? `/workspace/learner/${kind}/${id}` : '/workspace/learner';
-  const weekDoneCount = ctx?.weeks.find((w) => w.active)?.completed ?? 0;
+
 
   // Inspection-demo accounts only — see isInspectionDemoAccount. The results
   // screen shows an editable "demo time" beside the expected time; everyone
@@ -438,6 +449,9 @@ export default function ComponentViewPage() {
         onUploaded: (files) => {
           setEvidenceFiles(files);
           setEvidenceVersion((version) => version + 1);
+          // Also fires when a file is removed, and the optimistic label set at
+          // file-choice time would otherwise keep naming a file that is gone.
+          if (files.length === 0) setPendingEvidenceFileName(null);
         },
         trainingPlanDetails: {
           moduleId: component.moduleId ?? null,
@@ -453,6 +467,26 @@ export default function ComponentViewPage() {
   const visibleEvidenceFile = evidenceFiles[0] ?? null;
   const evidenceFileLabel = pendingEvidenceFileName || visibleEvidenceFile?.filename || null;
   const evidenceFileStatus = visibleEvidenceFile?.status || (pendingEvidenceFileName ? 'pending' : null);
+  // Deleting the stored file and letting the control fall back to its upload
+  // state *is* the reupload path — there is no separate replace call.
+  const removeEvidenceFile = async (fileId: string) => {
+    setSubmitError(null);
+    setRemovingEvidence(true);
+    try {
+      await deleteEvidence(kind as LearnerKind, id || '', fileId);
+      setPendingEvidenceFileName(null);
+      setConfirmingEvidenceRemoval(false);
+      // Bumping the version re-runs the fetch effect above, which is what keeps
+      // `evidenceCount` — and so the criteria gate and the Finish button — in
+      // step. Setting the file list here directly would leave that count stale.
+      setEvidenceVersion((version) => version + 1);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : 'Could not remove the evidence file.');
+    } finally {
+      setRemovingEvidence(false);
+    }
+  };
+
   const openEvidenceFile = async (file: EvidenceRecord) => {
     try {
       const url = await getEvidenceDownloadUrl(kind as LearnerKind, id || '', file.id);
@@ -467,7 +501,11 @@ export default function ComponentViewPage() {
 
   // Seeking changes the playhead/duration metadata, but cannot add watched time.
   const elapsedSeconds = wallElapsed;
-  const submittedTimeSeconds = timeSource === 'input' && manualTimeSeconds != null ? manualTimeSeconds : elapsedSeconds;
+  const submittedTimeSeconds = usesManualTimeOnly
+    ? manualTimeSeconds ?? 0
+    : timeSource === 'input' && manualTimeSeconds != null
+      ? manualTimeSeconds
+      : elapsedSeconds;
   // Planned time preset in the reflection window: always the component's
   // authored expected_otjh (its OTJ hours) when set, so "the planned time"
   // means the same thing for every component type in the training plan.
@@ -537,21 +575,31 @@ export default function ComponentViewPage() {
     return () => { cancelled = true; };
   }, [phase, openable, componentId, kind, id, canProgress, isVideo, trackingMode, timerStorageKey]);
 
-  // Only visible time counts. Supported videos must also actually be playing;
-  // iframe-only players use the explicit visible-page fallback.
+  // Only visible time counts for ordinary page content. Audio is intentionally
+  // allowed to keep counting in a background tab because playback can continue
+  // while the learner works elsewhere. Hidden tabs throttle intervals, so audio
+  // uses the real wall-clock delta instead of assuming every callback is exactly
+  // one second apart.
   useEffect(() => {
     if (phase !== 'consume' || (!unsupported && !playerPlaying)) return;
+    let lastAudioTickAt = Date.now();
     timerRef.current = setInterval(() => {
-      if (document.visibilityState === 'visible') {
+      if (isAudio || document.visibilityState === 'visible') {
+        const now = Date.now();
+        const increment = isAudio
+          ? Math.floor((now - lastAudioTickAt) / 1000)
+          : 1;
+        if (increment < 1) return;
+        if (isAudio) lastAudioTickAt += increment * 1000;
         setWallElapsed((seconds) => {
-          const next = seconds + 1;
+          const next = seconds + increment;
           saveActivityTimerElapsed(timerStorageKey, next);
           return next;
         });
       }
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [phase, unsupported, playerPlaying, timerStorageKey]);
+  }, [phase, unsupported, playerPlaying, isAudio, timerStorageKey]);
 
   const finishConsuming = () => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -605,7 +653,7 @@ export default function ComponentViewPage() {
       }
       setWallElapsed(0);
       setManualTimeSeconds(null);
-      setTimeSource('timer');
+      setTimeSource(usesManualTimeOnly ? 'input' : 'timer');
       const refreshed = await fetchLearnerDetail(kind as LearnerKind, id);
       setDetail(refreshed);
       setPhase('consume');
@@ -685,7 +733,7 @@ export default function ComponentViewPage() {
                 onPlayingChange={setPlayerPlaying}
                 onEnded={finishConsuming}
                 onUnsupported={() => setUnsupported(true)}
-                evidenceContext={null}
+                evidenceContext={activityEvidenceContext}
               />
               {(component.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session' && component.teamsLiveSessionId && (
                 <LiveSessionResultsCard
@@ -716,32 +764,72 @@ export default function ComponentViewPage() {
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
-                  <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-mono text-sm font-semibold tabular-nums bg-background-100 text-foreground-700" title="Time on this activity">
-                    <AppIcon className="ri-timer-line" /> {formatClock(elapsedSeconds)}
-                  </div>
+                  {!usesManualTimeOnly && (
+                    <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-mono text-sm font-semibold tabular-nums bg-background-100 text-foreground-700" title="Time on this activity">
+                      <AppIcon className="ri-timer-line" /> {formatClock(elapsedSeconds)}
+                    </div>
+                  )}
                   <ActivityTimeSpentInput
+                    key={timerStorageKey}
                     onChange={(seconds) => {
                       setManualTimeSeconds(seconds);
-                      setTimeSource(seconds == null ? 'timer' : 'input');
+                      setTimeSource(seconds == null && !usesManualTimeOnly ? 'timer' : 'input');
                     }}
                   />
                   {activityEvidenceContext && canProgress && (
                     evidenceFileLabel ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (visibleEvidenceFile?.status === 'approved') void openEvidenceFile(visibleEvidenceFile);
-                        }}
-                        disabled={visibleEvidenceFile?.status !== 'approved'}
-                        className="inline-flex max-w-[220px] items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 transition-colors enabled:cursor-pointer enabled:hover:border-emerald-300 enabled:hover:bg-emerald-100 disabled:cursor-default"
-                        title={evidenceFileLabel}
-                      >
-                        <AppIcon className={evidenceFileStatus === 'approved' ? 'ri-file-check-line' : 'ri-file-line'} />
-                        <span className="truncate">{evidenceFileLabel}</span>
-                        {evidenceFileStatus === 'pending' && (
-                          <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">Scanning</span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (visibleEvidenceFile?.status === 'approved') void openEvidenceFile(visibleEvidenceFile);
+                          }}
+                          disabled={visibleEvidenceFile?.status !== 'approved'}
+                          className="inline-flex max-w-[220px] items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 transition-colors enabled:cursor-pointer enabled:hover:border-emerald-300 enabled:hover:bg-emerald-100 disabled:cursor-default"
+                          title={evidenceFileLabel}
+                        >
+                          <AppIcon className={evidenceFileStatus === 'approved' ? 'ri-file-check-line' : 'ri-file-line'} />
+                          <span className="truncate">{evidenceFileLabel}</span>
+                          {evidenceFileStatus === 'pending' && (
+                            <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">Scanning</span>
+                          )}
+                        </button>
+                        {/* Wrong file uploaded? Remove it here and the control
+                            reverts to "Upload evidence" for the right one.
+                            Only for a real stored row — an optimistic label
+                            from a still-uploading file has no id to delete. */}
+                        {visibleEvidenceFile && (
+                          removingEvidence ? (
+                            <span className="text-[11px] font-semibold text-foreground-400">Removing…</span>
+                          ) : confirmingEvidenceRemoval ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => void removeEvidenceFile(visibleEvidenceFile.id)}
+                                className="rounded-lg bg-red-600 px-2.5 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-red-700 cursor-pointer"
+                              >
+                                Remove
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmingEvidenceRemoval(false)}
+                                className="rounded-lg border border-background-300 px-2.5 py-2 text-[11px] font-semibold text-foreground-600 transition-colors hover:bg-background-100 cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmingEvidenceRemoval(true)}
+                              className="rounded-lg border border-background-300 bg-white px-2.5 py-2 text-foreground-400 transition-colors hover:border-red-200 hover:text-red-600 cursor-pointer"
+                              title="Remove this file and upload a different one"
+                            >
+                              <AppIcon className="ri-delete-bin-line" />
+                            </button>
+                          )
                         )}
-                      </button>
+                      </span>
                     ) : (
                       <label
                         htmlFor={evidenceInputId}
@@ -754,15 +842,21 @@ export default function ComponentViewPage() {
                   )}
                   <button
                     onClick={finishConsuming}
-                    disabled={!!criteria && !criteria.met}
-                    title={criteria && !criteria.met ? 'Complete the criteria below before finishing.' : undefined}
-                    className={`inline-flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-xl transition-colors ${
+                    disabled={(!!criteria && !criteria.met) || manualTimeMissing}
+                    title={
                       criteria && !criteria.met
+                        ? 'Complete the criteria below before finishing.'
+                        : manualTimeMissing
+                          ? 'Enter the time spent before finishing.'
+                          : undefined
+                    }
+                    className={`inline-flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-xl transition-colors ${
+                      (criteria && !criteria.met) || manualTimeMissing
                         ? 'bg-background-200 text-foreground-400 cursor-not-allowed'
                         : 'bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer'
                     }`}
                   >
-                    <AppIcon className={criteria && !criteria.met ? 'ri-lock-line' : 'ri-check-line'} />
+                    <AppIcon className={(criteria && !criteria.met) || manualTimeMissing ? 'ri-lock-line' : 'ri-check-line'} />
                     Finish
                   </button>
                 </div>
@@ -775,7 +869,7 @@ export default function ComponentViewPage() {
                 </div>
               )}
 
-              {criteria?.gated && (
+              {criteria?.gated && !hasEditableAssignmentDocument && (
                 <div className={`mt-4 rounded-xl border p-4 ${
                   criteria.met ? 'border-emerald-200 bg-emerald-50/60' : 'border-amber-200 bg-amber-50/60'
                 }`}>
@@ -812,159 +906,56 @@ export default function ComponentViewPage() {
               )}
             </div>
 
-            {/* Sidebar: week components + other weeks */}
-            <aside className="space-y-4 lg:sticky lg:top-4">
-              <div className="rounded-xl border border-background-300 bg-white overflow-hidden">
-                <div className="px-4 py-3 border-b border-background-300">
-                  <h2 className="text-sm font-heading font-bold text-foreground-800">{weekTitle || 'This week'}</h2>
-                  <p className="text-[11px] text-foreground-400 mt-0.5">
-                    {ctx?.weekComponents.length ?? 0} components{' '}
-                    {weekDoneCount > 0 && <span className="text-emerald-600 font-semibold"> · {weekDoneCount} done</span>}
-                  </p>
-                </div>
-                <ul className="divide-y divide-background-300">
-                  {(ctx?.weekComponents ?? []).map((c) => {
-                    const cm = componentTypeMeta(c.title);
-                    const isCurrent = !c.isQuiz && c.componentId === componentId;
-                    const contentAvailable = hasComponentContent(c);
-                    const clickable = contentAvailable && isNavigableComponent(c) && !isCurrent;
-                    const attempts = c.isQuiz ? (c.quizAttempts || []) : [];
-                    const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
-                    const completed = isComponentComplete(c, completedIds);
-                    const timeKey = c.componentId
-                      ? demoTimeKey({ isQuiz: c.isQuiz, quizId: c.quizMeta?.quizId, componentId: c.componentId })
-                      : '';
-                    const overrideMinutes = timeKey ? demoTimeOverrides[timeKey] : null;
-                    const completionTime = completed
-                      ? overrideMinutes != null
-                        ? formatClock(Math.round(overrideMinutes * 60))
-                        : completionTimeFor(c, detail)
-                      : null;
-                    return (
-                      <li key={c.componentId || c.title}>
-                        <button
-                          disabled={!clickable}
-                          onClick={() => clickable && navigate(componentRoute(kind, id, c, moduleTitle, weekTitle))}
-                          className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
-                            !contentAvailable
-                              ? 'cursor-not-allowed bg-background-100/70 opacity-55 grayscale'
-                              : isCurrent
-                                ? 'bg-primary-50'
-                                : completed
-                                  ? `bg-emerald-50/70 ${clickable ? 'hover:bg-emerald-50 cursor-pointer' : 'cursor-default'}`
-                                  : clickable ? 'hover:bg-background-50 cursor-pointer' : 'cursor-default'
-                          }`}
-                        >
-                          <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${completed ? 'bg-emerald-100' : cm.bg}`}>
-                            <AppIcon className={completed ? 'ri-check-line text-[12px] text-emerald-700' : `${cm.icon} text-[12px] ${cm.color}`} />
-                          </span>
-                          <span className="flex-1 min-w-0">
-                            <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{cm.label}</span>
-                            <span className={`block text-[13px] font-semibold leading-snug truncate ${
-                              isCurrent ? 'text-primary-700' : completed ? 'text-emerald-900' : 'text-foreground-800'
-                            }`}>
-                              {cm.detail || cm.label}
-                            </span>
-                            {completionTime && !isDemoAccount && (
-                              <span className="mt-0.5 flex items-center gap-1 font-mono text-[10px] font-semibold tabular-nums text-emerald-700" title="Time taken">
-                                <AppIcon className="ri-timer-line text-[10px]" />
-                                {completionTime}
-                              </span>
-                            )}
-                          </span>
-                          {c.isQuiz && lastAttempt && (
-                            <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
-                              lastAttempt.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                            }`}>
-                              {gradePercent(lastAttempt.grade)}%
-                            </span>
-                          )}
-                          {!contentAvailable ? (
-                            <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
-                          ) : completed ? (
-                            <AppIcon className="ri-checkbox-circle-fill text-emerald-600 text-sm shrink-0" />
-                          ) : isCurrent ? (
-                            <AppIcon className="ri-focus-3-line text-primary-600 text-sm shrink-0" />
-                          ) : clickable ? (
-                            <AppIcon className="ri-arrow-right-s-line text-foreground-400 text-sm shrink-0" />
-                          ) : null}
-                        </button>
-                        {completed && isDemoAccount && timeKey && (
-                          <CompletionTimeInput
-                            value={completionTime || '00:00:00'}
-                            label={overrideMinutes != null ? 'Input' : 'Time taken'}
-                            rightAddon={
-                              !c.isQuiz && c.componentId && kind && id ? (
-                                <EvidenceFilesButton kind={kind as LearnerKind} learnerId={id} componentId={c.componentId} />
-                              ) : null
-                            }
-                            onSave={(seconds) => setDemoTimeOverride(
-                              demoScopeKey,
-                              timeKey,
-                              seconds == null ? null : seconds / 60,
-                            )}
-                          />
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-
-              {(ctx?.weeks?.length ?? 0) > 1 && (
-                <div className="rounded-xl border border-background-300 bg-white overflow-hidden">
-                  <div className="px-4 py-3 border-b border-background-300">
-                    <h2 className="text-sm font-heading font-bold text-foreground-800">{moduleTitle || 'Module'}</h2>
-                    <p className="text-[11px] text-foreground-400 mt-0.5">{ctx?.weeks.length} weeks</p>
-                  </div>
-                  <ul className="divide-y divide-background-300">
-                    {(ctx?.weeks ?? []).map((w) => {
-                      const weekComplete = w.count > 0 && w.completed >= w.count;
-                      const navigable = w.components.filter((item) => hasComponentContent(item) && isNavigableComponent(item));
-                      const target = navigable.find((item) => !isComponentComplete(item, completedIds)) || navigable[0] || null;
-                      return (
-                        <li key={w.week}>
-                          <button
-                            disabled={!target}
-                            onClick={() => target && navigate(componentRoute(kind, id, target, moduleTitle, w.week))}
-                            className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
-                              !target
-                                ? 'cursor-not-allowed bg-background-100/70 opacity-55'
-                                : weekComplete
-                                ? 'bg-emerald-50 text-emerald-900 hover:bg-emerald-100'
-                                : w.active ? 'bg-background-100' : 'hover:bg-background-50 cursor-pointer'
-                            }`}
-                          >
-                            <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
-                              weekComplete ? 'bg-emerald-100 text-emerald-700' : 'bg-background-100 text-foreground-500'
-                            }`}>
-                              <AppIcon className={`${weekComplete ? 'ri-check-line' : 'ri-calendar-line'} text-[12px]`} />
-                            </span>
-                            <span className="flex-1 min-w-0">
-                              <span className={`block text-[13px] font-semibold leading-snug truncate ${
-                                weekComplete ? 'text-emerald-900' : w.active ? 'text-foreground-900' : 'text-foreground-700'
-                              }`}>
-                                {w.week}
-                              </span>
-                              <span className={`block text-[10px] ${weekComplete ? 'text-emerald-700' : 'text-foreground-400'}`}>
-                                {w.count} components{weekComplete ? ' complete' : ''}
-                              </span>
-                            </span>
-                            {!target ? (
-                              <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
-                            ) : weekComplete ? (
-                              <span className="text-[10px] font-semibold text-emerald-700 shrink-0">Done</span>
-                            ) : w.active && (
-                              <span className="text-[10px] font-semibold text-primary-600 shrink-0">Current</span>
-                            )}
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              )}
-            </aside>
+            {/* The list beside the activity — shared with the quiz page, which
+                is another way into the same week. */}
+            <ActivitySidebar
+              weekComponents={ctx?.weekComponents ?? []}
+              weekTitle={weekTitle}
+              moduleTitle={moduleTitle}
+              weeks={ctx?.weeks ?? []}
+              completedIds={completedIds}
+              kind={kind}
+              id={id}
+              currentComponentId={componentId}
+              // The demo accounts edit their own completion times, so the plain
+              // read-only time is shown to everyone else.
+              completionTimeFor={(c) => {
+                const key = c.componentId
+                  ? demoTimeKey({ isQuiz: c.isQuiz, quizId: c.quizMeta?.quizId, componentId: c.componentId })
+                  : '';
+                const override = key ? demoTimeOverrides[key] : null;
+                if (override != null) return isDemoAccount ? null : formatClock(Math.round(override * 60));
+                return isDemoAccount ? null : completionTimeFor(c, detail);
+              }}
+              rowExtras={(c, completed) => {
+                const key = c.componentId
+                  ? demoTimeKey({ isQuiz: c.isQuiz, quizId: c.quizMeta?.quizId, componentId: c.componentId })
+                  : '';
+                if (!completed || !isDemoAccount || !key) return null;
+                const override = demoTimeOverrides[key];
+                return (
+                  <CompletionTimeInput
+                    value={
+                      (override != null
+                        ? formatClock(Math.round(override * 60))
+                        : completionTimeFor(c, detail)) || '00:00:00'
+                    }
+                    label={override != null ? 'Input' : 'Time taken'}
+                    rightAddon={
+                      !c.isQuiz && c.componentId && kind && id ? (
+                        <EvidenceFilesButton kind={kind as LearnerKind} learnerId={id} componentId={c.componentId} />
+                      ) : null
+                    }
+                    onSave={(seconds) => setDemoTimeOverride(
+                      demoScopeKey,
+                      key,
+                      seconds == null ? null : seconds / 60,
+                    )}
+                  />
+                );
+              }}
+              routeFor={(c, week) => componentRoute(kind, id, c, moduleTitle, week)}
+            />
           </div>
         )}
         {phase === 'confirm' && (
@@ -974,6 +965,7 @@ export default function ComponentViewPage() {
             timerLabel={formatClock(elapsedSeconds)}
             inputLabel={manualTimeSeconds == null ? null : formatClock(manualTimeSeconds)}
             selectedSource={timeSource}
+            manualTimeOnly={usesManualTimeOnly}
             evidenceFileName={evidenceFileLabel}
             submitting={submitting}
             error={submitError}
@@ -996,6 +988,7 @@ function CompletionConfirmPopup({
   timerLabel,
   inputLabel,
   selectedSource,
+  manualTimeOnly,
   evidenceFileName,
   submitting,
   error,
@@ -1003,11 +996,13 @@ function CompletionConfirmPopup({
   onCancel,
   onConfirm,
 }: {
-  title: string; noun: string; timerLabel: string; inputLabel: string | null; selectedSource: TimeSource; evidenceFileName?: string | null;
+  title: string; noun: string; timerLabel: string; inputLabel: string | null; selectedSource: TimeSource; manualTimeOnly: boolean; evidenceFileName?: string | null;
   submitting: boolean; error: string | null;
   onSelectSource: (source: TimeSource) => void; onCancel: () => void; onConfirm: () => void;
 }) {
-  const selectedTimeLabel = selectedSource === 'input' && inputLabel ? inputLabel : timerLabel;
+  const selectedTimeLabel = selectedSource === 'input'
+    ? inputLabel || '--:--:--'
+    : timerLabel;
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-foreground-950/35 px-4 py-6 backdrop-blur-[2px]">
@@ -1034,22 +1029,24 @@ function CompletionConfirmPopup({
               </span>
             </div>
           )}
-          <button
-            type="button"
-            onClick={() => onSelectSource('timer')}
-            disabled={submitting}
-            className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-colors ${
-              selectedSource === 'timer'
-                ? 'border-primary-300 bg-primary-50 text-primary-800'
-                : 'border-background-300 bg-white text-foreground-700 hover:bg-background-50'
-            } disabled:cursor-not-allowed disabled:opacity-60`}
-          >
-            <span className="inline-flex items-center gap-2 text-sm font-semibold">
-              <AppIcon className="ri-timer-line" />
-              Timer
-            </span>
-            <span className="font-mono text-sm font-bold tabular-nums">{timerLabel}</span>
-          </button>
+          {!manualTimeOnly && (
+            <button
+              type="button"
+              onClick={() => onSelectSource('timer')}
+              disabled={submitting}
+              className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-colors ${
+                selectedSource === 'timer'
+                  ? 'border-primary-300 bg-primary-50 text-primary-800'
+                  : 'border-background-300 bg-white text-foreground-700 hover:bg-background-50'
+              } disabled:cursor-not-allowed disabled:opacity-60`}
+            >
+              <span className="inline-flex items-center gap-2 text-sm font-semibold">
+                <AppIcon className="ri-timer-line" />
+                Timer
+              </span>
+              <span className="font-mono text-sm font-bold tabular-nums">{timerLabel}</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => inputLabel && onSelectSource('input')}
@@ -1086,7 +1083,7 @@ function CompletionConfirmPopup({
           <button
             type="button"
             onClick={onConfirm}
-            disabled={submitting}
+            disabled={submitting || (manualTimeOnly && !inputLabel)}
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <AppIcon className={submitting ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} />
@@ -1195,7 +1192,47 @@ function decodeInlineText(value: string): string {
     .replace(/&#39;/g, "'");
 }
 
-function AttachedFileCard({ url, fileName }: { url: string; fileName?: string | null }) {
+/**
+ * Download the file itself.
+ *
+ * Shown only where the author allowed it (`downloadAllowed` on the component —
+ * a PowerPoint's authoring form calls it "Download allowed"). The learner page
+ * carried the flag all the way from the database and then never offered the
+ * download, so a deck marked downloadable could only be read in the viewer.
+ *
+ * `download` names the saved file rather than leaving the learner with the
+ * upload's timestamped name; it works because these are served same-origin.
+ */
+function DownloadFileButton({ url, fileName, label = 'Download' }: {
+  url: string;
+  fileName?: string | null;
+  label?: string;
+}) {
+  return (
+    <a
+      href={proxiedMaterialUrl(url)}
+      download={fileLabelFrom(url, fileName)}
+      className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-primary-200 bg-primary-50 px-3.5 py-2 text-xs font-bold text-primary-700 transition-colors hover:border-primary-300 hover:bg-primary-100"
+    >
+      <AppIcon className="ri-download-2-line" />
+      {label}
+    </a>
+  );
+}
+
+/**
+ * The file itself, under whatever preview was shown.
+ *
+ * `previewed` says whether the reader is already looking at the content: this
+ * card sits under the in-house deck viewer as well as standing in for the
+ * previews we cannot draw, and telling somebody a preview is unavailable while
+ * they read one is simply untrue.
+ */
+function AttachedFileCard({ url, fileName, previewed = false }: {
+  url: string;
+  fileName?: string | null;
+  previewed?: boolean;
+}) {
   const href = proxiedMaterialUrl(url);
   return (
     <div className="rounded-xl border border-background-300 bg-background-50 p-4">
@@ -1206,17 +1243,24 @@ function AttachedFileCard({ url, fileName }: { url: string; fileName?: string | 
           </span>
           <div className="min-w-0">
             <p className="truncate text-sm font-bold text-foreground-900">{fileLabelFrom(url, fileName)}</p>
-            <p className="text-xs text-foreground-500">Preview is not available for this file type.</p>
+            <p className="text-xs text-foreground-500">
+              {previewed
+                ? 'Save a copy to read it outside the platform.'
+                : 'Preview is not available for this file type.'}
+            </p>
           </div>
         </div>
+        {/* Saved, not opened in a tab: the browser has no viewer for these
+            types either, so opening one only moved the download a click away
+            (and, for a deck, downloaded it under the upload's timestamped
+            name). `download` names the file as the author uploaded it. */}
         <a
           href={href}
-          target="_blank"
-          rel="noreferrer"
+          download={fileLabelFrom(url, fileName)}
           className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl bg-primary-600 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-primary-700"
         >
-          <AppIcon className="ri-external-link-line" />
-          Open file
+          <AppIcon className="ri-download-2-line" />
+          Download file
         </a>
       </div>
     </div>
@@ -1340,7 +1384,10 @@ function InlineAttachmentPreview({ url, title, fileName }: { url: string; title:
     <>
       <DocumentEmbed url={url} title={title} />
       <div className="mt-3">
-        <AttachedFileCard url={url} fileName={fileName} />
+        {/* DocumentEmbed above draws the deck itself where it can, so the card
+            below offers the file rather than apologising for a missing
+            preview. */}
+        <AttachedFileCard url={url} fileName={fileName} previewed />
       </div>
     </>
   );
@@ -1602,8 +1649,20 @@ function PdfCanvasPreview({ url, title, fileName }: { url: string; title: string
  * published on the public internet. See @/lib/docEmbed. */
 function DocumentEmbed({ url, title }: { url: string; title: string }) {
   const embed = resolveDocEmbed(url);
-  const unavailable = () => null;
-  if (embed.mode === 'unavailable') return null;
+  // Say why there is no preview. Returning null left a learner looking at a
+  // header, a download card, and nothing in between — with no way to tell a
+  // file that cannot be shown from one that failed to load. The file itself is
+  // offered by the card below this, so the note only has to explain.
+  const unavailable = (reason: string) => (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+      <p className="flex items-center gap-2 text-sm font-bold text-amber-900">
+        <AppIcon className="ri-information-line" />
+        This file can&apos;t be shown here
+      </p>
+      <p className="mt-1 text-xs leading-5 text-amber-800">{reason}</p>
+    </div>
+  );
+  if (embed.mode === 'unavailable') return unavailable(embed.reason);
   if (embed.mode === 'deck') return <SlideDeckViewer src={embed.src} title={title} fallback={unavailable} />;
   return (
     // A 4:3 box on a wide card is taller than the screen, which puts the top of
@@ -1658,21 +1717,196 @@ interface EvidenceContext {
 function ComponentContent({ evidenceContext, ...props }: Parameters<typeof ComponentBody>[0] & {
   evidenceContext: EvidenceContext | null;
 }) {
+  return <ComponentBody {...props} assignmentEditorContext={evidenceContext} />;
+}
+
+function completedAssignmentName(fileName?: string | null): string {
+  const stem = (fileName || 'assignment').replace(/\.[^.]+$/, '').replace(/[^a-z0-9 _-]+/gi, '').trim() || 'assignment';
+  return `${stem}-completed-${new Date().toISOString().slice(0, 10)}.doc`;
+}
+
+function wordCompatibleDocument(body: string, title: string): string {
+  const safeTitle = DOMPurify.sanitize(title, { ALLOWED_TAGS: [] });
+  const safeBody = DOMPurify.sanitize(body);
+  return `<!doctype html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
+<head><meta charset="utf-8"><title>${safeTitle}</title>
+<style>
+body{font-family:Arial,sans-serif;font-size:11pt;line-height:1.45;color:#111827}
+table{width:100%;border-collapse:collapse;margin:12px 0}td,th{border:1px solid #9ca3af;padding:7px;vertical-align:top}th{background:#f3f4f6}
+h1,h2,h3{page-break-after:avoid}p{margin:0 0 9px}ul,ol{margin:0 0 9px 22px}
+</style></head><body>${safeBody}</body></html>`;
+}
+
+function EditableAssignmentDocument({
+  url, fileName, title, evidenceContext,
+}: {
+  url: string;
+  fileName?: string | null;
+  title: string;
+  evidenceContext: EvidenceContext;
+}) {
+  const editorRef = useRef<HTMLDivElement>(null);
+  const [ready, setReady] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [submittedName, setSubmittedName] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    editor.replaceChildren();
+    setLoading(true);
+    setReady(false);
+    setError(null);
+    setDirty(false);
+    setSubmittedName(null);
+
+    async function loadDocument() {
+      try {
+        const response = await fetch(proxiedMaterialUrl(url), { credentials: 'same-origin' });
+        if (!response.ok) throw new Error(`File request failed (${response.status})`);
+
+        const arrayBuffer = await response.arrayBuffer();
+        if (cancelled) return;
+
+        // Mammoth intentionally produces semantic HTML and drops Word's page
+        // layout. docx-preview renders the original document relationships,
+        // headers, images, fonts and page geometry so the editable copy keeps
+        // the authored template's appearance.
+        const { renderAsync } = await import('docx-preview');
+        await renderAsync(arrayBuffer, editor, editor, {
+          className: 'assignment-docx',
+          inWrapper: true,
+          ignoreWidth: false,
+          ignoreHeight: false,
+          ignoreFonts: false,
+          breakPages: true,
+          ignoreLastRenderedPageBreak: false,
+          experimental: true,
+          useBase64URL: true,
+          renderHeaders: true,
+          renderFooters: true,
+          renderFootnotes: true,
+          renderEndnotes: true,
+        });
+
+        if (cancelled) return;
+        editor.querySelectorAll('td').forEach((cell) => {
+          if ((cell.textContent || '').trim()) return;
+          cell.setAttribute('data-assignment-field', 'true');
+          if (!cell.childNodes.length) cell.innerHTML = '<p><br></p>';
+        });
+        editor.querySelectorAll('table').forEach((table) => {
+          // Word templates frequently store an absolute table width. That can
+          // leave the answer column squeezed or clipped in the narrower LMS
+          // workspace, so fit authored form tables to the visible page.
+          table.style.setProperty('width', '100%', 'important');
+          table.style.setProperty('max-width', '100%', 'important');
+          table.style.tableLayout = 'fixed';
+        });
+        setReady(true);
+      } catch (loadError) {
+        if (!cancelled) {
+          editor.replaceChildren();
+          setError(loadError instanceof Error ? loadError.message : 'Could not open the assignment editor.');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    void loadDocument();
+    return () => { cancelled = true; };
+  }, [url, evidenceContext.componentId]);
+
+  const saveAndSubmit = async () => {
+    if (!editorRef.current || !dirty || saving) return;
+    if (!window.confirm('Save this as your final evidence submission? You will not be able to edit this submitted copy.')) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const outputName = completedAssignmentName(fileName);
+      const output = wordCompatibleDocument(editorRef.current.innerHTML, title);
+      const file = new File([output], outputName, { type: 'application/msword' });
+      await uploadEvidence(
+        evidenceContext.kind,
+        evidenceContext.learnerId,
+        file,
+        evidenceContext.componentId,
+        evidenceContext.trainingPlanDetails,
+      );
+      setDirty(false);
+      setSubmittedName(outputName);
+      try {
+        const files = await fetchEvidence(evidenceContext.kind, evidenceContext.learnerId, {
+          sectionRef: evidenceContext.componentId,
+        });
+        evidenceContext.onUploaded(files);
+      } catch {
+        // The upload itself succeeded. Do not invite a duplicate submission
+        // just because refreshing the evidence list had a transient failure.
+        setError('Your document was submitted, but the evidence list could not refresh. Reload the page to see it.');
+      }
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Could not save and submit this assignment.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!loading && !ready) {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+        <p className="font-bold">Could not open the editable document.</p>
+        <p className="mt-1 text-xs">{error || 'Download the template and upload the completed file instead.'}</p>
+      </div>
+    );
+  }
+
   return (
-    <>
-      <ComponentBody {...props} />
-      {evidenceContext && (
-        <div className="mt-4 rounded-2xl border border-background-300 bg-white p-6">
-          <AssignmentEvidence
-            kind={evidenceContext.kind}
-            learnerId={evidenceContext.learnerId}
-            componentId={evidenceContext.componentId}
-            trainingPlanDetails={evidenceContext.trainingPlanDetails}
-            onUploaded={evidenceContext.onUploaded}
-          />
+    <div className="overflow-hidden rounded-xl border border-background-300 bg-background-100 shadow-sm">
+      <div className="flex flex-col gap-3 border-b border-background-300 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-bold text-foreground-900">Editable assignment document</p>
+          <p className="mt-0.5 text-xs text-foreground-500">Click in the document, replace the example text, and complete the blank cells.</p>
         </div>
+        <button
+          type="button"
+          onClick={saveAndSubmit}
+          disabled={!dirty || saving || Boolean(submittedName)}
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white transition-colors enabled:hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : submittedName ? 'ri-checkbox-circle-line' : 'ri-save-3-line'} />
+          {saving ? 'Saving & submitting...' : submittedName ? 'Submitted' : 'Save & submit as evidence'}
+        </button>
+      </div>
+      {error && <p className="border-b border-red-200 bg-red-50 px-4 py-2 text-xs font-semibold text-red-700">{error}</p>}
+      {submittedName && (
+        <p className="border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800">
+          <AppIcon className="ri-checkbox-circle-line mr-1" />{submittedName} was saved and uploaded as evidence.
+        </p>
       )}
-    </>
+      <div className="relative min-h-[520px] bg-background-100">
+        {loading && (
+          <div className="absolute inset-0 z-10 grid place-items-center bg-white text-sm font-semibold text-foreground-500">
+            <span className="inline-flex items-center gap-2"><AppIcon className="ri-loader-4-line animate-spin" />Opening editable document...</span>
+          </div>
+        )}
+        <div
+          ref={editorRef}
+          contentEditable={ready && !saving && !submittedName}
+          suppressContentEditableWarning
+          spellCheck
+          onInput={() => { setDirty(true); setSubmittedName(null); }}
+          className="learner-assignment-editor max-h-[75vh] min-h-[520px] overflow-auto outline-none [&_.assignment-docx-wrapper]:min-h-full [&_.assignment-docx-wrapper]:py-6 [&_[data-assignment-field=true]]:bg-amber-50/60"
+        />
+      </div>
+    </div>
   );
 }
 
@@ -1687,48 +1921,17 @@ function LiveSessionResultsCard({
 }) {
   const [data, setData] = useState<TeamsMeetingArtifactsResult | null>(null);
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-
-  const loadResults = useCallback(async () => {
-    const result = await loadTeamsMeetingArtifacts(liveSessionId);
-    setData(result);
-    return result;
-  }, [liveSessionId]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setError(null);
+    setData(null);
     loadTeamsMeetingArtifacts(liveSessionId)
       .then((result) => { if (!cancelled) setData(result); })
-      .catch((reason) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : 'Unable to load Teams results.');
-      })
+      .catch(() => undefined)
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [liveSessionId]);
-
-  const handleSync = async () => {
-    if (syncing) return;
-    setSyncing(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const result = await syncTeamsMeetingArtifacts(liveSessionId);
-      await loadResults();
-      setNotice(
-        `Synced ${result.synced.attendanceRecords} attendance record${result.synced.attendanceRecords === 1 ? '' : 's'}`
-        + ` and ${result.synced.recordings} recording${result.synced.recordings === 1 ? '' : 's'}.`,
-      );
-      if (result.errors.length) setError(result.errors.join(' · '));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Unable to sync Teams results.');
-    } finally {
-      setSyncing(false);
-    }
-  };
 
   const occurrence = data?.occurrences.find((item) => Number(item.session_number) === sessionNumber)
     || data?.occurrences[sessionNumber - 1]
@@ -1764,20 +1967,11 @@ function LiveSessionResultsCard({
 
   return (
     <section className="mt-4 overflow-hidden rounded-2xl border border-primary-200 bg-white shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-primary-100 bg-primary-50/70 px-5 py-4">
+      <div className="border-b border-primary-100 bg-primary-50/70 px-5 py-4">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-primary-600">Microsoft Teams results</p>
           <h2 className="mt-1 text-sm font-heading font-black text-foreground-900">Attendance, absence and recording</h2>
         </div>
-        <button
-          type="button"
-          onClick={handleSync}
-          disabled={syncing}
-          className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[11px] font-black text-white shadow-sm transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <AppIcon className={`${syncing ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} text-sm`} />
-          {syncing ? 'Syncing…' : 'Sync Teams results'}
-        </button>
       </div>
 
       <div className="p-5">
@@ -1818,15 +2012,12 @@ function LiveSessionResultsCard({
             </div>
           </div>
         )}
-
-        {notice && <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-[10px] font-bold text-emerald-700">{notice}</p>}
-        {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-[10px] font-bold text-red-700">{error}</p>}
       </div>
     </section>
   );
 }
 
-function ComponentBody({ component, contentKind, parsed, title, onDuration, onProgress, onPlayingChange, onEnded, onUnsupported }: {
+function ComponentBody({ component, contentKind, parsed, title, onDuration, onProgress, onPlayingChange, onEnded, onUnsupported, assignmentEditorContext }: {
   component: JourneyComponent;
   contentKind: ReturnType<typeof componentContentKind>;
   parsed: ReturnType<typeof parseVideoUrl> | null;
@@ -1836,6 +2027,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
   onPlayingChange: (playing: boolean) => void;
   onEnded: () => void;
   onUnsupported: () => void;
+  assignmentEditorContext?: EvidenceContext | null;
 }) {
   if (contentKind === 'video' && parsed) {
     return (
@@ -1886,7 +2078,15 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
       <div className="rounded-2xl border border-background-300 bg-white p-6">
         <div className="flex items-center gap-3 mb-4">
           <span className="w-11 h-11 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center"><AppIcon className="ri-book-open-line text-xl" /></span>
-          <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Read the material, then finish and reflect below.</p></div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-foreground-900">{title}</p>
+            <p className="text-xs text-foreground-400">Read the material, then finish and reflect below.</p>
+          </div>
+          {/* Same flag, same promise: an attached document the author marked
+              downloadable can be taken away, not only read here. */}
+          {component.downloadAllowed && component.resourceUrl && (
+            <DownloadFileButton url={component.resourceUrl} fileName={component.fileName} />
+          )}
         </div>
         {/* A reading can have written content, an attached document, or both —
             imported material routinely has a sentence of framing plus the PDF —
@@ -1922,7 +2122,19 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
       <div className="rounded-2xl border border-background-300 bg-white p-6">
         <div className="flex items-center gap-3 mb-4">
           <span className="w-11 h-11 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center"><AppIcon className="ri-slideshow-line text-xl" /></span>
-          <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Review the slide deck, then finish and reflect below.</p></div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-foreground-900">{title}</p>
+            <p className="text-xs text-foreground-400">Review the slide deck, then finish and reflect below.</p>
+          </div>
+          {/* The author said this deck may be taken away; the inline viewer is
+              not the only way to read it. */}
+          {component.downloadAllowed && component.resourceUrl && (
+            <DownloadFileButton
+              url={component.resourceUrl}
+              fileName={component.fileName}
+              label="Download deck"
+            />
+          )}
         </div>
         {component.resourceUrl ? (
           <InlineAttachmentPreview url={component.resourceUrl} title={title} fileName={component.fileName} />
@@ -2011,21 +2223,61 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
   }
 
   /* resource / activity / evidence / live session / recording */
+  const isAssignment = (component.type || '').trim().toLowerCase().replace(/-/g, '_') === 'assignment';
   return (
     <div className="rounded-2xl border border-background-300 bg-white p-6">
       <div className="flex items-center gap-3 mb-3">
         <span className="w-11 h-11 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center"><AppIcon className="ri-task-line text-xl" /></span>
         <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Complete this activity, then finish and reflect below.</p></div>
       </div>
+      {/* The assignment brief is the task itself, so it leads — above the
+          generic "what to do" prompt, which is only reflection guidance.
+          Authored either as plain text (Module Builder) or as rich text
+          (Week Builder); the HTML one renders marked up, the plain one is
+          escaped by React as ordinary text. */}
+      {component.assignmentBriefHtml ? (
+        <div className="rounded-xl bg-background-50 border border-background-200 p-4 mb-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-1">Brief</p>
+          {/* Coach-authored curriculum (trusted staff authors) — same trust
+              model as the reading content above. */}
+          <div
+            className="max-w-none text-sm text-foreground-700 leading-relaxed [&_h2]:font-heading [&_h2]:font-bold [&_h2]:text-lg [&_h2]:text-foreground-900 [&_h2]:mt-4 [&_h2]:mb-2 [&_h3]:font-heading [&_h3]:font-semibold [&_h3]:text-base [&_h3]:text-foreground-900 [&_h3]:mt-3 [&_h3]:mb-1.5 [&_p]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-3 [&_li]:mb-1 [&_strong]:font-semibold [&_strong]:text-foreground-900 [&_em]:italic [&_a]:text-blue-600 [&_a]:underline"
+            dangerouslySetInnerHTML={{ __html: normalizeReadingHtml(component.assignmentBriefHtml) }}
+          />
+        </div>
+      ) : component.assignmentBrief && (
+        <div className="rounded-xl bg-background-50 border border-background-200 p-4 mb-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-1">Brief</p>
+          <p className="text-sm text-foreground-700 leading-relaxed whitespace-pre-line">{component.assignmentBrief}</p>
+        </div>
+      )}
       {component.reflectionPrompt && (
         <div className="rounded-xl bg-background-50 border border-background-200 p-4 mb-3">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-1">What to do</p>
           <p className="text-sm text-foreground-700 leading-relaxed whitespace-pre-line">{component.reflectionPrompt}</p>
         </div>
       )}
+      {isAssignment && component.resourceUrl && (
+        <div className="mb-4 flex flex-col gap-3 rounded-xl border border-primary-200 bg-primary-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-bold text-primary-900">Download, complete, then upload</p>
+            <p className="mt-1 text-xs text-primary-700">Save this Word template, fill it in, then upload your completed copy as evidence below.</p>
+          </div>
+          <DownloadFileButton url={component.resourceUrl} fileName={component.fileName} label="Download template" />
+        </div>
+      )}
       {component.resourceUrl && (
         <div className="space-y-3">
-          <InlineAttachmentPreview url={component.resourceUrl} title={title} fileName={component.fileName} />
+          {isAssignment && assignmentEditorContext && WORD_FILE_RE.test(fileProbe(component.resourceUrl, component.fileName)) ? (
+            <EditableAssignmentDocument
+              url={component.resourceUrl}
+              fileName={component.fileName}
+              title={title}
+              evidenceContext={assignmentEditorContext}
+            />
+          ) : (
+            <InlineAttachmentPreview url={component.resourceUrl} title={title} fileName={component.fileName} />
+          )}
         </div>
       )}
     </div>

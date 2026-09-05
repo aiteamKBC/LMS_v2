@@ -3,6 +3,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { getEvidenceDownloadUrl, uploadEvidence, type EvidenceRecord } from '@/api/evidence';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
+import { formatHoursMinutes } from '@/lib/format';
 
 /* ═══════════════════════════════════════════════════════════════
    TYPES
@@ -178,7 +179,7 @@ function StatStripCard({ label, value, icon, color }: { label: string; value: nu
   };
   const c = colorMap[color] || colorMap.primary;
   return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-foreground-300 hover:shadow-[0_12px_24px_rgba(75,75,75,0.28)]">
+    <div className="coach-metric-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
       <div className="flex items-center gap-2.5 mb-2">
         <span className={`w-10 h-10 rounded-xl flex items-center justify-center ring-1 ring-black/5 ${c.iconBg} ${c.iconText}`}>
           <AppIcon className={`${icon} text-base`}></AppIcon>
@@ -230,7 +231,7 @@ function EvidenceCard({ ev, onClick }: { ev: EvidenceItem; onClick: () => void }
         </span>
         {ev.otjh > 0 && <>
           <span className="text-foreground-200">·</span>
-          <span className="flex items-center gap-1"><AppIcon className="ri-time-line text-[10px]" />{ev.otjh}h OTJH</span>
+          <span className="flex items-center gap-1"><AppIcon className="ri-time-line text-[10px]" />{formatHoursMinutes(ev.otjh)} OTJH</span>
         </>}
       </div>
       <div className="flex items-center gap-1.5 mb-3 flex-wrap">
@@ -283,7 +284,7 @@ function EvidenceRow({ ev, onClick }: { ev: EvidenceItem; onClick: () => void })
           <span>{ev.documents?.[0]?.size || 'Size unavailable'}</span>
           <span className="text-foreground-200">·</span>
           <span>{ev.type}</span>
-          {ev.otjh > 0 && <><span className="text-foreground-200">·</span><span>{ev.otjh}h OTJH</span></>}
+          {ev.otjh > 0 && <><span className="text-foreground-200">·</span><span>{formatHoursMinutes(ev.otjh)} OTJH</span></>}
         </div>
       </div>
       <div className="hidden sm:flex items-center gap-1.5 shrink-0">
@@ -817,7 +818,7 @@ export function EvidenceTab({
               <MetaBox label="Status" value={STATUS_CONFIG[selectedItem.status].label} />
               <MetaBox label="Session" value={selectedItem.sessionType || 'N/A'} />
               <MetaBox label="Submitted" value={selectedItem.date} />
-              {selectedItem.otjh > 0 && <MetaBox label="OTJH" value={`${selectedItem.otjh}h`} />}
+              {selectedItem.otjh > 0 && <MetaBox label="OTJH" value={formatHoursMinutes(selectedItem.otjh)} />}
             </div>
             {selectedItem.ksb.length > 0 && <div>
               <h4 className="text-[11px] font-semibold text-foreground-400 uppercase tracking-wider mb-2">Linked KSBs</h4>

@@ -13,6 +13,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { TableRowsSkeleton } from '@/components/feature/Skeletons';
 import { curriculumNavItems } from '@/mocks/navigation';
+import { formatHoursMinutes } from '@/lib/format';
 import {
   fetchCurriculumProgrammeKsbCoverage,
   fetchCurriculumProgrammes,
@@ -214,7 +215,7 @@ function SummaryStat({ icon, label, value, detail, tone = 'default' }: {
     warning: 'bg-amber-100 text-amber-700',
   };
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-foreground-200/70 bg-background-50 px-3.5 py-3 shadow-sm">
+    <div className="coach-metric-card flex items-center gap-3">
       <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${tones[tone]}`}>
         <AppIcon className={`${icon} text-base`} />
       </span>
@@ -365,7 +366,7 @@ export default function KSBMapping() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <div className="space-y-4 p-4 md:p-6">
+      <div className="min-h-full space-y-4 bg-background-100 p-4 sm:p-5 lg:p-6">
         {/* Filters */}
         <section className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
@@ -573,7 +574,7 @@ export default function KSBMapping() {
                     <WeightBar value={row.totalWeight} max={maxWeight} />
 
                     <span className="text-right text-xs font-semibold tabular-nums text-foreground-700">
-                      {row.totalOtjh ? `${numberText(row.totalOtjh)}h` : <span className="text-foreground-300">&mdash;</span>}
+                      {row.totalOtjh ? formatHoursMinutes(row.totalOtjh) : <span className="text-foreground-300">&mdash;</span>}
                     </span>
                   </button>
 
@@ -625,7 +626,7 @@ export default function KSBMapping() {
                               </span>
                               <span className="text-right font-semibold tabular-nums text-foreground-700">{numberText(placement.weight)}</span>
                               <span className="text-right font-semibold tabular-nums text-foreground-700">
-                                {placement.otjh ? `${numberText(placement.otjh)}h` : <span className="text-foreground-300">&mdash;</span>}
+                                {placement.otjh ? formatHoursMinutes(placement.otjh) : <span className="text-foreground-300">&mdash;</span>}
                               </span>
                             </div>
                           ))}

@@ -80,7 +80,12 @@ def to_list_row(u):
         "group": _s(u.group),
         "subscriptionStatus": status,
         "subscriptionVerified": status.lower() == "fulluser",
-        "learningPlan": utype == "User",
+        # True for every row this mapper produces, which are all learner rows.
+        # It used to read `utype == "User"`, but Type is an editable label on the
+        # row (User, Referrer, Caseowner...) — so relabelling a learner took away
+        # their learning plan. What the row *is* comes from which table it came
+        # from, not from a column somebody can type over.
+        "learningPlan": True,
         # Whether a plan has actually been saved, so the users table can offer
         # "Add" vs "Edit" without fetching every learner's plan.
         "hasLearningPlan": bool(u.learning_plan) or bool(u.training_plan),
@@ -93,7 +98,8 @@ def to_list_row(u):
         # group filter cascade. Absent on staff/employer rows, like programme.
         "cohort": _s(u.cohort),
         "notesCount": 0,
-        "hasTasks": utype == "User",
+        # Same reasoning as learningPlan above.
+        "hasTasks": True,
         "reference": _s(u.organization),
         # Which kind of learner this is. Rows predating the Commercial_users merge
         # have no value and are apprenticeship.
@@ -101,6 +107,41 @@ def to_list_row(u):
         # Kept so the directory's existing source-based row routing keeps working
         # while both kinds share one table.
         "source": "commercial" if _s(getattr(u, "learner_type", "")) == "commercial" else "apprenticeship",
+    }
+
+
+def to_edit_fields(u):
+    """The flat, editable columns of a learner row — the edit form's prefill.
+
+    Deliberately not part of ``to_board``: the board GET is not staff-gated
+    (``@staff_only(writes_only=True)``), and these columns include a national
+    insurance number and a home address. This is served by its own staff-only
+    endpoint instead, so widening the form never widens who can read it.
+
+    The keys are ``WRITABLE_FIELDS`` keys, so whatever comes out of here can be
+    handed straight back to PATCH without a translation layer in between.
+    """
+    return {
+        "id": str(u.id),
+        "username": _s(u.username),
+        "email": _s(u.email),
+        "phone": _s(u.phone_number),
+        "dob": _s(u.date_of_birth),
+        "type": _s(u.type) or "User",
+        "status": _s(u.status),
+        "programmeStatus": _s(u.programme_status),
+        "programme": _s(u.programme),
+        "cohort": _s(u.cohort),
+        "group": _s(u.group),
+        "employer": _s(u.employer),
+        # The record id alongside the name: the form's employer select is keyed
+        # on it, because two employers can share a name.
+        "employerId": u.employer_id,
+        "organization": _s(u.organization),
+        "lineManager": _s(u.line_manager),
+        "learnerType": _s(getattr(u, "learner_type", "")) or "apprenticeship",
+        **{key: _s(getattr(u, attr)) for key, attr in APTEM_TEXT_FIELDS.items()},
+        **{key: getattr(u, attr) for key, attr in APTEM_BOOL_FIELDS.items()},
     }
 
 

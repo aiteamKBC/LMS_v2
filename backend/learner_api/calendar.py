@@ -7,10 +7,20 @@ The coach timetable stores events keyed by the "Learner"."Active_users" mirror
 id + email, so the learner is matched by email: directly against
 coach_calendar_event.learner_email, and via any Active_users mirror rows with
 the same email against coach_calendar_event.learner_id.
+
+Monthly coaching and progress reviews are *generated* from the learner's own
+delivery window rather than stored: the coach timetable derives them every time
+it loads (see coach_api.views.collect_generated_timetable), and a row only
+exists once somebody schedules one. So a learner whose coach had not booked yet
+saw an empty calendar while their coach saw a column of "Not Scheduled" slots.
+This endpoint runs the same generator over the same window, then lays the stored
+rows on top by event key — the coach's own join — so both calendars name the
+same dates and the same statuses.
 """
 import json
 import logging
 import hashlib
+from datetime import datetime
 
 from django.db import DatabaseError
 from django.db.models import Q
@@ -200,6 +210,125 @@ def _cancel_enrolment_review(record):
         )
 
 
+def _belongs_to_current_cycle(record, mirror):
+    """Whether a stored row is part of *this* learner's coaching cycle.
+
+    Rows are matched by email as well as by mirror id, because a learner's
+    mirror is recreated on occasion and their bookings must survive it. That
+    generosity has one bad case: a monthly-coaching or progress-review slot
+    generated against a *previous* mirror stays behind when that mirror is
+    deleted, and its dates came from a window the learner no longer has. The
+    coach never sees those — their timetable only builds keys from live
+    caseload profiles — so a learner shown them is reading dates their coach
+    cannot see.
+
+    Only the generated cycle is filtered. A catch-up, a student-support session
+    or an onboarding review is something somebody actually arranged, and it
+    belongs to the learner however their mirror has changed since.
+    """
+    if mirror is None:
+        return True
+    if _s(record.event_type) not in ("mcr", "progress-review"):
+        return True
+    return str(record.learner_id or "") in ("", str(mirror.id))
+
+
+def _generated_cycle_events(learner, mirror, stored_by_key):
+    """The learner's monthly-coaching and progress-review slots for the cycle.
+
+    Delegates to the coach timetable's own generator so there is one definition
+    of when these fall — every 30 days for monthly coaching, every 12 weeks for
+    a progress review, counted from the learner's start date and stopping at
+    their end date. Importing it rather than restating it is the point: two
+    implementations of the same cycle would drift apart the first time either
+    was tuned, and the learner and their coach would then be told different
+    dates for the same meeting.
+
+    A slot that has been scheduled already appears in `stored_by_key` and is
+    skipped here, because the stored row carries the real date, time and status.
+    Everything else is returned as the coach sees it: "not-scheduled", dated on
+    the target, with no time.
+    """
+    from coach_api.models import CoachCalendarEvent
+    from coach_api.views import (
+        TIMETABLE_MCR_INTERVAL,
+        TIMETABLE_PROGRESS_REVIEW_INTERVAL,
+        build_timetable_event_key,
+        iterate_generated_schedule_dates,
+        resolve_schedule_window,
+    )
+
+    if mirror is None:
+        # The window is read from the mirror the coach timetable reads, so
+        # without one there is nothing to generate from. A learner reaches that
+        # state before their first activation.
+        return []
+
+    start_date, end_date = resolve_schedule_window(mirror.id, {}, {}, mirror)
+    # Falling back to the enrolment row: the coach passes prefetched maps of
+    # commercial/enrolment rows, and this endpoint holds the one learner.
+    start_date = start_date or _as_date(getattr(learner, "start_date", None))
+    end_date = end_date or _as_date(
+        getattr(learner, "end_date", None)
+        or getattr(learner, "practical_period_end_date", None)
+        or getattr(learner, "apprenticeship_end_date", None)
+    )
+    if not start_date or not end_date or end_date <= start_date:
+        return []
+
+    coach_name = _s(mirror.coach_name)
+    coach_email = _s(mirror.coach_email)
+    generated = []
+    for event_type, interval in (
+        ("mcr", TIMETABLE_MCR_INTERVAL),
+        ("progress-review", TIMETABLE_PROGRESS_REVIEW_INTERVAL),
+    ):
+        for sequence, target_date in iterate_generated_schedule_dates(
+            start_date, end_date, interval,
+        ):
+            event_key = build_timetable_event_key(mirror.id, event_type, sequence, target_date)
+            if event_key in stored_by_key:
+                continue
+            generated.append({
+                "id": event_key,
+                "eventKey": event_key,
+                "title": EVENT_TITLES.get(event_type, "Coaching Session"),
+                "source": event_type,
+                "type": EVENT_JSON_TYPES.get(event_type, "coaching"),
+                "sequence": sequence,
+                "status": CoachCalendarEvent.STATUS_NOT_SCHEDULED,
+                # Dated on the target so it lands in the right month; the coach
+                # calendar shows the same date with the same caveat.
+                "date": target_date.isoformat(),
+                "targetDate": target_date.isoformat(),
+                "scheduledDate": None,
+                "scheduledTime": None,
+                "durationMinutes": 60,
+                "coachName": coach_name,
+                "coachEmail": coach_email,
+                "meetingProvider": "",
+                "meetingLink": "",
+                "notes": "",
+                "reviewResponses": {},
+                "reviewCompletedAt": None,
+                "invited": False,
+                "syncError": "",
+                # Nothing has been booked, so there is no time to show and no
+                # invitation to claim — see the coach's own generated event.
+                "isTimeEstimated": True,
+                "generated": True,
+            })
+    return generated
+
+
+def _as_date(value):
+    """A date from the enrolment row's date-or-text columns, or None."""
+    from coach_api.views import parse_date_value
+
+    parsed = parse_date_value(value)
+    return parsed.date() if isinstance(parsed, datetime) else parsed
+
+
 def _serialize_event(record):
     """Shape one coach_calendar_event row for the learner calendar page.
 
@@ -314,10 +443,18 @@ def learner_calendar(request, kind, pk):
         return JsonResponse({"learner": {"kind": kind, "id": pk}, "events": []})
 
     try:
-        records = CoachCalendarEvent.objects.filter(match).order_by(
-            "target_date", "event_type", "sequence"
-        )
+        records = [
+            record for record in CoachCalendarEvent.objects.filter(match).order_by(
+                "target_date", "event_type", "sequence"
+            )
+            if _belongs_to_current_cycle(record, mirror)
+        ]
         events = [_serialize_event(record) for record in records]
+
+        # The cycle the coach timetable draws: every slot for this learner's
+        # programme, with the ones already scheduled left to their stored row.
+        stored_by_key = {_s(record.event_key) for record in records}
+        events.extend(_generated_cycle_events(learner, mirror, stored_by_key))
 
         # Live curriculum sessions are generated from the same module/week
         # schedule used by the coach calendar. Restrict them to this learner's
@@ -345,6 +482,13 @@ def learner_calendar(request, kind, pk):
             for event in events
             if event.get("eventKey") or event.get("id")
         }.values())
+        # Generated slots interleave with stored ones, so the page is handed a
+        # calendar in date order rather than stored-then-generated.
+        events.sort(key=lambda event: (
+            event.get("date") or event.get("targetDate") or "",
+            _s(event.get("source")),
+            event.get("sequence") or 0,
+        ))
     except DatabaseError as exc:
         logger.exception("learner_calendar: event lookup failed")
         return _error(f"Database error: {exc}", 502)

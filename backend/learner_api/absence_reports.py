@@ -43,6 +43,9 @@ UPLOAD_EXTENSIONS = {
 DEFAULT_COACH_NAME = "Med Maher"
 DEFAULT_COACH_EMAIL = "med.maher@kbc.ac.uk"
 ATTENDANCE_TABLE = '"Learner"."learner_attendance_details"'
+CURRENT_ATTENDANCE_PREDICATE = """
+    (COALESCE(source, 'legacy') <> 'microsoft_teams' OR COALESCE(is_expected, true))
+"""
 # Read through the `default` alias, not `enrolment`: this table is in the
 # "Learner" schema, not the enrolment one, so it is outside what EnrolmentRouter
 # governs. Deliberate — see the note in apprenticeship_agreement._group_dates.
@@ -67,6 +70,7 @@ def _fetch_missed_sessions(learner, learner_id):
                session_start_time, session_end_time, coach_name, module_title
         FROM {ATTENDANCE_TABLE}
         WHERE {{learner_filter}}
+          AND {CURRENT_ATTENDANCE_PREDICATE}
           AND lower(trim(attendance_status::text)) IN
               ('0', 'false', 'no', 'n', 'absent', 'missed',
                'did not attend', 'non-attendance')
@@ -131,6 +135,7 @@ def _resolve_absent_attendance(
                 SELECT id
                 FROM {ATTENDANCE_TABLE}
                 WHERE {learner_filter}
+                  AND {CURRENT_ATTENDANCE_PREDICATE}
                   AND session_date = %s
                   AND lower(trim(session_title)) = lower(trim(%s))
                   {time_filter}

@@ -29,6 +29,7 @@
 // ============================================================================
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { formatHoursMinutes } from '@/lib/format';
 import {
   fetchCurriculumScopeLearnerKsbImpact,
   type CurriculumLearnerActivity,
@@ -61,8 +62,7 @@ const SCOPE_NOUN: Record<string, string> = {
 // ---------------------------------------------------------------- formatting
 
 function hours(value: number | null | undefined) {
-  const number = Number(value || 0);
-  return `${Number.isInteger(number) ? number : number.toFixed(1)}h`;
+  return formatHoursMinutes(Number(value || 0));
 }
 
 function weight(value: number | null | undefined) {
@@ -336,16 +336,16 @@ function CountStat({ label, value, note, hint }: { label: string; value: string 
 }
 
 /**
- * Knowledge, Skills and Behaviours as three tiles: achieved against missing.
+ * Knowledge, Skills and Behaviours as one segmented filter beside the table's
+ * other filters, rather than three tiles above it.
  *
  * The standard states a programme's KSBs as three families and a coach reads
  * them that way — "the behaviours are untouched" is a different conversation
- * from "B3 is short". A 70-row table cannot be read for that.
- *
- * Each tile is a filter, because the answer to "why are the behaviours at zero"
- * is the eleven rows behind the tile.
+ * from "B3 is short" — so the family filter stays. What went is the tiles'
+ * restatement of the figures: each chip still carries its family's achieved of
+ * required, and the full breakdown is one hover away.
  */
-function KsbFamilyStrip({
+function KsbFamilyFilter({
   families,
   selectedType,
   onSelectType,
@@ -355,45 +355,38 @@ function KsbFamilyStrip({
   onSelectType: (letter: string) => void;
 }) {
   return (
-    <div className="grid gap-3 sm:grid-cols-3">
+    <div className="flex items-center gap-1 rounded-xl border border-background-200 bg-background-100/60 p-1">
+      <button
+        type="button"
+        onClick={() => onSelectType('')}
+        aria-pressed={!selectedType}
+        title="Knowledge, skills and behaviours together"
+        className={`inline-flex h-8 items-center rounded-lg px-2.5 text-[11px] font-bold transition-smooth ${
+          selectedType ? 'text-foreground-600 hover:bg-background-50' : 'bg-foreground-800 text-white'
+        }`}
+      >
+        All types
+      </button>
       {families.map(family => {
         const selected = family.letter === selectedType;
-        const share = family.required ? (family.achieved / family.required) * 100 : 0;
         return (
           <button
             key={family.letter}
             type="button"
             onClick={() => onSelectType(selected ? '' : family.letter)}
-            title={`Show only the ${family.label.toLowerCase()} in the table below`}
-            className={`rounded-xl border p-3 text-left transition-smooth ${
-              selected
-                ? 'border-primary-400 bg-primary-50 ring-1 ring-primary-200'
-                : 'border-background-200 bg-background-100/60 hover:bg-background-100'
+            aria-pressed={selected}
+            title={`${family.label}: ${family.achieved} achieved of ${family.required}, ${family.missing} missing · ${weight(family.earnedWeight)} of ${weight(family.expectedWeight)} weight`}
+            className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-bold transition-smooth ${
+              selected ? 'bg-primary-600 text-white' : 'text-foreground-600 hover:bg-background-50'
             }`}
           >
-            <p className="flex items-center justify-between gap-2">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">
-                {family.label}
-              </span>
-              <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ${KSB_TYPE_META[family.letter].chip}`}>
-                {family.letter}
-              </span>
-            </p>
-            <p className="mt-1 flex items-baseline gap-1.5">
-              <span className="text-lg font-heading font-bold text-emerald-700">{family.achieved}</span>
-              <span className="text-[12px] text-foreground-400">achieved of {family.required}</span>
-            </p>
-            {/* One bar, split: achieved fills from the left and the amber
-                remainder is the gap. Nothing shaded in between — there are two
-                outcomes here, not a gradient. */}
-            <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-amber-200">
-              <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(Math.max(share, 0), 100)}%` }} />
-            </div>
-            <p className="mt-1 text-[11px] leading-snug text-foreground-500">
-              <span className={family.missing ? 'font-bold text-amber-700' : ''}>{family.missing} missing</span>
-              {' · '}
-              {weight(family.earnedWeight)} of {weight(family.expectedWeight)} weight
-            </p>
+            <span className={`rounded px-1 text-[10px] font-bold ${selected ? 'bg-white/20 text-white' : KSB_TYPE_META[family.letter].chip}`}>
+              {family.letter}
+            </span>
+            {family.label}
+            <span className={`rounded px-1 text-[10px] tabular-nums ${selected ? 'bg-black/15' : 'bg-black/10'}`}>
+              {family.achieved}/{family.required}
+            </span>
           </button>
         );
       })}
@@ -881,7 +874,121 @@ function KsbAchievementMatrix({
   );
 }
 
-const LEARNER_GRID = 'grid grid-cols-[minmax(160px,1.6fr)_minmax(110px,.9fr)_minmax(130px,1fr)_minmax(130px,1fr)_80px_80px]';
+const LEARNER_GRID = 'grid grid-cols-[minmax(160px,1.6fr)_minmax(110px,.9fr)_minmax(150px,1fr)_minmax(150px,1fr)]';
+
+/**
+ * One learner's KSB tiles, and where their credited hours came from.
+ *
+ * Shared by the Learners tab's expanded row and by the single-learner detail a
+ * group's roster opens: the same two facts, computed and worded the same way,
+ * because "what has this person earned here" is one question however it is
+ * reached.
+ *
+ * It opens on what the learner has actually earned, and nothing else. A KSB
+ * this scope never asks of them is not a milder version of one they have not
+ * achieved — there is nothing there to achieve — and a wall of "not expected
+ * here" tiles buried the handful that carried a figure. Those are never drawn.
+ * The ones this scope does expect and they have not earned yet are one click
+ * away, because that gap is the next thing worth seeing and hiding it for good
+ * would be its own bug.
+ */
+function LearnerKsbBreakdown({
+  ksbRows,
+  learner,
+}: {
+  ksbRows: CurriculumLearnerKsbConsumptionItem[];
+  learner: Pick<CurriculumScopeOtjhLearner, 'achievedOtjh' | 'declaredOtjh'>;
+}) {
+  const [showOutstanding, setShowOutstanding] = useState(false);
+  /** Three piles: earned something, owes something, or was never asked. */
+  const { earnedRows, outstandingRows, notAskedCount } = useMemo(() => {
+    const earned: CurriculumLearnerKsbConsumptionItem[] = [];
+    const outstanding: CurriculumLearnerKsbConsumptionItem[] = [];
+    let notAsked = 0;
+    for (const row of ksbRows) {
+      if (Number(row.cappedConsumedWeight || 0) > 0) earned.push(row);
+      else if (Number(row.expectedWeight || 0) > 0) outstanding.push(row);
+      else notAsked += 1;
+    }
+    return { earnedRows: earned, outstandingRows: outstanding, notAskedCount: notAsked };
+  }, [ksbRows]);
+  const visibleRows = showOutstanding ? [...earnedRows, ...outstandingRows] : earnedRows;
+  const outstandingCount = outstandingRows.length;
+  /** Why the grid is empty, which is a different sentence in each case. */
+  const emptyReason = outstandingCount > 0
+    ? `Nothing earned here yet, out of the ${outstandingCount} KSB${outstandingCount === 1 ? '' : 's'} this scope expects of this learner.`
+    : notAskedCount > 0
+      ? `This scope does not ask this learner for any of its ${notAskedCount} KSBs, so there is nothing here for them to achieve.`
+      : 'No KSB weight recorded for this learner in this scope yet.';
+  return (
+    <>
+      {visibleRows.length === 0 ? (
+        <p className="text-[11px] text-foreground-500">{emptyReason}</p>
+      ) : (
+        <>
+          {/* A key on the chips, not a tooltip: this grid is the
+              first thing a reader meets after expanding a learner,
+              and "50/0 — 100%" is where they stopped. */}
+          <p className="mb-1.5 text-[10px] leading-snug text-foreground-500">
+            Each tile is one KSB this learner has earned weight for here: its code, the{' '}
+            <span className="font-semibold text-foreground-700">weight earned of the weight expected</span>{' '}
+            of them here, then how complete that is.{' '}
+            <span className="font-semibold text-sky-700">Extra</span> means they earned it somewhere this
+            scope never asked them for it, so it is not counted as progress here.
+            {notAskedCount > 0 && (
+              <>
+                {' '}The {notAskedCount} KSB{notAskedCount === 1 ? '' : 's'} this scope never asks of them
+                {notAskedCount === 1 ? ' is' : ' are'} not shown.
+              </>
+            )}
+          </p>
+          <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
+            {visibleRows.map(row => {
+              const state = ksbCellState(row, row.code);
+              return (
+                <div
+                  key={row.code}
+                  title={state.title}
+                  className="flex cursor-help items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-50 px-2 py-1.5"
+                >
+                  <span className="truncate text-[11px] font-bold text-foreground-800">{row.code}</span>
+                  <span className="shrink-0 text-[11px] tabular-nums text-foreground-500">{state.amount}</span>
+                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${state.className}`}>
+                    {state.text}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+      {/* The gap, reachable but never in the way: a KSB this scope expects and
+          they have not earned yet is the one absence that means something. */}
+      {outstandingCount > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowOutstanding(value => !value)}
+          className="mt-1.5 text-[10px] font-semibold text-primary decoration-dotted underline-offset-4 hover:underline"
+        >
+          {showOutstanding
+            ? `Hide the ${outstandingCount} expected but not earned yet`
+            : `Show the ${outstandingCount} this scope expects but they have not earned yet`}
+        </button>
+      )}
+      {/* The learner's own declared hours, next to the credited
+          figure rather than inside it. */}
+      <p className="mt-2 text-[11px] leading-relaxed text-foreground-500">
+        Where their {hours(learner.achievedOtjh)} of credited hours came from:{' '}
+        <span className="font-semibold text-foreground-700">{hours(learner.declaredOtjh)}</span> the learner
+        wrote in their own reflections, and{' '}
+        <span className="font-semibold text-foreground-700">
+          {hours(Number(learner.achievedOtjh || 0) - Number(learner.declaredOtjh || 0))}
+        </span>{' '}
+        credited at the component’s planned hours, where they finished the work without writing one.
+      </p>
+    </>
+  );
+}
 
 function LearnerAchievementTable({
   learners,
@@ -898,23 +1005,22 @@ function LearnerAchievementTable({
 }) {
   return (
     <div className="overflow-x-auto">
-      <div className="min-w-[760px]">
+      <div className="min-w-[620px]">
         <div className={`${LEARNER_GRID} gap-2 border-b border-background-200 px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-foreground-400`}>
-          {/* Same reason as the Activity tab's headers: "Done" and "Logs" are
-              counts of two different records and the labels alone don't say
-              which. */}
+          {/* What each column reports, on the header rather than in prose
+              above the table: the question is asked while reading a row. Two
+              of these are ratios and the label alone doesn't name the
+              denominator. */}
           {([
             { label: 'Learner', hint: 'Who is placed here by enrolment. Curriculum only reads this roster.' },
             { label: 'Cohort / group', hint: 'Where enrolment placed them inside this programme. The group is what matters to the figures: a module belongs to one group, so a learner is measured against their own group’s modules.' },
             { label: 'OTJH achieved', hint: 'Off-the-job hours credited to this learner, out of the hours their own group is assigned in this scope. Reads as "credited of assigned".' },
             { label: 'KSB weight earned', hint: 'KSB weight this learner has earned, out of the weight expected of them in this scope. Reads as "earned of expected"; it is curriculum weight, not a mark or a percentage.' },
-            { label: 'Done', hint: 'How many components this learner has completed in this scope.', align: 'center' },
-            { label: 'Logs', hint: 'How many reflections this learner has submitted for those components.', align: 'center' },
-          ] as Array<{ label: string; hint: string; align?: 'center' }>).map(column => (
+          ] as Array<{ label: string; hint: string }>).map(column => (
             <span
               key={column.label}
               title={column.hint}
-              className={`cursor-help decoration-dotted underline-offset-4 hover:underline ${column.align === 'center' ? 'text-center' : ''}`}
+              className="cursor-help decoration-dotted underline-offset-4 hover:underline"
             >
               {column.label}
             </span>
@@ -985,59 +1091,11 @@ function LearnerAchievementTable({
                       {weight(consumption?.cappedConsumedWeightTotal)} of {weight(consumption?.expectedWeightTotal)}
                     </span>
                   </span>
-                  <span className="text-center text-[12px] tabular-nums text-foreground-700">{learner.completedActivityCount}</span>
-                  <span className="text-center text-[12px] tabular-nums text-foreground-700">{learner.reflectionCount}</span>
                 </button>
 
                 {expanded && (
                   <div className="border-t border-background-200 bg-background-100/50 px-3 py-2">
-                    {ksbRows.length === 0 ? (
-                      <p className="text-[11px] text-foreground-500">
-                        No KSB weight recorded for this learner in this scope yet.
-                      </p>
-                    ) : (
-                      <>
-                        {/* A key on the chips, not a tooltip: this grid is the
-                            first thing a reader meets after expanding a learner,
-                            and "50/0 — 100%" is where they stopped. */}
-                        <p className="mb-1.5 text-[10px] leading-snug text-foreground-500">
-                          Each tile is one KSB: its code, the{' '}
-                          <span className="font-semibold text-foreground-700">weight earned of the weight expected</span>{' '}
-                          of this learner here, then how complete that is.{' '}
-                          <span className="font-semibold text-sky-700">Extra</span> means they earned it somewhere this
-                          scope never asked them for it, so it is not counted as progress here.
-                        </p>
-                        <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
-                          {ksbRows.map(row => {
-                            const state = ksbCellState(row, row.code);
-                            return (
-                              <div
-                                key={row.code}
-                                title={state.title}
-                                className="flex cursor-help items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-50 px-2 py-1.5"
-                              >
-                                <span className="truncate text-[11px] font-bold text-foreground-800">{row.code}</span>
-                                <span className="shrink-0 text-[11px] tabular-nums text-foreground-500">{state.amount}</span>
-                                <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold ${state.className}`}>
-                                  {state.text}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </>
-                    )}
-                    {/* The learner's own declared hours, next to the credited
-                        figure rather than inside it. */}
-                    <p className="mt-2 text-[11px] leading-relaxed text-foreground-500">
-                      Where their {hours(learner.achievedOtjh)} of credited hours came from:{' '}
-                      <span className="font-semibold text-foreground-700">{hours(learner.declaredOtjh)}</span> the learner
-                      wrote in their own reflections, and{' '}
-                      <span className="font-semibold text-foreground-700">
-                        {hours(Number(learner.achievedOtjh || 0) - Number(learner.declaredOtjh || 0))}
-                      </span>{' '}
-                      credited at the component’s planned hours, where they finished the work without writing one.
-                    </p>
+                    <LearnerKsbBreakdown ksbRows={ksbRows} learner={learner} />
                   </div>
                 )}
               </div>
@@ -1049,12 +1107,12 @@ function LearnerAchievementTable({
   );
 }
 
-const ACTIVITY_GRID = 'grid grid-cols-[minmax(170px,1.5fr)_minmax(140px,1.1fr)_minmax(110px,.9fr)_92px_92px_92px_96px_96px]';
+const ACTIVITY_GRID = 'grid grid-cols-[minmax(170px,1.5fr)_minmax(140px,1.1fr)_minmax(110px,.9fr)_92px_92px_92px]';
 
 // What each column of the Activity tab actually reports. On the header rather
 // than in prose above the table: the question ("what is Declared?") is asked
-// while reading a row, and two of these columns answer different questions than
-// their one-word label suggests.
+// while reading a row, and more than one of these columns answers a different
+// question than its one-word label suggests.
 const ACTIVITY_COLUMNS: Array<{ label: string; hint: string; align?: 'center' }> = [
   {
     label: 'Component',
@@ -1062,7 +1120,7 @@ const ACTIVITY_COLUMNS: Array<{ label: string; hint: string; align?: 'center' }>
   },
   {
     label: 'Module / week',
-    hint: 'Where the component sits in the curriculum: the module that owns it and the week inside that module. Resolved live against the catalogue, so a module that has since been deleted is marked as such rather than named as though it were still there.',
+    hint: 'Where the component sits in the curriculum: the module that owns it and the week inside that module. Long names are cut to fit — hover the cell for the full module and week. Resolved live against the catalogue, so a module that has since been deleted is marked as such rather than named as though it were still there.',
   },
   {
     label: 'Learner',
@@ -1083,16 +1141,6 @@ const ACTIVITY_COLUMNS: Array<{ label: string; hint: string; align?: 'center' }>
     hint: 'KSB weight credited by this activity, from the component progress snapshot. A reflection’s own KSB declaration is evidence about the same activity and is never added on top.',
     align: 'center',
   },
-  {
-    label: 'Status',
-    hint: 'What happened to the activity: achieved, failed, or still incomplete. This says nothing about whether it counts here — see Counted.',
-    align: 'center',
-  },
-  {
-    label: 'Counted',
-    hint: 'Whether this activity counts toward the figures above. "Elsewhere" means the learner completed it in a part of the programme their group is not delivered, so it is reported here but excluded from this scope’s totals.',
-    align: 'center',
-  },
 ];
 
 function ActivityTable({
@@ -1105,7 +1153,7 @@ function ActivityTable({
 }) {
   return (
     <div className="overflow-x-auto">
-      <div className="min-w-[940px]">
+      <div className="min-w-[760px]">
         <div className={`${ACTIVITY_GRID} gap-2 border-b border-background-200 px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-foreground-400`}>
           {ACTIVITY_COLUMNS.map(column => (
             <span
@@ -1136,32 +1184,35 @@ function ActivityTable({
                   hint: 'This component no longer resolves to a module in the catalogue, so the module name shown is the label stored on the learner’s activity.',
                 }
                 : null;
-            // Two separate facts, so a row can state both. Before, a completed
-            // activity from another part of the programme reported "elsewhere"
-            // in place of its status, and an in-scope row never said that it
-            // counted at all.
-            const counted = outOfScope
-              ? { label: 'Elsewhere', className: 'bg-foreground-100 text-foreground-500', hint: 'Completed in a part of this programme that this learner’s group is not delivered — reported here, excluded from the totals above.' }
+            // Neither of these has a column any more, but both are still true
+            // of the row: an activity from another part of the programme, or a
+            // repeat completion, is listed here and left out of the figures
+            // above. Read together on the row's own tooltip so that a row which
+            // does not count cannot read as though it does.
+            const statusNote = status === 'achieved'
+              ? 'The learner completed this activity.'
+              : status === 'failed'
+                ? 'The learner attempted this activity and did not pass it.'
+                : 'Not completed yet.';
+            const countedNote = outOfScope
+              ? 'Completed in a part of this programme that this learner’s group is not delivered — reported here, excluded from the totals above.'
               : activity.countsTowardAchievement === false
-                ? {
-                  label: activity.exclusionReason === 'repeat_completion' ? 'Repeat' : 'Not counted',
-                  className: 'bg-amber-100 text-amber-700',
-                  hint: activity.exclusionReason === 'repeat_completion'
-                    ? 'The learner has completed this component before. The hours and KSB weight were earned once, so only the first completion counts — this one is kept as history.'
-                    : 'In this scope, but the activity itself does not count toward achievement.',
-                }
-                : {
-                  label: 'Counted',
-                  className: 'bg-emerald-100 text-emerald-700',
-                  // A component that has since been deleted is not in the scope's
-                  // live content any more, so without saying this the row reads
-                  // as though it were counted by mistake.
-                  hint: activity.scopeBasis === 'lineage'
-                    ? 'Counts toward the OTJH and KSB weight reported above. The component is no longer part of this scope’s content, so it was placed here by the programme/cohort/group the learner’s progress row was stamped with when they completed it.'
-                    : 'Counts toward the OTJH and KSB weight reported above.',
-                };
+                ? (activity.exclusionReason === 'repeat_completion'
+                  ? 'The learner has completed this component before. The hours and KSB weight were earned once, so only the first completion counts — this one is kept as history.'
+                  : 'In this scope, but the activity itself does not count toward achievement.')
+                // A component that has since been deleted is not in the scope's
+                // live content any more, so without saying this the row reads
+                // as though it were counted by mistake.
+                : activity.scopeBasis === 'lineage'
+                  ? 'Counts toward the OTJH and KSB weight reported above. The component is no longer part of this scope’s content, so it was placed here by the programme/cohort/group the learner’s progress row was stamped with when they completed it.'
+                  : 'Counts toward the OTJH and KSB weight reported above.';
+            const moduleWeek = `${activity.module || '—'}${activity.week ? ` · ${activity.week}` : ''}`;
             return (
-              <div key={activity.progressId} className={`${ACTIVITY_GRID} gap-2 px-3 py-2`}>
+              <div
+                key={activity.progressId}
+                title={`${statusNote} ${countedNote}`}
+                className={`${ACTIVITY_GRID} gap-2 px-3 py-2`}
+              >
                 <span className="min-w-0">
                   <span className="block truncate text-[12px] font-semibold text-foreground-900">
                     {activity.componentTitle || activity.componentId || `Activity ${activity.progressId}`}
@@ -1172,9 +1223,11 @@ function ActivityTable({
                   </span>
                 </span>
                 <span className="flex min-w-0 items-center gap-1.5 text-[12px] text-foreground-600">
-                  <span className="min-w-0 truncate">
-                    {activity.module || '—'}
-                    {activity.week ? ` · ${activity.week}` : ''}
+                  {/* Truncated to fit the column; the tooltip is the only place
+                      the reader can see which module and week this actually is
+                      when either name is long. */}
+                  <span className="min-w-0 truncate" title={moduleWeek}>
+                    {moduleWeek}
                   </span>
                   {/* Where the module went, when it is no longer somewhere the
                       reader can open. Without this a deleted module reads like a
@@ -1207,27 +1260,6 @@ function ActivityTable({
                 <span className="text-center text-[12px] tabular-nums text-foreground-700">
                   {weight(activity.achievedKsbWeightTotal)}
                 </span>
-                <span className="text-center">
-                  <span
-                    title={status === 'achieved'
-                      ? 'The learner completed this activity.'
-                      : status === 'failed'
-                        ? 'The learner attempted this activity and did not pass it.'
-                        : 'Not completed yet.'}
-                    className={`cursor-help rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                      status === 'achieved' ? 'bg-emerald-100 text-emerald-700'
-                        : status === 'failed' ? 'bg-red-100 text-red-700'
-                        : 'bg-amber-100 text-amber-700'
-                    }`}
-                  >
-                    {status}
-                  </span>
-                </span>
-                <span className="text-center">
-                  <span title={counted.hint} className={`cursor-help rounded-full px-2 py-0.5 text-[10px] font-bold ${counted.className}`}>
-                    {counted.label}
-                  </span>
-                </span>
               </div>
             );
           })}
@@ -1254,6 +1286,8 @@ export function ScopeAchievementPanel({
   learnerStatus,
   active = true,
   onPreviewCredit,
+  groupScopes,
+  moduleScopes,
 }: {
   scope: CurriculumLearnerScope;
   identifier: string;
@@ -1266,12 +1300,27 @@ export function ScopeAchievementPanel({
   /** Lets a caller that holds the module catalogue open the same placement
    *  preview coverage uses, from "Where it was earned" here too. */
   onPreviewCredit?: (credit: KsbCredit, ksbCode: string) => void;
+  /** Cohort and programme scopes only: the groups this scope is delivered by.
+   *  Picking one re-points the whole panel at that group's own endpoint, so
+   *  every figure below is the group's own — the same numbers its own page
+   *  shows. A slice of this scope's totals would be a different thing: a module
+   *  belongs to one group, so these totals are not a sum that can be cut. */
+  groupScopes?: Array<{ id: string; name: string }>;
+  /** The modules delivered under this scope, for the second picker. `groupId`
+   *  ties each one to its group, so picking a group narrows the module list to
+   *  that group's own — a module belongs to one group and never two. */
+  moduleScopes?: Array<{ id: string; name: string; groupId?: string }>;
 }) {
   const [data, setData] = useState<CurriculumScopeLearnerKsbImpactResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<PanelTab>('ksb');
   const [search, setSearch] = useState('');
+  /** Learners tab only: narrows the roster to one group, or to learners with
+   *  activity in one module — the two things the amber note above tells a
+   *  reader to do when a scope spans more than one of either. */
+  const [groupFilter, setGroupFilter] = useState('');
+  const [moduleFilter, setModuleFilter] = useState('');
   /** '' | 'achieved' | 'missing' — the segmented control above the table. */
   const [standing, setStanding] = useState<'' | KsbStanding>('');
   /** 'K' | 'S' | 'B' | '' — the family strip's filter. */
@@ -1285,19 +1334,50 @@ export function ScopeAchievementPanel({
    *  to a component or two rather than showing everyone at once. */
   const [pickedLearnerIds, setPickedLearnerIds] = useState<string[]>([]);
   const [learnerPickerOpen, setLearnerPickerOpen] = useState(false);
+  /** '' means the scope the caller passed; otherwise the id of the group from
+   *  `groupScopes` the panel is reading in its place. */
+  const [scopeGroupId, setScopeGroupId] = useState('');
+  /** '' means every module the picked group (or the whole scope) delivers. */
+  const [scopeModuleId, setScopeModuleId] = useState('');
   // Which read owns the panel's state. An aborted read must not clear `loading`
   // that a newer one has since set, and it must not report its own abort as an
   // error — but the read that is still current always gets to finish the
   // spinner, however it settled.
   const generationRef = useRef(0);
 
+  // What the panel actually reads. Picking a group swaps the endpoint rather
+  // than filtering the answer, because a group is a scope in its own right.
+  const pickedScopeGroup = useMemo(
+    () => (groupScopes || []).find(item => String(item.id) === scopeGroupId),
+    [groupScopes, scopeGroupId],
+  );
+  // A module belongs to one group, so picking a group narrows what modules
+  // there are to pick from rather than the two filters fighting each other.
+  const moduleScopeOptions = useMemo(() => {
+    const all = moduleScopes || [];
+    if (!scopeGroupId) return all;
+    return all.filter(item => normaliseText(item.groupId) === normaliseText(scopeGroupId));
+  }, [moduleScopes, scopeGroupId]);
+  const pickedScopeModule = useMemo(
+    () => moduleScopeOptions.find(item => String(item.id) === scopeModuleId),
+    [moduleScopeOptions, scopeModuleId],
+  );
+
+  // The narrowest pick wins: a module is delivered inside a group, so choosing
+  // one is choosing the finer of the two readings, not contradicting it.
+  const narrowedScope = pickedScopeModule || pickedScopeGroup;
+  const readScope: CurriculumLearnerScope = pickedScopeModule
+    ? 'module'
+    : pickedScopeGroup ? 'group' : scope;
+  const readIdentifier = narrowedScope ? String(narrowedScope.id) : identifier;
+
   const load = useCallback((signal?: AbortSignal) => {
-    if (!identifier) return;
+    if (!readIdentifier) return;
     const generation = generationRef.current + 1;
     generationRef.current = generation;
     setLoading(true);
     setError(null);
-    fetchCurriculumScopeLearnerKsbImpact(scope, identifier, { learnerStatus }, signal)
+    fetchCurriculumScopeLearnerKsbImpact(readScope, readIdentifier, { learnerStatus }, signal)
       .then(result => {
         if (signal?.aborted || generationRef.current !== generation) return;
         setData(result);
@@ -1311,7 +1391,7 @@ export function ScopeAchievementPanel({
       .finally(() => {
         if (generationRef.current === generation) setLoading(false);
       });
-  }, [identifier, learnerStatus, scope]);
+  }, [learnerStatus, readIdentifier, readScope]);
 
   // No per-scope "already asked" guard here. StrictMode runs this effect twice
   // on mount, and the cleanup between the two passes aborts the first read: a
@@ -1320,15 +1400,37 @@ export function ScopeAchievementPanel({
   // "Loading learner achievement…" for good. The shared GET layer dedupes the
   // pair into one request anyway (see curriculumApi.fetchJson).
   useEffect(() => {
-    if (!active || !identifier) return;
+    if (!active || !readIdentifier) return;
     const controller = new AbortController();
     load(controller.signal);
     return () => controller.abort();
-  }, [active, identifier, load]);
+  }, [active, load, readIdentifier]);
+
+  // A filter chosen for one scope means nothing once the caller points the
+  // panel at a different one — its group/module names may not even exist there.
+  useEffect(() => {
+    setGroupFilter('');
+    setModuleFilter('');
+  }, [readIdentifier, readScope]);
+
+  // The caller pointing the panel at a different record drops both picks with
+  // it — neither need exist under the new scope at all.
+  useEffect(() => {
+    setScopeGroupId('');
+    setScopeModuleId('');
+  }, [identifier, scope]);
+
+  // Switching group drops a module that group does not deliver, so the select
+  // never sits on a value its own list no longer offers.
+  useEffect(() => {
+    if (scopeModuleId && !moduleScopeOptions.some(item => String(item.id) === scopeModuleId)) {
+      setScopeModuleId('');
+    }
+  }, [moduleScopeOptions, scopeModuleId]);
 
   const otjh = data?.otjhAchievement;
   const ksb = data?.ksbAchievement;
-  const noun = SCOPE_NOUN[data?.scope || scope] || 'scope';
+  const noun = SCOPE_NOUN[data?.scope || readScope] || 'scope';
 
   const consumptionByLearner = useMemo(() => {
     const map = new Map<string, CurriculumLearnerKsbConsumption>();
@@ -1442,6 +1544,39 @@ export function ScopeAchievementPanel({
     });
   }, [ksb, search, selectedType, standing]);
 
+  // Every group these learners actually sit in, for the Learners tab's Group
+  // filter — the same names the amber note above points at.
+  const groupOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const learner of otjh?.learners || []) {
+      const name = String(learner.group || '').trim();
+      if (name) names.add(name);
+    }
+    return Array.from(names).sort((left, right) => left.localeCompare(right));
+  }, [otjh]);
+
+  // Every module with recorded activity in this scope, for the Learners tab's
+  // Module filter. A learner carries no module of their own — a module belongs
+  // to one group, and a learner can be in that group without having touched it
+  // yet — so this filters by "has activity here", not by assignment.
+  const moduleOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const row of data?.learnerActivities || []) {
+      const name = String(row.module || '').trim();
+      if (name) names.add(name);
+    }
+    return Array.from(names).sort((left, right) => left.localeCompare(right));
+  }, [data]);
+
+  const moduleFilterLearnerIds = useMemo(() => {
+    if (!moduleFilter) return null;
+    const ids = new Set<string>();
+    for (const row of data?.learnerActivities || []) {
+      if (row.module === moduleFilter && row.learnerId != null) ids.add(String(row.learnerId));
+    }
+    return ids;
+  }, [data, moduleFilter]);
+
   const learnerRows = useMemo(() => {
     const query = normaliseText(search);
     const rows = otjh?.learners || [];
@@ -1450,10 +1585,22 @@ export function ScopeAchievementPanel({
         normaliseText(item.code) === normaliseText(selectedCode) && Number(item.consumedWeight || 0) > 0
       )))
       : rows;
-    if (!query) return byCode;
-    return byCode.filter(row => [row.learnerName, row.email, row.group, row.cohort]
+    const byGroup = groupFilter ? byCode.filter(row => row.group === groupFilter) : byCode;
+    const byModule = moduleFilterLearnerIds
+      ? byGroup.filter(row => moduleFilterLearnerIds.has(String(row.learnerId)))
+      : byGroup;
+    if (!query) return byModule;
+    return byModule.filter(row => [row.learnerName, row.email, row.group, row.cohort]
       .some(value => normaliseText(value).includes(query)));
-  }, [consumptionByLearner, otjh, search, selectedCode]);
+  }, [consumptionByLearner, groupFilter, moduleFilterLearnerIds, otjh, search, selectedCode]);
+
+  // A pick surviving a filter change that no longer matches any learner would
+  // leave the KSB breakdown open on a row that has vanished from the table.
+  useEffect(() => {
+    if (expandedLearner && !learnerRows.some(row => String(row.learnerId) === expandedLearner)) {
+      setExpandedLearner('');
+    }
+  }, [expandedLearner, learnerRows]);
 
   /** The matrix's own learner columns — picked ids narrow it independently of
    *  the search box, which stays about finding a KSB in that view. */
@@ -1499,21 +1646,67 @@ export function ScopeAchievementPanel({
     <section className="rounded-2xl border border-foreground-200/60 bg-background-50">
       <div className="flex flex-col gap-2 border-b border-background-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h3 className="text-[13px] font-heading font-bold text-foreground-950">
+          <h3 className="flex flex-wrap items-center gap-2 text-[13px] font-heading font-bold text-foreground-950">
             {title || 'Learner achievement'}
+            {narrowedScope && (
+              <span className="rounded-full bg-primary-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary-700">
+                {narrowedScope.name} only
+              </span>
+            )}
           </h3>
           <p className="mt-0.5 text-[12px] text-foreground-500">
-            {description || `Which KSBs the learners in this ${noun} have actually achieved, who achieved them, and which are still missing.`}
+            {pickedScopeModule
+              ? `Every figure below is read from ${pickedScopeModule.name} alone — the learners of the group that delivers it, measured against that module's own KSBs.`
+              : pickedScopeGroup
+                ? `Every figure below is read from ${pickedScopeGroup.name} alone — its own learners, its own modules, its own KSBs.`
+                : description || `Which KSBs the learners in this ${noun} have actually achieved, who achieved them, and which are still missing.`}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => load()}
-          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
-        >
-          <AppIcon className="ri-refresh-line"></AppIcon>
-          Refresh
-        </button>
+        {/* The group picker sits beside Refresh, not inside a tab's filter row,
+            because it changes what is read rather than what is shown: every
+            figure in the panel is re-read from the group that is picked. */}
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {!!groupScopes?.length && (
+            <label className="flex items-center gap-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Group</span>
+              <select
+                value={scopeGroupId}
+                onChange={event => setScopeGroupId(event.target.value)}
+                title="Read one group on its own. A module belongs to one group, so this re-reads every figure here from that group alone."
+                className="h-8 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-bold text-foreground-700 outline-none transition-smooth focus:border-primary-400"
+              >
+                <option value="">All groups</option>
+                {groupScopes.map(item => (
+                  <option key={String(item.id)} value={String(item.id)}>{item.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {!!moduleScopeOptions.length && (
+            <label className="flex items-center gap-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Module</span>
+              <select
+                value={scopeModuleId}
+                onChange={event => setScopeModuleId(event.target.value)}
+                title="Read one module on its own: the learners of the group that delivers it, against that module's own KSBs."
+                className="h-8 max-w-[220px] rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-bold text-foreground-700 outline-none transition-smooth focus:border-primary-400"
+              >
+                <option value="">All modules</option>
+                {moduleScopeOptions.map(item => (
+                  <option key={String(item.id)} value={String(item.id)}>{item.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <button
+            type="button"
+            onClick={() => load()}
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
+          >
+            <AppIcon className="ri-refresh-line"></AppIcon>
+            Refresh
+          </button>
+        </div>
       </div>
 
       <div className="space-y-4 p-5">
@@ -1563,16 +1756,6 @@ export function ScopeAchievementPanel({
               />
             </div>
 
-            {/* Knowledge / Skills / Behaviours, before the long table that
-                cannot be read for them. */}
-            {!!families.length && (
-              <KsbFamilyStrip
-                families={families}
-                selectedType={selectedType}
-                onSelectType={setSelectedType}
-              />
-            )}
-
             {/* One line of method, and only the caveats that apply to the scope
                 being read. The five-paragraph explainer that used to sit here
                 was read as decoration and skipped. */}
@@ -1581,16 +1764,63 @@ export function ScopeAchievementPanel({
                 {(data.structure?.groupCount || 0) > 1 && (
                   <p>
                     This {noun} is delivered by {data.structure.groupCount} groups, and a module belongs to one group —
-                    each learner is measured against their own group&apos;s modules. Pick a group above to read one
-                    class on its own.
+                    each learner is measured against their own group&apos;s modules.
+                    {groupScopes?.length
+                      ? ' Use the group picker at the top of this panel to read one class on its own.'
+                      : ' Use the group filter on the Learners tab to read one class on its own.'}
                   </p>
                 )}
                 {outOfScopeCount > 0 && (
                   <p>
                     {outOfScopeCount} completed {outOfScopeCount === 1 ? 'activity belongs' : 'activities belong'} to
                     another part of this programme, so {outOfScopeCount === 1 ? 'it is' : 'they are'} left out of these
-                    figures and listed in Activity as <span className="font-bold">Elsewhere</span>.
+                    figures. {outOfScopeCount === 1 ? 'It is' : 'They are'} still listed under Activity — hover a row
+                    there to see whether it counts here.
                   </p>
+                )}
+              </div>
+            )}
+
+            {/* Right under that note, because this is what it tells a reader
+                spanning more than one group to do next — narrow the roster
+                before reading its figures, not after. */}
+            {tab === 'learners' && (groupOptions.length > 1 || moduleOptions.length > 1) && (
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-background-200 bg-background-100/60 p-2">
+                <span className="pl-1 text-[10px] font-bold uppercase tracking-wider text-foreground-400">Filter</span>
+                {groupOptions.length > 1 && (
+                  <select
+                    value={groupFilter}
+                    onChange={event => setGroupFilter(event.target.value)}
+                    title="Show only the learners in one group"
+                    className="h-8 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-bold text-foreground-700 outline-none transition-smooth focus:border-primary-400"
+                  >
+                    <option value="">All groups</option>
+                    {groupOptions.map(name => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                )}
+                {moduleOptions.length > 1 && (
+                  <select
+                    value={moduleFilter}
+                    onChange={event => setModuleFilter(event.target.value)}
+                    title="Show only the learners with activity recorded in one module"
+                    className="h-8 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-bold text-foreground-700 outline-none transition-smooth focus:border-primary-400"
+                  >
+                    <option value="">All modules</option>
+                    {moduleOptions.map(name => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                )}
+                {(groupFilter || moduleFilter) && (
+                  <button
+                    type="button"
+                    onClick={() => { setGroupFilter(''); setModuleFilter(''); }}
+                    className="text-[10px] font-bold text-foreground-500 underline decoration-dotted hover:text-foreground-800"
+                  >
+                    Clear
+                  </button>
                 )}
               </div>
             )}
@@ -1602,6 +1832,7 @@ export function ScopeAchievementPanel({
                     key={item.key}
                     type="button"
                     onClick={() => setTab(item.key)}
+                    aria-pressed={tab === item.key}
                     className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-bold transition-smooth ${
                       tab === item.key ? 'bg-primary-600 text-white' : 'text-foreground-600 hover:bg-background-50'
                     }`}
@@ -1618,6 +1849,7 @@ export function ScopeAchievementPanel({
                       key={item.key || 'all'}
                       type="button"
                       onClick={() => setStanding(item.key)}
+                      aria-pressed={standing === item.key}
                       className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-bold transition-smooth ${
                         standing === item.key
                           ? item.key === 'missing'
@@ -1633,6 +1865,15 @@ export function ScopeAchievementPanel({
                     </button>
                   ))}
                 </div>
+              )}
+              {/* Beside the achieved/missing control, because it narrows the
+                  same table by the other axis the standard names. */}
+              {tab === 'ksb' && !!families.length && (
+                <KsbFamilyFilter
+                  families={families}
+                  selectedType={selectedType}
+                  onSelectType={setSelectedType}
+                />
               )}
               <label className="relative min-w-[180px] flex-1">
                 <AppIcon className="ri-search-line pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[13px] text-foreground-400"></AppIcon>
@@ -1792,7 +2033,7 @@ export function ScopeAchievementPanel({
                   icon="ri-graduation-cap-line"
                   title={data.assignedLearnerCount ? 'No learner matches this filter' : 'No learners assigned here yet'}
                   message={data.assignedLearnerCount
-                    ? 'Clear the search or the selected KSB.'
+                    ? 'Clear the search, the selected KSB, or the group/module filter.'
                     : 'The enrolment team places learners into cohorts and groups; curriculum reads those placements.'}
                 />
               )
@@ -1811,6 +2052,256 @@ export function ScopeAchievementPanel({
                 />
               )
             )}
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// --------------------------------------------------- one learner, one scope
+
+/**
+ * What a single learner has achieved inside one curriculum scope.
+ *
+ * The scope panel above answers "how is this class doing"; this answers "how is
+ * this person doing here", which is the question a roster row asks when it is
+ * clicked. It is the same read (`learner-ksb-impact` for the scope) narrowed to
+ * one learner rather than a second endpoint, so the hours and KSB weight shown
+ * here are the same figures the class table sums — a learner's row on the
+ * Learners tab and this view can never disagree.
+ *
+ * Everything here is scope-local on purpose: a group shows what was earned in
+ * that group, not the learner's whole programme. Work they did elsewhere on the
+ * programme is still listed, and each row's tooltip says whether it counts here,
+ * rather than being silently dropped.
+ */
+export function ScopeLearnerAchievementDetail({
+  scope,
+  identifier,
+  learnerId,
+  learnerName,
+  learnerEmail,
+  scopeLabel,
+  onClose,
+}: {
+  scope: CurriculumLearnerScope;
+  identifier: string;
+  /** The enrolment learner id — what Learner, Coach and Curriculum match on. */
+  learnerId: string;
+  learnerName?: string;
+  learnerEmail?: string;
+  /** What to call this scope in prose, e.g. the group's name. */
+  scopeLabel?: string;
+  onClose?: () => void;
+}) {
+  const [data, setData] = useState<CurriculumScopeLearnerKsbImpactResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Same guard as the panel: an aborted read must not clear a newer read's
+  // spinner or report its own abort as a failure.
+  const generationRef = useRef(0);
+
+  const load = useCallback((signal?: AbortSignal) => {
+    if (!identifier) return;
+    const generation = generationRef.current + 1;
+    generationRef.current = generation;
+    setLoading(true);
+    setError(null);
+    // 'all' rather than the default: a learner whose placement has since been
+    // paused or completed still earned what they earned here, and a roster row
+    // the reader can see must not open onto "learner not found".
+    fetchCurriculumScopeLearnerKsbImpact(scope, identifier, { learnerStatus: 'all' }, signal)
+      .then(result => {
+        if (signal?.aborted || generationRef.current !== generation) return;
+        setData(result);
+        setError(null);
+      })
+      .catch(fetchError => {
+        if (signal?.aborted || generationRef.current !== generation) return;
+        setData(null);
+        setError(fetchError instanceof Error ? fetchError.message : 'Unable to load this learner’s achievement.');
+      })
+      .finally(() => {
+        if (generationRef.current === generation) setLoading(false);
+      });
+  }, [identifier, scope]);
+
+  useEffect(() => {
+    if (!identifier || !learnerId) return;
+    const controller = new AbortController();
+    load(controller.signal);
+    return () => controller.abort();
+  }, [identifier, learnerId, load]);
+
+  const key = String(learnerId);
+  const noun = SCOPE_NOUN[data?.scope || scope] || 'scope';
+  const where = scopeLabel || `this ${noun}`;
+
+  const otjhRow = useMemo(
+    () => (data?.otjhAchievement?.learners || []).find(row => String(row.learnerId) === key) || null,
+    [data, key],
+  );
+  const consumption = useMemo(
+    () => (data?.learnerKsbConsumption || []).find(row => String(row.learnerId) === key) || null,
+    [data, key],
+  );
+  const rosterRow = useMemo(
+    () => (data?.assignedLearners || []).find(row => String(row.id) === key) || null,
+    [data, key],
+  );
+
+  const displayName = learnerName
+    || otjhRow?.learnerName || consumption?.learnerName || rosterRow?.name
+    || learnerEmail || rosterRow?.email || `Learner ${key}`;
+  const displayEmail = learnerEmail || otjhRow?.email || consumption?.email || rosterRow?.email || '';
+
+  /** Only this learner's activity, newest first — the "how" behind the figures. */
+  const activities = useMemo(() => {
+    const rows = (data?.learnerActivities || []).filter(row => String(row.learnerId ?? '') === key);
+    return [...rows].sort((left, right) => String(right.submittedAt || '').localeCompare(String(left.submittedAt || '')));
+  }, [data, key]);
+
+  // The activity table names people by id unless it is handed the roster's
+  // names; one learner still needs the map, because that is its contract.
+  const learnerNames = useMemo(
+    () => new Map([[key, { name: displayName, email: displayEmail }]]),
+    [displayEmail, displayName, key],
+  );
+
+  const ksbRows = useMemo(() => {
+    const rows = [...(consumption?.ksbs || [])];
+    // Earned first, then the rest: the reader is here to see what was achieved,
+    // and a KSB with weight against it is the answer to that.
+    rows.sort((left, right) => {
+      const earned = Number(right.cappedConsumedWeight || 0) - Number(left.cappedConsumedWeight || 0);
+      if (earned) return earned;
+      return String(left.code).localeCompare(String(right.code), undefined, { numeric: true });
+    });
+    return rows;
+  }, [consumption]);
+
+  const otjhPercentage = otjhRow?.progressPercentage || 0;
+  const ksbPercentage = consumption?.progressPercentage || 0;
+  const earnedKsbCount = ksbRows.filter(row => Number(row.cappedConsumedWeight || 0) > 0).length;
+  const found = Boolean(otjhRow || consumption || rosterRow);
+
+  return (
+    <section className="rounded-2xl border border-background-200 bg-background-50">
+      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-background-200 px-4 py-3">
+        <div className="min-w-0">
+          <h3 className="truncate text-[13px] font-heading font-bold text-foreground-950">{displayName}</h3>
+          <p className="mt-0.5 text-[11px] text-foreground-500">
+            {displayEmail ? `${displayEmail} · ` : ''}
+            What this learner has achieved in {where} — off-the-job hours and KSB weight earned here, not across
+            the whole programme.
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => load()}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
+          >
+            <AppIcon className="ri-refresh-line text-sm"></AppIcon>
+            Refresh
+          </button>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
+            >
+              <AppIcon className="ri-close-line text-sm"></AppIcon>
+              Close
+            </button>
+          )}
+        </div>
+      </header>
+
+      <div className="space-y-4 p-4">
+        {loading && !data && <p className="text-[12px] text-foreground-500">Loading this learner’s achievement…</p>}
+
+        {error && <InlineError message={error} onRetry={() => load()} />}
+
+        {!loading && !error && data && !found && (
+          <EntityEmptyState
+            icon="ri-user-search-line"
+            title="This learner is not in this scope"
+            message={`Enrolment does not place ${displayName} in ${where}, so nothing is credited to them here.`}
+          />
+        )}
+
+        {data && found && (
+          <>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <AchievementMeter
+                label="OTJH achieved here"
+                achievedLabel={hours(otjhRow?.achievedOtjh)}
+                plannedLabel={hours(otjhRow?.plannedOtjh)}
+                percentage={otjhPercentage}
+                note={percent(otjhPercentage)}
+                hint={`Off-the-job hours credited to this learner in ${where}, out of the hours the modules of their own group assign them here.`}
+              />
+              <AchievementMeter
+                label="KSB weight earned here"
+                achievedLabel={weight(consumption?.cappedConsumedWeightTotal)}
+                plannedLabel={weight(consumption?.expectedWeightTotal)}
+                percentage={ksbPercentage}
+                tone="emerald"
+                note={percent(ksbPercentage)}
+                hint="Curriculum weight this learner has earned, out of the weight expected of them here. Weight, not a mark."
+              />
+              <CountStat
+                label="Components done"
+                value={otjhRow?.completedActivityCount ?? 0}
+                note={`${otjhRow?.reflectionCount ?? 0} reflection${(otjhRow?.reflectionCount ?? 0) === 1 ? '' : 's'} logged`}
+                hint="How many components this learner has completed here, and how many of them they wrote a reflection for."
+              />
+              <CountStat
+                label="KSBs with weight"
+                value={`${earnedKsbCount} of ${ksbRows.length}`}
+                note={consumption?.declaredReflectionWeightTotal
+                  ? `${weight(consumption.declaredReflectionWeightTotal)} declared in reflections`
+                  : undefined}
+                hint="KSBs this learner has earned any weight against, out of the KSBs in play for them here. Reflection-declared weight is evidence about the same work and is never added on top."
+              />
+            </div>
+
+            {otjhRow?.plannedBasis === 'none' && (
+              <p className="rounded-lg border border-amber-200/60 bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
+                No module in {where} is delivered to this learner’s group, so there are no assigned hours to measure
+                them against here.
+              </p>
+            )}
+
+            <div className="rounded-xl border border-background-200 bg-background-100/50 p-3">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-foreground-400">
+                KSBs achieved in {where}
+              </p>
+              <LearnerKsbBreakdown
+                ksbRows={ksbRows}
+                learner={{
+                  achievedOtjh: otjhRow?.achievedOtjh || 0,
+                  declaredOtjh: otjhRow?.declaredOtjh || 0,
+                }}
+              />
+            </div>
+
+            <div>
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-foreground-400">
+                The work behind those figures
+              </p>
+              {activities.length ? (
+                <ActivityTable activities={activities} learnerNames={learnerNames} />
+              ) : (
+                <EntityEmptyState
+                  icon="ri-history-line"
+                  title="No activity recorded here yet"
+                  message={`Activity appears once ${displayName} completes a component in ${where}.`}
+                />
+              )}
+            </div>
           </>
         )}
       </div>

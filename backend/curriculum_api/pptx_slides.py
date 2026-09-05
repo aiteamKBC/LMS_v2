@@ -10,10 +10,11 @@ the SlideDeckViewer positions absolutely on a fixed-size stage.
 
 What is modelled: slide/layout/master backgrounds, the decorative shapes a
 template puts on its master and layouts, text frames (runs with size, weight,
-colour, alignment, bullets), pictures, tables, and grouped shapes. What is not:
-charts, SmartArt and embedded objects become labelled placeholder boxes; effects
-(shadows, 3-D), transitions and animations are dropped. Gradients collapse to
-their first stop.
+colour, alignment, bullets), pictures, tables, and grouped shapes. SmartArt is
+drawn from the laid-out copy PowerPoint caches for it, so a diagram renders as
+its real boxes and text. What is not: charts and embedded objects become
+labelled placeholder boxes; effects (shadows, 3-D), transitions and animations
+are dropped. Gradients collapse to their first stop.
 
 Renders are cached on disk beside the upload, keyed by the source file's size
 and mtime, so a deck is parsed once and re-parsed after it is replaced.
@@ -22,6 +23,7 @@ and mtime, so a deck is parsed once and re-parsed after it is replaced.
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import logging
 import math
@@ -32,6 +34,8 @@ from django.conf import settings
 
 from lxml import etree
 from pptx import Presentation
+from pptx.oxml import parse_xml
+from pptx.shapes.autoshape import Shape as _AutoShape
 from pptx.enum.dml import MSO_COLOR_TYPE, MSO_FILL, MSO_THEME_COLOR
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
@@ -44,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 # Bumped when the emitted model changes shape, so cached renders from an older
 # version of this module are discarded instead of being replayed.
-MODEL_VERSION = 7
+MODEL_VERSION = 8
 
 #: Cache directory name, a sibling of the uploads it renders.
 RENDER_DIR_NAME = '_slide_renders'
@@ -665,6 +669,31 @@ def _rotation(shape):
     return round(rotation, 2) if rotation else None
 
 
+def _blip_fill_source(shape, context):
+    """The image a shape is *filled* with, or None.
+
+    A picture on a slide is not always a <p:pic>. PowerPoint also fills an
+    ordinary shape with one — <a:blipFill> inside the shape's <p:spPr> — which
+    is what "Picture fill" and most pasted diagrams and logos produce. Those
+    shapes have no solid fill, no line and no text, so without this they resolve
+    to nothing at all and are dropped, taking the artwork with them.
+    """
+    blip_fill = shape._element.find('.//' + qn('p:spPr') + '/' + qn('a:blipFill'))
+    if blip_fill is None:
+        return None
+    blip = blip_fill.find(qn('a:blip'))
+    if blip is None:
+        return None
+    rel_id = blip.get(qn('r:embed'))
+    if not rel_id:
+        return None
+    try:
+        part = context['slide_part'].rels[rel_id].target_part
+    except Exception:
+        return None
+    return _image_source(part, context)
+
+
 def _image_source(image, context):
     """Write an embedded image out once and return the URL it is served from."""
     try:
@@ -720,6 +749,112 @@ UNSUPPORTED_LABELS = {
 }
 
 
+#: SmartArt's drawing part namespace. PowerPoint stores the laid-out result of a
+#: SmartArt graphic here (ppt/diagrams/drawingN.xml) as ordinary DrawingML in a
+#: Microsoft extension namespace — same <a:xfrm>/<a:prstGeom>/<a:solidFill>
+#: children as a normal shape, just tagged dsp: instead of p:.
+DSP_NS = 'http://schemas.microsoft.com/office/drawing/2008/diagram'
+DSP = '{%s}' % DSP_NS
+P_NS = qn('p:sp').split('}')[0][1:]
+#: The graphicData URI that marks a graphicFrame as SmartArt.
+DIAGRAM_URI = 'http://schemas.openxmlformats.org/drawingml/2006/diagram'
+
+
+def _is_smartart(shape):
+    """Is this graphicFrame a SmartArt graphic?
+
+    Checked by graphicData URI rather than shape_type: python-pptx reports
+    `shape_type` as None for a SmartArt frame (it has no MSO type for the
+    diagram graphicData), so MSO_SHAPE_TYPE.DIAGRAM never matches and the frame
+    would otherwise fall through every branch below and be dropped silently.
+    """
+    graphic_data = shape._element.find('.//' + qn('a:graphicData'))
+    return graphic_data is not None and graphic_data.get('uri') == DIAGRAM_URI
+
+
+#: Relationship type of the laid-out drawing PowerPoint caches for a SmartArt.
+#: Matched on the suffix, not the whole URI: PowerPoint writes this one in a
+#: Microsoft namespace (schemas.microsoft.com/office/2007/relationships/…)
+#: rather than the openxmlformats one every other diagram part uses.
+DIAGRAM_DRAWING_RT_SUFFIX = '/diagramDrawing'
+
+
+def _smartart_drawing_root(shape, context):
+    """The <dsp:drawing> holding this SmartArt's laid-out shapes, or None.
+
+    The frame's <dgm:relIds> names the data/layout/style parts but NOT the
+    drawing, so the drawing is found by walking the slide's own relationships
+    for the diagramDrawing type. Where a slide holds several SmartArt graphics
+    the data part's number pairs them up (data3.xml <-> drawing3.xml), which is
+    how the right drawing is picked for the right frame.
+    """
+    try:
+        rels = context['slide_part'].rels
+        drawings = [
+            rel.target_part for rel in rels.values()
+            if rel.reltype.endswith(DIAGRAM_DRAWING_RT_SUFFIX)
+        ]
+        if not drawings:
+            return None
+        chosen = drawings[0]
+        if len(drawings) > 1:
+            # Pair by the trailing number on the data part this frame points at.
+            rel_ids = shape._element.find('.//{%s}relIds' % DIAGRAM_URI)
+            data_rid = rel_ids.get(qn('r:dm')) if rel_ids is not None else None
+            data_name = rels[data_rid].target_part.partname if data_rid else ''
+            suffix = ''.join(ch for ch in str(data_name).rsplit('/', 1)[-1] if ch.isdigit())
+            for part in drawings:
+                name = str(part.partname).rsplit('/', 1)[-1]
+                if ''.join(ch for ch in name if ch.isdigit()) == suffix:
+                    chosen = part
+                    break
+        return etree.fromstring(chosen.blob)
+    except Exception:
+        return None
+
+
+def _as_pptx_shape(element):
+    """A dsp: SmartArt element re-tagged as its p: equivalent, python-pptx-parsed.
+
+    Re-tagging alone is not enough: lxml has already bound the tree to plain
+    elements, so it is serialised and re-parsed through python-pptx's own parser
+    to pick up the oxml classes that Shape/Picture depend on.
+    """
+    converted = copy.deepcopy(element)
+    for node in converted.iter():
+        if isinstance(node.tag, str) and node.tag.startswith(DSP):
+            node.tag = '{%s}%s' % (P_NS, node.tag[len(DSP):])
+    # python-pptx requires a non-visual properties id/name; SmartArt omits both.
+    props = converted.find('.//' + qn('p:cNvPr'))
+    if props is not None:
+        props.set('id', props.get('id') or '1')
+        props.set('name', props.get('name') or 'SmartArt shape')
+    return parse_xml(etree.tostring(converted))
+
+
+def _smartart_models(shape, frame, context):
+    """A SmartArt graphic as the shapes PowerPoint already laid out for it.
+
+    Rendering SmartArt from its data + layout definition is a project in itself,
+    but PowerPoint caches the finished geometry in the drawing part, so the
+    diagram can be drawn from that with the ordinary shape path — which is why
+    this returns real boxes and text rather than a "Diagram" placeholder.
+    """
+    root = _smartart_drawing_root(shape, context)
+    if root is None:
+        return None
+    # The drawing's coordinates are relative to the frame's own origin.
+    nested = frame.nested(shape) if hasattr(frame, 'nested') else frame
+    models = []
+    for element in root.findall('.//' + DSP + 'sp'):
+        try:
+            converted = _as_pptx_shape(element)
+            models.extend(_shape_models(_AutoShape(converted, None), nested, context))
+        except Exception:
+            continue
+    return models or None
+
+
 def _shape_models(shape, frame, context):
     """One shape — recursively, for groups — as zero or more model entries."""
     theme = context['theme']
@@ -745,8 +880,24 @@ def _shape_models(shape, frame, context):
     if getattr(shape, 'has_table', False):
         return [_table_model(shape, box, theme, frame.text_scale)]
 
+    if _is_smartart(shape):
+        drawn = _smartart_models(shape, frame, context)
+        # Only when the cached layout is missing does the learner get a label
+        # instead of the diagram itself.
+        return drawn if drawn is not None else [
+            {'kind': 'note', **box, 'label': UNSUPPORTED_LABELS[MSO_SHAPE_TYPE.DIAGRAM]}
+        ]
+
     if shape_type in UNSUPPORTED_LABELS:
         return [{'kind': 'note', **box, 'label': UNSUPPORTED_LABELS[shape_type]}]
+
+    # Anything else the parser cannot model — an embedded object, a chart in a
+    # frame python-pptx types as None — is still *something* the author put on
+    # the slide. Marking its place says "there is content here the viewer
+    # cannot draw"; dropping it silently leaves a blank gap that reads as a
+    # broken deck, which is what SmartArt used to do.
+    if shape._element.tag == qn('p:graphicFrame'):
+        return [{'kind': 'note', **box, 'label': 'Embedded content'}]
 
     fill = _fill_hex(getattr(shape, 'fill', None), theme)
     line, line_width_pt = None, None
@@ -756,8 +907,24 @@ def _shape_models(shape, frame, context):
     except Exception:
         line, line_width_pt = None, None
     has_text = bool(getattr(shape, 'has_text_frame', False))
+
+    # A shape filled with a picture rather than a colour: drawn as the image it
+    # is filled with. Checked before the drop below, because such a shape has no
+    # solid fill and no line, so it would otherwise be discarded — silently
+    # losing pasted diagrams, logos and screenshots, which is most of the
+    # artwork in a real deck.
+    #
+    # `has_text` is not part of this test: a freeform carries an empty text
+    # frame, so requiring "no text" here skipped exactly the shapes that hold
+    # the artwork. Any real text is emitted as its own model below.
+    picture_fill = _blip_fill_source(shape, context)
+    picture_model = [{
+        'kind': 'image', **box, 'src': picture_fill,
+        'alt': shape.name or 'Slide image', 'rotation': _rotation(shape),
+    }] if picture_fill else []
+
     if not has_text and not fill and not line:
-        return []
+        return picture_model
 
     outline = _custom_path(shape)
     model = {
@@ -783,8 +950,12 @@ def _shape_models(shape, frame, context):
             frame.text_scale,
         ))
         if not model['paragraphs'] and not fill and not line:
-            return []
-    return [model]
+            # Empty text frame — but if the shape is picture-filled, the picture
+            # is the content and must still be drawn.
+            return picture_model
+    # Picture first so it sits behind the shape's own text, as PowerPoint draws
+    # a fill behind the words on top of it.
+    return picture_model + [model]
 
 
 # -- backgrounds and inherited (layout / master) graphics -------------------
@@ -850,6 +1021,8 @@ def _deck_model(source, asset_dir, url_prefix):
             'asset_dir': asset_dir,
             'url_prefix': url_prefix,
             'background_hex': '#ffffff',
+            # SmartArt's laid-out drawing is a related part of the slide.
+            'slide_part': slide.part,
         }
         theme = context['theme']
         background = (
@@ -964,7 +1137,9 @@ def _cached_render(relative_path, source, stamp, build, kind):
     cache_dir = render_root() / key
     manifest = cache_dir / 'deck.json'
     url_prefix = '/curriculum_api/curriculum/uploads/%s/%s' % (RENDER_DIR_NAME, key)
-    stamp = stamp or _stamp(source)
+    # Qualified by the model version so a renderer change re-parses rather
+    # than replaying a model built by an older version of this module.
+    stamp = _versioned(stamp) or _stamp(source)
 
     if manifest.exists():
         try:
@@ -1003,6 +1178,18 @@ def render_root():
 def _stamp(source):
     stat = source.stat()
     return '%s:%s:%s' % (MODEL_VERSION, stat.st_size, stat.st_mtime_ns)
+
+
+def _versioned(stamp):
+    """A caller's content stamp, qualified by the model version.
+
+    A stamp identifies the *bytes* — upload_storage builds it from a blob's size
+    and etag, or a local file's size and mtime — so on its own it says nothing
+    about the shape of the model those bytes were rendered into. Without the
+    version folded in, improving this renderer left every already-cached deck
+    replaying its old model forever, and the fix looked like it had not worked.
+    """
+    return None if not stamp else 'v%s:%s' % (MODEL_VERSION, stamp)
 
 
 def render_cache_key(relative_path):
@@ -1044,6 +1231,7 @@ def deck_model_for_stamp(relative_path, stamp):
     in blob storage would otherwise be downloaded on every request just to
     discover the render was already on disk.
     """
+    stamp = _versioned(stamp)
     if not stamp:
         return None
     manifest = render_root() / render_cache_key(relative_path) / 'deck.json'

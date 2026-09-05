@@ -23,6 +23,7 @@ export const MetricCard = memo(function MetricCard({
   note,
   tone = 'neutral',
   icon,
+  iconClassName,
   onClick,
   active = false,
   className,
@@ -34,6 +35,8 @@ export const MetricCard = memo(function MetricCard({
   tone?: StatusTone;
   /** Remix icon class. */
   icon?: string;
+  /** Optional visual override for contexts with a fixed semantic icon palette. */
+  iconClassName?: string;
   /** Given when the card filters the view below it. */
   onClick?: () => void;
   /** True when this card's filter is the one currently applied. */
@@ -46,7 +49,7 @@ export const MetricCard = memo(function MetricCard({
   const body = (
     <div className="flex min-w-0 items-start gap-3">
       {icon ? (
-        <span className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-xl', style.bg, style.text)}>
+        <span className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-xl', iconClassName || cn(style.bg, style.text))}>
           <AppIcon className={cn(icon, 'text-[18px]')}></AppIcon>
         </span>
       ) : null}
@@ -55,7 +58,7 @@ export const MetricCard = memo(function MetricCard({
         <p className="truncate text-[11px] font-medium text-foreground-500">{label}</p>
         <p
           className={cn(
-            'mt-1 text-[25px] font-semibold leading-none tabular-nums',
+            'mt-1 text-[28px] font-semibold leading-none tabular-nums',
             neutral ? 'text-foreground-900' : style.text,
           )}
         >
@@ -70,7 +73,7 @@ export const MetricCard = memo(function MetricCard({
   );
 
   const surface = cn(
-    'rounded-xl border border-foreground-100/70 bg-background-50 p-4 text-left shadow-sm',
+    'coach-metric-card rounded-xl border border-foreground-100/70 bg-background-50 p-4 text-left shadow-sm',
     active ? 'ring-1 ring-primary-200' : '',
     className,
   );

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
+import { formatHoursMinutes } from '@/lib/format';
 
 const tutorNav = roleNavMap.tutor;
 
@@ -71,7 +72,7 @@ export default function TutorOtjhValidationPage() {
             { l: 'Pending Review', v: String(pendingCount), i: 'ri-hourglass-line', c: 'amber' },
             { l: 'Approved This Month', v: String(OTJH_CLAIMS.filter(c => c.status === 'Approved').length), i: 'ri-check-double-line', c: 'emerald' },
             { l: 'Missing Employer OK', v: String(unconfirmed), i: 'ri-building-line', c: 'red' },
-            { l: 'Avg Hours/Claim', v: `${(totalHours / OTJH_CLAIMS.length).toFixed(1)}h`, i: 'ri-bar-chart-line', c: 'primary' },
+            { l: 'Avg Hours/Claim', v: formatHoursMinutes(totalHours / OTJH_CLAIMS.length), i: 'ri-bar-chart-line', c: 'primary' },
           ].map(s => (
             <div key={s.l} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 cursor-pointer">
               <span className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${s.c === 'amber' ? 'bg-amber-100 text-amber-600' : s.c === 'emerald' ? 'bg-emerald-100 text-emerald-600' : s.c === 'red' ? 'bg-red-100 text-red-600' : 'bg-primary-100 text-primary-600'}`}><AppIcon className={`${s.i} text-sm`}></AppIcon></span>

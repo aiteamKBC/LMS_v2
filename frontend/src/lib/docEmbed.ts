@@ -33,6 +33,14 @@ export type DocEmbed =
 const PDF_RE = /\.pdf$/i;
 /** Formats the in-house renderer reads: OOXML decks (not legacy .ppt) and PDFs. */
 const DECK_RE = /\.(pptx|ppsx|pptm|ppsm|pdf)$/i;
+/**
+ * PowerPoint 97-2003. The in-house renderer cannot read it (python-pptx opens
+ * OOXML only, and the backend refuses it outright — see
+ * curriculum_api.pptx_slides), so it depends entirely on the Office Online
+ * viewer: fine on a public deployment, impossible on one Microsoft cannot
+ * reach. Named here only to explain that difference to whoever uploaded it.
+ */
+const LEGACY_DECK_RE = /\.(ppt|pps)$/i;
 
 /** Hostnames the public internet cannot resolve or route to. */
 function isPubliclyReachable(hostname: string): boolean {
@@ -98,7 +106,13 @@ export function resolveDocEmbed(url: string, origin = window.location.origin): D
   if (!isPubliclyReachable(hostname)) {
     return {
       mode: 'unavailable',
-      reason: 'Inline preview uses Microsoft’s Office Online viewer, which has to download the file from the internet — it cannot reach this server.',
+      // A legacy deck says so plainly: on a public deployment the Office viewer
+      // would open it, so "we cannot reach this server" is the whole truth
+      // here, but it leaves the author with nothing to act on. Re-saving as
+      // .pptx is what makes it readable everywhere, including in-house.
+      reason: LEGACY_DECK_RE.test(pathname)
+        ? 'This deck is in the older PowerPoint 97-2003 format, which can only be previewed by Microsoft’s Office Online viewer — and that cannot reach this server. Re-saving it as .pptx (or as a PDF) would let it render here directly.'
+        : 'Inline preview uses Microsoft’s Office Online viewer, which has to download the file from the internet — it cannot reach this server.',
     };
   }
   // Everything else — Office documents, and any other public link an author
