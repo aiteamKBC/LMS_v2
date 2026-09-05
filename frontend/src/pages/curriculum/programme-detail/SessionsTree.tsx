@@ -606,7 +606,10 @@ function SessionRow({
         {session.durationMinutes > 0 && (
           <span className="text-[11px] tabular-nums text-foreground-400">{session.durationMinutes}m</span>
         )}
-        <StatusBadge status={session.status} />
+        {/* A recorded video's status is its authoring publish state (draft/
+            published/…), not anything about the session — showing it here just
+            said "DRAFT" on every recording nobody had explicitly published. */}
+        {session.kind === 'live' && <StatusBadge status={session.status} />}
 
         {session.kind === 'live' && session.liveSessionId && (
           <button
