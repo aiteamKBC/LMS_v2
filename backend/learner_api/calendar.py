@@ -222,13 +222,17 @@ def _belongs_to_current_cycle(record, mirror):
     caseload profiles — so a learner shown them is reading dates their coach
     cannot see.
 
-    Only the generated cycle is filtered. A catch-up, a student-support session
-    or an onboarding review is something somebody actually arranged, and it
-    belongs to the learner however their mirror has changed since.
+    Only the generated cycle is filtered. A catch-up, a student-support session,
+    an onboarding review, or a cycle-type meeting explicitly booked by the
+    learner is something somebody actually arranged and must survive a mirror
+    change. Learner bookings are identifiable by their durable idempotency key;
+    unlike coach-generated slots, they currently store the source learner id.
     """
     if mirror is None:
         return True
     if _s(record.event_type) not in ("mcr", "progress-review"):
+        return True
+    if _s(getattr(record, "idempotency_key", "")).startswith("learner-book:"):
         return True
     return str(record.learner_id or "") in ("", str(mirror.id))
 

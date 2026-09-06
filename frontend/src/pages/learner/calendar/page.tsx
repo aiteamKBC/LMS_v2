@@ -480,6 +480,12 @@ export function LearnerCalendarContent() {
     () => `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(selectedDay).padStart(2, '0')}`,
     [viewYear, viewMonth, selectedDay],
   );
+  const openBookSession = useCallback((date?: string) => {
+    setBookDate(date || todayISO());
+    setBookError(null);
+    setShowDayDrawer(false);
+    setShowBookModal(true);
+  }, []);
   const confirmedCount = myEvents.filter((ev) => ev.status === 'confirmed').length;
   const pendingCount = myEvents.filter((ev) => ev.status === 'pending').length;
   const totalPoints = myEvents.filter((ev) => ev.status === 'confirmed').reduce((s, ev) => s + ev.points, 0);
@@ -954,10 +960,10 @@ export function LearnerCalendarContent() {
                   <p className="text-sm text-foreground-500">No events scheduled</p>
                   <button
                     type="button"
-                    onClick={() => { setCustomDate(selectedIso); setShowDayDrawer(false); setShowCreateModal(true); }}
+                    onClick={() => openBookSession(selectedIso)}
                     className="inline-flex items-center gap-1.5 rounded-xl bg-primary-500 px-4 py-2 text-xs font-semibold text-white transition-smooth hover:bg-primary-600 cursor-pointer whitespace-nowrap"
                   >
-                    <AppIcon className="ri-add-line text-sm"></AppIcon>Create Event
+                    <AppIcon className="ri-user-star-line text-sm"></AppIcon>Book Session
                   </button>
                 </div>
               ) : (
@@ -1028,7 +1034,7 @@ export function LearnerCalendarContent() {
           actions={
             <>
               <button
-                onClick={() => setShowBookModal(true)}
+                onClick={() => openBookSession()}
                 className="inline-flex h-[42px] min-w-[181px] cursor-pointer items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[13px] font-semibold text-white transition-smooth hover:bg-primary-700"
               >
                 <AppIcon className="ri-user-star-line text-[15px]"></AppIcon>
