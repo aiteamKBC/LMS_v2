@@ -11,35 +11,19 @@ import {
   type LearnerCalendarEvent,
 } from '@/api/learnerCalendar';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { formatReportedTime, reportedTimeMinutes } from '@/utils/reportedTime';
+import {
+  collapseRepeatedActivities,
+  type ActivityType,
+  type MonthActivity,
+} from '@/utils/monthlyActivity';
+import { otjhContributionHours } from '@/utils/otjhContribution';
 
 const learnerNav = roleNavMap.learner;
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
-
-type ActivityType = 'quiz' | 'video' | 'learning' | 'coaching' | 'review';
-
-interface MonthActivity {
-  id: string;
-  at: string;
-  type: ActivityType;
-  title: string;
-  action: string;
-  detail?: string;
-  module?: string | null;
-  week?: string | null;
-  duration?: string | null;
-  reportedTime?: string | null;
-  ksbs: string[];
-  feedback?: string | null;
-  status?: string;
-  score?: number;
-  passed?: boolean;
-  coach?: string;
-  notes?: string;
-  meetingLink?: string;
-}
 
 const TYPE_META: Record<ActivityType, { label: string; icon: string; colour: string; soft: string; line: string }> = {
   quiz: { label: 'Quizzes', icon: 'ri-questionnaire-line', colour: 'text-amber-700', soft: 'bg-amber-50', line: 'border-l-amber-400' },
@@ -98,15 +82,6 @@ function durationLabel(value?: string | null) {
   return value;
 }
 
-function minutesFromText(value?: string | null) {
-  if (!value) return 0;
-  const hours = Number(value.match(/([\d.]+)\s*(?:hours?|hrs?|h)\b/i)?.[1] || 0);
-  const minutes = Number(value.match(/([\d.]+)\s*(?:minutes?|mins?|m)\b/i)?.[1] || 0);
-  if (hours || minutes) return (hours * 60) + minutes;
-  const numeric = Number(value.match(/[\d.]+/)?.[0] || 0);
-  return Number.isFinite(numeric) ? numeric * 60 : 0;
-}
-
 function formatMinutes(total: number) {
   if (!total) return '0m';
   const rounded = Math.round(total);
@@ -136,6 +111,8 @@ function buildActivities(real: LearnerDetail | null, events: LearnerCalendarEven
     const item = findFeed(feed, 'quiz', attempt.quizId, attempt.submittedAt);
     result.push({
       id: `quiz-${attempt.quizId}-${attempt.attempt || attempt.submittedAt}`,
+      activityKey: `quiz:${attempt.quizId}`,
+      attemptNumber: attempt.attempt,
       at: attempt.submittedAt,
       type: 'quiz',
       title: item?.title || `Quiz ${attempt.quizId}`,
@@ -145,6 +122,13 @@ function buildActivities(real: LearnerDetail | null, events: LearnerCalendarEven
       week: item?.week,
       duration: durationLabel(attempt.timeTaken),
       reportedTime: attempt.reportedTime,
+      loggedMinutes: otjhContributionHours({
+        expectedOtjh: attempt.expectedOtjh,
+        reportedTime: attempt.reportedTime,
+        verifiedSeconds: attempt.verifiedSeconds,
+        claimedSeconds: attempt.claimedSeconds,
+        timeTrackingSource: attempt.timeTrackingSource,
+      }) * 60,
       ksbs: attempt.ksbs || [],
       feedback: attempt.feedback,
       score: Math.round(attempt.grade * 100),
@@ -157,15 +141,25 @@ function buildActivities(real: LearnerDetail | null, events: LearnerCalendarEven
     const component = componentMap.get(video.componentId);
     result.push({
       id: `video-${video.componentId}-${video.attempt || video.submittedAt}`,
+      activityKey: `component:${video.componentId}`,
+      attemptNumber: video.attempt,
       at: video.submittedAt,
       type: 'video',
       title: item?.title || component?.component || 'Video',
       action: video.attempt && video.attempt > 1 ? `Watched again · attempt ${video.attempt}` : 'Watched video',
-      detail: item?.detail,
+      detail: item?.detail?.trim() === video.reportedTime?.trim() ? undefined : item?.detail,
       module: item?.module || component?.module,
       week: item?.week || component?.week,
       duration: durationLabel(video.timeTaken),
       reportedTime: video.reportedTime,
+      loggedMinutes: otjhContributionHours({
+        expectedOtjh: video.expectedOtjh,
+        fallbackExpectedOtjh: component?.expectedOtjh,
+        reportedTime: video.reportedTime,
+        verifiedSeconds: video.verifiedSeconds,
+        claimedSeconds: video.claimedSeconds,
+        timeTrackingSource: video.timeTrackingSource,
+      }) * 60,
       ksbs: video.ksbs || [],
       feedback: video.feedback,
     });
@@ -176,15 +170,27 @@ function buildActivities(real: LearnerDetail | null, events: LearnerCalendarEven
     const component = componentMap.get(progress.componentId);
     result.push({
       id: `component-${progress.componentId}-${progress.attempt || progress.submittedAt}`,
+      activityKey: `component:${progress.componentId}`,
+      attemptNumber: progress.attempt,
       at: progress.submittedAt,
       type: 'learning',
       title: item?.title || component?.component || progress.componentType || 'Learning activity',
       action: item?.action || `Completed ${progress.componentType || 'activity'}`,
-      detail: item?.detail || component?.description,
+      detail: item?.detail?.trim() === progress.reportedTime?.trim()
+        ? component?.description
+        : item?.detail || component?.description,
       module: item?.module || component?.module,
       week: item?.week || component?.week,
       duration: durationLabel(progress.timeTaken),
       reportedTime: progress.reportedTime,
+      loggedMinutes: otjhContributionHours({
+        expectedOtjh: progress.expectedOtjh,
+        fallbackExpectedOtjh: component?.expectedOtjh,
+        reportedTime: progress.reportedTime,
+        verifiedSeconds: progress.verifiedSeconds,
+        claimedSeconds: progress.claimedSeconds,
+        timeTrackingSource: progress.timeTrackingSource,
+      }) * 60,
       ksbs: progress.ksbs || [],
       feedback: progress.feedback,
     });
@@ -244,7 +250,9 @@ function statusLabel(status: string) {
 function ActivityCard({ activity }: { activity: MonthActivity }) {
   const [expanded, setExpanded] = useState(false);
   const meta = TYPE_META[activity.type];
-  const hasExtra = activity.module || activity.week || activity.duration || activity.reportedTime
+  const hasExtra = activity.module || activity.week || activity.duration
+    || activity.loggedMinutes != null || activity.reportedTime
+    || (activity.attemptCount || 0) > 1
     || activity.ksbs.length || activity.feedback || activity.coach || activity.notes;
   const visibleKsbs = expanded ? activity.ksbs : activity.ksbs.slice(0, 7);
   const hiddenKsbCount = activity.ksbs.length - visibleKsbs.length;
@@ -285,7 +293,8 @@ function ActivityCard({ activity }: { activity: MonthActivity }) {
               {activity.module && <span><AppIcon className="ri-stack-line mr-1 text-foreground-400"></AppIcon>{activity.module}</span>}
               {activity.week && <span><AppIcon className="ri-calendar-line mr-1 text-foreground-400"></AppIcon>{activity.week}</span>}
               {activity.duration && <span><AppIcon className="ri-timer-line mr-1 text-foreground-400"></AppIcon>Actual: {activity.duration}</span>}
-              {activity.reportedTime && <span><AppIcon className="ri-time-line mr-1 text-foreground-400"></AppIcon>Logged: {activity.reportedTime}</span>}
+              {(activity.loggedMinutes != null || activity.reportedTime) && <span><AppIcon className="ri-time-line mr-1 text-foreground-400"></AppIcon>Logged: {activity.loggedMinutes != null ? formatMinutes(activity.loggedMinutes) : formatReportedTime(activity.reportedTime)}</span>}
+              {(activity.attemptCount || 0) > 1 && <span><AppIcon className="ri-repeat-line mr-1 text-foreground-400"></AppIcon>Attempts: {activity.attemptCount}</span>}
               {activity.coach && <span><AppIcon className="ri-user-line mr-1 text-foreground-400"></AppIcon>{activity.coach}</span>}
               {visibleKsbs.map((ksb) => <span key={ksb} className="rounded-md border border-secondary-100 bg-secondary-50 px-1.5 py-0.5 font-semibold text-secondary-700">{ksb}</span>)}
               {hiddenKsbCount > 0 && (
@@ -369,7 +378,9 @@ export function RealMonthlyCycleView({
   const activeMonth = selectedMonth && months.includes(selectedMonth) ? selectedMonth : currentMonth;
 
   const monthActivities = useMemo(
-    () => allActivities.filter((activity) => monthKey(activity.at) === activeMonth),
+    () => collapseRepeatedActivities(
+      allActivities.filter((activity) => monthKey(activity.at) === activeMonth),
+    ),
     [allActivities, activeMonth],
   );
   const visible = useMemo(() => {
@@ -400,7 +411,12 @@ export function RealMonthlyCycleView({
     review: monthActivities.filter((item) => item.type === 'review').length,
   }), [monthActivities]);
 
-  const loggedMinutes = monthActivities.reduce((total, activity) => total + minutesFromText(activity.reportedTime), 0);
+  const loggedMinutes = monthActivities.reduce(
+    (total, activity) => total + (
+      activity.loggedMinutes ?? reportedTimeMinutes(activity.reportedTime) ?? 0
+    ),
+    0,
+  );
   const ksbCount = new Set(monthActivities.flatMap((activity) => activity.ksbs)).size;
   const activeDays = new Set(monthActivities.map((activity) => activity.at.slice(0, 10))).size;
   const busy = loading || eventsLoading;

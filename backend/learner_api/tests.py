@@ -852,6 +852,25 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
 
         self.assertEqual(completed_hours_from_progress(progress), "6")
 
+    def test_completed_hours_uses_highest_reported_attempt_per_activity(self):
+        progress = [
+            {
+                "kind": "video", "componentId": "component-1",
+                "attempt": 1, "reportedTime": "1h", "submittedAt": "2026-07-27T08:00:00Z",
+            },
+            {
+                "kind": "video", "componentId": "component-1",
+                "attempt": 2, "reportedTime": "3h", "submittedAt": "2026-07-27T09:00:00Z",
+            },
+            {
+                "kind": "component", "componentId": "component-2",
+                "attempt": 1, "reportedTime": "2h", "submittedAt": "2026-07-27T10:00:00Z",
+            },
+        ]
+
+        # Highest video attempt (3h) + the other activity (2h).
+        self.assertEqual(completed_hours_from_progress(progress), "5")
+
     def test_completed_hours_include_actual_quiz_time(self):
         progress = [{"kind": "quiz", "quizId": "42", "reportedTime": "30 min"}]
 
@@ -869,6 +888,27 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
 
         # Learner input is authoritative: 120 is 120 minutes and 5 is 5 hours.
         self.assertEqual(completed_hours_from_progress(progress, components), "7")
+
+    def test_completed_hours_prefers_manual_time_spent_input(self):
+        progress = [{
+            "kind": "video", "componentId": "component-1",
+            "reportedTime": "60", "claimedSeconds": 7200,
+            "verifiedSeconds": 11,
+            "timeTrackingSource": "signed_session_capped_active_playback:input",
+        }]
+
+        # The explicit 2h Time spent input wins over the default reported 60m.
+        self.assertEqual(completed_hours_from_progress(progress), "2")
+
+    def test_completed_hours_recognises_existing_capped_manual_input(self):
+        progress = [{
+            "kind": "video", "componentId": "component-1",
+            "reportedTime": "60", "claimedSeconds": 5400,
+            "verifiedSeconds": 11,
+            "timeTrackingSource": "signed_session_capped_active_playback",
+        }]
+
+        self.assertEqual(completed_hours_from_progress(progress), "1.5")
 
     def test_completed_hours_counts_reported_time_before_tracked_time(self):
         # The learner entered 2h for both activities, so that input is used even

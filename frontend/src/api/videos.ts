@@ -13,6 +13,7 @@ export interface VideoProgressSubmission {
   module?: string | null;
   startedAt: string;
   timeTakenSeconds: number;
+  timeEntrySource?: 'timer' | 'input';
   trackingToken: string;
   videoTitle?: string | null;
   ksbs?: string[];

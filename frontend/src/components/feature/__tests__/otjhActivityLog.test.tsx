@@ -118,6 +118,30 @@ describe('OTJ hours activity log', () => {
     expect(screen.getByText(/1 entry · 30m/)).toBeTruthy();
   });
 
+  it('keeps different Time spent inputs when reported defaults are identical', () => {
+    renderBody({
+      videoProgress: [
+        {
+          ...video,
+          componentId: 'VIDEO-1',
+          reportedTime: '60',
+          claimedSeconds: 3600,
+          verifiedSeconds: 11,
+        },
+        {
+          ...video,
+          componentId: 'VIDEO-2',
+          reportedTime: '60',
+          claimedSeconds: 7200,
+          verifiedSeconds: 12,
+        },
+      ],
+    } as Partial<LearnerDetail>);
+
+    expect(screen.getByText(/2 entries · 3h/)).toBeTruthy();
+    expect(screen.getByText('2h')).toBeTruthy();
+  });
+
   it('groups the hours by what kind of activity they came from', () => {
     renderBody({
       videoProgress: [video],
@@ -130,17 +154,17 @@ describe('OTJ hours activity log', () => {
     expect(screen.getAllByText('Assignment').length).toBeGreaterThan(0);
   });
 
-  it('counts a component completed twice once, as the total does', () => {
+  it('uses the highest attempt and shows the attempt count as a note', () => {
     renderBody({
       componentProgress: [
-        assignment,
-        { ...assignment, submittedAt: '2026-08-28T09:00:00Z' },
+        { ...assignment, attempt: 1, reportedTime: '1h' },
+        { ...assignment, attempt: 2, reportedTime: '3h', submittedAt: '2026-08-28T09:00:00Z' },
       ],
       components: components as LearnerDetail['components'],
     } as Partial<LearnerDetail>);
 
-    // Both attempts are listed — they happened — but the hours count once.
-    expect(screen.getByText(/2 entries · 2h/)).toBeTruthy();
+    expect(screen.getByText(/1 entry · 3h/)).toBeTruthy();
+    expect(screen.getByText(/2 attempts/)).toBeTruthy();
   });
 
   it('accounts for the reported case: one video and two readings', () => {

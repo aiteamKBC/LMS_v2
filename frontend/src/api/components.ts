@@ -14,6 +14,7 @@ export interface ComponentProgressSubmission {
   module?: string | null;
   startedAt: string;
   timeTakenSeconds: number;
+  timeEntrySource?: 'timer' | 'input';
   trackingToken: string;
   componentTitle?: string | null;
   componentType?: string | null;

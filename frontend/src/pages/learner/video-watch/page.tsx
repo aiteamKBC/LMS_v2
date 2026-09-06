@@ -630,6 +630,7 @@ export default function ComponentViewPage() {
         const res = await submitVideoProgress(componentId, kind as 'commercial' | 'apprenticeship', id, {
           week: weekTitle || null, module: moduleTitle || null,
           startedAt: tracking.startedAt, timeTakenSeconds: submittedTimeSeconds, trackingToken: tracking.trackingToken,
+          timeEntrySource: timeSource,
           videoTitle: meta?.detail || meta?.label || 'Video',
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
         });
@@ -638,6 +639,7 @@ export default function ComponentViewPage() {
         const res = await submitComponentProgress(componentId, kind as 'commercial' | 'apprenticeship', id, {
           week: weekTitle || null, module: moduleTitle || null,
           startedAt: tracking.startedAt, timeTakenSeconds: submittedTimeSeconds, trackingToken: tracking.trackingToken,
+          timeEntrySource: timeSource,
           componentTitle: pageTitle, componentType: component.type || undefined,
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
         });

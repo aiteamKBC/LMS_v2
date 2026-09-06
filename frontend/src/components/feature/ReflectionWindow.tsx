@@ -962,7 +962,7 @@ export function ReflectionWindow({
                   {plannedTimeLabel || 'Not set'}
                 </div>
               </Field>
-              <Field label="Actual time spent (minutes)">
+              <Field label="Actual time spent (hours)">
                 <input
                   type="number"
                   min="0"
