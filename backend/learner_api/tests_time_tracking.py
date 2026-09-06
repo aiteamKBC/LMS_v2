@@ -81,31 +81,33 @@ class TimeTrackingSessionTests(SimpleTestCase):
                 issued_at=datetime(2026, 7, 15, 12, 0, tzinfo=ZoneInfo("UTC")),
             )
 
-    def test_component_access_uses_uk_gmt_boundaries(self):
-        self.assertFalse(component_access_is_open(datetime(2026, 1, 15, 6, 59, tzinfo=ZoneInfo("UTC"))))
+    def test_component_access_is_open_before_during_and_after_old_hours(self):
+        self.assertTrue(component_access_is_open(datetime(2026, 1, 15, 6, 59, tzinfo=ZoneInfo("UTC"))))
         self.assertTrue(component_access_is_open(datetime(2026, 1, 15, 7, 0, tzinfo=ZoneInfo("UTC"))))
         self.assertTrue(component_access_is_open(datetime(2026, 1, 15, 18, 59, tzinfo=ZoneInfo("UTC"))))
-        self.assertFalse(component_access_is_open(datetime(2026, 1, 15, 19, 0, tzinfo=ZoneInfo("UTC"))))
+        self.assertTrue(component_access_is_open(datetime(2026, 1, 15, 19, 0, tzinfo=ZoneInfo("UTC"))))
 
-    def test_component_access_uses_bst_in_summer(self):
-        self.assertFalse(component_access_is_open(datetime(2026, 7, 15, 5, 59, tzinfo=ZoneInfo("UTC"))))
-        self.assertTrue(component_access_is_open(datetime(2026, 7, 15, 6, 0, tzinfo=ZoneInfo("UTC"))))
-        self.assertFalse(component_access_is_open(datetime(2026, 7, 15, 18, 0, tzinfo=ZoneInfo("UTC"))))
+    def test_component_access_is_open_all_weekend(self):
+        self.assertTrue(component_access_is_open(datetime(2026, 1, 17, 10, 0, tzinfo=ZoneInfo("UTC"))))
+        self.assertTrue(component_access_is_open(datetime(2026, 7, 19, 10, 0, tzinfo=ZoneInfo("UTC"))))
 
-    def test_component_access_is_closed_all_weekend(self):
-        self.assertFalse(component_access_is_open(datetime(2026, 1, 17, 10, 0, tzinfo=ZoneInfo("UTC"))))
-        self.assertFalse(component_access_is_open(datetime(2026, 7, 19, 10, 0, tzinfo=ZoneInfo("UTC"))))
-        self.assertTrue(component_access_is_open(datetime(2026, 1, 19, 7, 0, tzinfo=ZoneInfo("UTC"))))
-
-    def test_tracking_cannot_start_or_submit_outside_the_window(self):
-        with self.assertRaisesRegex(TrackingSessionError, "07:00 to 19:00"):
-            issue_tracking_session(
-                activity_kind="video",
-                activity_id="COMP-1",
-                learner_kind="apprenticeship",
-                learner_id="230",
-                counting_mode="active_playback",
-                issued_at=datetime(2026, 1, 15, 19, 0, tzinfo=ZoneInfo("UTC")),
-            )
-        with self.assertRaisesRegex(TrackingSessionError, "07:00 to 19:00"):
-            self.verify(submitted_at=datetime(2026, 7, 15, 18, 0, tzinfo=ZoneInfo("UTC")))
+    def test_tracking_can_start_and_submit_outside_the_old_window(self):
+        started_at = datetime(2026, 1, 18, 22, 0, tzinfo=ZoneInfo("UTC"))
+        session = issue_tracking_session(
+            activity_kind="video",
+            activity_id="COMP-1",
+            learner_kind="apprenticeship",
+            learner_id="230",
+            counting_mode="active_playback",
+            issued_at=started_at,
+        )
+        result = verify_tracking_session(
+            session["trackingToken"],
+            activity_kind="video",
+            activity_id="COMP-1",
+            learner_kind="apprenticeship",
+            learner_id="230",
+            claimed_seconds=10,
+            submitted_at=started_at + timedelta(seconds=20),
+        )
+        self.assertEqual(result["verifiedSeconds"], 10)

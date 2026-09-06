@@ -20,11 +20,6 @@ from login.permissions import learner_self_only
 
 TRACKING_SALT = "learner-api.activity-time.v1"
 TRACKING_MAX_AGE_SECONDS = 24 * 60 * 60
-COMPONENT_ACCESS_START_HOUR = 7
-COMPONENT_ACCESS_END_HOUR = 19
-COMPONENT_ACCESS_CLOSED_MESSAGE = (
-    "Learning components are available Monday to Friday from 07:00 to 19:00 UK time."
-)
 ACTIVITY_KINDS = {"quiz", "video", "component"}
 COUNTING_MODES = {"active_quiz", "active_playback", "visible_page"}
 ALLOWED_MODES_BY_KIND = {
@@ -39,17 +34,14 @@ class TrackingSessionError(ValueError):
 
 
 def component_access_is_open(at=None):
-    """True only inside the weekday UK learner-access window (GMT/BST aware)."""
-    local = timezone.localtime(at or timezone.now())
-    return (
-        local.weekday() < 5
-        and COMPONENT_ACCESS_START_HOUR <= local.hour < COMPONENT_ACCESS_END_HOUR
-    )
+    """Learning components are available 24/7."""
+    return True
 
 
 def enforce_component_access_window(at=None):
-    if not component_access_is_open(at):
-        raise TrackingSessionError(COMPONENT_ACCESS_CLOSED_MESSAGE)
+    # Kept as a compatibility seam for the signed tracking flow. Access is
+    # currently unrestricted, so starting and submitting are always allowed.
+    return None
 
 
 def _error(message, status):
