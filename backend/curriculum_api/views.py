@@ -1982,7 +1982,6 @@ def apply_teams_meeting_options(
     attendees=(),
     presenters=(),
     co_organizers=(),
-    co_organizers=(),
     online_meeting_id='',
     meeting=None,
 ):
@@ -2141,7 +2140,6 @@ def teams_standalone_occurrence_meeting(owner_key, event, target, invited_people
             spoken_language=options.get('spoken_language', 'en-GB'),
             attendees=invited_people,
             presenters=options.get('presenters') or [],
-            co_organizers=options.get('co_organizers') or [],
             co_organizers=options.get('co_organizers') or [],
         )
         warnings.extend(option_warnings)
@@ -2372,7 +2370,6 @@ def curriculum_teams_meeting(request):
         spoken_language=spoken_language,
         attendees=attendees,
         presenters=presenters,
-        co_organizers=co_organizers,
         co_organizers=co_organizers,
     )
     for option_warning in option_warnings:
@@ -2825,7 +2822,6 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         attendees=invited_people,
         presenters=presenters,
         co_organizers=co_organizers,
-        co_organizers=co_organizers,
         online_meeting_id=series.get('online_meeting_id'),
     )
     warnings.extend(option_warnings)
@@ -3120,7 +3116,6 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                 spoken_language=clean_str(series.get('spoken_language')) or 'en-GB',
                 attendees=teams_series_email_list(series.get('attendees')),
                 presenters=teams_series_email_list(series.get('presenters')),
-                co_organizers=teams_series_email_list(series.get('co_organizers')),
                 co_organizers=teams_series_email_list(series.get('co_organizers')),
                 online_meeting_id=meeting_id,
             )
