@@ -1934,6 +1934,7 @@ export default function ModuleBuilder() {
             initialSourceId={workspaceKsbProfileValue}
             lockedSourceId={workspaceKsbProfileValue}
             existingMappings={mappingsForTarget(workingModule, ksbTarget)}
+            limitPerKind={ksbTarget.scope === 'component' ? COMPONENT_KSB_LIMIT_PER_KIND : undefined}
             onClose={() => setKsbTarget(null)}
             onAddMany={(items) => {
               updateWorkingModule(module => items.reduce(
@@ -3256,6 +3257,7 @@ function TypeSpecificFields({
               onSettingChange('teamsOrganizerEmail', meeting.organizerEmail);
               onSettingChange('teamsAttendees', meeting.attendees);
               onSettingChange('teamsPresenters', meeting.presenters);
+              onSettingChange('teamsCoOrganizers', meeting.coOrganizers);
               if (scheduled) {
                 onSettingChange('teamsSessionNumber', scheduled.sessionNumber);
                 if (!hasExplicitSchedule) {
@@ -4481,6 +4483,8 @@ function sessionKsbKind(code: string): 'knowledge' | 'skill' | 'behaviour' {
   return 'knowledge';
 }
 
+const COMPONENT_KSB_LIMIT_PER_KIND = 2;
+
 function componentGroupLabels(module: ModuleCatalogueItem, component: ModuleComponent) {
   const settings = component.settings || {};
   const names = Array.isArray(settings.selectedGroupNames) ? settings.selectedGroupNames : [];
@@ -4492,7 +4496,7 @@ function componentGroupLabels(module: ModuleCatalogueItem, component: ModuleComp
   return [...new Set(labels)];
 }
 
-function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading, initialSourceId, lockedSourceId, existingMappings, onClose, onAddMany }: {
+function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading, initialSourceId, lockedSourceId, existingMappings, limitPerKind, onClose, onAddMany }: {
   standards: CurriculumStandard[];
   standardsLoading: boolean;
   ksbSets: CurriculumKsbSet[];
@@ -4500,6 +4504,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
   initialSourceId: string;
   lockedSourceId?: string;
   existingMappings: KsbMapping[];
+  limitPerKind?: number;
   onClose: () => void;
   onAddMany: (items: Array<{ option: KsbOption; weight: number; weightClass: KsbWeightClass }>) => void;
 }) {
@@ -4565,6 +4570,25 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
       return existing ? [[option.id, existing] as const] : [];
     }),
   ), [existingMappings, sourceKsbOptions]);
+  const existingKindCounts = useMemo(() => existingMappings.reduce(
+    (counts, mapping) => {
+      counts[sessionKsbKind(mapping.code)] += 1;
+      return counts;
+    },
+    { knowledge: 0, skill: 0, behaviour: 0 },
+  ), [existingMappings]);
+  const selectedKindCounts = useMemo(() => sourceKsbOptions.reduce(
+    (counts, option) => {
+      if (selectedKsbIds.has(option.id)) counts[sessionKsbKind(option.code)] += 1;
+      return counts;
+    },
+    { knowledge: 0, skill: 0, behaviour: 0 },
+  ), [selectedKsbIds, sourceKsbOptions]);
+  const optionLimitReached = (option: KsbOption) => {
+    if (!limitPerKind || selectedKsbIds.has(option.id)) return false;
+    const kind = sessionKsbKind(option.code);
+    return existingKindCounts[kind] + selectedKindCounts[kind] >= limitPerKind;
+  };
   const filteredKsbOptions = useMemo(() => {
     const query = ksbSearch.trim().toLowerCase();
     return sourceKsbOptions.filter(option => {
@@ -4592,7 +4616,14 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
     setSelectedKsbIds(current => {
       const next = new Set(current);
       if (next.has(option.id)) next.delete(option.id);
-      else next.add(option.id);
+      else {
+        const kind = sessionKsbKind(option.code);
+        const selectedOfKind = sourceKsbOptions.filter(candidate => (
+          current.has(candidate.id) && sessionKsbKind(candidate.code) === kind
+        )).length;
+        if (limitPerKind && existingKindCounts[kind] + selectedOfKind >= limitPerKind) return current;
+        next.add(option.id);
+      }
       return next;
     });
   };
@@ -4659,6 +4690,12 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                 <p className="mt-0.5 truncate text-[12px] font-bold text-primary-950">{sourceLabels[selectedSourceValue] || selectedSourceValue.replace(/^(profile|standard):/, '')}</p>
               </div>
             )}
+            {limitPerKind ? (
+              <div role='note' className='rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sky-800'>
+                <p className='text-[10px] font-bold uppercase tracking-wide'>Component KSB selection limit</p>
+                <p className='mt-0.5 text-[11px] font-semibold'>Choose up to 2 Knowledge, 2 Skills and 2 Behaviours for this component. Previously added KSBs count towards each limit.</p>
+              </div>
+            ) : null}
           </div>
           {resolvedSelectedSource && Boolean(sourceKsbOptions.length) && (
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -4694,6 +4731,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
             {filteredKsbOptions.map(option => {
               const tone = ksbVisualTone(option.code, option.type);
               const alreadyAdded = existingMappingByOptionId.has(option.id);
+              const limitReached = !alreadyAdded && optionLimitReached(option);
               const selected = alreadyAdded || selectedKsbIds.has(option.id);
               return (
               <div key={option.id} className={`rounded-xl border border-l-4 px-3 py-2 transition-smooth ${selected ? tone.selectedRow : tone.row}`}>
@@ -4702,9 +4740,9 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                     <input
                       type="checkbox"
                       checked={selected}
-                      disabled={alreadyAdded}
+                      disabled={alreadyAdded || limitReached}
                       onChange={() => toggleOption(option)}
-                      aria-label={alreadyAdded ? `${option.code} already added` : `Select ${option.code}`}
+                      aria-label={alreadyAdded ? `${option.code} already added` : limitReached ? `${option.code} unavailable because the component limit is reached` : `Select ${option.code}`}
                       className="mt-1 h-4 w-4 rounded border-foreground-300 text-primary-600 focus:ring-primary-300 disabled:cursor-not-allowed disabled:opacity-70"
                     />
                     <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${tone.iconClass}`}>
@@ -4725,7 +4763,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                       <span className="text-[9px] font-semibold uppercase text-foreground-400">Weight class</span>
                       <select
                         value={weightClassForOption(option)}
-                        disabled={alreadyAdded}
+                        disabled={alreadyAdded || limitReached}
                         onChange={event => updateOptionWeightClass(option, event.target.value)}
                         className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[11px] font-bold capitalize text-foreground-900 outline-none focus:border-primary-300 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-500"
                       >
@@ -4741,7 +4779,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                         min={1}
                         step={1}
                         value={clampPositiveKsbWeight(weightForOption(option), weightClassForOption(option))}
-                        disabled={alreadyAdded}
+                        disabled={alreadyAdded || limitReached}
                         onChange={event => updateOptionWeight(option, Number(event.target.value))}
                         className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[12px] font-bold text-foreground-900 outline-none focus:border-primary-300 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-500"
                       />
@@ -6722,6 +6760,10 @@ function mappingsForTarget(module: ModuleCatalogueItem, target: KsbTarget) {
 function addKsbMapping(module: ModuleCatalogueItem, target: KsbTarget, option: KsbOption, weight = defaultKsbWeight(), weightClass: KsbWeightClass = DEFAULT_KSB_WEIGHT_CLASS): ModuleCatalogueItem {
   const nextIdentity = ksbMappingIdentity(option);
   if (mappingsForTarget(module, target).some(mapping => ksbMappingIdentity(mapping) === nextIdentity)) return module;
+  if (
+    target.scope === 'component'
+    && mappingsForTarget(module, target).filter(mapping => sessionKsbKind(mapping.code) === sessionKsbKind(option.code)).length >= COMPONENT_KSB_LIMIT_PER_KIND
+  ) return module;
   const mapping: KsbMapping = {
     id: makeAuthoringId('KSBMAP'),
     ksbId: option.id,

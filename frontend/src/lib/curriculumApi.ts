@@ -1178,6 +1178,7 @@ export interface CurriculumTeamsMeetingSummary {
   onlineMeetingId?: string;
   organizerEmail: string;
   presenters?: string[];
+  coOrganizers?: string[];
   attendees?: string[];
   repeatPattern: string;
   startDateTime: string;

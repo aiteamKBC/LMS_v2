@@ -597,6 +597,9 @@ class CurriculumTeamsMeetingTests(TestCase):
         self.assertEqual(create_call.args[:2], ('POST', 'users/tutor%40example.com/events'))
         event_payload = create_call.kwargs['payload']
         self.assertTrue(event_payload['isOnlineMeeting'])
+        # The event represents the module calendar, not the component that
+        # happened to create it.
+        self.assertEqual(event_payload['subject'], 'Risk module')
         self.assertEqual(len(event_payload['attendees']), 3)
         self.assertEqual(event_payload['recurrence']['range']['numberOfOccurrences'], 6)
         meeting_patch = next(
@@ -635,6 +638,29 @@ class CurriculumTeamsMeetingTests(TestCase):
             [result['meeting']['liveSessionId']],
         )
         self.assertEqual(len(occurrences), 6)
+
+    @patch('coach_api.views.microsoft_graph_request', return_value={})
+    def test_applies_co_organizer_role_with_highest_priority(self, graph_request):
+        applied, _meeting, warnings = views.apply_teams_meeting_options(
+            'organizer@example.com',
+            'https://teams.microsoft.com/l/meetup-join/example',
+            attendees=['coorganizer@example.com', 'learner@example.com'],
+            presenters=['coorganizer@example.com', 'presenter@example.com'],
+            co_organizers=['coorganizer@example.com'],
+            online_meeting_id='meeting-1',
+        )
+
+        self.assertTrue(applied)
+        self.assertEqual(warnings, [])
+        payload = graph_request.call_args.kwargs['payload']
+        self.assertEqual(
+            {item['upn']: item['role'] for item in payload['participants']['attendees']},
+            {
+                'coorganizer@example.com': 'coorganizer',
+                'presenter@example.com': 'presenter',
+                'learner@example.com': 'attendee',
+            },
+        )
 
     @patch('coach_api.views.microsoft_graph_request')
     @patch('coach_api.views.has_graph_credentials', return_value=True)
@@ -738,7 +764,7 @@ class CurriculumTeamsMeetingTests(TestCase):
         response = self.client.patch(
             f'/curriculum_api/curriculum/teams-meetings/{live_session_id}/schedule/',
             data=json.dumps({
-                'title': 'Risk module',
+                'title': 'Live Teams Session 1',
                 'organizerEmail': 'tutor@example.com',
                 'eventId': 'event-1',
                 'localStartDateTime': '2026-09-02T09:30',
@@ -769,6 +795,12 @@ class CurriculumTeamsMeetingTests(TestCase):
         result = response.json()
         self.assertEqual(result['meeting']['trackedOccurrences'], 6)
         self.assertEqual(result['warnings'][0]['code'], 'teams_shifted_occurrence_not_moved')
+        series_patch = next(
+            call.kwargs.get('payload') or call.args[2]
+            for call in graph_request.call_args_list
+            if call.args[:2] == ('PATCH', 'users/tutor%40example.com/events/event-1')
+        )
+        self.assertEqual(series_patch['subject'], 'Risk module')
         self.assertFalse(any(call.args[0] == 'POST' for call in graph_request.call_args_list))
         self.assertFalse(any(call.args[:2] == ('DELETE', 'users/tutor%40example.com/events/instance-4') for call in graph_request.call_args_list))
         occurrences = views.authoring_fetch_all(
@@ -1148,6 +1180,7 @@ class CurriculumTeamsMeetingTests(TestCase):
             for call in graph_request.call_args_list
             if call.args[:2] == ('PATCH', 'users/tutor%40example.com/events/event-1')
         )
+        self.assertEqual(event_patch['subject'], 'Risk module')
         self.assertEqual(
             [attendee['emailAddress']['address'] for attendee in event_patch['attendees']],
             ['tutor@example.com', 'learner@example.com'],

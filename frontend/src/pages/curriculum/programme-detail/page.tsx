@@ -37,7 +37,7 @@ import {
 } from '@/pages/curriculum/shared/entities/ui';
 import { archiveCohortWithConfirm, archiveGroupWithConfirm, archiveModuleWithConfirm } from '@/pages/curriculum/shared/entities/archive';
 import { curriculumNavItems } from '@/mocks/navigation';
-import { formatHoursMinutes } from '@/lib/format';
+import { formatHoursMinutes, formatSystemTimestamp, systemTimeZoneName } from '@/lib/format';
 import type {
   CurriculumCohort,
   CurriculumComponent,
@@ -1128,11 +1128,13 @@ function buildModuleWeeks(
     const sorted = [...weekSessions].sort((a, b) => clean(a.date).localeCompare(clean(b.date)));
     const first = sorted[0];
     const last = sorted[sorted.length - 1];
-    // Programme OTJH is authored curriculum: only a component's explicit
-    // expected OTJH contributes. Generated timetable sessions (and a generic
-    // component duration) must not invent planned OTJH before content exists.
+    // Programme OTJH is authored curriculum: only a non-quiz component's
+    // explicit expected OTJH contributes. Generated timetable sessions, quiz
+    // components and generic duration must not invent planned OTJH.
     const componentOtjh = weekComponents.reduce(
-      (sum, component) => sum + (Number(component.expectedOtjh) || 0),
+      (sum, component) => normalise(component.type) === 'quiz'
+        ? sum
+        : sum + Math.max(0, Number(component.expectedOtjh) || 0),
       0,
     );
     const weekTitle = clean(weekComponents.find(component => clean(component.weekTitle))?.weekTitle);
@@ -1967,12 +1969,9 @@ export default function ProgrammeDetailPage() {
   const [selectedLearner, setSelectedLearner] = useState<CurriculumProgrammeAssignedLearner | null>(null);
   const [programmeKsbSets, setProgrammeKsbSets] = useState<CurriculumKsbSet[]>([]);
   const [skillsStandards, setSkillsStandards] = useState<CurriculumStandard[]>([]);
-  // The programme's off-the-job hours as the learner records hold them, which is
-  // the only place a *completed* hour exists: authored OTJH is a plan, and
-  // `Learner.learners` is where enrolment keeps what each learner has done
-  // against what they are targeted to do (completed_hours / target_hours, which
-  // is what the learner-roster endpoint reads).
-  const [learnerOtjh, setLearnerOtjh] = useState<{ completed: number; target: number; learners: number } | null>(null);
+  // Completed hours come from learner records. Their comparison value is kept
+  // separate: planned OTJH is authored by non-quiz curriculum components.
+  const [learnerOtjh, setLearnerOtjh] = useState<{ completed: number; learners: number } | null>(null);
   const [learnerOtjhLoading, setLearnerOtjhLoading] = useState(false);
   const coverageRequestKeyRef = useRef('');
   const rosterRequestKeyRef = useRef('');
@@ -2160,9 +2159,8 @@ export default function ProgrammeDetailPage() {
       });
   }, [coverageKsbSource, coverageProgrammeIds]);
 
-  // Summed rather than averaged: the programme's progress is what its learners
-  // have between them completed out of what they are between them targeted, so
-  // one learner running ahead cannot cover for a cohort that is behind.
+  // Sum completed hours across every placement; the readiness calculation later
+  // compares that aggregate with planned curriculum hours per placed learner.
   const loadLearnerOtjh = useCallback((signal?: AbortSignal) => {
     if (!coverageProgrammeIds.length) return Promise.resolve();
     setLearnerOtjhLoading(true);
@@ -2185,7 +2183,6 @@ export default function ProgrammeDetailPage() {
         const rows = result?.assignedLearners || [];
         setLearnerOtjh({
           completed: rows.reduce((total, row) => total + Number(row.completedHours || 0), 0),
-          target: rows.reduce((total, row) => total + Number(row.targetHours || 0), 0),
           learners: rows.length,
         });
       })
@@ -2518,8 +2515,8 @@ export default function ProgrammeDetailPage() {
           const settings = (component.settings || {}) as Record<string, unknown>;
           const sessionDateTimeUtc = clean(settings.sessionDateTimeUtc);
           const parsedSessionDate = sessionDateTimeUtc ? new Date(sessionDateTimeUtc) : null;
-          const sessionTimeUtc = parsedSessionDate && !Number.isNaN(parsedSessionDate.getTime())
-            ? `${parsedSessionDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC', hour12: false })} UTC`
+          const sessionTimeUk = parsedSessionDate && !Number.isNaN(parsedSessionDate.getTime())
+            ? `${formatSystemTimestamp(parsedSessionDate, { hour: '2-digit', minute: '2-digit', hour12: false })} ${systemTimeZoneName(parsedSessionDate)}`
             : '';
           const groupNames = Array.isArray(settings.selectedGroupNames)
             ? (settings.selectedGroupNames as unknown[]).map(value => clean(value)).filter(Boolean)
@@ -2581,7 +2578,7 @@ export default function ProgrammeDetailPage() {
             weekStartDate: clean(wk.startDate),
             date: authoredDate,
             dateIso: clean(occurrence?.scheduledStart) || sessionDateTimeUtc || authoredDate,
-            time: clean(settings.sessionTime) || sessionTimeUtc,
+            time: clean(settings.sessionTime) || sessionTimeUk,
             groups: groupNames,
             url: sessionUrl,
             provider: clean(settings.provider || settings.sourceType),
@@ -2859,6 +2856,17 @@ export default function ProgrammeDetailPage() {
   const publishedComponents = allComponents.filter(component => component.status === 'published').length;
   const contentReadiness = allComponents.length ? Math.round((publishedComponents / allComponents.length) * 100) : 0;
   const totalOtjh = activeModules.reduce((total, mod) => total + mod.otjh, 0);
+  // Programme OTJH is the non-quiz component plan. Since completed hours below
+  // are aggregated across learners, multiply the per-learner plan by the number
+  // of placed learners before calculating progress.
+  const learnerOtjhCompleted = Math.max(0, Number(learnerOtjh?.completed || 0));
+  const learnerOtjhLearners = Math.max(0, Number(learnerOtjh?.learners || 0));
+  const otjhDenominator = totalOtjh > 0 && learnerOtjhLearners > 0
+    ? totalOtjh * learnerOtjhLearners
+    : 0;
+  const otjhProgress = otjhDenominator > 0
+    ? Math.min(100, Math.max(0, Math.round((learnerOtjhCompleted / otjhDenominator) * 100)))
+    : 0;
   const totalLearners = PROGRAMME.cohorts.filter(cohortItem => !cohortItem.archived).reduce((total, cohortItem) => total + cohortItem.learners, 0);
   const totalWeeks = activeModules.reduce((total, mod) => total + mod.weeksData.length, 0);
   const emptyWeekCount = activeModules
@@ -3275,8 +3283,8 @@ export default function ProgrammeDetailPage() {
                         : !learnerOtjhLearners
                           ? 'No learners are placed on this programme yet, so no hours have been completed.'
                           : otjhDenominator
-                            ? `${formatHours(learnerOtjhCompleted)}h of ${formatHours(otjhDenominator)}h completed across ${learnerOtjhLearners} ${learnerOtjhLearners === 1 ? 'learner' : 'learners'}${otjhTargetIsProgrammeRequirement ? `, measured against the programme's own ${formatHours(programmeRequiredOtjh)}h requirement because no learner carries target hours.` : '.'}`
-                          : `${formatHours(learnerOtjhCompleted)}h completed across ${learnerOtjhLearners} ${learnerOtjhLearners === 1 ? 'learner' : 'learners'}. Neither their records nor this programme carry target hours, so there is nothing to measure against.`}
+                            ? `${formatHours(learnerOtjhCompleted)}h of ${formatHours(otjhDenominator)}h completed across ${learnerOtjhLearners} ${learnerOtjhLearners === 1 ? 'learner' : 'learners'}, based on ${formatHours(totalOtjh)}h planned per learner from non-quiz components.`
+                            : `${formatHours(learnerOtjhCompleted)}h completed across ${learnerOtjhLearners} ${learnerOtjhLearners === 1 ? 'learner' : 'learners'}. No non-quiz components carry planned OTJH yet, so there is nothing to measure against.`}
                   />
                   <div className="grid grid-cols-2 gap-2 border-t border-background-200 pt-4 sm:grid-cols-4">
                     {[

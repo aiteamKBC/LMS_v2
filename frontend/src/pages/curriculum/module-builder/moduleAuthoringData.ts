@@ -1121,6 +1121,7 @@ export interface TeamsMeetingInput {
   organizerEmail: string;
   attendees: string[];
   presenters?: string[];
+  coOrganizers?: string[];
   localStartDateTime: string;
   startDateTimeUtc: string;
   durationMinutes: number;
@@ -1157,6 +1158,7 @@ export interface TeamsMeetingResult {
     organizerEmail: string;
     attendees: string[];
     presenters: string[];
+    coOrganizers: string[];
     startDateTimeUtc: string;
     durationMinutes: number;
     repeat: string;
@@ -1420,7 +1422,7 @@ export function createTeamsMeeting(input: TeamsMeetingInput) {
  * are optional: omit them to move dates only, pass them to correct who is invited
  * and who presents without recreating the meeting.
  */
-export function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & { eventId?: string; attendees?: string[]; presenters?: string[] }) {
+export function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[] }) {
   return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }> }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
     method: 'PATCH',
     body: JSON.stringify(input),

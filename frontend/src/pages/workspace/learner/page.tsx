@@ -42,6 +42,9 @@ import { toneStyle, statusTone, type StatusTone } from '@/lib/statusTone';
 import { waitingCopy } from '@/utils/learnerAccessGate';
 import { displayValue, EMPTY_VALUE, ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
 import { fetchDemoMaterialSummaries, type DemoMaterialTable } from '@/api/demoMaterials';
+import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
+import { COMPONENT_ACCESS_MESSAGE } from '@/lib/componentAccessWindow';
+import { isNavigableComponent } from '@/pages/learner/video-watch/weekPreview';
 
 /* ─────────────────────────────────────────────
    Real-learner component progress + current-week UI
@@ -562,11 +565,6 @@ export default function LearnerOverview() {
   const otjValue = isRealMode
     ? formatHoursMinutes(otj.activities > 0 ? otj.completedHours : otj.plannedHours)
     : formatHoursMinutes(p.otjhCompleted);
-    // Always the hours actually logged. Falling back to the planned total when
-    // nothing had been submitted yet showed a learner the programme's whole
-    // OTJ allocation as though they had already done it.
-    ? formatHoursMinutes(otj.completedHours)
-    : `${p.otjhCompleted}h`;
   const otjCaption = isRealMode
     ? (otj.targetHours > 0 ? `Target ${formatHoursMinutes(otj.targetHours)}${otj.status ? ` · ${otj.status}` : ''}` : `${otj.activities} ${otj.activities === 1 ? 'activity' : 'activities'} logged`)
     : `${formatHoursMinutes(p.otjhCompleted)} / ${formatHoursMinutes(p.otjhTarget)} planned`;
@@ -1309,12 +1307,13 @@ function UpcomingRow({ day, month, timeLabel, title, subtitle, tone = 'neutral',
 }
 
 /** One component row inside the Continue Learning card. */
-function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen }: {
+function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen, accessRestricted = false }: {
   c: JourneyComponent;
   videos: LearnerVideoProgress[];
   completions: LearnerComponentProgress[];
   reflectionStatus?: string;
   onOpen?: () => void;
+  accessRestricted?: boolean;
   /** Inspection-demo accounts only — see isInspectionDemoAccount. */
 }) {
   const meta = componentTypeMeta(c.title);
@@ -1329,9 +1328,9 @@ function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen }: {
       type="button"
       onClick={onOpen}
       disabled={!actionable}
-      title={unavailable ? 'Content unavailable' : undefined}
+      title={unavailable ? 'Content unavailable' : accessRestricted ? COMPONENT_ACCESS_MESSAGE : undefined}
       className={`group relative w-full flex items-center gap-3 overflow-hidden rounded-xl border px-3.5 py-3 text-left transition-smooth ${
-        unavailable
+        unavailable || accessRestricted
           ? 'border-foreground-100 bg-background-100/70 opacity-55 grayscale'
           : completed
           ? 'border-emerald-200 bg-emerald-50/60 shadow-sm shadow-emerald-100/60'
@@ -1365,6 +1364,10 @@ function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen }: {
           <span className="inline-flex items-center gap-1 rounded-full bg-background-200 px-2 py-0.5 text-[10px] font-semibold text-foreground-500">
             <AppIcon className="ri-lock-line text-[10px]" />Content unavailable
           </span>
+        ) : accessRestricted ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+            <AppIcon className="ri-time-line text-[10px]" />Available 07:0019:00 UK
+          </span>
         ) : (
         <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${style.pill}`}>
           {prog.state === 'passed' && <AppIcon className="ri-check-line text-[10px]" />}
@@ -1383,7 +1386,9 @@ function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen }: {
           <span className="text-[10px] text-foreground-400 inline-flex items-center gap-1"><AppIcon className="ri-time-line text-[10px]" />{c.expectedOtjh}h</span>
         )}
       </span>
-      {actionable && <AppIcon className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-500 transition-smooth shrink-0" />}
+      {accessRestricted
+        ? <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
+        : actionable && <AppIcon className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-500 transition-smooth shrink-0" />}
     </button>
   );
 }
@@ -1406,6 +1411,8 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
   showReadOnlyNotice?: boolean;
 }) {
   const navigate = useNavigate();
+  const componentAccess = useComponentAccessWindow();
+  const [showAccessNotice, setShowAccessNotice] = useState(false);
   const availableComponents = components.filter(hasComponentContent);
   const total = availableComponents.length;
   const done = availableComponents.filter((c) => {
@@ -1420,10 +1427,14 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
     // already draws that state for components with nowhere to open.
     if (!kind || !learnerId || !canProgress) return undefined;
     const q = `?module=${encodeURIComponent(moduleTitle)}&week=${encodeURIComponent(weekLabel)}`;
-    if (c.isQuiz && hasComponentContent(c)) return () => navigate(`/learner/quiz/${kind}/${learnerId}/${c.quizMeta!.quizId}${q}`);
-    if (c.type === 'video' && c.videoUrl && c.componentId) return () => navigate(`/learner/video/${kind}/${learnerId}/${c.componentId}${q}`);
-    if (isOpenableComponent(c)) return () => navigate(`/learner/component/${kind}/${learnerId}/${c.componentId}${q}`);
-    return undefined;
+    let destination = '';
+    if (c.isQuiz && hasComponentContent(c)) destination = `/learner/quiz/${kind}/${learnerId}/${c.quizMeta!.quizId}${q}`;
+    else if (c.type === 'video' && c.videoUrl && c.componentId) destination = `/learner/video/${kind}/${learnerId}/${c.componentId}${q}`;
+    else if (isOpenableComponent(c)) destination = `/learner/component/${kind}/${learnerId}/${c.componentId}${q}`;
+    if (!destination) return undefined;
+    return componentAccess.open
+      ? () => navigate(destination)
+      : () => setShowAccessNotice(true);
   };
 
   const reflectionStatusFor = (c: JourneyComponent): string => {
@@ -1465,6 +1476,18 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
         </div>
       )}
       {!hideHeader && <ProgressBar percent={total ? percent : null} className="mb-4" />}
+      {showAccessNotice && (
+        <div role="alert" className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-[12px] text-amber-900">
+          <AppIcon className="ri-time-line mt-0.5 shrink-0 text-sm" />
+          <span>
+            <strong>Components are currently closed.</strong> {COMPONENT_ACCESS_MESSAGE}{' '}
+            Current UK time: {componentAccess.currentTimeLabel}.
+          </span>
+          <button type="button" aria-label="Dismiss" onClick={() => setShowAccessNotice(false)} className="ml-auto text-amber-700">
+            <AppIcon className="ri-close-line" />
+          </button>
+        </div>
+      )}
       {total === 0 ? (
         <div className="mt-3 flex min-h-[138px] flex-col items-center justify-center rounded-xl border border-dashed border-primary-200/70 bg-primary-50/10 px-5 py-5 text-center">
           <LearningEmptyIllustration />
@@ -1487,6 +1510,7 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
               completions={completions}
               reflectionStatus={reflectionStatusFor(c)}
               onOpen={openFor(c)}
+              accessRestricted={Boolean(canProgress && hasComponentContent(c) && isNavigableComponent(c) && !componentAccess.open)}
             />
           ))}
         </div>

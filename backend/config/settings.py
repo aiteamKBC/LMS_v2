@@ -532,7 +532,10 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+# One business timezone across the LMS. With USE_TZ enabled Django still stores
+# absolute instants in UTC, while localtime/localdate and user-facing values use
+# the UK's GMT/BST rules automatically.
+TIME_ZONE = os.environ.get('SYSTEM_TIME_ZONE', 'Europe/London').strip() or 'Europe/London'
 
 USE_I18N = True
 

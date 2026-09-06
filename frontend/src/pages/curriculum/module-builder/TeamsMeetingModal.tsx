@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { fetchCurriculumSessions, type CurriculumSession } from '@/lib/curriculumApi';
+import { formatSystemTimestamp } from '@/lib/format';
 import { FormField, SelectControl, TextAreaControl, TextControl } from '../shared/entities/ui';
 import { EmailChipsInput, emailList } from './EmailChipsInput';
 import {
@@ -90,6 +91,7 @@ export function TeamsMeetingModal({
   // gives the presenter role to people named here, and everyone else joins as an
   // attendee who cannot share.
   const [presenters, setPresenters] = useState(storedEmails('teamsPresenters'));
+  const [coOrganizers, setCoOrganizers] = useState(storedEmails('teamsCoOrganizers'));
   const [durationMinutes, setDurationMinutes] = useState(Number(component.settings.durationMinutes || 60));
   // The Duration defaults to the length the group was created with — the gap
   // between its session start and end — so the meeting matches the schedule
@@ -210,7 +212,9 @@ export function TeamsMeetingModal({
     if (!plannedOccurrences.length) {
       return setError('This module has no stored session dates yet, so there is nothing to put on a calendar. Save its schedule first — those dates are what the calendar is built from.');
     }
-    const title = (component.title || module.title || 'Live session').trim();
+    // Outlook/Teams calendar entries represent the module's delivery series,
+    // not the reusable live-session component sitting inside each week.
+    const title = (module.title || 'Live session').trim();
     const duration = Math.max(15, Number(durationMinutes) || 60);
     // The chosen duration applies to every occurrence, exactly as the Live Teams
     // Meetings page does it.
@@ -224,6 +228,7 @@ export function TeamsMeetingModal({
       organizerEmail: organizerEmail.trim(),
       attendees: emailList(attendees),
       presenters: emailList(presenters),
+      coOrganizers: emailList(coOrganizers),
       // Named on creation so the series is keyed to this module from the start,
       // rather than only once the module structure is next saved.
       moduleCatalogueId: module.catalogueId,
@@ -351,7 +356,7 @@ export function TeamsMeetingModal({
                       <li key={occurrence.sessionNumber} className="flex items-center justify-between gap-2 px-3 py-2 text-[12px]">
                         <span className="flex items-center font-semibold text-foreground-700">
                           <span className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full bg-background-100 text-[10px] font-bold text-foreground-500">{occurrence.sessionNumber}</span>
-                          {new Date(occurrence.startDateTimeUtc).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          {formatSystemTimestamp(occurrence.startDateTimeUtc, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                         </span>
                         <span className="shrink-0 text-[11px] font-semibold text-foreground-400">{occurrence.durationMinutes} min</span>
                       </li>
@@ -379,9 +384,15 @@ export function TeamsMeetingModal({
                   <TextControl value={organizerEmail} onChange={setOrganizerEmail} />
                 </FormField>
                 <FormField
+                  label="Co-organizers"
+                  hint="Internal Microsoft 365 users who can manage the meeting. They are invited automatically."
+                >
+                  <EmailChipsInput value={coOrganizers} onChange={setCoOrganizers} />
+                </FormField>
+                <FormField
                   label="Duration"
                   hint={plannedOccurrences.length
-                    ? `First session ${new Date(plannedOccurrences[0].startDateTimeUtc).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}.`
+                    ? `First session ${formatSystemTimestamp(plannedOccurrences[0].startDateTimeUtc, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' })}.`
                     : 'Defaults to the group session length.'}
                 >
                   <SelectControl

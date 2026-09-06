@@ -8,6 +8,7 @@
 // never decides a status from a date. See `deliverySessions` in page.tsx.
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { formatSystemTimestamp, SYSTEM_TIME_ZONE, systemDateParts } from '@/lib/format';
 import {
   fetchLiveSessionArtifacts,
   liveSessionArtifactContentUrl,
@@ -18,7 +19,6 @@ import {
 } from '@/lib/curriculumApi';
 import { syncTeamsMeetingArtifacts } from '../module-builder/moduleAuthoringData';
 import { StatusBadge } from '../shared/entities/ui';
-import { syncTeamsMeetingArtifacts } from '../module-builder/moduleAuthoringData';
 import type { DeliverySession } from './page';
 
 // --------------------------------------------------------------- date helpers
@@ -28,14 +28,20 @@ import type { DeliverySession } from './page';
  *  recording that instant is its week's start date — see `buildSessionTree`. */
 export function sessionMonthBucket(dateIso: string): { key: string; label: string; order: number } {
   const trimmed = (dateIso || '').trim();
-  const dateOnly = /^\d{4}-\d{2}-\d{2}/.test(trimmed);
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(trimmed);
   const date = trimmed ? new Date(dateOnly ? `${trimmed.slice(0, 10)}T12:00:00Z` : trimmed) : null;
   if (!date || Number.isNaN(date.getTime())) {
     return { key: 'unscheduled', label: 'Unscheduled', order: Number.MAX_SAFE_INTEGER };
   }
-  const year = date.getUTCFullYear();
-  const month = date.getUTCMonth();
-  const label = date.toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const parts = dateOnly
+    ? { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1 }
+    : systemDateParts(date);
+  if (!parts) return { key: 'unscheduled', label: 'Unscheduled', order: Number.MAX_SAFE_INTEGER };
+  const year = parts.year;
+  const month = parts.month - 1;
+  const label = date.toLocaleDateString('en-GB', {
+    month: 'long', year: 'numeric', timeZone: dateOnly ? 'UTC' : SYSTEM_TIME_ZONE,
+  });
   return { key: `${year}-${String(month + 1).padStart(2, '0')}`, label, order: year * 12 + month };
 }
 
@@ -47,7 +53,7 @@ function formatSessionDate(dateIso: string, fallback: string): string {
   if (Number.isNaN(date.getTime())) return fallback || trimmed;
   return date.toLocaleDateString('en-GB', {
     weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
-    ...(dateOnly ? { timeZone: 'UTC' } : {}),
+    timeZone: dateOnly ? 'UTC' : SYSTEM_TIME_ZONE,
   });
 }
 
@@ -105,21 +111,28 @@ export function parseTeamsTranscriptVtt(vtt: string): ReadableTranscriptCue[] {
 export function attendanceSheetRows(attendance: LiveSessionAttendance[]) {
   return attendance.map(person => {
     const intervals = Array.isArray(person.intervals) ? person.intervals : [];
-    const joins = intervals.map(item => String(item.joinDateTime || '')).filter(Boolean).join('; ');
-    const leaves = intervals.map(item => String(item.leaveDateTime || '')).filter(Boolean).join('; ');
+    const timestampOptions: Intl.DateTimeFormatOptions = {
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false, timeZoneName: 'short',
+    };
+    const joins = intervals.map(item => formatSystemTimestamp(String(item.joinDateTime || ''), timestampOptions)).filter(Boolean).join('; ');
+    const leaves = intervals.map(item => formatSystemTimestamp(String(item.leaveDateTime || ''), timestampOptions)).filter(Boolean).join('; ');
     const seconds = Math.max(0, Number(person.total_attendance_seconds) || 0);
     return {
       'Attendee name': person.display_name || '',
       Email: person.email || '',
-      'Meeting started': person.attendance_report_start || '',
+      'Meeting started (UK)': person.attendance_report_start
+        ? formatSystemTimestamp(person.attendance_report_start, timestampOptions)
+        : '',
       Status: person.attended === false ? 'Absent' : 'Attended',
       Expected: person.expected === false ? 'No' : 'Yes',
       Role: person.role || '',
       'Join sessions': person.join_count ?? intervals.length,
       'Time in session': formatSeconds(seconds),
       'Attendance seconds': Math.round(seconds),
-      'Joined at': joins,
-      'Left at': leaves,
+      'Joined at (UK)': joins,
+      'Left at (UK)': leaves,
     };
   });
 }
@@ -138,13 +151,13 @@ export function attendanceSheetGroups(attendance: LiveSessionAttendance[]): Atte
   attendance.forEach(person => {
     const firstInterval = Array.isArray(person.intervals) ? person.intervals[0] : undefined;
     const source = String(person.attendance_report_start || firstInterval?.joinDateTime || '').trim();
-    const parsed = source ? new Date(source) : null;
-    const valid = Boolean(parsed && !Number.isNaN(parsed.getTime()));
-    const dateKey = valid
-      ? `${parsed!.getFullYear()}-${String(parsed!.getMonth() + 1).padStart(2, '0')}-${String(parsed!.getDate()).padStart(2, '0')}`
+    const parts = source ? systemDateParts(source) : null;
+    const valid = Boolean(parts);
+    const dateKey = parts
+      ? `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`
       : 'undated';
     const sheetName = valid
-      ? parsed!.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/,/g, '')
+      ? formatSystemTimestamp(source, { day: '2-digit', month: 'short', year: 'numeric' }).replace(/,/g, '')
       : 'Undated attendance';
     const group = groups.get(dateKey) || { dateKey, sheetName, attendance: [] };
     group.attendance.push(person);
@@ -556,6 +569,12 @@ function SessionRow({
 }) {
   const hasLoadedOccurrence = artifactState?.status === 'ready' && Boolean(artifactState.occurrence);
   const isCompleted = statusClass(session.status) === 'completed';
+  const isMissing = statusClass(session.status) === 'missing';
+  const isUnsynced = session.kind === 'live'
+    && Boolean(session.liveSessionId)
+    && isCompleted
+    && !session.artifactsSyncedAt;
+  const artifactError = artifactState?.status === 'error' ? artifactState.message : '';
   const canExpand = session.kind === 'live' && Boolean(session.liveSessionId) && (isCompleted || hasLoadedOccurrence);
   const [copied, setCopied] = useState(false);
   const launchUrl = session.kind === 'live' && session.liveSessionId && session.occurrenceId
@@ -664,13 +683,12 @@ function SessionRow({
         <div className="flex flex-wrap items-center gap-3 bg-amber-50/60 px-4 py-2.5 text-[12px] text-amber-800">
           <AppIcon className="ri-time-line shrink-0 text-sm"></AppIcon>
           <span className="flex-1">
-            {syncError
-              || syncNotice
+            {artifactError
               || 'This session ended, but its recording, transcript and attendance have not been pulled from Microsoft Teams yet.'}
           </span>
           <button
             type="button"
-            onClick={runSync}
+            onClick={onSync}
             disabled={syncing}
             className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg bg-amber-600 px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-amber-700 disabled:opacity-70"
           >
@@ -872,7 +890,6 @@ export function SessionsTree({
   sessions,
   moduleHrefFor,
   empty,
-  onSynced,
   onSynced,
 }: {
   sessions: DeliverySession[];

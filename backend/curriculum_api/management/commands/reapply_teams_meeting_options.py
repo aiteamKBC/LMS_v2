@@ -92,6 +92,7 @@ class Command(BaseCommand):
             language = clean_str(series.get("spoken_language")) or "en-GB"
             attendees = teams_series_email_list(series.get("attendees"))
             presenters = teams_series_email_list(series.get("presenters"))
+            co_organizers = teams_series_email_list(series.get("co_organizers"))
             if not organizer or not (join_url or clean_str(series.get("online_meeting_id"))):
                 self.stdout.write(f"{live_session_id}: no organizer or Teams link -- skipped")
                 skipped += 1
@@ -130,6 +131,7 @@ class Command(BaseCommand):
                     spoken_language=language,
                     attendees=attendees,
                     presenters=presenters,
+                    co_organizers=co_organizers,
                     online_meeting_id=meeting_id,
                 )
                 if ok:

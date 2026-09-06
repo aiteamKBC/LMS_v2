@@ -770,6 +770,7 @@ function TranscriptPreview({ liveSessionId, artifact, title, onClose }: {
 interface PeopleForm {
   attendees: string;
   presenters: string;
+  coOrganizers: string;
 }
 
 interface CreateForm {
@@ -777,6 +778,7 @@ interface CreateForm {
   organizerEmail: string;
   attendees: string;
   presenters: string;
+  coOrganizers: string;
   details: string;
   durationMinutes: string;
   lobbyBypass: string;
@@ -835,9 +837,9 @@ export default function CurriculumTeamsMeetingsPage() {
     window.localStorage.setItem('curriculumTeamsAutoSync', autoSyncEnabled ? 'on' : 'off');
   }, [autoSyncEnabled]);
 
-  const peopleDrawer = useDrawerState<PeopleForm>({ attendees: '', presenters: '' });
+  const peopleDrawer = useDrawerState<PeopleForm>({ attendees: '', presenters: '', coOrganizers: '' });
   const createDrawer = useDrawerState<CreateForm>({
-    title: '', organizerEmail: '', attendees: '', presenters: '', details: '',
+    title: '', organizerEmail: '', attendees: '', presenters: '', coOrganizers: '', details: '',
     durationMinutes: String(DEFAULT_DURATION_MINUTES),
     lobbyBypass: 'invited', recording: 'record-transcribe', spokenLanguage: 'en-GB', meetingType: 'live-session',
   });
@@ -1310,6 +1312,7 @@ export default function CurriculumTeamsMeetingsPage() {
     peopleDrawer.openWith({
       attendees: attendees.join('\n'),
       presenters: presenters.join('\n'),
+      coOrganizers: (row.summary?.coOrganizers || []).join('\n'),
     });
   };
 
@@ -1318,9 +1321,10 @@ export default function CurriculumTeamsMeetingsPage() {
     const summary = row?.summary;
     if (!row || !summary) return;
     const presenters = emailList(peopleDrawer.form.presenters);
+    const coOrganizers = emailList(peopleDrawer.form.coOrganizers);
     const attendees = emailList(peopleDrawer.form.attendees);
-    if (!presenters.length && !attendees.length) {
-      peopleDrawer.setError('Name at least one attendee or presenter.');
+    if (!coOrganizers.length && !presenters.length && !attendees.length) {
+      peopleDrawer.setError('Name at least one co-organizer, presenter or attendee.');
       return;
     }
     // Only the invitation list is being changed, so the dates sent back are the
@@ -1352,6 +1356,7 @@ export default function CurriculumTeamsMeetingsPage() {
         scheduledOccurrences: occurrences,
         attendees,
         presenters,
+        coOrganizers,
       });
       peopleDrawer.close();
       await loadTeamsState();
@@ -1389,6 +1394,7 @@ export default function CurriculumTeamsMeetingsPage() {
       // in, so the invite list always matches who is actually assigned.
       attendees: attendees.join('\n'),
       presenters: presenters.join('\n'),
+      coOrganizers: '',
       details: '',
       durationMinutes: String(row.durationMinutes),
       lobbyBypass: 'invited',
@@ -1418,6 +1424,7 @@ export default function CurriculumTeamsMeetingsPage() {
       organizerEmail: organizer,
       attendees: emailList(form.attendees),
       presenters: emailList(form.presenters),
+      coOrganizers: emailList(form.coOrganizers),
       moduleCatalogueId: row.catalogueId,
       moduleTitle: meetingTitle,
       localStartDateTime: sessionNaiveLocal(row.sessions[0]),
@@ -1445,7 +1452,11 @@ export default function CurriculumTeamsMeetingsPage() {
       // endpoint is the one place that writes it into all of them.
       let attached = 0;
       try {
-        attached = (await restoreModuleTeamsMeeting(row.catalogueId)).updatedComponents;
+        const attachment = await restoreModuleTeamsMeeting(
+          row.catalogueId,
+          { createMissingComponents: true },
+        );
+        attached = (attachment.updatedComponents || 0) + (attachment.createdComponents || 0);
       } catch {
         setNotice({
           tone: 'warning',
@@ -1907,6 +1918,12 @@ export default function CurriculumTeamsMeetingsPage() {
                       : 'None — everyone joins as an attendee'}
                   />
                   <DetailRow
+                    label={'Co-organizers'}
+                    value={(selected.summary.coOrganizers || []).length
+                      ? (selected.summary.coOrganizers || []).join(', ')
+                      : 'None'}
+                  />
+                  <DetailRow
                     label="Attendees"
                     value={(
                       <InvitedPeopleList
@@ -2067,6 +2084,15 @@ export default function CurriculumTeamsMeetingsPage() {
                         />
                       </FormField>
                       <FormField
+                        label="Co-organizers"
+                        hint="Internal Microsoft 365 users who can manage the meeting. They are invited automatically."
+                      >
+                        <EmailChipsInput
+                          value={createDrawer.form.coOrganizers}
+                          onChange={value => createDrawer.patch({ coOrganizers: value })}
+                        />
+                      </FormField>
+                      <FormField
                         label="Duration"
                         hint={`First session ${calendarLabel(selected.plannedStarts[0])}.`}
                       >
@@ -2204,6 +2230,12 @@ export default function CurriculumTeamsMeetingsPage() {
         </div>
         <FormField label="Presenters" hint="Only these people get the presenter role in Teams.">
           <EmailChipsInput value={peopleDrawer.form.presenters} onChange={value => peopleDrawer.patch({ presenters: value })} />
+        </FormField>
+        <FormField
+          label={'Co-organizers'}
+          hint={'Internal Microsoft 365 users who can manage the meeting. They are invited automatically.'}
+        >
+          <EmailChipsInput value={peopleDrawer.form.coOrganizers} onChange={value => peopleDrawer.patch({ coOrganizers: value })} />
         </FormField>
         <FormField label="Attendees" hint="Presenters are invited automatically — no need to repeat them.">
           <EmailChipsInput value={peopleDrawer.form.attendees} onChange={value => peopleDrawer.patch({ attendees: value })} />
