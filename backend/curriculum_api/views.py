@@ -1603,7 +1603,6 @@ def teams_event_payload(payload, graph_settings):
         event['recurrence'] = recurrence
     # Return normalized timing too, for the component settings response.
     return event, invited_people, presenters, co_organizers, utc_start, duration, repeat, occurrences
-    return event, invited_people, presenters, co_organizers, utc_start, duration, repeat, occurrences
 
 
 def teams_single_occurrence_payload(title, target, attendees, transaction_id=''):
@@ -1982,7 +1981,6 @@ def apply_teams_meeting_options(
     attendees=(),
     presenters=(),
     co_organizers=(),
-    co_organizers=(),
     online_meeting_id='',
     meeting=None,
 ):
@@ -2142,7 +2140,6 @@ def teams_standalone_occurrence_meeting(owner_key, event, target, invited_people
             attendees=invited_people,
             presenters=options.get('presenters') or [],
             co_organizers=options.get('co_organizers') or [],
-            co_organizers=options.get('co_organizers') or [],
         )
         warnings.extend(option_warnings)
         online_meeting_id = clean_str((meeting or {}).get('id'))
@@ -2299,7 +2296,6 @@ def curriculum_teams_meeting(request):
 
     try:
         event_payload, attendees, presenters, co_organizers, utc_start, duration, repeat, occurrences = teams_event_payload(payload, graph_settings)
-        event_payload, attendees, presenters, co_organizers, utc_start, duration, repeat, occurrences = teams_event_payload(payload, graph_settings)
     except (TypeError, ValueError) as exc:
         return json_error(str(exc), status=400)
     if co_organizers and not has_column(LIVE_SESSIONS_TABLE, 'co_organizers'):
@@ -2341,7 +2337,6 @@ def curriculum_teams_meeting(request):
         'spoken_language': spoken_language,
         'presenters': presenters,
         'co_organizers': co_organizers,
-        'co_organizers': co_organizers,
     }
     recreated_details = []
     # Graph has just built a plain weekly series. Move its occurrences onto the
@@ -2372,7 +2367,6 @@ def curriculum_teams_meeting(request):
         spoken_language=spoken_language,
         attendees=attendees,
         presenters=presenters,
-        co_organizers=co_organizers,
         co_organizers=co_organizers,
     )
     for option_warning in option_warnings:
@@ -2420,7 +2414,6 @@ def curriculum_teams_meeting(request):
             'organizerEmail': organizer,
             'attendees': attendees,
             'presenters': presenters,
-            'coOrganizers': co_organizers,
             'coOrganizers': co_organizers,
             'startDateTimeUtc': utc_start.isoformat(),
             'durationMinutes': duration,
@@ -2591,8 +2584,6 @@ def attendance_roster(series, actual_rows, include_absent=False):
         expected_roles.setdefault(email, 'Attendee')
     for email in teams_series_email_list(series.get('presenters')):
         expected_roles[email] = 'Presenter'
-    for email in teams_series_email_list(series.get('co_organizers')):
-        expected_roles[email] = 'Co-organizer'
     for email in teams_series_email_list(series.get('co_organizers')):
         expected_roles[email] = 'Co-organizer'
 
@@ -2800,7 +2791,6 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         'spoken_language': clean_str(series.get('spoken_language')) or 'en-GB',
         'presenters': presenters,
         'co_organizers': co_organizers,
-        'co_organizers': co_organizers,
     }
     warnings, recreated_details = apply_teams_occurrence_shifts(
         owner_key,
@@ -2824,7 +2814,6 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         spoken_language=meeting_options['spoken_language'],
         attendees=invited_people,
         presenters=presenters,
-        co_organizers=co_organizers,
         co_organizers=co_organizers,
         online_meeting_id=series.get('online_meeting_id'),
     )
@@ -2855,7 +2844,6 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         series_update['attendees'] = json_db_value(attendees)
         series_update['presenters'] = json_db_value(presenters)
         series_update['co_organizers'] = json_db_value(co_organizers)
-        series_update['co_organizers'] = json_db_value(co_organizers)
     update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], series_update)
     return JsonResponse({
         'updated': True,
@@ -2871,7 +2859,6 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             'trackedOccurrences': len(occurrence_rows),
             'attendees': attendees,
             'presenters': presenters,
-            'coOrganizers': co_organizers,
             'coOrganizers': co_organizers,
         },
         'warnings': warnings,
@@ -3120,7 +3107,6 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                 spoken_language=clean_str(series.get('spoken_language')) or 'en-GB',
                 attendees=teams_series_email_list(series.get('attendees')),
                 presenters=teams_series_email_list(series.get('presenters')),
-                co_organizers=teams_series_email_list(series.get('co_organizers')),
                 co_organizers=teams_series_email_list(series.get('co_organizers')),
                 online_meeting_id=meeting_id,
             )
@@ -13350,13 +13336,11 @@ def component_builder_response(row, module_by_id=None, week_by_id=None, mappings
         'tutorValidationRequired': bool_payload(row.get('tutor_validation_required')),
         'ksbRefs': ksb_refs,
         'ksbMappings': ksb_mappings,
-        'ksbMappings': ksb_mappings,
         'status': settings.get('componentBuilderStatus') or 'draft',
         'lastEdited': format_date(row.get('updated_at')),
         'contentSections': parse_int(settings.get('contentSections'), 0),
         'quizQuestions': parse_int(settings.get('quizQuestions'), 0) or None,
         'hasResources': bool_payload(settings.get('hasResources')),
-        'settings': settings,
         'settings': settings,
     }
 
@@ -13900,7 +13884,6 @@ def live_session_row_to_component_settings(row):
         'teamsAttendees': as_json_value(row.get('attendees'), []),
         'teamsPresenters': as_json_value(row.get('presenters'), []),
         'teamsCoOrganizers': as_json_value(row.get('co_organizers'), []),
-        'teamsCoOrganizers': as_json_value(row.get('co_organizers'), []),
         'teamsStartDateTimeUtc': start_value,
         'sessionDateTimeUtc': start_value,
         'teamsDurationMinutes': parse_int(row.get('duration_minutes'), 60),
@@ -14316,7 +14299,6 @@ def curriculum_teams_meeting_summary(request):
             'onlineMeetingId': clean_str(row.get('online_meeting_id')),
             'organizerEmail': clean_str(row.get('organizer_email')),
             'presenters': teams_series_email_list(row.get('presenters')),
-            'coOrganizers': teams_series_email_list(row.get('co_organizers')),
             'coOrganizers': teams_series_email_list(row.get('co_organizers')),
             'attendees': teams_series_email_list(row.get('attendees')),
             'repeatPattern': clean_str(row.get('repeat_pattern')) or 'none',

@@ -1028,62 +1028,6 @@ export default function LearnerOverview() {
                 </div>
               </Panel>
 
-              <Panel>
-                <SectionHeader
-                  title="My Tasks"
-                  count={tasks.length}
-                  description="What needs your attention next"
-                  icon="ri-list-check-3"
-                  actions={<Link to="/tasks" className="text-[12px] font-semibold text-primary-600 hover:text-primary-700">View all tasks</Link>}
-                />
-                <div className="mt-3 space-y-2">
-                  {tasks.length === 0 ? (
-                    <div className="flex min-h-[112px] items-center justify-center gap-4 px-4 py-4 text-left">
-                      <TaskEmptyIllustration />
-                      <div>
-                        <p className="text-[13px] font-semibold text-foreground-900">You&apos;re all caught up</p>
-                        <p className="mt-1 text-[12px] text-foreground-500">Nothing needs your attention right now.</p>
-                      </div>
-                    </div>
-                  ) : (
-                    tasks.map((t) => (
-                      <ActionRow
-                        key={t.id}
-                        title={t.title}
-                        subtitle={t.subtitle}
-                        tone={t.tone}
-                        status={<StatusBadge tone={t.tone} label={t.tone === 'critical' ? 'Action needed' : 'Needs attention'} />}
-                        actions={<RowAction label={t.actionLabel} emphasis="primary" onClick={() => navigate(t.actionHref)} />}
-                      />
-                    ))
-                  )}
-                </div>
-              </Panel>
-
-              <Panel>
-                <SectionHeader
-                  title="My Apprenticeship Journey"
-                  icon="ri-road-map-line"
-                  actions={
-                    <Link to={journeyHref} className="compact-action text-[12px] font-semibold text-primary-600 hover:text-primary-700">
-                      View full journey <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
-                    </Link>
-                  }
-                />
-                <div className="mt-4">
-                  {isRealMode ? (
-                    <MiniJourney real={real} loading={loading} loadError={loadError} journeyHref={journeyHref} />
-                  ) : (
-                    <div>
-                      <div className="mb-2 flex items-center justify-between">
-                        <span className="text-[13px] font-semibold text-foreground-900">{p.overallProgress}% complete</span>
-                        <span className="text-[12px] text-foreground-400">Currently on: <span className="font-semibold text-foreground-700">{p.currentModule}</span></span>
-                      </div>
-                      <ProgressBar percent={p.overallProgress} />
-                    </div>
-                  )}
-                </div>
-              </Panel>
             </div>
 
             <div className="space-y-4 lg:col-span-1">
@@ -1140,15 +1084,24 @@ export default function LearnerOverview() {
           </div>
         </SectionReveal>}
 
-        {/* ================================================================
-            MY TASKS
-            ================================================================ */}
         {!isDemoAccount && <SectionReveal delay={140}>
           <Panel>
-            <SectionHeader title="My Tasks" count={tasks.length} description="What needs your attention next" icon="ri-list-check-3" />
+            <SectionHeader
+              title="My Tasks"
+              count={tasks.length}
+              description="What needs your attention next"
+              icon="ri-list-check-3"
+              actions={<Link to="/tasks" className="text-[12px] font-semibold text-primary-600 hover:text-primary-700">View all tasks</Link>}
+            />
             <div className="mt-3 space-y-2">
               {tasks.length === 0 ? (
-                <EmptyState size="sm" icon="ri-checkbox-circle-line" title="You're all caught up" description="Nothing needs your attention right now." />
+                <div className="flex min-h-[112px] items-center justify-center gap-4 px-4 py-4 text-left">
+                  <TaskEmptyIllustration />
+                  <div>
+                    <p className="text-[13px] font-semibold text-foreground-900">You&apos;re all caught up</p>
+                    <p className="mt-1 text-[12px] text-foreground-500">Nothing needs your attention right now.</p>
+                  </div>
+                </div>
               ) : (
                 tasks.map((t) => (
                   <ActionRow
@@ -1165,9 +1118,6 @@ export default function LearnerOverview() {
           </Panel>
         </SectionReveal>}
 
-        {/* ================================================================
-            MY APPRENTICESHIP JOURNEY
-            ================================================================ */}
         {!isDemoAccount && <SectionReveal delay={180}>
           <Panel>
             <SectionHeader
@@ -1175,7 +1125,7 @@ export default function LearnerOverview() {
               icon="ri-road-map-line"
               actions={
                 <Link to={journeyHref} className="compact-action text-[12px] font-semibold text-primary-600 hover:text-primary-700">
-                  Open <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
+                  View full journey <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
                 </Link>
               }
             />
