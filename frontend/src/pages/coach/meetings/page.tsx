@@ -15,6 +15,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { MonthlyCoachingCompletionModal } from './MonthlyCoachingCompletionModal';
 import { CalendarEventMeta, CalendarEventRow } from '../shared/CalendarEventRow';
+import { CoachMeetingArtifactsPanel } from '../shared/CoachMeetingArtifactsPanel';
 import { InfoTile, ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '../shared/ScheduleControls';
 import {
   type CalendarAction,
@@ -402,6 +403,8 @@ export default function CoachMeetings() {
                         <p className="text-[13px] text-foreground-600">{event.notes}</p>
                       </div>
                     ) : null}
+
+                    <CoachMeetingArtifactsPanel event={event} />
 
                     {(actionError || actionNotice) ? (
                       <div className={cn('rounded-lg border px-3 py-2 text-[12px]', actionError ? 'border-red-200 bg-red-50 text-red-700' : 'border-rose-200 bg-rose-50 text-rose-800')}>
