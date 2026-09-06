@@ -1282,7 +1282,7 @@ def replace_live_session_occurrences(live_session_id, payload, utc_start, durati
     return rows
 
 
-def persist_live_session_series(payload, event, warnings, graph_settings, organizer, attendees, presenters, co_organizers=(), online_meeting_id=''):
+def persist_live_session_series(payload, event, warnings, graph_settings, organizer, attendees, presenters, online_meeting_id='', co_organizers=()):
     ensure_module_authoring_tables()
     ensure_live_session_tracking_tables()
     module_catalogue_id = clean_str(payload.get('moduleCatalogueId'))
@@ -1318,7 +1318,7 @@ def persist_live_session_series(payload, event, warnings, graph_settings, organi
         'id': live_session_id,
         'module_catalogue_id': module_catalogue_id or None,
         'module_draft_id': module_draft_id,
-        'module_title': clean_str(payload.get('moduleTitle') or payload.get('title')),
+        'module_title': clean_str(event.get('subject')) or teams_calendar_subject(payload),
         'provider': 'Microsoft Teams',
         'graph_event_id': clean_str(event.get('id')) or None,
         'online_meeting_id': online_meeting_id,
@@ -1328,7 +1328,7 @@ def persist_live_session_series(payload, event, warnings, graph_settings, organi
         'organizer_email': organizer,
         'attendees': json_db_value(attendees),
         'presenters': json_db_value(presenters),
-        'co_organizers': json_db_value(list(co_organizers)),
+        'co_organizers': json_db_value(co_organizers),
         'start_datetime': start_datetime,
         'timezone': graph_settings.get('timezone') or '',
         'duration_minutes': max(15, min(1440, int(payload.get('durationMinutes') or 60))),
@@ -1497,8 +1497,39 @@ def teams_event_body_html(title, details=''):
     return ''.join(parts)
 
 
+def teams_calendar_subject(payload, series=None):
+    """Return the module title that owns a Teams calendar series.
+
+    A live-session component may be called "Live Teams Session 1", but the
+    Outlook event represents the module-wide delivery calendar. Prefer the
+    authoritative saved module title, then explicit/stored module labels, and
+    only use the generic title for legacy unlinked meetings.
+    """
+    series = series if isinstance(series, dict) else {}
+    requested_id = clean_str(
+        payload.get('moduleCatalogueId')
+        or series.get('module_catalogue_id')
+    )
+    module_id = resolve_authoring_catalogue_id(requested_id) or requested_id
+    if module_id and table_exists(AUTHORING_MODULES_TABLE):
+        rows = authoring_fetch_all(
+            AUTHORING_MODULES_TABLE,
+            'module_catalogue_id = %s',
+            [module_id],
+        )
+        saved_title = clean_str(rows[0].get('title')) if rows else ''
+        if saved_title:
+            return saved_title
+    return clean_str(
+        payload.get('moduleTitle')
+        or series.get('module_title')
+        or payload.get('title')
+        or 'Live session'
+    )
+
+
 def teams_event_payload(payload, graph_settings):
-    title = clean_str(payload.get('title')) or 'Live session'
+    title = teams_calendar_subject(payload)
     local_start_raw = clean_str(payload.get('localStartDateTime'))
     utc_start_raw = clean_str(payload.get('startDateTimeUtc'))
     try:
@@ -1515,13 +1546,17 @@ def teams_event_payload(payload, graph_settings):
     if repeat not in TEAMS_REPEAT_VALUES:
         raise ValueError('Unsupported repeat option.')
     occurrences = max(2, min(52, int(payload.get('repeatOccurrences') or 12)))
-    attendees = teams_attendee_emails(payload.get('attendees'))
-    presenters = teams_attendee_emails(payload.get('presenters'))
-    # Co-organizers run the meeting alongside the organizer -- they can start and
-    # manage the recording, admit people from the lobby and change the meeting
-    # options -- so they are invited like anyone else and given their own role on
-    # the online meeting below.
     co_organizers = teams_attendee_emails(payload.get('coOrganizers'))
+    co_organizer_set = set(co_organizers)
+    presenters = [
+        email for email in teams_attendee_emails(payload.get('presenters'))
+        if email not in co_organizer_set
+    ]
+    elevated = co_organizer_set | set(presenters)
+    attendees = [
+        email for email in teams_attendee_emails(payload.get('attendees'))
+        if email not in elevated
+    ]
     invited_people = list(dict.fromkeys([*co_organizers, *presenters, *attendees]))
     details = clean_str(payload.get('details'))
 
@@ -1567,6 +1602,7 @@ def teams_event_payload(payload, graph_settings):
     if recurrence:
         event['recurrence'] = recurrence
     # Return normalized timing too, for the component settings response.
+    return event, invited_people, presenters, co_organizers, utc_start, duration, repeat, occurrences
     return event, invited_people, presenters, co_organizers, utc_start, duration, repeat, occurrences
 
 
@@ -1946,6 +1982,7 @@ def apply_teams_meeting_options(
     attendees=(),
     presenters=(),
     co_organizers=(),
+    co_organizers=(),
     online_meeting_id='',
     meeting=None,
 ):
@@ -1997,9 +2034,18 @@ def apply_teams_meeting_options(
     if lobby_choice not in TEAMS_LOBBY_VALUES:
         lobby_choice = 'invited'
     recording_choice = clean_str(recording).lower() or 'none'
-    presenter_emails = teams_series_email_list(list(presenters))
     co_organizer_emails = teams_series_email_list(list(co_organizers))
-    roster = teams_series_email_list(co_organizer_emails, presenter_emails, list(attendees))
+    co_organizer_set = set(co_organizer_emails)
+    presenter_emails = [
+        email for email in teams_series_email_list(list(presenters))
+        if email not in co_organizer_set
+    ]
+    presenter_set = set(presenter_emails)
+    attendee_emails = [
+        email for email in teams_series_email_list(list(attendees))
+        if email not in co_organizer_set and email not in presenter_set
+    ]
+    roster = [*co_organizer_emails, *presenter_emails, *attendee_emails]
     patch = {
         'lobbyBypassSettings': {
             'scope': TEAMS_LOBBY_VALUES[lobby_choice],
@@ -2015,20 +2061,16 @@ def apply_teams_meeting_options(
     # found the link. `allowedPresenters` stays at the tenant default until a
     # presenter is actually named, because naming nobody would mute the tutor too.
     if roster:
-        presenter_set = set(presenter_emails)
-        co_organizer_set = set(co_organizer_emails)
-
-        def participant_role(email):
-            # Co-organizer outranks presenter for anyone named in both lists: they
-            # were named to run the meeting, and the weaker role would take back
-            # the recording and lobby controls that is the whole point of it.
-            if email in co_organizer_set:
-                return 'coorganizer'
-            return 'presenter' if email in presenter_set else 'attendee'
-
         patch['participants'] = {
             'attendees': [
-                {'upn': email, 'role': participant_role(email)}
+                {
+                    'upn': email,
+                    'role': (
+                        'coorganizer' if email in co_organizer_set
+                        else 'presenter' if email in presenter_set
+                        else 'attendee'
+                    ),
+                }
                 for email in roster
             ],
         }
@@ -2099,6 +2141,7 @@ def teams_standalone_occurrence_meeting(owner_key, event, target, invited_people
             spoken_language=options.get('spoken_language', 'en-GB'),
             attendees=invited_people,
             presenters=options.get('presenters') or [],
+            co_organizers=options.get('co_organizers') or [],
             co_organizers=options.get('co_organizers') or [],
         )
         warnings.extend(option_warnings)
@@ -2256,8 +2299,15 @@ def curriculum_teams_meeting(request):
 
     try:
         event_payload, attendees, presenters, co_organizers, utc_start, duration, repeat, occurrences = teams_event_payload(payload, graph_settings)
+        event_payload, attendees, presenters, co_organizers, utc_start, duration, repeat, occurrences = teams_event_payload(payload, graph_settings)
     except (TypeError, ValueError) as exc:
         return json_error(str(exc), status=400)
+    if co_organizers and not has_column(LIVE_SESSIONS_TABLE, 'co_organizers'):
+        return json_error(
+            'Co-organizers cannot be saved until the curriculum.live_sessions co_organizers column is added.',
+            status=409,
+            code='teams_co_organizers_schema_required',
+        )
 
     owner_key = urllib_parse.quote(organizer, safe='')
     try:
@@ -2291,6 +2341,7 @@ def curriculum_teams_meeting(request):
         'spoken_language': spoken_language,
         'presenters': presenters,
         'co_organizers': co_organizers,
+        'co_organizers': co_organizers,
     }
     recreated_details = []
     # Graph has just built a plain weekly series. Move its occurrences onto the
@@ -2300,7 +2351,7 @@ def curriculum_teams_meeting(request):
         shift_warnings, recreated_details = apply_teams_occurrence_shifts(
             owner_key,
             urllib_parse.quote(event_id, safe=''),
-            clean_str(payload.get('title')) or 'Live session',
+            clean_str(event_payload.get('subject')) or teams_calendar_subject(payload),
             teams_shifted_occurrence_targets(payload, duration),
             attendees,
             meeting_options,
@@ -2322,6 +2373,7 @@ def curriculum_teams_meeting(request):
         attendees=attendees,
         presenters=presenters,
         co_organizers=co_organizers,
+        co_organizers=co_organizers,
     )
     for option_warning in option_warnings:
         message = clean_str(option_warning.get('message'))
@@ -2342,8 +2394,8 @@ def curriculum_teams_meeting(request):
             organizer,
             attendees,
             presenters,
+            clean_str(graph_meeting.get('id')),
             co_organizers=co_organizers,
-            online_meeting_id=clean_str(graph_meeting.get('id')),
         )
         persist_recreated_occurrence_details(live_session_id, recreated_details)
     except Exception:
@@ -2368,6 +2420,7 @@ def curriculum_teams_meeting(request):
             'organizerEmail': organizer,
             'attendees': attendees,
             'presenters': presenters,
+            'coOrganizers': co_organizers,
             'coOrganizers': co_organizers,
             'startDateTimeUtc': utc_start.isoformat(),
             'durationMinutes': duration,
@@ -2540,6 +2593,8 @@ def attendance_roster(series, actual_rows, include_absent=False):
         expected_roles[email] = 'Presenter'
     for email in teams_series_email_list(series.get('co_organizers')):
         expected_roles[email] = 'Co-organizer'
+    for email in teams_series_email_list(series.get('co_organizers')):
+        expected_roles[email] = 'Co-organizer'
 
     rows = []
     actual_emails = set()
@@ -2653,7 +2708,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         return json_error('This Teams meeting is missing organizer or calendar event identifiers.', status=409)
 
     graph_settings = get_graph_settings()
-    title = clean_str(payload.get('title') or series.get('module_title') or 'Live session')
+    title = teams_calendar_subject(payload, series)
     local_start_raw = clean_str(payload.get('localStartDateTime'))
     utc_start_raw = clean_str(payload.get('startDateTimeUtc'))
     try:
@@ -2668,13 +2723,36 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     stored_attendees = teams_series_email_list(series.get('attendees'))
     stored_presenters = teams_series_email_list(series.get('presenters'))
     stored_co_organizers = teams_series_email_list(series.get('co_organizers'))
-    people_changed = 'attendees' in payload or 'presenters' in payload or 'coOrganizers' in payload
+    people_changed = any(key in payload for key in ('attendees', 'presenters', 'coOrganizers'))
     try:
-        attendees = teams_attendee_emails(payload['attendees']) if 'attendees' in payload else stored_attendees
-        presenters = teams_attendee_emails(payload['presenters']) if 'presenters' in payload else stored_presenters
-        co_organizers = teams_attendee_emails(payload['coOrganizers']) if 'coOrganizers' in payload else stored_co_organizers
+        co_organizers = (
+            teams_attendee_emails(payload['coOrganizers'])
+            if 'coOrganizers' in payload else stored_co_organizers
+        )
+        co_organizer_set = set(co_organizers)
+        presenters = [
+            email for email in (
+                teams_attendee_emails(payload['presenters'])
+                if 'presenters' in payload else stored_presenters
+            )
+            if email not in co_organizer_set
+        ]
+        elevated = co_organizer_set | set(presenters)
+        attendees = [
+            email for email in (
+                teams_attendee_emails(payload['attendees'])
+                if 'attendees' in payload else stored_attendees
+            )
+            if email not in elevated
+        ]
     except (TypeError, ValueError) as exc:
         return json_error(str(exc), status=400)
+    if co_organizers and not has_column(LIVE_SESSIONS_TABLE, 'co_organizers'):
+        return json_error(
+            'Co-organizers cannot be saved until the curriculum.live_sessions co_organizers column is added.',
+            status=409,
+            code='teams_co_organizers_schema_required',
+        )
     invited_people = list(dict.fromkeys([*co_organizers, *presenters, *attendees]))
 
     duration = max(15, min(1440, int(payload.get('durationMinutes') or series.get('duration_minutes') or 60)))
@@ -2722,6 +2800,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         'spoken_language': clean_str(series.get('spoken_language')) or 'en-GB',
         'presenters': presenters,
         'co_organizers': co_organizers,
+        'co_organizers': co_organizers,
     }
     warnings, recreated_details = apply_teams_occurrence_shifts(
         owner_key,
@@ -2745,6 +2824,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         spoken_language=meeting_options['spoken_language'],
         attendees=invited_people,
         presenters=presenters,
+        co_organizers=co_organizers,
         co_organizers=co_organizers,
         online_meeting_id=series.get('online_meeting_id'),
     )
@@ -2775,6 +2855,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         series_update['attendees'] = json_db_value(attendees)
         series_update['presenters'] = json_db_value(presenters)
         series_update['co_organizers'] = json_db_value(co_organizers)
+        series_update['co_organizers'] = json_db_value(co_organizers)
     update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], series_update)
     return JsonResponse({
         'updated': True,
@@ -2790,6 +2871,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             'trackedOccurrences': len(occurrence_rows),
             'attendees': attendees,
             'presenters': presenters,
+            'coOrganizers': co_organizers,
             'coOrganizers': co_organizers,
         },
         'warnings': warnings,
@@ -3038,6 +3120,7 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                 spoken_language=clean_str(series.get('spoken_language')) or 'en-GB',
                 attendees=teams_series_email_list(series.get('attendees')),
                 presenters=teams_series_email_list(series.get('presenters')),
+                co_organizers=teams_series_email_list(series.get('co_organizers')),
                 co_organizers=teams_series_email_list(series.get('co_organizers')),
                 online_meeting_id=meeting_id,
             )
@@ -13817,6 +13900,7 @@ def live_session_row_to_component_settings(row):
         'teamsAttendees': as_json_value(row.get('attendees'), []),
         'teamsPresenters': as_json_value(row.get('presenters'), []),
         'teamsCoOrganizers': as_json_value(row.get('co_organizers'), []),
+        'teamsCoOrganizers': as_json_value(row.get('co_organizers'), []),
         'teamsStartDateTimeUtc': start_value,
         'sessionDateTimeUtc': start_value,
         'teamsDurationMinutes': parse_int(row.get('duration_minutes'), 60),
@@ -14232,6 +14316,7 @@ def curriculum_teams_meeting_summary(request):
             'onlineMeetingId': clean_str(row.get('online_meeting_id')),
             'organizerEmail': clean_str(row.get('organizer_email')),
             'presenters': teams_series_email_list(row.get('presenters')),
+            'coOrganizers': teams_series_email_list(row.get('co_organizers')),
             'coOrganizers': teams_series_email_list(row.get('co_organizers')),
             'attendees': teams_series_email_list(row.get('attendees')),
             'repeatPattern': clean_str(row.get('repeat_pattern')) or 'none',

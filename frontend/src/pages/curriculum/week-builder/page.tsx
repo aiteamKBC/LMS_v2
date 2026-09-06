@@ -4,6 +4,7 @@ import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCenter, 
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
+import DOMPurify from 'dompurify';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -1752,6 +1753,7 @@ const POWERPOINT_UPLOAD_ACCEPT = '.ppt,.pptx,.pps,.ppsx,.pdf,application/vnd.ms-
 function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   const sourceMode = ['File', 'LMS resource'].includes(s('readingSource')) ? 'File' : 'Text';
+  const [writtenPreviewOpen, setWrittenPreviewOpen] = useState(false);
 
   return (
     <>
@@ -1773,6 +1775,18 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
         {sourceMode === 'Text' ? (
           <div className="mt-4">
             <RichTextDraft label="Component content" value={s('readingContent')} onChange={value => setSetting('readingContent', value)} rows={14} htmlOnly />
+            <div className="mt-3 flex justify-end">
+              <button type="button" disabled={!s('readingContent').trim()} onClick={() => setWrittenPreviewOpen(current => !current)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50" aria-expanded={writtenPreviewOpen}>
+                <AppIcon className={writtenPreviewOpen ? 'ri-eye-off-line' : 'ri-eye-line'} />
+                {writtenPreviewOpen ? 'Hide preview' : 'Preview content'}
+              </button>
+            </div>
+            {writtenPreviewOpen && s('readingContent').trim() && (
+              <div className="mt-3 overflow-hidden rounded-xl border border-background-200 bg-white">
+                <div className="flex items-center gap-2 border-b border-background-200 bg-background-100/60 px-3 py-2 text-[11px] font-bold text-foreground-700"><AppIcon className="ri-eye-line text-primary-600" />Learner preview</div>
+                <div className="rich-text-surface max-h-[520px] overflow-auto p-5 text-sm leading-relaxed text-foreground-800" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(normalizeAuthoredPreviewHtml(s('readingContent'))) }} />
+              </div>
+            )}
           </div>
         ) : (
           <div className="mt-4">
@@ -1785,6 +1799,7 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
               uploadedName={s('uploadedFileName')}
               uploadedUrl={s('uploadedFileUrl') || s('resourceUrl')}
               uploadedSize={Number(component.settings.uploadedFileSize) || 0}
+              uploadedContentType={s('uploadedFileContentType')}
               onUploaded={file => onChange({
                 settings: {
                   ...component.settings,
@@ -1871,6 +1886,7 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
               uploadedName={s('uploadedFileName')}
               uploadedUrl={s('uploadedFileUrl') || s('podcastUrl')}
               uploadedSize={Number(component.settings.uploadedFileSize) || 0}
+              uploadedContentType={s('uploadedFileContentType')}
               onUploaded={file => onChange({
                 settings: {
                   ...component.settings,
@@ -1885,12 +1901,6 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
               })}
             />
             <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: MP3, OGG, WAV (plus M4A, AAC, WEBM).</p>
-            {(s('uploadedFileUrl') || s('podcastUrl')) && (
-              <div className="mt-3">
-                <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Preview</span>
-                <audio controls src={s('uploadedFileUrl') || s('podcastUrl')} className="w-full" />
-              </div>
-            )}
           </div>
         ) : sourceType === 'External Link' ? (
           <Field label="Podcast URL" className="mt-4"><input value={s('podcastUrl')} onChange={e => setSetting('podcastUrl', e.target.value)} placeholder="https://…" className={inputClass} /></Field>
@@ -1987,17 +1997,12 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
             uploadedName={s('uploadedFileName') || s('fileName')}
             uploadedUrl={s('uploadedFileUrl')}
             uploadedSize={Number(component.settings.uploadedFileSize) || 0}
+            uploadedContentType={s('uploadedFileContentType')}
             onUploaded={file => onChange({
               settings: { ...component.settings, uploadedFileName: file.fileName, uploadedFileUrl: file.url, uploadedFileSize: file.size, uploadedFileContentType: file.contentType },
             })}
           />
           <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: PowerPoint (.ppt, .pptx, .pps, .ppsx) or PDF. The preview below is what a learner sees.</p>
-          {s('uploadedFileUrl') && (
-            <div className="mt-3">
-              <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Preview</span>
-              <UploadedDeckPreview url={s('uploadedFileUrl')} />
-            </div>
-          )}
         </div>
 
         <Field label="Speaker notes" className="mt-4"><textarea value={s('speakerNotes')} onChange={e => setSetting('speakerNotes', e.target.value)} rows={3} placeholder="Notes for whoever presents or reviews this deck…" className={`${inputClass} resize-none`} /></Field>
@@ -2041,6 +2046,17 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
 // carry no group) or creates a new draft here, which is saved straight into
 // the workspace via quiz_api. Question authoring happens in the workspace's
 // full editor, opened in a new tab so week-builder edits aren't lost.
+interface LinkedQuizPreview {
+  quiz: { id: string | number; title: string; programme?: string; packageType?: string };
+  questions: Array<{
+    id: string | number;
+    text: string;
+    questionType: string;
+    explanation?: string;
+    answers?: Array<{ id: string | number; text: string }>;
+  }>;
+}
+
 function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   const linkedQuizId = s('linkedQuizId');
@@ -2051,6 +2067,9 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
   const [editorOpen, setEditorOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [togglingCheckpoint, setTogglingCheckpoint] = useState(false);
+  const [studentPreview, setStudentPreview] = useState<LinkedQuizPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState('');
 
   const loadQuizzes = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -2131,6 +2150,22 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
 
   const closeEditor = () => { setEditorOpen(false); void loadQuizzes(); };
 
+  const openStudentPreview = async () => {
+    if (!linkedQuizId || previewLoading) return;
+    setPreviewLoading(true);
+    setPreviewError('');
+    try {
+      const response = await fetch(`/quiz_api/quizzes/${linkedQuizId}/preview/`);
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data) throw new Error(data?.error || 'Could not load quiz preview.');
+      setStudentPreview(data as LinkedQuizPreview);
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : 'Could not load quiz preview.');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
   return (
     <>
       {editorOpen && linkedQuizId && (
@@ -2144,6 +2179,8 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
           </div>
         </div>
       )}
+
+      {studentPreview && <LinkedQuizPreviewModal preview={studentPreview} onClose={() => setStudentPreview(null)} />}
 
       {wizardOpen && (
         <Suspense fallback={null}>
@@ -2186,12 +2223,16 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
               <span className="grid place-items-center w-10 h-10 shrink-0 rounded-xl bg-primary-500 text-white"><AppIcon className="ri-questionnaire-line text-lg"></AppIcon></span>
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => void openStudentPreview()} disabled={previewLoading} className="inline-flex items-center gap-1.5 rounded-full border border-primary-200 bg-background-50 px-4 py-1.5 text-[12px] font-bold text-primary-700 hover:bg-primary-100 disabled:cursor-wait disabled:opacity-60 transition-smooth">
+                <AppIcon className={previewLoading ? 'ri-loader-4-line animate-spin' : 'ri-eye-line'}></AppIcon>{previewLoading ? 'Loading preview...' : 'Preview quiz'}
+              </button>
               <button type="button" onClick={() => setEditorOpen(true)} className="primary-action inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-4 py-1.5 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth">
                 <AppIcon className="ri-edit-2-line"></AppIcon>Edit questions
               </button>
               <button type="button" onClick={() => loadQuizzes()} className="inline-flex items-center gap-1.5 rounded-full border border-background-200 bg-background-50 px-3 py-1.5 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 transition-smooth"><AppIcon className={loading ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}></AppIcon>Refresh</button>
               <button type="button" onClick={() => link(null)} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-semibold text-foreground-500 hover:text-red-600 transition-smooth"><AppIcon className="ri-link-unlink"></AppIcon>Unlink</button>
             </div>
+            {previewError && <p className="mt-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">{previewError}</p>}
             <label className="mt-3 flex cursor-pointer select-none items-center gap-2">
               <input type="checkbox" checked={isCheckpoint} disabled={togglingCheckpoint} onChange={e => void toggleCheckpoint(e.target.checked)} className="h-4 w-4 rounded border-background-300 accent-primary-600 disabled:cursor-not-allowed" />
               <span className="text-[12px] font-semibold text-foreground-700">Mark as checkpoint assessment</span>
@@ -2253,6 +2294,54 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
   );
 }
 
+function LinkedQuizPreviewModal({ preview, onClose }: { preview: LinkedQuizPreview; onClose: () => void }) {
+  const isScorm = String(preview.quiz.packageType || '').toLowerCase() === 'scorm';
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-foreground-950/50 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-background-200 bg-white shadow-2xl" onClick={event => event.stopPropagation()}>
+        <div className="flex items-start justify-between gap-4 border-b border-background-200 bg-background-50 px-5 py-4 sm:px-7">
+          <div className="min-w-0">
+            <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-primary-600"><AppIcon className="ri-eye-line" />Learner preview</p>
+            <h3 className="mt-1 truncate text-xl font-heading font-black text-foreground-950">{preview.quiz.title || 'Untitled quiz'}</h3>
+            <p className="mt-1 text-[12px] text-foreground-500">{isScorm ? 'SCORM package preview' : `${preview.questions.length} question${preview.questions.length === 1 ? '' : 's'}`}{preview.quiz.programme ? ` · ${preview.quiz.programme}` : ''}</p>
+          </div>
+          <button type="button" onClick={onClose} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-background-200 bg-white text-foreground-600 hover:bg-background-100" aria-label="Close quiz preview"><AppIcon className="ri-close-line text-lg" /></button>
+        </div>
+        {isScorm ? (
+          <iframe title={`${preview.quiz.title} SCORM preview`} src={`/quiz_api/quizzes/${preview.quiz.id}/scorm/`} className="min-h-[620px] w-full flex-1 border-0" sandbox="allow-scripts allow-forms allow-same-origin" />
+        ) : (
+          <div className="flex-1 overflow-y-auto bg-background-100/60 p-4 sm:p-6">
+            {!preview.questions.length ? (
+              <div className="grid min-h-64 place-items-center text-center"><div><AppIcon className="ri-questionnaire-line text-3xl text-foreground-300" /><p className="mt-2 text-sm font-bold text-foreground-600">No saved questions yet</p></div></div>
+            ) : (
+              <div className="mx-auto max-w-4xl space-y-4">
+                {preview.questions.map((question, index) => (
+                  <article key={question.id} className="rounded-2xl border border-background-200 bg-white p-5 shadow-sm">
+                    <div className="flex items-start gap-4">
+                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-primary-100 bg-primary-50 text-sm font-bold text-primary-700">{index + 1}</span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <p className="text-[14px] font-semibold leading-6 text-foreground-900">{question.text}</p>
+                          <span className="w-fit shrink-0 rounded-md bg-background-200/70 px-2 py-1 text-[9px] font-bold uppercase text-foreground-600">{question.questionType.replaceAll('_', ' ')}</span>
+                        </div>
+                        {question.answers?.length ? (
+                          <div className="mt-4 grid gap-2">
+                            {question.answers.map(answer => <div key={answer.id} className="flex items-start gap-2 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[12px] text-foreground-700"><span className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border-2 border-foreground-300" />{answer.text}</div>)}
+                          </div>
+                        ) : <p className="mt-3 text-[11px] text-foreground-400">The learner enters or arranges the answer for this question type.</p>}
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const ASSIGNMENT_UPLOAD_ACCEPT = '.txt,.doc,.docx,.pdf,.rtf,.odt,text/plain,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/rtf,application/vnd.oasis.opendocument.text';
 
 // Assignment editor — authored exactly like Reading material for now: a written
@@ -2295,6 +2384,7 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
               uploadedName={s('uploadedFileName')}
               uploadedUrl={s('uploadedFileUrl')}
               uploadedSize={Number(component.settings.uploadedFileSize) || 0}
+              uploadedContentType={s('uploadedFileContentType')}
               onUploaded={file => onChange({
                 // Pin the tab to File on upload (like Reading) so it stays put
                 // after save/reload rather than snapping back to the brief.
@@ -2334,19 +2424,21 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
   );
 }
 
-function WeekComponentFileUpload({ componentId, componentType, accept, uploadedName, uploadedUrl, uploadedSize, onUploaded, onUpload = uploadWeekComponentResource }: {
+function WeekComponentFileUpload({ componentId, componentType, accept, uploadedName, uploadedUrl, uploadedSize, uploadedContentType, onUploaded, onUpload = uploadWeekComponentResource }: {
   componentId: string;
   componentType: 'reading' | 'podcast' | 'powerpoint' | 'assignment';
   accept: string;
   uploadedName: string;
   uploadedUrl: string;
   uploadedSize: number;
+  uploadedContentType: string;
   onUploaded: (file: WeekComponentUploadResult['file']) => void;
   onUpload?: WeekComponentUploader;
 }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const [failedFile, setFailedFile] = useState<File | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(Boolean(uploadedUrl));
   const inputId = useMemo(() => `week-component-upload-${Math.random().toString(36).slice(2)}`, []);
 
   const handleFile = async (file: File) => {
@@ -2356,6 +2448,7 @@ function WeekComponentFileUpload({ componentId, componentType, accept, uploadedN
     try {
       const result = await onUpload(componentId, file, componentType);
       onUploaded(result.file);
+      setPreviewOpen(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to upload file.');
       setFailedFile(file);
@@ -2373,9 +2466,15 @@ function WeekComponentFileUpload({ componentId, componentType, accept, uploadedN
             {uploadedSize > 0 && <span className="ml-2 font-normal tabular-nums text-foreground-400">{formatFileSize(uploadedSize)}</span>}
           </p>
           {uploadedUrl && (
-            <a href={uploadedUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold text-primary-600 hover:text-primary-700">
-              <AppIcon className="ri-external-link-line"></AppIcon> Open uploaded file
-            </a>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <button type="button" onClick={() => setPreviewOpen(current => !current)} className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-600 hover:text-primary-700" aria-expanded={previewOpen}>
+                <AppIcon className={previewOpen ? 'ri-eye-off-line' : 'ri-eye-line'}></AppIcon>
+                {previewOpen ? 'Hide preview' : 'Preview file'}
+              </button>
+              <a href={uploadedUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] font-bold text-foreground-500 hover:text-foreground-700">
+                <AppIcon className="ri-external-link-line"></AppIcon> Open in new tab
+              </a>
+            </div>
           )}
         </div>
         <div className="w-full shrink-0 sm:w-auto">
@@ -2415,6 +2514,120 @@ function WeekComponentFileUpload({ componentId, componentType, accept, uploadedN
           )}
         </div>
       )}
+
+      {uploadedUrl && previewOpen && (
+        <UploadedComponentFilePreview
+          url={uploadedUrl}
+          fileName={uploadedName}
+          contentType={uploadedContentType}
+          componentType={componentType}
+        />
+      )}
+    </div>
+  );
+}
+
+function normalizeAuthoredPreviewHtml(value: string) {
+  if (!/&lt;\/?[a-z][a-z0-9]*(?:&gt;|\s)/i.test(value)) return value;
+  const lines = value.replace(/<br\s*\/?>/gi, '\n').replace(/<\/div>\s*<div>/gi, '\n').replace(/<\/?div>/gi, '');
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = lines;
+  return textarea.value;
+}
+
+type UploadedPreviewState =
+  | { status: 'loading' }
+  | { status: 'html'; value: string }
+  | { status: 'text'; value: string; truncated: boolean }
+  | { status: 'error'; message: string };
+
+function UploadedComponentFilePreview({ url, fileName, contentType, componentType }: {
+  url: string;
+  fileName: string;
+  contentType: string;
+  componentType: 'reading' | 'podcast' | 'powerpoint' | 'assignment';
+}) {
+  const probe = `${fileName} ${url.split(/[?#]/, 1)[0]}`.toLowerCase();
+  const mime = contentType.toLowerCase();
+  const isAudio = componentType === 'podcast' || mime.startsWith('audio/') || /\.(mp3|ogg|oga|wav|m4a|aac|webm)\b/.test(probe);
+  const isWord = mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || /\.docx\b/.test(probe);
+  const isText = mime.startsWith('text/plain') || /\.txt\b/.test(probe);
+  const [loaded, setLoaded] = useState<UploadedPreviewState | null>((isWord || isText) ? { status: 'loading' } : null);
+
+  useEffect(() => {
+    if (!isWord && !isText) {
+      setLoaded(null);
+      return;
+    }
+
+    let cancelled = false;
+    setLoaded({ status: 'loading' });
+
+    async function loadPreview() {
+      try {
+        const response = await fetch(url, { credentials: 'same-origin' });
+        if (!response.ok) throw new Error(`File request failed (${response.status})`);
+
+        if (isWord) {
+          const mammoth = await import('mammoth/mammoth.browser');
+          const result = await mammoth.convertToHtml({ arrayBuffer: await response.arrayBuffer() });
+          if (!cancelled) {
+            setLoaded({ status: 'html', value: DOMPurify.sanitize(result.value || '<p>No preview content found.</p>') });
+          }
+          return;
+        }
+
+        const fullText = await response.text();
+        const limit = 200_000;
+        if (!cancelled) setLoaded({ status: 'text', value: fullText.slice(0, limit), truncated: fullText.length > limit });
+      } catch (err) {
+        if (!cancelled) setLoaded({ status: 'error', message: err instanceof Error ? err.message : 'Could not load the preview.' });
+      }
+    }
+
+    void loadPreview();
+    return () => { cancelled = true; };
+  }, [isText, isWord, url]);
+
+  let content: ReactNode;
+  if (isAudio) {
+    content = <audio controls preload="metadata" src={url} className="w-full" />;
+  } else if (loaded?.status === 'loading') {
+    content = <div className="grid min-h-40 place-items-center text-[12px] font-semibold text-foreground-500"><span className="inline-flex items-center gap-2"><AppIcon className="ri-loader-4-line animate-spin" />Loading preview...</span></div>;
+  } else if (loaded?.status === 'html') {
+    content = <div className="max-h-[420px] overflow-auto bg-white p-5"><div className="max-w-none text-sm leading-relaxed text-foreground-800 [&_h1]:mb-3 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:text-xl [&_h2]:font-bold [&_p]:mb-3 [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:pl-5" dangerouslySetInnerHTML={{ __html: loaded.value }} /></div>;
+  } else if (loaded?.status === 'text') {
+    content = <div><pre className="max-h-[420px] overflow-auto whitespace-pre-wrap bg-white p-5 text-sm leading-relaxed text-foreground-800">{loaded.value}</pre>{loaded.truncated && <p className="border-t border-background-200 bg-amber-50 px-4 py-2 text-[11px] font-semibold text-amber-800">Preview limited to the first 200,000 characters. Open the file to see the rest.</p>}</div>;
+  } else if (loaded?.status === 'error') {
+    content = <PreviewUnavailable message={`The uploaded file could not be previewed: ${loaded.message}`} />;
+  } else {
+    const embed = resolveDocEmbed(url);
+    if (embed.mode === 'deck') {
+      content = <SlideDeckViewer src={embed.src} title={fileName || 'Uploaded file'} fallback={message => <PreviewUnavailable message={message} />} />;
+    } else if (embed.mode === 'native' || embed.mode === 'office') {
+      content = <iframe title={`Preview of ${fileName || 'uploaded file'}`} src={embed.src} className="h-[420px] w-full bg-white" />;
+    } else {
+      content = <PreviewUnavailable message={embed.reason} />;
+    }
+  }
+
+  return (
+    <div className="mt-3 overflow-hidden rounded-xl border border-background-200 bg-background-100/50">
+      <div className="flex items-center gap-2 border-b border-background-200 px-3 py-2 text-[11px] font-bold text-foreground-700">
+        <AppIcon className="ri-eye-line text-primary-600" />
+        File preview
+      </div>
+      {content}
+    </div>
+  );
+}
+
+function PreviewUnavailable({ message }: { message: string }) {
+  return (
+    <div className="flex min-h-36 flex-col items-center justify-center gap-2 bg-amber-50 px-5 py-6 text-center">
+      <AppIcon className="ri-file-warning-line text-2xl text-amber-600" />
+      <p className="text-[12px] font-bold text-amber-900">Inline preview is not available for this file.</p>
+      <p className="max-w-xl text-[11px] leading-5 text-amber-800">{message} You can still open it in a new tab using the link above.</p>
     </div>
   );
 }

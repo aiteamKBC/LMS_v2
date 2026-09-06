@@ -1390,12 +1390,14 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
     """The service-layer rejections must surface as a client error, not a 200."""
 
     def _post(self, component_id):
+        access_time = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
         tracking = issue_tracking_session(
             activity_kind="component",
             activity_id=component_id,
             learner_kind="apprenticeship",
             learner_id="19",
             counting_mode="visible_page",
+            issued_at=access_time,
         )
         request = RequestFactory().post(
             f"/learner_api/components/{component_id}/complete/?kind=apprenticeship&learnerId=19",
@@ -1405,7 +1407,8 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
         view = submit_component_progress
         while hasattr(view, "__wrapped__"):
             view = view.__wrapped__
-        return view(request, component_id)
+        with patch("learner_api.components.timezone.now", return_value=access_time):
+            return view(request, component_id)
 
     def _run(self, save_side_effect):
         profile = SimpleNamespace(training_plan_progress=[])

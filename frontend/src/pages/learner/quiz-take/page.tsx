@@ -23,6 +23,8 @@ import { DemoTimeChip } from '@/components/feature/DemoTimePanel';
 import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { startTimeTracking, type TimeTrackingSession } from '@/api/timeTracking';
+import { ComponentAccessNotice } from '@/components/feature/ComponentAccessNotice';
+import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
 
 const learnerNav = roleNavMap.learner;
 
@@ -39,6 +41,8 @@ export default function QuizTakePage() {
   // though the plan rows no longer link here. Sitting the quiz would file an
   // attempt in the learner's name, so they get the read-only panel instead.
   const { canProgress } = useLearnerWorkspaceAccess(id);
+  const componentAccess = useComponentAccessWindow();
+  const canUseComponent = canProgress && componentAccess.open;
   const moduleTitle = searchParams.get('module');
   const weekTitle = searchParams.get('week');
 
@@ -100,12 +104,12 @@ export default function QuizTakePage() {
   }, [kind, id, quizId]);
 
   useEffect(() => {
-    if (phase !== 'quiz') return;
+    if (phase !== 'quiz' || !componentAccess.open) return;
     timerRef.current = setInterval(() => {
       if (document.visibilityState === 'visible') setElapsedSeconds((s) => s + 1);
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [phase]);
+  }, [phase, componentAccess.open]);
 
   const totalPoints = useMemo(() => (quiz ? quiz.questions.reduce((n, q) => n + q.points, 0) : 0), [quiz]);
 
@@ -122,7 +126,7 @@ export default function QuizTakePage() {
   const showSidebar = Boolean(placement) && (phase === 'intro' || phase === 'results');
 
   const startQuiz = () => {
-    if (!quiz || !kind || !id) return;
+    if (!quiz || !kind || !id || !canUseComponent) return;
     setSubmitError(null);
     trackingSessionRef.current = null;
     const pending = startTimeTracking(
@@ -172,7 +176,7 @@ export default function QuizTakePage() {
   const demoExpectedMinutes = quizPlannedHours != null ? Math.round(quizPlannedHours * 60) : null;
 
   const finalizeSubmit = async (reflection: { ksbs: string[]; feedback: string; reportedTime: string }) => {
-    if (!quiz || !kind || !id || submitting || !canProgress) return;
+    if (!quiz || !kind || !id || submitting || !canUseComponent) return;
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -218,6 +222,8 @@ export default function QuizTakePage() {
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text={loadError || 'Quiz not found.'} /></div>
         ) : !canProgress ? (
           <ReadOnlyLearnerNotice what="sit their own quizzes" onBack={() => navigate(-1)} />
+        ) : !componentAccess.open ? (
+          <ComponentAccessNotice onBack={() => navigate(-1)} />
         ) : phase === 'intro' ? (
           <IntroScreen quiz={quiz} totalPoints={totalPoints} onStart={startQuiz} onBack={() => navigate(-1)} />
         ) : phase === 'quiz' ? (
@@ -283,6 +289,7 @@ export default function QuizTakePage() {
             routeFor={(component, week) => componentRoute(
               kind, id, component, placement.moduleTitle, week,
             )}
+            accessOpen={componentAccess.open}
           />
         )}
         </div>

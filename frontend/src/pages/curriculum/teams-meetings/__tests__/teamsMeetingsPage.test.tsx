@@ -143,6 +143,9 @@ const updateTeamsMeetingSchedule = vi.fn(async () => ({
   warnings: [],
 }));
 const createTeamsMeeting = vi.fn(async () => ({ created: true, meeting: {} as never, warnings: [] }));
+const restoreModuleTeamsMeeting = vi.fn(async () => ({
+  restored: true, updatedComponents: 0, createdComponents: 1, meeting: {}, module: {},
+}));
 const saveTeamsRecordingEvents = vi.fn(async () => ({ saved: 1, previewSessionId: 'preview-1' }));
 const syncTeamsMeetingArtifacts = vi.fn(async () => ({
   synced: { attendanceReports: 1, attendanceRecords: 3, transcripts: 1, recordings: 1 },
@@ -171,7 +174,7 @@ vi.mock('../../module-builder/moduleAuthoringData', async importOriginal => ({
   })),
   loadTeamsMeetingArtifacts: vi.fn(async () => artifacts),
   syncTeamsMeetingArtifacts: (...args: unknown[]) => syncTeamsMeetingArtifacts(...(args as [])),
-  restoreModuleTeamsMeeting: vi.fn(async () => ({ restored: true, updatedComponents: 1, meeting: {}, module: {} })),
+  restoreModuleTeamsMeeting: (...args: unknown[]) => restoreModuleTeamsMeeting(...(args as [])),
   probeModuleTeamsAttachment: (...args: unknown[]) => probeModuleTeamsAttachment(...(args as [])),
   updateTeamsMeetingSchedule: (...args: unknown[]) => updateTeamsMeetingSchedule(...(args as [])),
   createTeamsMeeting: (...args: unknown[]) => createTeamsMeeting(...(args as [])),
@@ -210,6 +213,7 @@ describe('Teams Meetings page', () => {
   beforeEach(() => {
     updateTeamsMeetingSchedule.mockClear();
     createTeamsMeeting.mockClear();
+    restoreModuleTeamsMeeting.mockClear();
     saveTeamsRecordingEvents.mockClear();
     syncTeamsMeetingArtifacts.mockClear();
     fetchCurriculumTeamsMeetingSummaries.mockClear();
@@ -306,15 +310,20 @@ describe('Teams Meetings page', () => {
   });
 
   it('offers the way into each meeting, and says so when the session is over', async () => {
-    await renderPage();
-    expect(await screen.findByText('Risk Management')).toBeInTheDocument();
-    await userEvent.click(within(rowFor('Risk Management')).getByRole('button', { name: 'Detail' }));
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-01T09:00:00Z'));
+    try {
+      await renderPage();
+      expect(await screen.findByText('Risk Management')).toBeInTheDocument();
+      await userEvent.click(within(rowFor('Risk Management')).getByRole('button', { name: 'Detail' }));
 
-    const dialog = await screen.findByRole('dialog');
-    const join = within(dialog).getAllByRole('link', { name: /Join/ });
-    expect(join.length).toBeGreaterThan(0);
-    join.forEach(link => expect(link).toHaveAttribute('href', 'https://teams.microsoft.com/l/meetup-join/two'));
-    expect(within(dialog).queryByText('Session ended')).not.toBeInTheDocument();
+      const dialog = await screen.findByRole('dialog');
+      const join = within(dialog).getAllByRole('link', { name: /Join/ });
+      expect(join.length).toBeGreaterThan(0);
+      join.forEach(link => expect(link).toHaveAttribute('href', 'https://teams.microsoft.com/l/meetup-join/two'));
+      expect(within(dialog).queryByText('Session ended')).not.toBeInTheDocument();
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it('closes the join door once a session\u2019s end time has passed', async () => {
@@ -561,6 +570,10 @@ describe('Teams Meetings page', () => {
     expect(input.scheduledOccurrences.map(item => item.startDateTimeUtc)).toEqual([
       '2026-09-04T08:30:00.000Z',
     ]);
+    await waitFor(() => expect(restoreModuleTeamsMeeting).toHaveBeenCalledWith(
+      'MOD-3',
+      { createMissingComponents: true },
+    ));
   });
 
   /**

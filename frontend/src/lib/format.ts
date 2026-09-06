@@ -12,6 +12,57 @@
 
 export const EMPTY_VALUE = '--';
 
+/** The LMS business timezone. Europe/London applies GMT/BST automatically. */
+export const SYSTEM_TIME_ZONE = 'Europe/London';
+
+function timestampDate(value: string | number | Date): Date | null {
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (typeof value === 'number') {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const text = String(value || '').trim();
+  if (!text) return null;
+  // API timestamps are absolute instants. Older responses sometimes omitted Z;
+  // interpreting those in the browser timezone would make results device-dependent.
+  const normalized = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(text)
+    ? `${text}Z`
+    : text;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+export function formatSystemTimestamp(
+  value: string | number | Date,
+  options: Intl.DateTimeFormatOptions = {},
+): string {
+  const date = timestampDate(value);
+  if (!date) return '';
+  return new Intl.DateTimeFormat('en-GB', { timeZone: SYSTEM_TIME_ZONE, ...options }).format(date);
+}
+
+export function systemDateParts(value: string | number | Date): { year: number; month: number; day: number } | null {
+  const date = timestampDate(value);
+  if (!date) return null;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: SYSTEM_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find(part => part.type === type)?.value);
+  return { year: get('year'), month: get('month'), day: get('day') };
+}
+
+export function systemTimeZoneName(value: string | number | Date): string {
+  const date = timestampDate(value);
+  if (!date) return '';
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: SYSTEM_TIME_ZONE,
+    timeZoneName: 'short',
+  }).formatToParts(date).find(part => part.type === 'timeZoneName')?.value || 'UK time';
+}
+
 // The mojibake em dash below is deliberate: some imported rows carry a
 // double-encoded em dash where a blank was meant, and it has to read as empty.
 const PLACEHOLDER_VALUES = new Set([EMPTY_VALUE, '-', '—', 'â€”']);
