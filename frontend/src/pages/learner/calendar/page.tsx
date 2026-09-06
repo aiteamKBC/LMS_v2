@@ -17,7 +17,7 @@ import {
   fetchCalendarConnections, startCalendarOAuth, connectCredentialCalendar,
   disconnectPersonalCalendar, fetchPersonalCalendarAvailability,
   type LearnerCalendarEvent, type BookableSessionType, type PersonalCalendarConnection,
-  type PersonalCalendarProvider, type CalendarBusySlot,
+  type PersonalCalendarProvider, type CalendarBusySlot, type BookingCalendarRules,
 } from '@/api/learnerCalendar';
 
 /** The header's secondary-actions menu — everything that isn't booking a
@@ -427,6 +427,7 @@ export function LearnerCalendarContent() {
   const [bookNotes, setBookNotes] = useState('');
   const [bookSubmitting, setBookSubmitting] = useState(false);
   const [bookError, setBookError] = useState<string | null>(null);
+  const [bookingCalendar, setBookingCalendar] = useState<BookingCalendarRules | null>(null);
   const [coach, setCoach] = useState<{ name: string; email: string } | null>(null);
   const [showCalendarConnect, setShowCalendarConnect] = useState(false);
   const [calendarConnections, setCalendarConnections] = useState<PersonalCalendarConnection[]>([]);
@@ -480,6 +481,32 @@ export function LearnerCalendarContent() {
     () => `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(selectedDay).padStart(2, '0')}`,
     [viewYear, viewMonth, selectedDay],
   );
+  const bankHolidayByDate = useMemo(
+    () => new Map((bookingCalendar?.bankHolidays || []).map((holiday) => [holiday.date, holiday.title])),
+    [bookingCalendar],
+  );
+  const bookingDateRestriction = useCallback((isoDate: string): string | null => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return 'Choose a valid booking date.';
+    const [year, month, day] = isoDate.split('-').map(Number);
+    const localDate = new Date(year, month - 1, day, 12, 0, 0);
+    if (
+      Number.isNaN(localDate.getTime())
+      || localDate.getFullYear() !== year
+      || localDate.getMonth() !== month - 1
+      || localDate.getDate() !== day
+    ) return 'Choose a valid booking date.';
+    if (localDate.getDay() === 0 || localDate.getDay() === 6) {
+      return 'Sessions cannot be booked on Saturdays or Sundays.';
+    }
+    const bankHoliday = bankHolidayByDate.get(isoDate);
+    if (bankHoliday) return `Sessions cannot be booked on UK bank holidays (${bankHoliday}).`;
+    if (bookingCalendar && !bookingCalendar.coveredYears.includes(year)) {
+      return 'Sessions cannot be booked because the UK bank-holiday calendar is not available for this year.';
+    }
+    return null;
+  }, [bankHolidayByDate, bookingCalendar]);
+  const selectedDateRestriction = bookingDateRestriction(selectedIso);
+  const bookDateRestriction = bookingDateRestriction(bookDate);
   const openBookSession = useCallback((date?: string) => {
     setBookDate(date || todayISO());
     setBookError(null);
@@ -552,6 +579,7 @@ export function LearnerCalendarContent() {
         const coachEvents = res.events
           .map((ev) => mapCoachEvent(ev, p.fullName))
           .filter((ev): ev is CalendarEvent => ev !== null);
+        setBookingCalendar(res.bookingCalendar || null);
         // Keep locally-created personal events; replace the DB-backed ones.
         setMyEvents((prev) => [...coachEvents, ...prev.filter((ev) => ev.id.startsWith('custom-'))]);
         setCalendarError(null);
@@ -601,6 +629,11 @@ export function LearnerCalendarContent() {
 
   const handleBookSession = async () => {
     if (bookSubmitting) return;
+    const restrictedDate = bookingDateRestriction(bookDate);
+    if (restrictedDate) {
+      setBookError(restrictedDate);
+      return;
+    }
     if (selectedSlotConflicts) {
       setBookError('This time overlaps an event in your connected personal calendar. Please choose another time.');
       return;
@@ -825,6 +858,12 @@ export function LearnerCalendarContent() {
                 <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Date <span className="text-red-400">*</span></label><input type="date" value={bookDate} min={todayISO()} onChange={(e) => setBookDate(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
                 <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Time <span className="text-red-400">*</span></label><input type="time" value={bookTime} onChange={(e) => setBookTime(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
               </div>
+              {bookDateRestriction && (
+                <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
+                  <AppIcon className="ri-calendar-close-line mt-0.5 shrink-0" />
+                  <p className="text-xs font-semibold">{bookDateRestriction}</p>
+                </div>
+              )}
               {calendarConnections.length > 0 ? (
                 <div className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 ${selectedSlotConflicts ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
                   <AppIcon className={`${availabilityLoading ? 'ri-loader-4-line animate-spin' : selectedSlotConflicts ? 'ri-calendar-close-line' : 'ri-calendar-check-line'} mt-0.5`} />
@@ -855,7 +894,7 @@ export function LearnerCalendarContent() {
             </div>
             <div className="flex gap-2 mt-5">
               <button onClick={() => setShowBookModal(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
-              <button onClick={handleBookSession} disabled={bookSubmitting || availabilityLoading || selectedSlotConflicts || !bookDate || !bookTime} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+              <button onClick={handleBookSession} disabled={bookSubmitting || availabilityLoading || selectedSlotConflicts || Boolean(bookDateRestriction) || !bookDate || !bookTime} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
                 {bookSubmitting ? <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon>Booking...</> : <><AppIcon className="ri-calendar-check-line mr-1"></AppIcon>Book Session</>}
               </button>
             </div>
@@ -956,15 +995,19 @@ export function LearnerCalendarContent() {
             <div className="flex-1 overflow-y-auto px-5 py-4">
               {selectedDaySorted.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
-                  <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-background-100"><AppIcon className="ri-calendar-2-line text-lg text-foreground-300"></AppIcon></span>
-                  <p className="text-sm text-foreground-500">No events scheduled</p>
-                  <button
-                    type="button"
-                    onClick={() => openBookSession(selectedIso)}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-primary-500 px-4 py-2 text-xs font-semibold text-white transition-smooth hover:bg-primary-600 cursor-pointer whitespace-nowrap"
-                  >
-                    <AppIcon className="ri-user-star-line text-sm"></AppIcon>Book Session
-                  </button>
+                  <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-background-100"><AppIcon className={`${selectedDateRestriction ? 'ri-calendar-close-line text-amber-500' : 'ri-calendar-2-line text-foreground-300'} text-lg`}></AppIcon></span>
+                  <p className={`text-sm ${selectedDateRestriction ? 'max-w-xs font-semibold text-amber-800' : 'text-foreground-500'}`}>
+                    {selectedDateRestriction || 'No events scheduled'}
+                  </p>
+                  {!selectedDateRestriction && (
+                    <button
+                      type="button"
+                      onClick={() => openBookSession(selectedIso)}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-primary-500 px-4 py-2 text-xs font-semibold text-white transition-smooth hover:bg-primary-600 cursor-pointer whitespace-nowrap"
+                    >
+                      <AppIcon className="ri-user-star-line text-sm"></AppIcon>Book Session
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -1096,15 +1139,24 @@ export function LearnerCalendarContent() {
                     const eventsForDay = getEventsForDay(day, viewMonth);
                     const isSel = day === selectedDay && viewMode === 'monthly';
                     const isTdy = isToday(day, viewMonth, viewYear);
+                    const isoDate = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    const dateRestriction = bookingDateRestriction(isoDate);
                     const visibleEvents = eventsForDay.slice(0, 2);
                     const extraCount = eventsForDay.length - visibleEvents.length;
                     return (
                       <button
                         key={`d-${day}`}
                         onClick={() => { setSelectedDay(day); setShowDayDrawer(true); }}
-                        className={`flex aspect-square cursor-pointer flex-col border-b border-r border-foreground-100 p-1 text-left transition-all duration-150 hover:z-10 hover:bg-primary-50/20 sm:aspect-[4/3] sm:p-1.5 ${isSel ? 'z-10 bg-[#fff8eb] shadow-[inset_0_0_0_1px_rgba(178,119,21,0.18)] ring-2 ring-[#b27715]/70 ring-inset' : isTdy ? 'bg-primary-50/15' : 'bg-background-50'}`}
+                        title={dateRestriction || undefined}
+                        aria-disabled={Boolean(dateRestriction)}
+                        className={`relative flex aspect-square cursor-pointer flex-col border-b border-r border-foreground-100 p-1 text-left transition-all duration-150 hover:z-10 sm:aspect-[4/3] sm:p-1.5 ${dateRestriction ? 'bg-background-100/80' : 'hover:bg-primary-50/20'} ${isSel ? 'z-10 bg-[#fff8eb] shadow-[inset_0_0_0_1px_rgba(178,119,21,0.18)] ring-2 ring-[#b27715]/70 ring-inset' : isTdy ? 'bg-primary-50/15' : dateRestriction ? '' : 'bg-background-50'}`}
                       >
                         <span className={`mb-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold sm:mb-1 sm:h-6 sm:w-6 sm:text-xs ${isSel ? 'bg-[#fff8eb] text-[#b27715] shadow-[0_2px_6px_rgba(178,119,21,0.3)] ring-1 ring-[#b27715]/50' : isTdy ? 'bg-primary-500 text-white' : 'text-foreground-500'}`}>{day}</span>
+                        {dateRestriction && (
+                          <span className="absolute right-1 top-1 inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[8px] font-bold uppercase text-amber-700 sm:text-[9px]">
+                            <AppIcon className="ri-lock-line" />Closed
+                          </span>
+                        )}
                         <div className="flex-1 w-full overflow-hidden space-y-0.5 min-w-0">
                           {visibleEvents.map((ev) => {
                             const dotColor = getEventDotColor(ev.type, ev.color);

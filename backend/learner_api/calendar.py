@@ -34,6 +34,7 @@ from .learner_detail import SOURCE_MODELS
 from .identity import learner_profile_for_source
 from .mappers import _s
 from .models import EnrolmentReview, LearnerProfile, StaffUser
+from .booking_calendar import booking_calendar_payload, booking_date_restriction
 from login.permissions import learner_self_or_staff
 
 logger = logging.getLogger(__name__)
@@ -444,7 +445,11 @@ def learner_calendar(request, kind, pk):
     for candidate in {mirror_email, source_email} - {""}:
         match |= Q(learner_email__iexact=candidate)
     if not match:
-        return JsonResponse({"learner": {"kind": kind, "id": pk}, "events": []})
+        return JsonResponse({
+            "learner": {"kind": kind, "id": pk},
+            "events": [],
+            "bookingCalendar": booking_calendar_payload(),
+        })
 
     try:
         records = [
@@ -501,6 +506,7 @@ def learner_calendar(request, kind, pk):
         {
             "learner": {"kind": kind, "id": pk, "email": email},
             "events": events,
+            "bookingCalendar": booking_calendar_payload(),
         }
     )
 
@@ -596,6 +602,9 @@ def learner_calendar_book(request, kind, pk):
         return _error("scheduledDate is required.", 400)
     if not scheduled_time:
         return _error("scheduledTime is required.", 400)
+    date_restriction = booking_date_restriction(scheduled_date)
+    if date_restriction is not None:
+        return _error(date_restriction.message, 400)
 
     notes = _s(payload.get("notes"))[:500]
     # An onboarding learner has no mirror row yet, so fall back to the source.

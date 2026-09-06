@@ -37,6 +37,13 @@ export interface LearnerCalendarEvent {
 export interface LearnerCalendarResponse {
   learner: { kind: LearnerKind; id: number; email?: string };
   events: LearnerCalendarEvent[];
+  bookingCalendar?: BookingCalendarRules;
+}
+
+export interface BookingCalendarRules {
+  division: 'england-and-wales';
+  coveredYears: number[];
+  bankHolidays: Array<{ date: string; title: string }>;
 }
 
 async function request<T>(url: string): Promise<T> {
