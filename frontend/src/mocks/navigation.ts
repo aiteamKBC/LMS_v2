@@ -245,21 +245,6 @@ export const curriculumNavItems: SidebarNavItem[] = [
     href: '/curriculum/programmes',
   },
   {
-    id: 'curriculum-library',
-    label: 'Library',
-    icon: 'ri-folder-open-line',
-    href: '/curriculum/library',
-    matchPaths: [
-      '/curriculum/week-builder',
-      '/curriculum/free-courses',
-      '/curriculum/standards',
-      '/curriculum/ksb-frameworks',
-      '/curriculum/quiz-xml',
-      '/curriculum/question-bank',
-      '/curriculum/checkpoints',
-    ],
-  },
-  {
     id: 'curriculum-delivery',
     label: 'Delivery',
     icon: 'ri-calendar-schedule-line',
@@ -272,6 +257,21 @@ export const curriculumNavItems: SidebarNavItem[] = [
       '/curriculum/teams-meetings',
       '/curriculum/session-calendar',
       '/curriculum/holidays',
+    ],
+  },
+  {
+    id: 'curriculum-library',
+    label: 'Library',
+    icon: 'ri-folder-open-line',
+    href: '/curriculum/library',
+    matchPaths: [
+      '/curriculum/week-builder',
+      '/curriculum/free-courses',
+      '/curriculum/standards',
+      '/curriculum/ksb-frameworks',
+      '/curriculum/quiz-xml',
+      '/curriculum/question-bank',
+      '/curriculum/checkpoints',
     ],
   },
   {
