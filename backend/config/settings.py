@@ -173,6 +173,12 @@ if not SECRET_KEY:
 # `setdefault` so an explicit API_REQUIRE_AUTH=1 in the environment still wins.
 if "test" in sys.argv:
     os.environ.setdefault("API_REQUIRE_AUTH", "0")
+    # Curriculum cache warming runs on a background thread that reads the
+    # database. Under the test runner that thread would race the per-test
+    # transaction rollback and touch a connection the test case owns, so the
+    # suite runs with warming off. `setdefault` keeps an explicit
+    # CURRICULUM_WARM=1 working for the tests that cover warming itself.
+    os.environ.setdefault("CURRICULUM_WARM", "0")
 
 CHAT_DEMO_BOOTSTRAP_ENABLED = os.environ.get(
     "CHAT_DEMO_BOOTSTRAP_ENABLED",
