@@ -33,6 +33,17 @@ class TrackingSessionError(ValueError):
     """The timing token is absent, invalid, expired, or mismatched."""
 
 
+def component_access_is_open(at=None):
+    """Learning components are available 24/7."""
+    return True
+
+
+def enforce_component_access_window(at=None):
+    # Kept as a compatibility seam for the signed tracking flow. Access is
+    # currently unrestricted, so starting and submitting are always allowed.
+    return None
+
+
 def _error(message, status):
     return JsonResponse({"error": message}, status=status)
 
@@ -47,7 +58,7 @@ def _normalise_claimed_seconds(value):
     return int(seconds)
 
 
-def issue_tracking_session(*, activity_kind, activity_id, learner_kind, learner_id, counting_mode):
+def issue_tracking_session(*, activity_kind, activity_id, learner_kind, learner_id, counting_mode, issued_at=None):
     if activity_kind not in ACTIVITY_KINDS:
         raise TrackingSessionError("Unknown activity kind.")
     if not str(activity_id).strip():
@@ -55,7 +66,8 @@ def issue_tracking_session(*, activity_kind, activity_id, learner_kind, learner_
     if counting_mode not in ALLOWED_MODES_BY_KIND[activity_kind]:
         raise TrackingSessionError("The time-counting mode is not valid for this activity kind.")
 
-    started_at = timezone.now()
+    started_at = issued_at or timezone.now()
+    enforce_component_access_window(started_at)
     claims = {
         "sessionId": str(uuid.uuid4()),
         "activityKind": activity_kind,
@@ -118,6 +130,7 @@ def verify_tracking_session(
         raise TrackingSessionError("The activity timing session has an invalid start time.")
 
     submitted_at = submitted_at or timezone.now()
+    enforce_component_access_window(submitted_at)
     server_session_seconds = max(0, int((submitted_at - started_at).total_seconds()))
     claimed = _normalise_claimed_seconds(claimed_seconds)
     verified = min(claimed, server_session_seconds)

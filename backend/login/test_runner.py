@@ -23,7 +23,33 @@ from pathlib import Path
 
 from django.core.management import call_command
 from django.db import connections
+from django.db.backends.signals import connection_created
 from django.test.runner import DiscoverRunner
+
+#: chat's migrations are skipped in the test build (see settings.MIGRATION_MODULES
+#: / SECURITY_AUDIT.md A17), but its one ``managed = True`` model —
+#: ``MessageDeletion`` (``chat"."message_deletions``) — is still created by
+#: run-syncdb during test-database setup and needs the ``chat`` schema to exist
+#: first. coach_api keeps its migrations, which create their own schema, so it is
+#: not listed here.
+_SYNCDB_SCHEMAS = ("chat",)
+
+
+def _ensure_syncdb_schemas(sender, connection, **kwargs):
+    """Create the schemas run-syncdb needs — but only ever on a test database.
+
+    Guarded twice: this handler is connected only by the test runner (below),
+    and it refuses any connection whose database name is not ``test_``-prefixed,
+    so it can never run ``CREATE SCHEMA`` against a real database even if it were
+    left connected by accident.
+    """
+    if connection.vendor != "postgresql":
+        return
+    if not (connection.settings_dict.get("NAME") or "").startswith(TEST_DATABASE_PREFIX):
+        return
+    with connection.cursor() as cursor:
+        for schema in _SYNCDB_SCHEMAS:
+            cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
 
 #: DDL commands to run against the freshly created test database, in order.
 #: Staff_users and Employers come first: the login tables reference the people
@@ -72,10 +98,48 @@ class EnrolmentTestRunner(DiscoverRunner):
         import os
 
         os.environ["AZURE_MAIL_ENABLED"] = "false"
+        # run-syncdb creates the managed chat/coach tables during database setup
+        # and needs their schemas to exist first. Connected here (test runs only)
+        # and self-guarded to test_ databases.
+        connection_created.connect(_ensure_syncdb_schemas)
         super().setup_test_environment(**kwargs)
 
     def setup_databases(self, **kwargs):
+        from django.conf import settings
+
+        # Branch mode (A17): run against the dedicated Neon test branch, which is
+        # a schema clone of production where every managed=False table and the
+        # full migration history already exist. None of the apply_* provisioning
+        # below is needed or wanted, and the test_-prefix guard does not apply
+        # (isolation is by host, asserted at settings load and reconfirmed here).
+        # The non-branch path below is unchanged.
+        branch_mode = getattr(settings, "USE_SECURITY_TEST_BRANCH", False)
+        if branch_mode and not self.keepdb:
+            # BARRIER 4: without --keepdb Django would DROP and recreate the branch
+            # database. Refuse rather than wipe it.
+            raise RuntimeError(
+                "Branch mode requires --keepdb: without it Django would drop and "
+                "recreate the Neon test branch database."
+            )
+
         old_config = super().setup_databases(**kwargs)
+
+        if branch_mode:
+            # CONDITION 3: pass only when branch mode is active, and take the
+            # allowed host from configuration — not a hardcoded string.
+            connection = connections["enrolment"]
+            host = (connection.settings_dict.get("HOST") or "").lower()
+            allowed = (getattr(settings, "SECURITY_TEST_BRANCH_HOST", "") or "").lower()
+            if not allowed or host != allowed:
+                raise RuntimeError(
+                    "Branch-mode setup: the 'enrolment' connection host "
+                    f"({host!r}) does not match the approved SECURITY_TEST_BRANCH_HOST; "
+                    "refusing to provision or run."
+                )
+            self.log(
+                "Branch mode: Neon test branch is pre-provisioned; skipping apply_* DDL."
+            )
+            return old_config
 
         connection = connections["enrolment"]
 

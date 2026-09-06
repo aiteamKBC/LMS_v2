@@ -41,6 +41,8 @@ export interface ActivitySidebarProps {
   rowExtras?: (component: JourneyComponent, completed: boolean) => ReactNode;
   /** Where each row goes. */
   routeFor: (component: JourneyComponent, week: string) => string;
+  accessOpen?: boolean;
+  onAccessBlocked?: () => void;
 }
 
 export function ActivitySidebar({
@@ -54,6 +56,8 @@ export function ActivitySidebar({
   completionTimeFor,
   rowExtras,
   routeFor,
+  accessOpen = true,
+  onAccessBlocked,
 }: ActivitySidebarProps) {
   const navigate = useNavigate();
   // Which week of the plan is expanded, if any. Picking a week used to navigate
@@ -91,7 +95,9 @@ export function ActivitySidebar({
             const cm = componentTypeMeta(c.title);
             const isCurrent = isCurrentRow(c);
             const contentAvailable = hasComponentContent(c);
-            const clickable = contentAvailable && isNavigableComponent(c) && !isCurrent;
+            const navigable = contentAvailable && isNavigableComponent(c) && !isCurrent;
+            const accessBlocked = navigable && !accessOpen;
+            const clickable = navigable && accessOpen;
             const attempts = c.isQuiz ? (c.quizAttempts || []) : [];
             const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
             const completed = isComponentComplete(c, completedIds);
@@ -99,10 +105,11 @@ export function ActivitySidebar({
             return (
               <li key={c.componentId || c.title}>
                 <button
-                  disabled={!clickable}
-                  onClick={() => clickable && navigate(routeFor(c, weekTitle))}
+                  disabled={!clickable && !accessBlocked}
+                  aria-disabled={accessBlocked || undefined}
+                  onClick={() => accessBlocked ? onAccessBlocked?.() : clickable && navigate(routeFor(c, weekTitle))}
                   className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
-                    !contentAvailable
+                    !contentAvailable || accessBlocked
                       ? 'cursor-not-allowed bg-background-100/70 opacity-55 grayscale'
                       : isCurrent
                         ? 'bg-primary-50'
@@ -135,7 +142,7 @@ export function ActivitySidebar({
                       {gradePercent(lastAttempt.grade)}%
                     </span>
                   )}
-                  {!contentAvailable ? (
+                  {!contentAvailable || accessBlocked ? (
                     <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
                   ) : completed ? (
                     <AppIcon className="ri-checkbox-circle-fill text-emerald-600 text-sm shrink-0" />
@@ -219,14 +226,16 @@ export function ActivitySidebar({
                     <ul className="border-t border-background-300 bg-background-50/60 divide-y divide-background-300/70">
                       {weekComponentRows(w, completedIds).map((row) => {
                         const rowMeta = componentTypeMeta(row.component.title);
+                        const accessBlocked = row.openable && !accessOpen;
                         return (
                           <li key={row.component.componentId || row.component.title}>
                             <button
                               type="button"
-                              disabled={!row.openable}
-                              onClick={() => row.openable && navigate(routeFor(row.component, w.week))}
+                              disabled={!row.openable && !accessBlocked}
+                              aria-disabled={accessBlocked || undefined}
+                              onClick={() => accessBlocked ? onAccessBlocked?.() : row.openable && navigate(routeFor(row.component, w.week))}
                               className={`w-full flex items-center gap-2 pl-11 pr-4 py-2 text-left transition-colors ${
-                                row.openable ? 'hover:bg-white cursor-pointer' : 'cursor-not-allowed opacity-60'
+                                row.openable && accessOpen ? 'hover:bg-white cursor-pointer' : 'cursor-not-allowed opacity-60'
                               }`}
                             >
                               <span className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${rowMeta.bg}`}>

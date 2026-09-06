@@ -17,7 +17,9 @@ import {
   resolveGroupContext,
   sameIdentifier,
   scheduleLabel,
+  sortEntities,
   upsertById,
+  GROUP_SORT_OPTIONS,
 } from '../shared/entities/model';
 import { GroupFormDrawer } from '../shared/entities/forms';
 import { archiveGroupWithConfirm } from '../shared/entities/archive';
@@ -63,6 +65,7 @@ export default function CurriculumGroupsPage() {
   const [programmeFilter, setProgrammeFilter] = useState(searchParams.get('programme') || '');
   const [cohortFilter, setCohortFilter] = useState(searchParams.get('cohort') || '');
   const [coachFilter, setCoachFilter] = useState('');
+  const [sort, setSort] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<CurriculumGroup | null>(null);
   // The guided run: the same group form, followed straight on by the module one,
@@ -117,7 +120,7 @@ export default function CurriculumGroupsPage() {
       programmeId: programmeFilter,
       cohortId: cohortFilter,
     });
-    return scoped.filter(group => {
+    const matched = scoped.filter(group => {
       if (coachFilter && normaliseKey(group.coach) !== normaliseKey(coachFilter)) return false;
       const context = resolveGroupContext(group, cohorts, programmes);
       return matchesSearch(search, [
@@ -125,7 +128,8 @@ export default function CurriculumGroupsPage() {
         group.coach, group.tutor, scheduleLabel(group),
       ]);
     });
-  }, [cohortFilter, coachFilter, cohorts, groups, programmeFilter, programmes, search]);
+    return sortEntities(matched, GROUP_SORT_OPTIONS, sort);
+  }, [cohortFilter, coachFilter, cohorts, groups, programmeFilter, programmes, search, sort]);
 
   const archive = async (group: CurriculumGroup) => {
     const moduleCount = modulesByGroup.get(normaliseKey(group.id)) || 0;
@@ -242,7 +246,8 @@ export default function CurriculumGroupsPage() {
               options: [{ value: '', label: 'All coaches' }, ...coachNames.map(name => ({ value: name, label: name }))],
             },
           ]}
-          onReset={() => { setSearch(''); setProgrammeFilter(''); setCohortFilter(''); setCoachFilter(''); }}
+          sort={{ value: sort, onChange: setSort, options: GROUP_SORT_OPTIONS }}
+          onReset={() => { setSearch(''); setProgrammeFilter(''); setCohortFilter(''); setCoachFilter(''); setSort(''); }}
           summary={loaded
             ? `Showing ${visibleGroups.length} of ${groups.length} groups${refreshing ? ' · updating…' : ''}`
             : undefined}

@@ -97,6 +97,31 @@ export interface CreateEnrolmentUserInput extends AptemUserFields {
   dob?: string;
 }
 
+/**
+ * A learner row as the edit form reads it. Every key is one the PATCH endpoint
+ * accepts back, so editing is a round trip rather than a mapping exercise.
+ */
+export interface EnrolmentUserFields extends AptemUserFields {
+  id: string;
+  username: string;
+  email: string;
+  phone: string;
+  dob: string;
+  type: string;
+  /** Subscription status — one of STATUS_OPTIONS. */
+  status: string;
+  /** Programme status — one of PROGRAMME_STATUS_OPTIONS. */
+  programmeStatus: string;
+  programme: string;
+  cohort: string;
+  group: string;
+  employer: string;
+  employerId: number | null;
+  organization: string;
+  lineManager: string;
+  learnerType: LearnerType;
+}
+
 async function request<T>(url: string, init?: Parameters<typeof fetch>[1]): Promise<T> {
   let res: Response;
   try {
@@ -146,6 +171,18 @@ export async function fetchEnrolmentUsers(learnerType?: LearnerType): Promise<Us
 /** Full read-only board for a single user. */
 export function fetchEnrolmentBoard(id: string): Promise<EnrolmentBoard> {
   return request<EnrolmentBoard>(`${BASE}/${id}/`);
+}
+
+/**
+ * The flat, editable columns of one learner — what the edit form prefills from.
+ *
+ * Its own endpoint rather than a slice of the board: the board GET is not
+ * staff-gated, and these fields include a national insurance number and a home
+ * address. The keys match `CreateEnrolmentUserInput`, so the form can hand what
+ * it reads straight back to `updateEnrolmentUser`.
+ */
+export function fetchEnrolmentUserFields(id: string): Promise<EnrolmentUserFields> {
+  return request<EnrolmentUserFields>(`${BASE}/${id}/fields/`);
 }
 
 /** Create a user; returns the new list row. */

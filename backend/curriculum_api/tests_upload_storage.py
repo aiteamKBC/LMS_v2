@@ -65,16 +65,15 @@ class UploadFailureResponseTests(SimpleTestCase):
 
 class ComponentUploadLimitTests(SimpleTestCase):
     @patch('curriculum_api.views.upload_storage.store')
-    def test_file_over_5_mb_is_rejected_before_storage(self, store):
-        uploaded = SimpleUploadedFile(
-            'large-deck.pptx',
-            b'x' * (COMPONENT_UPLOAD_MAX_BYTES + 1),
-        )
+    def test_file_over_limit_is_rejected_before_storage(self, store):
+        # Set .size past the cap rather than allocating a 300 MB buffer in memory.
+        uploaded = SimpleUploadedFile('large-deck.pptx', b'x')
+        uploaded.size = COMPONENT_UPLOAD_MAX_BYTES + 1
 
         metadata, error = component_upload_metadata('MOD-1', 'COMP-1', 'powerpoint', uploaded)
 
         self.assertIsNone(metadata)
-        self.assertEqual(error, 'File is too large. Maximum upload size is 5 MB.')
+        self.assertEqual(error, 'File is too large. Maximum upload size is 300 MB.')
         store.assert_not_called()
 
     @patch('curriculum_api.views.upload_storage.store', return_value=RELATIVE)

@@ -1,4 +1,5 @@
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
+import { CHAT_ENABLED } from '@/lib/featureFlags';
 
 // ============================================================================
 // LEARNER WORKSPACE — Grouped sidebar with 18 items across 8 groups
@@ -244,21 +245,6 @@ export const curriculumNavItems: SidebarNavItem[] = [
     href: '/curriculum/programmes',
   },
   {
-    id: 'curriculum-library',
-    label: 'Library',
-    icon: 'ri-folder-open-line',
-    href: '/curriculum/library',
-    matchPaths: [
-      '/curriculum/week-builder',
-      '/curriculum/free-courses',
-      '/curriculum/standards',
-      '/curriculum/ksb-frameworks',
-      '/curriculum/quiz-xml',
-      '/curriculum/question-bank',
-      '/curriculum/checkpoints',
-    ],
-  },
-  {
     id: 'curriculum-delivery',
     label: 'Delivery',
     icon: 'ri-calendar-schedule-line',
@@ -271,6 +257,21 @@ export const curriculumNavItems: SidebarNavItem[] = [
       '/curriculum/teams-meetings',
       '/curriculum/session-calendar',
       '/curriculum/holidays',
+    ],
+  },
+  {
+    id: 'curriculum-library',
+    label: 'Library',
+    icon: 'ri-folder-open-line',
+    href: '/curriculum/library',
+    matchPaths: [
+      '/curriculum/week-builder',
+      '/curriculum/free-courses',
+      '/curriculum/standards',
+      '/curriculum/ksb-frameworks',
+      '/curriculum/quiz-xml',
+      '/curriculum/question-bank',
+      '/curriculum/checkpoints',
     ],
   },
   {
@@ -758,7 +759,19 @@ export const safeguardingNavItems: SidebarNavItem[] = [
   { id: 'sg-reports', label: 'Reporting', icon: 'ri-bar-chart-box-line', href: '/safeguarding/reports', statusDot: 'blue' },
 ];
 
-export const roleNavMap: Record<string, { items: SidebarNavItem[]; label: string; workspaceLabel: string }> = {
+// The chat-backed "Messages" pages. When CHAT_ENABLED is false these entry
+// points are stripped from every role's sidebar (audit A10 — chat disabled).
+// Note: /safeguarding/communication is a separate feature and is NOT listed.
+const CHAT_NAV_HREFS = new Set(['/messages', '/learner/messages']);
+
+function stripChatNavItems(items: SidebarNavItem[]): SidebarNavItem[] {
+  if (CHAT_ENABLED) return items;
+  return items
+    .filter(item => !(item.href && CHAT_NAV_HREFS.has(item.href)))
+    .map(item => (item.children ? { ...item, children: stripChatNavItems(item.children) } : item));
+}
+
+const baseRoleNavMap: Record<string, { items: SidebarNavItem[]; label: string; workspaceLabel: string }> = {
   learner: { items: learnerNavItems, label: 'Learner', workspaceLabel: 'Learner Workspace' },
   coach: { items: coachNavItems, label: 'Coach', workspaceLabel: 'Coach Workspace' },
   tutor: { items: tutorNavItems, label: 'Tutor', workspaceLabel: 'Tutor Workspace' },
@@ -776,3 +789,8 @@ export const roleNavMap: Record<string, { items: SidebarNavItem[]; label: string
   support: { items: supportNavItems, label: 'Support', workspaceLabel: 'Support Centre' },
   safeguarding: { items: safeguardingNavItems, label: 'Safeguarding', workspaceLabel: 'Safeguarding Workspace' },
 };
+
+export const roleNavMap: Record<string, { items: SidebarNavItem[]; label: string; workspaceLabel: string }> =
+  Object.fromEntries(
+    Object.entries(baseRoleNavMap).map(([role, cfg]) => [role, { ...cfg, items: stripChatNavItems(cfg.items) }]),
+  );

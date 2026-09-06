@@ -34,6 +34,7 @@ from .learner_detail import SOURCE_MODELS
 from .identity import learner_profile_for_source
 from .mappers import _s
 from .models import EnrolmentReview, LearnerProfile, StaffUser
+from .booking_calendar import booking_calendar_payload, booking_date_restriction
 from login.permissions import learner_self_or_staff
 
 logger = logging.getLogger(__name__)
@@ -222,13 +223,17 @@ def _belongs_to_current_cycle(record, mirror):
     caseload profiles — so a learner shown them is reading dates their coach
     cannot see.
 
-    Only the generated cycle is filtered. A catch-up, a student-support session
-    or an onboarding review is something somebody actually arranged, and it
-    belongs to the learner however their mirror has changed since.
+    Only the generated cycle is filtered. A catch-up, a student-support session,
+    an onboarding review, or a cycle-type meeting explicitly booked by the
+    learner is something somebody actually arranged and must survive a mirror
+    change. Learner bookings are identifiable by their durable idempotency key;
+    unlike coach-generated slots, they currently store the source learner id.
     """
     if mirror is None:
         return True
     if _s(record.event_type) not in ("mcr", "progress-review"):
+        return True
+    if _s(getattr(record, "idempotency_key", "")).startswith("learner-book:"):
         return True
     return str(record.learner_id or "") in ("", str(mirror.id))
 
@@ -403,6 +408,7 @@ def _same_calendar_identity(left, right):
     return _s(left).strip().casefold() == _s(right).strip().casefold()
 
 
+@learner_self_or_staff(kwarg="pk")
 def learner_calendar(request, kind, pk):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -439,7 +445,11 @@ def learner_calendar(request, kind, pk):
     for candidate in {mirror_email, source_email} - {""}:
         match |= Q(learner_email__iexact=candidate)
     if not match:
-        return JsonResponse({"learner": {"kind": kind, "id": pk}, "events": []})
+        return JsonResponse({
+            "learner": {"kind": kind, "id": pk},
+            "events": [],
+            "bookingCalendar": booking_calendar_payload(),
+        })
 
     try:
         records = [
@@ -496,6 +506,7 @@ def learner_calendar(request, kind, pk):
         {
             "learner": {"kind": kind, "id": pk, "email": email},
             "events": events,
+            "bookingCalendar": booking_calendar_payload(),
         }
     )
 
@@ -591,6 +602,9 @@ def learner_calendar_book(request, kind, pk):
         return _error("scheduledDate is required.", 400)
     if not scheduled_time:
         return _error("scheduledTime is required.", 400)
+    date_restriction = booking_date_restriction(scheduled_date)
+    if date_restriction is not None:
+        return _error(date_restriction.message, 400)
 
     notes = _s(payload.get("notes"))[:500]
     # An onboarding learner has no mirror row yet, so fall back to the source.
@@ -781,6 +795,7 @@ def learner_calendar_cancel(request, kind, pk):
     )
 
 
+@learner_self_or_staff(kwarg="pk")
 def learner_onboarding_reviews(request, kind, pk):
     """The three onboarding reviews and whether each is booked.
 

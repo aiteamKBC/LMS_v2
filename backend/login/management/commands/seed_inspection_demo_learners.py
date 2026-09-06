@@ -50,7 +50,7 @@ DEMO_LEARNERS = [
     {
         "email": "learner-me@learner.local",
         "username": "ME Inspection Demo",
-        "programme": "Marketing Executive",
+        "programme": "Marketing Executive Level 4",
         "module_ids": [
             ("MOD-202608228DDFCB53074A", "Crispin- Marketing Impact and Planning Integrated Campaigns"),   # Impact Planning
             ("MOD-2026082243BD5ED0A8EA", "DR.Samar- Social Media"),                                         # Social Media
@@ -60,7 +60,7 @@ DEMO_LEARNERS = [
     {
         "email": "learner-mm@learner.local",
         "username": "MM Inspection Demo",
-        "programme": "Marketing Manager",
+        "programme": "Marketing Manager Level 6",
         "module_ids": [
             ("MOD-202608223E23693425BC", "G1-Keith-Strategy&Planning"),                                     # Strategy Planning
             ("MOD-20260822222D7B9190AA", "G1-Femi-Customer Journey"),                                        # Customer Journey
@@ -71,7 +71,7 @@ DEMO_LEARNERS = [
     {
         "email": "learner-pcp@learner.local",
         "username": "PCP Inspection Demo",
-        "programme": "Project Controls Professional",
+        "programme": "Project Controls Professional Level 6",
         "module_ids": [
             ("MOD-2026082245779A87FE0C", "Dr.Amgad – Project Management Professional (Apprenticeship) – Oct2025"),  # Project Management Professional
             ("MOD-20260822B2177D2C4599", "Andrew - PMI - SP (Scheduling Professional)"),                    # MSP / Scheduling Professional (1/2)

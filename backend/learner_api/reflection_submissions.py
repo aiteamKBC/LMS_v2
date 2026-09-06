@@ -9,7 +9,7 @@ from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from login.permissions import learner_self_only
+from login.permissions import learner_self_only, learner_self_or_staff
 
 logger = logging.getLogger(__name__)
 
@@ -140,12 +140,20 @@ def _reflection_lineage(learner_id, activity_id):
 
 
 @csrf_exempt
-# The learner id arrives in the JSON body here, not the URL. GET falls through
-# to get_reflection_submission below, and the gate lets reads past untouched.
-@learner_self_only(body_field="learnerId")
+# READ and WRITE need different authorization, so this single-URL view splits by
+# method. A learner may only WRITE their own reflection (POST, self-only, learner
+# id in the body); the owner OR staff may READ one (GET, id in the query — staff
+# review a learner's reflections and coach feedback). Before M2 the GET relied on
+# the gate's open-safe-methods bypass; that is now closed (A5), so the read is
+# gated explicitly on get_reflection_submission and the write on _submit_reflection.
 def create_reflection_submission(request):
     if request.method == "GET":
         return get_reflection_submission(request)
+    return _submit_reflection(request)
+
+
+@learner_self_only(body_field="learnerId")
+def _submit_reflection(request):
     if request.method != "POST":
         return _error("Method not allowed.", 405)
 
@@ -330,6 +338,8 @@ def create_reflection_submission(request):
     )
 
 
+# Owner or staff may read a reflection (A5); the learner id is in the query here.
+@learner_self_or_staff(query_param="learnerId")
 def get_reflection_submission(request):
     learner_kind = _text(request.GET.get("learnerKind"))
     learner_id = _text(request.GET.get("learnerId"))

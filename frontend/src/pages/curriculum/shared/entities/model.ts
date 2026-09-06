@@ -611,3 +611,144 @@ export function sameFormValues(
   const keys = new Set([...Object.keys(left || {}), ...Object.keys(right || {})]);
   return [...keys].every(key => JSON.stringify(left?.[key] ?? '') === JSON.stringify(right?.[key] ?? ''));
 }
+
+// ---------------------------------------------------------------------------
+// Sorting
+//
+// Every entity list is read for a different question -- "what did we just add",
+// "which programme is biggest", "which cohort starts next" -- and the server
+// order (programme, then name) answers only one of them. These are the orders
+// the pages offer, kept here so Programmes, Cohorts, Groups and the Module
+// Builder sort by the same rules rather than by four near-identical ones.
+//
+// The empty value is the list as the endpoint returned it, so "Reset" has an
+// order to go back to and the pages open exactly as they always did.
+// ---------------------------------------------------------------------------
+
+export interface EntitySortOption<T> {
+  value: string;
+  label: string;
+  compare: (left: T, right: T) => number;
+}
+
+/**
+ * A copy of `rows` in the chosen order, or `rows` untouched for the default
+ * choice -- that is the order the endpoint already returned.
+ */
+export function sortEntities<S, T extends S>(rows: T[], options: Array<EntitySortOption<S>>, value: string): T[] {
+  const chosen = options.find(option => option.value && option.value === value);
+  if (!chosen) return rows;
+  // Array.prototype.sort is stable, so rows the chosen key cannot separate keep
+  // the order the server put them in.
+  return [...rows].sort(chosen.compare);
+}
+
+/** A-Z on a text field, case- and accent-insensitively, blanks last. */
+export function compareText(left: unknown, right: unknown): number {
+  const a = cleanText(left);
+  const b = cleanText(right);
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  return a.localeCompare(b, 'en', { sensitivity: 'base', numeric: true });
+}
+
+/**
+ * Newest first. Dates arrive as ISO strings, which compare correctly as text,
+ * and anything undated sorts last rather than reading as the oldest record.
+ */
+export function compareRecency(left: unknown, right: unknown): number {
+  const a = cleanText(left);
+  const b = cleanText(right);
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  return b.localeCompare(a);
+}
+
+/** Earliest first. Anything undated sorts last, for the same reason. */
+export function compareChronology(left: unknown, right: unknown): number {
+  const a = cleanText(left);
+  const b = cleanText(right);
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  return a.localeCompare(b);
+}
+
+/** Largest first, with a missing count read as zero. */
+export function compareCountDesc(left: unknown, right: unknown): number {
+  return (Number(right) || 0) - (Number(left) || 0);
+}
+
+/**
+ * What "recently added" sorts on. Rows written before the created-at column
+ * existed carry no creation date, and fall back to when they were last touched
+ * -- the closest thing they hold. Never to the top of the list.
+ */
+export function recencyKey(row: { createdAt?: unknown; updatedAt?: unknown; lastUpdated?: unknown }): string {
+  return cleanText(row.createdAt) || cleanText(row.updatedAt) || cleanText(row.lastUpdated);
+}
+
+export const PROGRAMME_SORT_OPTIONS: Array<EntitySortOption<CurriculumProgramme>> = [
+  { value: '', label: 'Default order', compare: () => 0 },
+  { value: 'recent', label: 'Recently added', compare: (a, b) => compareRecency(recencyKey(a), recencyKey(b)) },
+  { value: 'updated', label: 'Recently updated', compare: (a, b) => compareRecency(a.lastUpdated, b.lastUpdated) },
+  { value: 'name', label: 'Name (A-Z)', compare: (a, b) => compareText(a.name, b.name) },
+  { value: 'name-desc', label: 'Name (Z-A)', compare: (a, b) => compareText(b.name, a.name) },
+  { value: 'cohorts', label: 'Most cohorts', compare: (a, b) => compareCountDesc(a.cohorts, b.cohorts) },
+  { value: 'modules', label: 'Most modules', compare: (a, b) => compareCountDesc(a.modules, b.modules) },
+  { value: 'learners', label: 'Most learners', compare: (a, b) => compareCountDesc(a.learners, b.learners) },
+];
+
+export const COHORT_SORT_OPTIONS: Array<EntitySortOption<CurriculumCohort>> = [
+  { value: '', label: 'Default order', compare: () => 0 },
+  { value: 'recent', label: 'Recently added', compare: (a, b) => compareRecency(recencyKey(a), recencyKey(b)) },
+  { value: 'name', label: 'Name (A-Z)', compare: (a, b) => compareText(a.name, b.name) },
+  { value: 'name-desc', label: 'Name (Z-A)', compare: (a, b) => compareText(b.name, a.name) },
+  { value: 'programme', label: 'Programme (A-Z)', compare: (a, b) => compareText(a.programme, b.programme) || compareText(a.name, b.name) },
+  { value: 'start', label: 'Starting soonest', compare: (a, b) => compareChronology(a.startDate, b.startDate) },
+  { value: 'start-desc', label: 'Starting latest', compare: (a, b) => compareRecency(a.startDate, b.startDate) },
+  { value: 'end', label: 'Ending soonest', compare: (a, b) => compareChronology(a.practicalEndDate || a.endDate, b.practicalEndDate || b.endDate) },
+  { value: 'learners', label: 'Most learners', compare: (a, b) => compareCountDesc(a.learners, b.learners) },
+];
+
+export const GROUP_SORT_OPTIONS: Array<EntitySortOption<CurriculumGroup>> = [
+  { value: '', label: 'Default order', compare: () => 0 },
+  { value: 'recent', label: 'Recently added', compare: (a, b) => compareRecency(recencyKey(a), recencyKey(b)) },
+  { value: 'name', label: 'Name (A-Z)', compare: (a, b) => compareText(a.name, b.name) },
+  { value: 'name-desc', label: 'Name (Z-A)', compare: (a, b) => compareText(b.name, a.name) },
+  { value: 'cohort', label: 'Cohort (A-Z)', compare: (a, b) => compareText(a.cohort, b.cohort) || compareText(a.name, b.name) },
+  { value: 'start', label: 'Starting soonest', compare: (a, b) => compareChronology(a.startDate, b.startDate) },
+  { value: 'learners', label: 'Most learners', compare: (a, b) => compareCountDesc(a.learners, b.learners) },
+  { value: 'modules', label: 'Most modules', compare: (a, b) => compareCountDesc((a.moduleIds || a.modules || []).length, (b.moduleIds || b.modules || []).length) },
+];
+
+/**
+ * The Module Builder holds its rows as authoring catalogue items rather than as
+ * `CurriculumModule` -- same records, different field names -- so these options
+ * read whichever of the two names each field goes by.
+ */
+export interface SortableModuleFields {
+  title?: string;
+  name?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  lastUpdated?: string;
+  startDate?: string;
+  weeks?: number;
+  lessonCount?: number;
+  programmeName?: string;
+  programme?: string;
+}
+
+export const MODULE_SORT_OPTIONS: Array<EntitySortOption<SortableModuleFields>> = [
+  { value: '', label: 'Default order', compare: () => 0 },
+  { value: 'recent', label: 'Recently added', compare: (a, b) => compareRecency(recencyKey(a), recencyKey(b)) },
+  { value: 'name', label: 'Name (A-Z)', compare: (a, b) => compareText(a.title || a.name, b.title || b.name) },
+  { value: 'name-desc', label: 'Name (Z-A)', compare: (a, b) => compareText(b.title || b.name, a.title || a.name) },
+  { value: 'programme', label: 'Programme (A-Z)', compare: (a, b) => compareText(a.programmeName || a.programme, b.programmeName || b.programme) || compareText(a.title || a.name, b.title || b.name) },
+  { value: 'start', label: 'Starting soonest', compare: (a, b) => compareChronology(a.startDate, b.startDate) },
+  { value: 'weeks', label: 'Most weeks', compare: (a, b) => compareCountDesc(a.weeks, b.weeks) },
+  { value: 'components', label: 'Most components', compare: (a, b) => compareCountDesc(a.lessonCount, b.lessonCount) },
+];
