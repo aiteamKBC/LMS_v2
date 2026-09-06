@@ -4,16 +4,22 @@ from channels.testing import WebsocketCommunicator
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.test import TestCase, TransactionTestCase, override_settings
-from django.urls import reverse
+from django.urls import path, reverse
 from rest_framework.test import APIClient
 
 from .consumers import ChatConsumer
 from .models import ChatCoach, ChatLearner, Conversation, Message, MessageReceipt
-from .routing import websocket_urlpatterns
 from .services import create_message
 
 
 User = get_user_model()
+
+# chat/routing.py hides the ws/chat/ route entirely when chat is disabled (audit
+# A10 — the route list is gated on CHAT_DEMO_BOOTSTRAP_ENABLED). These consumer
+# tests assert ChatConsumer's own participant authorization, which is unchanged
+# code, so they route to the consumer directly and stay independent of the
+# deployment flag rather than importing the gated (possibly empty) pattern list.
+chat_ws_urlpatterns = [path("ws/chat/<int:conversation_id>/", ChatConsumer.as_asgi())]
 
 
 class ChatTestMixin:
@@ -295,7 +301,7 @@ class ChatWebSocketTests(ChatTestMixin, TransactionTestCase):
     def setUp(self):
         self.create_users()
         self.application = UserScopeMiddleware(
-            URLRouter(websocket_urlpatterns), self.coach_user
+            URLRouter(chat_ws_urlpatterns), self.coach_user
         )
 
     async def test_authenticated_participants_receive_new_message(self):
@@ -304,7 +310,7 @@ class ChatWebSocketTests(ChatTestMixin, TransactionTestCase):
             f"/ws/chat/{self.conversation.pk}/",
         )
         learner_socket = WebsocketCommunicator(
-            UserScopeMiddleware(URLRouter(websocket_urlpatterns), self.learner_user),
+            UserScopeMiddleware(URLRouter(chat_ws_urlpatterns), self.learner_user),
             f"/ws/chat/{self.conversation.pk}/",
         )
 
@@ -329,7 +335,7 @@ class ChatWebSocketTests(ChatTestMixin, TransactionTestCase):
 
     async def test_unauthorized_websocket_is_rejected(self):
         socket = WebsocketCommunicator(
-            UserScopeMiddleware(URLRouter(websocket_urlpatterns), self.outsider),
+            UserScopeMiddleware(URLRouter(chat_ws_urlpatterns), self.outsider),
             f"/ws/chat/{self.conversation.pk}/",
         )
 

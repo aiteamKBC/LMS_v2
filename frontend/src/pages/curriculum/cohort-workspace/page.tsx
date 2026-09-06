@@ -23,6 +23,7 @@ import {
   EntityEmptyState,
   EntityTable,
   InlineError,
+  ParentBadge,
   PlainCell,
   StackedCell,
   WorkspaceHeader,
@@ -117,7 +118,7 @@ export default function CohortWorkspacePage() {
     { key: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
     { key: 'groups', label: 'Groups', icon: 'ri-team-line', count: cohortGroups.length },
     { key: 'modules', label: 'Modules', icon: 'ri-stack-line', count: cohortModules.length },
-    { key: 'learners', label: 'Learners', icon: 'ri-graduation-cap-line', count: cohort?.learners || undefined },
+    { key: 'learners', label: 'Learners and KSBs & activities', icon: 'ri-graduation-cap-line', count: cohort?.learners || undefined },
     { key: 'holidays', label: 'Holidays', icon: 'ri-calendar-close-line', count: selectedHolidays.length },
   ];
 
@@ -168,12 +169,11 @@ export default function CohortWorkspacePage() {
           subtitle={programme ? (
             <span className="flex flex-wrap items-center gap-1.5">
               <span className="text-foreground-400">Part of</span>
-              <Link
-                to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(programme))}?tab=cohorts`}
-                className="inline-flex items-center rounded-full border border-background-200 bg-background-100 px-2 py-0.5 text-[11px] font-semibold text-foreground-600 transition-smooth hover:bg-background-200"
-              >
-                {programme.name}
-              </Link>
+              <ParentBadge
+                tone="programme"
+                label={programme.name}
+                href={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(programme))}?tab=cohorts`}
+              />
             </span>
           ) : cleanText(cohort?.programme, 'Unassigned programme')}
           accentColor={cohort?.color}
@@ -340,6 +340,12 @@ export default function CohortWorkspacePage() {
             title={`Learners and achievement in ${cohort?.name || 'this cohort'}`}
             learnerStatus="all"
             active={tab === 'learners'}
+            groupScopes={cohortGroups.map(group => ({ id: group.id, name: group.name }))}
+            moduleScopes={cohortModules.map(module => ({
+              id: moduleIdentity(module) || module.id,
+              name: module.name,
+              groupId: module.groupId,
+            }))}
           />
         )}
 

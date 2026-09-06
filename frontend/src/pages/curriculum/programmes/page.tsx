@@ -8,7 +8,8 @@ import { ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
 import { WEEKEND_DAYS, WEEKEND_HINT } from '@/pages/curriculum/shared/entities/ui';
 import { CurriculumStructureWizard, type StructureWizardCreated, type StructureWizardRecordStep } from '@/pages/curriculum/shared/entities/structureWizard';
 import { ensureSharedEmptyKsbProfile, SHARED_EMPTY_KSB_PROFILE_NAME } from '@/pages/curriculum/shared/entities/programmeKsbProfile';
-import { formatProgrammeLevel, visibleNotes } from '@/pages/curriculum/shared/entities/model';
+import { formatProgrammeLevel, sortEntities, visibleNotes, PROGRAMME_SORT_OPTIONS } from '@/pages/curriculum/shared/entities/model';
+import { SelectMenu } from '@/components/feature/SelectField';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
@@ -221,6 +222,9 @@ export default function CurriculumProgrammes() {
   // It also makes a filtered view something that can be linked to.
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState(() => searchParams.get('q') || '');
+  // Which order the grid is in. Empty is the order the endpoint returned, which
+  // is what the page has always shown.
+  const [sort, setSort] = useState('');
   const [showArchived, setShowArchived] = useState(() => searchParams.get('view') === 'archive');
   const [programmePage, setProgrammePage] = useState(() => Math.max(1, Math.floor(Number(searchParams.get('page'))) || 1));
   const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false);
@@ -317,11 +321,15 @@ export default function CurriculumProgrammes() {
   // The stat tiles stay on live programmes; only the grid switches, so the
   // archive is a place to review and clear old programmes, not a second dashboard.
   const listedProgrammes = showArchived ? archivedProgrammes : visibleProgrammes;
-  const filtered = listedProgrammes.filter(p => {
-    const needle = search.toLowerCase();
-    if (needle && !p.name.toLowerCase().includes(needle)) return false;
-    return true;
-  });
+  const filtered = sortEntities(
+    listedProgrammes.filter(p => {
+      const needle = search.toLowerCase();
+      if (needle && !p.name.toLowerCase().includes(needle)) return false;
+      return true;
+    }),
+    PROGRAMME_SORT_OPTIONS,
+    sort,
+  );
   const totalProgrammePages = Math.max(1, Math.ceil(filtered.length / PROGRAMMES_PER_PAGE));
   const paginatedProgrammes = filtered.slice(
     (programmePage - 1) * PROGRAMMES_PER_PAGE,
@@ -339,7 +347,7 @@ export default function CurriculumProgrammes() {
       return;
     }
     setProgrammePage(1);
-  }, [search, showArchived]);
+  }, [search, showArchived, sort]);
 
   useEffect(() => {
     // Not while the programmes are still in flight: `filtered` is empty until
@@ -997,6 +1005,19 @@ export default function CurriculumProgrammes() {
                 </button>
               )}
             </div>
+            <label className="flex shrink-0 items-center gap-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-foreground-400">Sort</span>
+              <span className="w-48">
+                <SelectMenu
+                  size="sm"
+                  value={sort}
+                  onChange={setSort}
+                  options={PROGRAMME_SORT_OPTIONS.map(option => ({ value: option.value, label: option.label }))}
+                  ariaLabel="Sort programmes"
+                  placeholder="Default order"
+                />
+              </span>
+            </label>
             <button
               type="button"
               onClick={() => setShowArchived(previous => !previous)}

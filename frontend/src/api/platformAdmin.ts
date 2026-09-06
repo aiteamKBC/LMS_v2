@@ -173,6 +173,12 @@ export interface PlatformAccount {
    * record (`updateStaffUser`), which is where the grant lives.
    */
   access: string;
+  /**
+   * Which of the two learner kinds sits behind a learner account — '' for
+   * staff and employer accounts. The record board reads its documents by kind,
+   * so the console cannot link to a learner without it.
+   */
+  learnerType: '' | 'apprenticeship' | 'commercial';
 }
 
 export interface AccountQuery {

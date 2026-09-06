@@ -308,7 +308,7 @@ describe('ScopeAchievementPanel', () => {
     // Status and Counted have no columns any more, so the row's tooltip is
     // the only place these two facts are stated -- and an activity that is
     // left out of the figures above must still say so somewhere.
-    const inScope = screen.getByText('Intro assignment').closest('div[title]')!;
+    const inScope = screen.getByText('Intro assignment').closest('div[title]') as HTMLElement;
     expect(inScope.getAttribute('title')).toContain('completed this activity');
     expect(inScope.getAttribute('title')).toContain('Counts toward');
 

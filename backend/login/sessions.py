@@ -182,6 +182,28 @@ _LAST_SEEN_REFRESH_SECONDS = 300
 #: two ends cannot drift.
 RENEWED_UNTIL_ATTR = "login_session_renewed_until"
 
+#: Attribute marking a request whose session could not be *read* -- the auth
+#: database refused the query. That is not the same fact as "this caller has no
+#: session", and conflating the two is what turns a momentary Neon hiccup into a
+#: sign-out: the gate answers 401, the SPA reads 401 as "your session has ended"
+#: and bounces to /login, while the session row itself is alive and unexpired.
+#:
+#: Both gates still fail closed -- an unreadable session admits nobody -- but
+#: they answer **503** when this is set. A 503 is not in the SPA's sign-out path
+#: (see ``lib/sessionExpiry.ts``), so the request fails, the panel can retry, and
+#: nobody loses a session over an infrastructure blip.
+SESSION_UNREADABLE_ATTR = "login_session_unreadable"
+
+
+def mark_session_unreadable(request):
+    """Record that the session lookup itself failed on this request."""
+    setattr(request, SESSION_UNREADABLE_ATTR, True)
+
+
+def session_unreadable(request):
+    """Whether the session lookup *failed*, as opposed to finding no session."""
+    return bool(getattr(request, SESSION_UNREADABLE_ATTR, False))
+
 
 def renewal_target(session, now=None):
     """The furthest ``Expires_at`` this session may hold at ``now``.

@@ -14,14 +14,41 @@ import functools
 
 from django.http import JsonResponse
 
-from .sessions import authenticate_request
+from .sessions import authenticate_request, session_unreadable
 
 
-def _unauthenticated():
+def _unauthenticated(request=None):
+    """Refuse a caller with no session.
+
+    ``request`` is optional only for callers predating the distinction. Pass it:
+    a request whose session could not be *read* gets ``_unavailable`` instead,
+    because 401 is the status the SPA acts on by signing the person out and
+    navigating to /login. A database that blinked is not a session that ended,
+    and telling the browser it was loses somebody's working session.
+    """
+    if request is not None and session_unreadable(request):
+        return _unavailable()
     return JsonResponse(
         {"error": "Authentication required.", "code": "unauthenticated"},
         status=401,
     )
+
+
+def _unavailable():
+    """Fail closed on an unreadable session without claiming it ended.
+
+    Mirrors ``api_gate._unavailable`` -- same code and status, so the SPA does
+    not have to learn a second shape for "ask again shortly" per endpoint.
+    """
+    response = JsonResponse(
+        {
+            "error": "The sign-in service is temporarily unavailable.",
+            "code": "session_unavailable",
+        },
+        status=503,
+    )
+    response["Retry-After"] = "5"
+    return response
 
 
 def _forbidden(required):
@@ -41,7 +68,7 @@ def login_required(view):
     @functools.wraps(view)
     def wrapped(request, *args, **kwargs):
         if authenticate_request(request) is None:
-            return _unauthenticated()
+            return _unauthenticated(request)
         return view(request, *args, **kwargs)
 
     return wrapped
@@ -62,7 +89,7 @@ def require_role(*roles):
         def wrapped(request, *args, **kwargs):
             account = authenticate_request(request)
             if account is None:
-                return _unauthenticated()
+                return _unauthenticated(request)
             if account.role not in allowed:
                 return _forbidden(allowed)
             return view(request, *args, **kwargs)
@@ -142,7 +169,7 @@ def staff_only(*, writes_only=False, allow_own_learner=None):
 
             account = authenticate_request(request)
             if account is None:
-                return _unauthenticated()
+                return _unauthenticated(request)
 
             if account.role in allowed:
                 return view(request, *args, **kwargs)
@@ -204,7 +231,7 @@ def employer_or_staff(employer_kwarg="employer_id"):
 
             account = authenticate_request(request)
             if account is None:
-                return _unauthenticated()
+                return _unauthenticated(request)
 
             if account.role in allowed:
                 return view(request, *args, **kwargs)
@@ -259,7 +286,7 @@ def require_access(*accesses):
 
             account = authenticate_request(request)
             if account is None:
-                return _unauthenticated()
+                return _unauthenticated(request)
             if account.role not in {"admin", "staff"}:
                 return _forbidden(required)
 
@@ -311,7 +338,7 @@ def require_permission(*permissions):
 
             account = authenticate_request(request)
             if account is None:
-                return _unauthenticated()
+                return _unauthenticated(request)
             if not needed.issubset(set(permissions_for(account.role))):
                 return _forbidden(needed)
             return view(request, *args, **kwargs)
@@ -403,16 +430,21 @@ def _learner_progress_gate(view, *, kwarg, query_param, body_field, allow_staff)
             authenticate_request(request)
             return view(request, *args, **kwargs)
 
-        # Reads stay open. Staff reviewing a learner's plan hit the same URLs
-        # with GET (reflection submissions serve their read that way), and
-        # nothing about reading is what this gate exists to stop.
-        if request.method in _SAFE_METHODS:
+        # OPTIONS is a CORS/preflight probe: it carries no identity and returns no
+        # data, and ChatCorsMiddleware answers real cross-origin preflights before
+        # the view is reached. Leave it to the view. GET and HEAD are now
+        # ownership-scoped below, exactly like writes: reading another learner's
+        # record by changing the id in the URL is the A5 read-path IDOR
+        # (SECURITY_AUDIT.md A5), so a safe method is no longer a free pass. Staff
+        # keep read access wherever the endpoint uses ``learner_self_or_staff``
+        # (``allow_staff`` below); ``learner_self_only`` reads are the owner's alone.
+        if request.method == "OPTIONS":
             authenticate_request(request)
             return view(request, *args, **kwargs)
 
         account = authenticate_request(request)
         if account is None:
-            return _unauthenticated()
+            return _unauthenticated(request)
 
         if account.role == "learner":
             target_id = _target_learner_id(
@@ -462,10 +494,13 @@ def learner_self_only(*, kwarg=None, query_param=None, body_field=None):
     auditor could tell it apart from the real thing.
 
     So: **staff and admin get 403 here, deliberately**, unlike every other gate
-    in this module where they are the privileged case. Reading is untouched (see
-    ``_SAFE_METHODS``) — staff still review the plan, they just cannot act as the
-    learner in it. Booking a coaching session is the one write they keep, and it
-    uses ``learner_self_or_staff`` instead.
+    in this module where they are the privileged case — for BOTH writes and reads.
+    A ``learner_self_only`` endpoint is the owner's alone: its GET is scoped to the
+    learner too (private data such as calendar credentials), so staff do not read
+    it here. Staff still review a learner's plan and evidence, but through the
+    endpoints that use ``learner_self_or_staff`` (which admits them on read).
+    Booking a coaching session is the one write staff keep, and it uses
+    ``learner_self_or_staff`` instead. Only ``OPTIONS`` (CORS preflight) is exempt.
 
     ``kwarg`` / ``query_param`` / ``body_field`` name where the learner id is
     found; exactly one applies per endpoint. A learner naming somebody else's id

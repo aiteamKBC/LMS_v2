@@ -27,7 +27,13 @@ function matches(coach: DirectoryCoach, query: string) {
  * instead of a dashboard of zeros: one card per account holding Coach access,
  * and the workspace loads that coach's data once one is chosen.
  */
-export function CoachDirectoryPicker({ onSelect }: { onSelect: (coach: DirectoryCoach) => void }) {
+export function CoachDirectoryPicker({
+  onSelect,
+  onDirectoryLoaded,
+}: {
+  onSelect: (coach: DirectoryCoach) => void;
+  onDirectoryLoaded?: (coaches: DirectoryCoach[]) => void;
+}) {
   const [coaches, setCoaches] = useState<DirectoryCoach[]>([]);
   const [countsAvailable, setCountsAvailable] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -43,6 +49,7 @@ export function CoachDirectoryPicker({ onSelect }: { onSelect: (coach: Directory
       .then(directory => {
         if (controller.signal.aborted) return;
         setCoaches(directory.coaches);
+        onDirectoryLoaded?.(directory.coaches);
         setCountsAvailable(directory.caseloadCountsAvailable);
       })
       .catch(loadError => {
@@ -55,7 +62,7 @@ export function CoachDirectoryPicker({ onSelect }: { onSelect: (coach: Directory
       });
 
     return () => controller.abort();
-  }, []);
+  }, [onDirectoryLoaded]);
 
   const filtered = useMemo(() => coaches.filter(coach => matches(coach, search)), [coaches, search]);
 

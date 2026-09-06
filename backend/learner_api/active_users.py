@@ -133,19 +133,69 @@ def otjh_progress_dedupe_key(record, index=0):
     return f"entry:{index}"
 
 
+def _manual_claimed_seconds(record):
+    claimed = _number(
+        record.get("claimedSeconds") if record.get("claimedSeconds") is not None
+        else record.get("claimed_seconds")
+    )
+    if claimed is None or claimed < 0:
+        return None
+    verified = _number(
+        record.get("verifiedSeconds") if record.get("verifiedSeconds") is not None
+        else record.get("verified_seconds")
+    )
+    source = _progress_text(record, "timeTrackingSource", "time_tracking_source").lower()
+    explicitly_manual = source.endswith(":input") or "manual_input" in source
+    inferred_legacy_manual = verified is not None and claimed > verified + 2
+    return claimed if explicitly_manual or inferred_legacy_manual else None
+
+
+def _progress_record_minutes(record):
+    """Comparable OTJ value for choosing the best attempt of one activity."""
+    manual_seconds = _manual_claimed_seconds(record)
+    if manual_seconds is not None:
+        return manual_seconds / 60
+
+    reported_time = _progress_text(record, "reportedTime", "reported_time")
+    if reported_time:
+        return max(_reported_minutes(reported_time), 0)
+
+    verified_seconds = _number(
+        record.get("verifiedSeconds") if record.get("verifiedSeconds") is not None
+        else record.get("verified_seconds")
+    )
+    if verified_seconds is not None:
+        return max(verified_seconds, 0) / 60
+
+    expected_hours = _number(record.get("expectedOtjh") or record.get("expected_otjh"))
+    return max(expected_hours or 0, 0) * 60
+
+
 def dedupe_otjh_progress_records(progress):
     if not isinstance(progress, list):
         return []
-    seen = set()
+    positions = {}
     unique = []
     for index, record in enumerate(progress):
         if not isinstance(record, dict):
             continue
         key = otjh_progress_dedupe_key(record, index)
-        if key in seen:
+        position = positions.get(key)
+        if position is None:
+            positions[key] = len(unique)
+            unique.append(record)
             continue
-        seen.add(key)
-        unique.append(record)
+
+        current = unique[position]
+        candidate_minutes = _progress_record_minutes(record)
+        current_minutes = _progress_record_minutes(current)
+        candidate_is_newer = _progress_text(record, "submittedAt", "submitted_at") > _progress_text(
+            current, "submittedAt", "submitted_at"
+        )
+        if candidate_minutes > current_minutes or (
+            candidate_minutes == current_minutes and candidate_is_newer
+        ):
+            unique[position] = record
     return unique
 
 
@@ -480,19 +530,11 @@ def _normalise_component_ksb_mappings(value):
 
 
 def completed_hours_from_progress(progress, components=None):
-    """Hours the learner has actually done, for the OTJ total.
+    """Hours the learner has declared, for the OTJ total.
 
-    Completed OTJ hours are what the learner recorded on submission, NOT the
-    component's authored `expected_otjh` — that is the *plan*, and counting it
-    credited a learner the full 2h for an assignment they finished in 33
-    seconds. `verified_seconds` is the server-checked time the submit path
-    stores, so it is what a completed activity is worth.
-
-    `reportedTime` is deliberately not consulted: in the stored data it holds
-    the planned figure ("2h" on rows whose verified time was seconds), so
-    reading it would reintroduce exactly the planned-hours total this avoids.
-    `timeTaken` is not used either — it is a clock string whose minutes field
-    can exceed 59 ("60:00"), which no HH:MM:SS parse handles correctly.
+    A learner-entered Time spent value (`claimedSeconds` with input provenance)
+    is authoritative when present, followed by the reflection's `reportedTime`.
+    The server-verified timer is used only when neither input was supplied.
 
     Rows predating time tracking carry no verified time at all; those still
     fall back to the authored hours, because dropping them would silently zero
@@ -504,6 +546,14 @@ def completed_hours_from_progress(progress, components=None):
     hours = 0.0
     for record in dedupe_otjh_progress_records(progress):
         component_id = _s(record.get("componentId"))
+        manual_seconds = _manual_claimed_seconds(record)
+        if manual_seconds is not None:
+            hours += manual_seconds / 3600
+            continue
+        reported_time = _progress_text(record, "reportedTime", "reported_time")
+        if reported_time:
+            hours += _reported_minutes(reported_time) / 60
+            continue
         verified_seconds = _number(
             record.get("verifiedSeconds") if record.get("verifiedSeconds") is not None
             else record.get("verified_seconds")
@@ -518,8 +568,6 @@ def completed_hours_from_progress(progress, components=None):
         expected_hours = expected_hours_by_component.get(component_id)
         if expected_hours is not None:
             hours += expected_hours
-            continue
-        hours += _reported_minutes(record.get("reportedTime")) / 60
     return fmt_hours(hours)
 
 

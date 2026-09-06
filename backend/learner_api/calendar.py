@@ -403,6 +403,7 @@ def _same_calendar_identity(left, right):
     return _s(left).strip().casefold() == _s(right).strip().casefold()
 
 
+@learner_self_or_staff(kwarg="pk")
 def learner_calendar(request, kind, pk):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -781,6 +782,7 @@ def learner_calendar_cancel(request, kind, pk):
     )
 
 
+@learner_self_or_staff(kwarg="pk")
 def learner_onboarding_reviews(request, kind, pk):
     """The three onboarding reviews and whether each is booked.
 

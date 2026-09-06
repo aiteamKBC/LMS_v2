@@ -171,6 +171,26 @@ export async function fetchCoachCalendarEvents(
   });
 }
 
+/**
+ * Read one named coach's timetable without changing the administrator's active
+ * workspace selection. This is used by the super-admin overview, where several
+ * coach calendars are displayed together. The server validates the supplied
+ * address against the Coach staff directory and keeps the request read-only.
+ */
+export async function fetchCoachCalendarEventsForCoach(
+  coachEmail: string,
+  signal: AbortSignal | undefined,
+  options: CoachCalendarFetchOptions = {},
+) {
+  const endpoint = coachTimetableEndpoint(options);
+  const separator = endpoint.includes('?') ? '&' : '?';
+  const url = `${endpoint}${separator}viewAsCoach=${encodeURIComponent(coachEmail.trim().toLowerCase())}`;
+  return fetchSharedJsonGet<CoachTimetableResponse>(url, {
+    signal,
+    credentials: 'include',
+  });
+}
+
 export async function scheduleCoachCalendarEvent(event: CoachCalendarEvent, form: ScheduleFormState) {
   if (!event.eventKey) {
     throw new Error('This event is missing its calendar key.');

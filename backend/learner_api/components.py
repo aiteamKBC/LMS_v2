@@ -231,6 +231,7 @@ def submit_component_progress(request, component_id):
         ksbs = payload["ksbs"]
     feedback = payload.get("feedback") or ""
     reported_time = payload.get("reportedTime") or ""
+    time_entry_source = "input" if payload.get("timeEntrySource") == "input" else "timer"
     client_title = payload.get("componentTitle") or None
     client_type = (payload.get("componentType") or "").strip() or None
 
@@ -312,7 +313,7 @@ def submit_component_progress(request, component_id):
         "startedAt": started_at,
         "submittedAt": submitted_at,
         "timeTaken": time_taken,
-        "timeTrackingSource": tracking["source"],
+        "timeTrackingSource": f'{tracking["source"]}:{time_entry_source}',
         "timeTrackingCalculation": tracking["calculation"],
         "timeTrackingSessionId": tracking["sessionId"],
         "claimedSeconds": tracking["claimedSeconds"],

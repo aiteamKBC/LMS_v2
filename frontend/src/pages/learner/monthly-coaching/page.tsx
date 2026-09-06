@@ -9,6 +9,12 @@ import { monthlyCoachingAnswers } from '@/pages/shared/monthlyCoachingForm';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { MetricCard } from '@/components/ui/MetricCard';
+import {
+  activityTimeLabel,
+  learningKsbCodes,
+  learningMinutesForRecord,
+  uniqueLearningProgress,
+} from '@/lib/reviewLearningProgress';
 
 const learnerNav = roleNavMap.learner;
 
@@ -44,16 +50,6 @@ function inWindow(value: string | undefined | null, from: Date | null, to: Date)
   if (!value) return false;
   const date = new Date(value);
   return !Number.isNaN(date.getTime()) && (!from || date > from) && date <= to;
-}
-
-function minutesFrom(value?: string | null): number {
-  if (!value) return 0;
-  const text = value.toLowerCase();
-  const hours = Number(text.match(/([\d.]+)\s*(?:hours?|hrs?|h)\b/i)?.[1] || 0);
-  const minutes = Number(text.match(/([\d.]+)\s*(?:minutes?|mins?|m)\b/i)?.[1] || 0);
-  if (hours || minutes) return (hours * 60) + minutes;
-  const numeric = Number.parseFloat(text.match(/\d+(?:\.\d+)?/)?.[0] || '0');
-  return Number.isFinite(numeric) ? numeric * 60 : 0;
 }
 
 function hoursLabel(minutes: number): string {
@@ -287,17 +283,25 @@ export default function MonthlyCoachingPage() {
     ...(learner.componentProgress || []),
   ].filter((item) => inWindow(item.submittedAt, window.from, window.to)) : [], [learner, window]);
 
-  const learningItems = useMemo(() => progress.map((record) => {
+  const uniqueProgress = useMemo(() => uniqueLearningProgress(progress), [progress]);
+
+  const learningItems = useMemo(() => uniqueProgress.map((record) => {
     if ('quizId' in record) {
       const component = learner?.components.find((item) => item.quizMeta?.quizId === record.quizId);
       return { key: `quiz:${record.quizId}:${record.submittedAt}`, title: component?.component || `Quiz #${record.quizId}`, detail: 'Passed quiz', at: record.submittedAt };
     }
     const component = learner?.components.find((item) => item.componentId === record.componentId);
     const type = 'componentType' in record ? record.componentType : 'Video';
-    return { key: `component:${record.componentId}:${record.submittedAt}`, title: component?.component || type, detail: `${type} completed${record.reportedTime ? ` · ${record.reportedTime}` : ''}`, at: record.submittedAt };
-  }), [learner, progress]);
-  const ksbCodes = useMemo(() => [...new Set(progress.flatMap((record) => record.ksbs || []))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })), [progress]);
-  const learningMinutes = progress.reduce((sum, record) => sum + minutesFrom(record.reportedTime), 0);
+    return { key: `component:${record.componentId}:${record.submittedAt}`, title: component?.component || type, detail: `${type} completed · ${activityTimeLabel(learningMinutesForRecord(record, learner?.components || []))}`, at: record.submittedAt };
+  }), [learner, uniqueProgress]);
+  const ksbCodes = useMemo(
+    () => learningKsbCodes(uniqueProgress, learner?.components || []),
+    [learner?.components, uniqueProgress],
+  );
+  const learningMinutes = uniqueProgress.reduce(
+    (sum, record) => sum + learningMinutesForRecord(record, learner?.components || []),
+    0,
+  );
   const toggle = (id: string) => setOpenSections((items) => items.includes(id) ? items.filter((item) => item !== id) : [...items, id]);
 
   return (
@@ -316,7 +320,7 @@ export default function MonthlyCoachingPage() {
             </section>
 
             <Accordion id="learning" title="30-Day Learning Progress & Summary" icon="ri-graduation-cap-line" open={openSections.includes('learning')} onToggle={toggle}>
-              <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-primary-50 p-4"><p className="text-[10px] font-semibold uppercase text-primary-500">Completed activities</p><p className="mt-1 text-2xl font-bold text-primary-800">{progress.length}</p></div><div className="rounded-xl bg-accent-50 p-4"><p className="text-[10px] font-semibold uppercase text-accent-600">Completed activity time</p><p className="mt-1 text-2xl font-bold text-accent-800">{hoursLabel(learningMinutes)}</p></div><div className="rounded-xl bg-emerald-50 p-4"><p className="text-[10px] font-semibold uppercase text-emerald-600">KSBs evidenced</p><p className="mt-1 text-2xl font-bold text-emerald-800">{ksbCodes.length}</p></div></div>
+              <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-primary-50 p-4"><p className="text-[10px] font-semibold uppercase text-primary-500">Completed activities</p><p className="mt-1 text-2xl font-bold text-primary-800">{uniqueProgress.length}</p></div><div className="rounded-xl bg-accent-50 p-4"><p className="text-[10px] font-semibold uppercase text-accent-600">Completed activity time</p><p className="mt-1 text-2xl font-bold text-accent-800">{hoursLabel(learningMinutes)}</p></div><div className="rounded-xl bg-emerald-50 p-4"><p className="text-[10px] font-semibold uppercase text-emerald-600">KSBs evidenced</p><p className="mt-1 text-2xl font-bold text-emerald-800">{ksbCodes.length}</p></div></div>
               <div className="mt-4"><div className="mb-2 flex items-center justify-between"><h2 className="text-xs font-bold text-foreground-800">What the learner completed</h2><span className="text-[10px] text-foreground-400">{learningItems.length} {learningItems.length === 1 ? 'record' : 'records'}</span></div>{learningItems.length === 0 ? <Empty>No completed learning was recorded in this 30-day period.</Empty> : <div className="divide-y divide-background-200 rounded-xl border border-background-200">{learningItems.map((item) => <div key={item.key} className="flex items-start gap-3 p-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><AppIcon className="ri-checkbox-circle-line" /></span><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-foreground-800">{item.title}</p><p className="text-xs text-foreground-400">{item.detail}</p></div><span className="text-[10px] text-foreground-400">{new Date(item.at).toLocaleDateString('en-GB')}</span></div>)}</div>}</div>
             </Accordion>
             <Accordion id="previous-summary" title="Previous Meeting Summary" icon="ri-history-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'previous-summary').length ? 'Complete' : 'Incomplete'} open={openSections.includes('previous-summary')} onToggle={toggle}>

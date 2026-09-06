@@ -1,5 +1,6 @@
 // ============================================================================
-// Access editor — opened by clicking an account's name on the Accounts page.
+// Access editor — opened from the Accounts page by clicking an account's name
+// or its Access badge.
 //
 // One access per account, because 'super-admin' already means "everything" and
 // that is the only case combining them would serve.

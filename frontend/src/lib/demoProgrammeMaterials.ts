@@ -42,6 +42,8 @@ export interface DemoProgrammeDef {
    * LearnerDetail.programme) closely enough for display; materials are
    * matched by module id, not by this name. */
   programmeName: string;
+  /** Programme names already used by learner records for the same programme. */
+  programmeAliases: string[];
   materials: DemoMaterialDef[];
 }
 
@@ -49,7 +51,8 @@ export const DEMO_PROGRAMMES: DemoProgrammeDef[] = [
   {
     email: 'learner-me@learner.local',
     accountLabel: 'ME',
-    programmeName: 'Marketing Executive',
+    programmeName: 'Marketing Executive Level 4',
+    programmeAliases: ['ME', 'Marketing Executive', 'Marketing Executive Level 4', 'Level 4 Marketing Executive'],
     materials: [
       { key: 'impact-planning', name: 'Impact Planning', order: 1, moduleIds: ['MOD-202608228DDFCB53074A'] },
       { key: 'social-media', name: 'Social Media', order: 2, moduleIds: ['MOD-2026082243BD5ED0A8EA'] },
@@ -59,7 +62,8 @@ export const DEMO_PROGRAMMES: DemoProgrammeDef[] = [
   {
     email: 'learner-mm@learner.local',
     accountLabel: 'MM',
-    programmeName: 'Marketing Manager',
+    programmeName: 'Marketing Manager Level 6',
+    programmeAliases: ['MM', 'Marketing Manager', 'Marketing Manager Level 6', 'Level 6 Marketing Manager'],
     materials: [
       { key: 'strategy-planning', name: 'Strategy Planning', order: 1, moduleIds: ['MOD-202608223E23693425BC'] },
       { key: 'customer-journey', name: 'Customer Journey', order: 2, moduleIds: ['MOD-20260822222D7B9190AA'] },
@@ -70,7 +74,8 @@ export const DEMO_PROGRAMMES: DemoProgrammeDef[] = [
   {
     email: 'learner-pcp@learner.local',
     accountLabel: 'PCP',
-    programmeName: 'Project Controls Professional',
+    programmeName: 'Project Controls Professional Level 6',
+    programmeAliases: ['PCP', 'Project Controls Professional', 'Project Controls Professional Level 6', 'Level 6 Project Controls Professional'],
     materials: [
       { key: 'project-management-professional', name: 'Project Management Professional', order: 1, moduleIds: ['MOD-2026082245779A87FE0C'] },
       {
@@ -98,10 +103,21 @@ export const DEMO_PROGRAMMES: DemoProgrammeDef[] = [
 
 /** The demo programme/material config for one account's email, or null when
  * the account isn't one of the 3 provisioned inspection-demo accounts. */
-export function demoProgrammeFor(email: string | null | undefined): DemoProgrammeDef | null {
-  const normalised = (email || '').trim().toLowerCase();
-  if (!normalised) return null;
-  return DEMO_PROGRAMMES.find((p) => p.email === normalised) || null;
+export function demoProgrammeFor(
+  email: string | null | undefined,
+  programmeName?: string | null,
+): DemoProgrammeDef | null {
+  const normalisedEmail = (email || '').trim().toLowerCase();
+  const byEmail = normalisedEmail
+    ? DEMO_PROGRAMMES.find((programme) => programme.email === normalisedEmail)
+    : undefined;
+  if (byEmail) return byEmail;
+
+  const normalisedProgramme = (programmeName || '').trim().toLowerCase();
+  if (!normalisedProgramme) return null;
+  return DEMO_PROGRAMMES.find((programme) =>
+    programme.programmeAliases.some((alias) => alias.toLowerCase() === normalisedProgramme)
+  ) || null;
 }
 
 /** The material a given authored module id belongs to, within one demo

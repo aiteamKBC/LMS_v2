@@ -219,6 +219,15 @@ export async function fetchCoachOptions(): Promise<CoachOption[]> {
     .map((r) => ({ name: r.name, email: r.email }));
 }
 
+/**
+ * One staff/admin account by id. The Accounts console holds a login account,
+ * which carries only `subjectId` — this is how it reaches the person record
+ * behind it so the same edit form the directory uses can be opened there too.
+ */
+export function fetchStaffUser(id: string): Promise<StaffUserRow> {
+  return request<StaffUserRow>(`${BASE}/${id}/`);
+}
+
 /** Create a staff/admin account; returns the new row. */
 export function createStaffUser(input: CreateStaffUserInput): Promise<StaffUserRow> {
   return request<StaffUserRow>(`${BASE}/`, { method: 'POST', body: JSON.stringify(input) });

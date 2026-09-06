@@ -68,10 +68,9 @@ export function useCurriculumProgrammes({ skipCache = false, revalidate = false,
    *
    * The collection is rebuilt from several tables and can take seconds, so a
    * create that only triggered a refetch left the page looking unchanged for
-   * long enough to read as "it didn't save". A new programme goes to the front
-   * rather than the end: the list is paginated, and appending can drop it onto a
-   * page the reader is not looking at. The reload behind it restores the
-   * server's own ordering.
+   * long enough to read as "it didn't save". A new programme goes to the end,
+   * matching where the server's own ordering puts it once the reload behind
+   * this lands: the list reads newest-last, like any other list here.
    */
   const upsertProgramme = (programme: CurriculumProgramme) => {
     const key = programme.sourceId || programme.id;
@@ -80,7 +79,7 @@ export function useCurriculumProgrammes({ skipCache = false, revalidate = false,
       const known = prev.some(p => (p.sourceId || p.id) === key);
       return known
         ? prev.map(p => ((p.sourceId || p.id) === key ? { ...p, ...programme } : p))
-        : [programme, ...prev];
+        : [...prev, programme];
     });
   };
 

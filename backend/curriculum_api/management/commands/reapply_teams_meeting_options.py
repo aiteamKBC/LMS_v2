@@ -119,7 +119,8 @@ class Command(BaseCommand):
                 if dry_run:
                     self.stdout.write(
                         f"{live_session_id} ({label}): would set recording={recording}, lobby={lobby}, "
-                        f"language={language}, presenters={len(presenters)}, attendees={len(attendees)}"
+                        f"language={language}, presenters={len(presenters)}, "
+                        f"co-organizers={len(co_organizers)}, attendees={len(attendees)}"
                     )
                     skipped += 1
                     continue

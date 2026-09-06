@@ -13,7 +13,9 @@ import {
   programmeIdentity,
   removeById,
   sameIdentifier,
+  sortEntities,
   upsertById,
+  COHORT_SORT_OPTIONS,
 } from '../shared/entities/model';
 import { CohortFormDrawer } from '../shared/entities/forms';
 import { archiveCohortWithConfirm } from '../shared/entities/archive';
@@ -56,6 +58,7 @@ export default function CurriculumCohortsPage() {
   const [search, setSearch] = useState('');
   const [programmeFilter, setProgrammeFilter] = useState(searchParams.get('programme') || '');
   const [yearFilter, setYearFilter] = useState('');
+  const [sort, setSort] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<CurriculumCohort | null>(null);
   // The guided run: this same cohort form, then the group and module ones, for a
@@ -95,13 +98,14 @@ export default function CurriculumCohortsPage() {
 
   const visibleCohorts = useMemo(() => {
     const scoped = cohortsForProgramme(cohorts, programmes, programmeFilter);
-    return scoped.filter(cohort => {
+    const matched = scoped.filter(cohort => {
       if (yearFilter && cohortYear(cohort) !== yearFilter) return false;
       return matchesSearch(search, [
         cohort.name, cohort.programme, cohort.startDate, cohort.endDate, cohort.id,
       ]);
     });
-  }, [cohorts, programmes, programmeFilter, search, yearFilter]);
+    return sortEntities(matched, COHORT_SORT_OPTIONS, sort);
+  }, [cohorts, programmes, programmeFilter, search, sort, yearFilter]);
 
   const totals = useMemo(() => ({
     cohorts: cohorts.length,
@@ -217,7 +221,8 @@ export default function CurriculumCohortsPage() {
               options: [{ value: '', label: 'All years' }, ...years.map(year => ({ value: year, label: year }))],
             },
           ]}
-          onReset={() => { setSearch(''); setProgrammeFilter(''); setYearFilter(''); }}
+          sort={{ value: sort, onChange: setSort, options: COHORT_SORT_OPTIONS }}
+          onReset={() => { setSearch(''); setProgrammeFilter(''); setYearFilter(''); setSort(''); }}
           summary={loaded
             ? `Showing ${visibleCohorts.length} of ${cohorts.length} cohorts${refreshing ? ' · updating…' : ''}`
             : undefined}

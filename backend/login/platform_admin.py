@@ -382,14 +382,61 @@ def _staff_access_map(accounts):
         return {}
 
 
-def _account_json(account, now, access_map=None):
+def _learner_type_map(accounts):
+    """{subject_id: "apprenticeship"|"commercial"} for the learner accounts here.
+
+    The console links a learner's name to their record board, and that board
+    reads its documents by kind — so the kind has to travel with the row. Read
+    through ``all_learners`` because the default manager hides commercial rows,
+    which are precisely the ones this answers differently.
+    """
+    ids = [a.subject_id for a in accounts if a.subject_type == "learner"]
+    if not ids:
+        return {}
+    from learner_api.models import EnrolmentUser
+
+    try:
+        with transaction.atomic(using="enrolment"):
+            rows = (
+                EnrolmentUser.all_learners.filter(pk__in=ids)
+                .values_list("pk", "learner_type")
+            )
+        # Blank means apprenticeship: the column was backfilled and the model
+        # defaults it on save, so only commercial is ever stated explicitly.
+        return {
+            pk: ("commercial" if (kind or "").strip().lower() == "commercial" else "apprenticeship")
+            for pk, kind in rows
+        }
+    except DatabaseError:
+        return {}
+
+
+def _row_extras(accounts):
+    """The per-page lookups ``_account_json`` needs, in one object.
+
+    Two queries for a page of rows, gathered here so every caller — the list
+    and the three single-account actions — hands the serializer the same shape
+    and no row comes back missing a field the table reads.
+    """
+    return {
+        "access": _staff_access_map(accounts),
+        "learner_type": _learner_type_map(accounts),
+    }
+
+
+def _account_json(account, now, extras=None):
     locked = bool(account.locked_until and account.locked_until > now)
+    extras = extras or {}
     return {
         # The staff access grant, so the console can show and edit it without a
         # second request per row. "" for non-staff subjects and for staff whose
         # access has not been set yet.
-        "access": (access_map or {}).get(account.subject_id, "")
+        "access": extras.get("access", {}).get(account.subject_id, "")
         if account.subject_type == "staff" else "",
+        # Which of the two learner kinds this is, so the console can link to the
+        # right record board. "" for staff and employers, who have no kind.
+        "learnerType": extras.get("learner_type", {}).get(account.subject_id, "")
+        if account.subject_type == "learner" else "",
         "id": account.id,
         "email": account.email,
         "displayName": account.display_name or "",
@@ -455,12 +502,12 @@ def accounts(request):
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 
-    access_map = _staff_access_map(rows)
+    extras = _row_extras(rows)
     return JsonResponse({
         "count": total,
         "page": page,
         "pageSize": size,
-        "results": [_account_json(a, now, access_map) for a in rows],
+        "results": [_account_json(a, now, extras) for a in rows],
     })
 
 
@@ -554,7 +601,7 @@ def account_action(request, pk):
             "ok": True,
             "resent": True,
             "sentTo": account.email,
-            "account": _account_json(account, timezone.now(), _staff_access_map([account])),
+            "account": _account_json(account, timezone.now(), _row_extras([account])),
         })
     if action == "send-password-reset":
         # The counterpart to resend-invitation, and the two are mutually
@@ -594,7 +641,7 @@ def account_action(request, pk):
             "ok": True,
             "resetSent": True,
             "sentTo": account.email,
-            "account": _account_json(account, timezone.now(), _staff_access_map([account])),
+            "account": _account_json(account, timezone.now(), _row_extras([account])),
         })
 
     # An admin suspending themselves would lock the console's own door with no
@@ -643,7 +690,7 @@ def account_action(request, pk):
     except DatabaseError:
         pass
 
-    return JsonResponse({"account": _account_json(account, timezone.now(), _staff_access_map([account]))})
+    return JsonResponse({"account": _account_json(account, timezone.now(), _row_extras([account]))})
 
 
 # ---------------------------------------------------------------------------
