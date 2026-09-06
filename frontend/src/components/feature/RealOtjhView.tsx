@@ -28,8 +28,6 @@ interface LogRow {
   ksbs: string[];
   /** What this activity put towards the total, in hours. */
   hours: number;
-  /** What the learner said it took, shown under the contribution when they differ. */
-  reported: string;
   /** One row per quiz/component; repeats of the same one are folded in here. */
   dedupeKey: string;
   passed?: boolean;
@@ -38,11 +36,12 @@ interface LogRow {
 
 /**
  * The hours one activity contributed, by the same rule the backend totals with
- * (see active_users.completed_hours_from_progress): the time the learner
- * actually recorded on submission, and only for rows predating time tracking
- * the component's authored off-the-job hours. A bare number in that fallback is
- * hours up to 24 and minutes above it — the same reading _reported_minutes
- * applies, so this panel cannot disagree with the "Completed" figure beside it.
+ * (see active_users.completed_hours_from_progress): prefer the time entered by
+ * the learner, then use the verified timer when no input was supplied. Older
+ * rows without either fall back to the component's authored off-the-job hours.
+ * A bare reported number is hours up to 24 and minutes above it — the same
+ * reading _reported_minutes applies, so this panel cannot disagree with the
+ * "Completed" figure beside it.
  */
 function contributedHours(
   expectedOtjh: unknown,
@@ -50,11 +49,6 @@ function contributedHours(
   fallback?: number,
   verifiedSeconds?: unknown,
 ): number {
-  // What the learner actually did, and so what the activity is worth.
-  const verified = Number(verifiedSeconds);
-  if (Number.isFinite(verified) && verified >= 0 && verifiedSeconds != null) return verified / 3600;
-  const expected = Number(expectedOtjh);
-  if (Number.isFinite(expected) && expected > 0) return expected;
   const text = String(reported || '').trim().toLowerCase();
   if (text) {
     if (text.includes(':')) {
@@ -66,7 +60,12 @@ function contributedHours(
     if (hours || minutes) return hours + minutes / 60;
     const bare = Number(text.match(/[\d.]+/)?.[0] || 0);
     if (bare) return bare > 24 ? bare / 60 : bare;
+    return 0;
   }
+  const verified = Number(verifiedSeconds);
+  if (Number.isFinite(verified) && verified >= 0 && verifiedSeconds != null) return verified / 3600;
+  const expected = Number(expectedOtjh);
+  if (Number.isFinite(expected) && expected > 0) return expected;
   return Number.isFinite(Number(fallback)) ? Number(fallback) : 0;
 }
 
@@ -170,8 +169,7 @@ export function OtjhBody({
       type: 'Quiz', icon: 'ri-questionnaire-line',
       tint: a.passed ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600',
       at: a.submittedAt, ksbs: a.ksbs || [],
-      hours: contributedHours(a.expectedOtjh, a.reportedTime || a.timeTaken || '', undefined, a.verifiedSeconds),
-      reported: a.reportedTime || a.timeTaken || '',
+      hours: contributedHours(a.expectedOtjh, a.reportedTime || '', undefined, a.verifiedSeconds),
       // A quiz is one activity however many attempts it took, which is how the
       // total counts it.
       dedupeKey: `quiz:${a.quizId ?? a.componentId ?? a.submittedAt}`,
@@ -183,9 +181,8 @@ export function OtjhBody({
       type: 'Video', icon: 'ri-play-circle-line', tint: 'bg-red-100 text-red-600',
       at: v.submittedAt, ksbs: v.ksbs || [],
       hours: contributedHours(
-        v.expectedOtjh, v.reportedTime || v.timeTaken || '', expectedFor(v.componentId), v.verifiedSeconds,
+        v.expectedOtjh, v.reportedTime || '', expectedFor(v.componentId), v.verifiedSeconds,
       ),
-      reported: v.reportedTime || v.timeTaken || '',
       dedupeKey: `component:${v.componentId || v.submittedAt}`,
       isQuiz: false,
     }));
@@ -199,9 +196,8 @@ export function OtjhBody({
         tint: look?.tint || 'bg-primary-100 text-primary-600',
         at: c.submittedAt, ksbs: c.ksbs || [],
         hours: contributedHours(
-          c.expectedOtjh, c.reportedTime || c.timeTaken || '', expectedFor(c.componentId), c.verifiedSeconds,
+          c.expectedOtjh, c.reportedTime || '', expectedFor(c.componentId), c.verifiedSeconds,
         ),
-        reported: c.reportedTime || c.timeTaken || '',
         dedupeKey: `component:${c.componentId || c.submittedAt}`,
         isQuiz: false,
       };
@@ -347,13 +343,6 @@ export function OtjhBody({
                       <span className="block text-[12px] font-semibold text-foreground-700 tabular-nums">
                         {r.hours > 0 ? formatHoursMinutes(r.hours) : '—'}
                       </span>
-                      {/* What the learner said it took, shown only when that is
-                          not the same as what the component is worth — "2h ·
-                          said 2h" is noise. */}
-                      {r.reported && r.hours > 0
-                        && Math.abs(contributedHours(0, r.reported) - r.hours) > 0.01 && (
-                        <span className="block text-[10px] text-foreground-400">said {r.reported}</span>
-                      )}
                     </span>
                     {r.isQuiz && (
                       <span className={`shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full ${r.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>

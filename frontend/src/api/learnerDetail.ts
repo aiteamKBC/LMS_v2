@@ -105,7 +105,7 @@ export interface LearnerQuizAttempt {
   startedAt: string;
   submittedAt: string;
   timeTaken?: string;         // "MM:SS", e.g. "00:26" (auto-tracked)
-  verifiedSeconds?: number | null;  // server-checked seconds actually spent; the OTJ total
+  verifiedSeconds?: number | null;  // fallback for the OTJ total when reportedTime is blank
 }
 
 export interface LearnerDetail {
@@ -174,7 +174,7 @@ export interface LearnerComponentProgress {
   startedAt: string | null;
   submittedAt: string;
   timeTaken: string | null;
-  verifiedSeconds?: number | null;  // server-checked seconds actually spent; the OTJ total
+  verifiedSeconds?: number | null;  // fallback for the OTJ total when reportedTime is blank
   // Ungraded completions leave this absent — the row itself is the completion.
   // An explicit false is a recorded failure and never counts as achievement.
   passed?: boolean | null;
@@ -210,7 +210,7 @@ export interface LearnerVideoProgress {
   startedAt: string | null;
   submittedAt: string;
   timeTaken: string | null;
-  verifiedSeconds?: number | null;  // server-checked seconds actually spent; the OTJ total
+  verifiedSeconds?: number | null;  // fallback for the OTJ total when reportedTime is blank
   // See LearnerComponentProgress.passed.
   passed?: boolean | null;
 }

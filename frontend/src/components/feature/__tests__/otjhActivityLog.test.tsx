@@ -11,8 +11,8 @@ import type { LearnerDetail } from '@/api/learnerDetail';
 // log that did not add up to their own total.
 //
 // The hours per row follow the backend's rule (see
-// active_users.completed_hours_from_progress): the component's own off-the-job
-// hours first, whatever the learner reported second.
+// active_users.completed_hours_from_progress): the learner-entered time first,
+// with tracked or authored time used only when no input was supplied.
 // ---------------------------------------------------------------------------
 
 const detail = (overrides: Partial<LearnerDetail> = {}): LearnerDetail => ({
@@ -93,15 +93,13 @@ describe('OTJ hours activity log', () => {
     expect(screen.getByText(/2 entries · 8h/)).toBeTruthy();
   });
 
-  it("counts a component's own hours, not a bare reported number", () => {
-    // "60" against a component worth 1h is 60 minutes; reading it as 60 hours
-    // is what made the breakdown claim more than the whole programme.
+  it("counts the learner's input instead of tracked or authored time", () => {
     renderBody({
-      componentProgress: [{ ...assignment, expectedOtjh: 1, reportedTime: '60' }],
+      componentProgress: [{ ...assignment, expectedOtjh: 1, reportedTime: '3h', verifiedSeconds: 120 }],
       components: [{ component: 'Reading Material 2', componentId: 'COMP-ASSIGN', type: 'reading', expectedOtjh: 1 }] as LearnerDetail['components'],
     } as Partial<LearnerDetail>);
 
-    expect(screen.getByText(/1 entry · 1h/)).toBeTruthy();
+    expect(screen.getByText(/1 entry · 3h/)).toBeTruthy();
   });
 
   it('falls back to a large bare number as minutes, like the total does', () => {
@@ -110,6 +108,14 @@ describe('OTJ hours activity log', () => {
     } as Partial<LearnerDetail>);
 
     expect(screen.getByText(/1 entry · 1h 30m/)).toBeTruthy();
+  });
+
+  it('uses tracked time when the learner did not enter a time', () => {
+    renderBody({
+      componentProgress: [{ ...assignment, expectedOtjh: 2, reportedTime: '', verifiedSeconds: 1800 }],
+    } as Partial<LearnerDetail>);
+
+    expect(screen.getByText(/1 entry · 30m/)).toBeTruthy();
   });
 
   it('groups the hours by what kind of activity they came from', () => {

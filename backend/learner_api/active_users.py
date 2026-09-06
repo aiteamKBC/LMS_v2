@@ -480,19 +480,10 @@ def _normalise_component_ksb_mappings(value):
 
 
 def completed_hours_from_progress(progress, components=None):
-    """Hours the learner has actually done, for the OTJ total.
+    """Hours the learner has declared, for the OTJ total.
 
-    Completed OTJ hours are what the learner recorded on submission, NOT the
-    component's authored `expected_otjh` — that is the *plan*, and counting it
-    credited a learner the full 2h for an assignment they finished in 33
-    seconds. `verified_seconds` is the server-checked time the submit path
-    stores, so it is what a completed activity is worth.
-
-    `reportedTime` is deliberately not consulted: in the stored data it holds
-    the planned figure ("2h" on rows whose verified time was seconds), so
-    reading it would reintroduce exactly the planned-hours total this avoids.
-    `timeTaken` is not used either — it is a clock string whose minutes field
-    can exceed 59 ("60:00"), which no HH:MM:SS parse handles correctly.
+    A learner-entered `reportedTime` is authoritative when present. The
+    server-verified timer is used only when the learner did not enter a time.
 
     Rows predating time tracking carry no verified time at all; those still
     fall back to the authored hours, because dropping them would silently zero
@@ -504,6 +495,10 @@ def completed_hours_from_progress(progress, components=None):
     hours = 0.0
     for record in dedupe_otjh_progress_records(progress):
         component_id = _s(record.get("componentId"))
+        reported_time = _progress_text(record, "reportedTime", "reported_time")
+        if reported_time:
+            hours += _reported_minutes(reported_time) / 60
+            continue
         verified_seconds = _number(
             record.get("verifiedSeconds") if record.get("verifiedSeconds") is not None
             else record.get("verified_seconds")
@@ -518,8 +513,6 @@ def completed_hours_from_progress(progress, components=None):
         expected_hours = expected_hours_by_component.get(component_id)
         if expected_hours is not None:
             hours += expected_hours
-            continue
-        hours += _reported_minutes(record.get("reportedTime")) / 60
     return fmt_hours(hours)
 
 
