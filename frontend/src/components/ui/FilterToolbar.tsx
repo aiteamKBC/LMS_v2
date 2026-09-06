@@ -45,7 +45,7 @@ export function FilterToolbar({
   return (
     <div
       className={cn(
-        'rounded-xl border border-foreground-100/70 bg-background-50 p-3 shadow-sm',
+        'ui-filter-toolbar rounded-xl border border-foreground-100/70 bg-background-50 p-3 shadow-sm',
         className,
       )}
     >
@@ -90,7 +90,7 @@ export const SearchInput = memo(function SearchInput({
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         aria-label={ariaLabel || placeholder}
-        className="h-9 w-full rounded-lg border border-foreground-200 bg-background-50 pl-9 pr-8 text-[13px] text-foreground-900 placeholder:text-foreground-400 transition hover:border-foreground-300 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-200/50"
+        className="ui-search-input h-9 w-full rounded-lg border border-foreground-200 bg-background-50 pl-9 pr-8 text-[13px] text-foreground-900 placeholder:text-foreground-400 transition hover:border-foreground-300 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-200/50"
       />
       {value ? (
         <button

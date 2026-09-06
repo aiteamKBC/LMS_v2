@@ -40,6 +40,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   Clock,
+  Coffee,
   Cloud,
   Code2,
   Compass,
@@ -255,6 +256,7 @@ function resolveIcon(name: string): LucideIcon {
   if (/calendar-check|calendar-todo|calendar-close/.test(key)) return CalendarCheck;
   if (/calendar|timetable|schedule|event/.test(key)) return CalendarDays;
   if (/time|timer|clock|otjh|hours/.test(key)) return Timer;
+  if (/cup|coffee/.test(key)) return Coffee;
   if (/file-search|search-eye/.test(key)) return FileSearch;
   if (/file-sign/.test(key)) return FileSignature;
   if (/file-check/.test(key)) return FileCheck;

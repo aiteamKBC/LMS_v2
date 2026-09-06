@@ -928,15 +928,19 @@ function ScheduleSkeleton() {
   return (
     <>
       {Array.from({ length: 2 }, (_, groupIndex) => (
-        <div key={`schedule-skeleton-${groupIndex}`} className="rounded-xl border border-foreground-200/60 bg-background-50/70 p-3">
-          <LoadingBlock className="h-4 w-32" />
-          <div className="mt-3 space-y-3">
+        <div key={`schedule-skeleton-${groupIndex}`} className="coach-upcoming-schedule__group rounded-xl border border-foreground-200/60 bg-background-50/70 p-3">
+          <div className="coach-upcoming-schedule__group-header grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-foreground-100 pb-2.5">
+            <LoadingBlock className="h-4 w-32" />
+            <LoadingBlock className="h-5 w-7 rounded-full" />
+          </div>
+          <div className="coach-upcoming-schedule__events">
             {Array.from({ length: 2 }, (_, rowIndex) => (
-              <div key={`schedule-row-${groupIndex}-${rowIndex}`} className="flex items-center gap-3">
-                <LoadingBlock className="h-7 w-14 shrink-0" />
-                <div className="min-w-0 flex-1">
+              <div key={`schedule-row-${groupIndex}-${rowIndex}`} className="flex min-w-0 items-start gap-2.5 rounded-lg px-1.5 py-2">
+                <LoadingBlock className="h-7 w-[5.75rem] shrink-0" />
+                <LoadingBlock className="mt-1 h-3.5 w-3.5 shrink-0 rounded-full" />
+                <div className="min-w-0 flex-1 pt-0.5">
                   <LoadingBlock className="h-3 w-3/5" />
-                  <LoadingBlock className="mt-1.5 h-2.5 w-2/5" />
+                  <LoadingBlock className="mt-1 h-2.5 w-2/5" />
                 </div>
               </div>
             ))}
@@ -1447,7 +1451,7 @@ export default function CoachDashboard() {
                 value={onBreakLearners.length}
                 note="Programme paused"
                 tone="caution"
-                icon="ri-pause-circle-line"
+                icon="ri-cup-line"
                 active={kpiFilter === 'on-break'}
                 onFilter={() => setSelectedKpi('on-break')}
               />
@@ -1456,7 +1460,7 @@ export default function CoachDashboard() {
                 value={gatewayLearners.length}
                 note="At gateway stage"
                 tone="upcoming"
-                icon="ri-door-open-line"
+                icon="ri-flag-line"
                 active={kpiFilter === 'gateway'}
                 onFilter={() => setSelectedKpi('gateway')}
               />
@@ -1564,8 +1568,9 @@ export default function CoachDashboard() {
             </div>
 
             {/* ── Upcoming Schedule (live sessions + calendar, merged) ── */}
-            <Panel className="flex flex-col" padding="lg">
+            <Panel className="coach-upcoming-schedule flex flex-col" padding="lg">
               <SectionHeader
+                className="coach-upcoming-schedule__header"
                 icon="ri-calendar-schedule-line"
                 title="Upcoming schedule"
                 description={`Next ${COACHING_CALENDAR_WINDOW_DAYS} days · live, coaching & reviews`}
@@ -1593,19 +1598,19 @@ export default function CoachDashboard() {
               />
 
               {scheduleExpanded && (
-                <div id="coach-schedule-content" className="mt-3.5 max-h-[36rem] space-y-3 overflow-y-auto pr-1.5">
+                <div id="coach-schedule-content" className="coach-upcoming-schedule__content mt-3.5 max-h-[36rem] overflow-y-auto pr-1.5">
                   {schedulePanelLoading && <ScheduleSkeleton />}
                   {!schedulePanelLoading && upcomingScheduleGroups.map(group => (
-                    <div key={`schedule-group-${group.date}`} className="rounded-lg border border-foreground-200/60 bg-background-100/40 p-3">
-                      <div className="flex items-center justify-between gap-2 border-b border-foreground-100 pb-2">
-                        <div className="flex min-w-0 items-baseline gap-2">
-                          <span className="shrink-0 text-[17px] font-bold leading-none text-foreground-900">{formatCalendarDayNumber(group.date)}</span>
-                          <span className="min-w-0 truncate text-[12px] font-semibold text-foreground-700">{formatUpcomingLiveSessionDayLabel(group.date)}</span>
-                          <span className="shrink-0 text-[12px] text-foreground-400">{formatCalendarWeekday(group.date)} &middot; {formatCalendarMonth(group.date)}</span>
+                    <div key={`schedule-group-${group.date}`} className="coach-upcoming-schedule__group rounded-lg border border-foreground-200/60 bg-background-100/40 p-3">
+                      <div className="coach-upcoming-schedule__group-header grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-foreground-100 pb-2.5">
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <span className="shrink-0 text-[17px] font-bold leading-none tabular-nums text-foreground-900">{formatCalendarDayNumber(group.date)}</span>
+                          <span className="min-w-0 truncate text-[12px] font-semibold leading-tight text-foreground-700">{formatUpcomingLiveSessionDayLabel(group.date)}</span>
+                          <span className="shrink-0 text-[12px] leading-tight text-foreground-400">{formatCalendarWeekday(group.date)} &middot; {formatCalendarMonth(group.date)}</span>
                         </div>
-                        <span className="shrink-0 rounded-full bg-background-100 px-2 py-0.5 text-[12px] font-semibold text-foreground-500">{group.events.length}</span>
+                        <span className="coach-upcoming-schedule__count shrink-0 rounded-full bg-background-100 px-2 py-0.5 text-[12px] font-semibold leading-5 tabular-nums text-foreground-500">{group.events.length}</span>
                       </div>
-                      <div className="divide-y divide-foreground-100/80">
+                      <div className="coach-upcoming-schedule__events">
                         {group.events.map(event => {
                           const classes = eventStatusClasses(event);
                           return (
@@ -1613,16 +1618,16 @@ export default function CoachDashboard() {
                               key={event.eventKey || event.id}
                               to="/coach/timetable"
                               state={buildTimetableFocusState(event)}
-                              className="group flex items-center gap-3 py-2.5 transition-colors first:pt-2 last:pb-0.5 hover:text-primary-800"
+                              className="coach-upcoming-schedule__event group flex min-w-0 items-start gap-2.5 rounded-lg px-1.5 py-2 transition-colors hover:bg-background-50 hover:text-primary-800"
                             >
-                              <span className={cn('w-14 shrink-0 rounded-md px-2 py-1 text-center text-[12px] font-bold tabular-nums', classes.badge)}>
+                              <span className={cn('flex h-7 w-[5.75rem] shrink-0 items-center justify-center rounded-md px-2 text-center text-[12px] font-bold leading-none tabular-nums whitespace-nowrap', classes.badge)}>
                                 {scheduleEventTime(event)}
                               </span>
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-[13px] font-semibold text-foreground-900">{scheduleEventTitle(event)}</span>
-                                <span className="mt-0.5 block truncate text-[12px] text-foreground-400">{scheduleEventMeta(event)}</span>
+                              <AppIcon className={cn('mt-1 flex h-4 w-4 shrink-0 items-center justify-center text-[14px] transition-transform group-hover:translate-x-0.5', classes.icon)}></AppIcon>
+                              <span className="min-w-0 flex-1 pt-0.5">
+                                <span className="block whitespace-normal break-words text-[13px] font-semibold leading-tight text-foreground-900">{scheduleEventTitle(event)}</span>
+                                <span className="mt-1 block min-w-0 truncate text-[12px] leading-tight text-foreground-400">{scheduleEventMeta(event)}</span>
                               </span>
-                              <AppIcon className={cn('shrink-0 text-[14px] transition-transform group-hover:translate-x-0.5', classes.icon)}></AppIcon>
                             </Link>
                           );
                         })}
@@ -1853,7 +1858,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
   const meta: Record<DashboardKpi, { title: string; subtitle: string; icon: string; iconStyle: string }> = {
     caseload: { title: 'Learner caseload', subtitle: 'All learners currently assigned to you', icon: 'ri-group-line', iconStyle: 'bg-primary-100 text-primary-600' },
     active: { title: 'Active learners', subtitle: 'Learners currently active on their programme', icon: 'ri-user-follow-line', iconStyle: 'bg-emerald-100 text-emerald-600' },
-    'on-break': { title: 'Learners on break', subtitle: 'Learners whose programme is currently paused', icon: 'ri-pause-circle-line', iconStyle: 'bg-amber-100 text-amber-600' },
+    'on-break': { title: 'Learners on break', subtitle: 'Learners whose programme is currently paused', icon: 'ri-cup-line', iconStyle: 'bg-amber-100 text-amber-600' },
     'on-track': { title: 'Learners on track', subtitle: 'Learners currently meeting their OTJH target', icon: 'ri-checkbox-circle-line', iconStyle: 'bg-emerald-100 text-emerald-600' },
     'at-risk': { title: 'Learners at risk', subtitle: 'Learners requiring immediate coaching action', icon: 'ri-alarm-warning-line', iconStyle: 'bg-red-100 text-red-600' },
     'need-attention': { title: 'Learners needing attention', subtitle: 'Learners who need targeted support this week', icon: 'ri-error-warning-line', iconStyle: 'bg-amber-100 text-amber-600' },

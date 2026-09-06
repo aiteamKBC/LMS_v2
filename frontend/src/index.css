@@ -17,17 +17,17 @@
 
 :root {
   /* Background — clean off-white surfaces with stronger distinction */
-  --background-50: 0.99 0.001 95;
-  --background-100: 0.97 0.002 95;
-  --background-200: 0.94 0.003 95;
-  --background-300: 0.90 0.004 95;
-  --background-400: 0.84 0.005 95;
-  --background-500: 0.78 0.006 95;
-  --background-600: 0.68 0.007 95;
-  --background-700: 0.56 0.006 95;
-  --background-800: 0.40 0.005 95;
-  --background-900: 0.26 0.004 95;
-  --background-950: 0.15 0.003 95;
+  --background-50: 0.995 0.002 295;
+  --background-100: 0.975 0.012 295;
+  --background-200: 0.945 0.02 295;
+  --background-300: 0.90 0.028 295;
+  --background-400: 0.84 0.03 295;
+  --background-500: 0.78 0.032 295;
+  --background-600: 0.68 0.035 295;
+  --background-700: 0.56 0.04 295;
+  --background-800: 0.40 0.045 295;
+  --background-900: 0.26 0.05 295;
+  --background-950: 0.15 0.045 295;
 
   /* Primary — deep royal purple, the brand anchor */
   --primary-50: 0.96 0.02 295;
@@ -57,11 +57,11 @@
 
   /* Primary actions - semantic CTA colour, kept separate from the purple
      brand scale used by navigation, headers, icons and decorative UI. */
-  --action-primary: #b27715;
-  --action-primary-hover: #986511;
-  --action-primary-active: #80540e;
+  --action-primary: #5B21B6;
+  --action-primary-hover: #6D28D9;
+  --action-primary-active: #4B168C;
   --action-primary-foreground: #ffffff;
-  --action-primary-focus: rgb(178 119 21 / 0.28);
+  --action-primary-focus: rgb(139 92 246 / 0.28);
 
   /* Secondary — soft lavender/electric violet, supporting UI */
   --secondary-50: 0.97 0.01 290;
@@ -4504,7 +4504,7 @@ table tbody td:last-child {
    sidebar, making the two pieces read as one navigation frame. */
 .kbc-workspace-topbar {
   border-bottom: 0 !important;
-  background: linear-gradient(110deg, #43129a 0%, #321077 58%, #260b5f 100%) !important;
+  background: var(--kbc-chrome-color) !important;
   box-shadow: 0 10px 22px -20px rgb(76 29 149 / 0.72);
 }
 
@@ -4727,7 +4727,7 @@ table tbody td:last-child {
 
 .dashboard-theme[data-workspace-role="curriculum"] .kbc-workspace-topbar {
   border-bottom-color: rgb(255 255 255 / 0.12) !important;
-  background: linear-gradient(110deg, #43129a 0%, #321077 58%, #260b5f 100%) !important;
+  background: var(--kbc-chrome-color) !important;
 }
 
 .dashboard-theme[data-workspace-role="curriculum"] .kbc-topbar-title,
@@ -5034,6 +5034,120 @@ table tbody td:last-child {
   color: oklch(var(--foreground-900)) !important;
 }
 
+/* Question Bank uses the compact horizontal hero treatment from the product
+   reference. It is opt-in so the shared banner keeps its existing rhythm on
+   other workspaces. */
+.dashboard-theme .workspace-main .curriculum-library-hero {
+  min-height: 0;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__content {
+  gap: 1rem;
+  padding: 1.15rem 1.35rem;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__identity {
+  gap: 1rem;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__icon {
+  height: 3.35rem;
+  width: 3.35rem;
+  border: 1px solid rgb(255 255 255 / 0.2);
+  border-radius: 1rem;
+  background: rgb(255 255 255 / 0.18);
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-title {
+  font-size: 1.45rem;
+  line-height: 1.15;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-description {
+  max-width: 42rem;
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(5.35rem, 1fr));
+  gap: 0.55rem;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-metric {
+  min-width: 5.35rem;
+  min-height: 4.35rem;
+  padding: 0.65rem 0.8rem !important;
+  border-radius: 0.75rem !important;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-metric p:last-child {
+  margin-top: 0.35rem;
+  font-size: 1.55rem;
+}
+
+.curriculum-library-hero .workspace-hero-decoration {
+  position: absolute;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.curriculum-library-hero .workspace-hero-decoration--ring {
+  top: -13rem;
+  right: 14%;
+  width: 31rem;
+  height: 31rem;
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: 999px;
+  box-shadow: 0 0 0 2.25rem rgb(255 255 255 / 0.035), 0 0 0 4.5rem rgb(255 255 255 / 0.025);
+  opacity: 0.9;
+}
+
+.curriculum-library-hero .workspace-hero-decoration--dots {
+  right: 1.5rem;
+  bottom: 1rem;
+  width: 9rem;
+  height: 5rem;
+  background-image: radial-gradient(rgb(255 255 255 / 0.34) 1px, transparent 1px);
+  background-size: 0.75rem 0.75rem;
+  opacity: 0.25;
+}
+
+@media (max-width: 1023px) {
+  .dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__content {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__identity {
+    flex: none;
+  }
+
+  .dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__stats,
+  .dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__actions {
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__content {
+    padding: 1rem;
+  }
+
+  .dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__identity {
+    align-items: flex-start;
+  }
+
+  .dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__stats {
+    grid-template-columns: 1fr;
+  }
+
+  .curriculum-library-hero .workspace-hero-decoration--ring {
+    right: -15rem;
+  }
+}
+
 /* Progress Reviews keeps the purple hero, but its learner summary uses the
    same compact, readable KPI treatment as the Coach workspace. */
 .dashboard-theme .workspace-main .progress-review-hero-metric {
@@ -5191,4 +5305,658 @@ table tbody td:last-child {
   background-position: right 0.75rem center;
   background-repeat: no-repeat;
   background-size: 1rem 1rem;
+}
+
+/* ========================================================================== *
+   KBC global design system — final shared layer
+
+   The application contains a large set of established routes and feature
+   screens. This layer is intentionally presentation-only: it centralises the
+   visual contract at the shell and primitive boundaries, while compatibility
+   selectors let older screens inherit the same contract without changing
+   their markup, state, requests, or information order.
+   ========================================================================== */
+
+:root {
+  --kbc-primary-deep: #4B168C;
+  --kbc-primary: #5B21B6;
+  --kbc-primary-secondary: #6D28D9;
+  --kbc-primary-accent: #8B5CF6;
+  --kbc-purple-soft: #F3EEFF;
+  --kbc-purple-wash: #F7F5FF;
+  --kbc-brand-gold: #B27715;
+  --kbc-canvas: #F7F5FF;
+  --kbc-surface: #FFFFFF;
+  --kbc-border: #E9E4F0;
+  --kbc-text: #241B35;
+  --kbc-muted: #746C82;
+  /* Public aliases for feature-level styles and future shared primitives. */
+  --color-primary-deep: var(--kbc-primary-deep);
+  --color-primary: var(--kbc-primary);
+  --color-primary-light: var(--kbc-purple-soft);
+  --color-secondary: var(--kbc-primary-secondary);
+  --color-accent: var(--kbc-primary-accent);
+  --color-brand-gold: var(--kbc-brand-gold);
+  --color-background: var(--kbc-canvas);
+  --color-surface: var(--kbc-surface);
+  --color-border: var(--kbc-border);
+  --color-text: var(--kbc-text);
+  --color-muted: var(--kbc-muted);
+  --color-success: #2F855A;
+  --color-warning: #B7791F;
+  --color-danger: #C53030;
+  --color-info: var(--kbc-primary);
+  --kbc-control-height: 2.5rem;
+  --kbc-radius-card: 0.875rem;
+  --kbc-radius-control: 0.625rem;
+  --kbc-shadow-card: 0 1px 2px rgb(36 27 53 / 0.03), 0 12px 26px -20px rgb(36 27 53 / 0.24);
+  --kbc-shadow-popover: 0 20px 48px -24px rgb(36 27 53 / 0.32), 0 4px 12px -8px rgb(36 27 53 / 0.18);
+  --kbc-chrome-color: #4B168C;
+  --kbc-hero-gradient: linear-gradient(110deg, #4B168C 0%, #5B21B6 38%, #8B5CF6 68%, #F3EEFF 100%);
+}
+
+html {
+  background: var(--kbc-canvas);
+}
+
+body {
+  background: var(--kbc-canvas);
+  color: var(--kbc-text);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+/* ------------------------------ app chrome -------------------------------- */
+
+.dashboard-theme.workspace-shell,
+.dashboard-theme .workspace-content,
+.dashboard-theme .workspace-main {
+  background-color: var(--kbc-canvas) !important;
+}
+
+.dashboard-theme .workspace-main {
+  padding: 0.75rem;
+}
+
+/* ------------------------------- sidebar ---------------------------------- */
+
+.kbc-sidebar-panel,
+.kbc-sidebar-nav {
+  background: var(--kbc-chrome-color) !important;
+}
+
+.kbc-sidebar-panel {
+  border-right: 1px solid rgb(255 255 255 / 0.12) !important;
+}
+
+.kbc-sidebar-header {
+  height: 3.5rem !important;
+  min-height: 3.5rem !important;
+  border-bottom: 1px solid rgb(255 255 255 / 0.12) !important;
+  background: var(--kbc-chrome-color) !important;
+  box-shadow: none !important;
+}
+
+/* Keep workspace-specific sidebar overrides on the same chrome color as the
+   shared top header. The data attribute gives this final alignment rule the
+   same specificity as the older workspace rules without changing behavior. */
+.dashboard-theme[data-workspace-role] :is(.kbc-sidebar-panel, .kbc-sidebar-nav, .kbc-sidebar-header) {
+  background: var(--kbc-chrome-color) !important;
+}
+
+.dashboard-theme[data-workspace-role] .kbc-workspace-topbar {
+  background: var(--kbc-chrome-color) !important;
+}
+
+.dashboard-theme[data-workspace-role="admin"] .kbc-sidebar-header {
+  height: 3.75rem !important;
+  min-height: 3.75rem !important;
+}
+
+.dashboard-theme[data-workspace-role="curriculum"] .kbc-sidebar-header {
+  height: 4.375rem !important;
+  min-height: 4.375rem !important;
+}
+
+/* Let the sidebar's single gradient flow behind the brand row and navigation
+   instead of restarting at each nested element. This keeps the sidebar top
+   section visually identical to the sidebar body and the page header chrome. */
+.dashboard-theme[data-workspace-role] :is(.kbc-sidebar-header, .kbc-sidebar-nav) {
+  background: transparent !important;
+}
+
+.kbc-sidebar-brand {
+  border-radius: 0.625rem !important;
+  background: var(--kbc-surface) !important;
+  color: var(--kbc-primary-deep) !important;
+  box-shadow: 0 4px 12px rgb(20 5 49 / 0.22) !important;
+}
+
+.kbc-sidebar-role,
+.kbc-sidebar-header button {
+  color: rgb(255 255 255 / 0.92) !important;
+}
+
+.kbc-sidebar-nav {
+  scrollbar-color: rgb(255 255 255 / 0.25) transparent !important;
+}
+
+.kbc-sidebar-row {
+  min-height: 2.75rem;
+  margin: 0.12rem 0 !important;
+  border: 1px solid transparent !important;
+  background: transparent !important;
+  color: rgb(255 255 255 / 0.72) !important;
+  box-shadow: none !important;
+}
+
+.kbc-sidebar-row:hover {
+  border-color: rgb(255 255 255 / 0.1) !important;
+  background: rgb(255 255 255 / 0.1) !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}
+
+.kbc-sidebar-row.bg-primary-50,
+.kbc-sidebar-row[aria-current="page"] {
+  border-color: rgb(255 255 255 / 0.8) !important;
+  background: #fff !important;
+  color: var(--kbc-primary) !important;
+  box-shadow: 0 6px 16px -12px rgb(20 5 49 / 0.5) !important;
+}
+
+.kbc-sidebar-active-marker {
+  left: -1px !important;
+  width: 0.2rem !important;
+  height: 1.4rem !important;
+  background: var(--kbc-primary-accent) !important;
+  box-shadow: 0 0 10px rgb(139 92 246 / 0.55) !important;
+}
+
+.kbc-sidebar-icon-well {
+  width: 1.75rem !important;
+  height: 1.75rem !important;
+  flex-basis: 1.75rem !important;
+  border-radius: 0.5rem !important;
+  background: transparent !important;
+  color: inherit !important;
+  box-shadow: none !important;
+}
+
+.kbc-sidebar-row.bg-primary-50 .kbc-sidebar-icon-well,
+.kbc-sidebar-row[aria-current="page"] .kbc-sidebar-icon-well,
+.kbc-sidebar-row:hover .kbc-sidebar-icon-well {
+  background: var(--kbc-purple-soft) !important;
+  color: var(--kbc-primary) !important;
+  box-shadow: none !important;
+}
+
+.kbc-sidebar-child-icon-well {
+  width: 1.5rem !important;
+  height: 1.5rem !important;
+  flex-basis: 1.5rem !important;
+}
+
+.kbc-sidebar-expanded > div > div {
+  border-left-color: rgb(255 255 255 / 0.2) !important;
+}
+
+.kbc-sidebar-rail .kbc-sidebar-row {
+  min-height: 4.1rem;
+  margin: 0.18rem 0 !important;
+  border-color: transparent !important;
+  background: transparent !important;
+  color: rgb(255 255 255 / 0.76) !important;
+}
+
+.kbc-sidebar-rail .kbc-sidebar-row:hover,
+.kbc-sidebar-rail .kbc-sidebar-row.bg-primary-50,
+.kbc-sidebar-rail .kbc-sidebar-row[aria-current="page"] {
+  background: #fff !important;
+  color: var(--kbc-primary) !important;
+}
+
+.kbc-sidebar-flyout {
+  border-color: var(--kbc-border) !important;
+  background: var(--kbc-surface) !important;
+  box-shadow: var(--kbc-shadow-popover) !important;
+}
+
+/* ---------------------------- shared surfaces ------------------------------ */
+
+.dashboard-theme .page-container {
+  padding: 1rem 1.25rem 1.5rem;
+}
+
+.dashboard-theme .ui-panel,
+.dashboard-theme .ui-metric-card,
+.dashboard-theme .ui-filter-toolbar,
+.dashboard-theme .ui-data-table,
+.dashboard-theme .ui-action-row,
+.dashboard-theme .workspace-main .card-premium,
+.dashboard-theme .workspace-main :is(section, article, div)[class*="bg-background-50"][class*="rounded-"]:not(:has(> svg)),
+.dashboard-theme .workspace-main :is(section, article, div)[class*="bg-white"][class*="rounded-"]:not(:has(> svg)) {
+  border: 1px solid var(--kbc-border) !important;
+  border-radius: var(--kbc-radius-card) !important;
+  background: var(--kbc-surface) !important;
+  box-shadow: var(--kbc-shadow-card) !important;
+}
+
+.dashboard-theme .workspace-main .ui-panel:hover,
+.dashboard-theme .workspace-main .ui-metric-card:hover,
+.dashboard-theme .workspace-main .card-premium:hover {
+  border-color: rgb(139 92 246 / 0.28) !important;
+  box-shadow: 0 1px 2px rgb(36 27 53 / 0.04), 0 16px 30px -20px rgb(91 33 182 / 0.24) !important;
+}
+
+.dashboard-theme .workspace-main .ui-hero-banner,
+.dashboard-theme .workspace-main .workspace-hero-banner,
+.dashboard-theme .workspace-main .learner-super-admin-hero {
+  border: 0 !important;
+  background: var(--kbc-hero-gradient) !important;
+  box-shadow: 0 16px 32px -24px rgb(75 22 140 / 0.48) !important;
+}
+
+/* Existing page-owned gradient heroes remain feature surfaces, but use the
+   same KBC gradient so the workspaces read as one product. */
+.dashboard-theme .workspace-main :is(section, div)[style*="primary-950"],
+.dashboard-theme .workspace-main :is(section, div)[style*="primary-900"] {
+  background: var(--kbc-hero-gradient) !important;
+}
+
+/* ------------------------------ controls ---------------------------------- */
+
+.dashboard-theme .workspace-main :is(input, textarea, select),
+.learner-log-pro :is(input, textarea, select),
+.learner-log-pro-hours-test :is(input, textarea, select) {
+  min-height: var(--kbc-control-height);
+  border: 1px solid var(--kbc-border);
+  border-radius: var(--kbc-radius-control);
+  background: var(--kbc-surface);
+  color: var(--kbc-text);
+  box-shadow: inset 0 1px 2px rgb(36 27 53 / 0.025);
+}
+
+.dashboard-theme .workspace-main textarea,
+.learner-log-pro textarea,
+.learner-log-pro-hours-test textarea {
+  min-height: 6rem;
+}
+
+.dashboard-theme .workspace-main :is(input, textarea, select):focus,
+.learner-log-pro :is(input, textarea, select):focus,
+.learner-log-pro-hours-test :is(input, textarea, select):focus {
+  border-color: rgb(91 33 182 / 0.64) !important;
+  outline: none;
+  box-shadow: 0 0 0 3px rgb(139 92 246 / 0.16) !important;
+}
+
+.dashboard-theme .workspace-main :is(input, textarea, select)::placeholder,
+.learner-log-pro :is(input, textarea, select)::placeholder,
+.learner-log-pro-hours-test :is(input, textarea, select)::placeholder {
+  color: #A39AAC;
+}
+
+.dashboard-theme .workspace-main :is(button, a):has(> :is(svg.app-icon, svg.lucide)) {
+  align-items: center;
+  gap: 0.45rem;
+  white-space: nowrap;
+}
+
+/* Primary buttons stay purple. Gold is deliberately reserved for explicit
+   secondary/premium CTA classes and the two existing admin/report actions. */
+:is(button, a)[class~="bg-primary-500"]:not([role="tab"]):not([aria-pressed="true"]),
+:is(button, a)[class~="bg-primary-600"]:not([role="tab"]):not([aria-pressed="true"]),
+:is(button, a)[class~="bg-primary-700"]:not([role="tab"]):not([aria-pressed="true"]),
+.dashboard-theme .workspace-main :is(button, a).primary-action,
+.primary-action {
+  background: var(--kbc-primary) !important;
+  background-image: none !important;
+  border-color: transparent !important;
+  color: #fff !important;
+  box-shadow: 0 6px 16px rgb(91 33 182 / 0.2) !important;
+}
+
+:is(button, a)[class~="bg-primary-500"]:not(:disabled):hover,
+:is(button, a)[class~="bg-primary-600"]:not(:disabled):hover,
+:is(button, a)[class~="bg-primary-700"]:not(:disabled):hover,
+:is(button, a)[class~="hover:bg-primary-700"]:not(:disabled):hover,
+:is(button, a)[class~="hover:bg-primary-800"]:not(:disabled):hover,
+.dashboard-theme .workspace-main :is(button, a).primary-action:not(:disabled):hover,
+.primary-action:not(:disabled):hover {
+  background: var(--kbc-primary-secondary) !important;
+  box-shadow: 0 9px 20px rgb(91 33 182 / 0.28) !important;
+}
+
+.dashboard-theme .workspace-main :is(button, a)[class*="border-foreground-200"],
+.dashboard-theme .workspace-main :is(button, a)[class*="border-background-200"] {
+  border-color: var(--kbc-border);
+  background: var(--kbc-surface);
+  color: var(--kbc-primary);
+}
+
+.dashboard-theme .workspace-main :is(button, a)[class*="border-foreground-200"]:hover,
+.dashboard-theme .workspace-main :is(button, a)[class*="border-background-200"]:hover {
+  border-color: rgb(139 92 246 / 0.5);
+  background: var(--kbc-purple-wash);
+  color: var(--kbc-primary-deep);
+}
+
+.dashboard-theme .workspace-main :is(button, a):disabled,
+.dashboard-theme .workspace-main [aria-disabled="true"] {
+  opacity: 0.5;
+  box-shadow: none !important;
+}
+
+/* ------------------------------- tables ----------------------------------- */
+
+.dashboard-theme .workspace-main table {
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.dashboard-theme .workspace-main table thead th,
+.dashboard-theme .workspace-main .admin-cool-table thead th {
+  height: 2.75rem;
+  border-bottom: 1px solid var(--kbc-border) !important;
+  background: var(--kbc-purple-wash) !important;
+  color: var(--kbc-primary-deep) !important;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.055em;
+}
+
+.dashboard-theme .workspace-main table tbody tr,
+.dashboard-theme .workspace-main .admin-cool-table tbody tr {
+  background: var(--kbc-surface) !important;
+}
+
+.dashboard-theme .workspace-main table tbody tr:hover,
+.dashboard-theme .workspace-main .admin-cool-table tbody tr:hover {
+  background: var(--kbc-purple-wash) !important;
+  box-shadow: inset 3px 0 0 rgb(139 92 246 / 0.55);
+}
+
+.dashboard-theme .workspace-main table tbody td {
+  height: 3.15rem;
+  border-bottom: 1px solid rgb(233 228 240 / 0.86) !important;
+  color: #4B4358;
+  font-size: 0.78rem;
+}
+
+.dashboard-theme .workspace-main .overflow-x-auto:has(> table) {
+  border-color: var(--kbc-border) !important;
+  border-radius: var(--kbc-radius-card) !important;
+  background: var(--kbc-surface) !important;
+  box-shadow: var(--kbc-shadow-card) !important;
+}
+
+/* -------------------------------- states ----------------------------------- */
+
+.dashboard-theme .workspace-main .ui-status-badge {
+  min-height: 1.5rem;
+  border-radius: 999px !important;
+  font-size: 0.6875rem;
+  line-height: 1;
+}
+
+.dashboard-theme .workspace-main .ui-page-tabs [aria-pressed="true"] {
+  background: var(--kbc-primary) !important;
+  border-color: var(--kbc-primary) !important;
+  color: #fff !important;
+}
+
+.dashboard-theme .workspace-main [role="dialog"],
+.dashboard-theme [aria-modal="true"],
+.learner-log-pro [role="dialog"],
+.learner-log-pro-hours-test [role="dialog"] {
+  border: 1px solid var(--kbc-border) !important;
+  border-radius: 1rem !important;
+  background: var(--kbc-surface) !important;
+  box-shadow: var(--kbc-shadow-popover) !important;
+}
+
+.kbc-skeleton {
+  background: linear-gradient(90deg, var(--kbc-purple-wash) 25%, #EEE8FA 50%, var(--kbc-purple-wash) 75%);
+  background-size: 200% 100%;
+  animation: kbc-skeleton-shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes kbc-skeleton-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@media (max-width: 767px) {
+  .dashboard-theme .workspace-main {
+    padding: 0.5rem;
+  }
+
+  .dashboard-theme .page-container {
+    padding: 0.75rem;
+  }
+
+  .dashboard-theme .workspace-main table {
+    min-width: 42rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kbc-skeleton {
+    animation: none;
+  }
+}
+
+/* Curriculum Library heroes use a leading icon in each KPI tile so every
+   library destination shares the same compact reference treatment. */
+.dashboard-theme .workspace-main .curriculum-library-hero {
+  min-height: 9.4rem !important;
+  box-shadow: 0 16px 32px -22px rgb(47 20 112 / 0.42) !important;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__content {
+  min-height: 9.4rem;
+  gap: 1rem;
+  padding: 1.15rem 1.4rem !important;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__identity {
+  gap: 1rem;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__icon {
+  width: 5.1rem;
+  height: 5.1rem;
+  border: 1px solid rgb(255 255 255 / 0.2);
+  border-radius: 1rem;
+  background: rgb(255 255 255 / 0.2);
+  box-shadow: 0 8px 18px -12px rgb(36 8 91 / 0.48);
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__icon > svg {
+  width: 2.35rem;
+  height: 2.35rem;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-title {
+  font-size: 1.55rem;
+  line-height: 1.15;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-description {
+  max-width: 42rem;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: 0.65rem;
+}
+
+.dashboard-theme .workspace-main .question-bank-hero .workspace-hero-banner__stats {
+  grid-template-columns: repeat(3, minmax(7rem, 1fr));
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-metric--leading-icon {
+  display: flex;
+  width: auto;
+  min-width: 7rem;
+  height: 5.25rem;
+  min-height: 5.25rem;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.85rem 1rem !important;
+  border: 1px solid rgb(255 255 255 / 0.68) !important;
+  border-radius: 0.85rem !important;
+  background: rgb(255 255 255 / 0.84) !important;
+  box-shadow: 0 10px 24px -18px rgb(39 8 102 / 0.5) !important;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-metric--leading-icon::before {
+  display: none;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-metric__icon {
+  width: 3rem;
+  height: 3rem;
+  background: #f0eaff;
+  color: #4c1d95;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-metric__icon > svg {
+  width: 1.3rem;
+  height: 1.3rem;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-metric__body {
+  gap: 0.18rem;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-metric__value {
+  color: #111827;
+  font-size: 1.55rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-metric__label {
+  color: #746c82;
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 1279px) and (min-width: 1024px) {
+  .dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__stats {
+    grid-template-columns: repeat(3, minmax(7.25rem, 1fr));
+  }
+
+  .dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-metric--leading-icon {
+    width: auto;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 1023px) {
+  .dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__content {
+    min-height: 0;
+  }
+
+  .dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__stats {
+    width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-metric--leading-icon {
+    width: auto;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__content {
+    padding: 1rem !important;
+  }
+
+  .dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__identity {
+    align-items: flex-start;
+  }
+
+  .dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-banner__stats {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-metric--leading-icon {
+    width: 100%;
+  }
+}
+
+/* ------------------------ coach upcoming schedule ------------------------ */
+
+.coach-upcoming-schedule {
+  padding: 1rem !important;
+}
+
+.coach-upcoming-schedule__header {
+  gap: 0.75rem;
+}
+
+.coach-upcoming-schedule__content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.75rem !important;
+}
+
+.coach-upcoming-schedule__group {
+  container-type: inline-size;
+  padding: 0.75rem !important;
+}
+
+.coach-upcoming-schedule__group-header {
+  column-gap: 0.75rem;
+  padding-bottom: 0.625rem !important;
+}
+
+.coach-upcoming-schedule__group-header > :first-child {
+  min-width: 0;
+}
+
+.coach-upcoming-schedule__count {
+  min-width: 1.75rem;
+  text-align: center;
+}
+
+.coach-upcoming-schedule__events {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-rows: minmax(2.75rem, auto);
+  align-items: stretch;
+  column-gap: 0.875rem;
+  row-gap: 0.625rem;
+  margin-top: 0.625rem;
+}
+
+.coach-upcoming-schedule__event {
+  align-items: flex-start;
+  min-height: 2.75rem;
+  padding: 0.375rem 0.5rem !important;
+}
+
+@container (min-width: 32rem) {
+  .coach-upcoming-schedule__events {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (min-width: 48rem) {
+  .coach-upcoming-schedule__events {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }

@@ -52,7 +52,7 @@ export const PageTabs = memo(function PageTabs({
   return (
     <nav
       aria-label={label}
-      className={cn('-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5', className)}
+      className={cn('ui-page-tabs -mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5', className)}
     >
       {visible.map((item) => {
         const active = value === item.value;

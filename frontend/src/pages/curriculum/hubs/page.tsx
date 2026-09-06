@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { curriculumNavItems } from '@/mocks/navigation';
@@ -153,6 +154,14 @@ function CurriculumHub({ kind }: { kind: HubKind }) {
   });
   const copy = HUB_COPY[kind];
   const primary = cards[0];
+  const summaryStats = hubStats(kind, {
+    programmes: programmes.length,
+    modules: modules.length,
+    cohorts: activeCohorts.length,
+    groups: groups.length,
+    sessions: sessions.length,
+    issues: programmesWithoutKsb.length + modulesWithoutKsb.length + unassignedTutors.length + unassignedCoaches.length,
+  });
 
   return (
     <WorkspaceShell
@@ -165,15 +174,18 @@ function CurriculumHub({ kind }: { kind: HubKind }) {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <main className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6">
+      <main className={`min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 ${kind === 'library' ? 'curriculum-library-page' : ''}`}>
         <div className="mx-auto max-w-[1560px] space-y-4">
-          <section className="overflow-hidden rounded-2xl border border-primary-100 bg-background-50 shadow-sm">
-            <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:p-6">
-              <div className="min-w-0">
-                <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-primary-600">{copy.eyebrow}</p>
-                <h1 className="mt-2 font-heading text-3xl font-bold tracking-tight text-foreground-950">{copy.title}</h1>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-foreground-500">{copy.description}</p>
-              </div>
+          <WorkspaceHeroBanner
+            className={kind === 'library' ? 'curriculum-library-hero' : undefined}
+            decorative={kind === 'library'}
+            eyebrow={kind === 'library' ? 'Learning resources' : undefined}
+            title={copy.title}
+            description={copy.description}
+            icon={kind === 'library' ? 'ri-folder-open-line' : 'ri-calendar-schedule-line'}
+            statIconPosition={kind === 'library' ? 'leading' : 'inline'}
+            stats={summaryStats.map(stat => ({ label: stat.label, value: String(stat.value), icon: kind === 'library' ? stat.icon : undefined }))}
+            actions={(
               <Link
                 to={primary.href}
                 className={`inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-5 text-[12px] font-bold text-white ${
@@ -182,31 +194,18 @@ function CurriculumHub({ kind }: { kind: HubKind }) {
                     : 'bg-primary-600 shadow-sm transition-smooth hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2'
                 }`}
               >
-                <AppIcon className={primary.icon} />
+                <AppIcon className={primary.icon} size={18} />
                 Open {primary.title}
                 <AppIcon className="ri-arrow-right-line" />
               </Link>
-            </div>
-          </section>
+            )}
+          />
 
           {error && (
             <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[12px] font-semibold text-red-700">
               Some live curriculum counts could not be loaded: {error}
             </div>
           )}
-
-          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {hubStats(kind, {
-              programmes: programmes.length,
-              modules: modules.length,
-              cohorts: activeCohorts.length,
-              groups: groups.length,
-              sessions: sessions.length,
-              issues: programmesWithoutKsb.length + modulesWithoutKsb.length + unassignedTutors.length + unassignedCoaches.length,
-            }).map(stat => (
-              <StatCard key={stat.label} {...stat} loading={loading} />
-            ))}
-          </section>
 
           <section>
             <div className="mb-3 flex items-end justify-between gap-4">
