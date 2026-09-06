@@ -275,3 +275,24 @@ $RECYCLE.BIN/
 
 # Local dev launcher
 /backend/run.ps1
+
+# ---------------------------------------------------------------------------
+# Security-testing infrastructure & planning docs — LOCAL ONLY (not shipped)
+# ---------------------------------------------------------------------------
+# The Neon test-branch workflow (sanitise/seed SQL + the branch runserver
+# wrapper) and the Playwright baseline / V1–V7 verification suite are kept out
+# of the repo by decision: they are tied to the private `security_test` branch
+# and its seeded ids, and the planning/audit notes are working documents. The
+# product-code fixes and the backend exploit test suite still ship as normal.
+/backend/scripts/runserver_test_branch.sh
+/backend/scripts/sanitise_test_branch.sql
+/backend/scripts/seed_test_branch.sql
+/backend/scripts/seed_verify_branch.sql
+/frontend/e2e/
+/frontend/playwright.config.ts
+/frontend/.gitignore
+
+# Planning / audit working documents (kept local)
+/SECURITY_AUDIT.md
+/M2_PLAN.md
+/HANDOVER_M2_TO_NEXT.md

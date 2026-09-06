@@ -27,6 +27,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
 from login.permissions import staff_only
+from login.permissions import learner_self_or_staff
 from login.permissions import require_access
 from login.models import Invitation, LoginAccount, LoginSession, PasswordReset
 
@@ -566,7 +567,10 @@ def _create_profile_from_delivery_payload(payload, *, apprenticeship):
 
 
 @csrf_exempt
-@staff_only(writes_only=True)
+# A5/A4: the owner learner OR staff may READ their coach contact; only staff may
+# SET it (the learner-write block below). Previously staff_only(writes_only=True)
+# left the GET open to any authenticated caller (coach name/email of any learner).
+@learner_self_or_staff(kwarg="pk")
 def learner_coach(request, pk):
     """Read/update a learner's coach contact, stored on "Learner"."learners"
     (LearnerProfile, columns coach_name / coach_email), resolved from the
@@ -600,6 +604,12 @@ def learner_coach(request, pk):
         return JsonResponse({"coachName": active.coach_name or "", "coachEmail": active.coach_email or ""})
 
     if request.method in ("PATCH", "PUT"):
+        # A coach is assigned by staff from the learner's board, never by the
+        # learner themselves — the gate admits the owner learner for the GET, so
+        # writes are refused here.
+        account = getattr(request, "login_account", None)
+        if account is not None and account.role == "learner":
+            return _error("Only staff can set a learner's coach.", 403)
         try:
             payload = _parse_body(request)
         except ValidationError as exc:
@@ -630,7 +640,7 @@ def learner_coach(request, pk):
 
 
 @csrf_exempt
-@staff_only(writes_only=True)
+@staff_only()  # A4: the learner directory (PII) — staff/admin only, reads too.
 def enrolment_users(request):
     """The single learner collection — both kinds live in one table.
 
@@ -723,6 +733,10 @@ def enrolment_users(request):
 
 
 @csrf_exempt
+# Intentionally ungated (reviewed 2026-09-05): pure static enum lists (status,
+# type, programmeStatus, position, learnerType choices), no DB read and no PII,
+# so any authenticated caller under the ANY prefix may read them. Contrast
+# employers/options/, which IS staff-gated because it discloses staff usernames.
 def enrolment_user_options(request):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -741,7 +755,7 @@ def enrolment_user_options(request):
 # allow_own_learner: the onboarding wizard submits on the learner's own behalf.
 # The payload is narrowed to LEARNER_SELF_WRITABLE_KEYS below — owning the row
 # is not permission to set programmeStatus on it.
-@staff_only(writes_only=True, allow_own_learner="pk")
+@staff_only(allow_own_learner="pk")  # A4: staff, or the learner reading their own.
 def enrolment_user_detail(request, pk):
     try:
         # all_learners, not objects: `objects` is scoped to apprenticeship rows, so
@@ -921,7 +935,7 @@ def enrolment_user_finish(request, pk):
 
 
 @csrf_exempt
-@staff_only(writes_only=True)
+@staff_only()  # A4: the commercial-learner directory (PII) — staff/admin only.
 def commercial_users(request):
     if request.method == "GET":
         try:
@@ -948,7 +962,7 @@ def commercial_users(request):
 
 
 @csrf_exempt
-@staff_only(writes_only=True)
+@staff_only()  # A4: staff directory leaks access grants — staff/admin only, reads too.
 def staff_users(request):
     """Staff/admin accounts — enrolment."Staff_users".
 
@@ -993,7 +1007,7 @@ def staff_users(request):
 
 
 @csrf_exempt
-@staff_only(writes_only=True)
+@staff_only()  # A4: staff record incl. access grant — staff/admin only, reads too.
 def staff_user_detail(request, pk):
     try:
         user = StaffUser.objects.get(pk=pk)
@@ -1058,7 +1072,12 @@ def staff_user_detail(request, pk):
 
 
 @csrf_exempt
-@staff_only(writes_only=True)
+@staff_only()  # A4: commercial-learner record (PII) — staff/admin only, reads too.
+# NB: deliberately NOT allow_own_learner. This view keys on Learner"."learners.id,
+# while a learner's subject_id is a Created_users.id (independent sequence), so the
+# "own record" a learner could match here is never actually their own — the
+# parameter grants no functional access and only opens an unrestricted learner
+# PATCH path (A23). Kept as plain staff-only, matching pre-M2 behaviour.
 def commercial_user_detail(request, pk):
     try:
         profile = _learner_profiles_with_plan().filter(pk=pk).first()
