@@ -715,6 +715,8 @@ export interface CalendarEvent {
   isoDate?: string;
   /** Teams/meeting join URL for coach-scheduled sessions. */
   meetingLink?: string;
+  eventKey?: string;
+  source?: string;
   /** Stored duration used when an existing booking is rescheduled. */
   durationMinutes?: number;
   /** Backend booking lifecycle status; kept separate from the display badge. */

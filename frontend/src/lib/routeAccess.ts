@@ -145,6 +145,38 @@ export function homeRouteFor(
   return account.accessHome || HOME_BY_ROLE[account.role];
 }
 
+function routePathname(path: string | null | undefined): string {
+  const cleaned = String(path || '').trim();
+  if (!cleaned) return '';
+  return cleaned.split(/[?#]/, 1)[0].replace(/\/+$/, '') || '/';
+}
+
+export function isBareLearnerWorkspacePath(path: string | null | undefined): boolean {
+  return routePathname(path) === '/workspace/learner';
+}
+
+/**
+ * Where LoginPage should send a successfully authenticated account.
+ *
+ * `from` is helpful for pasted deep links, but `/workspace/learner` without a
+ * learner id is the learner self-workspace. Staff can open learner pages for
+ * read-only review, so route access deliberately allows it; as a post-login
+ * return target, though, it often means "the browser happened to be looking at
+ * the remembered learner". In that case a coach/admin should land in their own
+ * workspace instead of inheriting `localStorage.my_learner`.
+ */
+export function postLoginRouteFor(
+  account: Pick<AuthUser, 'role' | 'accessHome' | 'subjectId'>,
+  requestedPath?: string | null,
+): string {
+  const requested = String(requestedPath || '').trim();
+  if (!requested) return homeRouteFor(account);
+  if (account.role !== 'learner' && isBareLearnerWorkspacePath(requested)) {
+    return homeRouteFor(account);
+  }
+  return requested;
+}
+
 const HOME_BY_ROLE: Record<Role, string> = {
   admin: '/workspace/admin',
   staff: '/users',
