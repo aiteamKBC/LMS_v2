@@ -8,6 +8,7 @@ signed server-session duration.
 import json
 import math
 import uuid
+from zoneinfo import ZoneInfo
 
 from django.core import signing
 from django.http import JsonResponse
@@ -36,6 +37,19 @@ class TrackingSessionError(ValueError):
 def component_access_is_open(at=None):
     """Learning components are available 24/7."""
     return True
+
+
+def outside_uk_working_hours(at=None):
+    """Whether ``at`` falls outside 07:00-19:00 Monday-Friday in the UK.
+
+    Europe/London applies GMT/BST automatically. Components remain available;
+    callers use this only to require an explicit out-of-hours declaration.
+    """
+    instant = at or timezone.now()
+    if timezone.is_naive(instant):
+        instant = timezone.make_aware(instant, ZoneInfo("Europe/London"))
+    local = instant.astimezone(ZoneInfo("Europe/London"))
+    return local.weekday() >= 5 or local.hour < 7 or local.hour >= 19
 
 
 def enforce_component_access_window(at=None):

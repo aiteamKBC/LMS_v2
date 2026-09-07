@@ -33,7 +33,10 @@ const MAX_BYTES = 50 * 1024 * 1024;
 
 const STATUS_META: Record<string, { label: string; bg: string; color: string; icon: string }> = {
   pending: { label: 'Scanning…', bg: 'bg-amber-100', color: 'text-amber-700', icon: 'ri-loader-4-line' },
-  approved: { label: 'Approved', bg: 'bg-emerald-100', color: 'text-emerald-700', icon: 'ri-checkbox-circle-line' },
+  // The backend lifecycle name remains `approved` because it means the blob
+  // reached the downloadable Azure container. It is not a tutor decision, so
+  // the learner-facing label must describe the actual event.
+  approved: { label: 'Uploaded', bg: 'bg-emerald-100', color: 'text-emerald-700', icon: 'ri-checkbox-circle-line' },
   rejected: { label: 'Rejected', bg: 'bg-red-100', color: 'text-red-700', icon: 'ri-close-circle-line' },
 };
 
@@ -44,7 +47,7 @@ function formatSize(bytes: number): string {
 }
 
 export function AssignmentEvidence({
-  kind, learnerId, componentId, trainingPlanDetails, onUploaded, onFileSelected, inputId, showPanel = true,
+  kind, learnerId, componentId, trainingPlanDetails, onUploaded, onFileSelected, inputId, showPanel = true, readOnly = false,
 }: {
   kind: LearnerKind;
   learnerId: string;
@@ -58,6 +61,8 @@ export function AssignmentEvidence({
   inputId?: string;
   /** Keep only the file input mounted when the page supplies its own trigger. */
   showPanel?: boolean;
+  /** Show existing files without allowing upload or removal. */
+  readOnly?: boolean;
 }) {
   const [files, setFiles] = useState<EvidenceRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -154,7 +159,7 @@ export function AssignmentEvidence({
         id={inputId}
         type="file"
         accept={ACCEPT}
-        disabled={uploading}
+        disabled={uploading || readOnly}
         className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
       />
@@ -165,18 +170,20 @@ export function AssignmentEvidence({
     <div>
       <div className="flex items-center justify-between gap-3 mb-2">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Upload evidence</p>
-        <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600 hover:text-emerald-700 cursor-pointer">
-          <AppIcon className="ri-upload-2-line" /> {uploading ? 'Uploading…' : 'Choose file'}
-          <input
-            ref={inputRef}
-            id={inputId}
-            type="file"
-            accept={ACCEPT}
-            disabled={uploading}
-            className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
-          />
-        </label>
+        {!readOnly && (
+          <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600 hover:text-emerald-700 cursor-pointer">
+            <AppIcon className="ri-upload-2-line" /> {uploading ? 'Uploading…' : 'Choose file'}
+            <input
+              ref={inputRef}
+              id={inputId}
+              type="file"
+              accept={ACCEPT}
+              disabled={uploading}
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+            />
+          </label>
+        )}
       </div>
       <p className="text-[11px] text-foreground-400 mb-3">Word, PowerPoint, PDF, PNG, JPEG or MP4, up to 50 MB.</p>
 
@@ -225,7 +232,7 @@ export function AssignmentEvidence({
                 {/* Remove, so a learner can correct a wrong file: deleting the
                     one that is here leaves the uploader ready for the right
                     one, which is the whole reupload path. */}
-                {confirmingId === f.id ? (
+                {!readOnly && (confirmingId === f.id ? (
                   <span className="shrink-0 inline-flex items-center gap-1.5">
                     <button
                       onClick={() => handleDelete(f.id)}
@@ -250,7 +257,7 @@ export function AssignmentEvidence({
                   >
                     <AppIcon className="ri-delete-bin-line" />
                   </button>
-                )}
+                ))}
               </li>
             );
           })}

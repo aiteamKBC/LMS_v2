@@ -27,6 +27,13 @@ export interface LearningReflectionSubmissionInput {
   otjhConfirmed: boolean;
   signedDeclaration: boolean;
   qualityScore: number;
+  /** Assignment wizard fields. Other reflection flows omit these. */
+  submissionMode?: 'draft' | 'submit';
+  assignmentAnswer?: string;
+  whatYouLearned?: string;
+  businessImpact?: string;
+  outsideWorkingHours?: boolean;
+  outsideWorkingHoursConfirmed?: boolean;
 }
 
 export interface StoredLearningReflectionSubmission extends LearningReflectionSubmissionInput {

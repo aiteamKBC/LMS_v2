@@ -683,6 +683,12 @@ class LearnerProfile(models.Model):
                 "claimedSeconds": entry.claimed_seconds,
                 "serverSessionSeconds": entry.server_session_seconds,
                 "verifiedSeconds": entry.verified_seconds,
+                "outsideWorkingHours": entry.outside_working_hours,
+                "outsideWorkingHoursConfirmed": entry.outside_working_hours_confirmed,
+                "outsideWorkingHoursConfirmedAt": (
+                    entry.outside_working_hours_confirmed_at.isoformat()
+                    if entry.outside_working_hours_confirmed_at else ""
+                ),
                 "ksbs": [
                     row.ksb_code
                     for row in entry.ksb_links.all()
@@ -901,6 +907,9 @@ class LearnerProgressEntry(models.Model):
     claimed_seconds = models.PositiveIntegerField(null=True, blank=True)
     server_session_seconds = models.PositiveIntegerField(null=True, blank=True)
     verified_seconds = models.PositiveIntegerField(null=True, blank=True)
+    outside_working_hours = models.BooleanField(default=False)
+    outside_working_hours_confirmed = models.BooleanField(default=False)
+    outside_working_hours_confirmed_at = models.DateTimeField(null=True, blank=True)
     feed_kind = models.CharField(max_length=30, blank=True)
     feed_action = models.TextField(blank=True)
     feed_title = models.TextField(blank=True)

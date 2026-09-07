@@ -568,6 +568,16 @@ export function validateComponentAuthoring(component: ComponentValidationTarget,
   // before that still carries the text in the legacy key, so both count.
   const reflectionQuestion = String(component.reflectionQuestion || settings.reflectionPrompt || '').trim();
   if (component.reflectionRequired && !reflectionQuestion) issues.push({ path: `${pathPrefix}.reflectionQuestion`, message: 'A reflection question is required when reflection is enabled.' });
+  // Draft components must remain saveable while the author is still building
+  // the module. The question becomes a hard validation requirement only when
+  // the assignment is promoted into the QA/publishing workflow.
+  if (component.type === 'assignment' && status !== 'Draft') {
+    const assignmentQuestion = String(settings.assignmentContent || settings.assignmentBrief || '')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;|&#160;/gi, ' ')
+      .trim();
+    if (!assignmentQuestion) issues.push({ path: `${pathPrefix}.settings.assignmentContent`, message: 'An assignment question is required.' });
+  }
   Object.keys(settings).forEach(key => {
     if (!allowed.has(key)) issues.push({ path: `${pathPrefix}.settings.${key}`, message: `Unsupported setting "${key}" for ${component.type}.` });
   });
@@ -624,7 +634,11 @@ export function validateModuleAuthoringStructure(module: ModuleValidationTarget)
   module.weekStructure.forEach((week, weekIndex) => {
     if (!String(week.title || '').trim()) issues.push({ path: `weekStructure.${weekIndex}.title`, message: `Week ${weekIndex + 1} needs a title.` });
     week.components.forEach((component, componentIndex) => {
-      issues.push(...validateComponentAuthoring(component, `weekStructure.${weekIndex}.components.${componentIndex}`));
+      const location = `${String(week.title || '').trim() || `Week ${weekIndex + 1}`} / ${String(component.title || '').trim() || `Component ${componentIndex + 1}`}`;
+      issues.push(...validateComponentAuthoring(component, `weekStructure.${weekIndex}.components.${componentIndex}`).map(issue => ({
+        ...issue,
+        message: `${location}: ${issue.message}`,
+      })));
     });
   });
   return issues;
@@ -632,9 +646,8 @@ export function validateModuleAuthoringStructure(module: ModuleValidationTarget)
 
 export function firstValidationMessage(issues: ValidationIssue[]) {
   if (!issues.length) return '';
-  const first = issues[0];
-  const extra = issues.length > 1 ? ` (${issues.length - 1} more issue${issues.length === 2 ? '' : 's'}).` : '';
-  return `${first.message}${extra}`;
+  if (issues.length === 1) return issues[0].message;
+  return `${issues.length} issues: ${issues.map(issue => issue.message).join(' • ')}`;
 }
 
 function isHttpUrl(value: string) {

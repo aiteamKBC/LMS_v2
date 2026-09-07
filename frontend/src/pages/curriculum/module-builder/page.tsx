@@ -3128,7 +3128,7 @@ function TypeSpecificFields({
   const [uploadError, setUploadError] = useState('');
   const [teamsMeetingOpen, setTeamsMeetingOpen] = useState(false);
 
-  const handleResourceUpload = async (file: File, componentType: 'podcast' | 'powerpoint' | 'reading' | 'assignment') => {
+  const handleResourceUpload = async (file: File, componentType: 'podcast' | 'powerpoint' | 'reading') => {
     setUploadingResource(true);
     setUploadError('');
     try {
@@ -3153,9 +3153,6 @@ function TypeSpecificFields({
       } else if (componentType === 'reading') {
         onSettingChange('readingSource', 'File');
         onSettingChange('resourceUrl', uploaded.url);
-      } else {
-        onSettingChange('assignmentFileName', uploaded.fileName);
-        onSettingChange('assignmentFileUrl', uploaded.url);
       }
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Unable to upload file.');
@@ -3458,18 +3455,10 @@ function TypeSpecificFields({
   if (component.type === 'assignment') {
     return (
       <EditorBlock title="Assignment">
-        <TextArea label="Assignment brief" value={getString('assignmentBrief')} onChange={value => onSettingChange('assignmentBrief', value)} rows={4} />
-        <ComponentResourceUpload
-          label="Upload assignment file"
-          accept=".doc,.docx,.pdf,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.zip,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/csv,application/zip"
-          uploadedName={getString('uploadedFileName') || getString('assignmentFileName')}
-          uploadedUrl={getString('uploadedFileUrl') || getString('assignmentFileUrl')}
-          uploadedSize={getNumber('uploadedFileSize')}
-          uploading={uploadingResource}
-          error={uploadError}
-          onUpload={file => handleResourceUpload(file, 'assignment')}
-        />
-        <TextArea label="Submission instructions" value={getString('submissionInstructions')} onChange={value => onSettingChange('submissionInstructions', value)} rows={3} />
+        <RichTextDraft label="Assignment question" value={getString('assignmentContent') || getString('assignmentBrief')} onChange={value => onSettingChange('assignmentContent', value)} rows={14} htmlOnly />
+        <p className="rounded-lg border border-primary-100 bg-primary-50 px-3 py-2 text-[11px] font-medium leading-5 text-primary-700">
+          Learners answer this question in the three-step assignment form. They can optionally upload PDF, image, Word, PowerPoint or video evidence, which is stored securely in Azure.
+        </p>
         <TextInput label="Due timing relative to week" value={getString('dueTiming')} onChange={value => onSettingChange('dueTiming', value)} />
       </EditorBlock>
     );
@@ -4539,7 +4528,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
   const [sourceMode, setSourceMode] = useState<'standard' | 'profile'>('profile');
   const [addingKsbs, setAddingKsbs] = useState(false);
   const [ksbSearch, setKsbSearch] = useState('');
-  const [ksbTypeFilter, setKsbTypeFilter] = useState<'all' | 'knowledge' | 'skill' | 'behaviour'>('all');
+  const [ksbTypeFilter, setKsbTypeFilter] = useState<'knowledge' | 'skill' | 'behaviour'>('knowledge');
   const sourceLocked = Boolean(lockedSourceId);
   const standardSourceOptions = useMemo(() => standards.map(standard => ({
       id: ksbStandardSourceId(standard),
@@ -4608,6 +4597,13 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
     },
     { knowledge: 0, skill: 0, behaviour: 0 },
   ), [selectedKsbIds, sourceKsbOptions]);
+  const availableKindCounts = useMemo(() => sourceKsbOptions.reduce(
+    (counts, option) => {
+      counts[sessionKsbKind(option.code)] += 1;
+      return counts;
+    },
+    { knowledge: 0, skill: 0, behaviour: 0 },
+  ), [sourceKsbOptions]);
   const optionLimitReached = (option: KsbOption) => {
     if (!limitPerKind || selectedKsbIds.has(option.id)) return false;
     const kind = sessionKsbKind(option.code);
@@ -4616,8 +4612,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
   const filteredKsbOptions = useMemo(() => {
     const query = ksbSearch.trim().toLowerCase();
     return sourceKsbOptions.filter(option => {
-      const tone = ksbVisualTone(option.code, option.type);
-      if (ksbTypeFilter !== 'all' && tone.label.toLowerCase() !== ksbTypeFilter) return false;
+      if (sessionKsbKind(option.code) !== ksbTypeFilter) return false;
       if (!query) return true;
       return option.code.toLowerCase().includes(query) || option.description.toLowerCase().includes(query);
     });
@@ -4722,32 +4717,46 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
             ) : null}
           </div>
           {resolvedSelectedSource && Boolean(sourceKsbOptions.length) && (
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="relative flex-1 sm:max-w-[220px]">
+            <div className="space-y-3">
+              <div className="grid grid-cols-3 gap-2" role="tablist" aria-label="KSB categories">
+                {([
+                  { value: 'knowledge', code: 'K', label: 'Knowledge', activeClass: 'border-violet-400 bg-violet-600 text-white', iconClass: 'bg-violet-100 text-violet-700' },
+                  { value: 'skill', code: 'S', label: 'Skills', activeClass: 'border-amber-400 bg-amber-500 text-white', iconClass: 'bg-amber-100 text-amber-700' },
+                  { value: 'behaviour', code: 'B', label: 'Behaviours', activeClass: 'border-emerald-400 bg-emerald-600 text-white', iconClass: 'bg-emerald-100 text-emerald-700' },
+                ] as const).map(category => {
+                  const active = ksbTypeFilter === category.value;
+                  const chosen = existingKindCounts[category.value] + selectedKindCounts[category.value];
+                  return (
+                    <button
+                      key={category.value}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => setKsbTypeFilter(category.value)}
+                      className={`rounded-xl border px-2 py-2.5 text-left transition-smooth ${active ? category.activeClass : 'border-background-200 bg-background-100 text-foreground-700 hover:border-primary-200 hover:bg-background-50'}`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg text-[12px] font-black ${active ? 'bg-white/20 text-white' : category.iconClass}`}>{category.code}</span>
+                        <span className="min-w-0">
+                          <span className="block truncate text-[10px] font-black sm:text-[11px]">{category.label}</span>
+                          <span className={`block text-[9px] font-semibold ${active ? 'text-white/75' : 'text-foreground-400'}`}>
+                            {availableKindCounts[category.value]} available{limitPerKind ? ` · ${chosen}/${limitPerKind} chosen` : ''}
+                          </span>
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="relative">
                 <AppIcon className="ri-search-line absolute left-2.5 top-1/2 -translate-y-1/2 text-[12px] text-foreground-400"></AppIcon>
                 <input
                   type="text"
                   value={ksbSearch}
                   onChange={event => setKsbSearch(event.target.value)}
-                  placeholder="Search KSB code or text"
+                  placeholder={`Search ${ksbTypeFilter} KSBs`}
                   className="h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 pl-7 pr-2 text-[11px] font-semibold text-foreground-900 outline-none focus:border-primary-300"
                 />
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {(['all', 'knowledge', 'skill', 'behaviour'] as const).map(filterValue => (
-                  <button
-                    key={filterValue}
-                    type="button"
-                    onClick={() => setKsbTypeFilter(filterValue)}
-                    className={`rounded-full px-2.5 py-1 text-[10px] font-bold capitalize transition-smooth ${
-                      ksbTypeFilter === filterValue
-                        ? 'bg-primary-500 text-white'
-                        : 'bg-background-100 text-foreground-500 hover:bg-background-200'
-                    }`}
-                  >
-                    {filterValue}
-                  </button>
-                ))}
               </div>
             </div>
           )}
