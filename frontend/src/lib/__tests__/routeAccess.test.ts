@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { homeRouteFor, mayAccessRoute, rolesForRoute } from '../routeAccess';
+import {
+  homeRouteFor,
+  isBareLearnerWorkspacePath,
+  mayAccessRoute,
+  postLoginRouteFor,
+  rolesForRoute,
+} from '../routeAccess';
 import type { Role } from '@/api/auth';
 
 const as = (role: Role) => ({ role });
@@ -116,5 +122,43 @@ describe('homeRouteFor', () => {
     expect(
       homeRouteFor({ role: 'staff', accessHome: '/workspace/curriculum', subjectId: 1 }),
     ).toBe('/workspace/curriculum');
+  });
+});
+
+describe('postLoginRouteFor', () => {
+  it('keeps a learner on their own bare learner workspace', () => {
+    expect(
+      postLoginRouteFor({ role: 'learner', accessHome: null, subjectId: 42 }, '/workspace/learner'),
+    ).toBe('/workspace/learner');
+  });
+
+  it('sends staff away from a stale bare learner workspace return target', () => {
+    expect(
+      postLoginRouteFor({ role: 'staff', accessHome: '/workspace/coach', subjectId: 1 }, '/workspace/learner'),
+    ).toBe('/workspace/coach');
+  });
+
+  it('sends admins away from a stale bare learner workspace return target with query params', () => {
+    expect(
+      postLoginRouteFor({ role: 'admin', accessHome: '/workspace/admin', subjectId: 1 }, '/workspace/learner?tab=attendance'),
+    ).toBe('/workspace/admin');
+  });
+
+  it('keeps explicit learner drill-down links for staff review', () => {
+    expect(
+      postLoginRouteFor({ role: 'staff', accessHome: '/workspace/coach', subjectId: 1 }, '/workspace/learner/commercial/19'),
+    ).toBe('/workspace/learner/commercial/19');
+  });
+
+  it('falls back to the account home when there is no return target', () => {
+    expect(
+      postLoginRouteFor({ role: 'staff', accessHome: '/workspace/tutor', subjectId: 1 }, ''),
+    ).toBe('/workspace/tutor');
+  });
+
+  it('recognises only the bare learner workspace as ambiguous', () => {
+    expect(isBareLearnerWorkspacePath('/workspace/learner/')).toBe(true);
+    expect(isBareLearnerWorkspacePath('/workspace/learner/apprenticeship/82')).toBe(false);
+    expect(isBareLearnerWorkspacePath('/learner/attendance')).toBe(false);
   });
 });

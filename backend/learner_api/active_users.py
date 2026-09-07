@@ -629,6 +629,8 @@ def hydrate_training_plan(plan):
             cursor.execute(
                 """
                 SELECT m.module_catalogue_id, m.title,
+                       m.start_date, m.end_date, m.sessions_number,
+                       m.session_week_day, m.cohort_id,
                        w.id, w.title, w.week_number,
                        c.id, c.title, c.type, c.expected_otjh
                 FROM curriculum.modules m
@@ -646,13 +648,21 @@ def hydrate_training_plan(plan):
         return selected
 
     titles = {}
+    module_schedules = {}
     ids_by_title = {}
     weeks_by_module = {}
     seen_weeks = set()
-    for module_id, module_title, week_id, week_title, week_number, component_id, component_title, component_type, component_expected_otjh in rows:
+    for module_id, module_title, module_start, module_end, sessions_number, session_week_day, cohort_id, week_id, week_title, week_number, component_id, component_title, component_type, component_expected_otjh in rows:
         module_id = _s(module_id)
         titles[module_id] = _s(module_title) or module_id
         ids_by_title[titles[module_id]] = module_id
+        module_schedules[module_id] = {
+            "start_date": module_start,
+            "end_date": module_end,
+            "sessions_number": sessions_number,
+            "session_week_day": session_week_day,
+            "cohort_id": cohort_id,
+        }
         if not week_id:
             continue
         week_key = (module_id, str(week_id))
@@ -667,6 +677,7 @@ def hydrate_training_plan(plan):
             weeks_by_module[module_id][-1]["components"].append({
                 "componentId": str(component_id),
                 "componentTitle": _s(component_title) or _s(component_type) or "Activity",
+                "type": _s(component_type),
                 # This tree is persisted in a JSONField. psycopg returns NUMERIC
                 # as Decimal, which Python's standard JSON encoder cannot write.
                 "expectedOtjh": _number(component_expected_otjh),
@@ -682,11 +693,28 @@ def hydrate_training_plan(plan):
         if not module_id or module_id not in titles:
             expanded.append(item)
             continue
+        resolved_weeks = weeks_by_module.get(module_id, [])
+        try:
+            # Use the exact delivery dates used by Module Builder/Calendar,
+            # including authored delivery days and selected cohort holidays.
+            from curriculum_api.views import module_session_plan_for_count
+            dated_sessions = module_session_plan_for_count(module_schedules.get(module_id, {}), len(resolved_weeks)).get("sessions") or []
+        except Exception:
+            dated_sessions = []
+        resolved_weeks = [
+            {
+                **week,
+                "sessionDate": _s(dated_sessions[index].get("date")) if index < len(dated_sessions) else "",
+            }
+            for index, week in enumerate(resolved_weeks)
+        ]
         expanded.append({
             **item,
             "moduleId": module_id,
             "moduleTitle": titles[module_id],
-            "weeks": weeks_by_module.get(module_id, []),
+            "startDate": _s(module_schedules.get(module_id, {}).get("start_date")),
+            "endDate": _s(module_schedules.get(module_id, {}).get("end_date")),
+            "weeks": resolved_weeks,
         })
     return expanded
 

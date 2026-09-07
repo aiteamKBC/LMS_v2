@@ -1,5 +1,5 @@
 import json
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 from decimal import Decimal
 from inspect import unwrap
 from types import SimpleNamespace
@@ -7,16 +7,21 @@ from unittest.mock import patch
 
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
-from coach_api.models import CoachAbsenceReport
+from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
 from coach_api.views import (
+    build_generated_calendar_event,
+    build_graph_event_payload,
     build_ksb_completed_details,
     build_otjh_completed_entries,
     build_monthly_activity_learner,
     coach_caseload,
     coach_dashboard,
+    coach_meeting_expected_attendees,
     coach_monthly_activity,
+    coach_timetable_event_artifacts,
     coach_timetable_book_event,
     coach_timetable_schedule_event,
+    coach_meeting_graph_target,
     coach_has_live_session_access,
     coach_staff_display_name,
     collect_generated_timetable,
@@ -26,6 +31,7 @@ from coach_api.views import (
     fetch_caseload_learner_profiles,
     fetch_evidence_file_queue,
     fetch_source_schedule_rows,
+    graph_organizer_mailbox,
     iterate_generated_schedule_dates,
     reported_minutes,
     route_absence_report_evidence,
@@ -361,6 +367,83 @@ class CoachTimetableWindowTests(SimpleTestCase):
             ],
         )
 
+    def test_generated_timetable_events_include_source_detail_identity(self):
+        learner = SimpleNamespace(
+            id=42,
+            username="Test Learner",
+            email="learner@example.com",
+            programme="Test Programme",
+            cohort="C1",
+            learner_type="commercial",
+            enrolment_id=9001,
+        )
+
+        event = build_generated_calendar_event(
+            learner=learner,
+            owner_email="coach@example.com",
+            owner_name="Test Coach",
+            event_type="progress-review",
+            sequence=1,
+            target_date=date(2026, 9, 5),
+        )
+
+        self.assertEqual(event["learnerId"], "42")
+        self.assertEqual(event["learnerType"], "commercial")
+        self.assertEqual(event["enrolmentId"], "9001")
+
+    @patch("coach_api.views.Employer.objects.filter")
+    def test_progress_review_graph_invites_learner_and_employer_from_coach_calendar(self, employer_filter):
+        employer_filter.return_value.only.return_value.first.return_value = SimpleNamespace(
+            full_name="Employer Contact",
+            email="employer@example.com",
+        )
+        learner = SimpleNamespace(
+            id=42,
+            username="Test Learner",
+            email="learner@example.com",
+            programme="Test Programme",
+            cohort="C1",
+            learner_type="commercial",
+            enrolment_id=9001,
+        )
+        source_row = SimpleNamespace(
+            employer_id=77,
+            line_manager="Line Manager",
+            employer="Test Employer",
+        )
+
+        event = build_generated_calendar_event(
+            learner=learner,
+            owner_email="coach@example.com",
+            owner_name="Test Coach",
+            event_type="progress-review",
+            sequence=1,
+            target_date=date(2026, 9, 5),
+            source_row=source_row,
+        )
+        record = CoachCalendarEvent(
+            event_key=event["eventKey"],
+            owner_email="coach@example.com",
+            owner_name="Test Coach",
+            learner_id=42,
+            learner_name="Test Learner",
+            learner_email="learner@example.com",
+            event_type="progress-review",
+            sequence=1,
+            target_date=date(2026, 9, 5),
+            scheduled_date=date(2026, 9, 5),
+            scheduled_time=time(9, 0),
+            duration_minutes=60,
+        )
+
+        payload = build_graph_event_payload(record, event)
+        attendees = [item["emailAddress"]["address"] for item in payload["attendees"]]
+
+        self.assertEqual(event["employerEmail"], "employer@example.com")
+        self.assertEqual(graph_organizer_mailbox(record, event), "coach@example.com")
+        self.assertEqual(attendees, ["learner@example.com", "employer@example.com"])
+        self.assertNotIn("coach@example.com", attendees)
+
     @patch("coach_api.views.fetch_calendar_event_records", return_value={})
     @patch("coach_api.views.fetch_standalone_event_records", return_value=[])
     @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
@@ -500,6 +583,130 @@ class CoachTimetableBookingConflictTests(SimpleTestCase):
         )
         get_or_create.assert_not_called()
         sync_calendar_event_to_graph.assert_not_called()
+
+
+class CoachMeetingArtifactTests(SimpleTestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    def test_artifacts_endpoint_returns_transcript_and_recording(self):
+        record = CoachCalendarEvent(
+            event_key="mcr:42:1:2026-09-01",
+            owner_email="coach@example.com",
+            owner_name="Coach Owner",
+            learner_name="Test Learner",
+            learner_email="learner@example.com",
+            event_type="mcr",
+            status="completed",
+        )
+        request = self.factory.get("/coach_api/coach/timetable/events/mcr:42:1:2026-09-01/artifacts")
+        request.coach_email = "coach@example.com"
+
+        def graph_response(_method, path, *, payload=None):
+            self.assertIsNone(payload)
+            if path.endswith("/attendanceReports"):
+                return {"value": [{"id": "report-1", "meetingStartDateTime": "2026-09-01T10:00:00Z"}]}
+            if "attendanceReports/report-1" in path:
+                return {
+                    "id": "report-1",
+                    "meetingStartDateTime": "2026-09-01T10:00:00Z",
+                    "meetingEndDateTime": "2026-09-01T10:30:00Z",
+                    "totalParticipantCount": 1,
+                    "attendanceRecords": [
+                        {
+                            "id": "attendee-1",
+                            "emailAddress": "learner@example.com",
+                            "role": "Attendee",
+                            "attendanceIntervals": [
+                                {
+                                    "joinDateTime": "2026-09-01T10:05:00Z",
+                                    "leaveDateTime": "2026-09-01T10:25:00Z",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            if path.endswith("/transcripts"):
+                return {"value": [{"id": "transcript-1", "createdDateTime": "2026-09-01T10:00:00Z"}]}
+            if path.endswith("/recordings"):
+                return {"value": [{"id": "recording-1", "endDateTime": "2026-09-01T10:30:00Z"}]}
+            return {"value": []}
+
+        with patch("coach_api.views.coach_meeting_artifact_record", return_value=record), \
+             patch("coach_api.views.has_graph_credentials", return_value=True), \
+             patch("coach_api.views.coach_meeting_graph_target", return_value=("users/coach/onlineMeetings/meeting-1", None)), \
+             patch("coach_api.views.microsoft_graph_request", side_effect=graph_response):
+            response = unwrap(coach_timetable_event_artifacts)(request, record.event_key)
+
+        payload = json.loads(response.content)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [(item["artifact_type"], item["id"]) for item in payload["artifacts"]],
+            [("transcript", "transcript-1"), ("recording", "recording-1")],
+        )
+        self.assertEqual(payload["attendance"]["reportCount"], 1)
+        self.assertEqual(payload["attendance"]["attendedCount"], 1)
+        self.assertEqual(payload["attendance"]["expectedCount"], 2)
+        self.assertEqual(payload["attendance"]["expectedAttendedCount"], 1)
+        self.assertEqual(payload["attendance"]["expectedAbsentCount"], 1)
+        self.assertEqual(payload["attendance"]["records"][0]["displayName"], "Learner")
+        self.assertEqual(payload["attendance"]["records"][0]["totalAttendanceSeconds"], 1200)
+        self.assertEqual(
+            [(item["role"], item["email"]) for item in payload["attendance"]["expectedAttendees"]],
+            [("coach", "coach@example.com"), ("learner", "learner@example.com")],
+        )
+
+    def test_progress_review_expected_attendees_include_employer(self):
+        record = CoachCalendarEvent(
+            event_key="progress-review:42:1:2026-09-01",
+            owner_email="coach@example.com",
+            owner_name="Coach Owner",
+            learner_id=42,
+            learner_name="Test Learner",
+            learner_email="learner@example.com",
+            event_type="progress-review",
+            status="completed",
+        )
+        learner = SimpleNamespace(
+            id=42,
+            full_name="Test Learner",
+            email="learner@example.com",
+            programme="",
+            lifecycle_status="active",
+        )
+
+        with patch("coach_api.views.coach_meeting_record_learner", return_value=learner), \
+             patch("coach_api.views.resolve_caseload_source_row", return_value=SimpleNamespace()), \
+             patch("coach_api.views.learner_employer_attendee", return_value={"name": "Line Manager", "email": "manager@example.com"}):
+            expected = coach_meeting_expected_attendees(record)
+
+        self.assertEqual(
+            [(item["role"], item["email"]) for item in expected],
+            [
+                ("coach", "coach@example.com"),
+                ("learner", "learner@example.com"),
+                ("employer", "manager@example.com"),
+            ],
+        )
+
+    @patch("coach_api.views.microsoft_graph_request")
+    def test_graph_target_recovers_join_url_from_calendar_event(self, graph_request):
+        record = CoachCalendarEvent(
+            event_key="catch-up:42:1:2026-09-01",
+            owner_email="coach@example.com",
+            graph_organizer_email="coach@example.com",
+            graph_event_id="event-1",
+            meeting_link="https://outlook.office.com/calendar/item/event-1",
+        )
+        graph_request.side_effect = [
+            {"onlineMeeting": {"joinUrl": "https://teams.microsoft.com/l/meetup-join/example"}},
+            {"value": [{"id": "meeting-1"}]},
+        ]
+
+        base, error = coach_meeting_graph_target(record)
+
+        self.assertIsNone(error)
+        self.assertEqual(base, "users/coach%40example.com/onlineMeetings/meeting-1")
 
 
 @override_settings(
@@ -691,7 +898,7 @@ class MonthlyActivityTests(SimpleTestCase):
 
         self.assertEqual(result["otjh"]["monthlyTarget"], 2.5)
 
-    @patch("coach_api.views.hydrate_source_training_plan")
+    @patch("coach_api.views.hydrate_training_plan")
     @patch("coach_api.views.fetch_verified_teams_attendance_rows", return_value=[])
     @patch("coach_api.views.curriculum_expected_otjh_by_component_id", return_value={"component-1": 2.5})
     @patch("coach_api.views.serialize_caseload_learner")
@@ -706,7 +913,7 @@ class MonthlyActivityTests(SimpleTestCase):
         fetch_attendance,
         hydrate_plan,
     ):
-        source = SimpleNamespace(start_date=date(2026, 8, 26))
+        source = SimpleNamespace(start_date=date(2026, 8, 26), learning_plan=[])
         row = SimpleNamespace(
             id=42,
             coach_name="Med Maher",
@@ -748,7 +955,7 @@ class MonthlyActivityTests(SimpleTestCase):
         )
 
         payload = json.loads(response.content)
-        hydrate_plan.assert_called_with(source)
+        hydrate_plan.assert_called_with(source.learning_plan)
         expected_lookup.assert_called_once_with(["component-1"])
         self.assertEqual(payload["learners"][0]["otjh"]["monthlyTarget"], 2.5)
 

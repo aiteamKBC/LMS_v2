@@ -3194,13 +3194,16 @@ table tbody td:last-child {
 
 /* Shared treatment for actions that open a live meeting or session. */
 .meeting-join-action {
-  border: 1px solid #c9edce;
-  background-color: #edfaeb;
-  color: #166534;
+  border: 1px solid #15803d;
+  background-color: #15803d;
+  color: #ffffff;
+  box-shadow: 0 3px 10px rgb(21 128 61 / 0.22);
 }
 
 .meeting-join-action:hover {
-  background-color: #dff5e2;
+  border-color: #166534;
+  background-color: #166534;
+  box-shadow: 0 5px 14px rgb(21 128 61 / 0.3);
 }
 
 .meeting-join-action:disabled {
