@@ -45,6 +45,7 @@ export interface LearnerCalendarResponse {
 
 export interface BookingCalendarRules {
   division: 'england-and-wales';
+  today: string;
   coveredYears: number[];
   bankHolidays: Array<{ date: string; title: string }>;
 }
@@ -179,6 +180,42 @@ export async function bookLearnerCalendarSession(
   try {
     res = await fetch(`${BASE}/${kind}/${id}/book/`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+  } catch {
+    throw new Error('Could not reach the server. Is the backend running on port 8000?');
+  }
+  const text = await res.text();
+  let data: unknown = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    throw new Error(`Unexpected response (${res.status}).`);
+  }
+  if (!res.ok) {
+    const message = (data as { error?: string } | null)?.error || `Request failed with ${res.status}`;
+    throw new Error(message);
+  }
+  invalidateLearnerCalendarCache(kind, id);
+  return data as BookSessionResponse;
+}
+
+export type RescheduleSessionInput = Pick<
+  BookSessionInput,
+  'scheduledDate' | 'scheduledTime' | 'durationMinutes' | 'timezoneOffsetMinutes'
+> & { eventKey: string };
+
+/** Move an existing booking; the backend updates the same Graph/Teams event. */
+export async function rescheduleLearnerCalendarSession(
+  kind: LearnerKind,
+  id: string,
+  input: RescheduleSessionInput,
+): Promise<BookSessionResponse> {
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/${kind}/${id}/reschedule/`, {
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),
     });
