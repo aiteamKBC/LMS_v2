@@ -57,7 +57,7 @@ from learner_api.models import (
     learner_ksbs_relation_exists,
 )
 from learner_api.constants import ACCESS_COACH, ACCESS_SUPER_ADMIN
-from learner_api.active_users import components_target_to_date, current_week_label, dedupe_otjh_progress_records, hydrate_source_training_plan, refresh_learner_ksb_snapshot
+from learner_api.active_users import components_target_to_date, current_week_label, dedupe_otjh_progress_records, hydrate_training_plan, refresh_learner_ksb_snapshot
 from learner_api.calendar_connections import (
     booking_conflicts as personal_calendar_booking_conflicts,
 )
@@ -2161,7 +2161,8 @@ def monthly_learning_detail(entry: dict) -> str:
     if grade not in (None, ""):
         return f"Grade {round(to_number(grade) * 100)}%"
     if reported_time:
-        return reported_time
+        minutes = reported_minutes(reported_time)
+        return f"{format_hours_number(minutes / 60)}h" if minutes > 0 else reported_time
     return clean_text(entry.get("module") or entry.get("week")) or "--"
 
 
@@ -2194,17 +2195,21 @@ def training_plan_has_components(training_plan) -> bool:
     return any(component_ids for component_ids in curriculum_monthly_target_hours_weeks(training_plan))
 
 
+def training_plan_component_count(training_plan) -> int:
+    return sum(len(component_ids) for component_ids in curriculum_monthly_target_hours_weeks(training_plan))
+
+
 def monthly_target_training_plan(row: LearnerProfile | SimpleNamespace):
     plan = getattr(row, "training_plan", None)
-    if training_plan_has_components(plan):
-        return plan
-
     source = getattr(row, "_caseload_source", None)
     if source is None:
         return plan
 
     try:
-        hydrated = hydrate_source_training_plan(source)
+        # Monthly reporting is read-only: resolve the latest curriculum tree in
+        # memory and never mutate the learner's stored enrolment snapshot.
+        source_plan = getattr(source, "training_plan", None) or getattr(source, "learning_plan", None)
+        hydrated = hydrate_training_plan(source_plan)
     except Exception as exc:
         logger.warning(
             "Could not hydrate monthly target training plan for learner %s: %s",
@@ -2213,7 +2218,10 @@ def monthly_target_training_plan(row: LearnerProfile | SimpleNamespace):
         )
         return plan
 
-    if training_plan_has_components(hydrated):
+    # Active_users can carry an old, partial snapshot. Do not accept it merely
+    # because it contains one component: prefer the live curriculum hydration
+    # whenever it contains more of the learner's authored plan.
+    if training_plan_component_count(hydrated) > training_plan_component_count(plan):
         try:
             setattr(row, "training_plan", hydrated)
         except Exception:
@@ -2285,7 +2293,9 @@ def curriculum_monthly_target_hours(
     total_hours = 0.0
     for index, week in enumerate(raw_weeks):
         explicit_start = parse_date_value(
-            week.get("startDate") or week.get("start_date") or week.get("weekStart") or week.get("week_start")
+            week.get("sessionDate") or week.get("session_date")
+            or week.get("startDate") or week.get("start_date")
+            or week.get("weekStart") or week.get("week_start")
         )
         if isinstance(explicit_start, datetime):
             explicit_start = explicit_start.date()
@@ -2757,6 +2767,7 @@ def build_monthly_activity_learner(
 
     activities: list[dict] = []
     seen_activity_keys: set[str] = set()
+    credited_progress_keys: set[str] = set()
 
     for index, event in enumerate(learner_events):
         event_status = clean_text(event.get("status")).lower()
@@ -2781,33 +2792,17 @@ def build_monthly_activity_learner(
             )
         )
 
-    for index, entry in enumerate(monthly_feed):
-        activity_key = f"feed:{monthly_activity_identity(entry, index)}"
-        if activity_key in seen_activity_keys:
-            continue
-        seen_activity_keys.add(activity_key)
-        seen_activity_keys.add(f"learning:{monthly_activity_dedupe_identity(entry, index)}")
-        entry_date = entry_activity_date(entry)
-        if not entry_date:
-            continue
-        activities.append(
-            build_monthly_activity_item(
-                item_id=activity_key,
-                item_date=entry_date,
-                item_type=monthly_learning_type(entry),
-                title=monthly_learning_title(entry),
-                detail=monthly_learning_detail(entry),
-                tone=monthly_learning_tone(entry),
-                source="activity-feed",
-            )
-        )
-
-    for index, entry in enumerate(monthly_progress):
+    # The journal and Actual hours must use the same credited records. Rendering
+    # the raw activity feed first showed repeat submissions that OTJH
+    # deduplication correctly counted once, making the visible rows disagree
+    # with the headline total.
+    for index, entry in enumerate(deduped_monthly_progress):
         identity = monthly_activity_identity(entry, index)
         dedupe_key = f"learning:{monthly_activity_dedupe_identity(entry, index)}"
         if dedupe_key in seen_activity_keys:
             continue
         seen_activity_keys.add(dedupe_key)
+        credited_progress_keys.add(dedupe_key)
         entry_date = entry_activity_date(entry)
         if not entry_date:
             continue
@@ -2820,6 +2815,29 @@ def build_monthly_activity_learner(
                 detail=monthly_learning_detail(entry),
                 tone=monthly_learning_tone(entry),
                 source="training-plan-progress",
+            )
+        )
+
+    # Keep standalone feed entries that have no matching credited progress
+    # record. Multiple quiz attempts remain distinct audit rows.
+    for index, entry in enumerate(monthly_feed):
+        activity_key = f"feed:{monthly_activity_identity(entry, index)}"
+        dedupe_key = f"learning:{monthly_activity_dedupe_identity(entry, index)}"
+        if activity_key in seen_activity_keys or dedupe_key in credited_progress_keys:
+            continue
+        seen_activity_keys.add(activity_key)
+        entry_date = entry_activity_date(entry)
+        if not entry_date:
+            continue
+        activities.append(
+            build_monthly_activity_item(
+                item_id=activity_key,
+                item_date=entry_date,
+                item_type=monthly_learning_type(entry),
+                title=monthly_learning_title(entry),
+                detail=monthly_learning_detail(entry),
+                tone=monthly_learning_tone(entry),
+                source="activity-feed",
             )
         )
 
@@ -2893,7 +2911,7 @@ def build_monthly_activity_learner(
         "lastActivityDate": last_activity["date"] if last_activity else None,
         "lastActivityLabel": last_activity["title"] if last_activity else "--",
         "learning": {
-            "total": len(monthly_progress),
+            "total": len(deduped_monthly_progress),
             "quizzes": quizzes,
             "videos": videos,
             "components": components,

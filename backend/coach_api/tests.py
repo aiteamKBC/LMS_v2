@@ -898,7 +898,7 @@ class MonthlyActivityTests(SimpleTestCase):
 
         self.assertEqual(result["otjh"]["monthlyTarget"], 2.5)
 
-    @patch("coach_api.views.hydrate_source_training_plan")
+    @patch("coach_api.views.hydrate_training_plan")
     @patch("coach_api.views.fetch_verified_teams_attendance_rows", return_value=[])
     @patch("coach_api.views.curriculum_expected_otjh_by_component_id", return_value={"component-1": 2.5})
     @patch("coach_api.views.serialize_caseload_learner")
@@ -913,7 +913,7 @@ class MonthlyActivityTests(SimpleTestCase):
         fetch_attendance,
         hydrate_plan,
     ):
-        source = SimpleNamespace(start_date=date(2026, 8, 26))
+        source = SimpleNamespace(start_date=date(2026, 8, 26), learning_plan=[])
         row = SimpleNamespace(
             id=42,
             coach_name="Med Maher",
@@ -955,7 +955,7 @@ class MonthlyActivityTests(SimpleTestCase):
         )
 
         payload = json.loads(response.content)
-        hydrate_plan.assert_called_with(source)
+        hydrate_plan.assert_called_with(source.learning_plan)
         expected_lookup.assert_called_once_with(["component-1"])
         self.assertEqual(payload["learners"][0]["otjh"]["monthlyTarget"], 2.5)
 
