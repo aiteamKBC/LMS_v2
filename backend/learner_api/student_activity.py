@@ -1,18 +1,16 @@
 """Learner-scoped pilot view over the historical Last_audit activity mirror."""
 
-import json
-
 from django.db import DatabaseError
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
-from audit_api.last_audit_ledger_views import activities as last_audit_activities
+from audit_api.last_audit_ledger_views import _connection
+from audit_api.learner_exclusions import is_excluded_learner
 from login.permissions import learner_self_or_staff
 
 from .learner_detail import SOURCE_MODELS
-
-
-PILOT_APTEM_IDS = {92}
+from .student_activity_data import read_student_activity
+from .student_activity_pilot import student_activity_available
 
 
 def _error(message, status):
@@ -44,38 +42,15 @@ def student_activity(request, kind, pk):
         aptem_id = int(str(source.aptem_id or "").strip())
     except (TypeError, ValueError):
         return _error("This learner is not linked to Aptem.", 404)
-    if aptem_id not in PILOT_APTEM_IDS:
+    if not student_activity_available(aptem_id):
         return _error("Student activity is not enabled for this learner yet.", 404)
 
-    # Reuse the normalized Last_audit projection used by the audit workspace,
-    # but force the server-resolved Aptem id. Client-supplied filters cannot
-    # change whose records are returned.
-    original_query = request.GET
-    query = original_query.copy()
-    query["aptem_id"] = str(aptem_id)
-    query["limit"] = "20000"
-    query["offset"] = "0"
-    query.pop("category", None)
-    query.pop("month", None)
-    query.pop("search", None)
-    request.GET = query
+    # Never forward client filters or Aptem ids into the historical reader.
     try:
-        response = last_audit_activities(request)
-    finally:
-        request.GET = original_query
-
-    if response.status_code != 200:
-        return response
-
-    payload = json.loads(response.content)
-    # The shared audit feed also includes attendance. This pilot is explicitly
-    # the activities + activity_results view, whose stable ids start with la:.
-    items = [
-        item for item in payload.get("activities", [])
-        if str(item.get("activity_id", "")).startswith("la:")
-    ]
-    payload["activities"] = items
-    payload["count"] = len(items)
-    payload["module_count"] = len({item.get("group_id") for item in items})
-    payload["completed_count"] = sum(bool(item.get("completed")) for item in items)
+        with _connection().cursor() as cursor:
+            payload = read_student_activity(cursor, aptem_id)
+    except DatabaseError:
+        return _error("Could not read Last_audit activities. Please try again.", 503)
+    if payload is None or is_excluded_learner(aptem_id, payload["learner_name"]):
+        return _error("No audit activity record is linked to this learner.", 404)
     return JsonResponse(payload)
