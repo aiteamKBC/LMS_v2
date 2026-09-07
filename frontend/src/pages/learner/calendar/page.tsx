@@ -373,6 +373,21 @@ function todayISO(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/** Monday date for the calendar week containing an ISO day. */
+function calendarWeekKey(isoDate: string): string | null {
+  const [year, month, day] = isoDate.split('-').map(Number);
+  if (!year || !month || !day) return null;
+  const value = new Date(year, month - 1, day);
+  if (
+    value.getFullYear() !== year
+    || value.getMonth() !== month - 1
+    || value.getDate() !== day
+  ) return null;
+  const mondayOffset = value.getDay() === 0 ? -6 : 1 - value.getDay();
+  value.setDate(value.getDate() + mondayOffset);
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+}
+
 function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-background-200' }: { pct: number; size?: number; stroke?: number; color: string; trackClass?: string }) {
   const r = (size - stroke) / 2;
   const circ = 2 * Math.PI * r;
@@ -656,6 +671,22 @@ export function LearnerCalendarContent() {
     }) || null;
   }, [bookDate, bookTime, bookDuration, myEvents, rescheduleEvent?.id]);
 
+  const sameWeekSession = useMemo(() => {
+    const requestedWeek = calendarWeekKey(bookDate);
+    if (!requestedWeek) return null;
+    return myEvents.find((event) => (
+      event.id !== rescheduleEvent?.id
+      && event.bookingStatus === 'scheduled'
+      && event.bookingSessionType === bookType
+      && Boolean(event.isoDate)
+      && calendarWeekKey(event.isoDate!) === requestedWeek
+    )) || null;
+  }, [bookDate, bookType, myEvents, rescheduleEvent?.id]);
+
+  const sameSessionPeriod = sameWeekSession?.isoDate === bookDate
+    ? 'on the selected day'
+    : 'during the selected week';
+
   const handleCredentialConnect = async () => {
     if (!connectionProvider || connectionSubmitting) return;
     setConnectionSubmitting(true);
@@ -688,6 +719,12 @@ export function LearnerCalendarContent() {
     const restrictedDate = bookingDateRestriction(bookDate);
     if (restrictedDate) {
       setBookError(restrictedDate);
+      return;
+    }
+    if (sameWeekSession) {
+      setBookError(rescheduleEvent
+        ? `Another “${sameWeekSession.title}” is already booked ${sameSessionPeriod}. Choose a different week.`
+        : `You already have “${sameWeekSession.title}” booked ${sameSessionPeriod}. Would you like to reschedule it instead?`);
       return;
     }
     if (selectedLmsConflict) {
@@ -937,7 +974,27 @@ export function LearnerCalendarContent() {
                   <p className="text-xs font-semibold">{bookDateRestriction}</p>
                 </div>
               )}
-              {selectedLmsConflict && (
+              {sameWeekSession && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-amber-800">
+                  <div className="flex items-start gap-2">
+                    <AppIcon className="ri-calendar-schedule-line mt-0.5 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold">
+                        {rescheduleEvent
+                          ? <>Another “{sameWeekSession.title}” is already booked {sameSessionPeriod}. Choose a different week.</>
+                          : <>You already have “{sameWeekSession.title}” booked {sameSessionPeriod}. Would you like to reschedule it instead?</>}
+                      </p>
+                      {!rescheduleEvent && (
+                        <button type="button" onClick={() => openRescheduleSession(sameWeekSession)} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-amber-100 px-3 py-1.5 text-xs font-bold text-amber-900 transition-smooth hover:bg-amber-200 cursor-pointer">
+                          <AppIcon className="ri-calendar-schedule-line" />
+                          Reschedule existing session
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {selectedLmsConflict && selectedLmsConflict.id !== sameWeekSession?.id && (
                 <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-red-700">
                   <AppIcon className="ri-calendar-close-line mt-0.5 shrink-0" />
                   <p className="text-xs font-semibold">You already have “{selectedLmsConflict.title}” at this time. Choose another time.</p>
@@ -974,7 +1031,7 @@ export function LearnerCalendarContent() {
             </div>
             <div className="flex gap-2 mt-5">
               <button onClick={() => setShowBookModal(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
-              <button onClick={handleBookSession} disabled={bookSubmitting || availabilityLoading || selectedSlotConflicts || Boolean(selectedLmsConflict) || Boolean(bookDateRestriction) || !bookDate || !bookTime} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+              <button onClick={handleBookSession} disabled={bookSubmitting || availabilityLoading || selectedSlotConflicts || Boolean(sameWeekSession) || Boolean(selectedLmsConflict) || Boolean(bookDateRestriction) || !bookDate || !bookTime} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
                 {bookSubmitting ? <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon>{rescheduleEvent ? 'Rescheduling...' : 'Booking...'}</> : <><AppIcon className="ri-calendar-check-line mr-1"></AppIcon>{rescheduleEvent ? 'Save New Time' : 'Book Session'}</>}
               </button>
             </div>

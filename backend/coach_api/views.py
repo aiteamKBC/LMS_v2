@@ -5049,6 +5049,10 @@ class LearnerCalendarConflict(ValueError):
     pass
 
 
+class LearnerSessionAlreadyBooked(LearnerCalendarConflict):
+    """The learner already has this session type in the requested week."""
+
+
 def lock_learner_calendar(learner_id: int) -> None:
     """Serialize all booking types for one learner inside the current transaction."""
     CoachCalendarSequence.objects.select_for_update().get_or_create(
@@ -5122,6 +5126,62 @@ def ensure_learner_calendar_available(
         raise LearnerCalendarConflict(LEARNER_CALENDAR_CONFLICT_MESSAGE)
 
 
+def find_learner_same_session_in_week(
+    *,
+    learner_id: int,
+    learner_email: str,
+    session_type: str,
+    scheduled_date: date,
+    exclude_record_id: int | None = None,
+) -> CoachCalendarEvent | None:
+    """Return this learner's active booking of the same type, Monday-Sunday."""
+    week_start = scheduled_date - timedelta(days=scheduled_date.weekday())
+    week_end = week_start + timedelta(days=6)
+    identity = Q(learner_id=learner_id)
+    normalized_email = normalize_email(learner_email)
+    if normalized_email:
+        identity |= Q(learner_email__iexact=normalized_email)
+
+    candidates = CoachCalendarEvent.objects.filter(
+        identity,
+        event_type__iexact=clean_text(session_type),
+        scheduled_date__range=(week_start, week_end),
+        scheduled_time__isnull=False,
+        status__in=(
+            CoachCalendarEvent.STATUS_SCHEDULED,
+            CoachCalendarEvent.STATUS_IN_PROGRESS,
+            CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+        ),
+    )
+    if exclude_record_id is not None:
+        candidates = candidates.exclude(pk=exclude_record_id)
+    return candidates.order_by("scheduled_date", "scheduled_time", "pk").first()
+
+
+def ensure_learner_session_not_booked_in_week(
+    *,
+    learner_id: int,
+    learner_email: str,
+    session_type: str,
+    scheduled_date: date,
+    exclude_record_id: int | None = None,
+) -> None:
+    existing = find_learner_same_session_in_week(
+        learner_id=learner_id,
+        learner_email=learner_email,
+        session_type=session_type,
+        scheduled_date=scheduled_date,
+        exclude_record_id=exclude_record_id,
+    )
+    if existing is None:
+        return
+    period = "for that day" if existing.scheduled_date == scheduled_date else "during that week"
+    title = BOOKED_EVENT_TITLES.get(clean_text(session_type).lower(), "session")
+    raise LearnerSessionAlreadyBooked(
+        f"You already have a {title} booked {period}. Would you like to reschedule it instead?"
+    )
+
+
 def reserve_coach_calendar_booking(
     *,
     owner_email: str,
@@ -5191,6 +5251,12 @@ def reserve_coach_calendar_booking(
                     raise ValueError("Idempotency-Key was already used for a different booking.")
                 return existing, False
 
+            ensure_learner_session_not_booked_in_week(
+                learner_id=learner_id,
+                learner_email=learner_email,
+                session_type=session_type,
+                scheduled_date=scheduled_date,
+            )
             ensure_learner_calendar_available(
                 learner_id=learner_id,
                 learner_email=learner_email,
@@ -5299,6 +5365,13 @@ def persist_calendar_sync_reservation(candidate: CoachCalendarEvent) -> CoachCal
                 CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
             }
         ):
+            ensure_learner_session_not_booked_in_week(
+                learner_id=candidate.learner_id,
+                learner_email=candidate.learner_email,
+                session_type=candidate.event_type,
+                scheduled_date=candidate.scheduled_date,
+                exclude_record_id=candidate.pk,
+            )
             ensure_learner_calendar_available(
                 learner_id=candidate.learner_id,
                 learner_email=candidate.learner_email,

@@ -77,6 +77,7 @@ class CoachCalendarRaceTests(TransactionTestCase):
         csrf_token: str,
         idempotency_key: str,
         *,
+        scheduled_date: str = "2099-01-01",
         scheduled_time: str = "10:00",
         session_type: str = "catch-up",
         duration_minutes: int = 60,
@@ -87,7 +88,7 @@ class CoachCalendarRaceTests(TransactionTestCase):
                 {
                     "learnerId": self.learner.id,
                     "sessionType": session_type,
-                    "scheduledDate": "2099-01-01",
+                    "scheduledDate": scheduled_date,
                     "scheduledTime": scheduled_time,
                     "durationMinutes": duration_minutes,
                 }
@@ -222,6 +223,7 @@ class CoachCalendarRaceTests(TransactionTestCase):
             csrf_token,
             str(uuid.uuid4()),
             scheduled_time="11:00",
+            session_type="student-support",
         )
 
         self.assertEqual((first.status_code, second.status_code), (201, 201))
@@ -246,6 +248,7 @@ class CoachCalendarRaceTests(TransactionTestCase):
             csrf_token,
             str(uuid.uuid4()),
             scheduled_time="10:30",
+            session_type="student-support",
             duration_minutes=30,
         )
 
@@ -255,6 +258,77 @@ class CoachCalendarRaceTests(TransactionTestCase):
             CoachCalendarEvent.objects.filter(learner_id=self.learner.id).count(), 1
         )
         self.assertEqual(sync_graph.call_count, 1)
+
+    @patch("coach_api.views.coach_learner_personal_calendar_conflicts", return_value=[])
+    @patch("coach_api.views.fetch_caseload_learner_profiles")
+    @patch("coach_api.views.sync_calendar_event_to_graph")
+    def test_same_session_on_same_day_offers_reschedule_instead_of_second_booking(
+        self, sync_graph, caseload, _conflicts
+    ):
+        caseload.return_value = [self.learner]
+        sync_graph.side_effect = self._graph_success
+        client, csrf_token = self._client()
+
+        first = self._book(client, csrf_token, str(uuid.uuid4()))
+        second = self._book(
+            client,
+            csrf_token,
+            str(uuid.uuid4()),
+            scheduled_time="14:00",
+        )
+
+        self.assertEqual((first.status_code, second.status_code), (201, 409))
+        self.assertIn("reschedule it instead", second.json()["message"])
+        self.assertIn("that day", second.json()["message"])
+        self.assertEqual(
+            CoachCalendarEvent.objects.filter(learner_id=self.learner.id).count(), 1
+        )
+
+    @patch("coach_api.views.coach_learner_personal_calendar_conflicts", return_value=[])
+    @patch("coach_api.views.fetch_caseload_learner_profiles")
+    @patch("coach_api.views.sync_calendar_event_to_graph")
+    def test_same_session_on_another_day_of_week_offers_reschedule(
+        self, sync_graph, caseload, _conflicts
+    ):
+        caseload.return_value = [self.learner]
+        sync_graph.side_effect = self._graph_success
+        client, csrf_token = self._client()
+
+        first = self._book(client, csrf_token, str(uuid.uuid4()))
+        second = self._book(
+            client,
+            csrf_token,
+            str(uuid.uuid4()),
+            scheduled_date="2099-01-02",
+            scheduled_time="14:00",
+        )
+
+        self.assertEqual((first.status_code, second.status_code), (201, 409))
+        self.assertIn("reschedule it instead", second.json()["message"])
+        self.assertIn("that week", second.json()["message"])
+
+    @patch("coach_api.views.coach_learner_personal_calendar_conflicts", return_value=[])
+    @patch("coach_api.views.fetch_caseload_learner_profiles")
+    @patch("coach_api.views.sync_calendar_event_to_graph")
+    def test_same_session_in_a_different_week_is_allowed(
+        self, sync_graph, caseload, _conflicts
+    ):
+        caseload.return_value = [self.learner]
+        sync_graph.side_effect = self._graph_success
+        client, csrf_token = self._client()
+
+        first = self._book(client, csrf_token, str(uuid.uuid4()))
+        second = self._book(
+            client,
+            csrf_token,
+            str(uuid.uuid4()),
+            scheduled_date="2099-01-08",
+        )
+
+        self.assertEqual((first.status_code, second.status_code), (201, 201))
+        self.assertEqual(
+            CoachCalendarEvent.objects.filter(learner_id=self.learner.id).count(), 2
+        )
 
     @patch("coach_api.views.coach_learner_personal_calendar_conflicts", return_value=[])
     @patch("coach_api.views.fetch_caseload_learner_profiles")

@@ -18,7 +18,10 @@ from coach_api.views import (
     coach_timetable,
     coach_timetable_book_event,
     coach_timetable_event_action,
+    ensure_learner_session_not_booked_in_week,
     find_learner_calendar_conflict,
+    find_learner_same_session_in_week,
+    LearnerSessionAlreadyBooked,
 )
 
 
@@ -164,4 +167,42 @@ class LearnerCalendarConflictTests(SimpleTestCase):
         )
 
         self.assertIsNone(conflict)
+
+    @patch("coach_api.views.CoachCalendarEvent.objects.filter")
+    def test_same_session_type_is_found_anywhere_in_monday_to_sunday_week(self, event_filter):
+        existing = SimpleNamespace(
+            id=4,
+            scheduled_date=date(2026, 9, 9),
+            scheduled_time=time(14, 0),
+        )
+        event_filter.return_value.order_by.return_value.first.return_value = existing
+
+        result = find_learner_same_session_in_week(
+            learner_id=7,
+            learner_email="learner@example.com",
+            session_type="catch-up",
+            scheduled_date=date(2026, 9, 11),
+        )
+
+        self.assertIs(result, existing)
+        self.assertEqual(
+            event_filter.call_args.kwargs["scheduled_date__range"],
+            (date(2026, 9, 7), date(2026, 9, 13)),
+        )
+        self.assertEqual(event_filter.call_args.kwargs["event_type__iexact"], "catch-up")
+
+    @patch("coach_api.views.find_learner_same_session_in_week")
+    def test_duplicate_session_message_offers_reschedule(self, find_same):
+        find_same.return_value = SimpleNamespace(scheduled_date=date(2026, 9, 8))
+
+        with self.assertRaisesRegex(
+            LearnerSessionAlreadyBooked,
+            "Would you like to reschedule it instead",
+        ):
+            ensure_learner_session_not_booked_in_week(
+                learner_id=7,
+                learner_email="learner@example.com",
+                session_type="catch-up",
+                scheduled_date=date(2026, 9, 8),
+            )
 
