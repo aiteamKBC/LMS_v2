@@ -179,6 +179,7 @@ const ModuleBuilder = lazyRoute(() => import("../pages/curriculum/module-builder
 const ModulesPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
 const MonthlyCyclePage = lazyRoute(() => import("../pages/learner/monthly-cycle/page"));
 const MyLearningPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
+const TrainingPlanTimelinePage = lazyRoute(() => import("../pages/learner/training-plan-timeline/page"));
 const MySchedulePage = lazyRoute(() => import("../pages/learner/clubs/events/schedule/page"));
 const NotFound = lazyRoute(() => import("../pages/NotFound"));
 const PaymentsPage = lazyRoute(() => import("../pages/finance/payments/page"));
@@ -435,6 +436,17 @@ const routes: RouteObject[] = [
   {
     path: "/learner/my-learning/:kind/:id",
     element: <MyLearningPage />,
+  },
+  {
+    // The learner's Aptem training plan, month-by-month accordion. Distinct
+    // from "/learner/training-plan" below, which is a legacy alias onto the
+    // My Learning "Modules" tab.
+    path: "/learner/training-plan-timeline",
+    element: <TrainingPlanTimelinePage />,
+  },
+  {
+    path: "/learner/training-plan-timeline/:kind/:id",
+    element: <TrainingPlanTimelinePage />,
   },
   {
     path: "/learner/training-plan",

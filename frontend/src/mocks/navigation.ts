@@ -19,6 +19,10 @@ export const learnerNavItems: SidebarNavItem[] = [
   // Overview/Modules/Quizzes tabs on one page.
   { id: 'learner-my-learning', label: 'My Learning', icon: 'ri-book-open-line', href: '/learner/my-learning', badge: 1 },
 
+  // Training plan — the learner's Aptem training plan, month by month. Its
+  // "View components" action drops into My Learning to actually work through it.
+  { id: 'learner-training-plan-view', label: 'Training plan', icon: 'ri-calendar-todo-line', href: '/learner/training-plan-timeline' },
+
   // Calendar
   { id: 'learner-calendar', label: 'Calendar', icon: 'ri-calendar-2-line', href: '/learner/calendar', statusDot: 'green' },
 
