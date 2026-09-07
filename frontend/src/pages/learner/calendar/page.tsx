@@ -388,6 +388,17 @@ function calendarWeekKey(isoDate: string): string | null {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
 }
 
+function describeCalendarEventSlot(event: CalendarEvent): string {
+  if (!event.isoDate) return `${event.date} at ${event.time}`;
+  const [year, month, day] = event.isoDate.split('-').map(Number);
+  const value = new Date(year, month - 1, day);
+  if (Number.isNaN(value.getTime())) return `${event.date} at ${event.time}`;
+  const dateLabel = new Intl.DateTimeFormat('en-GB', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  }).format(value);
+  return `${dateLabel} at ${event.time}`;
+}
+
 function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-background-200' }: { pct: number; size?: number; stroke?: number; color: string; trackClass?: string }) {
   const r = (size - stroke) / 2;
   const circ = 2 * Math.PI * r;
@@ -683,9 +694,11 @@ export function LearnerCalendarContent() {
     )) || null;
   }, [bookDate, bookType, myEvents, rescheduleEvent?.id]);
 
-  const sameSessionPeriod = sameWeekSession?.isoDate === bookDate
-    ? 'on the selected day'
-    : 'during the selected week';
+  const canRescheduleTimeConflict = Boolean(
+    !rescheduleEvent
+    && selectedLmsConflict?.bookingStatus === 'scheduled'
+    && selectedLmsConflict.bookingSessionType,
+  );
 
   const handleCredentialConnect = async () => {
     if (!connectionProvider || connectionSubmitting) return;
@@ -723,12 +736,14 @@ export function LearnerCalendarContent() {
     }
     if (sameWeekSession) {
       setBookError(rescheduleEvent
-        ? `Another “${sameWeekSession.title}” is already booked ${sameSessionPeriod}. Choose a different week.`
-        : `You already have “${sameWeekSession.title}” booked ${sameSessionPeriod}. Would you like to reschedule it instead?`);
+        ? `Another “${sameWeekSession.title}” is already booked for ${describeCalendarEventSlot(sameWeekSession)}. The same session type can only be booked once per week.`
+        : `You already have “${sameWeekSession.title}” booked for ${describeCalendarEventSlot(sameWeekSession)}. Would you like to reschedule it instead?`);
       return;
     }
     if (selectedLmsConflict) {
-      setBookError(`You already have “${selectedLmsConflict.title}” at that time. Please choose another time.`);
+      setBookError(canRescheduleTimeConflict
+        ? `That time is occupied by “${selectedLmsConflict.title}”, booked for ${describeCalendarEventSlot(selectedLmsConflict)}. Would you like to reschedule it instead?`
+        : `That time overlaps “${selectedLmsConflict.title}”, scheduled for ${describeCalendarEventSlot(selectedLmsConflict)}. Please choose another time.`);
       return;
     }
     if (selectedSlotConflicts) {
@@ -981,23 +996,45 @@ export function LearnerCalendarContent() {
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-semibold">
                         {rescheduleEvent
-                          ? <>Another “{sameWeekSession.title}” is already booked {sameSessionPeriod}. Choose a different week.</>
-                          : <>You already have “{sameWeekSession.title}” booked {sameSessionPeriod}. Would you like to reschedule it instead?</>}
+                          ? <>Another “{sameWeekSession.title}” is booked for {describeCalendarEventSlot(sameWeekSession)}. The same session type can only be booked once per week, so choose a different week.</>
+                          : <>You already have “{sameWeekSession.title}” booked for {describeCalendarEventSlot(sameWeekSession)}. The same session type can only be booked once per week. Would you like to reschedule it?</>}
                       </p>
                       {!rescheduleEvent && (
-                        <button type="button" onClick={() => openRescheduleSession(sameWeekSession)} className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-amber-100 px-3 py-1.5 text-xs font-bold text-amber-900 transition-smooth hover:bg-amber-200 cursor-pointer">
-                          <AppIcon className="ri-calendar-schedule-line" />
-                          Reschedule existing session
-                        </button>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <button type="button" onClick={() => openRescheduleSession(sameWeekSession)} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-100 px-3 py-1.5 text-xs font-bold text-amber-900 transition-smooth hover:bg-amber-200 cursor-pointer">
+                            <AppIcon className="ri-calendar-schedule-line" />
+                            Yes, reschedule
+                          </button>
+                          <button type="button" onClick={() => setShowBookModal(false)} className="inline-flex items-center rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-bold text-amber-800 transition-smooth hover:bg-amber-50 cursor-pointer">
+                            No, keep current booking
+                          </button>
+                        </div>
                       )}
                     </div>
                   </div>
                 </div>
               )}
               {selectedLmsConflict && selectedLmsConflict.id !== sameWeekSession?.id && (
-                <div className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-red-700">
-                  <AppIcon className="ri-calendar-close-line mt-0.5 shrink-0" />
-                  <p className="text-xs font-semibold">You already have “{selectedLmsConflict.title}” at this time. Choose another time.</p>
+                <div className={`rounded-xl border px-3 py-3 ${canRescheduleTimeConflict ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                  <div className="flex items-start gap-2">
+                    <AppIcon className={`${canRescheduleTimeConflict ? 'ri-calendar-schedule-line' : 'ri-calendar-close-line'} mt-0.5 shrink-0`} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold">
+                        That time {canRescheduleTimeConflict ? 'is occupied by' : 'overlaps'} “{selectedLmsConflict.title}”, booked for {describeCalendarEventSlot(selectedLmsConflict)}. {canRescheduleTimeConflict ? 'Would you like to reschedule it?' : 'Choose another time.'}
+                      </p>
+                      {canRescheduleTimeConflict && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <button type="button" onClick={() => openRescheduleSession(selectedLmsConflict)} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-100 px-3 py-1.5 text-xs font-bold text-amber-900 transition-smooth hover:bg-amber-200 cursor-pointer">
+                            <AppIcon className="ri-calendar-schedule-line" />
+                            Yes, reschedule
+                          </button>
+                          <button type="button" onClick={() => setShowBookModal(false)} className="inline-flex items-center rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-bold text-amber-800 transition-smooth hover:bg-amber-50 cursor-pointer">
+                            No, keep current booking
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
               {calendarConnections.length > 0 ? (

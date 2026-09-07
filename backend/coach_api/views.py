@@ -5040,13 +5040,10 @@ def booking_request_matches_record(
 
 
 LEARNER_CALENDAR_LOCK_SCOPE = "__calendar_booking__"
-LEARNER_CALENDAR_CONFLICT_MESSAGE = (
-    "This learner already has another session at that time. Choose another time."
-)
-
-
 class LearnerCalendarConflict(ValueError):
-    pass
+    def __init__(self, message: str, record: CoachCalendarEvent | None = None):
+        super().__init__(message)
+        self.record = record
 
 
 class LearnerSessionAlreadyBooked(LearnerCalendarConflict):
@@ -5095,7 +5092,7 @@ def find_learner_calendar_conflict(
         candidates = candidates.exclude(pk=exclude_record_id)
 
     for existing in candidates.only(
-        "id", "scheduled_date", "scheduled_time", "duration_minutes"
+        "id", "event_type", "sequence", "scheduled_date", "scheduled_time", "duration_minutes"
     ):
         existing_start = datetime.combine(existing.scheduled_date, existing.scheduled_time)
         existing_end = existing_start + timedelta(
@@ -5115,15 +5112,20 @@ def ensure_learner_calendar_available(
     duration_minutes: int,
     exclude_record_id: int | None = None,
 ) -> None:
-    if find_learner_calendar_conflict(
+    existing = find_learner_calendar_conflict(
         learner_id=learner_id,
         learner_email=learner_email,
         scheduled_date=scheduled_date,
         scheduled_time=scheduled_time,
         duration_minutes=duration_minutes,
         exclude_record_id=exclude_record_id,
-    ):
-        raise LearnerCalendarConflict(LEARNER_CALENDAR_CONFLICT_MESSAGE)
+    )
+    if existing is not None:
+        raise LearnerCalendarConflict(
+            f"That time overlaps {calendar_record_label(existing)}, booked for "
+            f"{calendar_record_slot(existing)}. Would you like to reschedule that session instead?",
+            existing,
+        )
 
 
 def find_learner_same_session_in_week(
@@ -5158,6 +5160,25 @@ def find_learner_same_session_in_week(
     return candidates.order_by("scheduled_date", "scheduled_time", "pk").first()
 
 
+def calendar_record_label(record: CoachCalendarEvent) -> str:
+    title = BOOKED_EVENT_TITLES.get(clean_text(record.event_type).lower(), "Coaching Session")
+    return f'“{title} {record.sequence}”' if record.sequence else f'“{title}”'
+
+
+def calendar_record_slot(record: CoachCalendarEvent) -> str:
+    scheduled_date = record.scheduled_date
+    scheduled_time = record.scheduled_time
+    if not scheduled_date:
+        return "its current date"
+    date_label = (
+        f"{scheduled_date.strftime('%A')}, {scheduled_date.day} "
+        f"{scheduled_date.strftime('%B %Y')}"
+    )
+    if not scheduled_time:
+        return date_label
+    return f"{date_label} at {scheduled_time.strftime('%H:%M')}"
+
+
 def ensure_learner_session_not_booked_in_week(
     *,
     learner_id: int,
@@ -5175,10 +5196,11 @@ def ensure_learner_session_not_booked_in_week(
     )
     if existing is None:
         return
-    period = "for that day" if existing.scheduled_date == scheduled_date else "during that week"
-    title = BOOKED_EVENT_TITLES.get(clean_text(session_type).lower(), "session")
     raise LearnerSessionAlreadyBooked(
-        f"You already have a {title} booked {period}. Would you like to reschedule it instead?"
+        f"You already have {calendar_record_label(existing)} booked for "
+        f"{calendar_record_slot(existing)}. The same session type can only be booked once "
+        f"in the same week. Would you like to reschedule it instead?",
+        existing,
     )
 
 

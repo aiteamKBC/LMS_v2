@@ -18,9 +18,11 @@ from coach_api.views import (
     coach_timetable,
     coach_timetable_book_event,
     coach_timetable_event_action,
+    ensure_learner_calendar_available,
     ensure_learner_session_not_booked_in_week,
     find_learner_calendar_conflict,
     find_learner_same_session_in_week,
+    LearnerCalendarConflict,
     LearnerSessionAlreadyBooked,
 )
 
@@ -193,16 +195,50 @@ class LearnerCalendarConflictTests(SimpleTestCase):
 
     @patch("coach_api.views.find_learner_same_session_in_week")
     def test_duplicate_session_message_offers_reschedule(self, find_same):
-        find_same.return_value = SimpleNamespace(scheduled_date=date(2026, 9, 8))
+        find_same.return_value = SimpleNamespace(
+            event_type="catch-up",
+            sequence=2,
+            scheduled_date=date(2026, 9, 8),
+            scheduled_time=time(10, 30),
+        )
 
         with self.assertRaisesRegex(
             LearnerSessionAlreadyBooked,
             "Would you like to reschedule it instead",
-        ):
+        ) as raised:
             ensure_learner_session_not_booked_in_week(
                 learner_id=7,
                 learner_email="learner@example.com",
                 session_type="catch-up",
                 scheduled_date=date(2026, 9, 8),
             )
+
+        self.assertIn("Catch-up Session 2", str(raised.exception))
+        self.assertIn("Tuesday, 8 September 2026 at 10:30", str(raised.exception))
+
+    @patch("coach_api.views.find_learner_calendar_conflict")
+    def test_any_session_time_conflict_identifies_existing_slot_and_offers_reschedule(
+        self, find_conflict
+    ):
+        find_conflict.return_value = SimpleNamespace(
+            event_type="student-support",
+            sequence=3,
+            scheduled_date=date(2026, 9, 9),
+            scheduled_time=time(14, 0),
+        )
+
+        with self.assertRaisesRegex(
+            LearnerCalendarConflict,
+            "Would you like to reschedule that session instead",
+        ) as raised:
+            ensure_learner_calendar_available(
+                learner_id=7,
+                learner_email="learner@example.com",
+                scheduled_date=date(2026, 9, 9),
+                scheduled_time=time(14, 30),
+                duration_minutes=30,
+            )
+
+        self.assertIn("Student Support 3", str(raised.exception))
+        self.assertIn("Wednesday, 9 September 2026 at 14:00", str(raised.exception))
 
