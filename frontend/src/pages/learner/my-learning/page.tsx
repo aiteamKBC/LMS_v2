@@ -23,6 +23,8 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ProgressBar } from '@/components/ui/ProgressMetric';
 import { toneStyle, statusTone, type StatusTone } from '@/lib/statusTone';
 import { EMPTY_VALUE } from '@/lib/format';
+import { fetchStudentActivity, type StudentActivityItem, type StudentActivityResponse } from '@/api/studentActivity';
+import type { LearnerKind } from '@/api/learnerDetail';
 
 const learnerNav = roleNavMap.learner;
 
@@ -417,13 +419,49 @@ function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNotice }: 
   real: ReturnType<typeof useLearnerDetailParam>['real'];
   loading: boolean;
   loadError: string | null;
-  kind?: string;
+  kind?: LearnerKind;
   id?: string;
   showReadOnlyNotice: boolean;
 }) {
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [activityData, setActivityData] = useState<StudentActivityResponse | null>(null);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityError, setActivityError] = useState<string | null>(null);
+
+  const loadStudentActivity = async (force = false) => {
+    if ((!force && activityData) || activityLoading || !kind || !id) return;
+    setActivityLoading(true);
+    setActivityError(null);
+    try {
+      setActivityData(await fetchStudentActivity(kind, id));
+    } catch (error) {
+      setActivityError(error instanceof Error ? error.message : 'Could not load student activity.');
+    } finally {
+      setActivityLoading(false);
+    }
+  };
+  const openStudentActivity = () => {
+    setActivityOpen(true);
+    void loadStudentActivity();
+  };
+
   return (
     <div className="space-y-3">
-      <SectionHeader title="Modules" description="Your training plan, week by week" icon="ri-book-2-line" />
+      <SectionHeader
+        title="Modules"
+        description="Your training plan, week by week"
+        icon="ri-book-2-line"
+        actions={real?.studentActivityAvailable && kind && id ? (
+          <button
+            type="button"
+            onClick={openStudentActivity}
+            className="inline-flex items-center gap-2 rounded-xl border border-primary-200 bg-white px-3.5 py-2 text-[12px] font-semibold text-primary-700 shadow-sm transition-colors hover:bg-primary-50"
+          >
+            <AppIcon className="ri-pulse-line text-[15px]" />
+            Student activity
+          </button>
+        ) : undefined}
+      />
       {showReadOnlyNotice && (
         <div className="flex items-start gap-2.5 rounded-xl border border-primary-200/70 bg-primary-50/60 px-3.5 py-2.5">
           <AppIcon className="ri-eye-line mt-0.5 shrink-0 text-[15px] text-primary-600" />
@@ -443,6 +481,143 @@ function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNotice }: 
         showHero={false}
         compact
       />
+      {activityOpen && (
+        <StudentActivityModal
+          data={activityData}
+          loading={activityLoading}
+          error={activityError}
+          onClose={() => setActivityOpen(false)}
+          onRetry={() => { setActivityData(null); void loadStudentActivity(true); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function StudentActivityModal({ data, loading, error, onClose, onRetry }: {
+  data: StudentActivityResponse | null;
+  loading: boolean;
+  error: string | null;
+  onClose: () => void;
+  onRetry: () => void;
+}) {
+  const [search, setSearch] = useState('');
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const modules = useMemo(() => {
+    const grouped = new Map<number, { id: number; name: string; activities: StudentActivityItem[] }>();
+    for (const item of data?.activities || []) {
+      const group = grouped.get(item.group_id) || {
+        id: item.group_id,
+        name: item.group_name || 'Unnamed module',
+        activities: [],
+      };
+      group.activities.push(item);
+      grouped.set(item.group_id, group);
+    }
+    const term = search.trim().toLocaleLowerCase();
+    return [...grouped.values()]
+      .map((group) => term && !group.name.toLocaleLowerCase().includes(term)
+        ? { ...group, activities: group.activities.filter((item) => item.activity.toLocaleLowerCase().includes(term)) }
+        : group)
+      .filter((group) => group.activities.length > 0)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [data, search]);
+
+  const toggleModule = (groupId: number) => {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(groupId)) next.delete(groupId); else next.add(groupId);
+      return next;
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-3 backdrop-blur-sm sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section role="dialog" aria-modal="true" aria-labelledby="student-activity-title" className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-foreground-200 bg-white shadow-2xl">
+        <header className="flex items-center justify-between border-b border-foreground-100 px-5 py-4">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-primary-600">Last audit</p>
+            <h2 id="student-activity-title" className="mt-0.5 text-lg font-bold text-foreground-900">Student activity</h2>
+            {data && <p className="mt-0.5 text-[12px] text-foreground-500">{data.learner_name}</p>}
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close student activity" className="flex h-9 w-9 items-center justify-center rounded-xl text-foreground-500 hover:bg-background-100">
+            <AppIcon className="ri-close-line text-xl" />
+          </button>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
+          {loading ? (
+            <RowsSkeleton rows={6} />
+          ) : error ? (
+            <EmptyState
+              size="sm"
+              variant="error"
+              title="Could not load student activity"
+              description={error}
+              action={<button type="button" onClick={onRetry} className="rounded-lg border border-foreground-200 bg-white px-3.5 py-2 text-[12px] font-semibold text-foreground-700 hover:bg-background-100">Try again</button>}
+            />
+          ) : !data ? null : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-3 gap-2">
+                <ActivityStat label="Modules" value={data.module_count} />
+                <ActivityStat label="Activities" value={data.count} />
+                <ActivityStat label="Completed" value={data.completed_count} />
+              </div>
+              <label className="relative block">
+                <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400" />
+                <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search modules or activities" className="h-10 w-full rounded-xl border border-foreground-200 bg-white pl-9 pr-3 text-[13px] outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100" />
+              </label>
+              {modules.length === 0 ? (
+                <EmptyState size="sm" title="No activities match this search" />
+              ) : (
+                <div className="space-y-2">
+                  {modules.map((module) => {
+                    const isExpanded = expanded.has(module.id);
+                    const complete = module.activities.filter((item) => item.completed).length;
+                    return (
+                      <div key={module.id} className="overflow-hidden rounded-xl border border-foreground-200 bg-white">
+                        <button type="button" onClick={() => toggleModule(module.id)} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-background-100/70">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600"><AppIcon className="ri-book-open-line text-base" /></span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[13px] font-semibold text-foreground-900">{module.name}</span>
+                            <span className="block text-[11px] text-foreground-500">{complete} of {module.activities.length} completed</span>
+                          </span>
+                          <AppIcon className={`${isExpanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-lg text-foreground-500`} />
+                        </button>
+                        {isExpanded && (
+                          <div className="divide-y divide-foreground-100 border-t border-foreground-100">
+                            {module.activities.map((item) => <StudentActivityRow key={item.activity_id} item={item} />)}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ActivityStat({ label, value }: { label: string; value: number }) {
+  return <div className="rounded-xl border border-foreground-100 bg-background-100/60 px-3 py-2.5"><p className="text-[10px] uppercase tracking-wider text-foreground-400">{label}</p><p className="mt-0.5 text-lg font-bold text-foreground-900">{value}</p></div>;
+}
+
+function StudentActivityRow({ item }: { item: StudentActivityItem }) {
+  const score = item.quiz_score != null && item.quiz_maximum_score
+    ? `${item.quiz_score}/${item.quiz_maximum_score}`
+    : null;
+  return (
+    <div className="flex items-center gap-3 px-4 py-3">
+      <span className={`h-2 w-2 shrink-0 rounded-full ${item.completed ? 'bg-emerald-500' : 'bg-foreground-300'}`} />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[12px] font-semibold text-foreground-800">{item.activity}</p>
+        <p className="mt-0.5 text-[10px] text-foreground-500">{[item.category, item.date, score].filter(Boolean).join(' · ')}</p>
+      </div>
+      <StatusBadge tone={item.completed ? 'positive' : 'neutral'} label={item.completed ? 'Completed' : (item.status || 'Not started')} />
     </div>
   );
 }

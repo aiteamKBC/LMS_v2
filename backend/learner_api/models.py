@@ -205,6 +205,10 @@ class EnrolmentUser(models.Model):
     all_learners = models.Manager()
 
     id = models.AutoField(primary_key=True, db_column="id")
+    # Aptem's learner identifier. It is the bridge to the read-only
+    # Last_audit mirror; it is text here because that is how Created_users was
+    # originally provisioned, while Last_audit stores the same value as bigint.
+    aptem_id = models.TextField(db_column="aptem_id", null=True, blank=True)
 
     # The user's permanent public identifier, added by apply_user_uuid. The
     # integer pk above stays the internal join key — ~25 columns across three
