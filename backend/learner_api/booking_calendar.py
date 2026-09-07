@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
+from django.utils import timezone
+
 
 @dataclass(frozen=True)
 class BookingDateRestriction:
@@ -72,10 +74,17 @@ ENGLAND_WALES_BANK_HOLIDAYS = {
 COVERED_YEARS = frozenset(range(2024, 2029))
 
 
-def booking_date_restriction(day: date | None) -> BookingDateRestriction | None:
+def booking_date_restriction(
+    day: date | None, *, today: date | None = None
+) -> BookingDateRestriction | None:
     """Why no learner session may be booked on ``day``, or ``None``."""
     if day is None:
         return BookingDateRestriction("invalid-date", "Choose a valid booking date.")
+    if day < (today or timezone.localdate()):
+        return BookingDateRestriction(
+            "past-date",
+            "Sessions cannot be booked on a date that has already passed.",
+        )
     if day.weekday() >= 5:
         return BookingDateRestriction(
             "weekend",
@@ -99,6 +108,7 @@ def booking_calendar_payload() -> dict:
     """Client-safe dates used to draw the same closed days as the server."""
     return {
         "division": "england-and-wales",
+        "today": timezone.localdate().isoformat(),
         "coveredYears": sorted(COVERED_YEARS),
         "bankHolidays": [
             {"date": day.isoformat(), "title": title}
