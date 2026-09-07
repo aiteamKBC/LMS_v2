@@ -278,9 +278,17 @@ function TranscriptPreview({ preview }: { preview: TranscriptPreviewState }) {
 export function CoachMeetingArtifactsPanel({
   event,
   className,
+  fetchArtifacts = fetchCoachMeetingArtifacts,
+  contentUrl = coachMeetingArtifactContentUrl,
+  showAttendance = true,
+  visibleArtifactTypes = ['transcript', 'recording'],
 }: {
   event: CoachMeetingArtifactEvent;
   className?: string;
+  fetchArtifacts?: typeof fetchCoachMeetingArtifacts;
+  contentUrl?: typeof coachMeetingArtifactContentUrl;
+  showAttendance?: boolean;
+  visibleArtifactTypes?: string[];
 }) {
   const eventKey = event.eventKey || '';
   const hasTeamsLink = Boolean(event.meetingLink || event.graphWebLink);
@@ -296,7 +304,7 @@ export function CoachMeetingArtifactsPanel({
     }
     const controller = new AbortController();
     setState({ status: 'loading' });
-    fetchCoachMeetingArtifacts(eventKey, controller.signal)
+    fetchArtifacts(eventKey, controller.signal)
       .then(result => {
         setState({
           status: 'ready',
@@ -313,7 +321,7 @@ export function CoachMeetingArtifactsPanel({
         });
       });
     return () => controller.abort();
-  }, [event.source, eventKey, hasTeamsLink]);
+  }, [event.source, eventKey, fetchArtifacts, hasTeamsLink]);
 
   useEffect(() => {
     if (!preview || preview.type !== 'transcript') {
@@ -345,16 +353,17 @@ export function CoachMeetingArtifactsPanel({
   const grouped = useMemo(() => {
     if (state.status !== 'ready') return { transcripts: [], recordings: [] };
     return {
-      transcripts: state.artifacts.filter(artifact => artifact.artifact_type === 'transcript'),
-      recordings: state.artifacts.filter(artifact => artifact.artifact_type === 'recording'),
+      transcripts: state.artifacts.filter(artifact => artifact.artifact_type === 'transcript' && visibleArtifactTypes.includes('transcript')),
+      recordings: state.artifacts.filter(artifact => artifact.artifact_type === 'recording' && visibleArtifactTypes.includes('recording')),
     };
-  }, [state]);
+  }, [state, visibleArtifactTypes]);
 
   if (event.source === 'live-session' || !eventKey || !hasTeamsLink) return null;
 
   const artifacts = state.status === 'ready' ? state.artifacts : [];
   const attendance = state.status === 'ready' ? state.attendance : null;
-  const hasArtifacts = artifacts.length > 0;
+  const visibleArtifacts = artifacts.filter(artifact => visibleArtifactTypes.includes(artifact.artifact_type));
+  const hasArtifacts = visibleArtifacts.length > 0;
 
   return (
     <div className={cn('rounded-lg border border-background-200 bg-white p-3', className)}>
@@ -362,7 +371,7 @@ export function CoachMeetingArtifactsPanel({
         <div>
           <p className="flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wide text-foreground-500">
             <AppIcon className="ri-folder-video-line text-primary-500"></AppIcon>
-            Recording, Transcript & Attendance
+            {showAttendance ? 'Recording, Transcript & Attendance' : visibleArtifactTypes.length === 1 && visibleArtifactTypes[0] === 'recording' ? 'Meeting Recording' : 'Meeting Artifacts'}
           </p>
           <p className="mt-1 text-[12px] leading-5 text-foreground-500">
             {sourceLabel(event.source)} artifacts from Microsoft Teams.
@@ -382,11 +391,11 @@ export function CoachMeetingArtifactsPanel({
         </div>
       ) : null}
 
-      {state.status === 'ready' ? <AttendanceTracker attendance={attendance} /> : null}
+      {state.status === 'ready' && showAttendance ? <AttendanceTracker attendance={attendance} /> : null}
 
       {state.status === 'ready' && !hasArtifacts ? (
         <div className="mt-3 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[12px] leading-5 text-foreground-500">
-          No recording or transcript has been returned by Teams yet. They usually appear after the meeting ends and Teams finishes processing.
+          No meeting recording has been returned by Teams yet. It usually appears after the meeting ends and Teams finishes processing.
         </div>
       ) : null}
 
@@ -395,8 +404,8 @@ export function CoachMeetingArtifactsPanel({
           {[...grouped.transcripts, ...grouped.recordings].map(artifact => {
             const type = artifact.artifact_type || 'artifact';
             const artifactId = artifact.graph_artifact_id || artifact.id;
-            const previewUrl = coachMeetingArtifactContentUrl(eventKey, type, artifactId, { preview: true });
-            const downloadUrl = coachMeetingArtifactContentUrl(eventKey, type, artifactId);
+            const previewUrl = contentUrl(eventKey, type, artifactId, { preview: true });
+            const downloadUrl = contentUrl(eventKey, type, artifactId);
             const selected = preview?.type === type && preview.artifactId === artifactId;
             return (
               <div key={artifactKey(artifact)} className="rounded-lg border border-background-200 bg-background-50 px-3 py-2.5">

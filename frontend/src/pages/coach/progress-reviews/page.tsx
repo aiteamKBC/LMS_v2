@@ -408,7 +408,7 @@ function buildReviewActivities(detail: LearnerDetail): ProgressReviewActivity[] 
   return activities.sort((left, right) => right.at.localeCompare(left.at));
 }
 
-function buildProgressReviewSlidesDeck(
+export function buildProgressReviewSlidesDeck(
   review: CoachCalendarEvent,
   ownerName: string,
   kind: LearnerKind,

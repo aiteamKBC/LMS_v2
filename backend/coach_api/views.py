@@ -5404,13 +5404,8 @@ def coach_timetable_event_artifacts(request, event_key):
     )
 
 
-@coach_access_required
-@require_GET
-def coach_timetable_event_artifact_content(request, event_key, artifact_type, artifact_id):
-    owner_email = authenticated_coach_email(request)
-    record = coach_meeting_artifact_record(owner_email, event_key)
-    if not record:
-        return JsonResponse({"detail": "Calendar event not found for this coach."}, status=404)
+def coach_meeting_artifact_content_response(request, record, event_key, artifact_type, artifact_id):
+    """Stream one Teams artifact for an already-authorised calendar record."""
     artifact_type = clean_text(artifact_type).lower()
     endpoint = COACH_MEETING_ARTIFACT_ENDPOINTS.get(artifact_type)
     if not endpoint:
@@ -5497,6 +5492,16 @@ def coach_timetable_event_artifact_content(request, event_key, artifact_type, ar
     response = HttpResponse(content, content_type=content_type)
     response["Content-Disposition"] = f'{disposition}; filename="{filename}"'
     return response
+
+
+@coach_access_required
+@require_GET
+def coach_timetable_event_artifact_content(request, event_key, artifact_type, artifact_id):
+    owner_email = authenticated_coach_email(request)
+    record = coach_meeting_artifact_record(owner_email, event_key)
+    if not record:
+        return JsonResponse({"detail": "Calendar event not found for this coach."}, status=404)
+    return coach_meeting_artifact_content_response(request, record, event_key, artifact_type, artifact_id)
 
 
 def cancel_reserved_calendar_event(record: CoachCalendarEvent) -> tuple[CoachCalendarEvent, str]:

@@ -715,6 +715,8 @@ export interface CalendarEvent {
   isoDate?: string;
   /** Teams/meeting join URL for coach-scheduled sessions. */
   meetingLink?: string;
+  eventKey?: string;
+  source?: string;
   /**
    * True when `time` is a placeholder rather than an agreed time — a coaching
    * slot the cycle says is due but nobody has booked yet. The grid still needs

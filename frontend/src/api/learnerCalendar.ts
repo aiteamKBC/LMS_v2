@@ -1,4 +1,5 @@
 import type { LearnerKind } from '@/api/learnerDetail';
+import type { CoachMeetingArtifactsResponse } from '@/pages/coach/shared/calendarEvents';
 
 const BASE = '/learner_api/calendar';
 const CACHE_TTL_MS = 30_000;
@@ -25,6 +26,8 @@ export interface LearnerCalendarEvent {
   notes: string;
   reviewResponses?: Record<string, string>;
   reviewCompletedAt?: string | null;
+  learnerSigned?: boolean;
+  learnerSignedAt?: string | null;
   /** False when the Microsoft Graph sync failed: saved locally, but no invite sent. */
   invited?: boolean;
   syncError?: string;
@@ -46,10 +49,10 @@ export interface BookingCalendarRules {
   bankHolidays: Array<{ date: string; title: string }>;
 }
 
-async function request<T>(url: string): Promise<T> {
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(url, { headers: { 'Content-Type': 'application/json' } });
+    res = await fetch(url, { ...init, headers: { 'Content-Type': 'application/json', ...init?.headers } });
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
@@ -91,6 +94,28 @@ export function fetchLearnerCalendarEvents(kind: LearnerKind, id: string, option
     .finally(() => calendarRequests.delete(key));
   calendarRequests.set(key, promise);
   return promise;
+}
+
+export function fetchLearnerMeetingArtifacts(kind: LearnerKind, learnerId: string, eventKey: string, signal?: AbortSignal): Promise<CoachMeetingArtifactsResponse> {
+  return request<CoachMeetingArtifactsResponse>(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/artifacts/`, { signal, credentials: 'include' });
+}
+
+export function learnerMeetingArtifactContentUrl(kind: LearnerKind, learnerId: string, eventKey: string, artifactType: string, artifactId: string, options: { preview?: boolean } = {}): string {
+  const base = `${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/artifacts/${encodeURIComponent(artifactType)}/${encodeURIComponent(artifactId)}/content/`;
+  return options.preview ? `${base}?preview=1` : base;
+}
+
+export async function signLearnerProgressReview(kind: LearnerKind, learnerId: string, eventKey: string, input: { name: string; signature: string }): Promise<{ event: LearnerCalendarEvent }> {
+  const response = await fetch(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/sign/`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const data = await response.json().catch(() => ({})) as { event?: LearnerCalendarEvent; error?: string };
+  if (!response.ok || !data.event) throw new Error(data.error || `Could not sign the review (${response.status}).`);
+  invalidateLearnerCalendarCache(kind, learnerId);
+  return { event: data.event };
 }
 
 export type BookableSessionType =

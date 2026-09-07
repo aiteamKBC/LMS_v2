@@ -363,12 +363,106 @@ def _serialize_event(record):
         "notes": _s(record.notes),
         "reviewResponses": record.review_responses if isinstance(record.review_responses, dict) else {},
         "reviewCompletedAt": record.review_completed_at.isoformat() if record.review_completed_at else None,
+        "learnerSigned": bool(_s((record.review_responses or {}).get("learner_signature"))),
+        "learnerSignedAt": _s((record.review_responses or {}).get("learner_signed_at")) or None,
         # A row can save while the Graph sync fails (no network, non-tenant
         # mailbox, ...). Without this the UI shows a confident "Booked" for a
         # meeting that reached nobody's calendar or inbox.
         "invited": bool(_s(record.graph_event_id)),
         "syncError": _s(record.last_graph_sync_error),
     }
+
+
+def _learner_calendar_record(kind, pk, event_key):
+    """Resolve an event only when it belongs to the requested learner."""
+    model = SOURCE_MODELS.get(kind)
+    if model is None:
+        return None
+    learner = model.all_learners.filter(pk=pk).first()
+    if learner is None:
+        return None
+    mirror = learner_profile_for_source(learner, pk, active_only=True)
+    emails = {_s(learner.email).strip().casefold()}
+    if mirror:
+        emails.add(_s(mirror.email).strip().casefold())
+    emails.discard("")
+    record = CoachCalendarEvent.objects.filter(event_key=event_key).first()
+    if not record:
+        return None
+    return record if (record.learner_id == pk or _s(record.learner_email).strip().casefold() in emails) else None
+
+
+@learner_self_or_staff(kwarg="pk")
+def learner_calendar_event_artifacts(request, kind, pk, event_key):
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    record = _learner_calendar_record(kind, pk, event_key)
+    if not record:
+        return _error("Calendar event not found for this learner.", 404)
+    from coach_api.views import fetch_coach_meeting_graph_snapshot, persist_coach_meeting_snapshots
+    snapshot, error_payload, status_code = fetch_coach_meeting_graph_snapshot(record)
+    if error_payload:
+        return JsonResponse(error_payload, status=status_code)
+    storage = persist_coach_meeting_snapshots(
+        record,
+        artifacts=snapshot["artifacts"],
+        attendance_reports=snapshot["attendanceReports"],
+        attendance_tracker=snapshot["attendanceTracker"],
+    )
+    # Learners may watch the formal meeting recording, but transcripts remain
+    # staff-only because they can contain sensitive discussion notes.
+    learner_artifacts = [
+        artifact for artifact in snapshot["artifacts"]
+        if _s(artifact.get("artifact_type")).lower() == "recording"
+    ]
+    return JsonResponse({
+        "artifacts": learner_artifacts,
+        "attendance": snapshot["attendance"],
+        "errors": snapshot["errors"],
+        "partial": snapshot["partial"],
+        "storage": storage,
+    }, status=status_code)
+
+
+@learner_self_or_staff(kwarg="pk")
+def learner_calendar_event_artifact_content(request, kind, pk, event_key, artifact_type, artifact_id):
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    record = _learner_calendar_record(kind, pk, event_key)
+    if not record:
+        return _error("Calendar event not found for this learner.", 404)
+    if _s(artifact_type).lower() != "recording":
+        return _error("Only meeting recordings are available to learners.", 403)
+    from coach_api.views import coach_meeting_artifact_content_response
+    return coach_meeting_artifact_content_response(request, record, event_key, artifact_type, artifact_id)
+
+
+@csrf_exempt
+@learner_self_or_staff(kwarg="pk")
+def learner_progress_review_sign(request, kind, pk, event_key):
+    if request.method != "POST":
+        return _error("Method not allowed.", 405)
+    record = _learner_calendar_record(kind, pk, event_key)
+    if not record or record.event_type != "progress-review":
+        return _error("Progress review not found for this learner.", 404)
+    try:
+        payload = json.loads(request.body or b"{}")
+    except (TypeError, ValueError):
+        return _error("Invalid JSON body.", 400)
+    signature = _s(payload.get("signature"))
+    if not signature.startswith("data:image/"):
+        return _error("A valid learner signature is required.", 400)
+    if record.status not in {CoachCalendarEvent.STATUS_AWAITING_SIGNATURE, CoachCalendarEvent.STATUS_COMPLETED}:
+        return _error("The coach must submit the review before the learner can sign it.", 409)
+    responses = dict(record.review_responses or {})
+    responses.update({
+        "learner_signature": signature,
+        "learner_signed_by": _s(payload.get("name")) or record.learner_name,
+        "learner_signed_at": timezone.now().isoformat(),
+    })
+    record.review_responses = responses
+    record.save(update_fields=["review_responses", "updated_at"])
+    return JsonResponse({"event": _serialize_event(record)})
 
 
 def _serialize_live_session_event(event):
