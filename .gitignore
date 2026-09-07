@@ -285,6 +285,7 @@ $RECYCLE.BIN/
 # and its seeded ids, and the planning/audit notes are working documents. The
 # product-code fixes and the backend exploit test suite still ship as normal.
 /backend/scripts/runserver_test_branch.sh
+/backend/scripts/test_on_branch.sh
 /backend/scripts/sanitise_test_branch.sql
 /backend/scripts/seed_test_branch.sql
 /backend/scripts/seed_verify_branch.sql
