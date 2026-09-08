@@ -96,7 +96,7 @@ export default function MisCalendarPage() {
       pageTitle="Calendar" pageSubtitle="Organisation-wide calendar view of all sessions, deadlines, and events"
       userName="Priya Sharma" userRole="MIS Operations Lead"
     >
-      <div className="p-6 space-y-5">
+      <div className="mis-calendar-page p-6 space-y-5">
         {/* Stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[

@@ -227,7 +227,7 @@ export function Pagination({
   const btn = 'w-8 h-8 rounded-lg border border-background-200 flex items-center justify-center text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed';
   return (
     <div className="flex items-center justify-center gap-2 py-2">
-      <button className={btn} onClick={() => go(1)} disabled={page <= 1} aria-label="First page"><AppIcon className="ri-skip-back-line text-sm" /></button>
+      <button className={btn} onClick={() => go(1)} disabled={page <= 1} aria-label="First page"><AppIcon className="ri-arrow-left-double-line text-sm" /></button>
       <button className={btn} onClick={() => go(page - 1)} disabled={page <= 1} aria-label="Previous page"><AppIcon className="ri-arrow-left-s-line text-sm" /></button>
       <div className="flex items-center gap-1.5 text-[12px] text-foreground-600">
         <input
@@ -242,7 +242,7 @@ export function Pagination({
         <span>of {Math.max(1, totalPages)}</span>
       </div>
       <button className={btn} onClick={() => go(page + 1)} disabled={page >= totalPages} aria-label="Next page"><AppIcon className="ri-arrow-right-s-line text-sm" /></button>
-      <button className={btn} onClick={() => go(totalPages)} disabled={page >= totalPages} aria-label="Last page"><AppIcon className="ri-skip-forward-line text-sm" /></button>
+      <button className={btn} onClick={() => go(totalPages)} disabled={page >= totalPages} aria-label="Last page"><AppIcon className="ri-arrow-right-double-line text-sm" /></button>
     </div>
   );
 }

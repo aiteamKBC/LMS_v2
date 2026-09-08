@@ -43,10 +43,10 @@ export function PageHeader({
   return (
     <header
       className={cn(
-        'page-header relative overflow-hidden rounded-2xl border-0 px-5 py-5 shadow-sm md:px-7 md:py-7',
+        'page-header workspace-page-hero relative overflow-hidden rounded-2xl border-0 px-5 py-5 shadow-sm md:px-7 md:py-7',
         className,
       )}
-      style={{ background: 'linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 30%, oklch(var(--primary-100)) 66%, oklch(var(--background-50)) 100%)' }}
+      style={{ background: 'var(--kbc-hero-gradient)' }}
     >
       {backTo ? (
         <Link
@@ -68,7 +68,7 @@ export function PageHeader({
         <div className="flex min-w-0 items-start gap-4">
           {icon ? (
             <span
-              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/20 text-white backdrop-blur-sm"
+              className="workspace-hero-banner__icon flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/20 text-white backdrop-blur-sm"
             >
               <AppIcon className={cn(icon, 'text-2xl')}></AppIcon>
             </span>

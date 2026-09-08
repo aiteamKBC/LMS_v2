@@ -154,6 +154,7 @@ export default function PlatformReportPage() {
         </button>
       ) : undefined}
     >
+      <div className="platform-report-page">
       <DataPanel loading={loading && !data} error={error} onRetry={reload}>
         {data && (
           <p className="text-[11px] text-foreground-400">
@@ -239,6 +240,7 @@ export default function PlatformReportPage() {
         Counts are read live when this page loads; there is no snapshotting or scheduled report job.
         Export produces a CSV of exactly the rows shown.
       </SourceNote>
+      </div>
     </AdminPage>
   );
 }

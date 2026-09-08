@@ -4,6 +4,21 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRlpa29EIhlITUpJD6_DnqkUXNTYZbZ5DX6MzdH_hgMj1QBfhpNgIY77bY&amp;s=10" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (() => {
+        try {
+          const savedTheme = localStorage.getItem('theme');
+          const theme = savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : 'light';
+          document.documentElement.dataset.theme = theme;
+          document.documentElement.style.colorScheme = theme;
+          if (theme === 'light' && localStorage.getItem('accessibility-monochrome') === 'true') {
+            document.documentElement.dataset.accessibility = 'monochrome';
+          }
+        } catch (_) {
+          document.documentElement.dataset.theme = 'light';
+        }
+      })();
+    </script>
     <title>KBC LearningOS — Apprenticeship Operating System | Kent Business College</title>
     <meta name="description" content="KBC LearningOS is the complete UK apprenticeship learning, evidence, monitoring, coaching, employer, compliance, QA and reporting operating system for Kent Business College. Better than a normal LMS." />
     <meta name="keywords" content="apprenticeship platform, learning operating system, KBC, Kent Business College, apprenticeship management, ePortfolio, compliance, Ofsted, ILR, evidence" />

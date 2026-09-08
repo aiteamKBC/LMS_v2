@@ -1,7 +1,9 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
+import { Moon, Sun } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { useTheme } from '@/hooks/useTheme';
 import { BrandLockup } from '@/components/BrandLockup';
 import { WorkspaceSwitcher } from '@/components/feature/WorkspaceSwitcher';
 
@@ -22,6 +24,18 @@ function initialsOf(name: string) {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+const MONOCHROME_STORAGE_KEY = 'accessibility-monochrome';
+
+function readMonochromePreference() {
+  if (typeof window === 'undefined') return false;
+
+  try {
+    return window.localStorage.getItem(MONOCHROME_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
 /** The same avatar in the trigger, the menu and the dialog, so the three read
     as one object being carried between them. */
 function AccountAvatar({ initials, className = '', textClassName = 'text-[11px]' }: { initials: string; className?: string; textClassName?: string }) {
@@ -32,6 +46,23 @@ function AccountAvatar({ initials, className = '', textClassName = 'text-[11px]'
     >
       <span className={textClassName}>{initials}</span>
     </span>
+  );
+}
+
+function AccessibilityBadge({ className = '' }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      className={className}
+      aria-hidden="true"
+      focusable="false"
+    >
+      <circle cx="12" cy="12" r="10.2" stroke="currentColor" strokeWidth="1.8" />
+      <circle cx="12" cy="6.8" r="1.5" fill="currentColor" />
+      <path d="M5.6 9.4 12 10.2l6.4-.8" stroke="currentColor" strokeWidth="2.15" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12 10.3v4.8m0 0-3.2 5m3.2-5 3.2 5" stroke="currentColor" strokeWidth="2.15" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
 
@@ -127,13 +158,34 @@ export function SignOutConfirmModal({
 // Notification sound
 export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, role }: HeaderProps) {
   const { auth, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   // Profile is the only dropdown left in the header, so the state that used to
   // coordinate six of them is gone along with them — as are the hard-coded
   // notification, task and message lists that fed their badge counts.
   const [profileOpen, setProfileOpen] = useState(false);
   const [signOutOpen, setSignOutOpen] = useState(false);
+  const [accessibilityOpen, setAccessibilityOpen] = useState(false);
+  const [monochrome, setMonochrome] = useState(readMonochromePreference);
 
   const profileRef = useRef<HTMLDivElement>(null);
+
+  // Black-and-white mode is deliberately scoped to Light Mode. The preference
+  // is kept while Dark Mode is active so returning to Light Mode restores the
+  // user's choice without altering the dark palette.
+  useLayoutEffect(() => {
+    const shouldApplyMonochrome = theme === 'light' && monochrome;
+    if (shouldApplyMonochrome) {
+      document.documentElement.dataset.accessibility = 'monochrome';
+    } else {
+      delete document.documentElement.dataset.accessibility;
+    }
+
+    try {
+      window.localStorage.setItem(MONOCHROME_STORAGE_KEY, String(monochrome));
+    } catch {
+      // Storage can be unavailable in privacy-restricted browser contexts.
+    }
+  }, [monochrome, theme]);
 
   // Kept as a no-arg close so the Profile button's handler reads the same as
   // before; there is no longer anything else to close.
@@ -250,14 +302,79 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
                 </div>
               </div>
 
-              {/* My Profile and Preferences removed; Sign Out is the only action
-                  the menu carries. It stays neutral until hovered, so the menu
-                  does not sit there permanently coloured as a warning. */}
+              {/* Appearance is kept next to the existing account action so the
+                  preference is available anywhere the profile menu is available. */}
               <div className="border-t border-background-200/70 p-1.5">
                 <button
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-label="Toggle dark mode"
+                  aria-checked={theme === 'dark'}
+                  onClick={toggleTheme}
+                  className="account-theme-row group flex w-full cursor-pointer items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-smooth hover:bg-background-100 focus:outline-none focus-visible:bg-background-100"
+                >
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-500 transition-smooth group-hover:bg-background-200 group-hover:text-foreground-700" aria-hidden="true">
+                    {theme === 'dark' ? <Sun size={15} strokeWidth={2.2} /> : <Moon size={15} strokeWidth={2.2} />}
+                  </span>
+                  <span className="flex-1 text-[0.8125rem] font-semibold text-foreground-700 transition-smooth group-hover:text-foreground-900">Dark mode</span>
+                  <span className={`account-theme-switch relative h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors duration-200 ${theme === 'dark' ? 'bg-primary-500' : 'bg-background-300'}`} aria-hidden="true">
+                    <span className={`block h-4 w-4 rounded-full bg-background-50 shadow-sm transition-transform duration-200 ${theme === 'dark' ? 'translate-x-4' : 'translate-x-0'}`}></span>
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  aria-expanded={accessibilityOpen}
+                  onClick={() => setAccessibilityOpen((open) => !open)}
+                  className="account-theme-row group mt-1 flex w-full cursor-pointer items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-smooth hover:bg-background-100 focus:outline-none focus-visible:bg-background-100"
+                >
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-black transition-smooth group-hover:bg-background-50" aria-hidden="true">
+                    <AccessibilityBadge className="h-5 w-5" />
+                  </span>
+                  <span className="flex-1 text-[0.8125rem] font-semibold text-foreground-700 transition-smooth group-hover:text-foreground-900">Accessibility</span>
+                  <AppIcon className={`ri-arrow-down-s-line text-xs text-foreground-400 transition-transform duration-200 ${accessibilityOpen ? 'rotate-180' : ''}`} aria-hidden="true"></AppIcon>
+                </button>
+
+                {accessibilityOpen && (
+                  <div className="mx-1 mb-1 rounded-xl bg-background-100/70 p-2 ring-1 ring-background-200/70" role="group" aria-label="Accessibility settings">
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background-50 text-foreground-500" aria-hidden="true">
+                        <AppIcon className="ri-contrast-2-line text-base"></AppIcon>
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[0.75rem] font-semibold text-foreground-800">Black and white</p>
+                        <p className="text-[0.6875rem] leading-snug text-foreground-400">
+                          {theme === 'dark' ? 'Available in Light Mode only' : 'Remove colour from the interface'}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-label="Toggle black and white mode"
+                        aria-checked={theme === 'light' && monochrome}
+                        disabled={theme === 'dark'}
+                        title={theme === 'dark' ? 'Switch to Light Mode to use black and white mode' : 'Toggle black and white mode'}
+                        onClick={() => setMonochrome((enabled) => !enabled)}
+                        className={`relative h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 focus-visible:ring-offset-1 ${
+                          theme === 'dark'
+                            ? 'cursor-not-allowed bg-background-200 opacity-50'
+                            : monochrome
+                              ? 'bg-foreground-900'
+                              : 'bg-background-300'
+                        }`}
+                      >
+                        <span className={`block h-4 w-4 rounded-full bg-background-50 shadow-sm transition-transform duration-200 ${theme === 'light' && monochrome ? 'translate-x-4' : 'translate-x-0'}`}></span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  type="button"
                   role="menuitem"
                   onClick={() => { setProfileOpen(false); setSignOutOpen(true); }}
-                  className="group flex w-full cursor-pointer items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-smooth hover:bg-red-50 focus:outline-none focus-visible:bg-red-50"
+                  className="group mt-1 flex w-full cursor-pointer items-center gap-3 rounded-xl border-t border-background-200/70 px-2.5 pb-2 pt-2 text-left transition-smooth hover:bg-red-50 focus:outline-none focus-visible:bg-red-50"
                 >
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-400 transition-smooth group-hover:bg-red-100 group-hover:text-red-600">
                     <AppIcon className="ri-logout-box-line text-base"></AppIcon>

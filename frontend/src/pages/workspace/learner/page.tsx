@@ -371,6 +371,7 @@ export default function LearnerOverview() {
     : [`${p.programme} ${p.programmeLevel}`, p.employer, `Cohort ${p.cohort}`];
 
   const trainingPlanHref = kind && id ? `/learner/training-plan/${kind}/${id}` : '/learner/training-plan';
+  const learningPlanHubHref = kind && id ? `/learner/learning-plan/${kind}/${id}` : '/learner/learning-plan';
   const journeyHref = kind && id ? `/learner/modules/${kind}/${id}` : '/learner/modules';
   const displayLearnerName = isRealMode ? heroFullName : p.fullName;
   const displayCohort = isRealMode ? (heroCohort || EMPTY_VALUE) : p.cohort;
@@ -868,6 +869,14 @@ export default function LearnerOverview() {
                 >
                   <AppIcon className="ri-play-circle-line" />
                   Continue learning
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate(learningPlanHubHref)}
+                  className="learner-overview-learning-plan-button inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/70 bg-white/15 px-3 text-[12px] font-semibold text-white shadow-sm transition"
+                >
+                  <AppIcon className="ri-book-2-line" />
+                  Learning Plan
                 </button>
               </div>
             </div>

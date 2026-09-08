@@ -70,7 +70,7 @@ export function CurriculumQualityHub() {
                 <h1 className="mt-2 font-heading text-3xl font-bold tracking-tight text-foreground-950">{copy.title}</h1>
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-foreground-500">{copy.description}</p>
               </div>
-              <span className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full bg-amber-50 px-4 text-[11px] font-extrabold uppercase tracking-wide text-amber-700">
+              <span className="curriculum-quality-coming-soon inline-flex h-9 shrink-0 items-center gap-2 rounded-full bg-amber-50 px-4 text-[11px] font-extrabold uppercase tracking-wide text-amber-700">
                 <AppIcon className="ri-time-line" />
                 Coming soon
               </span>
@@ -189,7 +189,9 @@ function CurriculumHub({ kind }: { kind: HubKind }) {
               <Link
                 to={primary.href}
                 className={`inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-5 text-[12px] font-bold text-white ${
-                  kind === 'delivery'
+                  kind === 'library'
+                    ? 'bg-[#b27715] shadow-[0_6px_16px_rgba(178,119,21,0.28)] transition-all duration-200 hover:bg-[#965f0d] hover:shadow-[0_9px_20px_rgba(178,119,21,0.38)] focus:outline-none focus:ring-2 focus:ring-[#b27715] focus:ring-offset-2 active:translate-y-px'
+                    : kind === 'delivery'
                     ? 'bg-[linear-gradient(135deg,#8f5f0e_0%,#b27715_45%,#d39a2c_100%)] shadow-[0_6px_16px_rgba(178,119,21,0.28)] transition-all duration-200 hover:bg-[linear-gradient(135deg,#9f6d16_0%,#c08422_45%,#dfa645_100%)] hover:shadow-[0_9px_20px_rgba(178,119,21,0.38)] focus:outline-none focus:ring-2 focus:ring-[#b27715] focus:ring-offset-2 active:translate-y-px'
                     : 'bg-primary-600 shadow-sm transition-smooth hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2'
                 }`}

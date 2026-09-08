@@ -169,8 +169,8 @@ export default function IfateStandardPage() {
         ) : (
           <>
             <section
-              className="overflow-hidden rounded-2xl border border-primary-900/20 text-white shadow-lg"
-              style={{ background: 'linear-gradient(135deg, #140726 0%, #35105c 52%, #073a42 100%)' }}
+              className="workspace-page-hero overflow-hidden rounded-2xl border border-primary-900/20 text-white shadow-lg"
+              style={{ background: 'var(--kbc-hero-gradient)' }}
             >
               <div className="px-5 py-6 sm:px-7">
                 <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">

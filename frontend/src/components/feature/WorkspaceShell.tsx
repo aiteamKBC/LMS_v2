@@ -221,7 +221,7 @@ export function WorkspaceShell({
 
   return (
     <div
-      className="dashboard-theme workspace-shell flex h-screen bg-background-200 overflow-hidden"
+      className="dashboard-theme workspace-shell flex h-screen overflow-hidden"
       data-workspace-role={role}
       // The offset itself is applied under a `lg` media query in index.css —
       // below that breakpoint the sidebar is an off-canvas drawer and must
@@ -245,7 +245,7 @@ export function WorkspaceShell({
           same constants, so the content can never sit under the rail. The hover
           preview is deliberately not reserved: it floats above the page. */}
       <div
-        className="workspace-content flex-1 flex flex-col min-w-0 bg-background-200 transition-[margin] duration-300 ease-out"
+        className="workspace-content flex-1 flex flex-col min-w-0 transition-[margin] duration-300 ease-out"
         style={{ marginLeft: hideFocusedLearnerSidebar ? 0 : `var(--kbc-sidebar-offset, 0px)` }}
       >
         {!hidePageChrome && (
@@ -308,7 +308,7 @@ export function WorkspaceShell({
             change (router/index.ts keys the boundary by pathname), so a
             transition owned by this component could never run. It used to hold
             an opacity-0 state behind a 120ms timer that nothing ever set. */}
-        <main className="workspace-main flex-1 overflow-y-auto bg-background-200">
+        <main className="workspace-main flex-1 overflow-y-auto">
           {/* An administrator reading a coach's workspace: shown on every coach
               page, since the sidebar reaches most of them without passing the
               dashboard that chose the coach. */}

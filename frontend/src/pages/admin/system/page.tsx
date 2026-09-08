@@ -40,7 +40,7 @@ export default function AdminSystemPage() {
     <AdminPage
       title="System Status"
       subtitle="Subsystems this deployment depends on, and whether they are configured"
-      icon="ri-pulse-line"
+      icon="ri-shield-check-line"
       heroTitle="System status"
       heroBlurb={
         <>Each subsystem below is one this codebase genuinely calls. &ldquo;Configured&rdquo; means its settings are present — it is not a live health check of the remote service.</>

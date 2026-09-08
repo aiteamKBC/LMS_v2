@@ -212,8 +212,8 @@ export default function LearnerCaseFile() {
         )}
 
         <section
-          className="overflow-hidden rounded-2xl shadow-sm"
-          style={{ background: 'linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 36%, oklch(var(--primary-100)) 100%)' }}
+          className="workspace-page-hero overflow-hidden rounded-2xl shadow-sm"
+          style={{ background: 'var(--kbc-hero-gradient)' }}
         >
           <div className="flex flex-col gap-5 px-5 py-5 md:px-7">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">

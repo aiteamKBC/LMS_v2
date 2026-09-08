@@ -1317,7 +1317,7 @@ export default function CoachDashboard() {
               onClick={scrollToAttention}
               className="inline-flex h-9 items-center gap-2 rounded-lg border border-foreground-200/70 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700 shadow-sm transition-smooth hover:border-primary-300 hover:bg-primary-50/40"
             >
-              <AppIcon className="ri-equalizer-line text-sm text-foreground-500"></AppIcon>
+              <AppIcon className="ri-filter-3-line text-sm text-foreground-500"></AppIcon>
               <span>Filters</span>
             </button>
           </div>

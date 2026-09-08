@@ -48,7 +48,7 @@ export function WorkspaceHeroBanner({
     <div
       ref={bannerRef}
       className={`ui-hero-banner workspace-hero-banner relative overflow-hidden rounded-2xl shadow-sm ${className}`}
-      style={{ background: 'linear-gradient(110deg, var(--kbc-primary-deep) 0%, var(--kbc-primary) 38%, var(--kbc-primary-accent) 68%, var(--kbc-purple-soft) 100%)' }}
+      style={{ background: 'var(--kbc-hero-gradient)' }}
     >
       {decorative && (
         <>
@@ -73,12 +73,12 @@ export function WorkspaceHeroBanner({
         {stats && stats.length > 0 && (
           <div className="workspace-hero-banner__stats flex shrink-0 flex-wrap items-center gap-3">
             {stats.map((stat, i) => (
-              <div key={i} className={`coach-metric-card workspace-hero-metric min-w-[80px] ${statIconPosition === 'leading' ? 'workspace-hero-metric--leading-icon' : ''}`}>
+              <div key={i} className={`coach-metric-card workspace-hero-metric workspace-hero-metric--${stat.variant || 'default'} min-w-[80px] ${statIconPosition === 'leading' ? 'workspace-hero-metric--leading-icon' : ''}`}>
                 {statIconPosition === 'leading' ? (
                   <>
                     {stat.icon && (
-                      <span className="workspace-hero-metric__icon flex shrink-0 items-center justify-center rounded-full">
-                        <AppIcon className="text-primary-600" name={stat.icon} size={20} />
+                      <span aria-hidden="true" className="workspace-hero-metric__icon flex shrink-0 items-center justify-center rounded-full">
+                        <AppIcon className="text-current" name={stat.icon} size={20} />
                       </span>
                     )}
                     <span className="workspace-hero-metric__body flex min-w-0 flex-col">
@@ -88,9 +88,9 @@ export function WorkspaceHeroBanner({
                   </>
                 ) : (
                   <>
-                    <p className="flex items-center gap-1.5 whitespace-nowrap text-[10px] font-medium uppercase tracking-wide text-foreground-500">
-                      {stat.icon && <AppIcon className="text-primary-600" name={stat.icon} size={14} />}
-                      {stat.label}
+                    <p className="workspace-hero-metric__status flex items-center justify-between gap-1.5 whitespace-nowrap text-[10px] font-medium uppercase tracking-wide text-foreground-500">
+                      <span>{stat.label}</span>
+                      {stat.icon && <span className="workspace-hero-metric__status-icon flex shrink-0 items-center justify-center rounded-full"><AppIcon className="text-current" name={stat.icon} size={14} /></span>}
                     </p>
                     <p className="mt-1 text-[28px] font-semibold leading-none tabular-nums text-foreground-900">{stat.value}</p>
                   </>

@@ -4,6 +4,7 @@ import {
   AlarmClock,
   AlertCircle,
   AlertTriangle,
+  Accessibility,
   AlignCenter,
   AlignLeft,
   AlignRight,
@@ -30,6 +31,8 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  ChevronsLeft,
+  ChevronsRight,
   Circle,
   CircleAlert,
   CircleCheck,
@@ -45,6 +48,7 @@ import {
   Code2,
   Compass,
   Copy,
+  Contrast,
   Database,
   Download,
   Ellipsis,
@@ -162,6 +166,8 @@ function resolveIcon(name: string): LucideIcon {
   const key = name.replace(/^ri-/, '').toLowerCase();
 
   if (/loader|loading/.test(key)) return Loader2;
+  if (/accessibility|wheelchair/.test(key)) return Accessibility;
+  if (/contrast/.test(key)) return Contrast;
   // These three sit above the generic branches deliberately. Further down,
   // `/search/` claims anything containing "search" and `/add/` claims anything
   // containing "add", which shadowed the specific branches meant for these
@@ -191,6 +197,8 @@ function resolveIcon(name: string): LucideIcon {
   if (/quality.*publish/.test(key)) return ShieldCheck;
   if (/node-tree|network|mind-map/.test(key)) return GitBranch;
   if (/hammer|build|construction/.test(key)) return Hammer;
+  if (/arrow-left-double|skip-back/.test(key)) return ChevronsLeft;
+  if (/arrow-right-double|skip-forward/.test(key)) return ChevronsRight;
   if (/arrow-left-s/.test(key)) return ChevronLeft;
   if (/arrow-right-s/.test(key)) return ChevronRight;
   if (/arrow-up-s/.test(key)) return ChevronUp;

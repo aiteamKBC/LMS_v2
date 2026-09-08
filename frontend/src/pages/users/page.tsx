@@ -177,7 +177,7 @@ function ActiveProgrammeCard({ active, total, onClick, selected = false }: { act
         </svg>
         <div
           className="flex h-[76px] w-[76px] items-center justify-center rounded-full"
-          style={{ background: `conic-gradient(#35b98a ${percentage}%, #ebeaf1 0)` }}
+          style={{ background: `conic-gradient(#35b98a ${percentage}%, var(--enrolment-ring-track, #ebeaf1) 0)` }}
         >
           <div className="flex h-[58px] w-[58px] items-center justify-center rounded-full bg-white text-[16px] font-semibold text-foreground-700">
             {percentage}%
@@ -461,9 +461,9 @@ export default function UsersListPage() {
 
   return (
     <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Users" pageSubtitle="Directory of learners and administrators" userName="Enrolment Officer" userRole="Enrolment Officer">
-      <div className="p-6 space-y-6">
+      <div className="enrolment-users-page p-6 space-y-6">
         <div
-          className="relative overflow-visible rounded-2xl border border-primary-100/80 p-5 shadow-sm sm:p-7"
+          className="enrolment-users-hero relative overflow-visible rounded-2xl border border-primary-100/80 p-5 shadow-sm sm:p-7"
           style={{
             backgroundColor: '#f8f6ff',
             backgroundImage: 'radial-gradient(circle at 82% 18%, rgba(126, 87, 220, 0.12), transparent 28%), repeating-radial-gradient(ellipse at 78% 10%, transparent 0 18px, rgba(126, 87, 220, 0.07) 19px 21px, transparent 22px 34px)',

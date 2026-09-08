@@ -147,6 +147,8 @@ const LearnerOnboardingReviewsPage = lazy(() => import("../pages/learner/onboard
 const LearnerReviewFormPage = lazy(() => import("../pages/learner/onboarding/reviews/form"));
 const LearnerOverview = lazy(() => import("../pages/workspace/learner/page"));
 const LearnerDemoMaterialPage = lazy(() => import("../pages/learner/demo-material/page"));
+const LearnerLearningPlanPage = lazy(() => import("../pages/learner/learning-plan/page"));
+const LearnerLearningPlanModulesPage = lazy(() => import("../pages/learner/learning-plan/modules/page"));
 const LearnerProfilePage = lazy(() => import("../pages/learner/profile/page"));
 const MISDashboard = lazy(() => import("../pages/workspace/mis/page"));
 // These two modules export both a detail page (default) and a list page (named),
@@ -431,6 +433,22 @@ const routes: RouteObject[] = [
   {
     path: "/learner/my-learning/:kind/:id",
     element: <MyLearningPage />,
+  },
+  {
+    path: "/learner/learning-plan",
+    element: <LearnerLearningPlanPage />,
+  },
+  {
+    path: "/learner/learning-plan/:kind/:id",
+    element: <LearnerLearningPlanPage />,
+  },
+  {
+    path: "/learner/learning-plan/modules",
+    element: <LearnerLearningPlanModulesPage />,
+  },
+  {
+    path: "/learner/learning-plan/modules/:kind/:id",
+    element: <LearnerLearningPlanModulesPage />,
   },
   {
     path: "/learner/training-plan",
