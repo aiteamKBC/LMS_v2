@@ -3457,7 +3457,7 @@ function TypeSpecificFields({
       <EditorBlock title="Assignment">
         <RichTextDraft label="Assignment question" value={getString('assignmentContent') || getString('assignmentBrief')} onChange={value => onSettingChange('assignmentContent', value)} rows={14} htmlOnly />
         <p className="rounded-lg border border-primary-100 bg-primary-50 px-3 py-2 text-[11px] font-medium leading-5 text-primary-700">
-          Learners answer this question in the three-step assignment form. They can optionally upload PDF, image, Word, PowerPoint or video evidence, which is stored securely in Azure.
+          Learners complete an eight-step monthly submission: answer and learning statements; evidence cross-references; KSBs and actual hours; full-month reflection; employer impact; action plan and EPA; quality checks; coaching booking and editable PowerPoint. Incomplete work can always be saved as a draft. There is no six-hour cap. Historical imports are handled separately and are exempt from new-submission checks.
         </p>
         <TextInput label="Due timing relative to week" value={getString('dueTiming')} onChange={value => onSettingChange('dueTiming', value)} />
       </EditorBlock>

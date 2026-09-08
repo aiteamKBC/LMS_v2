@@ -1,3 +1,5 @@
+import type { MonthlyAssignment } from './monthlyAssignment';
+
 export interface LearningReflectionSubmissionInput {
   learnerKind: 'commercial' | 'apprenticeship';
   learnerId: string;
@@ -34,9 +36,13 @@ export interface LearningReflectionSubmissionInput {
   businessImpact?: string;
   outsideWorkingHours?: boolean;
   outsideWorkingHoursConfirmed?: boolean;
+  monthlyAssignment?: MonthlyAssignment;
+  assignmentTimeSource?: 'timer' | 'input';
 }
 
 export interface StoredLearningReflectionSubmission extends LearningReflectionSubmissionInput {
+  /** Server-owned provenance; learners cannot request the import exemption. */
+  submissionOrigin?: 'learner' | 'imported_legacy';
   id: string;
   status: string;
   coachFeedback: string | null;

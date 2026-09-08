@@ -118,6 +118,8 @@ urlpatterns = [
     path("reflection/transcribe/", reflection_ai.transcribe_reflection, name="reflection-transcribe"),
     path("reflection/proofread/", reflection_ai.proofread_reflection, name="reflection-proofread"),
     path("reflection/submissions/", reflection_submissions.create_reflection_submission, name="reflection-submission-create"),
+    path("reflection/assignment/check/", monthly_assignment.check_assignment, name="monthly-assignment-check"),
+    path("reflection/assignment/presentation/", monthly_assignment.export_presentation, name="monthly-assignment-presentation"),
     # learner calendar (coaching sessions from Coach.coach_calendar_event)
     path("calendar/<str:kind>/<int:pk>/", calendar.learner_calendar, name="learner-calendar"),
     path("calendar/<str:kind>/<int:pk>/book/", calendar.learner_calendar_book, name="learner-calendar-book"),

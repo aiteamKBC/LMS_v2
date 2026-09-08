@@ -686,10 +686,15 @@ export default function ComponentViewPage() {
       setWallElapsed(0);
       setManualTimeSeconds(null);
       setTimeSource(usesManualTimeOnly ? 'input' : 'timer');
-      const refreshed = await fetchLearnerDetail(kind as LearnerKind, id);
+      // A refresh failure after a committed completion must not invite the
+      // learner to submit the same timing session again.
+      const refreshed = await fetchLearnerDetail(kind as LearnerKind, id).catch(error => {
+        if (!options.stayOnPage) throw error;
+        return detail;
+      });
       setDetail(refreshed);
       setPhase('consume');
-      if (!options.stayOnPage) {
+      if (!options.stayOnPage && refreshed) {
         const nextHref = nextActivityRoute(refreshed, componentId, kind, id);
         if (nextHref) navigate(nextHref, { replace: true });
       }
@@ -938,6 +943,7 @@ export default function ComponentViewPage() {
               {isAssignment && activityEvidenceContext && kind && id && componentId && (
                 <div className="mt-4">
                   <AssignmentSubmissionWizard
+                    key={`${kind}:${id}:${componentId}`}
                     kind={kind as LearnerKind}
                     learnerId={id}
                     learnerName={detail?.name || 'Learner'}
@@ -952,29 +958,34 @@ export default function ComponentViewPage() {
                     ksbMappings={component.ksbMappings || []}
                     evidenceFiles={evidenceFiles}
                     evidenceDetails={activityEvidenceContext.trainingPlanDetails}
-                    timeSeconds={manualTimeSeconds}
+                    timeSeconds={submittedTimeSeconds}
+                    timeSource={timeSource}
                     timeControl={(
+                      <div className="space-y-3">
+                      <p className="text-sm">{timeSource === 'input' ? 'Confirmed time' : 'Automatic time'}: <span className="font-mono font-bold">{formatClock(submittedTimeSeconds)}</span></p>
                       <ActivityTimeSpentInput
                         initialSeconds={manualTimeSeconds}
                         onChange={(seconds) => {
                           setManualTimeSeconds(seconds);
-                          setTimeSource('input');
+                          setTimeSource(seconds == null ? 'timer' : 'input');
                         }}
                       />
+                      <p className="text-xs text-slate-500">The timer runs normally. Only enter a time above if you need to correct it.</p>
+                      </div>
                     )}
                     outsideWorkingHours={componentAccess.outsideWorkingHours}
                     outsideWorkingHoursConfirmed={outsideWorkingHoursConfirmed}
                     submittingProgress={submitting}
                     onEvidenceChanged={activityEvidenceContext.onUploaded}
-                    onRestoreTime={(seconds) => {
-                      setManualTimeSeconds(seconds);
-                      setTimeSource('input');
+                    onRestoreTime={(seconds, source) => {
+                      if (source === 'input') { setManualTimeSeconds(seconds); setTimeSource('input'); }
+                      else setWallElapsed(current => Math.max(current, seconds));
                     }}
                     onSubmitProgress={async (answers: AssignmentAnswers) => {
                       await finalizeSubmit({
                         ksbs: (component.ksbMappings || []).map(mapping => mapping.code),
                         feedback: `${answers.whatYouLearned}\n\nBusiness impact:\n${answers.businessImpact}`,
-                        reportedTime: manualTimeSeconds ? formatClock(manualTimeSeconds) : '',
+                        reportedTime: formatClock(submittedTimeSeconds),
                       }, { stayOnPage: true, rethrow: true });
                     }}
                   />
