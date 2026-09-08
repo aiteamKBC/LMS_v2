@@ -1,6 +1,7 @@
 import type { QuizAttempt } from '@/features/audit/learner-log-pro-manual/lib/api';
 
 export type Signature = { signed_at: string; signer_name: string; url: string };
+export type SignatureCaptureMethod = 'draw' | 'upload' | 'import';
 export type MonthState = {
   is_required?: boolean;
   month: string;
@@ -117,7 +118,7 @@ export const completeMonth = (month: string) => post<MonthDetail>(`/last-audit/m
 export const reopenMonth = (month: string, aptemId: number, reason: string) => post<MonthDetail>(`/last-audit/manual/finalization${query(aptemId)}`, { month, action: 'reopen', reason });
 export const refreshMonths = (aptemId: number, reason: string) => post<Summary>(`/old-otjh/refresh-months/${query(aptemId)}`, { reason });
 
-export function saveSignature(aptemId: number, month: string, digest: string, blob: Blob, capture: 'draw' | 'upload') {
+export function saveSignature(aptemId: number, month: string, digest: string, blob: Blob, capture: SignatureCaptureMethod) {
   const form = new FormData();
   form.set('signature', blob, blob.type === 'image/jpeg' ? 'signature.jpg' : 'signature.png');
   form.set('month', month);
@@ -127,7 +128,7 @@ export function saveSignature(aptemId: number, month: string, digest: string, bl
   return request<MonthDetail>(`/learners/${aptemId}/signoff/${query()}`, { method: 'POST', body: form });
 }
 
-export function saveMonthSignatures(months: string[], blob: Blob, capture: 'draw' | 'upload', aptemId?: number) {
+export function saveMonthSignatures(months: string[], blob: Blob, capture: SignatureCaptureMethod, aptemId?: number) {
   const form = new FormData();
   form.set('signature', blob, blob.type === 'image/jpeg' ? 'signature.jpg' : 'signature.png');
   form.set('months', JSON.stringify(months));

@@ -12,7 +12,7 @@ import { useRecordSummary } from './useRecordSummary';
 import { ActivityLog, LearnerInformation, MonthlyHours } from './ReportSections';
 import { SignatureCapture } from './SignatureCapture';
 import { BulkSignDialog } from './BulkSignDialog';
-import { completeMonth, getContentReview, getMonth, getSignoffs, getSummary, reopenMonth, saveSignature, type Signature } from './api';
+import { completeMonth, getContentReview, getMonth, getSignoffs, getSummary, reopenMonth, saveSignature, type Signature, type SignatureCaptureMethod } from './api';
 import { displayDate, monthLabel, monthStatus, nextOutstanding } from './report';
 import styles from './report.module.css';
 import design from './design.module.css';
@@ -58,7 +58,7 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
   // version present when this draft started. A conflict requires a fresh review.
   const draftDigest = useRef<string | null>(null);
   const refresh = () => { void client.invalidateQueries({ queryKey: ['old-otjh'] }); };
-  const signing = useMutation({ mutationFn: ({ blob, capture }: { blob: Blob; capture: 'draw' | 'upload' }) =>
+  const signing = useMutation({ mutationFn: ({ blob, capture }: { blob: Blob; capture: SignatureCaptureMethod }) =>
     saveSignature(summary.data!.learner!.aptem_id, month, draftDigest.current || query.data!.snapshot_digest, blob, capture),
     onSuccess: data => { setMessage(data.status === 'complete' ? 'Your signature is saved and this month is now complete.' : 'Your signature is saved. The learner completes the record with their signature.'); draftDigest.current = null; setCaptureVersion(value => value + 1); client.setQueryData(key, data); refresh(); }, onError: refresh });
   const completion = useMutation({ mutationFn: () => completeMonth(month), onSuccess: async data => {
@@ -88,10 +88,17 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
   const months = summary.data.months;
   const index = months.findIndex(item => item.month === month);
   const previous = months[index - 1]; const next = months[index + 1];
+  const reusableLearnerSignature = [...months]
+    .filter(item => item.month !== month && item.student_signature)
+    .sort((left, right) => right.month.localeCompare(left.month))[0];
   const signatureRows = [{ role: 'Learner', signature: data.student_signature, own: student },
     { role: 'Coach', signature: data.coach_signature, own: !student && !readOnly }];
-  let completionHint = 'The learner’s signature completes the record. Use Sign all months to sign once for every month.';
-  if (data.student_signature) completionHint = 'Your learner signature is saved. Use Sign all months to complete the remaining record.';
+  let completionHint = student
+    ? reusableLearnerSignature
+      ? 'Import your saved learner signature, confirm it for this month, and continue month by month.'
+      : 'Draw or upload your learner signature for this first month. You can import it in the remaining months.'
+    : 'The learner’s signature completes this month. Coach signatures can be added separately.';
+  if (data.student_signature) completionHint = 'Your learner signature is saved for this month.';
   if (readOnly) completionHint = 'Viewing only. The learner completes this record from their own account.';
   return <div className={design.reportPage}>
     {message && <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-800">{message}</div>}
@@ -105,7 +112,7 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
       <button className={btnSecondary} disabled={!next || busy} onClick={() => navigate(`${base}/${next.month}`)} aria-label="Next month">Next<AppIcon className="ri-arrow-right-s-line" /></button>
       <Link to={aptemId === undefined ? base : `/old-otjh/coach/${aptemId}`} className={btnSecondary}><AppIcon className="ri-layout-grid-line" />All months</Link>
     </nav>
-    {!readOnly && <div className={design.bulkActions}>
+    {!readOnly && !student && <div className={design.bulkActions}>
       <p>{summary.data.can_access_lms ? 'Your previous learning record is complete.' : 'One signature for your entire previous learning record.'}</p>
       <button className={btnPrimary} disabled={busy || summary.data.can_access_lms} onClick={() => setBulkOpen(true)}><AppIcon className="ri-edit-line" />Sign all months</button>
     </div>}
@@ -123,7 +130,9 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
       <h2 className="text-base font-semibold">{contentReview.isPending ? 'Checking your learning materials…' : 'Learning materials need attention'}</h2>
       <p className="mt-2 text-sm text-foreground-600">{contentReview.isPending
         ? 'You can read the report while we check its content. Signing becomes available when the required materials can be reviewed.'
-        : 'Some materials are unavailable for individual review. You can still use Sign all months to sign your entire record.'}</p>
+        : student
+          ? 'Some materials are unavailable for individual review. Please ask your coach to restore them before you sign this month.'
+          : 'Some materials are unavailable for individual review. You can still use Sign all months for the coach sign-off.'}</p>
       {contentReview.error && <p role="alert" className="mt-3 text-sm">{contentReview.error.message}</p>}
       {!!contentReview.data?.issues.length && <ul className="mt-4 space-y-2 text-sm">{contentReview.data.issues.map(issue =>
         <li key={issue.id}><strong>{issue.title || 'Untitled activity'}</strong><span className="text-foreground-600"> — {issue.reason}</span></li>)}</ul>}
@@ -139,6 +148,10 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
             {row.signature && <img src={row.signature.url} alt={`${row.role} signature`} className={design.signatureImage} />}
             {row.own && data.status !== 'complete' ? <SignatureCapture key={captureVersion} name={auth.account?.displayName || auth.user?.fullName || ''} busy={busy || !canSign}
               dialogRole={student ? 'learner' : 'coach'} hasSavedSignature={Boolean(row.signature)} saveError={signing.error?.message}
+              importSignature={student && reusableLearnerSignature?.student_signature ? {
+                url: reusableLearnerSignature.student_signature.url,
+                monthLabel: monthLabel(reusableLearnerSignature.month),
+              } : undefined}
               confirmationText={student ? "I confirm this is my signature. Save it and complete this month." : "I confirm this is my coach signature for this month."}
               onDraftStart={() => { draftDigest.current ??= data.snapshot_digest; }} onDraftReset={() => { draftDigest.current = null; }}
               onSave={(blob, capture) => signing.mutate({ blob, capture })} />

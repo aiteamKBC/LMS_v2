@@ -5,10 +5,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const fetchClassifiedLearners = vi.fn();
 const fetchLearnerAssignments = vi.fn();
 const setAssignmentSelection = vi.fn();
+const updateAssignmentKsbCodes = vi.fn();
 vi.mock('@/api/adminEvidence', () => ({
   fetchClassifiedLearners: (...args: unknown[]) => fetchClassifiedLearners(...args),
   fetchLearnerAssignments: (...args: unknown[]) => fetchLearnerAssignments(...args),
   setAssignmentSelection: (...args: unknown[]) => setAssignmentSelection(...args),
+  updateAssignmentKsbCodes: (...args: unknown[]) => updateAssignmentKsbCodes(...args),
 }));
 vi.mock('../_shared/AdminPage', () => ({
   AdminPage: ({ children }: { children: React.ReactNode }) => <main>{children}</main>,
@@ -25,6 +27,7 @@ beforeEach(() => {
   fetchClassifiedLearners.mockReset();
   fetchLearnerAssignments.mockReset();
   setAssignmentSelection.mockReset();
+  updateAssignmentKsbCodes.mockReset();
 });
 
 describe('Super Admin Evidence page', () => {
@@ -122,6 +125,27 @@ describe('Super Admin Evidence page', () => {
     expect(screen.getByText('K1')).toBeInTheDocument();
     expect(screen.getByText('S2')).toBeInTheDocument();
     expect(screen.getByText('80%')).toHaveClass('text-green-600');
+  });
+
+  it('edits and saves the verified KSB codes', async () => {
+    const payload = assignmentPage(true);
+    fetchLearnerAssignments.mockResolvedValue({
+      ...payload,
+      results: [{ ...payload.results[0], verifiedKsbCodes: ['K1', 'S2'] }],
+    });
+    updateAssignmentKsbCodes.mockResolvedValue({ verifiedKsbCodes: ['K1', 'S3', 'B2'] });
+    renderDetail();
+
+    expect(await screen.findByRole('heading', { name: 'Quality Marking' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    fireEvent.change(screen.getByLabelText('Verified KSB codes'), { target: { value: 'K1, s3 B2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    await waitFor(() => expect(updateAssignmentKsbCodes).toHaveBeenCalledWith(
+      42, 100, 9, 200, ['K1', 'S3', 'B2'],
+    ));
+    expect(await screen.findByText('S3')).toBeInTheDocument();
+    expect(screen.getByText('B2')).toBeInTheDocument();
   });
 
   it('selects an assignment, reloads persisted state and supports undo', async () => {

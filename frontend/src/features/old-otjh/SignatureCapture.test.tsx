@@ -52,6 +52,32 @@ it('previews an uploaded image and requires explicit confirmation', async () => 
   expect(save).toHaveBeenCalledWith(file, 'upload');
 });
 
+it('shows no import action before the learner has signed a month', () => {
+  render(<SignatureCapture name="Test student" dialogRole="learner" busy={false} onSave={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Sign as learner' }));
+  expect(screen.queryByRole('button', { name: 'Import previous signature' })).not.toBeInTheDocument();
+});
+
+it('imports a previously confirmed signature and still requires monthly confirmation', async () => {
+  const save = vi.fn();
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+    ok: true,
+    blob: async () => new Blob(['saved-signature'], { type: 'image/png' }),
+  } as Response);
+  render(<SignatureCapture name="Test student" dialogRole="learner" busy={false} onSave={save}
+    importSignature={{ url: '/saved-signature.png', monthLabel: 'July 2026' }} />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Sign as learner' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Import previous signature' }));
+
+  expect(await screen.findByAltText('Your signature preview')).toBeInTheDocument();
+  const confirm = screen.getByRole('button', { name: 'Confirm and save signature' });
+  expect(confirm).toBeDisabled();
+  fireEvent.click(screen.getByRole('checkbox'));
+  fireEvent.click(confirm);
+  expect(save).toHaveBeenCalledWith(expect.any(Blob), 'import');
+});
+
 it('rejects SVG in the upload picker', () => {
   render(<SignatureCapture name="Test student" busy={false} onSave={vi.fn()} />);
   fireEvent.click(screen.getByRole('button', { name: 'Upload signature image' }));

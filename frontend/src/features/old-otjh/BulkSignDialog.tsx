@@ -4,7 +4,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { Modal } from '@/pages/users/components/Modal';
 import { SignatureCapture } from './SignatureCapture';
-import { saveMonthSignatures, type SignedMonths, type Summary } from './api';
+import { saveMonthSignatures, type SignatureCaptureMethod, type SignedMonths, type Summary } from './api';
 import { monthLabel } from './report';
 import styles from './design.module.css';
 
@@ -15,7 +15,7 @@ export function BulkSignDialog({ summary, aptemId, onClose, onSaved }: {
   const student = auth.account?.role === 'learner';
   // No per-month requests: capture opens using the month list already on screen.
   const [months] = useState(() => summary.months.filter(month => month.is_required !== false).map(month => month.month));
-  const mutation = useMutation({ mutationFn: ({ blob, capture }: { blob: Blob; capture: 'draw' | 'upload' }) =>
+  const mutation = useMutation({ mutationFn: ({ blob, capture }: { blob: Blob; capture: SignatureCaptureMethod }) =>
     saveMonthSignatures(months, blob, capture, aptemId), onSuccess: onSaved });
   const base = aptemId === undefined ? '/old-otjh/months' : `/old-otjh/coach/${aptemId}/months`;
   return <Modal title="Sign all months" size="max-w-2xl" className={`${styles.scope} ${styles.dialog}`}

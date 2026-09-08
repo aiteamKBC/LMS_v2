@@ -5,6 +5,7 @@ import {
   fetchClassifiedLearners,
   fetchLearnerAssignments,
   setAssignmentSelection,
+  updateAssignmentKsbCodes,
   type AssignmentClassification,
   type ClassifiedLearner,
   type ClassifiedLearnerQuery,
@@ -13,6 +14,7 @@ import { AdminPage, DataPanel, Pager, StatusBadge } from '../_shared/AdminPage';
 import { useAdminData } from '../_shared/useAdminData';
 import { DocumentPreviewModal } from './DocumentPreviewModal';
 import { LearnerNameInput } from './LearnerNameInput';
+import { ReportFormModal } from './ReportFormModal';
 
 const PAGE_SIZE = 25;
 const ASSIGNMENT_PAGE_SIZE = 20;
@@ -169,7 +171,8 @@ function LearnerEvidenceDetail({ learnerId }: { learnerId: number }) {
   const navigate = useNavigate();
   const [view, setView] = useState<'recommended' | 'all'>('recommended');
   const [page, setPage] = useState(1);
-  const [preview, setPreview] = useState<{ path: string; title: string } | null>(null);
+  const [preview, setPreview] = useState<{ path: string; title: string; evidenceId: number } | null>(null);
+  const [buildingReport, setBuildingReport] = useState<number | null>(null);
   const [saving, setSaving] = useState<number | null>(null);
   const [selectionError, setSelectionError] = useState<string | null>(null);
 
@@ -243,7 +246,7 @@ function LearnerEvidenceDetail({ learnerId }: { learnerId: number }) {
       >
         <div className="space-y-4">
           {assignments.map(assignment => (
-            <AssignmentCard key={`${assignment.componentId}-${assignment.evidenceId}`} assignment={assignment} onPreview={(path, title) => setPreview({ path, title })} onSelection={() => void changeSelection(assignment)} selectionDisabled={loading || saving !== null} saving={saving === assignment.evidenceId} />
+            <AssignmentCard key={`${assignment.componentId}-${assignment.evidenceId}`} assignment={assignment} learnerId={learnerId} runId={learner?.runId ?? null} onPreview={(path, title) => setPreview({ path, title, evidenceId: assignment.evidenceId })} onBuildReport={() => setBuildingReport(assignment.evidenceId)} onSelection={() => void changeSelection(assignment)} onKsbSaved={reload} selectionDisabled={loading || saving !== null} saving={saving === assignment.evidenceId} />
           ))}
           <div className="overflow-hidden rounded-xl border border-foreground-200/60 bg-background-50">
             <Pager page={page} pageSize={ASSIGNMENT_PAGE_SIZE} count={data?.count ?? 0} onPage={setPage} />
@@ -251,18 +254,62 @@ function LearnerEvidenceDetail({ learnerId }: { learnerId: number }) {
         </div>
       </DataPanel>
 
-      {preview && <DocumentPreviewModal path={preview.path} title={preview.title} onClose={() => setPreview(null)} />}
+      {preview && <DocumentPreviewModal path={preview.path} title={preview.title} learnerId={learnerId} evidenceId={preview.evidenceId} onClose={() => setPreview(null)} onReportBuilt={reload} />}
+      {buildingReport !== null && <ReportFormModal learnerId={learnerId} evidenceId={buildingReport} onClose={() => setBuildingReport(null)} onSaved={reload} />}
     </AdminPage>
   );
 }
 
-function AssignmentCard({ assignment, onPreview, onSelection, selectionDisabled, saving }: {
+function AssignmentCard({ assignment, learnerId, runId, onPreview, onBuildReport, onSelection, onKsbSaved, selectionDisabled, saving }: {
   assignment: AssignmentClassification;
+  learnerId: number;
+  runId: number | null;
   onPreview: (path: string, title: string) => void;
+  onBuildReport: () => void;
   onSelection: () => void;
+  onKsbSaved: () => void;
   selectionDisabled: boolean;
   saving: boolean;
 }) {
+  const [editingKsbs, setEditingKsbs] = useState(false);
+  const [ksbSaving, setKsbSaving] = useState(false);
+  const [ksbError, setKsbError] = useState<string | null>(null);
+  const [ksbInput, setKsbInput] = useState(assignment.verifiedKsbCodes.join(', '));
+  const [displayKsbCodes, setDisplayKsbCodes] = useState(assignment.verifiedKsbCodes);
+
+  useEffect(() => {
+    setDisplayKsbCodes(assignment.verifiedKsbCodes);
+  }, [assignment.verifiedKsbCodes]);
+
+  const startKsbEdit = () => {
+    setKsbInput(displayKsbCodes.join(', '));
+    setKsbError(null);
+    setEditingKsbs(true);
+  };
+
+  const saveKsbCodes = async () => {
+    if (runId === null || ksbSaving) return;
+    const verifiedKsbCodes = [...new Set(ksbInput.split(/[\s,]+/).map(code => code.trim().toUpperCase()).filter(Boolean))];
+    setKsbSaving(true);
+    setKsbError(null);
+    try {
+      const updated = await updateAssignmentKsbCodes(
+        learnerId,
+        assignment.evidenceId,
+        runId,
+        assignment.componentId,
+        verifiedKsbCodes,
+      );
+      setDisplayKsbCodes(updated.verifiedKsbCodes);
+      setEditingKsbs(false);
+      onKsbSaved();
+    } catch (caught) {
+      setKsbError(caught instanceof Error ? caught.message : 'Could not save the KSB codes.');
+    } finally {
+      setKsbSaving(false);
+    }
+  };
+
   return (
     <article className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 !shadow-none">
       <header className="flex flex-col gap-5 border-b border-foreground-200/50 px-5 py-5 xl:flex-row xl:items-center xl:justify-between sm:px-6">
@@ -282,6 +329,7 @@ function AssignmentCard({ assignment, onPreview, onSelection, selectionDisabled,
           </div>
           <DocumentButton disabled={!assignment.filePreviewPath} onClick={() => assignment.filePreviewPath && onPreview(assignment.filePreviewPath, `${assignment.evidenceName} assignment`)} icon="ri-file-text-line">Assignment file</DocumentButton>
           <DocumentButton disabled={!assignment.reportPreviewPath} onClick={() => assignment.reportPreviewPath && onPreview(assignment.reportPreviewPath, `${assignment.evidenceName} assessment report`)} icon="ri-file-chart-line">Assessment report</DocumentButton>
+          {!assignment.reportPreviewPath && <button type="button" onClick={onBuildReport} className="inline-flex items-center gap-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2.5 text-xs font-semibold text-primary-700 !shadow-none hover:bg-primary-100"><AppIcon className="ri-file-add-line" />Build report</button>}
           <button type="button" onClick={onSelection} disabled={selectionDisabled}
             className={`rounded-lg border px-3 py-2.5 text-xs font-semibold !shadow-none disabled:cursor-not-allowed disabled:opacity-50 ${assignment.selected ? 'border-rose-200 text-rose-700 hover:bg-rose-50' : 'border-primary-600 bg-primary-600 text-white hover:bg-primary-700'}`}>
             {saving ? 'Saving...' : assignment.selected ? 'Unselect' : 'Select assignment'}
@@ -293,7 +341,28 @@ function AssignmentCard({ assignment, onPreview, onSelection, selectionDisabled,
         <InfoSection title="Classification">
           <Field name="Classification" value={label(assignment.classification)} />
           <Field name="Audit readiness" value={label(assignment.auditReadiness)} />
-          <TagField name="Verified KSB codes" values={assignment.verifiedKsbCodes} chips />
+          {editingKsbs ? (
+            <div className="space-y-3">
+              <label className="block space-y-1.5 text-xs font-semibold text-foreground-500">
+                <span>Verified KSB codes</span>
+                <textarea value={ksbInput} onChange={event => setKsbInput(event.target.value)} rows={4} autoFocus
+                  placeholder="K1, K2, S1, B1"
+                  className="w-full resize-y rounded-xl border border-foreground-200 bg-white px-3 py-2.5 text-sm font-normal leading-6 text-foreground-800 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-100" />
+              </label>
+              <p className="text-[11px] leading-5 text-foreground-400">Separate codes with commas or spaces.</p>
+              {ksbError && <p role="alert" className="text-xs text-rose-700">{ksbError}</p>}
+              <div className="flex flex-wrap justify-end gap-2">
+                <button type="button" onClick={() => { setEditingKsbs(false); setKsbError(null); }} disabled={ksbSaving} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-50">Cancel</button>
+                <button type="button" onClick={() => void saveKsbCodes()} disabled={ksbSaving} className="rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50">{ksbSaving ? 'Saving...' : 'Save changes'}</button>
+              </div>
+            </div>
+          ) : (
+            <TagField name="Verified KSB codes" values={displayKsbCodes} chips action={
+              <button type="button" onClick={startKsbEdit} disabled={runId === null} className="inline-flex items-center gap-1 rounded-lg border border-primary-200 px-2.5 py-1.5 text-[11px] font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50">
+                <AppIcon className="ri-edit-line" />Edit
+              </button>
+            } />
+          )}
         </InfoSection>
         <InfoSection title="Selection decision">
           {!assignment.selected && <Field name="Reason not selected" value={assignment.reasonNotSelected || 'No reason supplied.'} />}
@@ -301,7 +370,7 @@ function AssignmentCard({ assignment, onPreview, onSelection, selectionDisabled,
           <TagField name="Weaknesses" values={assignment.weaknesses} tone="warning" />
           <TagField name="Risks" values={assignment.risks} tone="risk" />
         </InfoSection>
-        <InfoSection title="Evidence review">
+        <InfoSection title="Quality Marking" className="lg:col-start-2 xl:col-start-auto">
           <Field name="Workplace evidence summary" value={assignment.workplaceEvidenceSummary || 'Not supplied.'} />
           <Field name="Feedback quality summary" value={assignment.feedbackQualitySummary || 'Not supplied.'} />
         </InfoSection>
@@ -316,19 +385,19 @@ function DocumentButton({ disabled, onClick, icon, children }: {
   return <button type="button" disabled={disabled} onClick={onClick} className="inline-flex items-center gap-2 rounded-lg border border-foreground-200/70 px-3 py-2.5 text-xs font-semibold text-foreground-700 !shadow-none hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className={icon} />{children}</button>;
 }
 
-function InfoSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className={`min-w-0 space-y-5 ${title === 'Evidence review' ? 'lg:col-start-2 xl:col-start-auto' : ''}`}><h4 className="border-b border-foreground-200/60 pb-3 text-xs font-semibold uppercase tracking-wide text-foreground-500">{title}</h4>{children}</section>;
+function InfoSection({ title, children, action, className = '' }: { title: string; children: React.ReactNode; action?: React.ReactNode; className?: string }) {
+  return <section className={`min-w-0 space-y-5 ${className}`}><div className="flex min-h-9 items-center justify-between gap-3 border-b border-foreground-200/60 pb-3"><h4 className="text-xs font-semibold uppercase tracking-wide text-foreground-500">{title}</h4>{action}</div>{children}</section>;
 }
 
 function Field({ name, value }: { name: string; value: string }) {
   return <div><p className="mb-1.5 text-xs font-semibold text-foreground-500">{name}</p><p className="whitespace-pre-wrap break-words text-sm leading-7 text-foreground-700">{value}</p></div>;
 }
 
-function TagField({ name, values, chips = false, tone = 'neutral' }: { name: string; values: string[]; chips?: boolean; tone?: 'positive' | 'warning' | 'risk' | 'neutral' }) {
+function TagField({ name, values, chips = false, tone = 'neutral', action }: { name: string; values: string[]; chips?: boolean; tone?: 'positive' | 'warning' | 'risk' | 'neutral'; action?: React.ReactNode }) {
   const tones = { positive: 'text-emerald-700', warning: 'text-amber-700', risk: 'text-rose-700', neutral: 'text-foreground-500' };
   return (
     <div>
-      <p className={`mb-2 text-xs font-semibold ${tones[tone]}`}>{name}</p>
+      <div className="mb-2 flex items-center justify-between gap-2"><p className={`text-xs font-semibold ${tones[tone]}`}>{name}</p>{action}</div>
       {!values.length ? <p className="text-sm text-foreground-400">None</p> : chips ? (
         <div className="flex flex-wrap gap-1.5">{values.map((value, index) => <span key={`${value}-${index}`} className="rounded-md border border-primary-100 bg-primary-50 px-2 py-1 text-xs font-medium text-primary-800">{value}</span>)}</div>
       ) : (

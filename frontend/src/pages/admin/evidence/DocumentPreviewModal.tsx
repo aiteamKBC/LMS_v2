@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchEvidenceDocument, fetchEvidenceText, type EvidenceDocumentUrl } from '@/api/adminEvidence';
+import { ReportFormModal } from './ReportFormModal';
 
 type PreviewMode = 'native' | 'office' | 'text' | 'unsupported';
 
@@ -22,16 +23,20 @@ function previewModeOf(document: EvidenceDocumentUrl): PreviewMode {
 }
 
 export function DocumentPreviewModal({
-  path, title, onClose,
+  path, title, learnerId, evidenceId, onClose, onReportBuilt,
 }: {
   path: string;
   title: string;
+  learnerId?: number;
+  evidenceId?: number;
   onClose: () => void;
+  onReportBuilt?: () => void;
 }) {
   const [document, setDocument] = useState<EvidenceDocumentUrl | null>(null);
   const [text, setText] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [buildingReport, setBuildingReport] = useState(false);
   const refreshTimer = useRef<number | null>(null);
 
   const load = useCallback(async () => {
@@ -67,12 +72,13 @@ export function DocumentPreviewModal({
   }, [document?.expiresAt, load]);
 
   useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape' && !buildingReport) onClose(); };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [onClose]);
+  }, [buildingReport, onClose]);
 
   const mode = document ? previewModeOf(document) : null;
+  const canBuildReport = path.includes('part=report') && learnerId !== undefined && evidenceId !== undefined;
   const embedUrl = useMemo(() => {
     if (!document) return '';
     return mode === 'office'
@@ -93,6 +99,11 @@ export function DocumentPreviewModal({
           <div className="flex items-center gap-2">
             {document && (
               <>
+                {canBuildReport && (
+                  <button type="button" onClick={() => setBuildingReport(true)} className="rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[12px] font-semibold text-primary-700 hover:bg-primary-100">
+                    <AppIcon className="ri-file-add-line mr-1" />Build
+                  </button>
+                )}
                 <a href={document.downloadUrl} className="rounded-lg border border-foreground-200 px-3 py-2 text-[12px] font-semibold text-foreground-700 hover:bg-background-100" download>
                   <AppIcon className="ri-download-line mr-1" />Download
                 </a>
@@ -129,6 +140,9 @@ export function DocumentPreviewModal({
           ) : null}
         </div>
       </div>
+      {buildingReport && learnerId !== undefined && evidenceId !== undefined && (
+        <ReportFormModal learnerId={learnerId} evidenceId={evidenceId} onClose={() => setBuildingReport(false)} onSaved={() => { void load(); onReportBuilt?.(); }} />
+      )}
     </div>
   );
 }
