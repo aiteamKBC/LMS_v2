@@ -253,7 +253,7 @@ class CoachCalendarRaceTests(TransactionTestCase):
         )
 
         self.assertEqual((first.status_code, second.status_code), (201, 409))
-        self.assertIn("already has another session", second.json()["message"])
+        self.assertIn("Would you like to reschedule", second.json()["message"])
         self.assertEqual(
             CoachCalendarEvent.objects.filter(learner_id=self.learner.id).count(), 1
         )
@@ -279,7 +279,7 @@ class CoachCalendarRaceTests(TransactionTestCase):
 
         self.assertEqual((first.status_code, second.status_code), (201, 409))
         self.assertIn("reschedule it instead", second.json()["message"])
-        self.assertIn("that day", second.json()["message"])
+        self.assertIn("Thursday, 1 January 2099 at 10:00", second.json()["message"])
         self.assertEqual(
             CoachCalendarEvent.objects.filter(learner_id=self.learner.id).count(), 1
         )
@@ -305,7 +305,7 @@ class CoachCalendarRaceTests(TransactionTestCase):
 
         self.assertEqual((first.status_code, second.status_code), (201, 409))
         self.assertIn("reschedule it instead", second.json()["message"])
-        self.assertIn("that week", second.json()["message"])
+        self.assertIn("Thursday, 1 January 2099 at 10:00", second.json()["message"])
 
     @patch("coach_api.views.coach_learner_personal_calendar_conflicts", return_value=[])
     @patch("coach_api.views.fetch_caseload_learner_profiles")
@@ -358,7 +358,7 @@ class CoachCalendarRaceTests(TransactionTestCase):
         response = self._book(client, csrf_token, str(uuid.uuid4()))
 
         self.assertEqual(response.status_code, 409)
-        self.assertIn("already has another session", response.json()["message"])
+        self.assertIn("Would you like to reschedule", response.json()["message"])
         self.assertEqual(
             CoachCalendarEvent.objects.filter(learner_id=self.learner.id).count(), 1
         )
