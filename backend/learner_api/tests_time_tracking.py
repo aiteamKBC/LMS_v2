@@ -8,6 +8,7 @@ from .time_tracking import (
     TrackingSessionError,
     component_access_is_open,
     issue_tracking_session,
+    outside_uk_working_hours,
     verify_tracking_session,
 )
 
@@ -90,6 +91,17 @@ class TimeTrackingSessionTests(SimpleTestCase):
     def test_component_access_is_open_all_weekend(self):
         self.assertTrue(component_access_is_open(datetime(2026, 1, 17, 10, 0, tzinfo=ZoneInfo("UTC"))))
         self.assertTrue(component_access_is_open(datetime(2026, 7, 19, 10, 0, tzinfo=ZoneInfo("UTC"))))
+
+    def test_outside_working_hours_uses_uk_weekdays_and_gmt_boundaries(self):
+        self.assertTrue(outside_uk_working_hours(datetime(2026, 1, 15, 6, 59, tzinfo=ZoneInfo("UTC"))))
+        self.assertFalse(outside_uk_working_hours(datetime(2026, 1, 15, 7, 0, tzinfo=ZoneInfo("UTC"))))
+        self.assertFalse(outside_uk_working_hours(datetime(2026, 1, 15, 18, 59, tzinfo=ZoneInfo("UTC"))))
+        self.assertTrue(outside_uk_working_hours(datetime(2026, 1, 15, 19, 0, tzinfo=ZoneInfo("UTC"))))
+
+    def test_outside_working_hours_applies_bst_and_weekends(self):
+        self.assertTrue(outside_uk_working_hours(datetime(2026, 7, 15, 5, 59, tzinfo=ZoneInfo("UTC"))))
+        self.assertFalse(outside_uk_working_hours(datetime(2026, 7, 15, 6, 0, tzinfo=ZoneInfo("UTC"))))
+        self.assertTrue(outside_uk_working_hours(datetime(2026, 7, 18, 12, 0, tzinfo=ZoneInfo("UTC"))))
 
     def test_tracking_can_start_and_submit_outside_the_old_window(self):
         started_at = datetime(2026, 1, 18, 22, 0, tzinfo=ZoneInfo("UTC"))

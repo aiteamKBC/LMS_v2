@@ -1381,8 +1381,15 @@ def _resolve_from_master(modules, weeks, components):
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                "SELECT module_catalogue_id, title FROM curriculum.modules "
-                "WHERE module_catalogue_id = ANY(%s)",
+                "SELECT m.module_catalogue_id, m.title FROM curriculum.modules m "
+                "LEFT JOIN curriculum.groups g ON g.group_id = m.group_id "
+                "LEFT JOIN curriculum.cohorts ch ON ch.cohort_id = m.cohort_id "
+                "LEFT JOIN curriculum.programmes p ON p.programme_id = m.programme_id "
+                "WHERE m.module_catalogue_id = ANY(%s) "
+                "AND m.deleted_at IS NULL AND COALESCE(m.is_programme_deleted, false) = false "
+                "AND (g.group_id IS NULL OR (g.deleted_at IS NULL AND COALESCE(g.is_programme_deleted, false) = false)) "
+                "AND (ch.cohort_id IS NULL OR (ch.deleted_at IS NULL AND COALESCE(ch.is_programme_deleted, false) = false)) "
+                "AND (p.programme_id IS NULL OR (p.deleted_at IS NULL AND COALESCE(p.is_archived, false) = false))",
                 [module_ids],
             )
             master_module_title = {mid: title for mid, title in cur.fetchall()}
@@ -1390,6 +1397,7 @@ def _resolve_from_master(modules, weeks, components):
             cur.execute(
                 "SELECT id, module_catalogue_id, title, week_number, display_order "
                 "FROM curriculum.weeks WHERE module_catalogue_id = ANY(%s) "
+                "AND deleted_at IS NULL AND COALESCE(is_programme_deleted, false) = false "
                 "ORDER BY module_catalogue_id, display_order, week_number, id",
                 [module_ids],
             )
@@ -1399,6 +1407,7 @@ def _resolve_from_master(modules, weeks, components):
                 "SELECT id, week_id, module_catalogue_id, type, title, description, settings_json, "
                 "live_sessions_link, display_order, ksb_mappings, reflection_required, \"Reflection_Question\" "
                 "FROM curriculum.components WHERE module_catalogue_id = ANY(%s) "
+                "AND deleted_at IS NULL AND COALESCE(is_programme_deleted, false) = false "
                 "ORDER BY week_id, display_order, id",
                 [module_ids],
             )
@@ -1491,9 +1500,6 @@ def _resolve_from_master(modules, weeks, components):
     except DatabaseError as exc:
         logger.warning("Could not live-resolve training plan from master: %s", exc)
         return modules, weeks, components
-
-    if not master_module_title:
-        return modules, weeks, components  # ids no longer exist in master — keep snapshot
 
     # Group master rows by parent.
     weeks_by_module = {}

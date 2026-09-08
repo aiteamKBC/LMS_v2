@@ -8,6 +8,7 @@ And two inbound helpers:
   * write_fields -> validates + returns kwargs for create/update (flat columns)
   * validate_choices -> enforces the canonical option lists
 """
+from .student_activity_access import student_activity_available
 from .constants import (
     ACCESS_CHOICES,
     STATUS_CHOICES,
@@ -849,6 +850,10 @@ def to_learner_detail(source, learner_profile):
 
     return {
         "id": str(source.id),
+        # Only expose whether this learner has the pilot activity view. The
+        # activity endpoint resolves the Aptem id again server-side, so the
+        # browser cannot substitute another learner's Aptem id.
+        "studentActivityAvailable": student_activity_available(getattr(source, "aptem_id", None)),
         "name": _s(source.username),
         "email": _s(source.email),
         "phone": _s(source.phone_number),

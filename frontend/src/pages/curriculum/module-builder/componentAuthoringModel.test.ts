@@ -1,7 +1,41 @@
 import { describe, expect, it } from 'vitest';
-import { normaliseComponentSettings, validateComponentAuthoring } from './componentAuthoringModel';
+import { firstValidationMessage, normaliseComponentSettings, validateComponentAuthoring, validateModuleAuthoringStructure } from './componentAuthoringModel';
 
 describe('normaliseComponentSettings week-template compatibility', () => {
+  it('identifies every invalid component by week and title in the save message', () => {
+    const assignment = (title: string) => ({
+      type: 'assignment' as const,
+      title,
+      expectedOtjh: 2,
+      points: 25,
+      reflectionRequired: false,
+      workplaceEvidenceRequired: false,
+      settings: normaliseComponentSettings('assignment', { assignmentContent: '', contentStatus: 'Ready for QA' }),
+    });
+    const issues = validateModuleAuthoringStructure({
+      title: 'Module 1',
+      weekStructure: [{ title: 'Week 4', components: [assignment('Assignment 1'), assignment('Assignment 2')] }],
+    });
+
+    expect(firstValidationMessage(issues)).toContain('Week 4 / Assignment 1');
+    expect(firstValidationMessage(issues)).toContain('Week 4 / Assignment 2');
+    expect(firstValidationMessage(issues)).not.toContain('more issue');
+  });
+
+  it('allows an incomplete assignment question to be saved while it is a draft', () => {
+    const issues = validateComponentAuthoring({
+      type: 'assignment',
+      title: 'Assignment draft',
+      expectedOtjh: 2,
+      points: 25,
+      reflectionRequired: false,
+      workplaceEvidenceRequired: false,
+      settings: normaliseComponentSettings('assignment', { assignmentContent: '', contentStatus: 'Draft' }),
+    });
+
+    expect(issues.some(issue => issue.message.includes('assignment question'))).toBe(false);
+  });
+
   it('restores a podcast embed imported from Week Builder and keeps both keys', () => {
     const settings = normaliseComponentSettings('podcast', {
       podcastSource: 'Embed',

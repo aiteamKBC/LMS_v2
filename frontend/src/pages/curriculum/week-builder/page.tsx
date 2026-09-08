@@ -2342,15 +2342,11 @@ function LinkedQuizPreviewModal({ preview, onClose }: { preview: LinkedQuizPrevi
   );
 }
 
-const ASSIGNMENT_UPLOAD_ACCEPT = '.txt,.doc,.docx,.pdf,.rtf,.odt,text/plain,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/rtf,application/vnd.oasis.opendocument.text';
-
-// Assignment editor — authored exactly like Reading material for now: a written
-// brief (rich text) or an uploaded document. The learner-facing delivery is
-// handled separately later; on the authoring side an assignment is just
-// learning material with a brief attached.
-function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
+// Assignment editor. Authors supply the question; the learner answers it in
+// the three-step assignment form and may attach their own Azure evidence.
+// The old downloadable-template source is intentionally no longer authored.
+function AssignmentBody({ component, onChange, setSetting, rulePoints }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
-  const sourceMode = s('assignmentSource') === 'File' ? 'File' : 'Text';
 
   return (
     <>
@@ -2359,41 +2355,9 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
         <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this assignment asks the learner to do…" className={`${inputClass} resize-none`} /></Field>
 
         <div className="mt-4">
-          <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Brief</span>
-          <div className="inline-flex items-center gap-0.5 rounded-full bg-background-100 p-1">
-            {(['Text', 'File'] as const).map(mode => (
-              <button key={mode} type="button" onClick={() => setSetting('assignmentSource', mode)} className={`px-4 py-1.5 rounded-full text-[11px] font-bold transition-smooth ${sourceMode === mode ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-800'}`}>
-                {mode === 'Text' ? 'Written brief' : 'Uploaded file'}
-              </button>
-            ))}
-          </div>
+          <RichTextDraft label="Assignment question" value={s('assignmentContent')} onChange={value => setSetting('assignmentContent', value)} rows={14} />
+          <p className="mt-2 text-[11px] text-foreground-400">The learner answers this question in the assignment form. Supporting PDF, image, Word, PowerPoint or video files are uploaded by the learner as optional evidence.</p>
         </div>
-
-        {sourceMode === 'Text' ? (
-          <div className="mt-4">
-            <RichTextDraft label="Assignment brief" value={s('assignmentContent')} onChange={value => setSetting('assignmentContent', value)} rows={14} />
-          </div>
-        ) : (
-          <div className="mt-4">
-            <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">File</span>
-            <WeekComponentFileUpload
-              componentId={component.id}
-              componentType="assignment"
-              onUpload={uploadResource}
-              accept={ASSIGNMENT_UPLOAD_ACCEPT}
-              uploadedName={s('uploadedFileName')}
-              uploadedUrl={s('uploadedFileUrl')}
-              uploadedSize={Number(component.settings.uploadedFileSize) || 0}
-              uploadedContentType={s('uploadedFileContentType')}
-              onUploaded={file => onChange({
-                // Pin the tab to File on upload (like Reading) so it stays put
-                // after save/reload rather than snapping back to the brief.
-                settings: { ...component.settings, assignmentSource: 'File', uploadedFileName: file.fileName, uploadedFileUrl: file.url, uploadedFileSize: file.size, uploadedFileContentType: file.contentType },
-              })}
-            />
-            <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: Word (.doc, .docx), PDF, plain text (.txt), RTF, OpenDocument (.odt).</p>
-          </div>
-        )}
       </Section>
 
       <Section title="Effort & reward">

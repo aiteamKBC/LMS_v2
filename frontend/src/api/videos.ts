@@ -14,6 +14,7 @@ export interface VideoProgressSubmission {
   startedAt: string;
   timeTakenSeconds: number;
   timeEntrySource?: 'timer' | 'input';
+  outsideWorkingHoursConfirmed?: boolean;
   trackingToken: string;
   videoTitle?: string | null;
   ksbs?: string[];
@@ -36,6 +37,9 @@ export interface VideoProgressRecord {
   claimedSeconds: number;
   serverSessionSeconds: number;
   verifiedSeconds: number;
+  outsideWorkingHours?: boolean;
+  outsideWorkingHoursConfirmed?: boolean;
+  outsideWorkingHoursConfirmedAt?: string | null;
 }
 
 // The full submit response: the slim record + display fields (not stored).

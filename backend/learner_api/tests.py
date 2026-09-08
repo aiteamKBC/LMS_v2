@@ -1,6 +1,6 @@
 import json
 from contextlib import nullcontext
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from io import BytesIO
 from types import SimpleNamespace
@@ -27,7 +27,7 @@ from .active_users import (
     save_progress_record,
 )
 from .active_users import connections as active_users_connections
-from .components import submit_component_progress
+from .components import _assignment_form_ready, submit_component_progress
 from . import evidence_storage, progress_rules
 from .progress_rules import (
     progress_achievement_status,
@@ -155,6 +155,39 @@ class LearnerReflectionStatusTests(SimpleTestCase):
         self.assertNotIn("create ", sql)
         self.assertNotIn("alter ", sql)
         self.assertNotIn("drop ", sql)
+
+
+class AssignmentFormReadinessTests(SimpleTestCase):
+    def _connection_with_payload(self, payload):
+        cursor = MagicMock()
+        cursor.__enter__.return_value = cursor
+        cursor.fetchone.return_value = None if payload is None else (payload,)
+        connection = MagicMock()
+        connection.cursor.return_value = cursor
+        return connection, cursor
+
+    def test_requires_all_three_written_sections(self):
+        connection, _cursor = self._connection_with_payload({
+            "assignmentAnswer": "My answer",
+            "whatYouLearned": "What I learned",
+            "businessImpact": "",
+        })
+
+        with patch("learner_api.components.connections", {"enrolment": connection}):
+            self.assertFalse(_assignment_form_ready("COMP-1", "commercial", "19"))
+
+    def test_accepts_complete_json_assignment_payload(self):
+        connection, cursor = self._connection_with_payload(json.dumps({
+            "assignmentAnswer": "My answer",
+            "whatYouLearned": "What I learned",
+            "businessImpact": "Faster customer response",
+        }))
+
+        with patch("learner_api.components.connections", {"enrolment": connection}):
+            self.assertTrue(_assignment_form_ready("COMP-1", "commercial", "19"))
+
+        params = cursor.execute.call_args.args[1]
+        self.assertEqual(params, ["commercial", "19", "COMP-1"])
 
 
 class LearnerProgressionTests(SimpleTestCase):
@@ -666,8 +699,10 @@ class ScriptedCursor:
     def __init__(self, results):
         self._results = list(results)
         self._current = []
+        self.queries = []
 
     def execute(self, sql, params=None):
+        self.queries.append(sql)
         self._current = self._results.pop(0) if self._results else []
 
     def fetchall(self):
@@ -723,6 +758,31 @@ class LearnerReflectionQuestionTests(SimpleTestCase):
 
     def test_exposes_whether_reflection_is_required(self):
         self.assertFalse(self._resolved_component(None, False)["reflectionRequired"])
+
+
+class LearnerSoftDeletedCurriculumVisibilityTests(SimpleTestCase):
+    def test_live_resolution_excludes_soft_deleted_curriculum_at_every_level(self):
+        cursor = ScriptedCursor([[], [], []])
+        weeks = [{
+            "module": "Deleted module", "week": "Deleted week",
+            "moduleId": "MOD-DELETED", "weekId": "WEEK-DELETED",
+        }]
+        components = [{
+            "module": "Deleted module", "week": "Deleted week", "component": "Deleted assignment",
+            "moduleId": "MOD-DELETED", "weekId": "WEEK-DELETED", "componentId": "COMP-DELETED",
+        }]
+
+        with patch("learner_api.learner_detail.connections", {"enrolment": ScriptedConnection(cursor)}):
+            resolved = _resolve_from_master(["Deleted module"], weeks, components)
+
+        self.assertEqual(resolved, ([], [], []))
+        module_query, week_query, component_query = [" ".join(query.lower().split()) for query in cursor.queries[:3]]
+        self.assertIn("m.deleted_at is null", module_query)
+        self.assertIn("g.deleted_at is null", module_query)
+        self.assertIn("ch.deleted_at is null", module_query)
+        self.assertIn("p.deleted_at is null", module_query)
+        self.assertIn("deleted_at is null", week_query)
+        self.assertIn("deleted_at is null", component_query)
 
 
 class LearnerWeekQuizVisibilityTests(SimpleTestCase):
@@ -1401,19 +1461,21 @@ class ComponentWriteSoftDeleteTests(SimpleTestCase):
 class ComponentWriteEndpointRejectionTests(SimpleTestCase):
     """The service-layer rejections must surface as a client error, not a 200."""
 
-    def _post(self, component_id):
-        access_time = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
+    def _post(self, component_id, *, access_time=None, payload=None):
+        access_time = access_time or datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
         tracking = issue_tracking_session(
             activity_kind="component",
             activity_id=component_id,
             learner_kind="apprenticeship",
             learner_id="19",
             counting_mode="visible_page",
-            issued_at=access_time,
+            issued_at=access_time - timedelta(seconds=20),
         )
+        body = {"trackingToken": tracking["trackingToken"], "timeTakenSeconds": 0}
+        body.update(payload or {})
         request = RequestFactory().post(
             f"/learner_api/components/{component_id}/complete/?kind=apprenticeship&learnerId=19",
-            data=json.dumps({"trackingToken": tracking["trackingToken"], "timeTakenSeconds": 0}),
+            data=json.dumps(body),
             content_type="application/json",
         )
         view = submit_component_progress
@@ -1422,7 +1484,7 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
         with patch("learner_api.components.timezone.now", return_value=access_time):
             return view(request, component_id)
 
-    def _run(self, save_side_effect):
+    def _run(self, save_side_effect=None, **post_options):
         profile = SimpleNamespace(training_plan_progress=[])
         with patch("learner_api.components.SOURCE_MODELS", {"apprenticeship": Mock()}) as models:
             models["apprenticeship"].objects.get.return_value = SimpleNamespace(id=19)
@@ -1435,7 +1497,7 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
                                     "learner_api.components.save_progress_record",
                                     side_effect=save_side_effect,
                                 ):
-                                    return self._post("COMP-UNDER-TEST")
+                                    return self._post("COMP-UNDER-TEST", **post_options)
 
     def test_unknown_component_write_returns_400(self):
         response = self._run(OrphanComponentReferenceError("COMP-GHOST"))
@@ -1448,6 +1510,35 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
         payload = json.loads(response.content)
         self.assertIn("COMP-DEAD", payload["error"])
         self.assertIn("week", payload["error"])
+
+    def test_out_of_hours_timer_is_accepted_after_confirmation_and_audited(self):
+        save = Mock()
+        response = self._run(
+            save,
+            access_time=datetime(2026, 1, 18, 22, 0, tzinfo=timezone.utc),
+            payload={
+                "timeTakenSeconds": 10,
+                "timeEntrySource": "timer",
+                "outsideWorkingHoursConfirmed": True,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        record = save.call_args.args[1]
+        self.assertEqual(record["verifiedSeconds"], 10)
+        self.assertTrue(record["outsideWorkingHours"])
+        self.assertTrue(record["outsideWorkingHoursConfirmed"])
+        self.assertEqual(record["outsideWorkingHoursConfirmedAt"], record["submittedAt"])
+
+    def test_out_of_hours_completion_requires_confirmation(self):
+        save = Mock()
+        response = self._run(
+            save,
+            access_time=datetime(2026, 1, 18, 22, 0, tzinfo=timezone.utc),
+            payload={"timeTakenSeconds": 10, "timeEntrySource": "timer"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Confirm", json.loads(response.content)["error"])
+        save.assert_not_called()
 
 
 class ProgressAchievementRuleTests(SimpleTestCase):

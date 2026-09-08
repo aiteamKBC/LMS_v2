@@ -10,14 +10,13 @@ import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerK
 import { submitVideoProgress } from '@/api/videos';
 import { submitComponentProgress } from '@/api/components';
 import { startTimeTracking, type TimeTrackingSession, type TrackingCountingMode } from '@/api/timeTracking';
-import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
 import { EvidenceFilesButton, EvidencePreviewModal, type EvidencePreview } from '@/components/feature/EvidenceFilesButton';
 import {
   buildLearnerJourney, componentTypeMeta, componentContentKind, componentNoun, hasComponentContent, isOpenableComponent, gradePercent, formatHoursMinutes,
   componentCriteria, componentRequiresEvidence, completedComponentIds, isComponentComplete,
   type JourneyComponent,
 } from '@/utils/learnerJourney';
-import { fetchEvidence, uploadEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
+import { fetchEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
 import { ReflectionWindow, formatClock, formatRecordedClock, parseClockSeconds } from '@/components/feature/ReflectionWindow';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
@@ -42,6 +41,7 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { ActivitySidebar } from './ActivitySidebar';
 import { isNavigableComponent } from './weekPreview';
 import { componentRoute } from './componentRoute';
+import { AssignmentSubmissionWizard, type AssignmentAnswers } from './AssignmentSubmissionWizard';
 import { resolveDocEmbed } from '@/lib/docEmbed';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 import {
@@ -172,8 +172,21 @@ function CompletionTimeInput({
   );
 }
 
-function ActivityTimeSpentInput({ onChange }: { onChange: (seconds: number | null) => void }) {
-  const [parts, setParts] = useState({ hours: '', minutes: '', seconds: '' });
+function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange: (seconds: number | null) => void; initialSeconds?: number | null }) {
+  const partsFromSeconds = (seconds: number | null) => {
+    if (seconds == null || seconds <= 0) return { hours: '', minutes: '', seconds: '' };
+    const [hours, minutes, secondsPart] = formatClock(seconds).split(':');
+    return { hours, minutes, seconds: secondsPart };
+  };
+  const [parts, setParts] = useState(() => partsFromSeconds(initialSeconds));
+
+  useEffect(() => {
+    setParts(current => (
+      current.hours || current.minutes || current.seconds
+        ? current
+        : partsFromSeconds(initialSeconds)
+    ));
+  }, [initialSeconds]);
 
   const totalSeconds = (next: typeof parts): number | null => {
     if (!next.hours && !next.minutes && !next.seconds) return null;
@@ -314,6 +327,7 @@ export default function ComponentViewPage() {
   );
   const [manualTimeSeconds, setManualTimeSeconds] = useState<number | null>(null);
   const [timeSource, setTimeSource] = useState<TimeSource>('timer');
+  const [outsideWorkingHoursConfirmed, setOutsideWorkingHoursConfirmed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [record, setRecord] = useState<DoneRecord | null>(null);
@@ -335,12 +349,17 @@ export default function ComponentViewPage() {
     setWallElapsed(readActivityTimer(timerStorageKey)?.elapsedSeconds ?? 0);
     setManualTimeSeconds(null);
     setTimeSource('timer');
+    setOutsideWorkingHoursConfirmed(false);
     setPendingEvidenceFileName(null);
     setEvidenceFiles([]);
     setEvidencePreview(null);
     // A pending "Remove this file?" must not survive onto the next activity.
     setConfirmingEvidenceRemoval(false);
   }, [timerStorageKey]);
+
+  useEffect(() => {
+    if (!componentAccess.outsideWorkingHours) setOutsideWorkingHoursConfirmed(false);
+  }, [componentAccess.outsideWorkingHours]);
 
   useEffect(() => {
     if ((kind !== 'commercial' && kind !== 'apprenticeship') || !id) {
@@ -376,6 +395,7 @@ export default function ComponentViewPage() {
   // a page timer. The signed session still runs invisibly so the server can cap
   // and verify the submitted duration.
   const isLiveSession = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session';
+  const isAssignment = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'assignment';
   const noun = componentNoun(component?.type);
   const openable = component ? isOpenableComponent(component) : false;
 
@@ -383,11 +403,6 @@ export default function ComponentViewPage() {
   // uploader) because the completion gate depends on it.
   const [evidenceCount, setEvidenceCount] = useState(0);
   const needsEvidence = componentRequiresEvidence(component?.type);
-  const hasEditableAssignmentDocument = Boolean(
-    needsEvidence
-    && component?.resourceUrl
-    && WORD_FILE_RE.test(fileProbe(component.resourceUrl, component.fileName)),
-  );
   const usesManualTimeOnly = isLiveSession || needsEvidence;
   const manualTimeMissing = usesManualTimeOnly && (manualTimeSeconds == null || manualTimeSeconds <= 0);
 
@@ -623,8 +638,17 @@ export default function ComponentViewPage() {
     });
   };
 
-  const finalizeSubmit = async (reflection: { ksbs: string[]; feedback: string; reportedTime: string }) => {
+  const finalizeSubmit = async (
+    reflection: { ksbs: string[]; feedback: string; reportedTime: string },
+    options: { stayOnPage?: boolean; rethrow?: boolean } = {},
+  ) => {
     if (!component || !componentId || !kind || !id || submitting || !canUseComponent) return;
+    if (componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed) {
+      const message = 'Confirm that you completed this activity outside UK working hours before submitting.';
+      setSubmitError(message);
+      if (options.rethrow) throw new Error(message);
+      return;
+    }
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -635,6 +659,7 @@ export default function ComponentViewPage() {
           week: weekTitle || null, module: moduleTitle || null,
           startedAt: tracking.startedAt, timeTakenSeconds: submittedTimeSeconds, trackingToken: tracking.trackingToken,
           timeEntrySource: timeSource,
+          outsideWorkingHoursConfirmed,
           videoTitle: meta?.detail || meta?.label || 'Video',
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
         });
@@ -644,6 +669,7 @@ export default function ComponentViewPage() {
           week: weekTitle || null, module: moduleTitle || null,
           startedAt: tracking.startedAt, timeTakenSeconds: submittedTimeSeconds, trackingToken: tracking.trackingToken,
           timeEntrySource: timeSource,
+          outsideWorkingHoursConfirmed,
           componentTitle: pageTitle, componentType: component.type || undefined,
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
         });
@@ -663,10 +689,13 @@ export default function ComponentViewPage() {
       const refreshed = await fetchLearnerDetail(kind as LearnerKind, id);
       setDetail(refreshed);
       setPhase('consume');
-      const nextHref = nextActivityRoute(refreshed, componentId, kind, id);
-      if (nextHref) navigate(nextHref, { replace: true });
+      if (!options.stayOnPage) {
+        const nextHref = nextActivityRoute(refreshed, componentId, kind, id);
+        if (nextHref) navigate(nextHref, { replace: true });
+      }
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : 'Could not save progress');
+      if (options.rethrow) throw e;
     } finally {
       setSubmitting(false);
     }
@@ -690,6 +719,32 @@ export default function ComponentViewPage() {
           </span>
           Back to training plan
         </button>
+
+        {component && canProgress && componentAccess.outsideWorkingHours && (
+          <div role="note" className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-4 text-amber-950 shadow-sm sm:px-5">
+            <div className="flex items-start gap-3">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-700">
+                <AppIcon className="ri-time-line text-lg" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold">You are accessing this component outside UK working hours</p>
+                <p className="mt-1 text-xs leading-5 text-amber-900/80">
+                  Working hours are Monday to Friday, 07:00-19:00 UK time. The current UK time is {componentAccess.currentTimeLabel}.
+                  Your activity time will continue to be calculated automatically. Confirm the declaration below before completing this component.
+                </p>
+                <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-xl border border-amber-200 bg-white/75 px-3 py-2.5 text-xs font-semibold leading-5 text-amber-950">
+                  <input
+                    type="checkbox"
+                    checked={outsideWorkingHoursConfirmed}
+                    onChange={event => setOutsideWorkingHoursConfirmed(event.target.checked)}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-amber-700"
+                  />
+                  <span>I confirm that I completed this activity outside UK working hours.</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        )}
 
         {loading ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
@@ -735,14 +790,15 @@ export default function ComponentViewPage() {
           /* ── consume phase: content + details + sidebar ── */
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
             <div className="min-w-0">
-              <ComponentContent component={component} contentKind={contentKind} parsed={parsed} title={pageTitle}
-                onDuration={(d) => setRealDuration((prev) => prev ?? d)}
-                onProgress={() => undefined}
-                onPlayingChange={setPlayerPlaying}
-                onEnded={finishConsuming}
-                onUnsupported={() => setUnsupported(true)}
-                evidenceContext={activityEvidenceContext}
-              />
+              {!isAssignment && (
+                <ComponentContent component={component} contentKind={contentKind} parsed={parsed} title={pageTitle}
+                  onDuration={(d) => setRealDuration((prev) => prev ?? d)}
+                  onProgress={() => undefined}
+                  onPlayingChange={setPlayerPlaying}
+                  onEnded={finishConsuming}
+                  onUnsupported={() => setUnsupported(true)}
+                />
+              )}
               {(component.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session' && component.teamsLiveSessionId && (
                 <LiveSessionResultsCard
                   liveSessionId={component.teamsLiveSessionId}
@@ -771,7 +827,7 @@ export default function ComponentViewPage() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 shrink-0">
+                {!isAssignment && <div className="flex items-center gap-3 shrink-0">
                   {!usesManualTimeOnly && (
                     <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-mono text-sm font-semibold tabular-nums bg-background-100 text-foreground-700" title="Time on this activity">
                       <AppIcon className="ri-timer-line" /> {formatClock(elapsedSeconds)}
@@ -850,24 +906,26 @@ export default function ComponentViewPage() {
                   )}
                   <button
                     onClick={finishConsuming}
-                    disabled={(!!criteria && !criteria.met) || manualTimeMissing}
+                    disabled={(!!criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed)}
                     title={
                       criteria && !criteria.met
                         ? 'Complete the criteria below before finishing.'
                         : manualTimeMissing
                           ? 'Enter the time spent before finishing.'
+                          : componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed
+                            ? 'Confirm the out-of-hours declaration before finishing.'
                           : undefined
                     }
                     className={`inline-flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-xl transition-colors ${
-                      (criteria && !criteria.met) || manualTimeMissing
+                      (criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed)
                         ? 'bg-background-200 text-foreground-400 cursor-not-allowed'
                         : 'bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer'
                     }`}
                   >
-                    <AppIcon className={(criteria && !criteria.met) || manualTimeMissing ? 'ri-lock-line' : 'ri-check-line'} />
+                    <AppIcon className={(criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed) ? 'ri-lock-line' : 'ri-check-line'} />
                     Finish
                   </button>
-                </div>
+                </div>}
               </div>
 
               {component.description && (
@@ -877,7 +935,53 @@ export default function ComponentViewPage() {
                 </div>
               )}
 
-              {criteria?.gated && !hasEditableAssignmentDocument && (
+              {isAssignment && activityEvidenceContext && kind && id && componentId && (
+                <div className="mt-4">
+                  <AssignmentSubmissionWizard
+                    kind={kind as LearnerKind}
+                    learnerId={id}
+                    learnerName={detail?.name || 'Learner'}
+                    programmeName={detail?.programme || 'Programme not set'}
+                    componentId={componentId}
+                    title={pageTitle}
+                    moduleTitle={moduleTitle}
+                    weekTitle={weekTitle}
+                    plannedOtjh={component.expectedOtjh ?? null}
+                    questionHtml={component.assignmentBriefHtml}
+                    questionText={component.assignmentBrief}
+                    ksbMappings={component.ksbMappings || []}
+                    evidenceFiles={evidenceFiles}
+                    evidenceDetails={activityEvidenceContext.trainingPlanDetails}
+                    timeSeconds={manualTimeSeconds}
+                    timeControl={(
+                      <ActivityTimeSpentInput
+                        initialSeconds={manualTimeSeconds}
+                        onChange={(seconds) => {
+                          setManualTimeSeconds(seconds);
+                          setTimeSource('input');
+                        }}
+                      />
+                    )}
+                    outsideWorkingHours={componentAccess.outsideWorkingHours}
+                    outsideWorkingHoursConfirmed={outsideWorkingHoursConfirmed}
+                    submittingProgress={submitting}
+                    onEvidenceChanged={activityEvidenceContext.onUploaded}
+                    onRestoreTime={(seconds) => {
+                      setManualTimeSeconds(seconds);
+                      setTimeSource('input');
+                    }}
+                    onSubmitProgress={async (answers: AssignmentAnswers) => {
+                      await finalizeSubmit({
+                        ksbs: (component.ksbMappings || []).map(mapping => mapping.code),
+                        feedback: `${answers.whatYouLearned}\n\nBusiness impact:\n${answers.businessImpact}`,
+                        reportedTime: manualTimeSeconds ? formatClock(manualTimeSeconds) : '',
+                      }, { stayOnPage: true, rethrow: true });
+                    }}
+                  />
+                </div>
+              )}
+
+              {criteria?.gated && !isAssignment && (
                 <div className={`mt-4 rounded-xl border p-4 ${
                   criteria.met ? 'border-emerald-200 bg-emerald-50/60' : 'border-amber-200 bg-amber-50/60'
                 }`}>
@@ -900,18 +1004,6 @@ export default function ComponentViewPage() {
                 </div>
               )}
 
-              {activityEvidenceContext && canUseComponent && (
-                <AssignmentEvidence
-                  kind={activityEvidenceContext.kind}
-                  learnerId={activityEvidenceContext.learnerId}
-                  componentId={activityEvidenceContext.componentId}
-                  trainingPlanDetails={activityEvidenceContext.trainingPlanDetails}
-                  onUploaded={activityEvidenceContext.onUploaded}
-                  onFileSelected={setPendingEvidenceFileName}
-                  inputId={evidenceInputId}
-                  showPanel={false}
-                />
-              )}
             </div>
 
             {/* The list beside the activity — shared with the quiz page, which
@@ -2197,200 +2289,8 @@ interface EvidenceContext {
 /** Content for the component, plus the evidence uploader when one is required.
  * The uploader is appended outside the per-kind renderers so a gated video or
  * reading gets it too — not just the activity/assignment fallback. */
-function ComponentContent({ evidenceContext, ...props }: Parameters<typeof ComponentBody>[0] & {
-  evidenceContext: EvidenceContext | null;
-}) {
-  return <ComponentBody {...props} assignmentEditorContext={evidenceContext} />;
-}
-
-function completedAssignmentName(fileName?: string | null): string {
-  const stem = (fileName || 'assignment').replace(/\.[^.]+$/, '').replace(/[^a-z0-9 _-]+/gi, '').trim() || 'assignment';
-  return `${stem}-completed-${new Date().toISOString().slice(0, 10)}.doc`;
-}
-
-function wordCompatibleDocument(body: string, title: string): string {
-  const safeTitle = DOMPurify.sanitize(title, { ALLOWED_TAGS: [] });
-  const safeBody = DOMPurify.sanitize(body);
-  return `<!doctype html>
-<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
-<head><meta charset="utf-8"><title>${safeTitle}</title>
-<style>
-body{font-family:Arial,sans-serif;font-size:11pt;line-height:1.45;color:#111827}
-table{width:100%;border-collapse:collapse;margin:12px 0}td,th{border:1px solid #9ca3af;padding:7px;vertical-align:top}th{background:#f3f4f6}
-h1,h2,h3{page-break-after:avoid}p{margin:0 0 9px}ul,ol{margin:0 0 9px 22px}
-</style></head><body>${safeBody}</body></html>`;
-}
-
-function EditableAssignmentDocument({
-  url, fileName, title, evidenceContext,
-}: {
-  url: string;
-  fileName?: string | null;
-  title: string;
-  evidenceContext: EvidenceContext;
-}) {
-  const editorRef = useRef<HTMLDivElement>(null);
-  const [ready, setReady] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [dirty, setDirty] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [submittedName, setSubmittedName] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const editor = editorRef.current;
-    if (!editor) return;
-
-    editor.replaceChildren();
-    setLoading(true);
-    setReady(false);
-    setError(null);
-    setDirty(false);
-    setSubmittedName(null);
-
-    async function loadDocument() {
-      try {
-        const response = await fetch(proxiedMaterialUrl(url), { credentials: 'same-origin' });
-        if (!response.ok) throw new Error(`File request failed (${response.status})`);
-
-        const arrayBuffer = await response.arrayBuffer();
-        if (cancelled) return;
-
-        // Mammoth intentionally produces semantic HTML and drops Word's page
-        // layout. docx-preview renders the original document relationships,
-        // headers, images, fonts and page geometry so the editable copy keeps
-        // the authored template's appearance.
-        const { renderAsync } = await import('docx-preview');
-        await renderAsync(arrayBuffer, editor, editor, {
-          className: 'assignment-docx',
-          inWrapper: true,
-          ignoreWidth: false,
-          ignoreHeight: false,
-          ignoreFonts: false,
-          breakPages: true,
-          ignoreLastRenderedPageBreak: false,
-          experimental: true,
-          useBase64URL: true,
-          renderHeaders: true,
-          renderFooters: true,
-          renderFootnotes: true,
-          renderEndnotes: true,
-        });
-
-        if (cancelled) return;
-        editor.querySelectorAll('td').forEach((cell) => {
-          if ((cell.textContent || '').trim()) return;
-          cell.setAttribute('data-assignment-field', 'true');
-          if (!cell.childNodes.length) cell.innerHTML = '<p><br></p>';
-        });
-        editor.querySelectorAll('table').forEach((table) => {
-          // Word templates frequently store an absolute table width. That can
-          // leave the answer column squeezed or clipped in the narrower LMS
-          // workspace, so fit authored form tables to the visible page.
-          table.style.setProperty('width', '100%', 'important');
-          table.style.setProperty('max-width', '100%', 'important');
-          table.style.tableLayout = 'fixed';
-        });
-        setReady(true);
-      } catch (loadError) {
-        if (!cancelled) {
-          editor.replaceChildren();
-          setError(loadError instanceof Error ? loadError.message : 'Could not open the assignment editor.');
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-
-    void loadDocument();
-    return () => { cancelled = true; };
-  }, [url, evidenceContext.componentId]);
-
-  const saveAndSubmit = async () => {
-    if (!editorRef.current || !dirty || saving) return;
-    if (!window.confirm('Save this as your final evidence submission? You will not be able to edit this submitted copy.')) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const outputName = completedAssignmentName(fileName);
-      const output = wordCompatibleDocument(editorRef.current.innerHTML, title);
-      const file = new File([output], outputName, { type: 'application/msword' });
-      await uploadEvidence(
-        evidenceContext.kind,
-        evidenceContext.learnerId,
-        file,
-        evidenceContext.componentId,
-        evidenceContext.trainingPlanDetails,
-      );
-      setDirty(false);
-      setSubmittedName(outputName);
-      try {
-        const files = await fetchEvidence(evidenceContext.kind, evidenceContext.learnerId, {
-          sectionRef: evidenceContext.componentId,
-        });
-        evidenceContext.onUploaded(files);
-      } catch {
-        // The upload itself succeeded. Do not invite a duplicate submission
-        // just because refreshing the evidence list had a transient failure.
-        setError('Your document was submitted, but the evidence list could not refresh. Reload the page to see it.');
-      }
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'Could not save and submit this assignment.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  if (!loading && !ready) {
-    return (
-      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-        <p className="font-bold">Could not open the editable document.</p>
-        <p className="mt-1 text-xs">{error || 'Download the template and upload the completed file instead.'}</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="overflow-hidden rounded-xl border border-background-300 bg-background-100 shadow-sm">
-      <div className="flex flex-col gap-3 border-b border-background-300 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-sm font-bold text-foreground-900">Editable assignment document</p>
-          <p className="mt-0.5 text-xs text-foreground-500">Click in the document, replace the example text, and complete the blank cells.</p>
-        </div>
-        <button
-          type="button"
-          onClick={saveAndSubmit}
-          disabled={!dirty || saving || Boolean(submittedName)}
-          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white transition-colors enabled:hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : submittedName ? 'ri-checkbox-circle-line' : 'ri-save-3-line'} />
-          {saving ? 'Saving & submitting...' : submittedName ? 'Submitted' : 'Save & submit as evidence'}
-        </button>
-      </div>
-      {error && <p className="border-b border-red-200 bg-red-50 px-4 py-2 text-xs font-semibold text-red-700">{error}</p>}
-      {submittedName && (
-        <p className="border-b border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-800">
-          <AppIcon className="ri-checkbox-circle-line mr-1" />{submittedName} was saved and uploaded as evidence.
-        </p>
-      )}
-      <div className="relative min-h-[520px] bg-background-100">
-        {loading && (
-          <div className="absolute inset-0 z-10 grid place-items-center bg-white text-sm font-semibold text-foreground-500">
-            <span className="inline-flex items-center gap-2"><AppIcon className="ri-loader-4-line animate-spin" />Opening editable document...</span>
-          </div>
-        )}
-        <div
-          ref={editorRef}
-          contentEditable={ready && !saving && !submittedName}
-          suppressContentEditableWarning
-          spellCheck
-          onInput={() => { setDirty(true); setSubmittedName(null); }}
-          className="learner-assignment-editor max-h-[75vh] min-h-[520px] overflow-auto outline-none [&_.assignment-docx-wrapper]:min-h-full [&_.assignment-docx-wrapper]:py-6 [&_[data-assignment-field=true]]:bg-amber-50/60"
-        />
-      </div>
-    </div>
-  );
+function ComponentContent(props: Parameters<typeof ComponentBody>[0]) {
+  return <ComponentBody {...props} />;
 }
 
 function LiveSessionResultsCard({
@@ -2500,7 +2400,7 @@ function LiveSessionResultsCard({
   );
 }
 
-function ComponentBody({ component, contentKind, parsed, title, onDuration, onProgress, onPlayingChange, onEnded, onUnsupported, assignmentEditorContext }: {
+function ComponentBody({ component, contentKind, parsed, title, onDuration, onProgress, onPlayingChange, onEnded, onUnsupported }: {
   component: JourneyComponent;
   contentKind: ReturnType<typeof componentContentKind>;
   parsed: ReturnType<typeof parseVideoUrl> | null;
@@ -2510,7 +2410,6 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
   onPlayingChange: (playing: boolean) => void;
   onEnded: () => void;
   onUnsupported: () => void;
-  assignmentEditorContext?: EvidenceContext | null;
 }) {
   if (contentKind === 'video' && parsed) {
     return (
@@ -2692,61 +2591,21 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
   }
 
   /* resource / activity / evidence / live session / recording */
-  const isAssignment = (component.type || '').trim().toLowerCase().replace(/-/g, '_') === 'assignment';
   return (
     <div className="rounded-2xl border border-background-300 bg-white p-6">
       <div className="flex items-center gap-3 mb-3">
         <span className="w-11 h-11 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center"><AppIcon className="ri-task-line text-xl" /></span>
         <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Complete this activity, then finish and reflect below.</p></div>
       </div>
-      {/* The assignment brief is the task itself, so it leads — above the
-          generic "what to do" prompt, which is only reflection guidance.
-          Authored either as plain text (Module Builder) or as rich text
-          (Week Builder); the HTML one renders marked up, the plain one is
-          escaped by React as ordinary text. */}
-      {component.assignmentBriefHtml ? (
-        <div className="rounded-xl bg-background-50 border border-background-200 p-4 mb-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-1">Brief</p>
-          {/* Coach-authored curriculum (trusted staff authors) — same trust
-              model as the reading content above. */}
-          <div
-            className="max-w-none text-sm text-foreground-700 leading-relaxed [&_h2]:font-heading [&_h2]:font-bold [&_h2]:text-lg [&_h2]:text-foreground-900 [&_h2]:mt-4 [&_h2]:mb-2 [&_h3]:font-heading [&_h3]:font-semibold [&_h3]:text-base [&_h3]:text-foreground-900 [&_h3]:mt-3 [&_h3]:mb-1.5 [&_p]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-3 [&_li]:mb-1 [&_strong]:font-semibold [&_strong]:text-foreground-900 [&_em]:italic [&_a]:text-blue-600 [&_a]:underline"
-            dangerouslySetInnerHTML={{ __html: normalizeReadingHtml(component.assignmentBriefHtml) }}
-          />
-        </div>
-      ) : component.assignmentBrief && (
-        <div className="rounded-xl bg-background-50 border border-background-200 p-4 mb-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-1">Brief</p>
-          <p className="text-sm text-foreground-700 leading-relaxed whitespace-pre-line">{component.assignmentBrief}</p>
-        </div>
-      )}
       {component.reflectionPrompt && (
         <div className="rounded-xl bg-background-50 border border-background-200 p-4 mb-3">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-1">What to do</p>
           <p className="text-sm text-foreground-700 leading-relaxed whitespace-pre-line">{component.reflectionPrompt}</p>
         </div>
       )}
-      {isAssignment && component.resourceUrl && (
-        <div className="mb-4 flex flex-col gap-3 rounded-xl border border-primary-200 bg-primary-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-bold text-primary-900">Download, complete, then upload</p>
-            <p className="mt-1 text-xs text-primary-700">Save this Word template, fill it in, then upload your completed copy as evidence below.</p>
-          </div>
-          <DownloadFileButton url={component.resourceUrl} fileName={component.fileName} label="Download template" />
-        </div>
-      )}
       {component.resourceUrl && (
         <div className="space-y-3">
-          {isAssignment && assignmentEditorContext && WORD_FILE_RE.test(fileProbe(component.resourceUrl, component.fileName)) ? (
-            <EditableAssignmentDocument
-              url={component.resourceUrl}
-              fileName={component.fileName}
-              title={title}
-              evidenceContext={assignmentEditorContext}
-            />
-          ) : (
-            <InlineAttachmentPreview url={component.resourceUrl} title={title} fileName={component.fileName} />
-          )}
+          <InlineAttachmentPreview url={component.resourceUrl} title={title} fileName={component.fileName} />
         </div>
       )}
     </div>

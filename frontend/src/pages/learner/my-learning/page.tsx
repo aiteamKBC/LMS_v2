@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { StudentMaterial } from './StudentMaterial';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -23,6 +24,8 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ProgressBar } from '@/components/ui/ProgressMetric';
 import { toneStyle, statusTone, type StatusTone } from '@/lib/statusTone';
 import { EMPTY_VALUE } from '@/lib/format';
+import { fetchStudentActivity, type StudentActivityItem, type StudentActivityResponse } from '@/api/studentActivity';
+import type { LearnerKind } from '@/api/learnerDetail';
 
 const learnerNav = roleNavMap.learner;
 
@@ -32,7 +35,7 @@ type TabKey = 'overview' | 'modules' | 'quizzes';
  * work (staff/coach deep-links and saved links depend on it) but now land on
  * the matching tab of this merged page instead of a separate screen. */
 function defaultTabForPath(pathname: string): TabKey {
-  if (pathname.startsWith('/learner/training-plan')) return 'modules';
+  if (pathname.startsWith('/learner/training-plan') || pathname.startsWith('/learner/modules')) return 'modules';
   if (pathname.startsWith('/learner/quizzes')) return 'quizzes';
   return 'overview';
 }
@@ -134,7 +137,7 @@ export default function MyLearningPage() {
             onGoToModules={() => setTab('modules')}
           />
         ) : tab === 'modules' ? (
-          <ModulesTab real={real} loading={loading} loadError={loadError} kind={kind} id={id} showReadOnlyNotice={showReadOnlyNotice} />
+          <ModulesTab key={`${kind}:${id}`} real={real} loading={loading} loadError={loadError} kind={kind} id={id} showReadOnlyNotice={showReadOnlyNotice} />
         ) : (
           <QuizzesTab real={real} loading={loading} loadError={loadError} kind={kind} id={id} canTake={canTake} navigate={navigate} />
         )}
@@ -430,18 +433,44 @@ function JourneyStepper({ statuses, moduleProgress }: { statuses: StageStatus[];
 /* ═══════════════════════════════════════════════════════
    MODULES TAB — the old Training Plan, reused and tightened
    ═══════════════════════════════════════════════════════ */
-function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNotice }: {
+export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNotice }: {
   real: ReturnType<typeof useLearnerDetailParam>['real'];
   loading: boolean;
   loadError: string | null;
-  kind?: string;
+  kind?: LearnerKind;
   id?: string;
   showReadOnlyNotice: boolean;
 }) {
+  const [activityData, setActivityData] = useState<StudentActivityResponse | null>(null);
+  const [activityLoading, setActivityLoading] = useState(true);
+  const [activityError, setActivityError] = useState<string | null>(null);
+  const [activityRetry, setActivityRetry] = useState(0);
+  const activityAvailable = !loading && !loadError && !!real?.studentActivityAvailable;
+
+  useEffect(() => {
+    if (!activityAvailable || !kind || !id) return;
+    const controller = new AbortController();
+    setActivityLoading(true);
+    setActivityError(null);
+    setActivityData(null);
+    void fetchStudentActivity(kind, id, controller.signal).then((data) => {
+      if (!controller.signal.aborted) setActivityData(data);
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) setActivityError(error instanceof Error ? error.message : 'Could not load student activity.');
+    }).finally(() => {
+      if (!controller.signal.aborted) setActivityLoading(false);
+    });
+    return () => controller.abort();
+  }, [activityAvailable, kind, id, activityRetry]);
+
   return (
     <div className="space-y-3">
-      <SectionHeader title="Modules" description="Your training plan, week by week" icon="ri-book-2-line" />
-      {showReadOnlyNotice && (
+      <SectionHeader
+        title="Modules"
+        description={activityAvailable ? 'Your recorded modules, activities and OTJ hours' : 'Your training plan, week by week'}
+        icon="ri-book-2-line"
+      />
+      {showReadOnlyNotice && !activityAvailable && (
         <div className="flex items-start gap-2.5 rounded-xl border border-primary-200/70 bg-primary-50/60 px-3.5 py-2.5">
           <AppIcon className="ri-eye-line mt-0.5 shrink-0 text-[15px] text-primary-600" />
           <p className="text-[12px] leading-snug text-foreground-600">
@@ -450,7 +479,15 @@ function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNotice }: 
           </p>
         </div>
       )}
-      <LearnerPlanBody
+      {activityAvailable && kind && id ? (
+        <StudentActivityPanel
+          kind={kind} learnerId={id}
+          data={activityData}
+          loading={activityLoading}
+          error={activityError}
+          onRetry={() => setActivityRetry((value) => value + 1)}
+        />
+      ) : <LearnerPlanBody
         real={real}
         loading={loading}
         loadError={loadError}
@@ -459,7 +496,153 @@ function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNotice }: 
         learnerId={id}
         showHero={false}
         compact
-      />
+      />}
+      {activityAvailable && ((real?.modules?.length || 0) > 0 || (real?.components?.length || 0) > 0) && (
+        <div className="space-y-3 pt-4">
+          <SectionHeader title="Current training plan" description="Your current learning activities" icon="ri-book-2-line" />
+          <LearnerPlanBody real={real} loading={loading} loadError={loadError} pageLabel="Modules" kind={kind} learnerId={id} showHero={false} compact />
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function StudentActivityPanel({ data, loading, error, onRetry, kind, learnerId }: {
+  kind?: string;
+  learnerId?: string;
+  data: StudentActivityResponse | null;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  const [search, setSearch] = useState('');
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const modules = useMemo(() => {
+    const grouped = new Map<number, { id: number; name: string; activities: StudentActivityItem[] }>();
+    for (const item of data?.activities || []) {
+      const group = grouped.get(item.group_id) || {
+        id: item.group_id,
+        name: item.group_name || 'Unnamed module',
+        activities: [],
+      };
+      group.activities.push(item);
+      grouped.set(item.group_id, group);
+    }
+    const term = search.trim().toLocaleLowerCase();
+    return [...grouped.values()]
+      .map((group) => ({ ...group, visibleActivities: term && !group.name.toLocaleLowerCase().includes(term)
+        ? group.activities.filter((item) => item.activity.toLocaleLowerCase().includes(term))
+        : group.activities }))
+      .filter((group) => group.visibleActivities.length > 0)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [data, search]);
+
+  const toggleModule = (groupId: number) => {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(groupId)) next.delete(groupId); else next.add(groupId);
+      return next;
+    });
+  };
+
+  return (
+      <section aria-labelledby="student-activity-title" className="overflow-hidden rounded-2xl border border-foreground-200 bg-white">
+        <header className="flex items-center justify-between border-b border-foreground-100 px-5 py-4">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-primary-600">Last audit</p>
+            <h2 id="student-activity-title" className="mt-0.5 text-lg font-bold text-foreground-900">Modules and activities</h2>
+            {data && <p className="mt-0.5 text-[12px] text-foreground-500">{data.learner_name}</p>}
+            <p className="mt-1 text-[12px] text-foreground-500">Historical records · Read-only</p>
+          </div>
+        </header>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5">
+          {loading ? (
+            <RowsSkeleton rows={6} />
+          ) : error ? (
+            <EmptyState
+              size="sm"
+              variant="error"
+              title="Could not load student activity"
+              description={error}
+              action={<button type="button" onClick={onRetry} className="rounded-lg border border-foreground-200 bg-white px-3.5 py-2 text-[12px] font-semibold text-foreground-700 hover:bg-background-100">Try again</button>}
+            />
+          ) : !data ? null : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                <ActivityStat label="Modules" value={data.module_count} />
+                <ActivityStat label="Activities" value={data.count} />
+                <ActivityStat label="Completed" value={data.completed_count} />
+                <ActivityStat label="Recorded OTJH" value={data.actual_total == null ? 'Unavailable' : formatHoursMinutes(data.actual_total)} />
+                <ActivityStat label="Planned OTJH" value={data.planned_total == null ? 'Unavailable' : formatHoursMinutes(data.planned_total)} />
+              </div>
+              <p className="text-[12px] text-foreground-500">
+                OTJ hours available for {data.mapped_count} of {data.unique_activity_count} unique activities; planned hours for {data.planned_mapped_count}.
+                {' '}Totals exclude attendance and separate assignment records. Shared activities count once. Missing hours are shown as unavailable, so totals may be incomplete.
+              </p>
+              <label className="relative block">
+                <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400" />
+                <input aria-label="Search modules or activities" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search modules or activities" className="h-10 w-full rounded-xl border border-foreground-200 bg-white pl-9 pr-3 text-[13px] outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100" />
+              </label>
+              {modules.length === 0 ? (
+                <EmptyState size="sm" title={data.count ? 'No activities match this search' : 'No recorded activities for this learner'} />
+              ) : (
+                <div className="space-y-2">
+                  {modules.map((module) => {
+                    const isExpanded = expanded.has(module.id);
+                    const complete = module.activities.filter((item) => item.completed).length;
+                    return (
+                      <div key={module.id} className="overflow-hidden rounded-xl border border-foreground-200 bg-white">
+                        <button type="button" aria-expanded={isExpanded} onClick={() => toggleModule(module.id)} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-background-100/70">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600"><AppIcon className="ri-book-open-line text-base" /></span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[13px] font-semibold text-foreground-900">{module.name}</span>
+                            <span className="block text-[11px] text-foreground-500">{complete} of {module.activities.length} completed</span>
+                            <span className="block text-[11px] text-foreground-500">Recorded OTJH: {module.activities.some((item) => item.hours_mapped) ? formatHoursMinutes(module.activities.reduce((sum, item) => sum + (item.hours_mapped ? item.actual : 0), 0)) : 'Unavailable'}</span>
+                          </span>
+                          <AppIcon className={`${isExpanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-lg text-foreground-500`} />
+                        </button>
+                        {isExpanded && (
+                          <div className="divide-y divide-foreground-100 border-t border-foreground-100">
+                            {module.visibleActivities.map((item) => <StudentActivityRow key={item.activity_id} item={item} kind={kind} learnerId={learnerId} />)}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </section>
+  );
+}
+
+function ActivityStat({ label, value }: { label: string; value: number | string }) {
+  return <div className="rounded-xl border border-foreground-100 bg-background-100/60 px-3 py-2.5"><p className="text-[10px] uppercase tracking-wider text-foreground-400">{label}</p><p className="mt-0.5 text-lg font-bold text-foreground-900">{value}</p></div>;
+}
+
+function StudentActivityRow({ item, kind, learnerId }: { item: StudentActivityItem; kind?: string; learnerId?: string }) {
+  const [open, setOpen] = useState(false);
+  const score = item.quiz_score != null && item.quiz_maximum_score
+    ? `${item.quiz_score}/${item.quiz_maximum_score}`
+    : null;
+  return (
+    <div><div className="flex flex-wrap items-center gap-3 px-4 py-3">
+      <span className={`h-2 w-2 shrink-0 rounded-full ${item.completed ? 'bg-emerald-500' : 'bg-foreground-300'}`} />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[12px] font-semibold text-foreground-800">{item.activity}</p>
+        <p className="mt-0.5 text-[10px] text-foreground-500">{[item.category, item.date, score].filter(Boolean).join(' · ')}</p>
+      </div>
+      <span className="text-right text-[11px] text-foreground-500">
+        <span className="block">OTJH: {item.hours_mapped ? formatHoursMinutes(item.actual) : 'Unavailable'}</span>
+        <span className="block">Planned: {item.planned_hours_mapped ? formatHoursMinutes(item.planned) : 'Unavailable'}</span>
+      </span>
+      <StatusBadge tone={item.completed ? 'positive' : 'neutral'} label={item.completed ? 'Completed' : (item.status || 'Not started')} />
+      {kind && learnerId && <button type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)} className="rounded-lg border px-3 py-2 text-sm font-semibold text-primary-700">{open ? 'Close material' : 'Open material'}</button>}
+    </div>
+    {open && kind && learnerId && <StudentMaterial kind={kind} learnerId={learnerId} groupId={item.group_id} activityId={item.source_activity_id} />}
     </div>
   );
 }

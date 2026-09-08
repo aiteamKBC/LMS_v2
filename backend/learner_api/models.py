@@ -205,6 +205,10 @@ class EnrolmentUser(models.Model):
     all_learners = models.Manager()
 
     id = models.AutoField(primary_key=True, db_column="id")
+    # Aptem's learner identifier. It is the bridge to the read-only
+    # Last_audit mirror; it is text here because that is how Created_users was
+    # originally provisioned, while Last_audit stores the same value as bigint.
+    aptem_id = models.TextField(db_column="aptem_id", null=True, blank=True)
 
     # The user's permanent public identifier, added by apply_user_uuid. The
     # integer pk above stays the internal join key — ~25 columns across three
@@ -685,6 +689,12 @@ class LearnerProfile(models.Model):
                 "claimedSeconds": entry.claimed_seconds,
                 "serverSessionSeconds": entry.server_session_seconds,
                 "verifiedSeconds": entry.verified_seconds,
+                "outsideWorkingHours": entry.outside_working_hours,
+                "outsideWorkingHoursConfirmed": entry.outside_working_hours_confirmed,
+                "outsideWorkingHoursConfirmedAt": (
+                    entry.outside_working_hours_confirmed_at.isoformat()
+                    if entry.outside_working_hours_confirmed_at else ""
+                ),
                 "ksbs": [
                     row.ksb_code
                     for row in entry.ksb_links.all()
@@ -903,6 +913,9 @@ class LearnerProgressEntry(models.Model):
     claimed_seconds = models.PositiveIntegerField(null=True, blank=True)
     server_session_seconds = models.PositiveIntegerField(null=True, blank=True)
     verified_seconds = models.PositiveIntegerField(null=True, blank=True)
+    outside_working_hours = models.BooleanField(default=False)
+    outside_working_hours_confirmed = models.BooleanField(default=False)
+    outside_working_hours_confirmed_at = models.DateTimeField(null=True, blank=True)
     feed_kind = models.CharField(max_length=30, blank=True)
     feed_action = models.TextField(blank=True)
     feed_title = models.TextField(blank=True)

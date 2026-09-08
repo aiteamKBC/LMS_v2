@@ -59,23 +59,26 @@ export function componentContentKind(type: string | null | undefined): ContentKi
    a learner from finishing an activity. Assignments remain gated
    because they require an approved evidence upload.
    ═══════════════════════════════════════════════════════ */
-/** Only assignments collect uploaded evidence, so only they can require it. */
+/** Assignments are the only components that offer supporting evidence upload.
+ * Evidence is optional in the assignment wizard; the three written sections
+ * are the completion gate. */
 export function componentRequiresEvidence(type: string | null | undefined): boolean {
   return (type || '').trim().toLowerCase().replace(/-/g, '_') === 'assignment';
 }
 
 export interface ComponentCriteria {
-  gated: boolean;          // true only when an evidence upload is required
+  gated: boolean;
   evidenceRequired: boolean;
   evidenceMet: boolean;
   met: boolean;            // overall: safe to complete
 }
 
-/** Evaluate the completion gate. `evidenceCount` is the learner's approved
- * uploads for this component (pass 0 when not yet known). */
-export function componentCriteria(c: JourneyComponent, evidenceCount: number): ComponentCriteria {
-  const evidenceRequired = componentRequiresEvidence(c.type);
-  const evidenceMet = evidenceRequired ? evidenceCount > 0 : true;
+/** Evidence no longer gates assignment completion; the assignment API checks
+ * the three written form sections instead. Keep this result shape for the
+ * generic component UI and existing consumers. */
+export function componentCriteria(_component: JourneyComponent, _evidenceCount: number): ComponentCriteria {
+  const evidenceRequired = false;
+  const evidenceMet = true;
   return {
     gated: evidenceRequired,
     evidenceRequired,

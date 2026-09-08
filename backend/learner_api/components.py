@@ -22,7 +22,12 @@ from django.views.decorators.csrf import csrf_exempt
 from .active_users import ComponentReferenceError, save_progress_record, sync_active_user
 from .identity import learner_profile_for_source
 from .models import CommercialUser, EnrolmentUser
-from .time_tracking import TrackingSessionError, tracking_session_already_used, verify_tracking_session
+from .time_tracking import (
+    TrackingSessionError,
+    outside_uk_working_hours,
+    tracking_session_already_used,
+    verify_tracking_session,
+)
 from login.permissions import learner_self_only
 
 logger = logging.getLogger(__name__)
@@ -78,8 +83,9 @@ def _component_meta(component_id):
     return (ctype or None), (title or None)
 
 
-# Only assignments collect uploaded evidence, so only they can require it.
-EVIDENCE_COMPONENT_TYPES = {"assignment"}
+# Assignment evidence is optional in the three-step assignment form. Keep the
+# helper for compatibility with callers, but no component is gated by a file.
+EVIDENCE_COMPONENT_TYPES = set()
 
 
 def normalise_component_type(value):
@@ -90,6 +96,40 @@ def normalise_component_type(value):
 
 def component_requires_evidence(component_type):
     return normalise_component_type(component_type) in EVIDENCE_COMPONENT_TYPES
+
+
+def _assignment_form_ready(component_id, kind, learner_id):
+    """An assignment can complete only after all three wizard answers exist.
+
+    The wizard saves these as a draft before it calls the progress endpoint;
+    checking the database here makes the rule authoritative rather than a UI-
+    only validation that a direct request could bypass.
+    """
+    try:
+        with connections["enrolment"].cursor() as cur:
+            cur.execute(
+                'SELECT full_submission FROM "Learner"."learning_reflection_submissions" '
+                'WHERE learner_kind = %s AND learner_id = %s '
+                "AND activity_type = 'assignment' AND activity_id = %s LIMIT 1",
+                [kind, str(learner_id), component_id],
+            )
+            row = cur.fetchone()
+    except DatabaseError as exc:
+        logger.warning("Could not verify assignment form for %s: %s", component_id, exc)
+        return False
+    if not row:
+        return False
+    payload = row[0]
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (TypeError, ValueError):
+            payload = {}
+    if not isinstance(payload, dict):
+        return False
+    return all(str(payload.get(key) or '').strip() for key in (
+        'assignmentAnswer', 'whatYouLearned', 'businessImpact',
+    ))
 
 
 def _component_ksb_mappings(component_id):
@@ -155,7 +195,8 @@ def _completion_criteria(component_id, kind, learner_id, component_type=None):
     """Evaluate the completion gate for a component.
 
     KSB weights measure curriculum contribution and never block completion.
-    Only assignments require an approved evidence file.
+    Assignment evidence is optional; its three written sections are validated
+    separately by ``_assignment_form_ready`` before this helper runs.
 
     Returns (ok, detail), with the outstanding evidence requirement when gated.
     """
@@ -239,6 +280,11 @@ def submit_component_progress(request, component_id):
     component_type = client_type or live_type or "component"
     component_title = client_title or live_title or TYPE_ACTIONS.get(component_type, (None, "Activity"))[1]
 
+    if normalise_component_type(live_type or client_type) == "assignment" and not _assignment_form_ready(
+        component_id, kind, learner_id,
+    ):
+        return _error("Complete and save all three assignment sections before submitting.", 409)
+
     try:
         source = model.objects.get(pk=learner_id)
     except model.DoesNotExist:
@@ -246,10 +292,9 @@ def submit_component_progress(request, component_id):
     except (DatabaseError, ValueError) as exc:
         return _error(f"Database error: {exc}", 502)
 
-    # Completion gate. Enforced here (not only in the UI) so the criteria cannot
-    # be bypassed by posting straight to the endpoint. Uses the master type
-    # (not the client's) so the evidence rule can't be dodged by mislabelling
-    # an assignment in the payload.
+    # Generic completion criteria. Assignment form readiness is enforced above
+    # using the master component type, so it cannot be bypassed by a client that
+    # labels an assignment as another activity type.
     criteria_ok, criteria = _completion_criteria(
         component_id, kind, learner_id, live_type or client_type,
     )
@@ -284,6 +329,14 @@ def submit_component_progress(request, component_id):
     ) + 1
 
     submitted_at_dt = timezone.now()
+    outside_working_hours = outside_uk_working_hours(submitted_at_dt)
+    confirmation_received = payload.get("outsideWorkingHoursConfirmed") is True
+    if outside_working_hours and not confirmation_received:
+        return _error(
+            "Confirm that this activity was completed outside UK working hours.",
+            400,
+        )
+    outside_working_hours_confirmed = outside_working_hours and confirmation_received
     try:
         tracking = verify_tracking_session(
             payload.get("trackingToken"),
@@ -319,6 +372,9 @@ def submit_component_progress(request, component_id):
         "claimedSeconds": tracking["claimedSeconds"],
         "serverSessionSeconds": tracking["serverSessionSeconds"],
         "verifiedSeconds": tracking["verifiedSeconds"],
+        "outsideWorkingHours": outside_working_hours,
+        "outsideWorkingHoursConfirmed": outside_working_hours_confirmed,
+        "outsideWorkingHoursConfirmedAt": submitted_at if outside_working_hours_confirmed else None,
     }
 
     action, _noun = TYPE_ACTIONS.get(component_type, ("Completed activity", "Activity"))

@@ -112,6 +112,8 @@ export interface LearnerQuizAttempt {
 
 export interface LearnerDetail {
   id: string;
+  /** Pilot feature flag; Aptem identity itself remains server-side. */
+  studentActivityAvailable?: boolean;
   name: string;
   email: string;
   phone: string;

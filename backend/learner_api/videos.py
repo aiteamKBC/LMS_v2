@@ -20,7 +20,12 @@ from .active_users import ComponentReferenceError, save_progress_record, sync_ac
 from .components import component_ksb_codes
 from .identity import learner_profile_for_source
 from .models import CommercialUser, EnrolmentUser
-from .time_tracking import TrackingSessionError, tracking_session_already_used, verify_tracking_session
+from .time_tracking import (
+    TrackingSessionError,
+    outside_uk_working_hours,
+    tracking_session_already_used,
+    verify_tracking_session,
+)
 from login.permissions import learner_self_only
 
 SOURCE_MODELS = {
@@ -124,6 +129,14 @@ def submit_video_progress(request, component_id):
     ) + 1
 
     submitted_at_dt = timezone.now()
+    outside_working_hours = outside_uk_working_hours(submitted_at_dt)
+    confirmation_received = payload.get("outsideWorkingHoursConfirmed") is True
+    if outside_working_hours and not confirmation_received:
+        return _error(
+            "Confirm that this activity was completed outside UK working hours.",
+            400,
+        )
+    outside_working_hours_confirmed = outside_working_hours and confirmation_received
     try:
         tracking = verify_tracking_session(
             payload.get("trackingToken"),
@@ -160,6 +173,9 @@ def submit_video_progress(request, component_id):
         "claimedSeconds": tracking["claimedSeconds"],
         "serverSessionSeconds": tracking["serverSessionSeconds"],
         "verifiedSeconds": tracking["verifiedSeconds"],
+        "outsideWorkingHours": outside_working_hours,
+        "outsideWorkingHoursConfirmed": outside_working_hours_confirmed,
+        "outsideWorkingHoursConfirmedAt": submitted_at if outside_working_hours_confirmed else None,
     }
 
     if active is not None:
