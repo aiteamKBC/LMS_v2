@@ -11,6 +11,13 @@ import {
   type LearnerCalendarEvent,
 } from '@/api/learnerCalendar';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { formatReportedTime, reportedTimeMinutes } from '@/utils/reportedTime';
+import {
+  collapseRepeatedActivities,
+  type ActivityType,
+  type MonthActivity,
+} from '@/utils/monthlyActivity';
+import { otjhContributionHours } from '@/utils/otjhContribution';
 import { MonthlyReportWizard } from '@/components/feature/MonthlyReportWizard';
 import {
   fetchMonthlyReports,
@@ -27,28 +34,6 @@ const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
-
-type ActivityType = 'quiz' | 'video' | 'learning' | 'coaching' | 'review';
-
-interface MonthActivity {
-  id: string;
-  at: string;
-  type: ActivityType;
-  title: string;
-  action: string;
-  detail?: string;
-  module?: string | null;
-  week?: string | null;
-  duration?: string | null;
-  reportedTime?: string | null;
-  ksbs: string[];
-  feedback?: string | null;
-  status?: string;
-  score?: number;
-  passed?: boolean;
-  coach?: string;
-  notes?: string;
-}
 
 const TYPE_META: Record<ActivityType, { label: string; icon: string; colour: string; soft: string; line: string }> = {
   quiz: { label: 'Quizzes', icon: 'ri-questionnaire-line', colour: 'text-amber-700', soft: 'bg-amber-50', line: 'border-l-amber-400' },
@@ -515,7 +500,12 @@ export function RealMonthlyCycleView({
     review: monthActivities.filter((item) => item.type === 'review').length,
   }), [monthActivities]);
 
-  const loggedMinutes = monthActivities.reduce((total, activity) => total + minutesFromText(activity.reportedTime), 0);
+  const loggedMinutes = monthActivities.reduce(
+    (total, activity) => total + (
+      activity.loggedMinutes ?? reportedTimeMinutes(activity.reportedTime) ?? 0
+    ),
+    0,
+  );
   const ksbCodes = Array.from(new Set(monthActivities.flatMap((activity) => activity.ksbs))).sort();
   const ksbCount = ksbCodes.length;
   const activeDays = new Set(monthActivities.map((activity) => activity.at.slice(0, 10))).size;

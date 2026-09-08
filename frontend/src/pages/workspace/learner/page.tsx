@@ -1786,7 +1786,6 @@ function DemoWeekAccordion({
             components={week.components}
             videos={videos}
             completions={completions}
-            markingStatus={markingStatus}
             kind={kind}
             learnerId={learnerId}
             reflectionStatuses={reflectionStatuses}

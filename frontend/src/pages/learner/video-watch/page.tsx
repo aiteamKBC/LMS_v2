@@ -613,6 +613,7 @@ export default function ComponentViewPage() {
   // one second apart.
   useEffect(() => {
     if (phase !== 'consume' || !canUseComponent || (!unsupported && !playerPlaying)) return;
+    let lastAudioTickAt = Date.now();
     timerRef.current = setInterval(() => {
       if (isAudio || document.visibilityState === 'visible') {
         const now = Date.now();
