@@ -14,6 +14,7 @@ import { lazyRoute } from "./lazyRoute";
 const AdminAccessLogsPage = lazyRoute(() => import("../pages/admin/access-logs/page"));
 const AdminDashboard = lazyRoute(() => import("../pages/workspace/admin/page"));
 const AdminDocumentsPage = lazyRoute(() => import("../pages/admin/documents/page"));
+const AdminEvidencePage = lazyRoute(() => import("../pages/admin/evidence/page"));
 const AdminNotificationsPage = lazyRoute(() => import("../pages/admin/notifications/page"));
 const AdminPermissionsPage = lazyRoute(() => import("../pages/admin/permissions/page"));
 const AdminRolesPage = lazyRoute(() => import("../pages/admin/roles/page"));
@@ -375,6 +376,14 @@ const routes: RouteObject[] = [
   {
     path: "/admin/documents",
     element: <AdminDocumentsPage />,
+  },
+  {
+    path: "/admin/evidence",
+    element: <AdminEvidencePage />,
+  },
+  {
+    path: "/admin/evidence/:learnerId",
+    element: <AdminEvidencePage />,
   },
   {
     path: "/admin/notifications",

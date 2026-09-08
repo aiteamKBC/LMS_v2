@@ -615,6 +615,7 @@ export const adminNavItems: SidebarNavItem[] = [
     icon: 'ri-settings-4-line',
     children: [
       { id: 'admin-documents', label: 'Documents', icon: 'ri-folder-line', href: '/admin/documents' },
+      { id: 'admin-evidence', label: 'Evidence', icon: 'ri-folder-shield-2-line', href: '/admin/evidence' },
       { id: 'admin-notifications', label: 'Email Delivery', icon: 'ri-mail-send-line', href: '/admin/notifications' },
       { id: 'admin-system', label: 'System Status', icon: 'ri-pulse-line', href: '/admin/system' },
     ],
