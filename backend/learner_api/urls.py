@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, time_tracking, videos, views
+from . import absence_reports, apprenticeship_agreement, attendance, calendar, certificates, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, time_tracking, videos, views
 
 urlpatterns = [
     path("tutor-learners/", views.tutor_learners, name="tutor-learners"),
@@ -82,6 +82,10 @@ urlpatterns = [
     ),
     path("employers/<int:pk>/", employers.employer_detail, name="employer-detail"),
     path("learner-detail/<str:kind>/<int:pk>/", learner_detail.learner_detail, name="learner-detail"),
+    path("certificates/verify/<uuid:token>/", certificates.verify_certificate, name="learner-certificate-verify"),
+    path("certificates/<str:kind>/<int:pk>/template/", certificates.learner_certificate_template, name="learner-certificate-template"),
+    path("certificates/<str:kind>/<int:pk>/", certificates.learner_certificate_status, name="learner-certificate-status"),
+    path("certificates/<str:kind>/<int:pk>/issue/", certificates.issue_learner_certificate, name="learner-certificate-issue"),
     path("kbc-lms/all-students-schema/", lms_schema.all_students_schema, name="kbc-lms-all-students-schema"),
     path("media/google-drive/<str:file_id>/", media_proxy.google_drive_media, name="google-drive-media"),
     path("media/legacy-attachment/<str:attachment_id>/", media_proxy.legacy_attachment_media, name="legacy-attachment-media"),

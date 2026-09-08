@@ -13,6 +13,7 @@ import { lazyRoute } from "./lazyRoute";
 // fail with "Failed to fetch dynamically imported module". See ./lazyRoute.
 const AdminAccessLogsPage = lazyRoute(() => import("../pages/admin/access-logs/page"));
 const AdminDashboard = lazyRoute(() => import("../pages/workspace/admin/page"));
+const AdminCertificatesPage = lazyRoute(() => import("../pages/admin/certificates/page"));
 const AdminDocumentsPage = lazyRoute(() => import("../pages/admin/documents/page"));
 const AdminEvidencePage = lazyRoute(() => import("../pages/admin/evidence/page"));
 const AdminNotificationsPage = lazyRoute(() => import("../pages/admin/notifications/page"));
@@ -35,6 +36,7 @@ const EmployerLearnerPage = lazyRoute(() => import("../pages/employer/EmployerLe
 const BudgetsPage = lazyRoute(() => import("../pages/finance/budgets/page"));
 const CallLogsPage = lazyRoute(() => import("../pages/engagement/call-logs/page"));
 const CatchUpPage = lazyRoute(() => import("../pages/learner/catchup/page"));
+const CertificateVerificationPage = lazyRoute(() => import("../pages/certificates/verify/page"));
 const CheckpointsPage = lazyRoute(() => import("../pages/curriculum/checkpoints/page"));
 const ClubBadgeDetailPage = lazyRoute(() => import("../pages/learner/clubs/badge-detail/page"));
 const ClubDetailPage = lazyRoute(() => import("../pages/learner/clubs/detail/page"));
@@ -362,8 +364,16 @@ const routes: RouteObject[] = [
     element: <AdminDashboard />,
   },
   {
+    path: "/workspace/admin/certificates",
+    element: <AdminCertificatesPage />,
+  },
+  {
     path: "/admin/users",
     element: <AdminUsersPage />,
+  },
+  {
+    path: "/admin/certificates",
+    element: <Navigate to="/workspace/admin/certificates" replace />,
   },
   {
     path: "/admin/roles",
@@ -1397,6 +1407,10 @@ const routes: RouteObject[] = [
     element: <StarredMessagesPage />,
   },
   {
+    path: "/verify-certificate/:token",
+    element: <CertificateVerificationPage />,
+  },
+  {
     path: "*",
     element: <NotFound />,
   },
@@ -1429,8 +1443,13 @@ const PUBLIC_PATHS = new Set([
   "/reset-password",
 ]);
 
+const PUBLIC_PREFIXES = [
+  "/verify-certificate/",
+];
+
 const isPublic = (route: RouteObject) =>
-  typeof route.path === "string" && PUBLIC_PATHS.has(route.path);
+  typeof route.path === "string"
+  && (PUBLIC_PATHS.has(route.path) || PUBLIC_PREFIXES.some((prefix) => route.path?.startsWith(prefix)));
 
 export default [
   ...routes.filter(isPublic),

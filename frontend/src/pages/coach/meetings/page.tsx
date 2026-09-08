@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RowAction } from '@/components/ui/ActionRow';
@@ -104,6 +105,7 @@ function matchesMeetingSearch(event: CoachCalendarEvent, searchTerm: string) {
 
 export default function CoachMeetings() {
   const coach = useCoachIdentity();
+  const navigate = useNavigate();
   const [filter, setFilter] = useState<MeetingFilter>('this-month');
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -215,6 +217,20 @@ export default function CoachMeetings() {
     setScheduleForm(scheduleDefaults(event));
     setActionError(null);
     setActionNotice(event.syncWarning || null);
+  };
+
+  const openEventInCalendar = (event: CoachCalendarEvent) => {
+    navigate('/coach/timetable', {
+      state: {
+        focusEvent: {
+          eventKey: eventIdentity(event),
+          source: event.source,
+          date: eventDisplayDate(event),
+          title: event.title,
+          scheduledTime: event.scheduledTime,
+        },
+      },
+    });
   };
 
   const handleSchedule = async (event: CoachCalendarEvent) => {
@@ -374,6 +390,7 @@ export default function CoachMeetings() {
                   )}
                   actions={(
                     <div className="hidden shrink-0 items-center gap-2 lg:flex">
+                      <RowAction label="Calendar" icon="ri-calendar-schedule-line" emphasis="calendar" onClick={() => openEventInCalendar(event)} />
                       {url ? (
                         <RowAction
                           label="Join Meeting"
@@ -385,6 +402,8 @@ export default function CoachMeetings() {
                       ) : null}
                       <RowAction
                         label={needsScheduling(event) ? 'Schedule' : 'Manage'}
+                        icon={needsScheduling(event) ? 'ri-calendar-check-line' : 'ri-settings-3-line'}
+                        emphasis="primary"
                         onClick={() => toggleExpanded(event)}
                       />
                     </div>
@@ -430,6 +449,7 @@ export default function CoachMeetings() {
                           </div>
                         </div>
                         <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <RowAction label="Open in Calendar" icon="ri-calendar-schedule-line" emphasis="calendar" onClick={() => openEventInCalendar(event)} />
                           <RowAction
                             label={event.status === 'scheduled' || event.status === 'in-progress' ? 'Reschedule' : 'Schedule'}
                             icon="ri-calendar-check-line"

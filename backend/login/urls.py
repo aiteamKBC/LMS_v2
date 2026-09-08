@@ -72,4 +72,5 @@ urlpatterns = [
         admin_evidence.select_assignment,
         name="admin-evidence-assignment-selection",
     ),
+    path("admin/certificate-template/", platform_admin.certificate_template, name="admin-certificate-template"),
 ]
