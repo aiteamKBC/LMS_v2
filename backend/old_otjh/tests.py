@@ -307,6 +307,19 @@ class TransitionTests(SimpleTestCase):
         request._dont_enforce_csrf_checks = False
         self.assertEqual(views.signoff(request, 42).status_code, 403)
 
+    def test_single_month_signoff_records_an_imported_capture(self):
+        request = RequestFactory().post('/audit_api/learners/42/signoff/', {
+            'month': '2026-07', 'snapshot_digest': service.digest(self.rows),
+            'confirmed': 'true', 'capture_method': 'import',
+            'signature': SimpleUploadedFile('signature.png', b'test-image', content_type='image/png'),
+        })
+        request.login_account = self.user
+        request._dont_enforce_csrf_checks = True
+        with patch.object(storage, 'sanitize', return_value=b'clean-png'):
+            response = views.signoff(request, 42)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.events[0][5]['capture_method'], 'import')
+
     def test_new_lms_gate_refuses_direct_and_batch_paths(self):
         from login.api_gate import refusal_for
         with patch.dict('os.environ', {'API_REQUIRE_AUTH': '1'}):

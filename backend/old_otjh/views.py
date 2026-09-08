@@ -185,7 +185,7 @@ def signoff(request, learner_id):
             'coach': safe_signature(detail['coach_signature'])}})
     if set(data) - {'aptem_id', 'month', 'confirmed', 'snapshot_digest', 'capture_method'} or set(request.FILES) != {'signature'}:
         raise service.ServiceError('Only your signature and review confirmation can be submitted.')
-    if data.get('confirmed') not in (True, 'true') or data.get('capture_method') not in {'draw', 'upload'}:
+    if data.get('confirmed') not in (True, 'true') or data.get('capture_method') not in {'draw', 'upload', 'import'}:
         raise service.ServiceError('Preview and confirm your signature before saving.')
     image = storage.sanitize(request.FILES.get('signature'))
     result = service.sign(learner, month, request.login_account, role, image,
@@ -202,7 +202,7 @@ def bulk_signoff(request):
         return JsonResponse(service.signing_review(learner, request.GET.get('month'), role))
     if set(data) - {'aptem_id', 'months', 'confirmed', 'capture_method'} or set(request.FILES) != {'signature'}:
         raise service.ServiceError('Only your signature and reviewed months can be submitted.')
-    if data.get('confirmed') not in (True, 'true') or data.get('capture_method') not in {'draw', 'upload'}:
+    if data.get('confirmed') not in (True, 'true') or data.get('capture_method') not in {'draw', 'upload', 'import'}:
         raise service.ServiceError('Preview and confirm your signature before saving.')
     try:
         months = json.loads(data['months']) if isinstance(data.get('months'), str) else data.get('months')

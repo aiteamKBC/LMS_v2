@@ -3,15 +3,17 @@ import SignaturePad from 'signature_pad';
 import { inputClass } from '@/pages/users/components/ui';
 import { Modal } from '@/pages/users/components/Modal';
 import { AppIcon } from '@/components/feature/AppIcon';
+import type { SignatureCaptureMethod } from './api';
 import styles from './design.module.css';
 
 const btnPrimary = styles.primaryButton;
 const btnSecondary = styles.secondaryButton;
 
-export function SignatureCapture({ name, busy, onSave, onDraftStart, onDraftReset, dialogRole, hasSavedSignature, saveError, confirmationText }: {
-  name: string; busy: boolean; onSave: (blob: Blob, capture: 'draw' | 'upload') => void;
+export function SignatureCapture({ name, busy, onSave, onDraftStart, onDraftReset, dialogRole, hasSavedSignature, importSignature, saveError, confirmationText }: {
+  name: string; busy: boolean; onSave: (blob: Blob, capture: SignatureCaptureMethod) => void;
   onDraftStart?: () => void; onDraftReset?: () => void;
   dialogRole?: 'learner' | 'coach'; hasSavedSignature?: boolean; saveError?: string;
+  importSignature?: { url: string; monthLabel: string };
   confirmationText?: string;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -26,6 +28,8 @@ export function SignatureCapture({ name, busy, onSave, onDraftStart, onDraftRese
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState('');
   const [hasInk, setHasInk] = useState(false);
+  const [captureMethod, setCaptureMethod] = useState<SignatureCaptureMethod>('draw');
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => {
     if (mode !== 'draw' || !open || !canvas.current) return;
@@ -44,16 +48,17 @@ export function SignatureCapture({ name, busy, onSave, onDraftStart, onDraftRese
     }
     drawingWidth.current = width;
     pad.current = instance;
-    const changed = () => { setHasInk(!instance.isEmpty()); setPreview(''); setBlob(null); setConfirmed(false); };
+    const changed = () => { setHasInk(!instance.isEmpty()); setPreview(''); setBlob(null); setConfirmed(false); setCaptureMethod('draw'); };
     instance.addEventListener('endStroke', changed);
     return () => { drawing.current = instance.toData(); instance.removeEventListener('endStroke', changed); instance.off(); pad.current = null; };
   }, [mode, open]);
 
-  const reset = () => { setPreview(''); setBlob(null); setConfirmed(false); setError(''); setHasInk(false); drawing.current = []; pad.current?.clear(); onDraftReset?.(); };
+  const reset = () => { setPreview(''); setBlob(null); setConfirmed(false); setError(''); setHasInk(false); setCaptureMethod('draw'); drawing.current = []; pad.current?.clear(); onDraftReset?.(); };
   const previewDrawing = () => {
     if (!pad.current || pad.current.isEmpty() || !canvas.current) return;
     setPreview(pad.current.toDataURL('image/png'));
     canvas.current.toBlob(value => setBlob(value), 'image/png');
+    setCaptureMethod('draw');
     setConfirmed(false);
   };
   const upload = (file?: File) => {
@@ -64,14 +69,48 @@ export function SignatureCapture({ name, busy, onSave, onDraftStart, onDraftRese
       setError('Choose a PNG or JPEG image up to 2 MB.'); return;
     }
     const reader = new FileReader();
-    reader.onload = () => { setPreview(String(reader.result)); setBlob(file); };
+    reader.onload = () => { setPreview(String(reader.result)); setBlob(file); setCaptureMethod('upload'); };
     reader.onerror = () => setError('Could not read this image. Please try again.');
     reader.readAsDataURL(file);
+  };
+  const importSavedSignature = async () => {
+    if (!importSignature || importing || busy) return;
+    reset();
+    onDraftStart?.();
+    setImporting(true);
+    try {
+      const response = await fetch(importSignature.url, { credentials: 'same-origin' });
+      if (!response.ok) throw new Error('Could not import your previous signature. Please try again.');
+      const savedBlob = await response.blob();
+      if (!savedBlob.type.startsWith('image/')) throw new Error('Your previous signature image is unavailable.');
+      const reader = new FileReader();
+      reader.onload = () => {
+        setPreview(String(reader.result));
+        setBlob(savedBlob);
+        setCaptureMethod('import');
+        setConfirmed(false);
+      };
+      reader.onerror = () => setError('Could not import your previous signature. Please try again.');
+      reader.readAsDataURL(savedBlob);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not import your previous signature. Please try again.');
+      onDraftReset?.();
+    } finally {
+      setImporting(false);
+    }
   };
 
   const controls = <fieldset disabled={busy} className={`${styles.capture} space-y-3`}>
     <legend className="mb-3 text-sm font-semibold text-foreground-900">Your signature</legend>
     <p className="text-sm text-foreground-600">Signing as <strong>{name}</strong></p>
+    {importSignature && !hasSavedSignature && <div className="rounded-xl border border-primary-200 bg-primary-50 p-3">
+      <p className="text-sm font-semibold text-primary-900">Use your saved signature</p>
+      <p className="mt-1 text-xs text-primary-700">Import the signature you confirmed for {importSignature.monthLabel}, then confirm it for this month.</p>
+      <button type="button" className={`${btnSecondary} mt-3`} disabled={busy || importing} onClick={() => void importSavedSignature()}>
+        <AppIcon className={importing ? 'ri-loader-4-line animate-spin' : 'ri-file-download-line'} />
+        {importing ? 'Importing…' : 'Import previous signature'}
+      </button>
+    </div>}
     <div className={styles.captureModes}>
       <button type="button" aria-pressed={mode === 'draw'} className={mode === 'draw' ? btnPrimary : btnSecondary} onClick={() => { reset(); setMode('draw'); }}>Draw signature</button>
       <button type="button" aria-pressed={mode === 'upload'} className={mode === 'upload' ? btnPrimary : btnSecondary} onClick={() => { reset(); setMode('upload'); }}>Upload signature image</button>
@@ -91,7 +130,7 @@ export function SignatureCapture({ name, busy, onSave, onDraftStart, onDraftRese
       <img src={preview} alt="Your signature preview" className="max-h-36 max-w-full rounded-lg border border-foreground-100 bg-white" />
       <label className="flex items-start gap-2 text-sm text-foreground-700"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} className="mt-1 accent-primary-500" />
         {confirmationText || "I have reviewed this month's record and confirm this is my signature."}</label>
-      <button type="button" className={btnPrimary} disabled={!confirmed || !blob || busy} onClick={() => blob && onSave(blob, mode)}>{busy ? 'Saving…' : 'Confirm and save signature'}</button>
+      <button type="button" className={btnPrimary} disabled={!confirmed || !blob || busy} onClick={() => blob && onSave(blob, captureMethod)}>{busy ? 'Saving…' : 'Confirm and save signature'}</button>
     </div>}
   </fieldset>;
   if (!dialogRole) return controls;
@@ -102,7 +141,9 @@ export function SignatureCapture({ name, busy, onSave, onDraftStart, onDraftRese
     {open && <Modal size="max-w-xl" className={`${styles.scope} ${styles.dialog}`} returnFocusRef={trigger}
       title={dialogRole === 'coach' ? 'Coach signature' : 'Learner signature'} onClose={() => setOpen(false)}
       footer={<button type="button" className={btnSecondary} onClick={() => setOpen(false)}>Keep draft and close</button>}>
-      <p className="mb-4 text-[13px] leading-relaxed text-foreground-500">Draw or upload your signature for this month’s record. Review the preview and confirm before saving.</p>
+      <p className="mb-4 text-[13px] leading-relaxed text-foreground-500">{importSignature && !hasSavedSignature
+        ? 'Import your previously confirmed signature, or draw or upload a new one. Review the preview and confirm before saving.'
+        : 'Draw or upload your signature for this month’s record. Review the preview and confirm before saving.'}</p>
       {controls}
     </Modal>}
   </>;

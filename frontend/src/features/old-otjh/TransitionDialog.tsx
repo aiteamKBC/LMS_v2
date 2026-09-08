@@ -24,7 +24,7 @@ export function TransitionDialog({ summary, error, checking, onClose, onReview, 
     <div className={design.dialogIntro}><span className={`${design.iconTile} ${design.iconSolid}`}><AppIcon className="ri-graduation-cap-line" /></span>
       <RecordBadge>{error ? 'Check unavailable' : 'Your learning transition'}</RecordBadge></div>
     {error ? <p role="alert" className="text-sm text-foreground-600">{error} Please try again to check your LMS access.</p> : <>
-      <p className="text-sm leading-relaxed text-foreground-600">Sign your previous learning record once to complete all months and open your LMS workspace.</p>
+      <p className="text-sm leading-relaxed text-foreground-600">Review and sign each month in your previous learning record. Draw your signature for the first month, then import it into each remaining month.</p>
       <div className={`${design.fact} space-y-3`}><p className="text-[13px] font-semibold">{completed} of {total} months complete <span className="font-normal text-foreground-500">· {Math.max(0, total - completed)} remaining</span></p>
         <RecordProgress completed={completed} total={total} /></div>
       {outstanding.length > 0 && <div><h3 className="mb-3 text-[13px] font-semibold">Outstanding months</h3><ul className={design.outstanding}>
