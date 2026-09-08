@@ -254,6 +254,9 @@ CHAT_DEMO_BOOTSTRAP_ENABLED = os.environ.get(
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
+EVIDENCE_AUDIT_SERVICE_URL = os.environ.get(
+    "EVIDENCE_AUDIT_SERVICE_URL", "https://fetch-evidence.kentbusinesscollege.net"
+).rstrip("/")
 OPENAI_TRANSCRIPTION_MODEL = os.environ.get("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe")
 OPENAI_REFLECTION_MODEL = os.environ.get("OPENAI_REFLECTION_MODEL", "gpt-4o-mini")
 OPENAI_MODERATION_MODEL = os.environ.get("OPENAI_MODERATION_MODEL", "omni-moderation-latest")

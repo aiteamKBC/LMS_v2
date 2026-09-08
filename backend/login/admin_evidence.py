@@ -10,8 +10,12 @@ relationship has been proved.
 from __future__ import annotations
 
 import ast
+import datetime
+import io
 import json
 import mimetypes
+import re
+import httpx
 from datetime import timedelta
 from pathlib import PurePosixPath
 
@@ -34,6 +38,9 @@ TEST_LEARNER_ID = 8539
 EVIDENCE_CONTAINER = "fetch-aptem-evidences"
 MAX_TEXT_PREVIEW_BYTES = 1024 * 1024
 EVALUATIONS = 'fetching_evidence.assignment_classification_evaluations'
+EVIDENCE_ITEMS = 'fetching_evidence.evidence_items'
+LEARNER_EVIDENCE = 'fetching_evidence.learner_evidence'
+RESULT_OPTIONS = ["Accepted", "Referred", "TraineeAccepted", "TraineeReferred"]
 
 
 def _exclusions_available():
@@ -362,6 +369,9 @@ def _assignment_payload(row, learner_id):
         selection_reasons = _json_list(row.get("selection_reason"))
 
     def chosen(key, default=None):
+        admin_key = f"admin_{key}"
+        if admin_key in evaluation:
+            return evaluation[admin_key]
         value = row.get(key)
         return evaluation.get(key, default) if value is None else value
 
@@ -568,6 +578,304 @@ def select_assignment(request, learner_id, evidence_id):
         return JsonResponse({'selected': selected})
     except DatabaseError:
         return _error('Could not save the selection. Please try again.', 503)
+
+
+@csrf_exempt
+@require_POST
+@require_role(ROLE_ADMIN)
+def update_ksb_codes(request, learner_id, evidence_id):
+    """Store the administrator's verified KSB-code override."""
+    if request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+        return _error('Missing X-Requested-With header.', 403)
+    try:
+        payload = json.loads(request.body)
+    except (ValueError, UnicodeDecodeError):
+        return _error('Invalid JSON body.', 400)
+    if not isinstance(payload, dict):
+        return _error('Request body must be a JSON object.', 400)
+
+    run_id = payload.get('runId')
+    component_id = payload.get('componentId')
+    ksb_codes = payload.get('verifiedKsbCodes')
+    if type(run_id) is not int or type(component_id) is not int:
+        return _error('runId and componentId are required.', 400)
+    if not isinstance(ksb_codes, list) or len(ksb_codes) > 200 or not all(isinstance(code, str) for code in ksb_codes):
+        return _error('verifiedKsbCodes must be a list of up to 200 codes.', 400)
+    normalized_codes = []
+    for code in ksb_codes:
+        normalized = code.strip().upper()
+        if not re.fullmatch(r'[KSB]\d+(?:\.\d+)*', normalized):
+            return _error(f'Invalid KSB code: {code}', 400)
+        if normalized not in normalized_codes:
+            normalized_codes.append(normalized)
+
+    overrides = json.dumps({'admin_verified_ksb_codes': normalized_codes})
+    try:
+        learner = _learner_and_run(learner_id)
+        if not learner:
+            return _error('Active learner not found.', 404)
+        if learner.get('run_id') != run_id:
+            return _error('Classification changed. Refresh the page and try again.', 409)
+        updated = _rows(f'''UPDATE {EVALUATIONS}
+            SET evaluation = coalesce(evaluation, '{{}}'::jsonb) || %s::jsonb
+            WHERE run_id = %s AND learner_id = %s AND component_id = %s AND evidence_id = %s
+            RETURNING evidence_id''', [overrides, run_id, learner_id, component_id, evidence_id])
+        if not updated:
+            return _error('Assignment not found for this learner and classification.', 404)
+    except DatabaseError:
+        return _error('Could not save the KSB codes. Please try again.', 503)
+
+    return JsonResponse({'verifiedKsbCodes': normalized_codes})
+
+
+def _report_form_row(learner_id, evidence_id):
+    rows = _rows(
+        f"""
+        SELECT run.id AS run_id, e.evidence_id, e.learner_id, e.full_name,
+               e.program_name, e.evidence_name, e.evidence_status, e.spent_time,
+               e.completed_date, e.report_blob,
+               coalesce(nullif(e.component_name, ''), nullif(v.component_name, '')) AS activity_name
+        FROM "LMS"."Aptem_users" a
+        JOIN LATERAL ({LATEST_COMPLETED_RUN}) run ON true
+        JOIN {EVALUATIONS} v
+          ON v.run_id = run.id AND v.learner_id = run.learner_id
+        JOIN {EVIDENCE_ITEMS} e
+          ON e.evidence_id = v.evidence_id AND e.learner_id = v.learner_id
+        WHERE a."ID" = %s AND a."ID" <> %s
+          AND lower(btrim(coalesce(a."Program-Status", ''))) = 'active'
+          AND e.evidence_id = %s
+        LIMIT 1
+        """,
+        [learner_id, TEST_LEARNER_ID, evidence_id],
+    )
+    return rows[0] if rows else None
+
+
+@require_GET
+@require_role(ROLE_ADMIN)
+def report_form(request, learner_id, evidence_id):
+    """Prefill the Aptem-style assessment-report form for one assignment."""
+    try:
+        row = _report_form_row(learner_id, evidence_id)
+    except DatabaseError:
+        return _error('Could not load the assessment report form.', 503)
+    if not row:
+        return _error('Assignment not found for this learner.', 404)
+
+    options = list(RESULT_OPTIONS)
+    current_result = str(row.get('evidence_status') or '').strip()
+    if current_result and current_result not in options:
+        options.insert(0, current_result)
+    return JsonResponse({
+        'learner_name': row.get('full_name') or '',
+        'activity_name': row.get('activity_name') or '',
+        'evidence_name': row.get('evidence_name') or '',
+        'time_spent': row.get('spent_time') or 0,
+        'result': current_result or 'Accepted',
+        'assessor': '',
+        'date': timezone.localdate().strftime('%d/%m/%Y'),
+        'result_options': options,
+        'has_report': bool(row.get('report_blob')),
+    })
+
+
+def _safe_blob_segment(value, default='_', max_length=150):
+    value = str(value or '').strip().replace('\r', ' ').replace('\n', ' ')
+    value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', value)
+    value = re.sub(r'\s+', ' ', value).strip(' .') or default
+    return value[:max_length].strip(' .')
+
+
+def _updated_manifest(manifest, evidence_id, report_blob):
+    if not isinstance(manifest, dict):
+        return manifest
+    items = manifest.get('items')
+    if not isinstance(items, list):
+        return manifest
+    filename = PurePosixPath(report_blob).name
+    previous_status = None
+    matched = None
+    for item in items:
+        if isinstance(item, dict) and str(item.get('evidence_id')) == str(evidence_id):
+            matched = item
+            report = item.get('report') if isinstance(item.get('report'), dict) else {}
+            previous_status = report.get('status')
+            item['report'] = {'blob': report_blob, 'status': 'present', 'filename': filename}
+            feedback = item.get('feedback')
+            if isinstance(feedback, dict):
+                feedback['report_blob'] = report_blob
+                feedback['report_filename'] = filename
+            break
+    if matched is None:
+        return manifest
+    counts = manifest.get('counts')
+    if isinstance(counts, dict) and previous_status == 'missing':
+        counts['reports_missing'] = max(0, int(counts.get('reports_missing') or 0) - 1)
+        counts['reports_present'] = int(counts.get('reports_present') or 0) + 1
+    missing_ids = manifest.get('missing_ids')
+    submission = matched.get('submission') if isinstance(matched.get('submission'), dict) else {}
+    if isinstance(missing_ids, list) and submission.get('status') not in {'missing', 'failed'}:
+        manifest['missing_ids'] = [item for item in missing_ids if str(item) != str(evidence_id)]
+    return manifest
+
+
+def _persist_report_source(learner_id, evidence_id, report_blob):
+    rows = _rows(
+        f'SELECT evidence, azure_manifest FROM {LEARNER_EVIDENCE} '
+        'WHERE learner_id=%s FOR UPDATE',
+        [learner_id],
+    )
+    if not rows:
+        return
+    evidence = rows[0].get('evidence')
+    if isinstance(evidence, list):
+        for item in evidence:
+            if isinstance(item, dict) and str(item.get('id')) == str(evidence_id):
+                item['report_blob'] = report_blob
+                break
+    manifest = _updated_manifest(rows[0].get('azure_manifest'), evidence_id, report_blob)
+    _rows(
+        f'''UPDATE {LEARNER_EVIDENCE}
+            SET evidence=%s::jsonb, azure_manifest=%s::json
+            WHERE learner_id=%s RETURNING learner_id''',
+        [json.dumps(evidence or []), json.dumps(manifest) if manifest is not None else None, learner_id],
+    )
+
+
+def _report_text(value, field, max_length):
+    if value is None:
+        return ''
+    if not isinstance(value, (str, int, float)):
+        raise ValueError(f'{field} must be text.')
+    text = str(value).strip()
+    if len(text) > max_length:
+        raise ValueError(f'{field} is too long.')
+    return text
+
+
+def _start_evidence_reanalysis(evidence_id):
+    """Ask the existing fetch-evidence worker to queue an immediate fresh audit."""
+    base_url = str(getattr(settings, 'EVIDENCE_AUDIT_SERVICE_URL', '') or '').rstrip('/')
+    if not base_url:
+        raise RuntimeError('The evidence audit service is not configured.')
+    try:
+        response = httpx.post(
+            f'{base_url}/api/evidence/{evidence_id}/reanalyze',
+            json={}, timeout=20.0,
+        )
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise RuntimeError('Could not reach the evidence audit service.') from exc
+    if response.status_code >= 400 or not payload.get('queued'):
+        raise RuntimeError(str(payload.get('error') or 'The evidence audit could not be queued.'))
+    return payload
+
+
+@csrf_exempt
+@require_POST
+@require_role(ROLE_ADMIN)
+def save_report_form(request, learner_id, evidence_id):
+    """Build, store and link a real Aptem-style assessment-report PDF."""
+    if request.headers.get('X-Requested-With') != 'XMLHttpRequest':
+        return _error('Missing X-Requested-With header.', 403)
+    try:
+        payload = json.loads(request.body or b'{}')
+    except (ValueError, TypeError, UnicodeDecodeError):
+        return _error('Invalid form data.', 400)
+    if not isinstance(payload, dict):
+        return _error('Request body must be a JSON object.', 400)
+    reanalyze = payload.get('reanalyze')
+    if type(reanalyze) is not bool:
+        return _error('reanalyze must be true or false.', 400)
+    try:
+        row = _report_form_row(learner_id, evidence_id)
+    except DatabaseError:
+        return _error('Could not load this assignment.', 503)
+    if not row:
+        return _error('Assignment not found for this learner.', 404)
+
+    try:
+        minutes = int(payload.get('time_spent') or 0)
+        if minutes < 0 or minutes > 10_000_000:
+            raise ValueError('Time spent must be a positive number of minutes.')
+        result = _report_text(payload.get('result'), 'Assessment result', 200)
+        allowed_results = set(RESULT_OPTIONS)
+        if row.get('evidence_status'):
+            allowed_results.add(str(row['evidence_status']))
+        if result not in allowed_results:
+            raise ValueError('Choose a valid assessment result.')
+        report_data = {
+            'learner_name': _report_text(payload.get('learner_name') or row.get('full_name'), 'Learner name', 1000),
+            'activity_name': _report_text(payload.get('activity_name'), 'Activity name', 2000),
+            'evidence_name': _report_text(payload.get('evidence_name'), 'Evidence name', 2000),
+            'time_spent': minutes,
+            'result': result,
+            'assessor': _report_text(payload.get('assessor'), 'Assessed by', 1000),
+            'date': _report_text(payload.get('date'), 'Assessment date', 20),
+            'criteria': _report_text(payload.get('criteria'), 'Criteria', 50_000),
+            'comments': _report_text(payload.get('comments'), 'Comments', 50_000),
+            'evidence_date': row.get('completed_date'),
+        }
+    except (TypeError, ValueError) as exc:
+        return _error(str(exc), 400)
+    try:
+        datetime.datetime.strptime(report_data['date'], '%d/%m/%Y')
+    except ValueError:
+        return _error('Assessment date must use DD/MM/YYYY.', 400)
+
+    try:
+        from .report_pdf import build_assessment_report_pdf
+        pdf = build_assessment_report_pdf(report_data)
+    except Exception:
+        return _error('Could not build the report PDF.', 500)
+    if not pdf.startswith(b'%PDF'):
+        return _error('Could not build a valid report PDF.', 500)
+    if not evidence_storage.azure_configured():
+        return _error('The document store is not configured.', 503)
+
+    folder = (
+        f"{_safe_blob_segment(row.get('program_name'))}/"
+        f"{_safe_blob_segment(row.get('full_name'))}-{row['learner_id']}"
+    )
+    report_blob = f'{folder}/{evidence_id}-AssessmentReport-form.pdf'
+    try:
+        evidence_storage.upload_blob(
+            io.BytesIO(pdf), EVIDENCE_CONTAINER, report_blob,
+            'application/pdf', overwrite=True,
+        )
+    except Exception:
+        return _error('Could not store the assessment report.', 503)
+
+    try:
+        with transaction.atomic(using=_audit_alias()):
+            updated = _rows(
+                f'''UPDATE {EVIDENCE_ITEMS} SET report_blob=%s, updated_at=now()
+                    WHERE evidence_id=%s AND learner_id=%s RETURNING evidence_id''',
+                [report_blob, evidence_id, learner_id],
+            )
+            if not updated:
+                raise DatabaseError('Evidence changed while the report was being built.')
+            _persist_report_source(learner_id, evidence_id, report_blob)
+    except DatabaseError:
+        return _error('The PDF was built but its evidence record could not be updated.', 503)
+
+    reanalysis = None
+    if reanalyze:
+        try:
+            reanalysis = _start_evidence_reanalysis(evidence_id)
+        except RuntimeError:
+            return _error(
+                'The report was saved, but the new audit could not be started. Your previous analysis was preserved.',
+                503,
+            )
+
+    return JsonResponse({
+        'report_blob': report_blob,
+        'analysis_required': False,
+        'analysis_preserved': not reanalyze,
+        'reanalyze_queued': bool(reanalysis),
+        'job_id': reanalysis.get('job_id') if reanalysis else None,
+    })
 
 
 def _authorised_document(learner_id, evidence_id):

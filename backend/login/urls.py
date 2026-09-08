@@ -72,5 +72,20 @@ urlpatterns = [
         admin_evidence.select_assignment,
         name="admin-evidence-assignment-selection",
     ),
+    path(
+        "admin/evidence/classified-learners/<int:learner_id>/evidence/<int:evidence_id>/ksb-codes/",
+        admin_evidence.update_ksb_codes,
+        name="admin-evidence-ksb-codes",
+    ),
+    path(
+        "admin/evidence/classified-learners/<int:learner_id>/evidence/<int:evidence_id>/report-form/",
+        admin_evidence.report_form,
+        name="admin-evidence-report-form",
+    ),
+    path(
+        "admin/evidence/classified-learners/<int:learner_id>/evidence/<int:evidence_id>/report-form/save/",
+        admin_evidence.save_report_form,
+        name="admin-evidence-report-form-save",
+    ),
     path("admin/certificate-template/", platform_admin.certificate_template, name="admin-certificate-template"),
 ]

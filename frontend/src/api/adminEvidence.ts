@@ -149,6 +149,49 @@ export function setAssignmentSelection(
   );
 }
 
+export function updateAssignmentKsbCodes(
+  learnerId: number,
+  evidenceId: number,
+  runId: number,
+  componentId: number,
+  verifiedKsbCodes: string[],
+) {
+  return request<{ verifiedKsbCodes: string[] }>(
+    `${BASE}/classified-learners/${learnerId}/evidence/${evidenceId}/ksb-codes/`,
+    { runId, componentId, verifiedKsbCodes },
+  );
+}
+
+export interface AssessmentReportForm {
+  learner_name: string;
+  activity_name: string;
+  evidence_name: string;
+  time_spent: number | string;
+  result: string;
+  assessor: string;
+  date: string;
+  criteria: string;
+  comments: string;
+}
+
+export interface AssessmentReportPrefill extends Omit<AssessmentReportForm, 'criteria' | 'comments'> {
+  result_options: string[];
+  has_report: boolean;
+}
+
+export function fetchAssessmentReportForm(learnerId: number, evidenceId: number) {
+  return request<AssessmentReportPrefill>(
+    `${BASE}/classified-learners/${learnerId}/evidence/${evidenceId}/report-form/`,
+  );
+}
+
+export function saveAssessmentReportForm(learnerId: number, evidenceId: number, form: AssessmentReportForm, reanalyze: boolean) {
+  return request<{ report_blob: string; analysis_required: boolean; analysis_preserved: boolean; reanalyze_queued: boolean; job_id: string | number | null }>(
+    `${BASE}/classified-learners/${learnerId}/evidence/${evidenceId}/report-form/save/`,
+    { ...form, reanalyze },
+  );
+}
+
 export interface EvidenceDocumentUrl {
   id: number;
   name: string;
