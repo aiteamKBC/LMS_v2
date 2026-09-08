@@ -8,7 +8,7 @@ And two inbound helpers:
   * write_fields -> validates + returns kwargs for create/update (flat columns)
   * validate_choices -> enforces the canonical option lists
 """
-from .student_activity_pilot import student_activity_available
+from .student_activity_access import student_activity_available
 from .constants import (
     ACCESS_CHOICES,
     STATUS_CHOICES,
