@@ -57,6 +57,41 @@ const initial: CertificateTemplate = {
   },
 };
 
+const MAX_BACKGROUND_WIDTH = 1400;
+const MAX_BACKGROUND_HEIGHT = 990;
+const MAX_BACKGROUND_DATA_URL_LENGTH = 1_800_000;
+
+function compressBackgroundDataUrl(dataUrl: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const scale = Math.min(1, MAX_BACKGROUND_WIDTH / image.width, MAX_BACKGROUND_HEIGHT / image.height);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      const context = canvas.getContext('2d');
+      if (!context) {
+        reject(new Error('Could not prepare the selected image.'));
+        return;
+      }
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      let quality = 0.78;
+      let compressed = canvas.toDataURL('image/jpeg', quality);
+      while (compressed.length > MAX_BACKGROUND_DATA_URL_LENGTH && quality > 0.46) {
+        quality -= 0.08;
+        compressed = canvas.toDataURL('image/jpeg', quality);
+      }
+      if (compressed.length > MAX_BACKGROUND_DATA_URL_LENGTH) {
+        reject(new Error('This background is still too large after compression. Please export it smaller from Canva, then upload it again.'));
+        return;
+      }
+      resolve(compressed);
+    };
+    image.onerror = () => reject(new Error('Could not read the selected image.'));
+    image.src = dataUrl;
+  });
+}
+
 function Field({
   label,
   value,
@@ -165,7 +200,12 @@ export default function CertificateBuilderPage() {
     if (file.type === 'image/svg+xml') {
       const reader = new FileReader();
       reader.onload = () => {
-        updateLayout({ backgroundImageUrl: String(reader.result || ''), contentBackdropOpacity: form.layoutConfig.contentBackdropOpacity ?? 0 });
+        const dataUrl = String(reader.result || '');
+        if (dataUrl.length > MAX_BACKGROUND_DATA_URL_LENGTH) {
+          setNotice('This SVG is too large to save inside the certificate template. Please export it smaller from Canva.');
+          return;
+        }
+        updateLayout({ backgroundImageUrl: dataUrl, contentBackdropOpacity: form.layoutConfig.contentBackdropOpacity ?? 0 });
         setNotice('Background image added to the draft. Save or publish to keep it.');
       };
       reader.onerror = () => setNotice('Could not read the selected image.');
@@ -174,30 +214,13 @@ export default function CertificateBuilderPage() {
     }
 
     const objectUrl = URL.createObjectURL(file);
-    const image = new Image();
-    image.onload = () => {
-      const maxWidth = 1800;
-      const maxHeight = 1275;
-      const scale = Math.min(1, maxWidth / image.width, maxHeight / image.height);
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(image.width * scale));
-      canvas.height = Math.max(1, Math.round(image.height * scale));
-      const context = canvas.getContext('2d');
-      if (!context) {
-        URL.revokeObjectURL(objectUrl);
-        setNotice('Could not prepare the selected image.');
-        return;
-      }
-      context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      updateLayout({ backgroundImageUrl: canvas.toDataURL('image/jpeg', 0.88), contentBackdropOpacity: form.layoutConfig.contentBackdropOpacity ?? 0 });
-      URL.revokeObjectURL(objectUrl);
-      setNotice('Background image added to the draft. Save or publish to keep it.');
-    };
-    image.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      setNotice('Could not read the selected image.');
-    };
-    image.src = objectUrl;
+    compressBackgroundDataUrl(objectUrl)
+      .then((dataUrl) => {
+        updateLayout({ backgroundImageUrl: dataUrl, contentBackdropOpacity: form.layoutConfig.contentBackdropOpacity ?? 0 });
+        setNotice('Background image added to the draft. Save or publish to keep it.');
+      })
+      .catch((error) => setNotice(error instanceof Error ? error.message : 'Could not prepare the selected image.'))
+      .finally(() => URL.revokeObjectURL(objectUrl));
   };
 
   const visibilityConfig: Partial<Record<CertificateElementId, keyof CertificateTemplate['layoutConfig']>> = {
@@ -394,7 +417,23 @@ export default function CertificateBuilderPage() {
     setBusy(true);
     setNotice('');
     try {
-      const response = await saveCertificateTemplate(form, publish);
+      let templateToSave = form;
+      const backgroundImageUrl = form.layoutConfig.backgroundImageUrl || '';
+      if (backgroundImageUrl.startsWith('data:image/') && backgroundImageUrl.length > MAX_BACKGROUND_DATA_URL_LENGTH) {
+        if (backgroundImageUrl.startsWith('data:image/svg+xml')) {
+          throw new Error('This SVG background is too large to save. Please export it smaller from Canva, then upload it again.');
+        }
+        const compressedBackground = await compressBackgroundDataUrl(backgroundImageUrl);
+        templateToSave = {
+          ...form,
+          layoutConfig: {
+            ...form.layoutConfig,
+            backgroundImageUrl: compressedBackground,
+          },
+        };
+        setForm(templateToSave);
+      }
+      const response = await saveCertificateTemplate(templateToSave, publish);
       if (response.template) {
         setForm({
           ...initial,
