@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { StudentMaterial } from './StudentMaterial';
+import { AssignmentsTab } from './AssignmentsTab';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -29,7 +30,7 @@ import type { LearnerKind } from '@/api/learnerDetail';
 
 const learnerNav = roleNavMap.learner;
 
-type TabKey = 'overview' | 'modules' | 'quizzes';
+type TabKey = 'overview' | 'modules' | 'quizzes' | 'assignments';
 
 /** Training Plan and Quizzes used to be their own pages; their old URLs still
  * work (staff/coach deep-links and saved links depend on it) but now land on
@@ -48,7 +49,7 @@ export default function MyLearningPage() {
   const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
   const { canProgress, showReadOnlyNotice } = useLearnerWorkspaceAccess(id);
 
-  const [tab, setTab] = useState<TabKey>(() => defaultTabForPath(location.pathname));
+  const [tab, setTab] = useState<TabKey>(() => new URLSearchParams(location.search).get('tab') === 'assignments' ? 'assignments' : defaultTabForPath(location.pathname));
 
   const journey = useMemo(() => buildLearnerJourney(real), [real]);
   const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
@@ -110,6 +111,7 @@ export default function MyLearningPage() {
     { value: 'overview', label: 'Overview' },
     { value: 'modules', label: 'Modules' },
     { value: 'quizzes', label: 'Quizzes' },
+    { value: 'assignments', label: 'Assignments' },
   ];
 
   return (
@@ -139,6 +141,7 @@ export default function MyLearningPage() {
         ) : tab === 'modules' ? (
           <ModulesTab key={`${kind}:${id}`} real={real} loading={loading} loadError={loadError} kind={kind} id={id} showReadOnlyNotice={showReadOnlyNotice} />
         ) : (
+          tab === 'assignments' ? <AssignmentsTab key={`${kind}:${id}`} kind={kind} id={id} /> :
           <QuizzesTab real={real} loading={loading} loadError={loadError} kind={kind} id={id} canTake={canTake} navigate={navigate} />
         )}
       </PageContainer>

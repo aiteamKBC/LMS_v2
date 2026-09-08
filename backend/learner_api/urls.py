@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import certificates
+from . import certificates, monthly_assignment, legacy_assignments
 from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, videos, views
 
 urlpatterns = [
@@ -119,6 +119,7 @@ urlpatterns = [
     path("reflection/proofread/", reflection_ai.proofread_reflection, name="reflection-proofread"),
     path("reflection/submissions/", reflection_submissions.create_reflection_submission, name="reflection-submission-create"),
     path("reflection/assignment/check/", monthly_assignment.check_assignment, name="monthly-assignment-check"),
+    path("reflection/assignment/legacy-document/<int:evidence_id>/", legacy_assignments.open_legacy_assignment_document, name="legacy-assignment-document"),
     path("reflection/assignment/presentation/", monthly_assignment.export_presentation, name="monthly-assignment-presentation"),
     # learner calendar (coaching sessions from Coach.coach_calendar_event)
     path("calendar/<str:kind>/<int:pk>/", calendar.learner_calendar, name="learner-calendar"),
