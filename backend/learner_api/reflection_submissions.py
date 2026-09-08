@@ -162,6 +162,9 @@ def _submit_reflection(request):
     except (TypeError, ValueError):
         return _error("Request body must be valid JSON.")
 
+    if not isinstance(payload, dict):
+        return _error("Request body must be a JSON object.")
+
     learner_kind = _text(payload.get("learnerKind"))
     learner_id = _text(payload.get("learnerId"))
     activity_type = _text(payload.get("activityType"))
@@ -195,7 +198,7 @@ def _submit_reflection(request):
 
     # The existing column is non-null and remains the searchable summary for
     # every reflection-like submission. Assignment forms keep their complete
-    # three-answer payload in full_submission and use the learning answer here.
+    # versioned monthly payload in full_submission and use the learning answer here.
     if is_assignment_form:
         learning_reflection = what_you_learned or assignment_answer
     submission_status = "draft" if submission_mode == "draft" else "submitted_for_tutor_review"
@@ -225,7 +228,7 @@ def _submit_reflection(request):
             with connections["enrolment"].cursor() as cur:
                 cur.execute(
                     """
-                    select status
+                    select status, full_submission
                     from "Learner"."learning_reflection_submissions"
                     where learner_kind = %s
                       and learner_id = %s
@@ -236,6 +239,19 @@ def _submit_reflection(request):
                     [learner_kind, learner_id, activity_type, activity_id],
                 )
                 existing = cur.fetchone()
+                # Provenance is server-owned. A learner cannot bypass the new
+                # checks by posting an import flag or by omitting version 2.
+                stored = existing[1] if existing else {}
+                if isinstance(stored, str):
+                    try:
+                        stored = json.loads(stored)
+                    except (TypeError, ValueError):
+                        stored = {}
+                stored = _dict(stored)
+                imported = stored.get("submissionOrigin") == "imported_legacy"
+                full_submission["submissionOrigin"] = "imported_legacy" if imported else "learner"
+                if is_assignment_form and imported:
+                    return _error("Imported assignments are historical records and cannot be overwritten here.", 409)
                 if existing and existing[0] == "accepted":
                     return _error(
                         "This reflection has been accepted by the coach and can no longer be changed.",
@@ -244,13 +260,22 @@ def _submit_reflection(request):
                 if (
                     existing
                     and existing[0] == "submitted_for_tutor_review"
-                    and submission_mode == "draft"
                     and is_assignment_form
                 ):
                     return _error(
                         "This assignment has already been submitted for tutor review.",
                         409,
                     )
+
+                if is_assignment_form and submission_mode == "submit":
+                    from .monthly_assignment import assignment_checks
+                    checks = assignment_checks(payload)
+                    missing_checks = [check["label"] for check in checks if not check["passed"]]
+                    if missing_checks:
+                        return JsonResponse({"error": "Complete the outstanding submission requirements. Your draft is saved.", "checks": checks}, status=400)
+                    quality_score = 100
+                    full_submission["qualityScore"] = quality_score
+                    full_submission["qualityChecks"] = checks
 
                 cur.execute(
                 """

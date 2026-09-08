@@ -83,7 +83,8 @@ def _component_meta(component_id):
     return (ctype or None), (title or None)
 
 
-# Assignment evidence is optional in the three-step assignment form. Keep the
+# Assignment evidence is checked by the monthly form (including library/links).
+# Keep the
 # helper for compatibility with callers, but no component is gated by a file.
 EVIDENCE_COMPONENT_TYPES = set()
 
@@ -99,7 +100,7 @@ def component_requires_evidence(component_type):
 
 
 def _assignment_form_ready(component_id, kind, learner_id):
-    """An assignment can complete only after all three wizard answers exist.
+    """An assignment can complete only after all monthly submission checks pass.
 
     The wizard saves these as a draft before it calls the progress endpoint;
     checking the database here makes the rule authoritative rather than a UI-
@@ -127,9 +128,18 @@ def _assignment_form_ready(component_id, kind, learner_id):
             payload = {}
     if not isinstance(payload, dict):
         return False
-    return all(str(payload.get(key) or '').strip() for key in (
-        'assignmentAnswer', 'whatYouLearned', 'businessImpact',
-    ))
+    # Imported history is not a new completion. Missing client version/origin
+    # must never be a path around the eight-step submission requirements.
+    if payload.get('submissionOrigin') == 'imported_legacy':
+        return False
+    from .monthly_assignment import assignment_checks
+    try:
+        return all(check['passed'] for check in assignment_checks({
+            **payload, 'learnerKind': kind, 'learnerId': str(learner_id), 'activityId': component_id,
+        }))
+    except (DatabaseError, ValueError, TypeError):
+        logger.warning('Could not verify monthly submission for %s', component_id)
+        return False
 
 
 def _component_ksb_mappings(component_id):
@@ -283,7 +293,7 @@ def submit_component_progress(request, component_id):
     if normalise_component_type(live_type or client_type) == "assignment" and not _assignment_form_ready(
         component_id, kind, learner_id,
     ):
-        return _error("Complete and save all three assignment sections before submitting.", 409)
+        return _error("Complete the monthly submission quality checks, presentation and coaching booking, then save before submitting.", 409)
 
     try:
         source = model.objects.get(pk=learner_id)
@@ -390,9 +400,15 @@ def submit_component_progress(request, component_id):
         "at": submitted_at,
     }
     try:
-        save_progress_record(active, record, activity)
+        if normalise_component_type(live_type or client_type) == "assignment":
+            from .monthly_assignment import complete_saved_assignment
+            complete_saved_assignment(kind, learner_id, component_id, record, lambda: save_progress_record(active, record, activity))
+        else:
+            save_progress_record(active, record, activity)
     except ComponentReferenceError as exc:
         return _error(str(exc), 400)
+    except ValueError as exc:
+        return _error(str(exc), 409)
     except IntegrityError as exc:
         if "learner_progress_tracking_session_uq" in str(exc):
             return _error("This activity timing session has already been submitted.", 409)

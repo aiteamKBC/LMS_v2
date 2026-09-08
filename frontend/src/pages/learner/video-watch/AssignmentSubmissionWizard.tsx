@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from 'react';
 import DOMPurify from 'dompurify';
 import type { ComponentKsbMapping, LearnerKind } from '@/api/learnerDetail';
 import {
@@ -13,6 +13,8 @@ import {
 } from '@/api/evidence';
 import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { checkMonthlyAssignment, emptyMonthlyAssignment, MONTHLY_STEPS, type MonthlyAssignment, type AssignmentQualityCheck } from '@/api/monthlyAssignment';
+import { MonthlyAnswerField, MonthlyAssignmentSteps } from './MonthlyAssignmentSteps';
 
 export type AssignmentAnswers = {
   assignmentAnswer: string;
@@ -26,11 +28,7 @@ const EMPTY_ANSWERS: AssignmentAnswers = {
   businessImpact: '',
 };
 
-const STEP_META = [
-  { label: 'Your answer', icon: 'ri-edit-box-line' },
-  { label: 'Learning & KSBs', icon: 'ri-lightbulb-flash-line' },
-  { label: 'Business impact', icon: 'ri-building-4-line' },
-] as const;
+const STEP_META = MONTHLY_STEPS.map(label => ({ label }));
 
 function londonDate(): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -41,10 +39,6 @@ function londonDate(): string {
   }).formatToParts(new Date());
   const value = Object.fromEntries(parts.map(part => [part.type, part.value]));
   return `${value.year}-${value.month}-${value.day}`;
-}
-
-function wordCount(value: string): number {
-  return value.trim().split(/\s+/).filter(Boolean).length;
 }
 
 export function AssignmentSubmissionWizard({
@@ -63,6 +57,7 @@ export function AssignmentSubmissionWizard({
   evidenceFiles,
   evidenceDetails,
   timeSeconds,
+  timeSource = 'timer',
   timeControl,
   outsideWorkingHours,
   outsideWorkingHoursConfirmed,
@@ -86,16 +81,24 @@ export function AssignmentSubmissionWizard({
   evidenceFiles: EvidenceRecord[];
   evidenceDetails: EvidenceTrainingPlanDetails;
   timeSeconds: number | null;
+  timeSource?: 'timer' | 'input';
   timeControl: ReactNode;
   outsideWorkingHours: boolean;
   outsideWorkingHoursConfirmed: boolean;
   submittingProgress: boolean;
   onEvidenceChanged: (files: EvidenceRecord[]) => void;
-  onRestoreTime: (seconds: number) => void;
+  onRestoreTime: (seconds: number, source: 'timer' | 'input') => void;
   onSubmitProgress: (answers: AssignmentAnswers) => Promise<void>;
 }) {
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState<AssignmentAnswers>(EMPTY_ANSWERS);
+  const [monthly, setMonthly] = useState<MonthlyAssignment>(() => emptyMonthlyAssignment(ksbMappings.map(m => m.code), londonDate().slice(0, 7)));
+  const [checks, setChecks] = useState<AssignmentQualityCheck[]>([]);
+  const [checking, setChecking] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [imported, setImported] = useState(false);
+  const [savedTimeSeconds, setSavedTimeSeconds] = useState<number | null>(null);
+  const [recoveredDraft, setRecoveredDraft] = useState(false);
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
   const [savingDraft, setSavingDraft] = useState(false);
@@ -107,11 +110,18 @@ export function AssignmentSubmissionWizard({
   const loadedRef = useRef(false);
   const saveVersionRef = useRef(0);
   const submittingRef = useRef(false);
+  const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
+  const latestDraftRef = useRef<LearningReflectionSubmissionInput | null>(null);
+  const lockedRef = useRef(false);
+  const mountedRef = useRef(true);
   const onRestoreTimeRef = useRef(onRestoreTime);
+  const recoveryKey = `monthly-assignment-draft:${kind}:${learnerId}:${componentId}`;
 
   useEffect(() => { onRestoreTimeRef.current = onRestoreTime; }, [onRestoreTime]);
 
-  const locked = status === 'submitted_for_tutor_review' || status === 'accepted';
+  const locked = imported || status === 'submitted_for_tutor_review' || status === 'accepted';
+  const readOnly = locked || loadFailed || submittingProgress;
+  lockedRef.current = locked;
   const evidenceNames = evidenceFiles.map(file => file.filename);
   const cleanQuestionHtml = useMemo(
     () => questionHtml ? DOMPurify.sanitize(questionHtml) : '',
@@ -130,19 +140,19 @@ export function AssignmentSubmissionWizard({
     weekTitle,
     plannedOtjh: plannedOtjh == null ? '' : String(plannedOtjh),
     learningReflection: answers.whatYouLearned || answers.assignmentAnswer,
-    ksbCodes: ksbMappings.map(mapping => mapping.code),
+    ksbCodes: monthly.claims.map(claim => claim.code),
     ksbWeights: Object.fromEntries(ksbMappings.map(mapping => [mapping.code, Number(mapping.weight) || 0])),
-    ksbExplanations: {},
+    ksbExplanations: Object.fromEntries(monthly.claims.map(claim => [claim.code, claim.explanation])),
     confidenceBefore: {},
     confidenceAfter: {},
     applicationType: 'assignment_form',
     applicationText: answers.businessImpact,
     evidenceFiles: evidenceNames,
-    evidenceConsentConfirmed: true,
+    evidenceConsentConfirmed: monthly.sharingConsent,
     selectedBenefits: [],
     benefitExplanation: answers.businessImpact,
-    actualTimeHours: timeSeconds && timeSeconds > 0 ? (timeSeconds / 3600).toFixed(2) : '',
-    completedDuringPaidHours: '',
+    actualTimeHours: timeSeconds && timeSeconds > 0 ? String(timeSeconds / 3600) : '',
+    completedDuringPaidHours: monthly.paidHours ? 'yes' : 'no',
     dateCompleted: mode === 'submit' ? londonDate() : '',
     otjhConfirmed: mode === 'submit',
     signedDeclaration: mode === 'submit',
@@ -153,10 +163,28 @@ export function AssignmentSubmissionWizard({
     businessImpact: answers.businessImpact,
     outsideWorkingHours,
     outsideWorkingHoursConfirmed,
+    monthlyAssignment: { ...monthly, step },
+    assignmentTimeSource: timeSource,
   });
+  latestDraftRef.current = payload('draft');
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      // Flush the current snapshot on in-app navigation as well as debounced
+      // typing. Queue it after earlier writes so it cannot be overwritten.
+      if (loadedRef.current && !lockedRef.current && !submittingRef.current && latestDraftRef.current) {
+        const snapshot = latestDraftRef.current;
+        saveQueueRef.current = saveQueueRef.current.catch(() => undefined).then(() => saveLearningReflectionSubmission(snapshot)).catch(() => undefined);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
+    loadedRef.current = false;
+    setLoadFailed(false);
     setLoading(true);
     loadLearningReflectionSubmission({
       learnerKind: kind,
@@ -165,38 +193,71 @@ export function AssignmentSubmissionWizard({
       activityId: componentId,
     })
       .then(submission => {
-        if (!active || !submission) return;
+        if (!active) return;
+        loadedRef.current = true;
+        // A tab-local recovery copy protects the debounce and a temporary
+        // network failure. It never supersedes a submitted/server-newer record.
+        try {
+          const local = JSON.parse(sessionStorage.getItem(recoveryKey) || 'null');
+          const serverLocked = submission?.status === 'submitted_for_tutor_review' || submission?.status === 'accepted' || submission?.submissionOrigin === 'imported_legacy';
+          if (local?.payload?.activityId === componentId && !serverLocked && Number(local.at) > (Date.parse(submission?.submittedAt || '') || 0)) {
+            submission = { ...submission, ...local.payload, status: submission?.status || 'draft' };
+            setRecoveredDraft(true);
+          } else if (serverLocked) sessionStorage.removeItem(recoveryKey);
+        } catch { /* Storage is optional; the server draft is authoritative. */ }
+        if (!submission) return;
         setAnswers({
           assignmentAnswer: submission.assignmentAnswer || '',
           whatYouLearned: submission.whatYouLearned || submission.learningReflection || '',
           businessImpact: submission.businessImpact || submission.benefitExplanation || '',
         });
         setStatus(submission.status || '');
+        setImported(submission.submissionOrigin === 'imported_legacy');
+        if (submission.monthlyAssignment) {
+          const restored = { ...emptyMonthlyAssignment(ksbMappings.map(m => m.code), londonDate().slice(0, 7)), ...submission.monthlyAssignment };
+          setMonthly(restored);
+          setStep(Math.max(0, Math.min(7, Number(restored.step) || 0)));
+        }
         const storedHours = Number(submission.actualTimeHours);
-        if (Number.isFinite(storedHours) && storedHours > 0) onRestoreTimeRef.current(Math.round(storedHours * 3600));
+        if (Number.isFinite(storedHours) && storedHours > 0) {
+          const seconds = Math.round(storedHours * 3600);
+          setSavedTimeSeconds(seconds);
+          onRestoreTimeRef.current(seconds, submission.assignmentTimeSource || 'input');
+        }
       })
       .catch(error => {
-        if (active) setSaveError(error instanceof Error ? error.message : 'Could not load the saved assignment.');
+        if (active) {
+          setLoadFailed(true);
+          setSaveError(error instanceof Error ? error.message : 'Could not load the saved assignment.');
+        }
       })
       .finally(() => {
         if (active) {
-          loadedRef.current = true;
           setLoading(false);
         }
       });
     return () => { active = false; };
   }, [kind, learnerId, componentId]);
 
-  const saveDraft = async (showSaved = true): Promise<boolean> => {
-    if (locked || submittingRef.current) return false;
+  const saveDraft = async (_showSaved = true): Promise<boolean> => {
+    if (locked || !loadedRef.current || submittingRef.current) return false;
+    const snapshot = payload('draft');
     const version = ++saveVersionRef.current;
     setSavingDraft(true);
     setSaveError('');
     try {
-      const result = await saveLearningReflectionSubmission(payload('draft'));
-      if (version !== saveVersionRef.current) return;
+      // Queue writes, not just responses: old drafts must never arrive last.
+      const request = saveQueueRef.current.catch(() => undefined).then(() => saveLearningReflectionSubmission(snapshot));
+      saveQueueRef.current = request;
+      const result = await request;
+      if (version !== saveVersionRef.current || !mountedRef.current) return true;
       setStatus(result.status || 'draft');
-      if (showSaved) setDraftSaved(true);
+      setDraftSaved(true);
+      setRecoveredDraft(false);
+      try {
+        const local = JSON.parse(sessionStorage.getItem(recoveryKey) || 'null');
+        if (JSON.stringify(local?.payload) === JSON.stringify(snapshot)) sessionStorage.removeItem(recoveryKey);
+      } catch { /* Server save succeeded even when browser storage is disabled. */ }
       return true;
     } catch (error) {
       if (version === saveVersionRef.current) {
@@ -209,36 +270,54 @@ export function AssignmentSubmissionWizard({
   };
 
   useEffect(() => {
-    if (!loadedRef.current || locked) return;
-    if (!answers.assignmentAnswer && !answers.whatYouLearned && !answers.businessImpact) return;
+    if (!loadedRef.current || locked || submittingRef.current) return;
     setDraftSaved(false);
+    try { sessionStorage.setItem(recoveryKey, JSON.stringify({ at: Date.now(), payload: latestDraftRef.current })); } catch { /* Draft still saves to the server. */ }
     const timeout = window.setTimeout(() => { void saveDraft(false); }, 900);
     return () => window.clearTimeout(timeout);
     // The identifying fields are stable for the lifetime of this wizard.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [answers.assignmentAnswer, answers.whatYouLearned, answers.businessImpact, locked]);
+  }, [answers, monthly, step, evidenceFiles, Math.floor((timeSeconds || 0) / 30), outsideWorkingHoursConfirmed, locked]);
 
-  const setAnswer = (key: keyof AssignmentAnswers, value: string) => {
-    setAnswers(current => ({ ...current, [key]: value }));
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (!locked && loadedRef.current && (!draftSaved || savingDraft)) { event.preventDefault(); event.returnValue = ''; }
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [locked, draftSaved, savingDraft]);
+
+  const runChecks = async (): Promise<boolean> => {
+    setChecking(true); setSaveError('');
+    try {
+      const result = await checkMonthlyAssignment(payload('draft'));
+      setChecks(result);
+      return result.every(check => check.passed);
+    } catch (e) { setSaveError(e instanceof Error ? e.message : 'Could not check your submission.'); return false; }
+    finally { setChecking(false); }
   };
 
-  const currentReady = [
-    Boolean(answers.assignmentAnswer.trim()),
-    Boolean(answers.whatYouLearned.trim()),
-    Boolean(answers.businessImpact.trim()),
-  ][step];
+  const setAnswer = (key: keyof AssignmentAnswers, value: string) => {
+    setChecks([]);
+    setAnswers(current => ({ ...current, [key]: value }));
+    setMonthly(current => ({ ...current, presentationReviewed: false, presentationToken: '' }));
+  };
+
+  const changeMonthly = (update: SetStateAction<MonthlyAssignment>) => {
+    setChecks([]);
+    setMonthly(current => {
+    const next = typeof update === 'function' ? update(current) : update;
+    const content = (value: MonthlyAssignment) => JSON.stringify(Object.fromEntries(Object.entries(value).filter(([key]) => !['step', 'meetingKey', 'presentationReviewed', 'presentationToken'].includes(key))));
+    return content(next) !== content(current) ? { ...next, presentationReviewed: false, presentationToken: '' } : next;
+    });
+  };
 
   const goNext = async () => {
-    if (!currentReady) return;
-    if (await saveDraft()) setStep(current => Math.min(2, current + 1));
+    if (locked || await saveDraft()) setStep(current => Math.min(7, current + 1));
   };
 
   const submit = async () => {
-    if (locked || submittingProgress) return;
-    if (!answers.assignmentAnswer.trim() || !answers.whatYouLearned.trim() || !answers.businessImpact.trim()) {
-      setSaveError('Complete all three sections before submitting.');
-      return;
-    }
+    if (readOnly || submittingRef.current || checking || submittingProgress) return;
     if (!timeSeconds || timeSeconds <= 0) {
       setSaveError('Enter the time spent on this assignment before submitting.');
       return;
@@ -254,13 +333,19 @@ export function AssignmentSubmissionWizard({
     setSavingDraft(true);
     setSaveError('');
     try {
-      // Persist the complete answers first. The component completion endpoint
-      // verifies this server-side, so a client cannot mark an empty assignment
-      // complete. Only lock it for tutor review after progress also succeeds.
+      await saveQueueRef.current.catch(() => undefined);
+      // The completion endpoint saves progress and submits this saved draft
+      // atomically. Never use a second POST that could fail after completion.
       await saveLearningReflectionSubmission(payload('draft'));
+      if (!await runChecks()) {
+        setStep(6);
+        setSaveError('Your draft is saved. Complete the outstanding checks before submitting.');
+        return;
+      }
+      setSavedTimeSeconds(timeSeconds);
       await onSubmitProgress(answers);
-      const result = await saveLearningReflectionSubmission(payload('submit'));
-      setStatus(result.status || 'submitted_for_tutor_review');
+      setStatus('submitted_for_tutor_review');
+      try { sessionStorage.removeItem(recoveryKey); } catch { /* Optional recovery copy. */ }
       setPreviewOpen(true);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : 'Could not submit the assignment.');
@@ -299,15 +384,16 @@ export function AssignmentSubmissionWizard({
 
   return (
     <>
-      <section className="overflow-hidden rounded-2xl border border-primary-100 bg-white shadow-sm">
-        <div className="border-b border-primary-100 bg-gradient-to-r from-primary-50 to-purple-50 px-5 py-4">
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white font-sans shadow-sm">
+        <div className="border-b border-slate-200 bg-sky-50/50 px-5 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-primary-600">Assignment submission</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-slate-600">Monthly submission</p>
               <h2 className="mt-1 font-heading text-lg font-bold text-foreground-950">{title}</h2>
             </div>
             <div className="flex items-center gap-2">
-              {(savingDraft || draftSaved || status === 'draft') && !locked && (
+              {!locked && <button type="button" disabled={savingDraft || loadFailed || submittingProgress} onClick={() => void saveDraft()} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold shadow-sm">Save draft</button>}
+              {(savingDraft || draftSaved) && !locked && !saveError && (
                 <span className="text-[11px] font-semibold text-foreground-500">
                   <AppIcon className={savingDraft ? 'ri-loader-4-line mr-1 animate-spin' : 'ri-check-line mr-1 text-emerald-600'} />
                   {savingDraft ? 'Saving…' : 'Draft saved'}
@@ -330,17 +416,23 @@ export function AssignmentSubmissionWizard({
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-3 gap-2">
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-700">
+            <label>Submission month <input aria-label="Submission month" type="month" value={monthly.month} disabled={readOnly || savingDraft} onChange={e => { if (e.target.value) changeMonthly(m => ({ ...m, month: e.target.value, meetingKey: '', presentationToken: '' })); }} className="ml-2 rounded-lg border border-slate-200 px-2 py-1" /></label>
+            <span>Step {step + 1} of 8 — {MONTHLY_STEPS[step]}</span>
+            <span>{checks.length ? `${checks.filter(c => c.passed).length}/13 checks passed at last check` : 'Quality checks not run yet'}</span>
+          </div>
+          <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full bg-slate-900 transition-all" style={{ width: `${(step + 1) / 8 * 100}%` }} /></div>
+          <div className="mt-4 flex flex-wrap gap-2">
             {STEP_META.map((item, index) => (
               <button
                 key={item.label}
                 type="button"
                 onClick={() => setStep(index)}
-                className={`rounded-xl border px-3 py-2 text-left transition-colors ${step === index ? 'border-primary-300 bg-white text-primary-800 shadow-sm' : 'border-transparent bg-white/50 text-foreground-500 hover:bg-white'}`}
+                className={`rounded-lg border px-3 py-2 text-left text-xs shadow-sm transition-colors ${step === index ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-sky-50'}`}
               >
                 <span className="flex items-center gap-2 text-[11px] font-bold">
-                  <span className={`grid h-6 w-6 place-items-center rounded-full ${step === index ? 'bg-primary-600 text-white' : 'bg-background-200 text-foreground-500'}`}>{index + 1}</span>
-                  <span className="hidden sm:inline">{item.label}</span>
+                  <span className={`grid h-6 w-6 place-items-center rounded-full ${step === index ? 'bg-white/15 text-white' : 'bg-background-200 text-foreground-500'}`}>{index + 1}</span>
+                  <span>{item.label}</span>
                 </span>
               </button>
             ))}
@@ -348,6 +440,7 @@ export function AssignmentSubmissionWizard({
         </div>
 
         <div className="p-5 sm:p-6">
+          {recoveredDraft && <p role="status" className="mb-4 rounded-xl bg-blue-50 p-3 text-sm text-blue-900">Recovered your most recent unsaved changes from this tab. Use Save draft to confirm they are stored on the server.</p>}
           {locked && (
             <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
               This assignment has been submitted for tutor review. Your saved answers and evidence remain available in Preview.
@@ -366,80 +459,23 @@ export function AssignmentSubmissionWizard({
                   )}
                 </div>
               </div>
-              <label className="block">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-foreground-600">Your answer <span className="text-red-500">*</span></span>
-                <textarea
-                  value={answers.assignmentAnswer}
-                  onChange={event => setAnswer('assignmentAnswer', event.target.value)}
-                  disabled={locked}
-                  rows={10}
-                  placeholder="Write your answer to the assignment question…"
-                  className="mt-2 w-full resize-y rounded-xl border border-background-300 bg-white px-4 py-3 text-sm leading-6 text-foreground-900 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:bg-background-100"
-                />
-                <span className="mt-1 block text-right text-[10px] text-foreground-400">{wordCount(answers.assignmentAnswer)} words</span>
-              </label>
-              <div className="rounded-xl border border-background-200 bg-background-50 p-4">
-                <AssignmentEvidence
-                  kind={kind}
-                  learnerId={learnerId}
-                  componentId={componentId}
-                  trainingPlanDetails={evidenceDetails}
-                  onUploaded={onEvidenceChanged}
-                  readOnly={locked}
-                />
-                <p className="mt-3 text-[11px] text-foreground-400">Evidence is optional. Uploaded files are stored securely in Azure.</p>
-              </div>
+              <MonthlyAnswerField title={title} label="Your answer (at least 120 words; one point per line)" value={answers.assignmentAnswer} onChange={value => setAnswer('assignmentAnswer', value)} disabled={readOnly || submittingRef.current} rows={10} />
             </div>
           )}
 
-          {step === 1 && (
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-primary-600">What You Learned / Achieved KSBs</p>
-              <h3 className="mt-2 font-heading text-base font-bold text-foreground-900">What did you learn, and how did this assignment help you achieve the mapped KSBs?</h3>
-              {ksbMappings.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {ksbMappings.map(mapping => (
-                    <span key={mapping.code} className="rounded-full border border-primary-100 bg-primary-50 px-2.5 py-1 text-[11px] font-bold text-primary-700">
-                      {mapping.code}{Number(mapping.weight) > 0 ? ` · ${mapping.weight}%` : ''}
-                    </span>
-                  ))}
-                </div>
-              )}
-              <textarea
-                value={answers.whatYouLearned}
-                onChange={event => setAnswer('whatYouLearned', event.target.value)}
-                disabled={locked}
-                rows={12}
-                placeholder="Explain the knowledge, skills or behaviours you developed…"
-                className="mt-4 w-full resize-y rounded-xl border border-background-300 bg-white px-4 py-3 text-sm leading-6 text-foreground-900 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:bg-background-100"
-              />
-              <p className="mt-1 text-right text-[10px] text-foreground-400">{wordCount(answers.whatYouLearned)} words</p>
-            </div>
-          )}
-
-          {step === 2 && (
-            <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-primary-600">Business Impact</p>
-              <h3 className="mt-2 font-heading text-base font-bold text-foreground-900">How has this learning benefited your role, workplace or organisation?</h3>
-              <textarea
-                value={answers.businessImpact}
-                onChange={event => setAnswer('businessImpact', event.target.value)}
-                disabled={locked}
-                rows={12}
-                placeholder="Describe the practical impact, improvements or measurable outcomes…"
-                className="mt-4 w-full resize-y rounded-xl border border-background-300 bg-white px-4 py-3 text-sm leading-6 text-foreground-900 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:bg-background-100"
-              />
-              <p className="mt-1 text-right text-[10px] text-foreground-400">{wordCount(answers.businessImpact)} words</p>
-              <div className="mt-5 rounded-xl border border-background-200 bg-background-50 p-4">
-                <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-foreground-600">Time spent <span className="text-red-500">*</span></p>
-                {timeControl}
-              </div>
-            </div>
-          )}
+          <div className="mt-5">
+            <MonthlyAssignmentSteps step={step} data={monthly} onChange={changeMonthly} answers={answers} onAnswer={setAnswer}
+              kind={kind} learnerId={learnerId} title={title} plannedOtjh={plannedOtjh} mappings={ksbMappings}
+              evidenceFiles={evidenceFiles} timeControl={timeControl} disabled={readOnly || submittingRef.current}
+              evidenceUploader={<AssignmentEvidence kind={kind} learnerId={learnerId} componentId={componentId} trainingPlanDetails={evidenceDetails} onUploaded={onEvidenceChanged} readOnly={readOnly} />}
+              payload={() => payload('draft')} checks={checks} checking={checking} onCheck={runChecks} onSave={saveDraft}
+            />
+          </div>
 
           {saveError && (
             <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{saveError}</p>
           )}
+          {loadFailed && <button type="button" onClick={() => window.location.reload()} className="mt-3 rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold">Reload saved submission</button>}
 
           <div className="mt-6 flex items-center justify-between gap-3 border-t border-background-200 pt-4">
             <button
@@ -450,12 +486,12 @@ export function AssignmentSubmissionWizard({
             >
               <AppIcon className="ri-arrow-left-line" />Back
             </button>
-            {step < 2 ? (
+            {step < 7 ? (
               <button
                 type="button"
                 onClick={() => void goNext()}
-                disabled={!currentReady || locked || savingDraft}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={loadFailed || savingDraft || submittingProgress}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Next<AppIcon className="ri-arrow-right-line" />
               </button>
@@ -467,7 +503,7 @@ export function AssignmentSubmissionWizard({
               <button
                 type="button"
                 onClick={() => void submit()}
-                disabled={!currentReady || savingDraft || submittingProgress}
+                disabled={loadFailed || checking || savingDraft || submittingProgress || checks.length !== 13 || checks.some(check => !check.passed)}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <AppIcon className={savingDraft || submittingProgress ? 'ri-loader-4-line animate-spin' : 'ri-send-plane-fill'} />
@@ -514,7 +550,7 @@ export function AssignmentSubmissionWizard({
                   ) : isVideo ? (
                     <video src={evidencePreview.url} controls className="mx-auto max-h-[72vh] max-w-full rounded-lg bg-black" />
                   ) : (
-                    <iframe title={evidencePreview.file.filename} src={evidencePreview.url} className="h-[72vh] w-full rounded-lg bg-white" />
+                    <iframe title={evidencePreview.file.filename} src={evidencePreview.url} referrerPolicy="no-referrer" sandbox={evidencePreview.file.id.startsWith('link:') ? 'allow-scripts allow-forms' : undefined} className="h-[72vh] w-full rounded-lg bg-white" />
                   );
                 })()}
               </div>
@@ -524,12 +560,34 @@ export function AssignmentSubmissionWizard({
                   ['1. Assignment answer', answers.assignmentAnswer],
                   ['2. What You Learned / Achieved KSBs', answers.whatYouLearned],
                   ['3. Business Impact', answers.businessImpact],
+                  ['I understood', monthly.understood],
+                  ['I gained skills in', monthly.gainedSkills],
+                  ['Full-month LMS reflection', monthly.lmsReflection],
+                  ['Additional activities', monthly.extraActivities],
+                  ['Integrated understanding', monthly.integratedReflection],
+                  ['Career impact', monthly.careerImpact],
+                  ['Job impact', monthly.jobImpact],
+                  ['Employer impact', monthly.employerImpact],
+                  ['Action plan', monthly.actionPlan],
+                  ['EPA preparedness', monthly.epaPreparedness],
                 ].map(([label, value]) => (
                   <section key={label} className="rounded-xl border border-background-200 bg-background-50 p-4">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-primary-700">{label}</h3>
                     <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-foreground-800">{value || 'Not answered yet.'}</p>
                   </section>
                 ))}
+                <section className="rounded-xl border border-background-200 p-4 text-sm">
+                  <h3 className="font-bold">Submission details</h3>
+                  <p>Month: {monthly.month} · Time: {savedTimeSeconds ? (savedTimeSeconds / 3600).toFixed(2) : '0'} hours</p>
+                  <p>Coaching reference: {monthly.meetingKey || 'Not linked'}</p>
+                  {monthly.claims.map(c => <p key={c.code} className="mt-2 whitespace-pre-wrap"><strong>{c.code}</strong>: {c.explanation}</p>)}
+                </section>
+                {monthly.slides.map((slide, index) => <section key={index} className="rounded-xl border border-background-200 p-4"><h3 className="font-bold">Slide {index + 1}: {slide.title}</h3><p className="mt-3 whitespace-pre-wrap text-sm">{slide.body}</p></section>)}
+                {monthly.evidence.map(entry => <section key={entry.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-background-200 p-4 text-sm"><div><strong>{entry.name}</strong><p>Supports answer points: {entry.points}</p></div><button type="button" className="font-semibold text-primary-700" onClick={() => {
+                  if (entry.url && /^https?:\/\//i.test(entry.url)) {
+                    setEvidencePreview({ file: { id: entry.id, filename: entry.name, contentType: '', sizeBytes: 0, status: 'approved', scanResult: null, sectionRef: componentId, uploadedAt: null, trainingPlanDetails: null }, url: entry.url });
+                  } else void openEvidence(evidenceFiles.find(f => f.id === entry.id) || { id: entry.id, filename: entry.name, contentType: '', sizeBytes: 0, status: 'approved', scanResult: null, sectionRef: componentId, uploadedAt: null, trainingPlanDetails: null });
+                }}>Preview evidence</button></section>)}
                 <section className="rounded-xl border border-background-200 bg-background-50 p-4">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-primary-700">Evidence</h3>
                   {evidenceFiles.length === 0 ? (

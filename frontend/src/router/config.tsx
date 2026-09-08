@@ -182,6 +182,7 @@ const MisTutorAssignmentPage = lazyRoute(() => import("../pages/mis/tutor-assign
 const ModuleBuilder = lazyRoute(() => import("../pages/curriculum/module-builder/page"));
 const ModulesPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
 const MonthlyCyclePage = lazyRoute(() => import("../pages/learner/monthly-cycle/page"));
+const MonthlySubmissionPage = lazyRoute(() => import("../pages/learner/monthly-submission/page"));
 const MyLearningPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
 const TrainingPlanTimelinePage = lazyRoute(() => import("../pages/learner/training-plan-timeline/page"));
 const MySchedulePage = lazyRoute(() => import("../pages/learner/clubs/events/schedule/page"));
@@ -559,6 +560,18 @@ const routes: RouteObject[] = [
   {
     path: "/learner/monthly-cycle",
     element: <MonthlyCyclePage />,
+  },
+  {
+    path: "/learner/monthly-submission",
+    element: <MonthlySubmissionPage />,
+  },
+  {
+    path: "/learner/monthly-submission/:kind/:id",
+    element: <MonthlySubmissionPage />,
+  },
+  {
+    path: "/learner/monthly-submission/:kind/:id/:componentId",
+    element: <VideoWatchPage />,
   },
   {
     path: "/learner/monthly-cycle/:kind/:id",
