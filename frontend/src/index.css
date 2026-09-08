@@ -4346,10 +4346,29 @@ table tbody td:last-child {
 }
 
 .kbc-sidebar-brand {
-  border-radius: 999px !important;
-  background: #fff !important;
-  color: #5b21b6 !important;
-  box-shadow: 0 5px 14px rgb(46 16 101 / 0.24);
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 108px;
+  height: 42px;
+  padding: 5px 8px;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 2px 6px rgb(46 16 101 / 0.14);
+}
+
+.kbc-sidebar-brand img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.kbc-sidebar-rail .kbc-sidebar-brand {
+  width: 72px;
+  height: 38px;
+  padding: 4px;
 }
 
 .kbc-sidebar-role {
@@ -4510,6 +4529,47 @@ table tbody td:last-child {
 
 .kbc-topbar-title {
   color: white !important;
+}
+
+.kbc-workspace-topbar .kbc-navigation-menu {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 8px 11px;
+  border: 1px solid rgb(255 255 255 / 0.26);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 0.12);
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.kbc-workspace-topbar .kbc-navigation-menu:hover { background: rgb(255 255 255 / 0.22); }
+.kbc-workspace-topbar .kbc-navigation-menu:focus-visible { outline: 2px solid white; outline-offset: 3px; }
+.workspace-breadcrumbs .kbc-workspace-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  gap: 6px;
+  min-height: 36px;
+  padding: 7px 11px;
+  border: 1px solid #ddd6fe;
+  border-radius: 10px;
+  background: #f5f3ff;
+  color: #4c1d95;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.workspace-breadcrumbs .kbc-workspace-back:hover:not(:disabled) { background: #ede9fe; border-color: #c4b5fd; }
+.workspace-breadcrumbs .kbc-workspace-back:focus-visible { outline: 2px solid #7c3aed; outline-offset: 2px; }
+.workspace-breadcrumbs .kbc-workspace-back:disabled { opacity: 0.5; cursor: default; }
+@media (max-width: 767px) {
+  .kbc-workspace-topbar .kbc-navigation-menu,
+  .workspace-breadcrumbs .kbc-workspace-back { min-height: 40px; }
 }
 
 .kbc-topbar-subtitle {

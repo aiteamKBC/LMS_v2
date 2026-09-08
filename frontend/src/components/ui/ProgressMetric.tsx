@@ -35,8 +35,8 @@ export const ProgressBar = memo(function ProgressBar({
     >
       <div
         className={cn(height, 'rounded-full transition-[width] duration-500', tone || progressTone(percent))}
-        // A 2% floor so a real-but-tiny value is still visibly non-zero.
-        style={{ width: `${percent === null ? 0 : Math.max(2, Math.min(100, percent))}%` }}
+        // Keep a true zero empty; small positive values remain visible.
+        style={{ width: `${percent === null || percent <= 0 ? 0 : Math.max(2, Math.min(100, percent))}%` }}
       />
     </div>
   );

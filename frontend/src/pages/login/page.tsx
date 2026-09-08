@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { AuthError, apiAuthHealth, apiMicrosoftStart } from '@/api/auth';
+import { AppIcon } from '@/components/feature/AppIcon';
 // Shared with RequireAuth, so the page you are sent to after signing in and
 // the page you are sent back to when refused are decided by one definition.
 import { homeRouteFor } from '@/lib/routeAccess';
@@ -13,8 +14,6 @@ export default function LoginPage() {
   const { login, auth, isInitialized } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
@@ -58,22 +57,31 @@ export default function LoginPage() {
   // and round again.
   useEffect(() => {
     if (!isInitialized || !auth.account) return;
-    navigate(from || homeRouteFor(auth.account), { replace: true });
+    navigate(auth.account.hasLegacyRecord || auth.account.access === 'record-monitor' ? homeRouteFor(auth.account) : from || homeRouteFor(auth.account), { replace: true });
   }, [isInitialized, auth.account, from, navigate]);
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    // Read the displayed values at submission: password managers can fill the
+    // inputs without dispatching change events to React.
+    const fields = new FormData(e.currentTarget);
+    const email = String(fields.get('email') || '').trim();
+    const password = String(fields.get('password') || '');
     setError('');
 
-    if (!email.trim()) {
+    if (!email) {
       setError('Please enter your email address');
+      return;
+    }
+    if (!password) {
+      setError('Please enter your password');
       return;
     }
 
     setIsLoading(true);
     try {
-      const account = await login(email.trim(), password, rememberMe);
-      navigate(from || homeRouteFor(account), { replace: true });
+      const account = await login(email, password, rememberMe);
+      navigate(account.hasLegacyRecord || account.access === 'record-monitor' ? homeRouteFor(account) : from || homeRouteFor(account), { replace: true });
     } catch (err) {
       setError(
         err instanceof AuthError
@@ -125,9 +133,9 @@ export default function LoginPage() {
                   <AppIcon className={`ri-mail-line ${styles.inputIcon}`} aria-hidden="true" />
                   <input
                     id="email"
+                    name="email"
                     type="email"
-                    value={email}
-                    onChange={(e) => { setEmail(e.target.value); setError(''); }}
+                    onChange={() => setError('')}
                     placeholder="your.email@kbc.test"
                     autoComplete="email"
                     aria-invalid={!!error}
@@ -148,9 +156,9 @@ export default function LoginPage() {
                   <AppIcon className={`ri-lock-line ${styles.inputIcon}`} aria-hidden="true" />
                   <input
                     id="password"
+                    name="password"
                     type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={(e) => { setPassword(e.target.value); setError(''); }}
+                    onChange={() => setError('')}
                     placeholder="Enter your password"
                     autoComplete="current-password"
                     aria-invalid={!!error}
@@ -202,7 +210,7 @@ export default function LoginPage() {
 
               <button
                 type="submit"
-                disabled={!email || !password || isLoading}
+                disabled={isLoading}
                 className={styles.primaryButton}
               >
                 {isLoading ? (

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 // Explicit, not auto-imported: vitest.config.ts deliberately leaves
 // unplugin-auto-import out, so a dialog rendered in a test would crash on it.
@@ -11,22 +11,29 @@ interface ModalProps {
   footer?: ReactNode;
   /** max-width tailwind class, e.g. "max-w-3xl" */
   size?: string;
+  /** Optional styling for a specific feature; shared dialog behavior is unchanged. */
+  className?: string;
   /**
    * Changing this scrolls the body back to the top — for a modal that steps
    * through content in place (e.g. question 3 -> 4) so each step starts at the top
    * instead of inheriting the previous scroll position.
    */
   scrollResetKey?: string | number;
+  /** Trigger may temporarily lose focus while awaiting an API response. */
+  returnFocusRef?: RefObject<HTMLElement | null>;
 }
 
 /**
  * Generic modal: dimmed backdrop, title bar, body, footer.
  * Traps focus, closes on Esc, and restores focus to the trigger on close.
  */
-export function Modal({ title, onClose, children, footer, size = 'max-w-3xl', scrollResetKey }: ModalProps) {
+export function Modal({ title, onClose, children, footer, size = 'max-w-3xl', className = '', scrollResetKey, returnFocusRef }: ModalProps) {
+  const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
+  const returnFocus = useRef(returnFocusRef);
+  returnFocus.current = returnFocusRef;
 
   useEffect(() => {
     if (scrollResetKey === undefined) return;
@@ -67,7 +74,7 @@ export function Modal({ title, onClose, children, footer, size = 'max-w-3xl', sc
         if (nodes.length === 0) return;
         const first = nodes[0];
         const last = nodes[nodes.length - 1];
-        if (e.shiftKey && document.activeElement === first) {
+        if (e.shiftKey && (document.activeElement === first || document.activeElement === panel)) {
           e.preventDefault();
           last.focus();
         } else if (!e.shiftKey && document.activeElement === last) {
@@ -85,7 +92,7 @@ export function Modal({ title, onClose, children, footer, size = 'max-w-3xl', sc
       document.body.style.overflow = prevOverflow;
       // preventScroll: the trigger may be far down the page; restoring focus
       // shouldn't yank the viewport to it.
-      previouslyFocused.current?.focus({ preventScroll: true });
+      (returnFocus.current?.current || previouslyFocused.current)?.focus({ preventScroll: true });
     };
     // Mount-only: see onCloseRef above.
   }, []);
@@ -104,11 +111,12 @@ export function Modal({ title, onClose, children, footer, size = 'max-w-3xl', sc
         ref={panelRef}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
         tabIndex={-1}
-        className={`relative w-full ${size} mt-[5vh] mb-8 bg-background-50 rounded-2xl border border-foreground-200 shadow-2xl max-h-[90vh] flex flex-col overflow-hidden outline-none`}
+        className={`relative w-full ${size} mt-[5vh] mb-8 bg-background-50 rounded-2xl border border-foreground-200 shadow-2xl max-h-[90vh] flex flex-col overflow-hidden outline-none ${className}`}
       >
         <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-foreground-100 shrink-0">
-          <h2 className="text-[15px] font-heading font-semibold text-foreground-900 leading-snug">{title}</h2>
+          <h2 id={titleId} className="text-[15px] font-heading font-semibold text-foreground-900 leading-snug">{title}</h2>
           <button
             onClick={onClose}
             aria-label="Close"

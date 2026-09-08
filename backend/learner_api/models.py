@@ -228,6 +228,8 @@ class EnrolmentUser(models.Model):
     # --- flat text columns ---
     username = models.TextField(db_column="Username", null=True, blank=True)
     email = models.TextField(db_column="Email", null=True, blank=True)
+    # Existing column verified in Neon; this mapping does not create a column.
+    aptem_id = models.TextField(db_column="aptem_id", null=True, blank=True)
     status = models.TextField(db_column=" Status", null=True, blank=True)  # NB: leading space
     type = models.TextField(db_column="Type", null=True, blank=True)
     programme_status = models.TextField(db_column="Programme_status", null=True, blank=True)
