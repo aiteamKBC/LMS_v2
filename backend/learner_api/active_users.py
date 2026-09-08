@@ -1614,6 +1614,28 @@ def _fetch_ksb_items(programme, training_plan=None):
     return []
 
 
+def current_curriculum_ksb_items_for_learner(learner=None, source=None, training_plan=None):
+    """Read the learner's current authored KSB profile from curriculum.
+
+    LearnerProfile.ksbs is an immutable assignment snapshot captured when the
+    learner was activated. For live dashboard totals, staff expect the current
+    Curriculum KSB profile, so this helper resolves it read-only and lets callers
+    fall back to the snapshot only when curriculum has no matching profile.
+    """
+    plan = training_plan
+    if plan is None and source is not None:
+        plan = get_training_plan(source)
+    if plan is None and learner is not None:
+        plan = getattr(learner, "training_plan", None)
+
+    programme = (
+        getattr(source, "programme", None)
+        if source is not None
+        else getattr(learner, "programme", None)
+    )
+    return _fetch_ksb_items(programme, training_plan=plan)
+
+
 def refresh_learner_ksb_snapshot(learner, source, training_plan=None):
     plan = training_plan if training_plan is not None else get_training_plan(source)
     programme = getattr(source, "programme", None)

@@ -823,7 +823,8 @@ def to_learner_detail(source, learner_profile):
     source record's structured plan column, so it's visible even for learners
     who aren't currently active; KSBs, progress, and activity feed are read
     from the normalized Learner.* tables exposed through LearnerProfile."""
-    modules, week, components = flatten_training_plan(get_training_plan(source))
+    training_plan = get_training_plan(source)
+    modules, week, components = flatten_training_plan(training_plan)
 
     # Unified progress log holds both quiz attempts and video completions,
     # distinguished by "kind" (a record without a "kind" is treated as a quiz
@@ -843,6 +844,19 @@ def to_learner_detail(source, learner_profile):
     })
     # Activity Feed is projected from the same normalized progress rows.
     activity_feed = learner_profile.activity_feed_entries(newest_first=True) if learner_profile else []
+    snapshot_ksbs = _as_list(learner_profile.ksbs) if learner_profile else []
+    curriculum_ksbs = []
+    if learner_profile:
+        try:
+            from .active_users import current_curriculum_ksb_items_for_learner
+
+            curriculum_ksbs = current_curriculum_ksb_items_for_learner(
+                learner_profile,
+                source=source,
+                training_plan=training_plan,
+            )
+        except Exception:
+            curriculum_ksbs = []
     programme_start = getattr(source, "start_date", None)
     if hasattr(programme_start, "isoformat"):
         programme_start = programme_start.isoformat()
@@ -873,7 +887,7 @@ def to_learner_detail(source, learner_profile):
         "modules": modules,
         "week": week,
         "components": components,
-        "ksbs": _as_list(learner_profile.ksbs) if learner_profile else [],
+        "ksbs": curriculum_ksbs or snapshot_ksbs,
         "progressKsbCodes": progress_ksb_codes,
         "quizAttempts": quiz_attempts,
         "videoProgress": video_progress,

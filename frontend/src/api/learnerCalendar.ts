@@ -159,6 +159,8 @@ export function fetchOnboardingReviews(kind: LearnerKind, id: string): Promise<O
 
 export interface BookSessionInput {
   sessionType: BookableSessionType;
+  /** Required when booking a generated MCM/Progress Review slot. */
+  eventKey?: string;
   scheduledDate: string; // YYYY-MM-DD
   scheduledTime: string; // HH:MM
   durationMinutes: number;
@@ -169,6 +171,7 @@ export interface BookSessionInput {
 export interface BookSessionResponse {
   event: LearnerCalendarEvent;
   warning?: string;
+  approvalRequired?: boolean;
 }
 
 export async function bookLearnerCalendarSession(

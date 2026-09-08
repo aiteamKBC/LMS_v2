@@ -294,6 +294,31 @@ export function recordedKsbEvidenceCodes(real: LearnerDetail | null): Set<string
   return codes;
 }
 
+/** Programme KSB target codes, normalised to the same parent-code level used
+ * by the coach caseload. */
+export function targetKsbCodes(real: Pick<LearnerDetail, 'ksbs'> | null): Set<string> {
+  return new Set(
+    (real?.ksbs || [])
+      .map((ksb) => ksbParentCode(ksb.code))
+      .filter(Boolean),
+  );
+}
+
+/** Evidenced KSBs that are actually part of the learner's target profile.
+ * Completion records can contain historical/raw KSB codes from old mappings;
+ * this keeps overview counts from showing impossible values such as 6 of 2. */
+export function evidencedTargetKsbCodes(real: LearnerDetail | null): Set<string> {
+  const targetCodes = targetKsbCodes(real);
+  const evidencedCodes = recordedKsbEvidenceCodes(real);
+  if (targetCodes.size === 0) return evidencedCodes;
+
+  return new Set(
+    Array.from(evidencedCodes)
+      .map(ksbParentCode)
+      .filter((code) => targetCodes.has(code)),
+  );
+}
+
 /** Short noun used in the reflection copy ("this podcast", "this reading…"). */
 export function componentNoun(type: string | null | undefined): string {
   const t = (type || '').toLowerCase();

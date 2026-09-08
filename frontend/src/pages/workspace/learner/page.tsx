@@ -13,7 +13,7 @@ import { demoProgrammeFor, materialForModuleId, type DemoMaterialDef } from '@/l
 import { buildDemoTimings, currentWeekStatus, summariseDemoTimings, timingsForModuleIds, useDemoTimeOverrides, type DemoProgrammeSummary } from '@/lib/demoTime';
 import { DemoMaterialCard } from '@/components/feature/DemoTimePanel';
 import { SignOutConfirmModal } from '@/components/feature/Header';
-import { buildLearnerJourney, completedComponentIds, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, hasComponentContent, isOpenableComponent, parseHours, recordedKsbEvidenceCodes, type JourneyComponent, type JourneyModule, type JourneyWeek } from '@/utils/learnerJourney';
+import { buildLearnerJourney, completedComponentIds, componentTypeMeta, componentNoun, evidencedTargetKsbCodes, gradePercent, formatHoursMinutes, hasComponentContent, isOpenableComponent, parseHours, type JourneyComponent, type JourneyModule, type JourneyWeek } from '@/utils/learnerJourney';
 import type {
   LearnerComponentProgress,
   LearnerDetail,
@@ -418,7 +418,7 @@ export default function LearnerOverview() {
     }
     return null;
   }, [currentStation, currentWeekLabel, journey]);
-  const evidencedKsbCodes = useMemo(() => recordedKsbEvidenceCodes(real), [real]);
+  const evidencedKsbCodes = useMemo(() => evidencedTargetKsbCodes(real), [real]);
 
   /* ── Inspection-demo time overlay — scoped to the 3 provisioned accounts ──
      Everything here is derived from data already fetched above (journey,
