@@ -26,9 +26,12 @@ import { fetchLearnerCalendarEvents, fetchLearnerCoach, type LearnerCalendarEven
 import { useFreshUserRedirect, useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
 import { syncLearnerStatus } from '@/hooks/useLearnerNavGate';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
+import { fetchLearnerCertificateStatus, issueLearnerCertificate, type LearnerCertificate, type LearnerCertificateStatus } from '@/api/learnerCertificates';
+import type { CertificateTemplate } from '@/api/platformAdmin';
 import { fetchEvidence, type EvidenceRecord } from '@/api/evidence';
 import type React from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { CertificateDocument } from '@/components/feature/CertificateDocument';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { Panel } from '@/components/ui/Panel';
@@ -1816,9 +1819,82 @@ function stationTone(s: ModuleStation): StationTone {
   return s.status === 'completed' ? 'done' : s.status === 'current' ? 'current' : 'upcoming';
 }
 
+function formatCertificateDate(value?: string | null): string {
+  if (!value) return 'Today';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? value
+    : new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(date);
+}
+
+function CertificatePreview({ certificate, template, onClose }: { certificate: LearnerCertificate; template: CertificateTemplate; onClose: () => void }) {
+  const snapshot = certificate.snapshot || {};
+  const layout = snapshot.layoutConfig || template.layoutConfig || {};
+  const learner = snapshot.learner;
+  const title = snapshot.certificateTitle || template.title;
+  const body = snapshot.bodyText || template.bodyText;
+  const learnerName = learner?.name || 'Learner';
+  const programme = snapshot.programme || learner?.programme || 'Programme';
+  const progress = snapshot.progressPercent ?? certificate.progressPercent;
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-5" onClick={onClose}>
+      <div className="w-full max-w-5xl rounded-2xl bg-background-100 p-4" onClick={(event) => event.stopPropagation()}>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-bold text-foreground-900">{certificate.certificateNumber}</p>
+            <p className="text-xs text-foreground-500">Issued {formatCertificateDate(certificate.issuedAt)}</p>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => window.print()} className="primary-action rounded-lg bg-primary-700 px-4 py-2 text-xs font-bold text-white">
+              Download / Print PDF
+            </button>
+            <button onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-xs font-bold">
+              Close
+            </button>
+          </div>
+        </div>
+        <CertificateDocument
+          title={title}
+          bodyText={body}
+          learnerName={learnerName}
+          programmeName={programme}
+          progressLabel={`${progress}%`}
+          certificateNumber={certificate.certificateNumber}
+          awardedOn={formatCertificateDate(certificate.issuedAt)}
+          verificationUrl={certificate.verificationUrl}
+          layoutConfig={layout}
+        />
+      </div>
+    </div>
+  );
+}
+
 function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerDetail | null; loading: boolean; loadError: string | null; journeyHref: string }) {
   const journey = useMemo(() => buildLearnerJourney(real), [real]);
   const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
+  const [certificateStatus, setCertificateStatus] = useState<LearnerCertificateStatus | null>(null);
+  const [issuedCertificate, setIssuedCertificate] = useState<LearnerCertificate | null>(null);
+  const [certificateBusy, setCertificateBusy] = useState(false);
+  const [certificateNotice, setCertificateNotice] = useState('');
+
+  useEffect(() => {
+    if (!real?.id || !real.learnerType) {
+      setCertificateStatus(null);
+      setIssuedCertificate(null);
+      return;
+    }
+    let cancelled = false;
+    setCertificateNotice('');
+    fetchLearnerCertificateStatus(real.learnerType, real.id)
+      .then((result) => {
+        if (!cancelled) setCertificateStatus(result);
+      })
+      .catch(() => {
+        if (!cancelled) setCertificateStatus(null);
+      });
+    return () => { cancelled = true; };
+  }, [real?.id, real?.learnerType]);
 
   if (loading) return <RowsSkeleton rows={4} className="py-2" />;
   if (loadError) return <EmptyState size="sm" title={loadError} />;
@@ -1842,6 +1918,49 @@ function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerD
           {current ? ` · currently on Module ${current.index + 1}` : allDone ? ' · Gateway ready' : ''}
         </p>
       </div>
+
+      {certificateStatus?.template ? (
+        <div className={`mb-4 flex items-center gap-3 rounded-xl border p-3.5 ${certificateStatus.eligibility?.eligible ? 'border-amber-200 bg-amber-50/60' : 'border-foreground-200 bg-background-100'}`}>
+          <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${certificateStatus.eligibility?.eligible ? 'bg-amber-500 text-white' : 'bg-background-200 text-foreground-400'}`}>
+            <AppIcon className={certificateStatus.eligibility?.eligible ? 'ri-award-fill' : 'ri-lock-2-line'} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold text-foreground-900">{certificateStatus.certificate ? 'Certificate issued' : certificateStatus.eligibility?.eligible ? 'Certificate unlocked' : 'Progress certificate'}</p>
+            <p className="text-xs text-foreground-500">
+              {certificateStatus.certificate
+                ? `${certificateStatus.certificate.certificateNumber} · issued ${formatCertificateDate(certificateStatus.certificate.issuedAt)}`
+                : certificateStatus.eligibility?.eligible
+                  ? `${certificateStatus.template.title} is ready to issue.`
+                  : `Reach ${certificateStatus.template.minimumProgress}% to unlock · ${Math.max(0, certificateStatus.template.minimumProgress - (certificateStatus.eligibility?.progressPercent ?? overallPct))}% remaining`}
+            </p>
+            {certificateNotice ? <p className="mt-1 text-xs font-semibold text-red-600">{certificateNotice}</p> : null}
+          </div>
+          {certificateStatus.eligibility?.eligible || certificateStatus.certificate ? (
+            <button
+              disabled={certificateBusy}
+              onClick={() => {
+                if (!real?.id || !real.learnerType) return;
+                if (certificateStatus.certificate) {
+                  setIssuedCertificate(certificateStatus.certificate);
+                  return;
+                }
+                setCertificateBusy(true);
+                setCertificateNotice('');
+                issueLearnerCertificate(real.learnerType, real.id)
+                  .then((result) => {
+                    setCertificateStatus(result);
+                    setIssuedCertificate(result.certificate);
+                  })
+                  .catch((error) => setCertificateNotice(error instanceof Error ? error.message : 'Could not issue certificate.'))
+                  .finally(() => setCertificateBusy(false));
+              }}
+              className="primary-action rounded-lg bg-primary-700 px-4 py-2 text-xs font-bold text-white disabled:opacity-60"
+            >
+              {certificateBusy ? 'Issuing...' : 'View certificate'}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* Milestone track */}
       <div className="overflow-x-auto pb-1">
@@ -1892,6 +2011,9 @@ function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerD
           <span className="w-8 h-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0"><AppIcon className="ri-trophy-fill" /></span>
           <p className="text-[13px] font-semibold text-emerald-700">All modules complete — you&apos;ve reached the Gateway!</p>
         </div>
+      ) : null}
+      {issuedCertificate && certificateStatus?.template ? (
+        <CertificatePreview certificate={issuedCertificate} template={certificateStatus.template} onClose={() => setIssuedCertificate(null)} />
       ) : null}
     </div>
   );

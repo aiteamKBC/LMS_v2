@@ -47,4 +47,5 @@ urlpatterns = [
     path("admin/system/", platform_admin.system, name="admin-system"),
     path("admin/documents/", platform_admin.documents, name="admin-documents"),
     path("admin/curriculum/", platform_admin.curriculum, name="admin-curriculum"),
+    path("admin/certificate-template/", platform_admin.certificate_template, name="admin-certificate-template"),
 ]

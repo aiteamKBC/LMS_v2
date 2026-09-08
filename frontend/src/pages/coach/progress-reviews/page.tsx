@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { fetchEvidence, type EvidenceRecord } from '@/api/evidence';
 import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerQuizAttempt } from '@/api/learnerDetail';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -687,6 +688,7 @@ export function buildProgressReviewSlidesDeck(
 
 export default function CoachProgressReviews() {
   const coach = useCoachIdentity();
+  const navigate = useNavigate();
   const [tab, setTab] = useState<ReviewTab>('this-month');
   const [currentPage, setCurrentPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
@@ -803,6 +805,20 @@ export default function CoachProgressReviews() {
     setScheduleForm(scheduleDefaults(event));
     setActionError(null);
     setActionNotice(event.syncWarning || null);
+  };
+
+  const openEventInCalendar = (event: CoachCalendarEvent) => {
+    navigate('/coach/timetable', {
+      state: {
+        focusEvent: {
+          eventKey: eventIdentity(event),
+          source: event.source,
+          date: eventDisplayDate(event),
+          title: event.title,
+          scheduledTime: event.scheduledTime,
+        },
+      },
+    });
   };
 
   const handleSchedule = async (event: CoachCalendarEvent) => {
@@ -1005,6 +1021,7 @@ export default function CoachProgressReviews() {
                   )}
                   actions={(
                     <div className="hidden shrink-0 items-center gap-2 md:flex">
+                      <RowAction label="Calendar" icon="ri-calendar-schedule-line" emphasis="calendar" onClick={() => openEventInCalendar(review)} />
                       {joinAvailable ? (
                         <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" disabled={isBusy} onClick={() => { handleJoin(review); }} />
                       ) : null}
@@ -1063,6 +1080,7 @@ export default function CoachProgressReviews() {
                           </div>
                         </div>
                         <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <RowAction label="Open in Calendar" icon="ri-calendar-schedule-line" emphasis="calendar" onClick={() => openEventInCalendar(review)} />
                           {joinAvailable ? (
                             <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" onClick={() => { handleJoin(review); }} disabled={isBusy} />
                           ) : null}
