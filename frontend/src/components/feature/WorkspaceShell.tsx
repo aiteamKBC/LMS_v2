@@ -265,8 +265,6 @@ export function WorkspaceShell({
             userName={displayName}
             onToggleMobileSidebar={hideFocusedLearnerSidebar ? undefined : handleToggleMobileSidebar}
             mobileSidebarOpen={mobileSidebarOpen}
-            onToggleDesktopSidebar={hideFocusedLearnerSidebar ? undefined : () => handlePinChange(!sidebarPinned)}
-            sidebarPinned={sidebarPinned}
             role={role}
           />
         )}
