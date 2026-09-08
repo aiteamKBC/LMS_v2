@@ -407,9 +407,11 @@ export function Sidebar({
     <div className={`kbc-sidebar-panel kbc-sidebar-${variant} flex h-screen w-full flex-col border-r border-foreground-100 bg-background-50`}>
       {/* Header — brand, and the pin control on desktop */}
       <div className={`kbc-sidebar-header flex h-14 shrink-0 items-center gap-2 border-b border-foreground-100/70 ${variant === 'rail' ? 'justify-center px-2' : 'px-3'}`}>
-        <span className="kbc-sidebar-brand">
-          <img src="/assets/kbc-logo.png" alt="Kent Business College" width={430} height={195} />
-        </span>
+        <img
+          src="https://jokdxsdbxorzciulkdyl.supabase.co/storage/v1/object/public/images/16480272afc94729b2911a62d1bbf85d.webp"
+          alt="KENT logo"
+          className="kbc-sidebar-brand-image block h-8 w-8 shrink-0 rounded-lg object-contain"
+        />
         {variant === 'expanded' && (
           <>
             <span className="kbc-sidebar-role min-w-0 flex-1 truncate font-heading text-[13px] font-bold text-foreground-800">

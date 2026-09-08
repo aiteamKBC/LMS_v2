@@ -294,7 +294,7 @@ export default function AdminDashboard() {
         </div>
 
         <div className="super-admin-hero-row grid grid-cols-1 items-stretch gap-3 md:grid-cols-[minmax(0,3fr)_minmax(23rem,2fr)]">
-        <section className="super-admin-hero relative h-full min-h-[180px] overflow-hidden rounded-xl border border-primary-200/60 p-5 shadow-sm md:p-6" style={{ background: 'linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 28%, oklch(var(--primary-100)) 62%, oklch(var(--background-50)) 100%)' }}>
+        <section className="super-admin-hero relative h-full min-h-[180px] overflow-hidden rounded-xl border border-primary-200/60 p-5 shadow-sm md:p-6" style={{ background: 'var(--kbc-hero-gradient)' }}>
           <div className="absolute top-0 left-0 right-0 h-px bg-white/10"></div>
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute opacity-20" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />

@@ -1,7 +1,7 @@
 from django.urls import path
 
-from . import certificates, monthly_assignment
-from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, videos, views
+from . import certificates
+from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, videos, views
 
 urlpatterns = [
     path("tutor-learners/", views.tutor_learners, name="tutor-learners"),
@@ -84,6 +84,7 @@ urlpatterns = [
     path("employers/<int:pk>/", employers.employer_detail, name="employer-detail"),
     path("learner-detail/<str:kind>/<int:pk>/", learner_detail.learner_detail, name="learner-detail"),
     path("student-activity/<str:kind>/<int:pk>/", student_activity.student_activity, name="student-activity"),
+    path("training-plan/<str:kind>/<int:pk>/", training_plan_view.training_plan, name="training-plan"),
     path("certificates/verify/<uuid:token>/", certificates.verify_certificate, name="learner-certificate-verify"),
     path("certificates/<str:kind>/<int:pk>/template/", certificates.learner_certificate_template, name="learner-certificate-template"),
     path("certificates/<str:kind>/<int:pk>/", certificates.learner_certificate_status, name="learner-certificate-status"),
