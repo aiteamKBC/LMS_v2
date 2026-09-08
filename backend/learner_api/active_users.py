@@ -133,19 +133,78 @@ def otjh_progress_dedupe_key(record, index=0):
     return f"entry:{index}"
 
 
+def _manual_claimed_seconds(record):
+    claimed = _number(
+        record.get("claimedSeconds") if record.get("claimedSeconds") is not None
+        else record.get("claimed_seconds")
+    )
+    if claimed is None or claimed < 0:
+        return None
+    verified = _number(
+        record.get("verifiedSeconds") if record.get("verifiedSeconds") is not None
+        else record.get("verified_seconds")
+    )
+    source = _progress_text(record, "timeTrackingSource", "time_tracking_source").lower()
+    explicitly_manual = source.endswith(":input") or "manual_input" in source
+    # MBA imports retain the raw source duration in ``claimedSeconds`` for
+    # auditability and put the OTJH value that may actually be credited in
+    # ``verifiedSeconds``.  A large difference therefore means the import was
+    # bounded, not that the learner manually entered the larger duration.
+    imported_source_duration = source.startswith("mba_import_")
+    inferred_legacy_manual = (
+        not imported_source_duration
+        and verified is not None
+        and claimed > verified + 2
+    )
+    return claimed if explicitly_manual or inferred_legacy_manual else None
+
+
+def _progress_record_minutes(record):
+    """Comparable OTJ value for choosing the best attempt of one activity."""
+    manual_seconds = _manual_claimed_seconds(record)
+    if manual_seconds is not None:
+        return manual_seconds / 60
+
+    reported_time = _progress_text(record, "reportedTime", "reported_time")
+    if reported_time:
+        return max(_reported_minutes(reported_time), 0)
+
+    verified_seconds = _number(
+        record.get("verifiedSeconds") if record.get("verifiedSeconds") is not None
+        else record.get("verified_seconds")
+    )
+    if verified_seconds is not None:
+        return max(verified_seconds, 0) / 60
+
+    expected_hours = _number(record.get("expectedOtjh") or record.get("expected_otjh"))
+    return max(expected_hours or 0, 0) * 60
+
+
 def dedupe_otjh_progress_records(progress):
     if not isinstance(progress, list):
         return []
-    seen = set()
+    positions = {}
     unique = []
     for index, record in enumerate(progress):
         if not isinstance(record, dict):
             continue
         key = otjh_progress_dedupe_key(record, index)
-        if key in seen:
+        position = positions.get(key)
+        if position is None:
+            positions[key] = len(unique)
+            unique.append(record)
             continue
-        seen.add(key)
-        unique.append(record)
+
+        current = unique[position]
+        candidate_minutes = _progress_record_minutes(record)
+        current_minutes = _progress_record_minutes(current)
+        candidate_is_newer = _progress_text(record, "submittedAt", "submitted_at") > _progress_text(
+            current, "submittedAt", "submitted_at"
+        )
+        if candidate_minutes > current_minutes or (
+            candidate_minutes == current_minutes and candidate_is_newer
+        ):
+            unique[position] = record
     return unique
 
 
@@ -480,12 +539,37 @@ def _normalise_component_ksb_mappings(value):
 
 
 def completed_hours_from_progress(progress, components=None):
+    """Hours the learner has declared, for the OTJ total.
+
+    A learner-entered Time spent value (`claimedSeconds` with input provenance)
+    is authoritative when present, followed by the reflection's `reportedTime`.
+    The server-verified timer is used only when neither input was supplied.
+
+    Rows predating time tracking carry no verified time at all; those still
+    fall back to the authored hours, because dropping them would silently zero
+    historical activity rather than measure it.
+    """
     if not isinstance(progress, list):
         return "0"
     expected_hours_by_component = _component_expected_hours_lookup(components)
     hours = 0.0
     for record in dedupe_otjh_progress_records(progress):
         component_id = _s(record.get("componentId"))
+        manual_seconds = _manual_claimed_seconds(record)
+        if manual_seconds is not None:
+            hours += manual_seconds / 3600
+            continue
+        reported_time = _progress_text(record, "reportedTime", "reported_time")
+        if reported_time:
+            hours += _reported_minutes(reported_time) / 60
+            continue
+        verified_seconds = _number(
+            record.get("verifiedSeconds") if record.get("verifiedSeconds") is not None
+            else record.get("verified_seconds")
+        )
+        if verified_seconds is not None:
+            hours += max(verified_seconds, 0) / 3600
+            continue
         record_expected = _number(record.get("expectedOtjh") or record.get("expected_otjh"))
         if record_expected is not None:
             hours += record_expected
@@ -493,8 +577,6 @@ def completed_hours_from_progress(progress, components=None):
         expected_hours = expected_hours_by_component.get(component_id)
         if expected_hours is not None:
             hours += expected_hours
-            continue
-        hours += _reported_minutes(record.get("reportedTime")) / 60
     return fmt_hours(hours)
 
 
@@ -556,6 +638,8 @@ def hydrate_training_plan(plan):
             cursor.execute(
                 """
                 SELECT m.module_catalogue_id, m.title,
+                       m.start_date, m.end_date, m.sessions_number,
+                       m.session_week_day, m.cohort_id,
                        w.id, w.title, w.week_number,
                        c.id, c.title, c.type, c.expected_otjh
                 FROM curriculum.modules m
@@ -573,13 +657,21 @@ def hydrate_training_plan(plan):
         return selected
 
     titles = {}
+    module_schedules = {}
     ids_by_title = {}
     weeks_by_module = {}
     seen_weeks = set()
-    for module_id, module_title, week_id, week_title, week_number, component_id, component_title, component_type, component_expected_otjh in rows:
+    for module_id, module_title, module_start, module_end, sessions_number, session_week_day, cohort_id, week_id, week_title, week_number, component_id, component_title, component_type, component_expected_otjh in rows:
         module_id = _s(module_id)
         titles[module_id] = _s(module_title) or module_id
         ids_by_title[titles[module_id]] = module_id
+        module_schedules[module_id] = {
+            "start_date": module_start,
+            "end_date": module_end,
+            "sessions_number": sessions_number,
+            "session_week_day": session_week_day,
+            "cohort_id": cohort_id,
+        }
         if not week_id:
             continue
         week_key = (module_id, str(week_id))
@@ -594,6 +686,7 @@ def hydrate_training_plan(plan):
             weeks_by_module[module_id][-1]["components"].append({
                 "componentId": str(component_id),
                 "componentTitle": _s(component_title) or _s(component_type) or "Activity",
+                "type": _s(component_type),
                 # This tree is persisted in a JSONField. psycopg returns NUMERIC
                 # as Decimal, which Python's standard JSON encoder cannot write.
                 "expectedOtjh": _number(component_expected_otjh),
@@ -609,11 +702,28 @@ def hydrate_training_plan(plan):
         if not module_id or module_id not in titles:
             expanded.append(item)
             continue
+        resolved_weeks = weeks_by_module.get(module_id, [])
+        try:
+            # Use the exact delivery dates used by Module Builder/Calendar,
+            # including authored delivery days and selected cohort holidays.
+            from curriculum_api.views import module_session_plan_for_count
+            dated_sessions = module_session_plan_for_count(module_schedules.get(module_id, {}), len(resolved_weeks)).get("sessions") or []
+        except Exception:
+            dated_sessions = []
+        resolved_weeks = [
+            {
+                **week,
+                "sessionDate": _s(dated_sessions[index].get("date")) if index < len(dated_sessions) else "",
+            }
+            for index, week in enumerate(resolved_weeks)
+        ]
         expanded.append({
             **item,
             "moduleId": module_id,
             "moduleTitle": titles[module_id],
-            "weeks": weeks_by_module.get(module_id, []),
+            "startDate": _s(module_schedules.get(module_id, {}).get("start_date")),
+            "endDate": _s(module_schedules.get(module_id, {}).get("end_date")),
+            "weeks": resolved_weeks,
         })
     return expanded
 
@@ -881,6 +991,9 @@ def save_progress_record(learner, record, activity=None):
             claimed_seconds=record.get("claimedSeconds"),
             server_session_seconds=record.get("serverSessionSeconds"),
             verified_seconds=record.get("verifiedSeconds"),
+            outside_working_hours=record.get("outsideWorkingHours") is True,
+            outside_working_hours_confirmed=record.get("outsideWorkingHoursConfirmed") is True,
+            outside_working_hours_confirmed_at=_datetime(record.get("outsideWorkingHoursConfirmedAt")),
             feed_kind=_s(activity.get("kind") or record.get("kind")),
             feed_action=_s(activity.get("action")),
             feed_title=_s(activity.get("title") or record.get("componentTitle")),

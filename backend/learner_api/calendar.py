@@ -7,10 +7,20 @@ The coach timetable stores events keyed by the "Learner"."Active_users" mirror
 id + email, so the learner is matched by email: directly against
 coach_calendar_event.learner_email, and via any Active_users mirror rows with
 the same email against coach_calendar_event.learner_id.
+
+Monthly coaching and progress reviews are *generated* from the learner's own
+delivery window rather than stored: the coach timetable derives them every time
+it loads (see coach_api.views.collect_generated_timetable), and a row only
+exists once somebody schedules one. So a learner whose coach had not booked yet
+saw an empty calendar while their coach saw a column of "Not Scheduled" slots.
+This endpoint runs the same generator over the same window, then lays the stored
+rows on top by event key — the coach's own join — so both calendars name the
+same dates and the same statuses.
 """
 import json
 import logging
 import hashlib
+from datetime import datetime
 
 from django.db import DatabaseError
 from django.db.models import Q
@@ -24,6 +34,7 @@ from .learner_detail import SOURCE_MODELS
 from .identity import learner_profile_for_source
 from .mappers import _s
 from .models import EnrolmentReview, LearnerProfile, StaffUser
+from .booking_calendar import booking_calendar_payload, booking_date_restriction
 from login.permissions import learner_self_or_staff
 
 logger = logging.getLogger(__name__)
@@ -148,31 +159,33 @@ def _record_enrolment_review(record, *, kind, learner_kind_id, coach_id):
     if _s(record.event_type) not in ONBOARDING_REVIEW_TYPES:
         return
     try:
+        defaults = {
+            "review_type": _s(record.event_type),
+            "review_label": ONBOARDING_REVIEW_LABELS.get(_s(record.event_type), ""),
+            "learner_kind": kind,
+            "learner_id": learner_kind_id,
+            "learner_name": _s(record.learner_name),
+            "learner_email": _s(record.learner_email),
+            "coach_name": _s(record.owner_name),
+            "coach_email": _s(record.owner_email),
+            "scheduled_date": record.scheduled_date,
+            "scheduled_time": record.scheduled_time,
+            "duration_minutes": record.duration_minutes or 60,
+            "status": EnrolmentReview.STATUS_BOOKED,
+            "notes": _s(record.notes),
+            "meeting_provider": _s(record.meeting_provider),
+            "meeting_link": _s(record.meeting_link) or _s(record.graph_web_link),
+            "graph_event_id": _s(record.graph_event_id),
+            "invite_sent": bool(_s(record.graph_event_id)),
+            "sync_error": _s(record.last_graph_sync_error),
+            "booked_at": timezone.now(),
+            "cancelled_at": None,
+        }
+        if coach_id is not None:
+            defaults["coach_id"] = coach_id
         EnrolmentReview.objects.update_or_create(
             event_key=record.event_key,
-            defaults={
-                "review_type": _s(record.event_type),
-                "review_label": ONBOARDING_REVIEW_LABELS.get(_s(record.event_type), ""),
-                "learner_kind": kind,
-                "learner_id": learner_kind_id,
-                "learner_name": _s(record.learner_name),
-                "learner_email": _s(record.learner_email),
-                "coach_id": coach_id,
-                "coach_name": _s(record.owner_name),
-                "coach_email": _s(record.owner_email),
-                "scheduled_date": record.scheduled_date,
-                "scheduled_time": record.scheduled_time,
-                "duration_minutes": record.duration_minutes or 60,
-                "status": EnrolmentReview.STATUS_BOOKED,
-                "notes": _s(record.notes),
-                "meeting_provider": _s(record.meeting_provider),
-                "meeting_link": _s(record.meeting_link) or _s(record.graph_web_link),
-                "graph_event_id": _s(record.graph_event_id),
-                "invite_sent": bool(_s(record.graph_event_id)),
-                "sync_error": _s(record.last_graph_sync_error),
-                "booked_at": timezone.now(),
-                "cancelled_at": None,
-            },
+            defaults=defaults,
         )
     except DatabaseError:
         logger.exception(
@@ -198,6 +211,129 @@ def _cancel_enrolment_review(record):
         logger.exception(
             "_cancel_enrolment_review: could not update %s in Enrolment_Reviews", record.event_key
         )
+
+
+def _belongs_to_current_cycle(record, mirror):
+    """Whether a stored row is part of *this* learner's coaching cycle.
+
+    Rows are matched by email as well as by mirror id, because a learner's
+    mirror is recreated on occasion and their bookings must survive it. That
+    generosity has one bad case: a monthly-coaching or progress-review slot
+    generated against a *previous* mirror stays behind when that mirror is
+    deleted, and its dates came from a window the learner no longer has. The
+    coach never sees those — their timetable only builds keys from live
+    caseload profiles — so a learner shown them is reading dates their coach
+    cannot see.
+
+    Only the generated cycle is filtered. A catch-up, a student-support session,
+    an onboarding review, or a cycle-type meeting explicitly booked by the
+    learner is something somebody actually arranged and must survive a mirror
+    change. Learner bookings are identifiable by their durable idempotency key;
+    unlike coach-generated slots, they currently store the source learner id.
+    """
+    if mirror is None:
+        return True
+    if _s(record.event_type) not in ("mcr", "progress-review"):
+        return True
+    if _s(getattr(record, "idempotency_key", "")).startswith("learner-book:"):
+        return True
+    return str(record.learner_id or "") in ("", str(mirror.id))
+
+
+def _generated_cycle_events(learner, mirror, stored_by_key):
+    """The learner's monthly-coaching and progress-review slots for the cycle.
+
+    Delegates to the coach timetable's own generator so there is one definition
+    of when these fall — every 30 days for monthly coaching, every 12 weeks for
+    a progress review, counted from the learner's start date and stopping at
+    their end date. Importing it rather than restating it is the point: two
+    implementations of the same cycle would drift apart the first time either
+    was tuned, and the learner and their coach would then be told different
+    dates for the same meeting.
+
+    A slot that has been scheduled already appears in `stored_by_key` and is
+    skipped here, because the stored row carries the real date, time and status.
+    Everything else is returned as the coach sees it: "not-scheduled", dated on
+    the target, with no time.
+    """
+    from coach_api.models import CoachCalendarEvent
+    from coach_api.views import (
+        TIMETABLE_MCR_INTERVAL,
+        TIMETABLE_PROGRESS_REVIEW_INTERVAL,
+        build_timetable_event_key,
+        iterate_generated_schedule_dates,
+        resolve_schedule_window,
+    )
+
+    if mirror is None:
+        # The window is read from the mirror the coach timetable reads, so
+        # without one there is nothing to generate from. A learner reaches that
+        # state before their first activation.
+        return []
+
+    start_date, end_date = resolve_schedule_window(mirror.id, {}, {}, mirror)
+    # Falling back to the enrolment row: the coach passes prefetched maps of
+    # commercial/enrolment rows, and this endpoint holds the one learner.
+    start_date = start_date or _as_date(getattr(learner, "start_date", None))
+    end_date = end_date or _as_date(
+        getattr(learner, "end_date", None)
+        or getattr(learner, "practical_period_end_date", None)
+        or getattr(learner, "apprenticeship_end_date", None)
+    )
+    if not start_date or not end_date or end_date <= start_date:
+        return []
+
+    coach_name = _s(mirror.coach_name)
+    coach_email = _s(mirror.coach_email)
+    generated = []
+    for event_type, interval in (
+        ("mcr", TIMETABLE_MCR_INTERVAL),
+        ("progress-review", TIMETABLE_PROGRESS_REVIEW_INTERVAL),
+    ):
+        for sequence, target_date in iterate_generated_schedule_dates(
+            start_date, end_date, interval,
+        ):
+            event_key = build_timetable_event_key(mirror.id, event_type, sequence, target_date)
+            if event_key in stored_by_key:
+                continue
+            generated.append({
+                "id": event_key,
+                "eventKey": event_key,
+                "title": EVENT_TITLES.get(event_type, "Coaching Session"),
+                "source": event_type,
+                "type": EVENT_JSON_TYPES.get(event_type, "coaching"),
+                "sequence": sequence,
+                "status": CoachCalendarEvent.STATUS_NOT_SCHEDULED,
+                # Dated on the target so it lands in the right month; the coach
+                # calendar shows the same date with the same caveat.
+                "date": target_date.isoformat(),
+                "targetDate": target_date.isoformat(),
+                "scheduledDate": None,
+                "scheduledTime": None,
+                "durationMinutes": 60,
+                "coachName": coach_name,
+                "coachEmail": coach_email,
+                "meetingProvider": "",
+                "meetingLink": "",
+                "notes": "",
+                "reviewResponses": {},
+                "reviewCompletedAt": None,
+                "invited": False,
+                "syncError": "",
+                # Nothing has been booked, so there is no time to show and no
+                # invitation to claim — see the coach's own generated event.
+                "isTimeEstimated": True,
+                "generated": True,
+            })
+    return generated
+
+
+def _as_date(value):
+    """A date from the enrolment row's date-or-text columns, or None."""
+    from coach_api.views import parse_date_value
+
+    parsed = parse_date_value(value)
+    return parsed.date() if isinstance(parsed, datetime) else parsed
 
 
 def _serialize_event(record):
@@ -229,12 +365,106 @@ def _serialize_event(record):
         "notes": _s(record.notes),
         "reviewResponses": record.review_responses if isinstance(record.review_responses, dict) else {},
         "reviewCompletedAt": record.review_completed_at.isoformat() if record.review_completed_at else None,
+        "learnerSigned": bool(_s((record.review_responses or {}).get("learner_signature"))),
+        "learnerSignedAt": _s((record.review_responses or {}).get("learner_signed_at")) or None,
         # A row can save while the Graph sync fails (no network, non-tenant
         # mailbox, ...). Without this the UI shows a confident "Booked" for a
         # meeting that reached nobody's calendar or inbox.
         "invited": bool(_s(record.graph_event_id)),
         "syncError": _s(record.last_graph_sync_error),
     }
+
+
+def _learner_calendar_record(kind, pk, event_key):
+    """Resolve an event only when it belongs to the requested learner."""
+    model = SOURCE_MODELS.get(kind)
+    if model is None:
+        return None
+    learner = model.all_learners.filter(pk=pk).first()
+    if learner is None:
+        return None
+    mirror = learner_profile_for_source(learner, pk, active_only=True)
+    emails = {_s(learner.email).strip().casefold()}
+    if mirror:
+        emails.add(_s(mirror.email).strip().casefold())
+    emails.discard("")
+    record = CoachCalendarEvent.objects.filter(event_key=event_key).first()
+    if not record:
+        return None
+    return record if (record.learner_id == pk or _s(record.learner_email).strip().casefold() in emails) else None
+
+
+@learner_self_or_staff(kwarg="pk")
+def learner_calendar_event_artifacts(request, kind, pk, event_key):
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    record = _learner_calendar_record(kind, pk, event_key)
+    if not record:
+        return _error("Calendar event not found for this learner.", 404)
+    from coach_api.views import fetch_coach_meeting_graph_snapshot, persist_coach_meeting_snapshots
+    snapshot, error_payload, status_code = fetch_coach_meeting_graph_snapshot(record)
+    if error_payload:
+        return JsonResponse(error_payload, status=status_code)
+    storage = persist_coach_meeting_snapshots(
+        record,
+        artifacts=snapshot["artifacts"],
+        attendance_reports=snapshot["attendanceReports"],
+        attendance_tracker=snapshot["attendanceTracker"],
+    )
+    # Learners may watch the formal meeting recording, but transcripts remain
+    # staff-only because they can contain sensitive discussion notes.
+    learner_artifacts = [
+        artifact for artifact in snapshot["artifacts"]
+        if _s(artifact.get("artifact_type")).lower() == "recording"
+    ]
+    return JsonResponse({
+        "artifacts": learner_artifacts,
+        "attendance": snapshot["attendance"],
+        "errors": snapshot["errors"],
+        "partial": snapshot["partial"],
+        "storage": storage,
+    }, status=status_code)
+
+
+@learner_self_or_staff(kwarg="pk")
+def learner_calendar_event_artifact_content(request, kind, pk, event_key, artifact_type, artifact_id):
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    record = _learner_calendar_record(kind, pk, event_key)
+    if not record:
+        return _error("Calendar event not found for this learner.", 404)
+    if _s(artifact_type).lower() != "recording":
+        return _error("Only meeting recordings are available to learners.", 403)
+    from coach_api.views import coach_meeting_artifact_content_response
+    return coach_meeting_artifact_content_response(request, record, event_key, artifact_type, artifact_id)
+
+
+@csrf_exempt
+@learner_self_or_staff(kwarg="pk")
+def learner_progress_review_sign(request, kind, pk, event_key):
+    if request.method != "POST":
+        return _error("Method not allowed.", 405)
+    record = _learner_calendar_record(kind, pk, event_key)
+    if not record or record.event_type != "progress-review":
+        return _error("Progress review not found for this learner.", 404)
+    try:
+        payload = json.loads(request.body or b"{}")
+    except (TypeError, ValueError):
+        return _error("Invalid JSON body.", 400)
+    signature = _s(payload.get("signature"))
+    if not signature.startswith("data:image/"):
+        return _error("A valid learner signature is required.", 400)
+    if record.status not in {CoachCalendarEvent.STATUS_AWAITING_SIGNATURE, CoachCalendarEvent.STATUS_COMPLETED}:
+        return _error("The coach must submit the review before the learner can sign it.", 409)
+    responses = dict(record.review_responses or {})
+    responses.update({
+        "learner_signature": signature,
+        "learner_signed_by": _s(payload.get("name")) or record.learner_name,
+        "learner_signed_at": timezone.now().isoformat(),
+    })
+    record.review_responses = responses
+    record.save(update_fields=["review_responses", "updated_at"])
+    return JsonResponse({"event": _serialize_event(record)})
 
 
 def _serialize_live_session_event(event):
@@ -274,6 +504,7 @@ def _same_calendar_identity(left, right):
     return _s(left).strip().casefold() == _s(right).strip().casefold()
 
 
+@learner_self_or_staff(kwarg="pk")
 def learner_calendar(request, kind, pk):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -310,13 +541,25 @@ def learner_calendar(request, kind, pk):
     for candidate in {mirror_email, source_email} - {""}:
         match |= Q(learner_email__iexact=candidate)
     if not match:
-        return JsonResponse({"learner": {"kind": kind, "id": pk}, "events": []})
+        return JsonResponse({
+            "learner": {"kind": kind, "id": pk},
+            "events": [],
+            "bookingCalendar": booking_calendar_payload(),
+        })
 
     try:
-        records = CoachCalendarEvent.objects.filter(match).order_by(
-            "target_date", "event_type", "sequence"
-        )
+        records = [
+            record for record in CoachCalendarEvent.objects.filter(match).order_by(
+                "target_date", "event_type", "sequence"
+            )
+            if _belongs_to_current_cycle(record, mirror)
+        ]
         events = [_serialize_event(record) for record in records]
+
+        # The cycle the coach timetable draws: every slot for this learner's
+        # programme, with the ones already scheduled left to their stored row.
+        stored_by_key = {_s(record.event_key) for record in records}
+        events.extend(_generated_cycle_events(learner, mirror, stored_by_key))
 
         # Live curriculum sessions are generated from the same module/week
         # schedule used by the coach calendar. Restrict them to this learner's
@@ -344,6 +587,13 @@ def learner_calendar(request, kind, pk):
             for event in events
             if event.get("eventKey") or event.get("id")
         }.values())
+        # Generated slots interleave with stored ones, so the page is handed a
+        # calendar in date order rather than stored-then-generated.
+        events.sort(key=lambda event: (
+            event.get("date") or event.get("targetDate") or "",
+            _s(event.get("source")),
+            event.get("sequence") or 0,
+        ))
     except DatabaseError as exc:
         logger.exception("learner_calendar: event lookup failed")
         return _error(f"Database error: {exc}", 502)
@@ -352,6 +602,7 @@ def learner_calendar(request, kind, pk):
         {
             "learner": {"kind": kind, "id": pk, "email": email},
             "events": events,
+            "bookingCalendar": booking_calendar_payload(),
         }
     )
 
@@ -379,6 +630,7 @@ def learner_calendar_book(request, kind, pk):
         build_booked_calendar_event,
         booking_request_matches_record,
         calendar_idempotency_key,
+        LearnerCalendarConflict,
         normalize_duration_minutes,
         parse_date_value,
         parse_time_value,
@@ -447,6 +699,9 @@ def learner_calendar_book(request, kind, pk):
         return _error("scheduledDate is required.", 400)
     if not scheduled_time:
         return _error("scheduledTime is required.", 400)
+    date_restriction = booking_date_restriction(scheduled_date)
+    if date_restriction is not None:
+        return _error(date_restriction.message, 400)
 
     notes = _s(payload.get("notes"))[:500]
     # An onboarding learner has no mirror row yet, so fall back to the source.
@@ -549,6 +804,8 @@ def learner_calendar_book(request, kind, pk):
         record, warning, _attempted = synchronize_reserved_calendar_event(
             record.pk, build_booked_calendar_event(record)
         )
+    except LearnerCalendarConflict as exc:
+        return _error(str(exc), 409)
     except ValueError as exc:
         return _error(str(exc), 409 if "already used" in str(exc) else 400)
     except DatabaseError as exc:
@@ -568,6 +825,108 @@ def learner_calendar_book(request, kind, pk):
     return JsonResponse(
         {"event": _serialize_event(record), "warning": _friendly_sync_warning(warning)},
         status=201 if created else 200,
+    )
+
+
+@csrf_exempt
+@learner_self_or_staff(kwarg="pk")
+def learner_calendar_reschedule(request, kind, pk):
+    """Move one of this learner's booked sessions and update its Graph event."""
+    from coach_api.views import (
+        build_booked_calendar_event,
+        CalendarSyncInProgress,
+        LearnerCalendarConflict,
+        normalize_duration_minutes,
+        parse_date_value,
+        parse_time_value,
+        persist_calendar_sync_reservation,
+        synchronize_reserved_calendar_event,
+    )
+
+    if request.method not in {"POST", "PATCH"}:
+        return _error("Method not allowed.", 405)
+    if SOURCE_MODELS.get(kind) is None:
+        return _error(f"Unknown kind: {kind!r}. Expected 'commercial' or 'apprenticeship'.", 404)
+
+    try:
+        payload = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return _error("Invalid JSON body.", 400)
+
+    event_key = _s(payload.get("eventKey"))
+    if not event_key:
+        return _error("eventKey is required.", 400)
+    try:
+        scheduled_date = parse_date_value(payload.get("scheduledDate"))
+        scheduled_time = parse_time_value(payload.get("scheduledTime"))
+        duration_minutes = normalize_duration_minutes(payload.get("durationMinutes") or 60)
+        timezone_offset_minutes = int(payload.get("timezoneOffsetMinutes") or 0)
+        if not -840 <= timezone_offset_minutes <= 840:
+            raise ValueError("timezoneOffsetMinutes is outside the supported range.")
+    except ValueError as exc:
+        return _error(str(exc), 400)
+    if isinstance(scheduled_date, datetime):
+        scheduled_date = scheduled_date.date()
+    if not scheduled_date:
+        return _error("scheduledDate is required.", 400)
+    if not scheduled_time:
+        return _error("scheduledTime is required.", 400)
+    date_restriction = booking_date_restriction(scheduled_date)
+    if date_restriction is not None:
+        return _error(date_restriction.message, 400)
+
+    try:
+        record = CoachCalendarEvent.objects.filter(
+            event_key=event_key,
+            learner_id=pk,
+            event_type__in=CANCELLABLE_TYPES,
+        ).first()
+        if record is None:
+            return _error("Booking not found.", 404)
+        if record.status != CoachCalendarEvent.STATUS_SCHEDULED:
+            return _error("Only an upcoming scheduled session can be rescheduled.", 409)
+        if (
+            record.scheduled_date == scheduled_date
+            and record.scheduled_time == scheduled_time
+            and record.duration_minutes == duration_minutes
+        ):
+            return JsonResponse({"event": _serialize_event(record), "warning": ""})
+
+        from .calendar_connections import booking_conflicts
+        if booking_conflicts(
+            kind,
+            pk,
+            scheduled_date,
+            scheduled_time,
+            duration_minutes,
+            timezone_offset_minutes,
+            exclude_scheduled_date=record.scheduled_date,
+            exclude_scheduled_time=record.scheduled_time,
+            exclude_duration_minutes=record.duration_minutes,
+        ):
+            return _error(
+                "That time overlaps an event in your connected personal calendar. Please choose another time.",
+                409,
+            )
+
+        record.scheduled_date = scheduled_date
+        record.scheduled_time = scheduled_time
+        record.duration_minutes = duration_minutes
+        record = persist_calendar_sync_reservation(record)
+        record, warning, _attempted = synchronize_reserved_calendar_event(
+            record.pk, build_booked_calendar_event(record)
+        )
+    except LearnerCalendarConflict as exc:
+        return _error(str(exc), 409)
+    except CalendarSyncInProgress:
+        return _error("Calendar event synchronization is already in progress.", 409)
+    except DatabaseError as exc:
+        logger.exception("learner_calendar_reschedule: update failed")
+        return _error(f"Database error: {exc}", 502)
+
+    _record_enrolment_review(record, kind=kind, learner_kind_id=pk, coach_id=None)
+    return JsonResponse(
+        {"event": _serialize_event(record), "warning": _friendly_sync_warning(warning)}
     )
 
 
@@ -637,6 +996,7 @@ def learner_calendar_cancel(request, kind, pk):
     )
 
 
+@learner_self_or_staff(kwarg="pk")
 def learner_onboarding_reviews(request, kind, pk):
     """The three onboarding reviews and whether each is booked.
 

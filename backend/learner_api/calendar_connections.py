@@ -9,6 +9,7 @@ import json
 import os
 import re
 import ipaddress
+import secrets
 from urllib.parse import urljoin, urlparse
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
@@ -18,9 +19,13 @@ import httpx
 from cryptography.fernet import Fernet, InvalidToken
 from lxml import etree
 from django.core import signing
+from django.core.cache import cache
 from django.db import connections, transaction
 from django.http import HttpResponseRedirect, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+
+from login.permissions import _auth_gate_enabled, learner_self_only
+from login.sessions import authenticate_request
 
 from .learner_detail import SOURCE_MODELS
 
@@ -28,6 +33,64 @@ from .learner_detail import SOURCE_MODELS
 PROVIDERS = {"google", "microsoft", "icloud", "caldav", "ics"}
 OAUTH_PROVIDERS = {"google", "microsoft"}
 STATE_SALT = "learner-personal-calendar-oauth"
+
+#: OAuth ``state`` is signed and short-lived but, on its own, replayable within
+#: its 10-minute window. Pairing it with a single-use nonce recorded server-side
+#: against the minting learner makes each authorization usable exactly once and
+#: lets the callback derive whose credentials to store from the server's record
+#: rather than from the (attacker-replayable) state. The nonce lives in the
+#: cache (Redis in production) rather than a table, so no migration is needed.
+_OAUTH_NONCE_PREFIX = "calendar-oauth-nonce:"
+_OAUTH_NONCE_TTL_SECONDS = 600
+
+
+def _issue_oauth_nonce(kind, learner_id, provider):
+    """Mint a single-use nonce for an OAuth flow and record who it belongs to."""
+    nonce = secrets.token_urlsafe(32)
+    cache.set(
+        _OAUTH_NONCE_PREFIX + nonce,
+        {"kind": kind, "learner_id": int(learner_id), "provider": provider},
+        _OAUTH_NONCE_TTL_SECONDS,
+    )
+    return nonce
+
+
+def _consume_oauth_nonce(nonce):
+    """Return the record for ``nonce`` and delete it, or None if unknown.
+
+    Single-use: the delete is what stops a state being redeemed twice, so a
+    replay of an already-completed authorization finds nothing and is rejected.
+    """
+    if not nonce:
+        return None
+    key = _OAUTH_NONCE_PREFIX + nonce
+    record = cache.get(key)
+    if record is None:
+        return None
+    cache.delete(key)
+    return record
+
+
+def _own_calendar_error(request, learner_id):
+    """learner-self-only, inline, for the GET ``oauth_start``, or None to proceed.
+
+    ``learner_self_only`` cannot be used on ``oauth_start`` because it lets safe
+    methods through; this reproduces its non-safe branch. Calendar credentials
+    are the learner's own — staff and admin are refused (403), a learner naming
+    another's id gets 404 (existence-hiding), no session is 401. Honours
+    ``LEARNER_API_REQUIRE_AUTH=0`` like the rest of the login gates.
+    """
+    if not _auth_gate_enabled():
+        authenticate_request(request)
+        return None
+    account = authenticate_request(request)
+    if account is None:
+        return _error("Authentication required.", 401)
+    if account.role == "learner":
+        if account.subject_id != learner_id:
+            return JsonResponse({"error": "Not found."}, status=404)
+        return None
+    return _error("Only the learner may manage their own calendar connection.", 403)
 
 
 def _microsoft_tenant():
@@ -114,6 +177,8 @@ def _public(row):
     return {key: row[key] for key in ("provider", "accountEmail", "status", "connectedAt", "lastSyncAt")}
 
 
+# Private calendar credentials/connections — the owner's alone, not staff (A5).
+@learner_self_only(kwarg="learner_id")
 def connection_list(request, kind, learner_id):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -141,9 +206,19 @@ def connection_list(request, kind, learner_id):
 def oauth_start(request, kind, learner_id, provider):
     if request.method != "GET" or provider not in OAUTH_PROVIDERS:
         return _error("Unsupported calendar provider.", 400)
+    # A GET, so learner_self_only (which lets safe methods through) cannot gate
+    # it; enforce the same learner-self-only rule inline before a state naming
+    # this learner is minted. Fail closed; same status shapes as the decorator.
+    ownership_error = _own_calendar_error(request, learner_id)
+    if ownership_error is not None:
+        return ownership_error
     if not _learner(kind, learner_id):
         return _error("Learner not found.", 404)
-    state = signing.dumps({"kind": kind, "learnerId": learner_id, "provider": provider}, salt=STATE_SALT, compress=True)
+    nonce = _issue_oauth_nonce(kind, learner_id, provider)
+    state = signing.dumps(
+        {"kind": kind, "learnerId": learner_id, "provider": provider, "nonce": nonce},
+        salt=STATE_SALT, compress=True,
+    )
     if provider == "google":
         client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
         callback = os.environ.get("GOOGLE_CALLBACK_URI", "")
@@ -187,6 +262,27 @@ def oauth_callback(request, provider):
         payload = signing.loads(request.GET.get("state", ""), salt=STATE_SALT, max_age=600)
         if payload.get("provider") != provider:
             raise ValueError("Provider mismatch")
+
+        # Single-use: consume the nonce before doing anything with the flow. A
+        # replayed or already-completed authorization finds no record and stops
+        # here, before any token exchange or write.
+        record = _consume_oauth_nonce(payload.get("nonce"))
+        if record is None:
+            raise ValueError("This calendar authorization has expired or was already used.")
+        # The server's record — not the (replayable) state — decides whose
+        # credentials are stored. A state whose learner id disagrees with the
+        # record it was issued against is rejected, not quietly resolved to one.
+        learner_id = record["learner_id"]
+        if int(payload.get("learnerId")) != learner_id:
+            raise ValueError("Calendar authorization mismatch.")
+        # Opportunistic identity binding: where the session cookie reaches this
+        # callback host, a caller who is not this learner is rejected outright,
+        # closing the in-flight-state replay race. Where no session is present
+        # (the cookie may not survive to the callback host in every deployment),
+        # the single-use nonce above remains the gate. Never the sole check.
+        account = authenticate_request(request)
+        if account is not None and account.subject_id != learner_id:
+            raise ValueError("Calendar authorization does not match the signed-in learner.")
         code = request.GET.get("code")
         if not code:
             raise ValueError(request.GET.get("error_description") or "OAuth was cancelled")
@@ -206,7 +302,7 @@ def oauth_callback(request, provider):
         response.raise_for_status()
         tokens = response.json()
         email = _oauth_identity(provider, tokens["access_token"])
-        _save(payload["kind"], int(payload["learnerId"]), provider, tokens, email)
+        _save(record["kind"], learner_id, provider, tokens, email)
         return HttpResponseRedirect(f"{app_url}/learner/calendar?calendar_connected={provider}")
     except Exception as exc:
         message = urlencode({"calendar_error": str(exc)[:180]})
@@ -270,6 +366,9 @@ def _discover_caldav(url, credentials, timeout):
 
 
 @csrf_exempt
+# Calendar credentials are the learner's own; only they may attach them. Staff
+# and admin are refused (403), not given access as they are on most endpoints.
+@learner_self_only(kwarg="learner_id")
 def credential_connect(request, kind, learner_id, provider):
     if request.method != "POST" or provider not in {"icloud", "caldav", "ics"}:
         return _error("Unsupported calendar provider.", 400)
@@ -302,6 +401,8 @@ def credential_connect(request, kind, learner_id, provider):
 
 
 @csrf_exempt
+# Only the learner may remove their own calendar connection; staff/admin 403.
+@learner_self_only(kwarg="learner_id")
 def disconnect(request, kind, learner_id, provider):
     if request.method != "POST":
         return _error("Method not allowed.", 405)
@@ -522,11 +623,17 @@ def cached_learner_busy_slots(kind, learner_id, start, end):
     ]
 
 
-def _cached_booking_conflicts(kind, learner_id, start_dt, end_dt, provider=None):
+def _cached_booking_conflicts(
+    kind, learner_id, start_dt, end_dt, provider=None, exclude_start_dt=None, exclude_end_dt=None
+):
     """Return True when cached privacy-safe busy slots overlap a proposed booking."""
     try:
         provider_clause = ""
+        exclude_clause = ""
         params = [kind, learner_id, end_dt, start_dt]
+        if exclude_start_dt is not None and exclude_end_dt is not None:
+            exclude_clause = "AND NOT (slot.starts_at = %s AND slot.ends_at = %s)"
+            params.extend([exclude_start_dt, exclude_end_dt])
         if provider:
             provider_clause = "AND connection.provider = %s"
             params.append(provider)
@@ -538,9 +645,10 @@ def _cached_booking_conflicts(kind, learner_id, start_dt, end_dt, provider=None)
                      ON connection.id = slot.connection_id
                    WHERE connection.learner_kind = %s
                      AND connection.learner_id = %s
-                     AND connection.status = 'connected'
-                     AND slot.starts_at < %s AND slot.ends_at > %s
-                     {provider_clause}
+                      AND connection.status = 'connected'
+                      AND slot.starts_at < %s AND slot.ends_at > %s
+                      {exclude_clause}
+                      {provider_clause}
                    LIMIT 1''',
                 params,
             )
@@ -549,6 +657,8 @@ def _cached_booking_conflicts(kind, learner_id, start_dt, end_dt, provider=None)
         return False
 
 
+# Reads (and refreshes) the owner's private free/busy — owner only, not staff (A5).
+@learner_self_only(kwarg="learner_id")
 def availability(request, kind, learner_id):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -564,10 +674,27 @@ def availability(request, kind, learner_id):
     return JsonResponse({"busy": busy, "errors": errors, "connectedProviders": providers})
 
 
-def booking_conflicts(kind, learner_id, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes=0):
+def booking_conflicts(
+    kind,
+    learner_id,
+    scheduled_date,
+    scheduled_time,
+    duration_minutes,
+    timezone_offset_minutes=0,
+    *,
+    exclude_scheduled_date=None,
+    exclude_scheduled_time=None,
+    exclude_duration_minutes=None,
+):
     """Return True when a proposed learner booking overlaps a connected calendar."""
     start_dt = datetime.combine(scheduled_date, scheduled_time, tzinfo=timezone.utc) + timedelta(minutes=timezone_offset_minutes)
     end_dt = start_dt + timedelta(minutes=duration_minutes)
+    exclude_start_dt = exclude_end_dt = None
+    if exclude_scheduled_date and exclude_scheduled_time and exclude_duration_minutes:
+        exclude_start_dt = datetime.combine(
+            exclude_scheduled_date, exclude_scheduled_time, tzinfo=timezone.utc
+        ) + timedelta(minutes=timezone_offset_minutes)
+        exclude_end_dt = exclude_start_dt + timedelta(minutes=exclude_duration_minutes)
     start, end = start_dt.isoformat().replace("+00:00", "Z"), end_dt.isoformat().replace("+00:00", "Z")
     try:
         with _db().cursor() as cursor:
@@ -575,19 +702,27 @@ def booking_conflicts(kind, learner_id, scheduled_date, scheduled_time, duration
                               WHERE learner_kind = %s AND learner_id = %s AND status = 'connected' ''', [kind, learner_id])
             providers = [item[0] for item in cursor.fetchall()]
     except Exception:
-        return _cached_booking_conflicts(kind, learner_id, start_dt, end_dt)
+        return _cached_booking_conflicts(
+            kind, learner_id, start_dt, end_dt,
+            exclude_start_dt=exclude_start_dt, exclude_end_dt=exclude_end_dt,
+        )
     for provider in providers:
         try:
             row = _row(kind, learner_id, provider)
             row.update({"kind": kind, "learnerId": learner_id})
             for slot in _sync_connection_busy(row, start, end):
                 slot_start, slot_end = _parse_dt(slot.get("start", "")), _parse_dt(slot.get("end", ""))
+                if slot_start == exclude_start_dt and slot_end == exclude_end_dt:
+                    continue
                 if slot_start and slot_end and start_dt < slot_end and end_dt > slot_start:
                     return True
         except Exception:
             # A transient provider failure should not make the whole LMS unusable;
             # cached busy slots still block known conflicts without exposing details.
-            if _cached_booking_conflicts(kind, learner_id, start_dt, end_dt, provider):
+            if _cached_booking_conflicts(
+                kind, learner_id, start_dt, end_dt, provider,
+                exclude_start_dt=exclude_start_dt, exclude_end_dt=exclude_end_dt,
+            ):
                 return True
             continue
     return False

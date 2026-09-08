@@ -120,7 +120,7 @@ export function RowAction({
   label: string;
   icon?: string;
   onClick: () => void;
-  emphasis?: 'primary' | 'secondary' | 'meeting';
+  emphasis?: 'primary' | 'secondary' | 'meeting' | 'calendar';
   disabled?: boolean;
 }) {
   return (
@@ -132,6 +132,8 @@ export function RowAction({
         'inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60',
         emphasis === 'meeting'
           ? 'meeting-join-action'
+          : emphasis === 'calendar'
+            ? 'border border-primary-200 bg-primary-50 text-primary-700 shadow-sm hover:border-primary-300 hover:bg-primary-100'
           : emphasis === 'primary'
             ? 'primary-action bg-primary-600 text-white hover:bg-primary-700'
             : 'border border-foreground-200 bg-background-50 text-foreground-700 hover:border-foreground-300 hover:text-foreground-900',

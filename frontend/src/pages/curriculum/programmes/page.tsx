@@ -8,12 +8,14 @@ import { ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
 import { WEEKEND_DAYS, WEEKEND_HINT } from '@/pages/curriculum/shared/entities/ui';
 import { CurriculumStructureWizard, type StructureWizardCreated, type StructureWizardRecordStep } from '@/pages/curriculum/shared/entities/structureWizard';
 import { ensureSharedEmptyKsbProfile, SHARED_EMPTY_KSB_PROFILE_NAME } from '@/pages/curriculum/shared/entities/programmeKsbProfile';
-import { formatProgrammeLevel, visibleNotes } from '@/pages/curriculum/shared/entities/model';
+import { formatProgrammeLevel, sortEntities, visibleNotes, PROGRAMME_SORT_OPTIONS } from '@/pages/curriculum/shared/entities/model';
+import { SelectMenu } from '@/components/feature/SelectField';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
 import { useCurriculumStaffProfiles } from '@/hooks/useCurriculumStaffProfiles';
 import { curriculumNavItems } from '@/mocks/navigation';
+import { formatHoursMinutes } from '@/lib/format';
 import {
   archiveCurriculumCohort,
   archiveCurriculumGroup,
@@ -220,6 +222,9 @@ export default function CurriculumProgrammes() {
   // It also makes a filtered view something that can be linked to.
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState(() => searchParams.get('q') || '');
+  // Which order the grid is in. Empty is the order the endpoint returned, which
+  // is what the page has always shown.
+  const [sort, setSort] = useState('');
   const [showArchived, setShowArchived] = useState(() => searchParams.get('view') === 'archive');
   const [programmePage, setProgrammePage] = useState(() => Math.max(1, Math.floor(Number(searchParams.get('page'))) || 1));
   const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false);
@@ -316,11 +321,15 @@ export default function CurriculumProgrammes() {
   // The stat tiles stay on live programmes; only the grid switches, so the
   // archive is a place to review and clear old programmes, not a second dashboard.
   const listedProgrammes = showArchived ? archivedProgrammes : visibleProgrammes;
-  const filtered = listedProgrammes.filter(p => {
-    const needle = search.toLowerCase();
-    if (needle && !p.name.toLowerCase().includes(needle)) return false;
-    return true;
-  });
+  const filtered = sortEntities(
+    listedProgrammes.filter(p => {
+      const needle = search.toLowerCase();
+      if (needle && !p.name.toLowerCase().includes(needle)) return false;
+      return true;
+    }),
+    PROGRAMME_SORT_OPTIONS,
+    sort,
+  );
   const totalProgrammePages = Math.max(1, Math.ceil(filtered.length / PROGRAMMES_PER_PAGE));
   const paginatedProgrammes = filtered.slice(
     (programmePage - 1) * PROGRAMMES_PER_PAGE,
@@ -338,7 +347,7 @@ export default function CurriculumProgrammes() {
       return;
     }
     setProgrammePage(1);
-  }, [search, showArchived]);
+  }, [search, showArchived, sort]);
 
   useEffect(() => {
     // Not while the programmes are still in flight: `filtered` is empty until
@@ -996,6 +1005,19 @@ export default function CurriculumProgrammes() {
                 </button>
               )}
             </div>
+            <label className="flex shrink-0 items-center gap-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-foreground-400">Sort</span>
+              <span className="w-48">
+                <SelectMenu
+                  size="sm"
+                  value={sort}
+                  onChange={setSort}
+                  options={PROGRAMME_SORT_OPTIONS.map(option => ({ value: option.value, label: option.label }))}
+                  ariaLabel="Sort programmes"
+                  placeholder="Default order"
+                />
+              </span>
+            </label>
             <button
               type="button"
               onClick={() => setShowArchived(previous => !previous)}
@@ -1592,7 +1614,7 @@ function ProgrammeLearnerImpactModal({
 
         <div className="grid grid-cols-2 gap-3 border-b border-background-200 bg-background-50 p-4 lg:grid-cols-4">
           <ImpactStat icon="ri-user-follow-line" label="Assigned learners" value={String(assignedLearners.length)} detail="Learner + enrolment records" />
-          <ImpactStat icon="ri-time-line" label="OTJH achieved" value={`${formatMetricNumber(achievedHours)}h`} detail={`of ${formatMetricNumber(plannedHours)}h planned across this programme's components`} />
+          <ImpactStat icon="ri-time-line" label="OTJH achieved" value={formatHoursMinutes(achievedHours)} detail={`of ${formatHoursMinutes(plannedHours)} planned across this programme's components`} />
           <ImpactStat icon="ri-node-tree" label="KSB weight earned" value={`${averageProgress}%`} detail={`${formatMetricNumber(totalConsumed)} of ${formatMetricNumber(totalExpected)} expected weight`} />
           <ImpactStat icon="ri-checkbox-circle-line" label="Achieved KSBs" value={String(achievedKsbCount)} detail={`${achievedRecordCount} learner record${achievedRecordCount === 1 ? '' : 's'}`} />
         </div>
@@ -1669,10 +1691,10 @@ function ProgrammeLearnerImpactRow({
         <div className="grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-4 xl:w-[620px]">
           <LearnerMiniMetric
             label="OTJH here"
-            value={`${formatMetricNumber(otjhCompleted)}h`}
+            value={formatHoursMinutes(otjhCompleted)}
             detail={otjhRow
-              ? `${otjhProgress}% of ${formatMetricNumber(otjhPlanned)}h · ${formatMetricNumber(learnerMeta?.completedHours || 0)}h on record`
-              : `${otjhProgress}% of ${formatMetricNumber(otjhPlanned)}h`}
+              ? `${otjhProgress}% of ${formatHoursMinutes(otjhPlanned)} · ${formatHoursMinutes(learnerMeta?.completedHours || 0)} on record`
+              : `${otjhProgress}% of ${formatHoursMinutes(otjhPlanned)}`}
           />
           <LearnerMiniMetric label="KSB weight achieved" value={formatMetricNumber(achievedWeight)} detail="Total consumed weight" />
           <LearnerMiniMetric label="Achieved KSBs" value={String(achievements.length)} detail={`${achievedCount} record${achievedCount === 1 ? '' : 's'}`} />
@@ -1866,7 +1888,7 @@ function formatMetricNumber(value: number) {
 }
 
 function formatNullableHours(value: number | null) {
-  return value === null ? 'Not returned' : `${formatMetricNumber(value)}h`;
+  return value === null ? 'Not returned' : formatHoursMinutes(value);
 }
 
 function formatOtjhPair(actual: number | null, planned: number | null) {

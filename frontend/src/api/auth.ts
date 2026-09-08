@@ -43,6 +43,8 @@ export interface AuthUser {
   /** Learners only. */
   learnerType?: string | null;
   programme?: string | null;
+  /** Server-derived eligibility for the previous-record portal. */
+  hasLegacyRecord?: boolean;
   /** Employers only — the organisations they belong to. */
   organisationIds?: number[];
 }
@@ -72,7 +74,7 @@ const BASE = '/login_api';
 // remains the authority and a later call must still ask the server.
 const inFlightGets = new Map<string, Promise<unknown>>();
 
-function request<T>(path: string, init?: RequestInit): Promise<T> {
+function request<T>(path: string, init?: globalThis.RequestInit): Promise<T> {
   const method = (init?.method || 'GET').toUpperCase();
   if (method !== 'GET') return send<T>(path, init);
 
@@ -86,7 +88,7 @@ function request<T>(path: string, init?: RequestInit): Promise<T> {
   return pending;
 }
 
-async function send<T>(path: string, init?: RequestInit): Promise<T> {
+async function send<T>(path: string, init?: globalThis.RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${BASE}${path}`, {

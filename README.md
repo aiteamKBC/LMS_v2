@@ -339,11 +339,22 @@ Run these commands from `backend/`:
 | `python manage.py seed_demo_admin` | Create or reset the demo administrator account |
 | `python manage.py create_calendar_busy_slots_table` | Create the learner personal-calendar busy-slot cache |
 | `python manage.py sync_calendar_busy_slots` | Refresh connected learner calendars (defaults to the next 90 days) |
+| `python manage.py sync_teams_meeting_artifacts` | Pull Teams attendance, transcripts and recordings for recently ended live sessions and coach meetings |
+| `python manage.py sync_coach_meeting_snapshots --recent` | Pull Teams artifacts/attendance for recently ended coach MCM, PR, catch-up and support meetings only |
 
 Run `sync_calendar_busy_slots` every 10–15 minutes in the deployment scheduler. Example cron entry:
 
 ```cron
 */15 * * * * cd /path/to/LMS/backend && .venv/bin/python manage.py sync_calendar_busy_slots
+```
+
+Run `sync_teams_meeting_artifacts` every five minutes to keep Microsoft Teams
+attendance, recordings and transcripts fresh. The command now also checks
+recently ended coach meetings (MCM, progress reviews, catch-ups and support
+sessions) unless `--skip-coach-meetings` is supplied.
+
+```cron
+*/5 * * * * cd /path/to/LMS/backend && .venv/bin/python manage.py sync_teams_meeting_artifacts --lookback-hours 24 --limit 100 --coach-limit 100
 ```
 
 The cache stores only start/end times and never stores personal event titles, descriptions, attendees, or locations. Booking endpoints still perform a live provider check before confirming a session.

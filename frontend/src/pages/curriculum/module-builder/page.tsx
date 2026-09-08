@@ -9,6 +9,7 @@ import { useCurriculumKsbSets } from '@/hooks/useCurriculumKsbSets';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { curriculumNavItems } from '@/mocks/navigation';
+import { formatHoursMinutes } from '@/lib/format';
 import {
   fetchCurriculumHolidays,
   fetchCurriculumOverview,
@@ -29,7 +30,13 @@ import {
 // and whether its Teams series exists -- used to live on a separate Curriculum
 // -> Modules page. This catalogue lists it now, and each delivery row opens the
 // module workspace where that delivery (tutor included) is edited.
-import { formatDateLabel, moduleIdentity, namedCurriculumWorkspacePath } from '../shared/entities/model';
+import {
+  formatDateLabel,
+  moduleIdentity,
+  namedCurriculumWorkspacePath,
+  sortEntities,
+  MODULE_SORT_OPTIONS,
+} from '../shared/entities/model';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
 // Creating a module and moving it between programmes, cohorts and groups is one
 // dedicated form, shared with the Group and Module workspaces. It replaced the
@@ -61,6 +68,7 @@ import {
   saveModuleStructure,
   uploadComponentResource,
   utcIsoToCalendarParts,
+  weekPlacementLabel,
   type AdvancedModuleDetails,
   type CompletionCriteria,
   type KsbMapping,
@@ -237,6 +245,8 @@ export default function ModuleBuilder() {
     groupId: (searchParams.get('group') || '').trim(),
   });
   const [search, setSearch] = useState('');
+  // Which order the catalogue is in. Empty is the order the endpoint returned.
+  const [sort, setSort] = useState('');
   const [programmeFilter, setProgrammeFilter] = useState<string>(() => requestedCreateScopeRef.current.programmeName || 'All');
   // The delivery filters the Modules page used to carry. They read the module's
   // own deliveries rather than a second fetch of cohorts and groups, so the
@@ -851,7 +861,7 @@ export default function ModuleBuilder() {
     && !deliveryFiltersActive
     && !programmeFilterKeys(programmeFilter, curriculumProgrammes).some(key => programmeKeysWithModules.has(key));
 
-  const filtered = catalogueModules.filter(module => {
+  const filteredModules = catalogueModules.filter(module => {
     const text = `${module.title} ${module.catalogueId} ${module.programmeName} ${moduleIdentityText(module)} ${moduleDeliverySearchText(module)}`.toLowerCase();
     if (search && !text.includes(search.toLowerCase())) return false;
     if (programmeFilter !== 'All' && !moduleBelongsToProgrammeFilter(module, programmeFilter, curriculumProgrammes)) return false;
@@ -865,6 +875,9 @@ export default function ModuleBuilder() {
       && (!tutorFilter || normaliseDeepLinkValue(usage.tutor) === normaliseDeepLinkValue(tutorFilter))
     ));
   });
+  // Sorted after filtering, so the chosen order applies to what is on screen
+  // rather than to the whole catalogue behind it.
+  const filtered = sortEntities(filteredModules, MODULE_SORT_OPTIONS, sort);
 
   const deliveryStats = useMemo(() => ({
     deliveries: deliveryUsages.length,
@@ -1672,7 +1685,7 @@ export default function ModuleBuilder() {
                 updateWorkingModule(generateMissingLiveSessions);
                 void showCurriculumAlert({
                   title: 'Live sessions added',
-                  text: `${addedCount} live-session component${addedCount === 1 ? '' : 's'} added across ${weekCount} week${weekCount === 1 ? '' : 's'}. Open each one and use "Create Teams meeting" to schedule it in Teams.`,
+                  text: `${addedCount} live-session component${addedCount === 1 ? '' : 's'} added across ${weekCount} week${weekCount === 1 ? '' : 's'}. Use "Create all Teams meetings" once to create the module calendar and link every session.`,
                   timer: 3200,
                 });
               }}
@@ -1743,7 +1756,7 @@ export default function ModuleBuilder() {
                   uploadResource={uploadComponentForModule}
                   restoreTeamsMeeting={selectedComponent.type === 'live-session' ? restoreTeamsMeetingForWorkingModule : undefined}
                   restoringTeamsMeeting={restoringTeamsModuleId === workingModule.catalogueId}
-                  liveSessionModule={{ catalogueId: workingModule.catalogueId, title: workingModule.title }}
+                  liveSessionModule={{ catalogueId: workingModule.catalogueId, title: workingModule.title, programmeName: workingModule.programmeName, cohort: workingModule.cohort, group: workingModule.group }}
                 />
               ) : selectedWeek ? (
                 <ModuleWeekPanel
@@ -1883,7 +1896,7 @@ export default function ModuleBuilder() {
           return (
             <TeamsMeetingModal
               component={{ ...base, title: workingModule.title }}
-              module={{ catalogueId: workingModule.catalogueId, title: workingModule.title }}
+              module={{ catalogueId: workingModule.catalogueId, title: workingModule.title, programmeName: workingModule.programmeName, cohort: workingModule.cohort, group: workingModule.group }}
               onClose={() => setBulkTeamsMeetingOpen(false)}
               // The series is now tracked against this module, so re-attaching pulls
               // its join link into every live-session component and saves them — the
@@ -1902,7 +1915,7 @@ export default function ModuleBuilder() {
           <ComponentLibraryModal
             weekLabel={(() => {
               const week = workingModule.weekStructure.find(item => item.id === reusePickerWeekId);
-              return week ? `Week ${week.weekNumber}${week.title ? ` — ${week.title}` : ''}` : 'this week';
+              return week ? weekPlacementLabel(week, ' — ') : 'this week';
             })()}
             onClose={() => setReusePickerWeekId(null)}
             onAddMany={picked => addLibraryComponentsToWeek(reusePickerWeekId, picked)}
@@ -1933,6 +1946,7 @@ export default function ModuleBuilder() {
             initialSourceId={workspaceKsbProfileValue}
             lockedSourceId={workspaceKsbProfileValue}
             existingMappings={mappingsForTarget(workingModule, ksbTarget)}
+            limitPerKind={ksbTarget.scope === 'component' ? COMPONENT_KSB_LIMIT_PER_KIND : undefined}
             onClose={() => setKsbTarget(null)}
             onAddMany={(items) => {
               updateWorkingModule(module => items.reduce(
@@ -2051,15 +2065,26 @@ export default function ModuleBuilder() {
                 <option value="">All tutors</option>
                 {tutorNames.map(name => <option key={name} value={name}>{name}</option>)}
               </select>
+              <select
+                aria-label="Sort modules"
+                value={sort}
+                onChange={event => setSort(event.target.value)}
+                className={FILTER_SELECT_CLASS}
+              >
+                {MODULE_SORT_OPTIONS.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
               <button
                 type="button"
-                disabled={!search && programmeFilter === 'All' && !deliveryFiltersActive}
+                disabled={!search && programmeFilter === 'All' && !deliveryFiltersActive && !sort}
                 onClick={() => changeFilter(() => {
                   setSearch('');
                   setProgrammeFilter('All');
                   setCohortFilter('');
                   setGroupFilter('');
                   setTutorFilter('');
+                  setSort('');
                 })}
                 className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-40 disabled:hover:bg-background-50"
               >
@@ -2145,6 +2170,7 @@ export default function ModuleBuilder() {
                     setCohortFilter('');
                     setGroupFilter('');
                     setTutorFilter('');
+                    setSort('');
                   })}
                   className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
                 >
@@ -2361,7 +2387,7 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
   const moduleMetrics = [
     { label: 'Weeks', value: String(module.weekStructure.length), icon: 'ri-stack-line' },
     { label: 'Components', value: String(module.lessonCount), icon: 'ri-layout-grid-line' },
-    { label: 'OTJH', value: module.totalOtjh.toFixed(1), icon: 'ri-time-line' },
+    { label: 'OTJH', value: formatHoursMinutes(module.totalOtjh), icon: 'ri-time-line' },
   ];
   const programmeLocked = Boolean(scopeLock?.locked);
   const lockedKsbLabel = scopeLock?.ksbSourceLabel || (ksbProfileValue ? ksbProfileValue.replace(/^(profile|standard):/, '') : 'No source selected');
@@ -2577,7 +2603,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
         )}
         <div className="mt-3 grid grid-cols-3 gap-1.5">
           <MiniStructureMetric label="Items" value={String(totalComponents)} />
-          <MiniStructureMetric label="OTJH" value={module.totalOtjh.toFixed(1)} />
+          <MiniStructureMetric label="OTJH" value={formatHoursMinutes(module.totalOtjh)} />
           <MiniStructureMetric label="KSBs" value={String(module.ksbCount)} />
         </div>
         <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background-200">
@@ -2599,7 +2625,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
               <div className="flex items-baseline justify-between gap-2 px-1 pb-0.5 pt-2 first:pt-0">
                 <p className="text-[11px] font-heading font-bold uppercase tracking-wider text-primary-700">{monthHeading.label}</p>
                 <p className="text-[10px] font-semibold text-foreground-400">
-                  {monthHeading.weeks} {monthHeading.weeks === 1 ? 'week' : 'weeks'} · {monthHeading.otjh.toFixed(1)}h
+                  {monthHeading.weeks} {monthHeading.weeks === 1 ? 'week' : 'weeks'} · {formatHoursMinutes(monthHeading.otjh)}
                 </p>
               </div>
             )}
@@ -2630,7 +2656,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                   <p className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium text-foreground-400">
                     <span>{week.components.length} components</span>
                     <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
-                    <span>{totalOtjh.toFixed(1)}h</span>
+                    <span>{formatHoursMinutes(totalOtjh)}</span>
                     {week.sessionDate && (
                       <>
                         <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
@@ -2934,7 +2960,7 @@ function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson,
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex rounded-full bg-primary-100 px-2.5 py-1 text-[10px] font-bold text-primary-700">Week {week.weekNumber}</span>
             <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{week.components.length} components</span>
-            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">{totalOtjh.toFixed(1)}h OTJH</span>
+            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">{formatHoursMinutes(totalOtjh)} OTJH</span>
           </div>
           <div className="mt-1.5">
             <TextInput label="Week title" value={week.title} onChange={value => onChange({ title: value })} />
@@ -2997,7 +3023,7 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <MiniMetric label="OTJH" value={Number(component.expectedOtjh || 0).toFixed(1)} />
+            <MiniMetric label="OTJH" value={formatHoursMinutes(Number(component.expectedOtjh || 0))} />
             <MiniMetric label="Points" value={String(component.points || 0)} />
           </div>
         </div>
@@ -3102,7 +3128,7 @@ function TypeSpecificFields({
   const [uploadError, setUploadError] = useState('');
   const [teamsMeetingOpen, setTeamsMeetingOpen] = useState(false);
 
-  const handleResourceUpload = async (file: File, componentType: 'podcast' | 'powerpoint' | 'reading' | 'assignment') => {
+  const handleResourceUpload = async (file: File, componentType: 'podcast' | 'powerpoint' | 'reading') => {
     setUploadingResource(true);
     setUploadError('');
     try {
@@ -3127,9 +3153,6 @@ function TypeSpecificFields({
       } else if (componentType === 'reading') {
         onSettingChange('readingSource', 'File');
         onSettingChange('resourceUrl', uploaded.url);
-      } else {
-        onSettingChange('assignmentFileName', uploaded.fileName);
-        onSettingChange('assignmentFileUrl', uploaded.url);
       }
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Unable to upload file.');
@@ -3218,7 +3241,7 @@ function TypeSpecificFields({
               className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600"
             >
               <AppIcon className="ri-calendar-event-line"></AppIcon>
-              {getString('liveSessionUrl') ? 'Create another meeting' : 'Create Teams meeting'}
+              {getString('liveSessionUrl') ? 'Meeting already created' : 'Create Teams meeting'}
             </button>
           </div>
           {getString('liveSessionUrl') && (
@@ -3255,6 +3278,7 @@ function TypeSpecificFields({
               onSettingChange('teamsOrganizerEmail', meeting.organizerEmail);
               onSettingChange('teamsAttendees', meeting.attendees);
               onSettingChange('teamsPresenters', meeting.presenters);
+              onSettingChange('teamsCoOrganizers', meeting.coOrganizers || []);
               if (scheduled) {
                 onSettingChange('teamsSessionNumber', scheduled.sessionNumber);
                 if (!hasExplicitSchedule) {
@@ -3431,18 +3455,10 @@ function TypeSpecificFields({
   if (component.type === 'assignment') {
     return (
       <EditorBlock title="Assignment">
-        <TextArea label="Assignment brief" value={getString('assignmentBrief')} onChange={value => onSettingChange('assignmentBrief', value)} rows={4} />
-        <ComponentResourceUpload
-          label="Upload assignment file"
-          accept=".doc,.docx,.pdf,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.zip,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/csv,application/zip"
-          uploadedName={getString('uploadedFileName') || getString('assignmentFileName')}
-          uploadedUrl={getString('uploadedFileUrl') || getString('assignmentFileUrl')}
-          uploadedSize={getNumber('uploadedFileSize')}
-          uploading={uploadingResource}
-          error={uploadError}
-          onUpload={file => handleResourceUpload(file, 'assignment')}
-        />
-        <TextArea label="Submission instructions" value={getString('submissionInstructions')} onChange={value => onSettingChange('submissionInstructions', value)} rows={3} />
+        <RichTextDraft label="Assignment question" value={getString('assignmentContent') || getString('assignmentBrief')} onChange={value => onSettingChange('assignmentContent', value)} rows={14} htmlOnly />
+        <p className="rounded-lg border border-primary-100 bg-primary-50 px-3 py-2 text-[11px] font-medium leading-5 text-primary-700">
+          Learners answer this question in the three-step assignment form. They can optionally upload PDF, image, Word, PowerPoint or video evidence, which is stored securely in Azure.
+        </p>
         <TextInput label="Due timing relative to week" value={getString('dueTiming')} onChange={value => onSettingChange('dueTiming', value)} />
       </EditorBlock>
     );
@@ -3883,7 +3899,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
     const weekWeightSummary = ksbWeightSummary(mappedKsbs);
     const readinessItems = [
       { label: 'Components', ready: week.components.length > 0, value: week.components.length ? `${week.components.length} added` : 'Missing' },
-      { label: 'OTJH', ready: totalOtjh > 0, value: totalOtjh > 0 ? `${totalOtjh.toFixed(1)} h` : 'Missing' },
+      { label: 'OTJH', ready: totalOtjh > 0, value: totalOtjh > 0 ? formatHoursMinutes(totalOtjh) : 'Missing' },
       { label: 'KSBs', ready: mappedKsbs.length > 0, value: mappedKsbs.length ? `${mappedKsbs.length} mapped` : 'Needs mapping' },
     ];
     const readyCount = readinessItems.filter(item => item.ready).length;
@@ -3972,7 +3988,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
           ))}
         </div>
         <div className="grid grid-cols-2 gap-2">
-          <MiniMetric label="OTJH" value={Number(component.expectedOtjh || 0).toFixed(1)} />
+          <MiniMetric label="OTJH" value={formatHoursMinutes(Number(component.expectedOtjh || 0))} />
           <MiniMetric label="Points" value={String(component.points || 0)} />
         </div>
         <KsbWeightSummary summary={componentWeightSummary} />
@@ -4480,6 +4496,8 @@ function sessionKsbKind(code: string): 'knowledge' | 'skill' | 'behaviour' {
   return 'knowledge';
 }
 
+const COMPONENT_KSB_LIMIT_PER_KIND = 2;
+
 function componentGroupLabels(module: ModuleCatalogueItem, component: ModuleComponent) {
   const settings = component.settings || {};
   const names = Array.isArray(settings.selectedGroupNames) ? settings.selectedGroupNames : [];
@@ -4491,7 +4509,7 @@ function componentGroupLabels(module: ModuleCatalogueItem, component: ModuleComp
   return [...new Set(labels)];
 }
 
-function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading, initialSourceId, lockedSourceId, existingMappings, onClose, onAddMany }: {
+function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading, initialSourceId, lockedSourceId, existingMappings, limitPerKind, onClose, onAddMany }: {
   standards: CurriculumStandard[];
   standardsLoading: boolean;
   ksbSets: CurriculumKsbSet[];
@@ -4499,6 +4517,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
   initialSourceId: string;
   lockedSourceId?: string;
   existingMappings: KsbMapping[];
+  limitPerKind?: number;
   onClose: () => void;
   onAddMany: (items: Array<{ option: KsbOption; weight: number; weightClass: KsbWeightClass }>) => void;
 }) {
@@ -4509,7 +4528,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
   const [sourceMode, setSourceMode] = useState<'standard' | 'profile'>('profile');
   const [addingKsbs, setAddingKsbs] = useState(false);
   const [ksbSearch, setKsbSearch] = useState('');
-  const [ksbTypeFilter, setKsbTypeFilter] = useState<'all' | 'knowledge' | 'skill' | 'behaviour'>('all');
+  const [ksbTypeFilter, setKsbTypeFilter] = useState<'knowledge' | 'skill' | 'behaviour'>('knowledge');
   const sourceLocked = Boolean(lockedSourceId);
   const standardSourceOptions = useMemo(() => standards.map(standard => ({
       id: ksbStandardSourceId(standard),
@@ -4564,11 +4583,36 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
       return existing ? [[option.id, existing] as const] : [];
     }),
   ), [existingMappings, sourceKsbOptions]);
+  const existingKindCounts = useMemo(() => existingMappings.reduce(
+    (counts, mapping) => {
+      counts[sessionKsbKind(mapping.code)] += 1;
+      return counts;
+    },
+    { knowledge: 0, skill: 0, behaviour: 0 },
+  ), [existingMappings]);
+  const selectedKindCounts = useMemo(() => sourceKsbOptions.reduce(
+    (counts, option) => {
+      if (selectedKsbIds.has(option.id)) counts[sessionKsbKind(option.code)] += 1;
+      return counts;
+    },
+    { knowledge: 0, skill: 0, behaviour: 0 },
+  ), [selectedKsbIds, sourceKsbOptions]);
+  const availableKindCounts = useMemo(() => sourceKsbOptions.reduce(
+    (counts, option) => {
+      counts[sessionKsbKind(option.code)] += 1;
+      return counts;
+    },
+    { knowledge: 0, skill: 0, behaviour: 0 },
+  ), [sourceKsbOptions]);
+  const optionLimitReached = (option: KsbOption) => {
+    if (!limitPerKind || selectedKsbIds.has(option.id)) return false;
+    const kind = sessionKsbKind(option.code);
+    return existingKindCounts[kind] + selectedKindCounts[kind] >= limitPerKind;
+  };
   const filteredKsbOptions = useMemo(() => {
     const query = ksbSearch.trim().toLowerCase();
     return sourceKsbOptions.filter(option => {
-      const tone = ksbVisualTone(option.code, option.type);
-      if (ksbTypeFilter !== 'all' && tone.label.toLowerCase() !== ksbTypeFilter) return false;
+      if (sessionKsbKind(option.code) !== ksbTypeFilter) return false;
       if (!query) return true;
       return option.code.toLowerCase().includes(query) || option.description.toLowerCase().includes(query);
     });
@@ -4591,7 +4635,14 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
     setSelectedKsbIds(current => {
       const next = new Set(current);
       if (next.has(option.id)) next.delete(option.id);
-      else next.add(option.id);
+      else {
+        const kind = sessionKsbKind(option.code);
+        const selectedOfKind = sourceKsbOptions.filter(candidate => (
+          current.has(candidate.id) && sessionKsbKind(candidate.code) === kind
+        )).length;
+        if (limitPerKind && existingKindCounts[kind] + selectedOfKind >= limitPerKind) return current;
+        next.add(option.id);
+      }
       return next;
     });
   };
@@ -4658,34 +4709,54 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                 <p className="mt-0.5 truncate text-[12px] font-bold text-primary-950">{sourceLabels[selectedSourceValue] || selectedSourceValue.replace(/^(profile|standard):/, '')}</p>
               </div>
             )}
+            {limitPerKind ? (
+              <div role='note' className='rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sky-800'>
+                <p className='text-[10px] font-bold uppercase tracking-wide'>Component KSB selection limit</p>
+                <p className='mt-0.5 text-[11px] font-semibold'>Choose up to 2 Knowledge, 2 Skills and 2 Behaviours for this component. Previously added KSBs count towards each limit.</p>
+              </div>
+            ) : null}
           </div>
           {resolvedSelectedSource && Boolean(sourceKsbOptions.length) && (
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="relative flex-1 sm:max-w-[220px]">
+            <div className="space-y-3">
+              <div className="grid grid-cols-3 gap-2" role="tablist" aria-label="KSB categories">
+                {([
+                  { value: 'knowledge', code: 'K', label: 'Knowledge', activeClass: 'border-violet-400 bg-violet-600 text-white', iconClass: 'bg-violet-100 text-violet-700' },
+                  { value: 'skill', code: 'S', label: 'Skills', activeClass: 'border-amber-400 bg-amber-500 text-white', iconClass: 'bg-amber-100 text-amber-700' },
+                  { value: 'behaviour', code: 'B', label: 'Behaviours', activeClass: 'border-emerald-400 bg-emerald-600 text-white', iconClass: 'bg-emerald-100 text-emerald-700' },
+                ] as const).map(category => {
+                  const active = ksbTypeFilter === category.value;
+                  const chosen = existingKindCounts[category.value] + selectedKindCounts[category.value];
+                  return (
+                    <button
+                      key={category.value}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => setKsbTypeFilter(category.value)}
+                      className={`rounded-xl border px-2 py-2.5 text-left transition-smooth ${active ? category.activeClass : 'border-background-200 bg-background-100 text-foreground-700 hover:border-primary-200 hover:bg-background-50'}`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg text-[12px] font-black ${active ? 'bg-white/20 text-white' : category.iconClass}`}>{category.code}</span>
+                        <span className="min-w-0">
+                          <span className="block truncate text-[10px] font-black sm:text-[11px]">{category.label}</span>
+                          <span className={`block text-[9px] font-semibold ${active ? 'text-white/75' : 'text-foreground-400'}`}>
+                            {availableKindCounts[category.value]} available{limitPerKind ? ` · ${chosen}/${limitPerKind} chosen` : ''}
+                          </span>
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="relative">
                 <AppIcon className="ri-search-line absolute left-2.5 top-1/2 -translate-y-1/2 text-[12px] text-foreground-400"></AppIcon>
                 <input
                   type="text"
                   value={ksbSearch}
                   onChange={event => setKsbSearch(event.target.value)}
-                  placeholder="Search KSB code or text"
+                  placeholder={`Search ${ksbTypeFilter} KSBs`}
                   className="h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 pl-7 pr-2 text-[11px] font-semibold text-foreground-900 outline-none focus:border-primary-300"
                 />
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {(['all', 'knowledge', 'skill', 'behaviour'] as const).map(filterValue => (
-                  <button
-                    key={filterValue}
-                    type="button"
-                    onClick={() => setKsbTypeFilter(filterValue)}
-                    className={`rounded-full px-2.5 py-1 text-[10px] font-bold capitalize transition-smooth ${
-                      ksbTypeFilter === filterValue
-                        ? 'bg-primary-500 text-white'
-                        : 'bg-background-100 text-foreground-500 hover:bg-background-200'
-                    }`}
-                  >
-                    {filterValue}
-                  </button>
-                ))}
               </div>
             </div>
           )}
@@ -4693,6 +4764,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
             {filteredKsbOptions.map(option => {
               const tone = ksbVisualTone(option.code, option.type);
               const alreadyAdded = existingMappingByOptionId.has(option.id);
+              const limitReached = !alreadyAdded && optionLimitReached(option);
               const selected = alreadyAdded || selectedKsbIds.has(option.id);
               return (
               <div key={option.id} className={`rounded-xl border border-l-4 px-3 py-2 transition-smooth ${selected ? tone.selectedRow : tone.row}`}>
@@ -4701,9 +4773,9 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                     <input
                       type="checkbox"
                       checked={selected}
-                      disabled={alreadyAdded}
+                      disabled={alreadyAdded || limitReached}
                       onChange={() => toggleOption(option)}
-                      aria-label={alreadyAdded ? `${option.code} already added` : `Select ${option.code}`}
+                      aria-label={alreadyAdded ? `${option.code} already added` : limitReached ? `${option.code} unavailable because the component limit is reached` : `Select ${option.code}`}
                       className="mt-1 h-4 w-4 rounded border-foreground-300 text-primary-600 focus:ring-primary-300 disabled:cursor-not-allowed disabled:opacity-70"
                     />
                     <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${tone.iconClass}`}>
@@ -4724,7 +4796,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                       <span className="text-[9px] font-semibold uppercase text-foreground-400">Weight class</span>
                       <select
                         value={weightClassForOption(option)}
-                        disabled={alreadyAdded}
+                        disabled={alreadyAdded || limitReached}
                         onChange={event => updateOptionWeightClass(option, event.target.value)}
                         className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[11px] font-bold capitalize text-foreground-900 outline-none focus:border-primary-300 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-500"
                       >
@@ -4740,7 +4812,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                         min={1}
                         step={1}
                         value={clampPositiveKsbWeight(weightForOption(option), weightClassForOption(option))}
-                        disabled={alreadyAdded}
+                        disabled={alreadyAdded || limitReached}
                         onChange={event => updateOptionWeight(option, Number(event.target.value))}
                         className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[12px] font-bold text-foreground-900 outline-none focus:border-primary-300 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-500"
                       />
@@ -4979,10 +5051,10 @@ function PreviewModal({ module, onClose }: { module: ModuleCatalogueItem; onClos
           </div>
           {module.weekStructure.map(week => (
             <div key={week.id} className="rounded-xl border border-background-200 bg-background-100/50 p-4">
-              <h3 className="text-sm font-bold text-foreground-900">Week {week.weekNumber}: {week.title}</h3>
+              <h3 className="text-sm font-bold text-foreground-900">{weekPlacementLabel(week, ': ')}</h3>
               <p className="text-[11px] text-foreground-500 mt-1">{week.summary}</p>
               <div className="mt-3 space-y-2">
-                {week.components.map(component => <div key={component.id} className="rounded-lg bg-background-50 border border-background-200 px-3 py-2 text-[12px] text-foreground-700">{readableComponentTitle(component.title)} - {component.expectedOtjh} OTJH - {component.points} pts</div>)}
+                {week.components.map(component => <div key={component.id} className="rounded-lg bg-background-50 border border-background-200 px-3 py-2 text-[12px] text-foreground-700">{readableComponentTitle(component.title)} - {formatHoursMinutes(component.expectedOtjh)} OTJH - {component.points} pts</div>)}
               </div>
             </div>
           ))}
@@ -5630,18 +5702,6 @@ function ReadOnlyMetricChip({ label, value, suffix, tone }: {
   );
 }
 
-/**
- * Only the states that ask for something are badged. Published is what a
- * finished module is supposed to be, so it carries no badge: on a list where
- * nearly everything is published, the badge said nothing and cost a line.
- */
-function StatusBadge({ status }: { status: string }) {
-  if (status === 'published') return null;
-  const classes = status === 'draft' ? 'bg-amber-100 text-amber-700' : 'bg-primary-100 text-primary-700';
-  const label = status === 'review' ? 'in review' : status;
-  return <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${classes}`}>{label}</span>;
-}
-
 function ModuleCatalogueCard({
   module,
   teamsSummary,
@@ -5673,6 +5733,14 @@ function ModuleCatalogueCard({
   const subLabel = moduleListSubLabel(module);
   const primaryDelivery = (module.deliveryUsages || []).find(usage => usage.deliveryModuleId);
   const primaryDeliveryHref = primaryDelivery ? namedCurriculumWorkspacePath('modules', primaryDelivery.deliveryModuleId, module.title) : '';
+  // The module's own artwork replaces the generic icon when it has one. An
+  // address that fails to load falls back to the icon rather than leaving a
+  // broken frame beside the title -- a pasted URL can rot, and a card with a
+  // hole in it reads as a broken module.
+  const [coverBroken, setCoverBroken] = useState(false);
+  const coverImage = String(module.coverImage || '').trim();
+  useEffect(() => { setCoverBroken(false); }, [coverImage]);
+  const showCover = Boolean(coverImage) && !coverBroken;
   // Legacy fallbacks retained by the merge were:
   // weekCount = module.weekStructure.length || module.weeks || 0
 
@@ -5681,13 +5749,23 @@ function ModuleCatalogueCard({
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
         <div className="min-w-0">
           <div className="flex flex-wrap items-start gap-3">
-            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${hasContent ? 'bg-primary-50 text-primary-600 ring-1 ring-primary-100' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'}`}>
-              <AppIcon className={hasContent ? 'ri-layout-4-line text-base' : 'ri-draft-line text-base'}></AppIcon>
-            </span>
+            {showCover ? (
+              <span className="h-10 w-10 shrink-0 overflow-hidden rounded-lg ring-1 ring-background-200">
+                <img
+                  src={coverImage}
+                  alt=""
+                  className="h-full w-full object-cover"
+                  onError={() => setCoverBroken(true)}
+                />
+              </span>
+            ) : (
+              <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${hasContent ? 'bg-primary-50 text-primary-600 ring-1 ring-primary-100' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'}`}>
+                <AppIcon className={hasContent ? 'ri-layout-4-line text-base' : 'ri-draft-line text-base'}></AppIcon>
+              </span>
+            )}
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <h3 className="truncate text-[14px] font-heading font-bold text-foreground-950">{module.title}</h3>
-                <StatusBadge status={module.status} />
               </div>
               {subLabel && <p className="mt-1 text-[11px] text-foreground-500">{subLabel}</p>}
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
@@ -6493,6 +6571,7 @@ function moduleFormTargetFromCatalogue(module: ModuleCatalogueItem, usage?: Modu
     status: module.status,
     notes: module.description,
     color: module.color,
+    coverImage: module.coverImage,
     deliveryUsages: (module as ModuleBuilderListItem).deliveryUsages,
   };
 }
@@ -6721,6 +6800,10 @@ function mappingsForTarget(module: ModuleCatalogueItem, target: KsbTarget) {
 function addKsbMapping(module: ModuleCatalogueItem, target: KsbTarget, option: KsbOption, weight = defaultKsbWeight(), weightClass: KsbWeightClass = DEFAULT_KSB_WEIGHT_CLASS): ModuleCatalogueItem {
   const nextIdentity = ksbMappingIdentity(option);
   if (mappingsForTarget(module, target).some(mapping => ksbMappingIdentity(mapping) === nextIdentity)) return module;
+  if (
+    target.scope === 'component'
+    && mappingsForTarget(module, target).filter(mapping => sessionKsbKind(mapping.code) === sessionKsbKind(option.code)).length >= COMPONENT_KSB_LIMIT_PER_KIND
+  ) return module;
   const mapping: KsbMapping = {
     id: makeAuthoringId('KSBMAP'),
     ksbId: option.id,
@@ -7012,8 +7095,7 @@ function uniquePlacementOtjh(rows: ModuleKsbMapRow[]) {
 }
 
 function formatKsbOtjh(value: number) {
-  const amount = Number(value || 0);
-  return `${Number.isInteger(amount) ? amount.toFixed(0) : amount.toFixed(1)}h`;
+  return formatHoursMinutes(Number(value || 0));
 }
 
 function formatKsbWeight(value: number) {

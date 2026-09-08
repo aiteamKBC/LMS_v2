@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react
 import { Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { Moon, Sun } from 'lucide-react';
+import { Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 import { BrandLockup } from '@/components/BrandLockup';
@@ -13,6 +14,9 @@ interface HeaderProps {
   onOpenSearch: () => void;
   userName?: string;
   onToggleMobileSidebar?: () => void;
+  mobileSidebarOpen?: boolean;
+  onToggleDesktopSidebar?: () => void;
+  sidebarPinned?: boolean;
   role?: string;
 }
 
@@ -156,7 +160,7 @@ export function SignOutConfirmModal({
 }
 
 // Notification sound
-export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, role }: HeaderProps) {
+export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, onToggleDesktopSidebar, sidebarPinned = false, role }: HeaderProps) {
   const { auth, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   // Profile is the only dropdown left in the header, so the state that used to
@@ -223,16 +227,29 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
     {/* Height and border deliberately match the sidebar's brand row, so the two
         read as one continuous bar across the top of the workspace. */}
     <header className={`kbc-workspace-topbar workspace-topbar flex shrink-0 items-center gap-2 border-b border-foreground-100 bg-background-50 px-2 sm:px-3 md:gap-3 md:px-4 ${role === 'admin' ? 'h-[60px]' : role === 'curriculum' ? 'h-[70px]' : 'h-14'}`}>
-      {/* Hamburger — mobile only */}
+      {/* Labelled navigation controls, with the action matching the screen size. */}
       {onToggleMobileSidebar && (
+        <div className="shrink-0 lg:hidden">
         <button
+          type="button"
           onClick={onToggleMobileSidebar}
-          className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-primary-50/70 hover:text-primary-700 lg:hidden"
-          title="Toggle menu"
-          aria-label="Toggle menu"
+          className="kbc-navigation-menu"
+          title={mobileSidebarOpen ? 'Close navigation menu' : 'Open navigation menu'}
+          aria-label={mobileSidebarOpen ? 'Close navigation menu' : 'Open navigation menu'}
+          aria-expanded={mobileSidebarOpen}
         >
-          <AppIcon className="ri-menu-line text-lg"></AppIcon>
+          <Menu size={18} aria-hidden="true" /><span>Menu</span>
         </button>
+        </div>
+      )}
+      {onToggleDesktopSidebar && (
+        <div className="hidden shrink-0 lg:block">
+          <button type="button" className="kbc-navigation-menu" onClick={onToggleDesktopSidebar}
+            title={sidebarPinned ? 'Collapse navigation menu' : 'Expand navigation menu'}
+            aria-label={sidebarPinned ? 'Collapse navigation menu' : 'Expand navigation menu'} aria-expanded={sidebarPinned}>
+            {sidebarPinned ? <PanelLeftClose size={18} aria-hidden="true" /> : <PanelLeftOpen size={18} aria-hidden="true" />}<span>Menu</span>
+          </button>
+        </div>
       )}
 
       {/* Provider logo — below lg only. From lg up the sidebar carries the

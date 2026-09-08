@@ -1,4 +1,5 @@
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
+import { CHAT_ENABLED } from '@/lib/featureFlags';
 
 // ============================================================================
 // LEARNER WORKSPACE — Grouped sidebar with 18 items across 8 groups
@@ -17,6 +18,10 @@ export const learnerNavItems: SidebarNavItem[] = [
   // My Learning — training plan, learning journey and quizzes merged into
   // Overview/Modules/Quizzes tabs on one page.
   { id: 'learner-my-learning', label: 'My Learning', icon: 'ri-book-open-line', href: '/learner/my-learning', matchPaths: ['/learner/learning-plan'], badge: 1 },
+
+  // Training plan — the learner's Aptem training plan, month by month. Its
+  // "View components" action drops into My Learning to actually work through it.
+  { id: 'learner-training-plan-view', label: 'Training plan', icon: 'ri-calendar-todo-line', href: '/learner/training-plan-timeline' },
 
   // Calendar
   { id: 'learner-calendar', label: 'Calendar', icon: 'ri-calendar-2-line', href: '/learner/calendar', statusDot: 'green' },
@@ -89,6 +94,7 @@ export const learnerNavItems: SidebarNavItem[] = [
 // ============================================================================
 export const coachNavItems: SidebarNavItem[] = [
   { id: 'coach-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/coach' },
+  { id: 'coach-previous-records', label: 'Previous learning records', icon: 'ri-history-line', href: '/old-otjh/coach' },
   {
     id: 'coach-group-learners',
     label: 'My Learners',
@@ -244,21 +250,6 @@ export const curriculumNavItems: SidebarNavItem[] = [
     href: '/curriculum/programmes',
   },
   {
-    id: 'curriculum-library',
-    label: 'Library',
-    icon: 'ri-folder-open-line',
-    href: '/curriculum/library',
-    matchPaths: [
-      '/curriculum/week-builder',
-      '/curriculum/free-courses',
-      '/curriculum/standards',
-      '/curriculum/ksb-frameworks',
-      '/curriculum/quiz-xml',
-      '/curriculum/question-bank',
-      '/curriculum/checkpoints',
-    ],
-  },
-  {
     id: 'curriculum-delivery',
     label: 'Delivery',
     icon: 'ri-calendar-schedule-line',
@@ -271,6 +262,21 @@ export const curriculumNavItems: SidebarNavItem[] = [
       '/curriculum/teams-meetings',
       '/curriculum/session-calendar',
       '/curriculum/holidays',
+    ],
+  },
+  {
+    id: 'curriculum-library',
+    label: 'Library',
+    icon: 'ri-folder-open-line',
+    href: '/curriculum/library',
+    matchPaths: [
+      '/curriculum/week-builder',
+      '/curriculum/free-courses',
+      '/curriculum/standards',
+      '/curriculum/ksb-frameworks',
+      '/curriculum/quiz-xml',
+      '/curriculum/question-bank',
+      '/curriculum/checkpoints',
     ],
   },
   {
@@ -614,6 +620,8 @@ export const adminNavItems: SidebarNavItem[] = [
     icon: 'ri-settings-4-line',
     children: [
       { id: 'admin-documents', label: 'Documents', icon: 'ri-folder-line', href: '/admin/documents' },
+      { id: 'admin-evidence', label: 'Evidence', icon: 'ri-folder-shield-2-line', href: '/admin/evidence' },
+      { id: 'admin-certificates', label: 'Certificates', icon: 'ri-award-line', href: '/workspace/admin/certificates' },
       { id: 'admin-notifications', label: 'Email Delivery', icon: 'ri-mail-send-line', href: '/admin/notifications' },
       { id: 'admin-system', label: 'System Status', icon: 'ri-pulse-line', href: '/admin/system' },
     ],
@@ -758,7 +766,20 @@ export const safeguardingNavItems: SidebarNavItem[] = [
   { id: 'sg-reports', label: 'Reporting', icon: 'ri-bar-chart-box-line', href: '/safeguarding/reports', statusDot: 'blue' },
 ];
 
-export const roleNavMap: Record<string, { items: SidebarNavItem[]; label: string; workspaceLabel: string }> = {
+// The chat-backed "Messages" pages. When CHAT_ENABLED is false these entry
+// points are stripped from every role's sidebar (audit A10 — chat disabled).
+// Note: /safeguarding/communication is a separate feature and is NOT listed.
+const CHAT_NAV_HREFS = new Set(['/messages', '/learner/messages']);
+
+function stripChatNavItems(items: SidebarNavItem[]): SidebarNavItem[] {
+  if (CHAT_ENABLED) return items;
+  return items
+    .filter(item => !(item.href && CHAT_NAV_HREFS.has(item.href)))
+    .map(item => (item.children ? { ...item, children: stripChatNavItems(item.children) } : item));
+}
+
+const baseRoleNavMap: Record<string, { items: SidebarNavItem[]; label: string; workspaceLabel: string }> = {
+  'record-monitor': { items: [{ id: 'record-monitor', label: 'Record monitoring', href: '/old-otjh/monitor', icon: 'ri-dashboard-line' }], label: 'Record monitor', workspaceLabel: 'Learning record monitoring' },
   learner: { items: learnerNavItems, label: 'Learner', workspaceLabel: 'Learner Workspace' },
   coach: { items: coachNavItems, label: 'Coach', workspaceLabel: 'Coach Workspace' },
   tutor: { items: tutorNavItems, label: 'Tutor', workspaceLabel: 'Tutor Workspace' },
@@ -776,3 +797,8 @@ export const roleNavMap: Record<string, { items: SidebarNavItem[]; label: string
   support: { items: supportNavItems, label: 'Support', workspaceLabel: 'Support Centre' },
   safeguarding: { items: safeguardingNavItems, label: 'Safeguarding', workspaceLabel: 'Safeguarding Workspace' },
 };
+
+export const roleNavMap: Record<string, { items: SidebarNavItem[]; label: string; workspaceLabel: string }> =
+  Object.fromEntries(
+    Object.entries(baseRoleNavMap).map(([role, cfg]) => [role, { ...cfg, items: stripChatNavItems(cfg.items) }]),
+  );

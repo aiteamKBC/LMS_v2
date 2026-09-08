@@ -3,11 +3,12 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail } from '@/api/learnerDetail';
-import { formatHoursMinutes, parseHours } from '@/utils/learnerJourney';
+import { formatHoursMinutes, parseHours, trainingPlanWeekPosition } from '@/utils/learnerJourney';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 // Explicit, not auto-imported: vitest.config.ts leaves unplugin-auto-import out,
 // so a test that renders this view would crash on it (same reason as Modal.tsx).
 import { AppIcon } from '@/components/feature/AppIcon';
+import { otjhContributionHours } from '@/utils/otjhContribution';
 
 const learnerNav = roleNavMap.learner;
 
@@ -28,40 +29,23 @@ interface LogRow {
   ksbs: string[];
   /** What this activity put towards the total, in hours. */
   hours: number;
-  /** What the learner said it took, shown under the contribution when they differ. */
-  reported: string;
   /** One row per quiz/component; repeats of the same one are folded in here. */
   dedupeKey: string;
+  /** Total attempts made; shown as a note while only the highest value counts. */
+  attemptCount: number;
   passed?: boolean;
   isQuiz: boolean;
 }
 
 /**
  * The hours one activity contributed, by the same rule the backend totals with
- * (see active_users.completed_hours_from_progress): the component's own
- * off-the-job hours when it has them, and only failing that whatever the learner
- * reported. A bare number is hours up to 24 and minutes above it — the same
+ * (see active_users.completed_hours_from_progress): prefer the explicit Time
+ * spent input, then the reflection time, then the verified timer. Older rows
+ * without any of those fall back to the component's authored OTJ hours.
+ * A bare reported number is hours up to 24 and minutes above it — the same
  * reading _reported_minutes applies, so this panel cannot disagree with the
  * "Completed" figure beside it.
  */
-function contributedHours(expectedOtjh: unknown, reported: string, fallback?: number): number {
-  const expected = Number(expectedOtjh);
-  if (Number.isFinite(expected) && expected > 0) return expected;
-  const text = String(reported || '').trim().toLowerCase();
-  if (text) {
-    if (text.includes(':')) {
-      const [minutes, seconds] = text.split(':').map(Number);
-      if (Number.isFinite(minutes)) return (minutes + (Number.isFinite(seconds) ? seconds / 60 : 0)) / 60;
-    }
-    const hours = Number(text.match(/([\d.]+)\s*(?:hours?|hrs?|h)\b/)?.[1] || 0);
-    const minutes = Number(text.match(/([\d.]+)\s*(?:minutes?|mins?|m)\b/)?.[1] || 0);
-    if (hours || minutes) return hours + minutes / 60;
-    const bare = Number(text.match(/[\d.]+/)?.[0] || 0);
-    if (bare) return bare > 24 ? bare / 60 : bare;
-  }
-  return Number.isFinite(Number(fallback)) ? Number(fallback) : 0;
-}
-
 /** "reading" -> "Reading", "live_session" -> "Live session". */
 function activityTypeLabel(type: string): string {
   const words = String(type || 'Activity').replace(/[_-]+/g, ' ').trim();
@@ -134,11 +118,16 @@ export function OtjhBody({
   const rag = RAG(status);
   const plannedPercent = planned > 0 ? Math.round((completed / planned) * 100) : 0;
   const targetPercent = target > 0 ? Math.min(100, Math.round((completed / target) * 100)) : 0;
+  const planWeek = trainingPlanWeekPosition(real);
+  const targetWeekLabel = planWeek?.state === 'upcoming'
+    ? 'Plan has ' + planWeek.total + ' weeks'
+    : planWeek
+      ? 'Week ' + planWeek.current + ' of ' + planWeek.total
+        + (planWeek.state === 'complete' ? ' - plan complete' : '')
+      : 'Up to this week';
 
-  // Every completion that put hours on the total, newest first: quizzes, videos,
-  // and the readings, decks, podcasts and assignments finished through the
-  // component runner. Those last were missing, so a learner whose hours came
-  // from them saw a log that did not account for the number above it.
+  // One row per activity, using its highest-value attempt. Repeats remain
+  // visible through attemptCount without inflating the completed-hours total.
   const rows = useMemo<LogRow[]>(() => {
     const components = new Map(
       (real?.components ?? [])
@@ -151,18 +140,21 @@ export function OtjhBody({
       Number(components.get(String(componentId))?.expectedOtjh ?? NaN);
 
     const quiz = (real?.quizAttempts ?? []).map<LogRow>((a) => ({
-      title: `Quiz attempt${a.attempt ? ` #${a.attempt}` : ''}`,
+      title: a.componentTitle?.trim() || titleFor(a.componentId, 'Quiz'),
       type: 'Quiz', icon: 'ri-questionnaire-line',
       tint: a.passed ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600',
       at: a.submittedAt, ksbs: a.ksbs || [],
-      hours: contributedHours(
-        (a as { expectedOtjh?: number }).expectedOtjh,
-        a.reportedTime || a.timeTaken || '',
-      ),
-      reported: a.reportedTime || a.timeTaken || '',
+      hours: otjhContributionHours({
+        expectedOtjh: a.expectedOtjh,
+        reportedTime: a.reportedTime,
+        verifiedSeconds: a.verifiedSeconds,
+        claimedSeconds: a.claimedSeconds,
+        timeTrackingSource: a.timeTrackingSource,
+      }),
       // A quiz is one activity however many attempts it took, which is how the
       // total counts it.
       dedupeKey: `quiz:${a.quizId ?? a.componentId ?? a.submittedAt}`,
+      attemptCount: a.attempt || 1,
       passed: a.passed, isQuiz: true,
     }));
 
@@ -170,13 +162,16 @@ export function OtjhBody({
       title: titleFor(v.componentId, 'Video watched'),
       type: 'Video', icon: 'ri-play-circle-line', tint: 'bg-red-100 text-red-600',
       at: v.submittedAt, ksbs: v.ksbs || [],
-      hours: contributedHours(
-        (v as { expectedOtjh?: number }).expectedOtjh,
-        v.reportedTime || v.timeTaken || '',
-        expectedFor(v.componentId),
-      ),
-      reported: v.reportedTime || v.timeTaken || '',
+      hours: otjhContributionHours({
+        expectedOtjh: v.expectedOtjh,
+        fallbackExpectedOtjh: expectedFor(v.componentId),
+        reportedTime: v.reportedTime,
+        verifiedSeconds: v.verifiedSeconds,
+        claimedSeconds: v.claimedSeconds,
+        timeTrackingSource: v.timeTrackingSource,
+      }),
       dedupeKey: `component:${v.componentId || v.submittedAt}`,
+      attemptCount: v.attempt || 1,
       isQuiz: false,
     }));
 
@@ -188,40 +183,51 @@ export function OtjhBody({
         icon: look?.icon || 'ri-check-double-line',
         tint: look?.tint || 'bg-primary-100 text-primary-600',
         at: c.submittedAt, ksbs: c.ksbs || [],
-        hours: contributedHours(
-          (c as { expectedOtjh?: number }).expectedOtjh,
-          c.reportedTime || c.timeTaken || '',
-          expectedFor(c.componentId),
-        ),
-        reported: c.reportedTime || c.timeTaken || '',
+        hours: otjhContributionHours({
+          expectedOtjh: c.expectedOtjh,
+          fallbackExpectedOtjh: expectedFor(c.componentId),
+          reportedTime: c.reportedTime,
+          verifiedSeconds: c.verifiedSeconds,
+          claimedSeconds: c.claimedSeconds,
+          timeTrackingSource: c.timeTrackingSource,
+        }),
         dedupeKey: `component:${c.componentId || c.submittedAt}`,
+        attemptCount: c.attempt || 1,
         isQuiz: false,
       };
     });
 
-    return [...quiz, ...video, ...activities]
-      .sort((a, b) => (b.at || '').localeCompare(a.at || ''));
+    const grouped = new Map<string, LogRow>();
+    const occurrences = new Map<string, number>();
+    for (const row of [...quiz, ...video, ...activities]) {
+      const existing = grouped.get(row.dedupeKey);
+      const occurrenceCount = (occurrences.get(row.dedupeKey) || 0) + 1;
+      occurrences.set(row.dedupeKey, occurrenceCount);
+      if (!existing) {
+        grouped.set(row.dedupeKey, { ...row, attemptCount: Math.max(row.attemptCount, occurrenceCount) });
+        continue;
+      }
+
+      const rowIsHigher = row.hours > existing.hours
+        || (row.hours === existing.hours && (row.at || '') > (existing.at || ''));
+      const best = rowIsHigher ? row : existing;
+      grouped.set(row.dedupeKey, {
+        ...best,
+        attemptCount: Math.max(existing.attemptCount, row.attemptCount, occurrenceCount),
+        ksbs: Array.from(new Set([...existing.ksbs, ...row.ksbs])),
+        passed: Boolean(existing.passed || row.passed),
+      });
+    }
+
+    return Array.from(grouped.values()).sort((a, b) => (b.at || '').localeCompare(a.at || ''));
   }, [real]);
 
-  // What the log accounts for. The total counts each quiz or component once
-  // however many times it was completed, so the same fold is applied here —
-  // otherwise a re-watched video would make this disagree with "Completed".
-  const loggedHours = useMemo(() => {
-    const counted = new Set<string>();
-    return rows.reduce((total, row) => {
-      if (counted.has(row.dedupeKey)) return total;
-      counted.add(row.dedupeKey);
-      return total + row.hours;
-    }, 0);
-  }, [rows]);
+  const loggedHours = useMemo(() => rows.reduce((total, row) => total + row.hours, 0), [rows]);
 
   // The same contributions, grouped by what kind of activity they were.
   const breakdown = useMemo(() => {
     const map = new Map<string, number>();
-    const counted = new Set<string>();
     for (const row of rows) {
-      if (counted.has(row.dedupeKey)) continue;
-      counted.add(row.dedupeKey);
       map.set(row.type, (map.get(row.type) || 0) + row.hours);
     }
     const withHours = Array.from(map.entries()).filter(([, hrs]) => hrs > 0);
@@ -273,7 +279,7 @@ export function OtjhBody({
         {/* Stat strip */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 md:gap-4">
           <StatCard icon="ri-flag-line" iconTint="bg-gradient-to-br from-[#d8c9ff] via-[#8b5cf6] to-[#5420a8] text-white shadow-sm shadow-primary-500/25" label="Completed" value={formatHoursMinutes(completed)} sub={`${plannedPercent}% of plan`} />
-          <StatCard icon="ri-focus-3-line" iconTint="bg-gradient-to-br from-[#ddd6fe] via-[#a78bfa] to-[#6d28d9] text-white shadow-sm shadow-violet-500/25" label="Current target" value={formatHoursMinutes(target)} sub="up to this week" />
+          <StatCard icon="ri-focus-3-line" iconTint="bg-gradient-to-br from-[#ddd6fe] via-[#a78bfa] to-[#6d28d9] text-white shadow-sm shadow-violet-500/25" label="Current target" value={formatHoursMinutes(target)} sub={targetWeekLabel} />
           <StatCard icon="ri-calendar-todo-line" iconTint="bg-gradient-to-br from-[#e5e7eb] via-[#9ca3af] to-[#4b5563] text-white shadow-sm shadow-foreground-400/25" label="Programme plan" value={formatHoursMinutes(planned)} sub="total planned hours" />
         </div>
 
@@ -325,7 +331,10 @@ export function OtjhBody({
                     </span>
                     <div className="flex-1 min-w-0">
                       <p className="text-[13px] font-semibold text-foreground-900 truncate">{r.title}</p>
-                      <p className="text-[11px] text-foreground-400">{r.type} · {fmtDate(r.at)}</p>
+                      <p className="text-[11px] text-foreground-400">
+                        {r.type} · {fmtDate(r.at)}
+                        {r.attemptCount > 1 && ` · ${r.attemptCount} attempts`}
+                      </p>
                     </div>
                     {r.ksbs.length > 0 && (
                       <div className="hidden sm:flex flex-wrap gap-1 max-w-[160px] justify-end">
@@ -339,13 +348,6 @@ export function OtjhBody({
                       <span className="block text-[12px] font-semibold text-foreground-700 tabular-nums">
                         {r.hours > 0 ? formatHoursMinutes(r.hours) : '—'}
                       </span>
-                      {/* What the learner said it took, shown only when that is
-                          not the same as what the component is worth — "2h ·
-                          said 2h" is noise. */}
-                      {r.reported && r.hours > 0
-                        && Math.abs(contributedHours(0, r.reported) - r.hours) > 0.01 && (
-                        <span className="block text-[10px] text-foreground-400">said {r.reported}</span>
-                      )}
                     </span>
                     {r.isQuiz && (
                       <span className={`shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full ${r.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>

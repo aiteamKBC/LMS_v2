@@ -66,6 +66,7 @@ TABLE_OWNER_MIGRATION = {
     'live_session_attendance': 'curriculum_api.0012_livesession_livesessionartifact_and_more',
     'live_session_artifacts': 'curriculum_api.0012_livesession_livesessionartifact_and_more',
     'live_session_recording_events': 'curriculum_api.0012_livesession_livesessionartifact_and_more',
+    'live_session_join_launches': 'curriculum_api.0060_live_session_join_launches_updated_at',
     'quizzes': 'quiz_api.0003_initial',
     'quiz_course_links': 'quiz_api.0002_rename_quiz_course_links_module_catalogue_id',
     'quiz_component_links': 'quiz_api.0002_rename_quiz_course_links_module_catalogue_id',

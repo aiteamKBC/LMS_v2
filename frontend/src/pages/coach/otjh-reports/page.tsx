@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { formatHoursMinutes } from '@/lib/format';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
@@ -132,7 +133,7 @@ function toNumber(value: unknown): number {
 }
 
 function formatHours(value: number): string {
-  return new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 }).format(value);
+  return formatHoursMinutes(value);
 }
 
 function displayText(value?: string | null): string {
@@ -664,7 +665,7 @@ export default function CoachOtjhReports() {
                           </p>
                         </div>
                         <div className="shrink-0 text-right">
-                          <p className="text-sm font-bold text-primary-600">{formatHours(entry.hours)}h</p>
+                          <p className="text-sm font-bold text-primary-600">{formatHours(entry.hours)}</p>
                           <p className="mt-1 text-[12px] text-foreground-400">{entry.completedDate}</p>
                         </div>
                       </div>

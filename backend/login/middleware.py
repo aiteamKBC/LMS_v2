@@ -18,7 +18,12 @@ import logging
 
 from django.db import DatabaseError
 
-from .sessions import RENEWED_UNTIL_ATTR, authenticate_request, refresh_session_cookie
+from .sessions import (
+    RENEWED_UNTIL_ATTR,
+    authenticate_request,
+    mark_session_unreadable,
+    refresh_session_cookie,
+)
 
 logger = logging.getLogger("login")
 
@@ -47,6 +52,12 @@ class LoginSessionMiddleware:
             request.login_session = None
             request.login_account = None
             setattr(request, RENEWED_UNTIL_ATTR, None)
+            # Anonymous *and* flagged. The views behind this must refuse the
+            # request either way, but the flag is what stops them refusing it
+            # with a 401 -- the one status the SPA reads as "signed out", which
+            # would end a perfectly live session over a transient database
+            # error. See ``sessions.SESSION_UNREADABLE_ATTR``.
+            mark_session_unreadable(request)
 
         response = self.get_response(request)
 

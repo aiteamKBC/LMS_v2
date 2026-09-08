@@ -61,6 +61,8 @@ export interface CoachCalendarEvent {
   sequence?: number;
   notes?: string;
   learnerId?: string;
+  learnerType?: 'commercial' | 'apprenticeship' | null;
+  enrolmentId?: string | null;
   ownerEmail?: string;
   ownerName?: string;
   targetDate?: string;
@@ -108,10 +110,112 @@ export interface CoachCalendarBookingInput {
 
 export type CalendarAction = 'start' | 'complete' | 'sign' | 'cancel';
 
+export interface CoachMeetingArtifact {
+  id: string;
+  artifact_type: 'transcript' | 'recording' | string;
+  graph_artifact_id?: string;
+  call_id?: string;
+  content_correlation_id?: string;
+  created_datetime?: string;
+  end_datetime?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CoachMeetingAttendanceRecord {
+  id: string;
+  reportId?: string;
+  graphRecordId?: string;
+  email?: string;
+  displayName: string;
+  role?: string;
+  totalAttendanceSeconds: number;
+  attended: boolean;
+  intervals?: Array<{
+    joinDateTime?: string;
+    leaveDateTime?: string;
+  }>;
+}
+
+export interface CoachMeetingExpectedAttendee {
+  id: string;
+  role: 'coach' | 'learner' | 'employer' | 'attendee' | string;
+  name: string;
+  displayName?: string;
+  email?: string;
+  required?: boolean;
+}
+
+export interface CoachMeetingAttendanceTrackerRow {
+  id: string;
+  role: 'coach' | 'learner' | 'employer' | 'attendee' | string;
+  name: string;
+  displayName?: string;
+  email?: string;
+  expected: boolean;
+  required?: boolean;
+  attended: boolean;
+  status: 'attended' | 'absent' | 'pending' | 'extra' | string;
+  totalAttendanceSeconds: number;
+  actualDisplayName?: string;
+  actualRecordIds?: string[];
+  reportIds?: string[];
+}
+
+export interface CoachMeetingAttendanceReport {
+  id: string;
+  meetingStartDateTime?: string;
+  meetingEndDateTime?: string;
+  totalParticipantCount: number;
+  records: CoachMeetingAttendanceRecord[];
+  attendedCount: number;
+  absentCount: number;
+}
+
+export interface CoachMeetingAttendanceSummary {
+  reports: CoachMeetingAttendanceReport[];
+  records: CoachMeetingAttendanceRecord[];
+  expectedAttendees?: CoachMeetingExpectedAttendee[];
+  tracker?: CoachMeetingAttendanceTrackerRow[];
+  reportCount: number;
+  attendedCount: number;
+  absentCount: number;
+  participantCount: number;
+  expectedCount?: number;
+  expectedAttendedCount?: number;
+  expectedAbsentCount?: number;
+  expectedPendingCount?: number;
+  extraAttendees?: CoachMeetingAttendanceTrackerRow[];
+  extraCount?: number;
+}
+
+export interface CoachMeetingArtifactsResponse {
+  event?: {
+    eventKey: string;
+    source: string;
+    status: string;
+    learner: string;
+    scheduledDate: string | null;
+    scheduledTime: string | null;
+  };
+  attendance?: CoachMeetingAttendanceSummary;
+  artifacts: CoachMeetingArtifact[];
+  errors?: string[];
+  partial?: boolean;
+  storage?: {
+    stored: boolean;
+    reason?: string;
+    syncedAt?: string;
+  };
+}
+
 async function readJsonResponse<T>(response: Response): Promise<T> {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const message = typeof data.detail === 'string' ? data.detail : `Request failed with ${response.status}`;
+    const message = typeof data.detail === 'string'
+      ? data.detail
+      : typeof data.error === 'string'
+        ? data.error
+        : `Request failed with ${response.status}`;
     throw new Error(message);
   }
   return data as T;
@@ -169,6 +273,47 @@ export async function fetchCoachCalendarEvents(
     signal,
     credentials: 'include',
   });
+}
+
+/**
+ * Read one named coach's timetable without changing the administrator's active
+ * workspace selection. This is used by the super-admin overview, where several
+ * coach calendars are displayed together. The server validates the supplied
+ * address against the Coach staff directory and keeps the request read-only.
+ */
+export async function fetchCoachCalendarEventsForCoach(
+  coachEmail: string,
+  signal: AbortSignal | undefined,
+  options: CoachCalendarFetchOptions = {},
+) {
+  const endpoint = coachTimetableEndpoint(options);
+  const separator = endpoint.includes('?') ? '&' : '?';
+  const url = `${endpoint}${separator}viewAsCoach=${encodeURIComponent(coachEmail.trim().toLowerCase())}`;
+  return fetchSharedJsonGet<CoachTimetableResponse>(url, {
+    signal,
+    credentials: 'include',
+  });
+}
+
+export async function fetchCoachMeetingArtifacts(
+  eventKey: string,
+  signal?: AbortSignal,
+): Promise<CoachMeetingArtifactsResponse> {
+  const response = await coachFetch(
+    `/coach_api/coach/timetable/events/${encodeURIComponent(eventKey)}/artifacts`,
+    { signal },
+  );
+  return readJsonResponse<CoachMeetingArtifactsResponse>(response);
+}
+
+export function coachMeetingArtifactContentUrl(
+  eventKey: string,
+  artifactType: string,
+  artifactId: string,
+  options: { preview?: boolean } = {},
+): string {
+  const base = `/coach_api/coach/timetable/events/${encodeURIComponent(eventKey)}/artifacts/${encodeURIComponent(artifactType)}/${encodeURIComponent(artifactId)}/content`;
+  return withCoachViewAs(options.preview ? `${base}?preview=1` : base);
 }
 
 export async function scheduleCoachCalendarEvent(event: CoachCalendarEvent, form: ScheduleFormState) {

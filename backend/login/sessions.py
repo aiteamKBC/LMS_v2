@@ -182,6 +182,28 @@ _LAST_SEEN_REFRESH_SECONDS = 300
 #: two ends cannot drift.
 RENEWED_UNTIL_ATTR = "login_session_renewed_until"
 
+#: Attribute marking a request whose session could not be *read* -- the auth
+#: database refused the query. That is not the same fact as "this caller has no
+#: session", and conflating the two is what turns a momentary Neon hiccup into a
+#: sign-out: the gate answers 401, the SPA reads 401 as "your session has ended"
+#: and bounces to /login, while the session row itself is alive and unexpired.
+#:
+#: Both gates still fail closed -- an unreadable session admits nobody -- but
+#: they answer **503** when this is set. A 503 is not in the SPA's sign-out path
+#: (see ``lib/sessionExpiry.ts``), so the request fails, the panel can retry, and
+#: nobody loses a session over an infrastructure blip.
+SESSION_UNREADABLE_ATTR = "login_session_unreadable"
+
+
+def mark_session_unreadable(request):
+    """Record that the session lookup itself failed on this request."""
+    setattr(request, SESSION_UNREADABLE_ATTR, True)
+
+
+def session_unreadable(request):
+    """Whether the session lookup *failed*, as opposed to finding no session."""
+    return bool(getattr(request, SESSION_UNREADABLE_ATTR, False))
+
 
 def renewal_target(session, now=None):
     """The furthest ``Expires_at`` this session may hold at ``now``.
@@ -423,8 +445,9 @@ def _refresh_staff_role(account):
     changed, so this costs one indexed read per authenticated staff request and
     no write on the overwhelming majority of them.
 
-    Never raises: a failure here must not sign somebody out. The stale role is
-    then still in force for that request, which is the pre-existing behaviour.
+    Never raises: a failure here must not sign somebody out. The API gate
+    reports unreadable staff grants as temporary unavailability instead of
+    letting a restricted monitoring account use a broader stale role.
     """
     if account is None or account.subject_type != "staff":
         return
@@ -441,14 +464,17 @@ def _refresh_staff_role(account):
             .first()
         )
         if row is None:
+            account._staff_access_unavailable = True
             return
+        account._staff_access = (row.access or '').strip().lower()
         derived = role_for_staff(row.position, row.access)
         if derived != account.role:
             account.role = derived
             account.save(update_fields=["role", "updated_at"])
     except DatabaseError:
-        pass
+        account._staff_access_unavailable = True
     except Exception:  # noqa: BLE001 - never break authentication over this
+        account._staff_access_unavailable = True
         import logging
 
         logging.getLogger("login").exception("Could not refresh staff role")

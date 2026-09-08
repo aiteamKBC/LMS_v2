@@ -8,7 +8,11 @@ import {
   fetchQuiz, submitQuizAttempt,
   type Quiz, type QuizQuestion, type QuizAnswerValue, type QuizAttemptResult,
 } from '@/api/quizzes';
-import { fetchLearnerDetail, type LearnerKsbItem, type LearnerKind } from '@/api/learnerDetail';
+import { fetchLearnerDetail, type LearnerDetail, type LearnerKsbItem, type LearnerKind } from '@/api/learnerDetail';
+import { completedComponentIds } from '@/utils/learnerJourney';
+import { placeActivity } from '@/pages/learner/video-watch/weekPreview';
+import { ActivitySidebar } from '@/pages/learner/video-watch/ActivitySidebar';
+import { componentRoute } from '@/pages/learner/video-watch/componentRoute';
 import { ReflectionWindow, formatClock } from '@/components/feature/ReflectionWindow';
 import { rememberLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
@@ -19,6 +23,8 @@ import { DemoTimeChip } from '@/components/feature/DemoTimePanel';
 import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { startTimeTracking, type TimeTrackingSession } from '@/api/timeTracking';
+import { ComponentAccessNotice } from '@/components/feature/ComponentAccessNotice';
+import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
 
 const learnerNav = roleNavMap.learner;
 
@@ -29,11 +35,14 @@ export default function QuizTakePage() {
   // Keep sidebar self-view pointing at this learner after the quiz.
   useEffect(() => { rememberLearner(kind, id); }, [kind, id]);
   const [searchParams] = useSearchParams();
+  const [detail, setDetail] = useState<LearnerDetail | null>(null);
   const navigate = useNavigate();
   // A staff viewer can reach this URL directly (pasted, or from history) even
   // though the plan rows no longer link here. Sitting the quiz would file an
   // attempt in the learner's name, so they get the read-only panel instead.
   const { canProgress } = useLearnerWorkspaceAccess(id);
+  const componentAccess = useComponentAccessWindow();
+  const canUseComponent = canProgress && componentAccess.open;
   const moduleTitle = searchParams.get('module');
   const weekTitle = searchParams.get('week');
 
@@ -77,6 +86,9 @@ export default function QuizTakePage() {
     fetchLearnerDetail(kind as LearnerKind, id)
       .then((d) => {
         if (!cancelled) {
+          // Kept whole: the sidebar is built from the learner's plan, not just
+          // from the KSBs this page used to take out of it.
+          setDetail(d);
           setLearnerKsbs(d.ksbs || []);
           setLearnerName(d.name || 'Learner');
           setProgrammeName(d.programme || 'Programme not set');
@@ -92,17 +104,29 @@ export default function QuizTakePage() {
   }, [kind, id, quizId]);
 
   useEffect(() => {
-    if (phase !== 'quiz') return;
+    if (phase !== 'quiz' || !componentAccess.open) return;
     timerRef.current = setInterval(() => {
       if (document.visibilityState === 'visible') setElapsedSeconds((s) => s + 1);
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [phase]);
+  }, [phase, componentAccess.open]);
 
   const totalPoints = useMemo(() => (quiz ? quiz.questions.reduce((n, q) => n + q.points, 0) : 0), [quiz]);
 
+  // Where this quiz sits in the plan, for the list beside it. A quiz reached
+  // from somewhere other than the plan (or one no longer in it) simply has no
+  // list — the page still works, which is how it behaved before it had one.
+  const completedIds = useMemo(() => completedComponentIds(detail), [detail]);
+  const placement = useMemo(
+    () => placeActivity(detail, { quizId }, completedIds),
+    [detail, quizId, completedIds],
+  );
+  // Hidden while the quiz is actually being sat: a timed attempt is not the
+  // moment to offer a way out of it, and leaving mid-attempt loses the answers.
+  const showSidebar = Boolean(placement) && (phase === 'intro' || phase === 'results');
+
   const startQuiz = () => {
-    if (!quiz || !kind || !id) return;
+    if (!quiz || !kind || !id || !canUseComponent) return;
     setSubmitError(null);
     trackingSessionRef.current = null;
     const pending = startTimeTracking(
@@ -152,7 +176,7 @@ export default function QuizTakePage() {
   const demoExpectedMinutes = quizPlannedHours != null ? Math.round(quizPlannedHours * 60) : null;
 
   const finalizeSubmit = async (reflection: { ksbs: string[]; feedback: string; reportedTime: string }) => {
-    if (!quiz || !kind || !id || submitting || !canProgress) return;
+    if (!quiz || !kind || !id || submitting || !canUseComponent) return;
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -189,13 +213,17 @@ export default function QuizTakePage() {
       userName="Learner"
       userRole="Learner"
     >
-      <div className="p-3 md:p-6 max-w-5xl mx-auto">
+      <div className={`p-3 md:p-6 ${showSidebar ? 'max-w-7xl' : 'max-w-5xl'} mx-auto`}>
+        <div className={showSidebar ? 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-6 items-start' : ''}>
+        <div className="min-w-0">
         {loading ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
         ) : loadError || !quiz ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text={loadError || 'Quiz not found.'} /></div>
         ) : !canProgress ? (
           <ReadOnlyLearnerNotice what="sit their own quizzes" onBack={() => navigate(-1)} />
+        ) : !componentAccess.open ? (
+          <ComponentAccessNotice onBack={() => navigate(-1)} />
         ) : phase === 'intro' ? (
           <IntroScreen quiz={quiz} totalPoints={totalPoints} onStart={startQuiz} onBack={() => navigate(-1)} />
         ) : phase === 'quiz' ? (
@@ -246,6 +274,25 @@ export default function QuizTakePage() {
             />
           )
         )}
+        </div>
+
+        {showSidebar && placement && (
+          <ActivitySidebar
+            weekComponents={placement.weekComponents}
+            weekTitle={placement.weekTitle}
+            moduleTitle={placement.moduleTitle}
+            weeks={placement.weeks}
+            completedIds={completedIds}
+            kind={kind}
+            id={id}
+            currentQuizId={Number(quizId)}
+            routeFor={(component, week) => componentRoute(
+              kind, id, component, placement.moduleTitle, week,
+            )}
+            accessOpen={componentAccess.open}
+          />
+        )}
+        </div>
       </div>
     </WorkspaceShell>
   );

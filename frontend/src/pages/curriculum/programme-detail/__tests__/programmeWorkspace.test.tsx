@@ -382,7 +382,7 @@ describe('Programme workspace', { timeout: 15000 }, () => {
 
     expect(screen.getAllByRole('button', { name: /^Add cohort$/ })).toHaveLength(1);
     expect(screen.getByPlaceholderText('Search cohorts, dates, status...')).toBeDisabled();
-    expect(screen.getByRole('combobox', { name: 'Status' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Record status' })).toBeDisabled();
 
     await openTab(/Groups/);
     expect(screen.getByText('Coach')).toBeInTheDocument();

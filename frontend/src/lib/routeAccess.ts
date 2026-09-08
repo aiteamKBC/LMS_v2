@@ -60,6 +60,8 @@ const EMPLOYER_AND_STAFF: readonly Role[] = ['admin', 'staff', 'employer'];
  * fallback below safe to close.
  */
 const RULES: ReadonlyArray<readonly [string, readonly Role[]]> = [
+  ['/old-otjh/coach', STAFF],
+  ['/old-otjh', LEARNER_AND_STAFF],
   // Workspaces, which do not share one audience.
   ['/workspace/learner', LEARNER_AND_STAFF],
   ['/workspace/employer', EMPLOYER_AND_STAFF],
@@ -124,7 +126,9 @@ export function rolesForRoute(path: string): readonly Role[] {
 }
 
 /** Whether `account` is admitted to `path`. */
-export function mayAccessRoute(path: string, account: Pick<AuthUser, 'role'>): boolean {
+export function mayAccessRoute(path: string, account: Pick<AuthUser, 'role' | 'access'>): boolean {
+  if (account.access === 'record-monitor') return path === '/old-otjh' || path.startsWith('/old-otjh/');
+  if (path === '/old-otjh/monitor') return account.access === 'super-admin';
   return rolesForRoute(path).includes(account.role);
 }
 
@@ -137,12 +141,52 @@ export function mayAccessRoute(path: string, account: Pick<AuthUser, 'role'>): b
  * no grant is sent to /access-required rather than into a console it cannot use.
  */
 export function homeRouteFor(
-  account: Pick<AuthUser, 'role' | 'accessHome' | 'subjectId'>,
+  account: Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord'>,
 ): string {
+  if (account.access === 'record-monitor') return '/old-otjh/monitor';
+  if (account.role === 'learner' && account.hasLegacyRecord) return '/old-otjh';
   if (account.role === 'employer' && account.subjectId) {
     return `/employers/${account.subjectId}`;
   }
   return account.accessHome || HOME_BY_ROLE[account.role];
+}
+
+function routePathname(path: string | null | undefined): string {
+  const cleaned = String(path || '').trim();
+  if (!cleaned) return '';
+  return cleaned.split(/[?#]/, 1)[0].replace(/\/+$/, '') || '/';
+}
+
+export function isBareLearnerWorkspacePath(path: string | null | undefined): boolean {
+  return routePathname(path) === '/workspace/learner';
+}
+
+/**
+ * Where LoginPage should send a successfully authenticated account.
+ *
+ * Legacy learners start at the transition portal, and record monitors at their
+ * monitoring dashboard, regardless of a remembered destination.
+ *
+ * `from` is helpful for pasted deep links, but `/workspace/learner` without a
+ * learner id is the learner self-workspace. Staff can open learner pages for
+ * read-only review, so route access deliberately allows it; as a post-login
+ * return target, though, it often means "the browser happened to be looking at
+ * the remembered learner". In that case a coach/admin should land in their own
+ * workspace instead of inheriting `localStorage.my_learner`.
+ */
+export function postLoginRouteFor(
+  account: Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord'>,
+  requestedPath?: string | null,
+): string {
+  if (account.access === 'record-monitor' || (account.role === 'learner' && account.hasLegacyRecord)) {
+    return homeRouteFor(account);
+  }
+  const requested = String(requestedPath || '').trim();
+  if (!requested) return homeRouteFor(account);
+  if (account.role !== 'learner' && isBareLearnerWorkspacePath(requested)) {
+    return homeRouteFor(account);
+  }
+  return requested;
 }
 
 const HOME_BY_ROLE: Record<Role, string> = {

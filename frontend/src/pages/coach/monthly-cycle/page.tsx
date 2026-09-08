@@ -32,7 +32,6 @@ import { roleNavMap } from '@/mocks/navigation';
 import { CoachingDeliveryPanel } from './components/CoachingDeliveryPanel';
 import { LearnerMonthCard } from './components/LearnerMonthCard';
 import { LearnerOverviewPanel } from './components/LearnerOverviewPanel';
-import { MonthHeroTiles } from './components/MonthHeroTiles';
 import { MonthNavigator } from './components/MonthNavigator';
 import { MonthlyCycleError, MonthlyCycleLoading, NoActiveLearners, NoLearnerMatches } from './components/MonthlyCycleStates';
 import { COACHING_DELIVERY_CONFIG, COACHING_DELIVERY_ORDER, EMPTY_LEARNERS, EMPTY_SUMMARY, LEARNERS_PER_PAGE } from './lib/constants';
@@ -279,12 +278,6 @@ export default function CoachMonthlyCycle() {
             icon="ri-radar-line"
             title={`Monthly Cycle — ${monthLabel}`}
             description="Track every learner touchpoint this month: learning completions, coaching and reviews, evidence, KSBs, and OTJH logged."
-            meta={(
-              <MonthHeroTiles
-                learners={summary.activeLearners}
-                reviews={summary.coachingSessions}
-              />
-            )}
             actions={(
               <MonthNavigator
                 value={selectedMonth}

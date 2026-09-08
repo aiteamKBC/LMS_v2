@@ -1,11 +1,14 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from django.test import SimpleTestCase
 from django.utils.dateparse import parse_datetime
 
 from .time_tracking import (
     TrackingSessionError,
+    component_access_is_open,
     issue_tracking_session,
+    outside_uk_working_hours,
     verify_tracking_session,
 )
 
@@ -18,6 +21,7 @@ class TimeTrackingSessionTests(SimpleTestCase):
             learner_kind="apprenticeship",
             learner_id="230",
             counting_mode="active_playback",
+            issued_at=datetime(2026, 7, 15, 12, 0, tzinfo=ZoneInfo("UTC")),
         )
         self.started_at = parse_datetime(self.session["startedAt"])
 
@@ -75,4 +79,47 @@ class TimeTrackingSessionTests(SimpleTestCase):
                 learner_kind="apprenticeship",
                 learner_id="230",
                 counting_mode="visible_page",
+                issued_at=datetime(2026, 7, 15, 12, 0, tzinfo=ZoneInfo("UTC")),
             )
+
+    def test_component_access_is_open_before_during_and_after_old_hours(self):
+        self.assertTrue(component_access_is_open(datetime(2026, 1, 15, 6, 59, tzinfo=ZoneInfo("UTC"))))
+        self.assertTrue(component_access_is_open(datetime(2026, 1, 15, 7, 0, tzinfo=ZoneInfo("UTC"))))
+        self.assertTrue(component_access_is_open(datetime(2026, 1, 15, 18, 59, tzinfo=ZoneInfo("UTC"))))
+        self.assertTrue(component_access_is_open(datetime(2026, 1, 15, 19, 0, tzinfo=ZoneInfo("UTC"))))
+
+    def test_component_access_is_open_all_weekend(self):
+        self.assertTrue(component_access_is_open(datetime(2026, 1, 17, 10, 0, tzinfo=ZoneInfo("UTC"))))
+        self.assertTrue(component_access_is_open(datetime(2026, 7, 19, 10, 0, tzinfo=ZoneInfo("UTC"))))
+
+    def test_outside_working_hours_uses_uk_weekdays_and_gmt_boundaries(self):
+        self.assertTrue(outside_uk_working_hours(datetime(2026, 1, 15, 6, 59, tzinfo=ZoneInfo("UTC"))))
+        self.assertFalse(outside_uk_working_hours(datetime(2026, 1, 15, 7, 0, tzinfo=ZoneInfo("UTC"))))
+        self.assertFalse(outside_uk_working_hours(datetime(2026, 1, 15, 18, 59, tzinfo=ZoneInfo("UTC"))))
+        self.assertTrue(outside_uk_working_hours(datetime(2026, 1, 15, 19, 0, tzinfo=ZoneInfo("UTC"))))
+
+    def test_outside_working_hours_applies_bst_and_weekends(self):
+        self.assertTrue(outside_uk_working_hours(datetime(2026, 7, 15, 5, 59, tzinfo=ZoneInfo("UTC"))))
+        self.assertFalse(outside_uk_working_hours(datetime(2026, 7, 15, 6, 0, tzinfo=ZoneInfo("UTC"))))
+        self.assertTrue(outside_uk_working_hours(datetime(2026, 7, 18, 12, 0, tzinfo=ZoneInfo("UTC"))))
+
+    def test_tracking_can_start_and_submit_outside_the_old_window(self):
+        started_at = datetime(2026, 1, 18, 22, 0, tzinfo=ZoneInfo("UTC"))
+        session = issue_tracking_session(
+            activity_kind="video",
+            activity_id="COMP-1",
+            learner_kind="apprenticeship",
+            learner_id="230",
+            counting_mode="active_playback",
+            issued_at=started_at,
+        )
+        result = verify_tracking_session(
+            session["trackingToken"],
+            activity_kind="video",
+            activity_id="COMP-1",
+            learner_kind="apprenticeship",
+            learner_id="230",
+            claimed_seconds=10,
+            submitted_at=started_at + timedelta(seconds=20),
+        )
+        self.assertEqual(result["verifiedSeconds"], 10)

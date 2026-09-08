@@ -138,7 +138,7 @@ export function downloadLearnersPdf(learners: Learner[], ownerName: string, insi
       displayValue(learner.coachRag),
       learner.overallProgressAvailable ? `${learner.overallProgress}%` : EMPTY_VALUE,
       learner.overallProgressAvailable
-        ? `${formatHours(learner.otjhCompleted)}/${formatHours(learner.otjhTarget)}h`
+        ? `${formatHours(learner.otjhCompleted)} / ${formatHours(learner.otjhTarget)}`
         : EMPTY_VALUE,
       formatPercent(learner.liveAttendanceRate),
       formatRatio(learner.componentsCompleted, learner.componentsPlanned),

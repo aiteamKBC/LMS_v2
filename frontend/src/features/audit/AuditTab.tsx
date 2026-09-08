@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { jsPDF } from 'jspdf';
 import { EmptyState } from '@/pages/users/components/ui';
 import { formatDisplayDate, type CaseFileTabProps } from '@/pages/coach/learner-case-file/data';
+import { formatHoursMinutes } from '@/lib/format';
 import { fetchLearnerAudit, type AuditActivityItem, type LearnerAuditResponse } from './api';
 
 export default function AuditTab({ data }: CaseFileTabProps) {
@@ -98,7 +99,7 @@ export default function AuditTab({ data }: CaseFileTabProps) {
                 ['End-Point Assessment (EPA)', display(audit.learner.epa)],
               ]} />
               <InfoPanel title="Audit Summary" rows={[
-                ['Completed OTJH', audit.summary.completed_otjh == null ? 'Not available' : `${audit.summary.completed_otjh}h`],
+                ['Completed OTJH', audit.summary.completed_otjh == null ? 'Not available' : formatHoursMinutes(audit.summary.completed_otjh)],
                 ['Total planned hours', audit.summary.total_programme_planned_hours == null ? 'Not available' : `${audit.summary.total_programme_planned_hours}h`],
                 ['LMS progress', audit.summary.lms_progress == null ? 'Not available' : `${audit.summary.lms_progress}%`],
                 ['Quiz attempts', display(audit.summary.quiz_attempts)],

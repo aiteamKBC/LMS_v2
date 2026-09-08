@@ -181,6 +181,13 @@ export function CompactSchedulePreview({
     plannedUtc: string;
     durationMinutes: number;
     shift?: SessionShift;
+    /**
+     * What is taught on this date: the title of the week's live-session
+     * component. A date and a number say when a session runs; the name says
+     * which session it is. Optional, because a caller that has not read the
+     * module's weeks has no name to give — the row then reads as it always did.
+     */
+    name?: string;
     /** Extra read-only info for this occurrence (e.g. a Teams calendar status), rendered under the date. */
     extra?: ReactNode;
     /** Controls this one session offers — a join link, a recording to play. */
@@ -196,16 +203,19 @@ export function CompactSchedulePreview({
   showDuration?: boolean;
 }) {
   type Entry =
-    | { kind: 'session'; number: number; date: string; plannedUtc: string; durationMinutes: number; extra?: ReactNode; actions?: ReactNode }
-    | { kind: 'blocked'; number: number; date: string; durationMinutes: number; causePhrase: string; replacementDate: string }
-    | { kind: 'replacement'; number: number; date: string; plannedUtc: string; durationMinutes: number; extra?: ReactNode; actions?: ReactNode };
+    | { kind: 'session'; number: number; name: string; date: string; plannedUtc: string; durationMinutes: number; extra?: ReactNode; actions?: ReactNode }
+    | { kind: 'blocked'; number: number; name: string; date: string; durationMinutes: number; causePhrase: string; replacementDate: string }
+    | { kind: 'replacement'; number: number; name: string; date: string; plannedUtc: string; durationMinutes: number; extra?: ReactNode; actions?: ReactNode };
 
   const entries: Entry[] = [];
   occurrences.forEach((item, index) => {
     const number = item.shift?.sessionNumber || index + 1;
+    // A blocked date and its replacement are one session that moved, so both
+    // rows carry the same name.
+    const name = cleanText(item.name);
     if (!item.session) {
       if (item.plannedUtc) {
-        entries.push({ kind: 'session', number, date: cleanText(item.plannedUtc).slice(0, 10), plannedUtc: item.plannedUtc, durationMinutes: item.durationMinutes, extra: item.extra, actions: item.actions });
+        entries.push({ kind: 'session', number, name, date: cleanText(item.plannedUtc).slice(0, 10), plannedUtc: item.plannedUtc, durationMinutes: item.durationMinutes, extra: item.extra, actions: item.actions });
       }
       return;
     }
@@ -213,14 +223,15 @@ export function CompactSchedulePreview({
       entries.push({
         kind: 'blocked',
         number,
+        name,
         date: item.shift.originalDate,
         durationMinutes: item.durationMinutes,
         causePhrase: holidayCausePhrase(item.shift),
         replacementDate: item.shift.actualDate,
       });
-      entries.push({ kind: 'replacement', number, date: item.shift.actualDate, plannedUtc: item.plannedUtc, durationMinutes: item.durationMinutes, extra: item.extra, actions: item.actions });
+      entries.push({ kind: 'replacement', number, name, date: item.shift.actualDate, plannedUtc: item.plannedUtc, durationMinutes: item.durationMinutes, extra: item.extra, actions: item.actions });
     } else {
-      entries.push({ kind: 'session', number, date: cleanText(item.session.date), plannedUtc: item.plannedUtc, durationMinutes: item.durationMinutes, extra: item.extra, actions: item.actions });
+      entries.push({ kind: 'session', number, name, date: cleanText(item.session.date), plannedUtc: item.plannedUtc, durationMinutes: item.durationMinutes, extra: item.extra, actions: item.actions });
     }
   });
 
@@ -259,6 +270,7 @@ export function CompactSchedulePreview({
                           <AppIcon className="ri-close-circle-fill shrink-0 text-sm text-red-600"></AppIcon>
                           <span className="font-bold text-red-700">{formatDateLabel(entry.date)}</span>
                           <span className="text-[11px] font-bold text-red-400">Session {entry.number}</span>
+                          {entry.name && <span className="font-semibold text-red-700">{entry.name}</span>}
                         </span>
                         <span className="rounded-full bg-red-100 px-2.5 py-1 text-[11px] font-semibold text-red-700">
                           Shifted to replacement
@@ -290,6 +302,12 @@ export function CompactSchedulePreview({
                             session numbers -- "sessions 8-10 run later" is only
                             actionable if session 8 can be found in the list. */}
                         <span className="text-[11px] font-bold text-foreground-400">Session {entry.number}</span>
+                        {/* What is taught on the date, next to when it runs. */}
+                        {entry.name && (
+                          <span className={`font-semibold ${isReplacement ? 'text-emerald-700' : 'text-foreground-700'}`}>
+                            {entry.name}
+                          </span>
+                        )}
                         {showDuration && <span className="text-foreground-400">{entry.durationMinutes} min</span>}
                       </span>
                       {(isReplacement || entry.actions) && (

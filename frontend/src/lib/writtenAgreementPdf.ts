@@ -13,6 +13,7 @@
 // complete rather than invented figures.
 // ============================================================================
 import jsPDF from 'jspdf';
+import { formatHoursMinutes } from '@/lib/format';
 
 const PAGE_W = 210;
 const PAGE_H = 297;
@@ -177,7 +178,7 @@ export function buildWrittenAgreementPdf(
   const activities = delivery.activities ?? [];
   doc.setFontSize(8.8);
   activities.forEach((a) => {
-    const hours = a.hours != null ? ` (${a.hours} hrs)` : '';
+    const hours = a.hours != null ? ` (${formatHoursMinutes(a.hours)})` : '';
     const text = `${a.method ? `${a.method}: ` : ''}${a.title ?? ''}${hours}`;
     const lines = doc.splitTextToSize(latin1(text), CONTENT_W - 5);
     space(lines.length * 4 + 1);
@@ -191,7 +192,7 @@ export function buildWrittenAgreementPdf(
   doc.setFontSize(9.5);
   space(8);
   doc.text(
-    latin1(`Total planned off-the-job training: ${delivery.totalOtjHours ?? 0} hrs`),
+    latin1(`Total planned off-the-job training: ${formatHoursMinutes(delivery.totalOtjHours ?? 0)}`),
     MARGIN_X,
     y + 3,
   );

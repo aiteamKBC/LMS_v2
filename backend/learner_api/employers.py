@@ -41,6 +41,7 @@ from login.permissions import staff_only
 
 from .models import Employer, Organisation, StaffUser
 from .views import _error, _parse_body, _send_platform_invitation
+from login.services import sync_account
 
 # The picker in the reference UI pages ten rows at a time.
 PAGE_SIZE = 10
@@ -59,7 +60,7 @@ def _resolve_groups(ids):
 
 
 @csrf_exempt
-@staff_only(writes_only=True)
+@staff_only()  # A4: organisation directory — staff/admin only, reads too.
 def organisations(request):
     """Organisation profiles — enrolment."Organisations".
 
@@ -118,7 +119,7 @@ def organisations(request):
 
 
 @csrf_exempt
-@staff_only(writes_only=True)
+@staff_only()  # A4: organisation detail — staff/admin only, reads too.
 def organisation_detail(request, pk):
     try:
         org = Organisation.objects.get(pk=pk)
@@ -171,7 +172,7 @@ def _resync_group_names(org):
 
 
 @csrf_exempt
-@staff_only(writes_only=True)
+@staff_only()  # A4: employer directory (PII) — staff/admin only, reads too.
 def employers(request):
     """Employer profiles — enrolment."Employers".
 
@@ -229,7 +230,7 @@ def employers(request):
 
 
 @csrf_exempt
-@staff_only(writes_only=True)
+@staff_only()  # A4: employer detail (PII) — staff/admin only, reads too.
 def employer_detail(request, pk):
     try:
         emp = Employer.objects.get(pk=pk)
@@ -254,11 +255,16 @@ def employer_detail(request, pk):
                 emp.save(update_fields=[*fields.keys(), "updated_at"])
             except DatabaseError as exc:
                 return _error(f"Database error: {exc}", 502)
+            # The login account holds its own copy of the address an invitation
+            # is sent to; correcting it here has to reach that copy.
+            if any(field in fields for field in ("email", "full_name")):
+                sync_account("employer", emp.pk, subject=emp)
         return JsonResponse(to_employer_row(emp))
 
     return _error("Method not allowed.", 405)
 
 
+@staff_only()  # A4: `owners` discloses every staff username — staff/admin only.
 def employer_options(request):
     """Canonical dropdown lists for the organisation and employer forms.
 
@@ -266,6 +272,11 @@ def employer_options(request):
     drift. `owners` is every staff account — an organisation is owned by a member
     of staff, whatever their position, so this is deliberately unfiltered rather
     than restricted to the Caseowner/Admin positions a learner's case owner is.
+
+    Staff/admin only: these are the console's organisation/employer authoring
+    forms (only staff create organisations), and `owners` leaks the full staff
+    username list, so an open GET is the same staff-directory disclosure class as
+    A4. Learner/employer callers get 403.
     """
     if request.method != "GET":
         return _error("Method not allowed.", 405)

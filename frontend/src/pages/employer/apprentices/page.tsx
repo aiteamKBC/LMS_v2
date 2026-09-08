@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
+import { formatHoursMinutes } from '@/lib/format';
 
 const employerNav = roleNavMap.employer;
 
@@ -173,7 +174,7 @@ export default function EmployerApprentices() {
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <QuickStat label="Progress" value={`${selectedApprentice.progress}%`} color="primary" />
                   <QuickStat label="Attendance" value={`${selectedApprentice.attendance}%`} color="accent" />
-                  <QuickStat label="OTJH" value={`${selectedApprentice.otjhCompleted}/${selectedApprentice.otjhTarget}h`} color="secondary" />
+                  <QuickStat label="OTJH" value={`${formatHoursMinutes(selectedApprentice.otjhCompleted)} / ${formatHoursMinutes(selectedApprentice.otjhTarget)}`} color="secondary" />
                   <QuickStat label="KSB" value={`${selectedApprentice.ksbProgress}%`} color="primary" />
                 </div>
                 <div className="bg-background-100 rounded-xl p-4 space-y-3">

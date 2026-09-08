@@ -39,6 +39,9 @@ ADMIN_ENDPOINTS = (
     "/login_api/admin/system/",
     "/login_api/admin/documents/",
     "/login_api/admin/curriculum/",
+    # Reads arbitrary rows out of the auth and enrolment tables, so it belongs
+    # behind the same gate as the rest.
+    "/login_api/admin/report-drill/?metric=accounts.total",
 )
 
 
@@ -107,6 +110,74 @@ class PlatformAdminReadTests(LoginTestBase):
         data = self.get("/login_api/admin/overview/")
         for section in ("people", "documents", "curriculum", "delivery"):
             self.assertIn("available", data[section], msg=section)
+
+    def test_report_drill_returns_the_records_behind_a_figure(self):
+        """The drill must agree with the report row it was opened from.
+
+        The whole point of the screen is that a number can be checked, so its
+        count is asserted against the same figure `overview` publishes rather
+        than merely asserted to be a number.
+        """
+        overview = self.get("/login_api/admin/overview/")
+        drill = self.get("/login_api/admin/report-drill/?metric=accounts.byRole.admin")
+
+        self.assertTrue(drill["available"])
+        self.assertEqual(drill["total"], overview["accounts"]["byRole"]["admin"])
+        self.assertEqual(drill["table"], 'login."Login_accounts"')
+        # The SQL is shown so the figure can be re-run by hand; it must be there.
+        self.assertIn("count(", drill["countSql"])
+        self.assertIn("Login_accounts", drill["rowsSql"])
+        # The signed-in admin is one of the rows behind their own count.
+        self.assertTrue(any(row.get("Email") == self.email for row in drill["rows"]))
+
+    def test_report_drill_never_exposes_the_password_hash(self):
+        """This endpoint selects named columns, and that must stay true."""
+        drill = self.get("/login_api/admin/report-drill/?metric=accounts.total")
+        self.assertNotIn("Password_hash", drill["columns"])
+        for row in drill["rows"]:
+            self.assertNotIn("Password_hash", row)
+
+    def test_report_drill_rejects_an_unknown_metric(self):
+        """The metric key selects a fixed entry — it is never SQL."""
+        response = self.client.get(
+            "/login_api/admin/report-drill/?metric=' OR 1=1--", **XHR
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["code"], "unknown_metric")
+
+    def test_report_drill_reports_a_missing_table_rather_than_zero_rows(self):
+        """An absent table is not an empty one — the same stance as `overview`.
+
+        Delivery reads "Learner"."Active_users", which is not provisioned on
+        every database; when it is missing the drill must say so instead of
+        returning an empty result that would read as "no records".
+        """
+        drill = self.get("/login_api/admin/report-drill/?metric=delivery.activeLearners")
+        if not drill["available"]:
+            self.assertIn("error", drill)
+            # The query is still shown, so the reader can see what was attempted.
+            self.assertIn("Active_users", drill["rowsSql"])
+
+    def test_every_drill_metric_has_a_runnable_query(self):
+        """Guards the registry against a typo'd column or predicate.
+
+        A metric whose table is absent is allowed (available: false); a metric
+        that 404s or returns a malformed payload is not.
+        """
+        from .platform_admin import DRILL_METRICS
+
+        for key in DRILL_METRICS:
+            with self.subTest(metric=key):
+                response = self.client.get(
+                    f"/login_api/admin/report-drill/?metric={key}", **XHR
+                )
+                self.assertEqual(response.status_code, 200)
+                payload = response.json()
+                self.assertEqual(payload["metric"], key)
+                self.assertIn("countSql", payload)
+                if payload["available"]:
+                    self.assertIsInstance(payload["total"], int)
+                    self.assertIsInstance(payload["rows"], list)
 
     def test_accounts_lists_the_signed_in_account(self):
         data = self.get("/login_api/admin/accounts/")

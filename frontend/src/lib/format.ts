@@ -12,6 +12,57 @@
 
 export const EMPTY_VALUE = '--';
 
+/** The LMS business timezone. Europe/London applies GMT/BST automatically. */
+export const SYSTEM_TIME_ZONE = 'Europe/London';
+
+function timestampDate(value: string | number | Date): Date | null {
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (typeof value === 'number') {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const text = String(value || '').trim();
+  if (!text) return null;
+  // API timestamps are absolute instants. Older responses sometimes omitted Z;
+  // interpreting those in the browser timezone would make results device-dependent.
+  const normalized = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(text)
+    ? `${text}Z`
+    : text;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+export function formatSystemTimestamp(
+  value: string | number | Date,
+  options: Intl.DateTimeFormatOptions = {},
+): string {
+  const date = timestampDate(value);
+  if (!date) return '';
+  return new Intl.DateTimeFormat('en-GB', { timeZone: SYSTEM_TIME_ZONE, ...options }).format(date);
+}
+
+export function systemDateParts(value: string | number | Date): { year: number; month: number; day: number } | null {
+  const date = timestampDate(value);
+  if (!date) return null;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: SYSTEM_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find(part => part.type === type)?.value);
+  return { year: get('year'), month: get('month'), day: get('day') };
+}
+
+export function systemTimeZoneName(value: string | number | Date): string {
+  const date = timestampDate(value);
+  if (!date) return '';
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: SYSTEM_TIME_ZONE,
+    timeZoneName: 'short',
+  }).formatToParts(date).find(part => part.type === 'timeZoneName')?.value || 'UK time';
+}
+
 // The mojibake em dash below is deliberate: some imported rows carry a
 // double-encoded em dash where a blank was meant, and it has to read as empty.
 const PLACEHOLDER_VALUES = new Set([EMPTY_VALUE, '-', '—', 'â€”']);
@@ -114,12 +165,25 @@ export function daysUntil(value?: string | null): number | null {
 
 // --- numbers ----------------------------------------------------------------
 
-const HOURS_FORMAT = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 });
 const WHOLE_FORMAT = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 0 });
 
-export function formatHours(value?: number | null): string {
+/** Decimal hours -> a user-facing hours/minutes label.
+ * 21.58 -> "21h 35m", 1.5 -> "1h 30m", 0.5 -> "30m". */
+export function formatHoursMinutes(value?: number | null): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return EMPTY_VALUE;
-  return HOURS_FORMAT.format(value);
+  const roundedMinutes = Math.round(value * 60);
+  const sign = roundedMinutes < 0 ? '-' : '';
+  const absoluteMinutes = Math.abs(roundedMinutes);
+  const hours = Math.floor(absoluteMinutes / 60);
+  const minutes = absoluteMinutes % 60;
+  if (hours === 0 && minutes === 0) return '0h';
+  if (hours === 0) return `${sign}${minutes}m`;
+  if (minutes === 0) return `${sign}${hours}h`;
+  return `${sign}${hours}h ${minutes}m`;
+}
+
+export function formatHours(value?: number | null): string {
+  return formatHoursMinutes(value);
 }
 
 /** "42 / 60 hrs" — the ratio a coach reads, with its unit attached. */
@@ -132,7 +196,7 @@ export function formatHoursRatio(completed?: number | null, target?: number | nu
   ) {
     return EMPTY_VALUE;
   }
-  return `${HOURS_FORMAT.format(completed)} / ${HOURS_FORMAT.format(target)} hrs`;
+  return `${formatHoursMinutes(completed)} / ${formatHoursMinutes(target)}`;
 }
 
 export function formatRatio(completed?: number | null, target?: number | null): string {

@@ -205,6 +205,10 @@ class EnrolmentUser(models.Model):
     all_learners = models.Manager()
 
     id = models.AutoField(primary_key=True, db_column="id")
+    # Aptem's learner identifier. It is the bridge to the read-only
+    # Last_audit mirror; it is text here because that is how Created_users was
+    # originally provisioned, while Last_audit stores the same value as bigint.
+    aptem_id = models.TextField(db_column="aptem_id", null=True, blank=True)
 
     # The user's permanent public identifier, added by apply_user_uuid. The
     # integer pk above stays the internal join key — ~25 columns across three
@@ -228,6 +232,8 @@ class EnrolmentUser(models.Model):
     # --- flat text columns ---
     username = models.TextField(db_column="Username", null=True, blank=True)
     email = models.TextField(db_column="Email", null=True, blank=True)
+    # Existing column verified in Neon; this mapping does not create a column.
+    aptem_id = models.TextField(db_column="aptem_id", null=True, blank=True)
     status = models.TextField(db_column=" Status", null=True, blank=True)  # NB: leading space
     type = models.TextField(db_column="Type", null=True, blank=True)
     programme_status = models.TextField(db_column="Programme_status", null=True, blank=True)
@@ -635,7 +641,18 @@ class LearnerProfile(models.Model):
     @property
     def training_plan_progress(self):
         records = []
-        for entry in self.progress_entries.all():
+        # Prefetched, not lazily walked: the body below touches ksb_links twice,
+        # quiz_answers once, and two relations under each answer, so plain
+        # `.all()` issues a query per entry per relation. A learner with 1,392
+        # entries — an MBA import, but any long-running learner gets there —
+        # spent over four minutes here on several thousand round trips, on the
+        # property every progress and OTJH screen reads.
+        entries = self.progress_entries.prefetch_related(
+            "ksb_links",
+            "quiz_answers__chosen_answers",
+            "quiz_answers__correct_answers",
+        )
+        for entry in entries:
             if entry.kind == "activity_event":
                 continue
             record = {
@@ -672,6 +689,12 @@ class LearnerProfile(models.Model):
                 "claimedSeconds": entry.claimed_seconds,
                 "serverSessionSeconds": entry.server_session_seconds,
                 "verifiedSeconds": entry.verified_seconds,
+                "outsideWorkingHours": entry.outside_working_hours,
+                "outsideWorkingHoursConfirmed": entry.outside_working_hours_confirmed,
+                "outsideWorkingHoursConfirmedAt": (
+                    entry.outside_working_hours_confirmed_at.isoformat()
+                    if entry.outside_working_hours_confirmed_at else ""
+                ),
                 "ksbs": [
                     row.ksb_code
                     for row in entry.ksb_links.all()
@@ -694,17 +717,12 @@ class LearnerProfile(models.Model):
                 record["questions"] = [
                     {
                         "questionId": answer.question_ref,
+                        # Built from the prefetched rows rather than .exists(),
+                        # which would issue its own query per answer and undo
+                        # the prefetch above.
                         "chosenAnswerId": (
-                            [
-                                choice.answer_ref
-                                for choice in answer.chosen_answers.all()
-                            ]
-                            # .all() and not .exists(): only the result cache that
-                            # prefetch_related fills is reused here. .exists()
-                            # always issues its own query, once per answer, and so
-                            # defeated the prefetch its callers set up.
-                            if answer.chosen_answers.all()
-                            else answer.chosen_answer_ref
+                            [choice.answer_ref for choice in answer.chosen_answers.all()]
+                            or answer.chosen_answer_ref
                         ),
                         "correct": answer.is_correct,
                         "earned": float(answer.earned) if answer.earned is not None else None,
@@ -895,6 +913,9 @@ class LearnerProgressEntry(models.Model):
     claimed_seconds = models.PositiveIntegerField(null=True, blank=True)
     server_session_seconds = models.PositiveIntegerField(null=True, blank=True)
     verified_seconds = models.PositiveIntegerField(null=True, blank=True)
+    outside_working_hours = models.BooleanField(default=False)
+    outside_working_hours_confirmed = models.BooleanField(default=False)
+    outside_working_hours_confirmed_at = models.DateTimeField(null=True, blank=True)
     feed_kind = models.CharField(max_length=30, blank=True)
     feed_action = models.TextField(blank=True)
     feed_title = models.TextField(blank=True)

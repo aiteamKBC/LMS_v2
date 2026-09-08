@@ -171,6 +171,8 @@ export interface CurriculumProgramme {
   cohorts: number;
   groups?: number;
   lastUpdated: string;
+  /** When the record was first written. Blank on rows predating the column. */
+  createdAt?: string;
   owner: string;
   color: string;
   description: string;
@@ -239,7 +241,15 @@ export interface CurriculumModule {
   tutor?: string;
   coach?: string;
   lastUpdated: string;
+  /** When the record was first written. Blank on rows predating the column. */
+  createdAt?: string;
   color: string;
+  /**
+   * Optional module artwork — a pasted image URL, or a data: URL read off the
+   * picked file, exactly as a free course stores its cover. Empty means the
+   * Module Builder card keeps its generic icon.
+   */
+  coverImage?: string;
   notes: string;
   sessionNames: string[];
   ksbCodes: string[];
@@ -1098,6 +1108,9 @@ export interface CurriculumCohort {
   progress: number;
   attendance: number;
   holidayIds?: Array<string | number>;
+  /** When the record was first written. Blank on rows predating the column. */
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface CurriculumGroup {
@@ -1122,6 +1135,9 @@ export interface CurriculumGroup {
   moduleIds?: string[];
   modules: string[];
   sessions: number;
+  /** When the record was first written. Blank on rows predating the column. */
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface CurriculumSession {
@@ -1178,6 +1194,9 @@ export interface CurriculumTeamsMeetingSummary {
   onlineMeetingId?: string;
   organizerEmail: string;
   presenters?: string[];
+  /** People who run the meeting alongside the organizer: they can manage the
+   *  recording, the lobby and the meeting options without owning the calendar. */
+  coOrganizers?: string[];
   attendees?: string[];
   repeatPattern: string;
   startDateTime: string;
@@ -1245,6 +1264,12 @@ export interface LiveSessionAttendance {
   total_attendance_seconds?: number;
   intervals?: Array<Record<string, unknown>>;
   raw_data?: Record<string, unknown>;
+  expected?: boolean;
+  attended?: boolean;
+  join_count?: number;
+  attendance_report_id?: string;
+  attendance_report_start?: string;
+  attendance_report_end?: string;
 }
 
 /** An occurrence enriched with its attendance + artifacts (from the per-series
@@ -1713,14 +1738,30 @@ let mutationEpoch = 0;
 // not tied to component cleanup signals: React StrictMode can unmount/remount
 // immediately in development, and aborting those requests fills DevTools with
 // noisy "(cancelled)" rows even though the next mount needs the same data.
-const inFlightGets = new Map<string, Promise<unknown>>();
-const completedGets = new Map<string, { value: unknown; expiresAt: number }>();
-const GET_CACHE_TTL_MS = 30_000; // Fallback for legacy code
+/**
+ * The `/curriculum/preview/*` endpoints answer a question about what the form is
+ * currently holding -- where these session dates land, which tutors are free in
+ * this slot -- and write nothing. They are POSTs only because the question does
+ * not fit in a URL: the unsaved holidays, delivery days and dates go in a body.
+ *
+ * So they get a read's treatment, keyed on the question rather than on the path:
+ * the same body asked twice is one request, and the answer stands for a short
+ * while. Their URL is identical every time, which is why the multi-tier cache
+ * above -- keyed on path alone -- cannot hold them.
+ */
+const inFlightReads = new Map<string, Promise<unknown>>();
+const completedReads = new Map<string, { value: unknown; expiresAt: number }>();
+const READ_POST_TTL_MS = 30_000;
+const READ_POST_MAX_ENTRIES = 60;
+
+function isReadOnlyPost(method: string, path: string): boolean {
+  return method === 'POST' && path.startsWith('/curriculum/preview/');
+}
 
 export function clearCurriculumGetCache() {
   multiTierCache.clear();
-  completedGets.clear();
-  inFlightGets.clear();
+  completedReads.clear();
+  inFlightReads.clear();
 }
 
 export function invalidateCurriculumCacheByEntity(entityType: string, entityId?: string): number {
@@ -1731,8 +1772,59 @@ export function getCurriculumCacheStats() {
   return multiTierCache.getStats();
 }
 
+/**
+ * A cached, de-duplicated GET for callers that hold their own response types.
+ *
+ * The module authoring layer had its own bare `fetch` for the structure
+ * endpoint, so its reads shared nothing: a workspace and a drawer open on the
+ * same module -- and each of them mounted twice under StrictMode -- each opened
+ * a separate request for identical bytes, and the slowest were still in flight
+ * when their 15s timeout aborted them. Going through `fetchJson` puts them on
+ * the one in-flight promise and the `moduleStructure` cache tier.
+ */
+export function fetchCurriculumJson<T>(path: string, init?: CurriculumRequestInit): Promise<T> {
+  return fetchJson<T>(path, init);
+}
+
 async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise<T> {
   const method = (init?.method || 'GET').toUpperCase();
+  // A preview read, answered before the mutation branch below can treat it as a
+  // write. It used to fall through to that branch's `else`, so every one of them
+  // cleared the whole cache and bumped the mutation epoch -- and the module
+  // drawer fires two of them (session plan, tutor availability) on a 300ms
+  // debounce as the weeks or the start date are typed. Each keystroke therefore
+  // threw away the overview, the tutors, the coaches and the holidays, and the
+  // page spent the next few seconds fetching back data that had not changed.
+  if (isReadOnlyPost(method, path)) {
+    const key = `${path}|${typeof init?.body === 'string' ? init.body : ''}`;
+    const cached = completedReads.get(key);
+    if (cached && !init?.skipCache && !init?.revalidate) {
+      if (cached.expiresAt > Date.now()) {
+        return settleWithCallerAbort(Promise.resolve(cached.value as T), init?.signal);
+      }
+      completedReads.delete(key);
+    }
+    const existingRead = inFlightReads.get(key) as Promise<T> | undefined;
+    const readPending = existingRead || fetchJsonUncached<T>(
+      path,
+      init?.signal ? { ...init, signal: undefined } : init,
+    ).then(value => {
+      if (completedReads.size >= READ_POST_MAX_ENTRIES) {
+        const oldest = completedReads.keys().next();
+        if (!oldest.done) completedReads.delete(oldest.value);
+      }
+      completedReads.set(key, { value, expiresAt: Date.now() + READ_POST_TTL_MS });
+      return value;
+    });
+    if (!existingRead) {
+      inFlightReads.set(key, readPending as Promise<unknown>);
+      const clearRead = () => {
+        if (inFlightReads.get(key) === (readPending as Promise<unknown>)) inFlightReads.delete(key);
+      };
+      readPending.then(clearRead, clearRead);
+    }
+    return settleWithCallerAbort(readPending, init?.signal);
+  }
   if (method !== 'GET') {
     // Any GET started before this point predates the write, so skipCache callers
     // must not reuse it.
@@ -2281,6 +2373,17 @@ export function liveSessionArtifactContentUrl(liveSessionId: string, artifactId:
   return `${API_BASE_URL}/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/${encodeURIComponent(artifactId)}/content/`;
 }
 
+/** Same-origin redirect that records which Week/occurrence launched the shared Teams meeting. */
+export function liveSessionJoinUrl(liveSessionId: string, occurrenceId: string): string {
+  return `${API_BASE_URL}/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/occurrences/${encodeURIComponent(occurrenceId)}/join/`;
+}
+
+/** Inline media/text response. Without this flag the backend deliberately sends
+ * Content-Disposition: attachment so the same endpoint is a real download. */
+export function liveSessionArtifactPreviewUrl(liveSessionId: string, artifactId: string): string {
+  return `${liveSessionArtifactContentUrl(liveSessionId, artifactId)}?preview=1`;
+}
+
 export function fetchCurriculumSessions(
   signal?: AbortSignal,
   options: { skipCache?: boolean } = {},
@@ -2339,7 +2442,7 @@ export type CurriculumProgrammeInput = Partial<Pick<CurriculumProgramme, 'name' 
    */
   requiredOtjh?: number | string | null;
 };
-export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'weeks' | 'color' | 'notes'>> & {
+export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'weeks' | 'color' | 'notes' | 'coverImage'>> & {
   programmeId?: string;
   programmeName?: string;
   programme?: string;
@@ -2384,6 +2487,8 @@ export type CurriculumModuleAttachmentInput = {
   groupId?: string;
   catalogueId?: string | number;
   color?: string;
+  /** See CurriculumModule.coverImage. */
+  coverImage?: string;
   startDate?: string;
   endDate?: string;
   coach?: string;

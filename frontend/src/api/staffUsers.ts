@@ -40,8 +40,8 @@ export const ADMIN_POSITION = 'Admin';
  */
 export const TUTOR_POSITION = 'Tutor';
 
-/** The five access grants. Mirrors ACCESS_CHOICES in learner_api/constants.py. */
-export type StaffAccess = 'enrolment' | 'curriculum' | 'coach' | 'tutor' | 'super-admin';
+/** Supported access grants. Mirrors ACCESS_CHOICES in learner_api/constants.py. */
+export type StaffAccess = 'enrolment' | 'curriculum' | 'coach' | 'tutor' | 'record-monitor' | 'super-admin';
 
 /**
  * What each access permits, and where it lands on sign-in.
@@ -58,6 +58,11 @@ export const ACCESS_OPTIONS: {
   home: string;
   icon: string;
 }[] = [
+  {
+    id: 'record-monitor', label: 'Learning record monitoring',
+    description: 'Read-only access to active enrolled learners, previous records and signatures.',
+    home: '/old-otjh/monitor', icon: 'ri-dashboard-line',
+  },
   {
     id: 'enrolment',
     label: 'Enrolment access',
@@ -144,7 +149,7 @@ export interface StaffUserRow extends UserListRow {
   // invitation is always issued.
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+async function request<T>(url: string, init?: globalThis.RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, {
@@ -217,6 +222,15 @@ export async function fetchCoachOptions(): Promise<CoachOption[]> {
   return rows
     .filter((r) => r.name && r.email)
     .map((r) => ({ name: r.name, email: r.email }));
+}
+
+/**
+ * One staff/admin account by id. The Accounts console holds a login account,
+ * which carries only `subjectId` — this is how it reaches the person record
+ * behind it so the same edit form the directory uses can be opened there too.
+ */
+export function fetchStaffUser(id: string): Promise<StaffUserRow> {
+  return request<StaffUserRow>(`${BASE}/${id}/`);
 }
 
 /** Create a staff/admin account; returns the new row. */

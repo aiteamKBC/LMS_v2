@@ -212,30 +212,89 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; };
   }, []);
 
-  // A 401 from a gated API means the session this browser holds is gone —
+  // A 401 from a gated API *suggests* the session this browser holds is gone —
   // expired, revoked, the account deactivated, or signed out elsewhere. Before
   // the API gate existed those requests were answered anyway and a lapsed
   // session went unnoticed; now every panel on the page fails at once, so
   // something has to say why rather than leaving a screen of broken cards.
   //
+  // It suggests, and does not prove. A 401 is what the backend answers whenever
+  // it cannot identify the caller, and an ended session is only one of the ways
+  // that happens: a request that raced the sign-in cookie, an auth lookup that
+  // failed against the database, a gate applied to a prefix the page should not
+  // have called. Acting on the first 401 unconditionally is what made this feel
+  // arbitrary — people were bounced to /login an hour into a five-hour session,
+  // with a row in `Login_sessions` that was alive and nowhere near expiring.
+  //
+  // So the 401 is treated as evidence and checked against `/login_api/me/`,
+  // which is the authority on this question and deliberately outside the gate
+  // (its own 401 is a normal answer, so it cannot start this loop again). Only
+  // `/me` answering "nobody" signs the person out. Every other outcome leaves
+  // the session alone: a broken panel is recoverable, a discarded session is
+  // not — it costs the person their password and their place on the page.
+  //
   // Installed here rather than at a call site because roughly forty modules
   // under api/ and lib/ each own their own fetch. See lib/sessionExpiry.
   useEffect(() => {
-    return installSessionExpiryHandler(() => {
-      // `navigate` rather than a reload: it keeps the SPA mounted, and the
-      // `from` state is what returns the person to the page they were on once
-      // they sign in again.
-      const from = `${window.location.pathname}${window.location.search}`;
-      localStorage.removeItem(AUTH_STORAGE_KEY);
-      clearCoachViewAs();
-      clearTutorViewAs();
-      setAuth(SIGNED_OUT);
-      toast?.warning(
-        'Your session has ended',
-        'Please sign in again to continue where you left off.',
-      );
-      navigate('/login', { state: { from }, replace: true });
+    let cancelled = false;
+    let rearmTimer: ReturnType<typeof setTimeout> | undefined;
+
+    // Re-arm on a delay, not immediately. The latch inside sessionExpiry is the
+    // only thing stopping a panel that 401s on every poll from asking `/me` on
+    // every poll as well; a few seconds of quiet bounds that to one check per
+    // burst, and still catches a session that really has ended on the next
+    // request the page makes.
+    const rearmSoon = () => {
+      rearmTimer = setTimeout(() => {
+        if (!cancelled) resetSessionExpiryNotice();
+      }, 10_000);
+    };
+
+    const uninstall = installSessionExpiryHandler(() => {
+      void (async () => {
+        let account: AuthUser | null = null;
+        try {
+          account = await apiMe();
+        } catch {
+          // `/me` itself could not be reached. A network or server failure is
+          // not evidence of anything about the session, and signing somebody
+          // out is the one response to it that cannot be taken back.
+          if (!cancelled) rearmSoon();
+          return;
+        }
+        if (cancelled) return;
+
+        if (account) {
+          // Still signed in, so that 401 belonged to that one request. Keep the
+          // session and refresh the identity while we have it — the answer is
+          // current, and a role or access change is exactly the kind of thing
+          // that produces a surprising refusal.
+          setAuth(stateFromAccount(account));
+          rearmSoon();
+          return;
+        }
+
+        // `navigate` rather than a reload: it keeps the SPA mounted, and the
+        // `from` state is what returns the person to the page they were on once
+        // they sign in again.
+        const from = `${window.location.pathname}${window.location.search}`;
+        localStorage.removeItem(AUTH_STORAGE_KEY);
+        clearCoachViewAs();
+        clearTutorViewAs();
+        setAuth(SIGNED_OUT);
+        toast?.warning(
+          'Your session has ended',
+          'Please sign in again to continue where you left off.',
+        );
+        navigate('/login', { state: { from }, replace: true });
+      })();
     });
+
+    return () => {
+      cancelled = true;
+      if (rearmTimer) clearTimeout(rearmTimer);
+      uninstall();
+    };
   }, [navigate, toast]);
 
   // Sign-out in another tab should not leave this one showing a console it can

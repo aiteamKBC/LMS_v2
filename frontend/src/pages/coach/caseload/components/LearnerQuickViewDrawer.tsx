@@ -287,9 +287,9 @@ function OtjhTab({ learner, insight }: { learner: Learner; insight: LearnerInsig
           {delta !== null ? (
             <span className={`pb-1 text-[12px] font-semibold ${delta < -0.5 ? 'text-red-700' : delta > 0.5 ? 'text-emerald-700' : 'text-foreground-500'}`}>
               {delta < -0.5
-                ? `${formatHours(Math.abs(delta))} hrs behind`
+                ? `${formatHours(Math.abs(delta))} behind`
                 : delta > 0.5
-                  ? `${formatHours(delta)} hrs ahead`
+                  ? `${formatHours(delta)} ahead`
                   : 'On target'}
             </span>
           ) : null}
@@ -305,14 +305,14 @@ function OtjhTab({ learner, insight }: { learner: Learner; insight: LearnerInsig
       <div>
         <SectionLabel>Breakdown</SectionLabel>
         <div className="mt-1">
-          <DataRow label="Hours recorded" value={`${formatHours(learner.otjhCompleted)} hrs`} />
-          <DataRow label="Expected by now" value={`${formatHours(learner.otjhTarget)} hrs`} />
-          {learner.otjhPlanned ? <DataRow label="Planned for programme" value={`${formatHours(learner.otjhPlanned)} hrs`} /> : null}
-          {learner.otjhMinimum ? <DataRow label="Minimum required" value={`${formatHours(learner.otjhMinimum)} hrs`} /> : null}
+          <DataRow label="Hours recorded" value={formatHours(learner.otjhCompleted)} />
+          <DataRow label="Expected by now" value={formatHours(learner.otjhTarget)} />
+          {learner.otjhPlanned ? <DataRow label="Planned for programme" value={formatHours(learner.otjhPlanned)} /> : null}
+          {learner.otjhMinimum ? <DataRow label="Minimum required" value={formatHours(learner.otjhMinimum)} /> : null}
           {delta !== null ? (
             <DataRow
               label="Ahead / behind"
-              value={`${delta > 0 ? '+' : ''}${formatHours(delta)} hrs`}
+              value={`${delta > 0 ? '+' : ''}${formatHours(delta)}`}
               tone={delta < -0.5 ? 'critical' : delta > 0.5 ? 'positive' : 'default'}
             />
           ) : null}

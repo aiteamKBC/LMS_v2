@@ -137,6 +137,71 @@ def _as_date(value):
     return None
 
 
+#: Human names for the four compliance documents, for telling a learner which
+#: of them their start is still waiting on.
+COMPLIANCE_DOCUMENT_LABELS = {
+    "apprenticeshipAgreement": "Apprenticeship Agreement",
+    "ilr": "Individual Learner Record",
+    "trainingPlan": "Training Plan",
+    "writtenAgreement": "Written Agreement",
+}
+
+
+def access_gate(learner):
+    """Why this learner cannot start yet — the same conditions advance_learner
+    checks, reported instead of applied.
+
+    The waiting page used to assume there was only ever one answer ("your start
+    date has not arrived"), so a learner held back by an unassigned plan was told
+    to wait for a date that had already passed. Progression knows the real
+    reason; this hands it over rather than making the page guess.
+
+    Returns {blocked, reasons, startDate, outstandingDocuments}. `reasons` is
+    ordered by what has to happen first, and empty when nothing is holding the
+    learner back.
+    """
+    result = {"blocked": False, "reasons": [], "startDate": "", "outstandingDocuments": []}
+    try:
+        status = _s(learner.programme_status)
+        kind = _learner_kind(learner)
+        commercial = kind.casefold() == "commercial"
+        waiting_statuses = (
+            COMMERCIAL_PRE_START_STATUSES if commercial
+            else {"", "Fresh user", "Onboarding", DELIVERY_PROGRAMME_STATUS, READY_TO_ENROL_STATUS}
+        )
+        if status not in waiting_statuses or status == ACTIVE_STATUS:
+            return result
+
+        start = _programme_start_date(learner)
+        result["startDate"] = start.isoformat() if start else ""
+
+        # An apprenticeship learner's documents come before their start date:
+        # they cannot be enrolled, let alone started, until all four are signed.
+        if not commercial and status in {"", "Fresh user", "Onboarding", DELIVERY_PROGRAMME_STATUS}:
+            state = compliance_document_state(kind, learner.pk)
+            outstanding = [name for name, done in state.items() if not done]
+            if outstanding:
+                result["reasons"].append("documents")
+                result["outstandingDocuments"] = [
+                    COMPLIANCE_DOCUMENT_LABELS.get(name, name) for name in outstanding
+                ]
+
+        # Commercial delivery waits on the plan the delivery team assigns.
+        if commercial and not _has_assigned_learning_plan(learner):
+            result["reasons"].append("plan")
+
+        if start is None:
+            result["reasons"].append("start-date-missing")
+        elif start > timezone.localdate():
+            result["reasons"].append("start-date-future")
+
+        result["blocked"] = bool(result["reasons"])
+        return result
+    except DatabaseError:
+        logger.exception("access_gate: failed for learner %s", getattr(learner, "pk", "?"))
+        return result
+
+
 def advance_learner(learner):
     """Move a learner as far forward as their evidence allows.
 

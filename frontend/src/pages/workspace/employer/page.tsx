@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
+import { formatHoursMinutes } from '@/lib/format';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 
@@ -130,7 +131,7 @@ export default function EmployerDashboard() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <EmployerStatCard label="Overall Progress" value={`${p.overallProgress}%`} sub={`Week ${p.currentWeek} of 72`} icon="ri-pie-chart-line" color="primary" progress={p.overallProgress} />
               <EmployerStatCard label="Attendance Rate" value={`${p.attendanceRate}%`} sub={`${p.sessionsAttended}/${p.sessionsAttended + p.sessionsMissed} sessions`} icon="ri-calendar-check-line" color="accent" progress={p.attendanceRate} />
-              <EmployerStatCard label="OTJH Hours" value={`${p.otjhCompleted} hrs`} sub={`Target: ${p.otjhTarget} hrs`} icon="ri-time-line" color="secondary" progress={Math.round((p.otjhCompleted / p.otjhTarget) * 100)} />
+              <EmployerStatCard label="OTJH Hours" value={formatHoursMinutes(p.otjhCompleted)} sub={`Target: ${formatHoursMinutes(p.otjhTarget)}`} icon="ri-time-line" color="secondary" progress={Math.round((p.otjhCompleted / p.otjhTarget) * 100)} />
               <EmployerStatCard label="KSB Progress" value={`${p.ksbProgress}%`} sub={`${p.ksbValidated} of ${p.ksbTotal} validated`} icon="ri-bar-chart-2-line" color="primary" progress={p.ksbProgress} />
             </div>
 

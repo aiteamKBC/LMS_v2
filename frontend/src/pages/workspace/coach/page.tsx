@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -10,8 +10,10 @@ import { useAuth } from '@/hooks/useAuth';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import { CoachDirectoryPicker } from './CoachDirectoryPicker';
+import { AllCoachesCalendar } from './AllCoachesCalendar';
+import type { DirectoryCoach } from '@/api/coachDirectory';
 import { cn } from '@/lib/cn';
-import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
+import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE, formatHoursMinutes } from '@/lib/format';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { SectionHeader, SectionLabel } from '@/components/ui/SectionHeader';
@@ -690,7 +692,7 @@ interface OverdueSignal {
 }
 
 function formatHours(value: number) {
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+  return formatHoursMinutes(value);
 }
 
 function otjhPercentFor(learner: CoachLearner): number | null {
@@ -979,6 +981,28 @@ export default function CoachDashboard() {
   const [liveSessionsError, setLiveSessionsError] = useState<string | null>(null);
   const [caseloadExpanded, setCaseloadExpanded] = useState(true);
   const [scheduleExpanded, setScheduleExpanded] = useState(true);
+  const [directoryCoaches, setDirectoryCoaches] = useState<DirectoryCoach[]>([]);
+  const handleDirectoryLoaded = useCallback((nextCoaches: DirectoryCoach[]) => {
+    setDirectoryCoaches(nextCoaches);
+  }, []);
+
+  const openCoachCalendar = useCallback((selected: DirectoryCoach, event: CoachCalendarEvent) => {
+    setCoachViewAs({ email: selected.email, name: selected.name }, adminEmail);
+    navigate('/coach/timetable', {
+      state: {
+        focusEvent: {
+          source: event.source,
+          eventKey: event.eventKey,
+          date: eventDisplayDate(event),
+          title: event.title,
+          scheduledTime: event.scheduledTime,
+          programme: event.programme,
+          cohort: event.cohort,
+          group: event.group,
+        },
+      },
+    });
+  }, [adminEmail, navigate]);
 
   useEffect(() => {
     if (!isInitialized) return;
@@ -1278,7 +1302,9 @@ export default function CoachDashboard() {
         <div className="space-y-6 p-3 md:p-6">
           <CoachDirectoryPicker
             onSelect={selected => setCoachViewAs({ email: selected.email, name: selected.name }, adminEmail)}
+            onDirectoryLoaded={handleDirectoryLoaded}
           />
+          <AllCoachesCalendar coaches={directoryCoaches} onOpenCoach={openCoachCalendar} />
         </div>
       </WorkspaceShell>
     );
@@ -1788,7 +1814,7 @@ function AttentionLearnerRow({ rank, learner, priority, onOpen }: {
   const extraReasons = Math.max(priority.reasons.length - 1, 0);
 
   const otjhPercent = otjhPercentFor(learner);
-  const otjhLabel = learner.otjhTarget > 0 ? `${formatHours(learner.otjhCompleted)}/${formatHours(learner.otjhTarget)} hrs` : EMPTY_VALUE;
+  const otjhLabel = learner.otjhTarget > 0 ? `${formatHours(learner.otjhCompleted)} / ${formatHours(learner.otjhTarget)}` : EMPTY_VALUE;
   const progressLabel = learner.overallProgressAvailable ? `${learner.overallProgress}%` : EMPTY_VALUE;
   const attendanceLabel = learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE;
   const review = nextReviewCell(learner);

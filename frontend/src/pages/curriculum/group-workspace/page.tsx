@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
-import { fetchCurriculumSessions, type CurriculumGroup, type CurriculumSession } from '@/lib/curriculumApi';
+import { type CurriculumGroup } from '@/lib/curriculumApi';
 import {
   cleanText,
   findGroup,
@@ -24,52 +24,22 @@ import {
   EntityEmptyState,
   EntityTable,
   InlineError,
+  ParentBadge,
   PlainCell,
   StackedCell,
-  StatusBadge,
   WorkspaceHeader,
   WorkspacePanel,
   WorkspaceTabs,
 } from '../shared/entities/ui';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { SkeletonBlock } from '@/components/feature/Skeletons';
 
 // One Group: what it delivers, to whom, and when. Modules are listed rather than
 // edited here — each one opens its own workspace, which is where the operational
 // controls (schedule, Teams, components) live.
 
-type Tab = 'overview' | 'modules' | 'sessions' | 'learners';
+type Tab = 'overview' | 'modules' | 'learners';
 
 const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(130px,1fr)_70px_110px_110px]';
-
-/** Month bucket for a session, from its date. Undated sessions collapse into
- *  one "Unscheduled" bucket that always sorts last — same grouping the
- *  Programme workspace's own Sessions tab reads its tree by. */
-function sessionMonthBucket(dateIso: string): { key: string; label: string; order: number } {
-  const trimmed = (dateIso || '').trim();
-  const dateOnly = /^\d{4}-\d{2}-\d{2}/.test(trimmed);
-  const date = trimmed ? new Date(dateOnly ? `${trimmed.slice(0, 10)}T12:00:00Z` : trimmed) : null;
-  if (!date || Number.isNaN(date.getTime())) {
-    return { key: 'unscheduled', label: 'Unscheduled', order: Number.MAX_SAFE_INTEGER };
-  }
-  const year = date.getUTCFullYear();
-  const month = date.getUTCMonth();
-  const label = date.toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
-  return { key: `${year}-${String(month + 1).padStart(2, '0')}`, label, order: year * 12 + month };
-}
-
-interface GroupSessionWeek {
-  key: string;
-  week: number;
-  sessions: CurriculumSession[];
-}
-interface GroupSessionMonth {
-  key: string;
-  label: string;
-  order: number;
-  count: number;
-  weeks: GroupSessionWeek[];
-}
 
 export default function GroupWorkspacePage() {
   const { id = '' } = useParams();
@@ -83,8 +53,6 @@ export default function GroupWorkspacePage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [moduleDrawerOpen, setModuleDrawerOpen] = useState(false);
   const [moduleCreating, setModuleCreating] = useState(false);
-  const [sessions, setSessions] = useState<CurriculumSession[]>([]);
-  const [sessionsLoading, setSessionsLoading] = useState(false);
 
   // This page is about one group, so a save shows on it immediately rather than
   // when the background refresh gets back. See the Cohorts list for the pattern.
@@ -125,74 +93,6 @@ export default function GroupWorkspacePage() {
     () => (group ? modules.filter(module => normaliseKey(module.groupId) === normaliseKey(group.id)) : []),
     [group, modules],
   );
-
-  // Sessions are the heaviest collection in the curriculum payload, so they are
-  // only fetched once the user actually opens the Sessions tab.
-  //
-  // Depends on the group's *id*, never on this effect's own state. It used to
-  // list `sessionsLoading` and `sessions.length` as dependencies while also
-  // setting them, which made it cancel its own request: setting the loading
-  // flag re-ran the effect, whose cleanup aborted the fetch it had just
-  // started; the aborted request then cleared the flag, which re-ran the
-  // effect, which started another one. That was the flashing — skeleton,
-  // empty, skeleton, empty — not the loading UI or the abort handling.
-  // `group` is out too: it is a fresh object every time the shared
-  // collections reload, and a new identity for the same group is not a reason
-  // to throw away a request already in flight for it.
-  const groupId = group?.id || '';
-  useEffect(() => {
-    if (tab !== 'sessions' || !groupId) return undefined;
-    const controller = new AbortController();
-    setSessionsLoading(true);
-    fetchCurriculumSessions(controller.signal)
-      .then(result => {
-        if (controller.signal.aborted) return;
-        setSessions(result);
-        setSessionsLoading(false);
-      })
-      .catch(() => {
-        if (controller.signal.aborted) return;
-        setSessions([]);
-        setSessionsLoading(false);
-      });
-    return () => controller.abort();
-  }, [groupId, tab]);
-
-  const groupSessions = useMemo(() => {
-    if (!group) return [];
-    return sessions
-      .filter(session => normaliseKey(session.groupId) === normaliseKey(group.id)
-        || normaliseKey(session.group) === normaliseKey(group.name))
-      .sort((a, b) => String(a.date).localeCompare(String(b.date)));
-  }, [group, sessions]);
-
-  // One flat list read fine at a dozen rows; a group running a full year of
-  // weekly sessions does not. Grouped Month -> Week, the same tree the
-  // Programme workspace's own Sessions tab reads by, so a long-running group
-  // reads as a handful of collapsible months rather than a scroll of
-  // identical weekday rows.
-  const sessionMonths = useMemo<GroupSessionMonth[]>(() => {
-    const months = new Map<string, GroupSessionMonth>();
-    groupSessions.forEach(session => {
-      const bucket = sessionMonthBucket(session.date);
-      let month = months.get(bucket.key);
-      if (!month) {
-        month = { key: bucket.key, label: bucket.label, order: bucket.order, count: 0, weeks: [] };
-        months.set(bucket.key, month);
-      }
-      month.count += 1;
-      const weekKey = String(session.week);
-      let week = month.weeks.find(item => item.key === weekKey);
-      if (!week) {
-        week = { key: weekKey, week: session.week, sessions: [] };
-        month.weeks.push(week);
-      }
-      week.sessions.push(session);
-    });
-    const result = [...months.values()].sort((a, b) => a.order - b.order);
-    result.forEach(month => month.weeks.sort((a, b) => a.week - b.week));
-    return result;
-  }, [groupSessions]);
 
   const coachNames = useMemo(() => {
     const names = new Set<string>();
@@ -245,7 +145,6 @@ export default function GroupWorkspacePage() {
   const tabs = [
     { key: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
     { key: 'modules', label: 'Modules', icon: 'ri-stack-line', count: groupModules.length },
-    { key: 'sessions', label: 'Sessions', icon: 'ri-time-line', count: groupSessions.length || undefined },
     { key: 'learners', label: 'Learners, Activity & KSBs', icon: 'ri-graduation-cap-line', count: group?.learners || undefined },
   ];
 
@@ -276,21 +175,21 @@ export default function GroupWorkspacePage() {
           eyebrow="Group"
           title={groupDisplayName}
           subtitle={context ? (
-            <span className="flex flex-wrap items-center gap-1">
-              <span>in Cohort</span>
-              <Link
-                to={`/curriculum/cohorts/${encodeURIComponent(context.cohortId)}`}
-                className="font-semibold text-primary-700 hover:underline"
-              >
-                {context.cohortName}
-              </Link>
-              <span>in programme</span>
-              <Link
-                to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(context.programme))}?tab=groups`}
-                className="font-semibold text-primary-700 hover:underline"
-              >
-                {context.programmeName}
-              </Link>
+            <span className="flex flex-wrap items-center gap-1.5">
+              <span className="text-foreground-400">in Cohort</span>
+              <ParentBadge
+                tone="cohort"
+                label={context.cohortName}
+                href={context.cohortId ? `/curriculum/cohorts/${encodeURIComponent(context.cohortId)}` : undefined}
+              />
+              <span className="text-foreground-400">in programme</span>
+              <ParentBadge
+                tone="programme"
+                label={context.programmeName}
+                href={context.programmeId
+                  ? `/curriculum/programmes/${encodeURIComponent(programmeIdentity(context.programme))}?tab=groups`
+                  : undefined}
+              />
             </span>
           ) : ''}
           accentColor={group?.color}
@@ -300,6 +199,28 @@ export default function GroupWorkspacePage() {
             { icon: 'ri-graduation-cap-line', label: 'Learners', value: group?.learners || 0 },
             { icon: 'ri-user-star-line', label: 'Coach', value: cleanText(group?.coach, 'Unassigned') },
             { icon: 'ri-calendar-line', label: 'Delivery', value: group ? scheduleLabel(group) : '—' },
+            // The same three dates the Cohort workspace carries, because they are
+            // the same three dates: a group delivers inside its cohort's
+            // contracted window and holds no dates of its own. Labelled as the
+            // cohort's so the header cannot be read as a group-level date
+            // somebody could edit here -- Edit group has no such field.
+            {
+              icon: 'ri-calendar-line',
+              label: 'Cohort start',
+              value: context?.cohort ? formatDateLabel(context.cohort.startDate) : 'No cohort linked',
+            },
+            {
+              icon: 'ri-flag-line',
+              label: 'Cohort practical end',
+              value: context?.cohort
+                ? formatDateLabel(context.cohort.practicalEndDate || context.cohort.endDate)
+                : 'No cohort linked',
+            },
+            {
+              icon: 'ri-award-line',
+              label: 'Cohort apprenticeship end',
+              value: context?.cohort ? formatDateLabel(context.cohort.apprenticeshipEndDate) : 'No cohort linked',
+            },
           ]}
           actions={(
             <>
@@ -400,29 +321,6 @@ export default function GroupWorkspacePage() {
           />
         )}
 
-        {tab === 'sessions' && (
-          sessionsLoading && !groupSessions.length ? (
-            // The one loading pattern this app uses is the pulsing skeleton,
-            // not a spinner — a spinner reads as a different, competing kind
-            // of wait next to every other list on this page.
-            <div className="space-y-2 overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
-              {Array.from({ length: 6 }).map((_, index) => <SkeletonBlock key={index} className="h-14 w-full" />)}
-            </div>
-          ) : !groupSessions.length ? (
-            <EntityEmptyState
-              icon="ri-time-line"
-              title="No sessions scheduled"
-              message="Sessions are generated from each module's start date, session count and delivery days."
-            />
-          ) : (
-            <div className="space-y-3">
-              {sessionMonths.map(month => (
-                <GroupSessionMonthBlock key={month.key} group={month} />
-              ))}
-            </div>
-          )
-        )}
-
         {/* The group is the timetabled class, so it is the level enrolment
             places a learner into and the level a module borrows its roster
             from. Both questions — who is here, and what have they earned
@@ -470,82 +368,5 @@ export default function GroupWorkspacePage() {
         }}
       />
     </WorkspaceShell>
-  );
-}
-
-// --------------------------------------------------------- sessions tree
-// Month -> Week -> session, cloned from the Programme workspace's own Sessions
-// tab (SessionsTree.tsx). That tree also groups by Module and reads real Teams
-// occurrence data (live/recorded kind, attendance, recordings) this page never
-// fetches; a group's sessions are the generated weekly schedule instead, one
-// module deep already, so the tree here stops at Week -> session.
-
-function GroupSessionMonthBlock({ group }: { group: GroupSessionMonth }) {
-  const [open, setOpen] = useState(true);
-  return (
-    <div className="space-y-2">
-      <button
-        type="button"
-        onClick={() => setOpen(value => !value)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-2 text-left"
-      >
-        <AppIcon className={`${open ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-sm text-foreground-400`}></AppIcon>
-        <AppIcon className="ri-calendar-2-line text-sm text-foreground-400"></AppIcon>
-        <span className="text-[12px] font-bold uppercase tracking-wide text-foreground-600">{group.label}</span>
-        <span className="ml-auto rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-semibold text-foreground-500">{group.count}</span>
-      </button>
-      {open && (
-        <div className="space-y-2 pl-4">
-          {group.weeks.map(week => (
-            <GroupSessionWeekBlock key={week.key} group={week} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function GroupSessionWeekBlock({ group }: { group: GroupSessionWeek }) {
-  const [open, setOpen] = useState(true);
-  return (
-    <div className="rounded-lg border border-background-200 bg-background-50">
-      <button
-        type="button"
-        onClick={() => setOpen(value => !value)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left"
-      >
-        <AppIcon className={`${open ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-sm text-foreground-400`}></AppIcon>
-        <span className="text-[12px] font-bold text-foreground-700">Week {group.week}</span>
-        <span className="ml-auto rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-semibold text-foreground-500">{group.sessions.length}</span>
-      </button>
-      {open && (
-        <div>
-          {group.sessions.map(session => (
-            <GroupSessionRow key={session.id} session={session} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function GroupSessionRow({ session }: { session: CurriculumSession }) {
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-background-200 px-4 py-2.5 first:border-t-0">
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
-        <AppIcon className="ri-time-line text-[11px]"></AppIcon>
-      </span>
-      <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground-800">{session.title || 'Session'}</span>
-      <span className="text-[11px] text-foreground-500">
-        {formatDateLabel(session.date)}{session.day ? ` · ${session.day}` : ''}
-      </span>
-      <span className="text-[11px] text-foreground-500">
-        {session.startTime ? `${session.startTime} – ${cleanText(session.endTime, '')}` : '—'}
-      </span>
-      <span className="text-[11px] text-foreground-500">{cleanText(session.tutor, 'Unassigned')}</span>
-      <StatusBadge status={session.status} />
-    </div>
   );
 }

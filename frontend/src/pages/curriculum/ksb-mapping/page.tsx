@@ -13,6 +13,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { TableRowsSkeleton } from '@/components/feature/Skeletons';
 import { curriculumNavItems } from '@/mocks/navigation';
+import { formatHoursMinutes } from '@/lib/format';
 import {
   fetchCurriculumProgrammeKsbCoverage,
   fetchCurriculumProgrammes,
@@ -573,7 +574,7 @@ export default function KSBMapping() {
                     <WeightBar value={row.totalWeight} max={maxWeight} />
 
                     <span className="text-right text-xs font-semibold tabular-nums text-foreground-700">
-                      {row.totalOtjh ? `${numberText(row.totalOtjh)}h` : <span className="text-foreground-300">&mdash;</span>}
+                      {row.totalOtjh ? formatHoursMinutes(row.totalOtjh) : <span className="text-foreground-300">&mdash;</span>}
                     </span>
                   </button>
 
@@ -625,7 +626,7 @@ export default function KSBMapping() {
                               </span>
                               <span className="text-right font-semibold tabular-nums text-foreground-700">{numberText(placement.weight)}</span>
                               <span className="text-right font-semibold tabular-nums text-foreground-700">
-                                {placement.otjh ? `${numberText(placement.otjh)}h` : <span className="text-foreground-300">&mdash;</span>}
+                                {placement.otjh ? formatHoursMinutes(placement.otjh) : <span className="text-foreground-300">&mdash;</span>}
                               </span>
                             </div>
                           ))}

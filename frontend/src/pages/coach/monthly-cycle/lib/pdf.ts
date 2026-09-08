@@ -59,7 +59,7 @@ export function downloadLearnerMonthlyCyclePdf(
   ];
 
   const summaryCards = [
-    { label: 'Monthly target', value: formatHoursLabel(learner.otjh.monthlyTarget), accent: colors.navy },
+    { label: 'Planned hours', value: formatHoursLabel(learner.otjh.monthlyTarget), accent: colors.navy },
     { label: 'Actual hours', value: learner.otjh.monthlyHoursLabel, accent: colors.accent },
     { label: 'Variance', value: varianceLabel, accent: variance < 0 ? colors.red : colors.emerald },
     { label: 'KSBs evidenced', value: String(learner.ksb.touched), accent: colors.amber },

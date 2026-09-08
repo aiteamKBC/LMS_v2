@@ -14,8 +14,8 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 import { Panel } from '@/components/ui/Panel';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { inlineActivityCategory } from '../lib/monthly';
-import type { MonthlyLearnerActivity } from '../types';
+import { coachingDeliveryKind } from '../lib/monthly';
+import type { MonthlyActivityItem, MonthlyLearnerActivity } from '../types';
 
 const SERIES = [
   { key: 'completions', label: 'Completions', color: 'oklch(var(--primary-500))' },
@@ -24,6 +24,14 @@ const SERIES = [
 ] as const;
 
 type SeriesKey = (typeof SERIES)[number]['key'];
+
+function activitySeriesKey(activity: MonthlyActivityItem): SeriesKey {
+  const searchableText = `${activity.type} ${activity.title} ${activity.detail} ${activity.source}`.toLowerCase();
+  if (searchableText.includes('evidence')) return 'evidence';
+  if (coachingDeliveryKind(activity)) return 'reviews';
+
+  return 'completions';
+}
 
 function dayLabel(isoDate: string): string {
   const parsed = new Date(`${isoDate}T00:00:00`);
@@ -47,8 +55,7 @@ export function EngagementOverviewChart({ learners, monthKey }: { learners: Mont
         if (Number.isNaN(activityDate.getTime())) return;
         if (activityDate.getFullYear() !== year || activityDate.getMonth() !== month - 1) return;
 
-        const category = inlineActivityCategory(activity.type);
-        const seriesKey: SeriesKey | null = category === 'coaching' ? 'reviews' : category === 'evidence' ? 'evidence' : 'completions';
+        const seriesKey = activitySeriesKey(activity);
         const bucket = dailyCounts.get(activityDate.getDate());
         if (bucket) bucket[seriesKey] += 1;
       });

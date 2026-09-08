@@ -190,7 +190,7 @@ function resolveIcon(name: string): LucideIcon {
   if (/file-list|list-3/.test(key)) return LayoutList;
   if (/file-chart|bar-chart-box/.test(key)) return FileBarChart;
   if (/chat-1|chat|message|feedback|comment/.test(key)) return MessageCircle;
-  if (/programme-design/.test(key)) return Presentation;
+  if (/programme-design|slideshow|presentation/.test(key)) return Presentation;
   if (/curriculum-builder/.test(key)) return Workflow;
   if (/assessment-design/.test(key)) return ClipboardCheck;
   if (/delivery-planning/.test(key)) return CalendarDays;

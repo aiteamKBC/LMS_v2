@@ -89,10 +89,10 @@ function otjhReason(learner: Learner, delta: number | null): AttentionReason | n
   return {
     id: 'otjh',
     label: behind !== null
-      ? `OTJH ${formatHours(behind)} hrs behind target`
+      ? `OTJH ${formatHours(behind)} behind target`
       : 'Off-the-job hours behind target',
     detail: learner.overallProgressAvailable
-      ? `${formatHours(learner.otjhCompleted)} recorded of ${formatHours(learner.otjhTarget)} hrs expected by now`
+      ? `${formatHours(learner.otjhCompleted)} recorded of ${formatHours(learner.otjhTarget)} expected by now`
       : undefined,
     severity: statusKey === 'at-risk' ? 'critical' : 'warning',
     metric: 'otjh',

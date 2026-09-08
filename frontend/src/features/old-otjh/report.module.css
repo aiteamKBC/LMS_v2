@@ -1,0 +1,74 @@
+.activitySections { display: grid; gap: 14px; min-width: 0; }
+.activityTable, .signTable { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
+:global(.dashboard-theme .workspace-main) table.activityTable,
+:global(.dashboard-theme .workspace-main) table.signTable { min-width: 0; width: 100%; white-space: normal; }
+.activityTable th, .signTable th { padding: 9px 10px; text-align: left; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--record-muted); background: var(--record-soft); }
+.activityTable td, .signTable td { padding: 10px; vertical-align: top; overflow-wrap: anywhere; border-top: 1px solid var(--record-border); }
+:global(.dashboard-theme .workspace-main) table.activityTable thead th,
+:global(.dashboard-theme .workspace-main) table.signTable thead th { background: var(--record-soft); color: var(--record-muted); padding: 9px 10px; }
+:global(.dashboard-theme .workspace-main) table.activityTable tbody td,
+:global(.dashboard-theme .workspace-main) table.signTable tbody td { height: auto; padding: 10px; border-color: var(--record-border); }
+.activityTable th:nth-child(1) { width: 11%; }
+.activityTable th:nth-child(2) { width: 12%; }
+.activityTable th:nth-child(3) { width: 40%; }
+.activityTable th:nth-child(4) { width: 17%; }
+.activityTable th:nth-child(5), .activityTable th:nth-child(6) { width: 10%; }
+.signTable th:nth-child(1) { width: 10%; }
+.signTable th:nth-child(2) { width: 40%; }
+.signTable th:nth-child(3) { width: 22%; }
+.signTable th:nth-child(4) { width: 12%; }
+.signTable th:nth-child(5) { width: 16%; }
+.activityTable .activityRow:nth-child(even) { background: var(--record-surface); }
+.activityTable .activityRow:hover { background: var(--record-soft); }
+.activityTable .activityCell { min-width: 0; overflow-wrap: anywhere; }
+.activityDescription { display: grid; gap: 4px; min-width: 0; }
+.activityTrigger { display: inline-flex; align-items: flex-start; gap: 6px; text-align: left; max-width: 100%; padding-block: 2px; border-radius: 5px; }
+.activityTrigger span { min-width: 0; }
+.activityTrigger:hover { color: var(--record-brand); text-decoration: underline; }
+.activityBadges { display: flex; flex-wrap: wrap; gap: 4px; }
+.activityNotes { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; color: var(--record-muted); font-size: 11px; }
+.activityNotes > p { min-width: 0; }
+.activityTable .groupRow th { background: oklch(var(--background-200) / .65); padding-block: 9px; font-weight: 600; }
+.activityTable .expansionRow td { white-space: normal; }
+.signatureCell { min-width: 0; }
+.signTable td { vertical-align: middle; }
+.signTable td[data-label='Status'] > span { text-transform: none; letter-spacing: 0; }
+.reportTableWrap { min-width: 0; overflow: hidden; border: 1px solid var(--record-border); border-radius: 10px; }
+.detailBadge { display: inline-flex; border-radius: 6px; background: var(--record-soft); border: 1px solid var(--record-ring); padding: 2px 6px; font-size: 10px; font-weight: 500; color: var(--record-deep); }
+.document { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 4px 8px; margin-top: 2px; }
+.documentName { display: inline-flex; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.documentActions { display: inline-flex; gap: 8px; }
+.modalIntro { animation: reveal 180ms ease-out; }
+@keyframes reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .modalIntro { animation: none; } }
+@media (max-width: 1023px) {
+  /* The workspace's generic tables have a minimum width and fixed cell
+     heights. These two report tables reflow into cards instead. */
+  :global(.dashboard-theme .workspace-main) table.activityTable,
+  :global(.dashboard-theme .workspace-main) table.signTable { position: relative; min-width: 0; width: 100%; white-space: normal; }
+  .activityTable, .activityTable tbody, .signTable, .signTable tbody { display: block; }
+  .activityTable thead, .signTable thead { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .activityTable .activityRow, .signTable tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); padding: 12px; gap: 10px 14px; border-top: 1px solid var(--record-border); }
+  :global(.dashboard-theme .workspace-main) table.activityTable tbody td,
+  :global(.dashboard-theme .workspace-main) table.signTable tbody td { display: block; height: auto; padding: 0; border: 0; width: auto; min-width: 0; overflow-wrap: anywhere; }
+  .activityTable td[data-label]::before, .signTable td[data-label]::before { content: attr(data-label); display: block; margin-bottom: 4px; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: oklch(var(--foreground-500)); }
+  .activityTable .activityCell { grid-column: 1 / -1; width: auto; order: -1; }
+  .activityTable .groupRow, .activityTable .groupRow th { display: block; width: 100%; }
+  .activityTable .expansionRow { display: block; padding: 8px; }
+  .signTable .signatureCell { grid-column: 1 / -1; order: 1; }
+  .documentName { max-width: 100%; }
+  .documentName > span { min-width: 0; }
+  .activityTrigger { min-height: 36px; align-items: center; }
+  .documentActions > :is(button, a) { display: inline-flex; align-items: center; min-height: 36px; }
+}
+@media (max-width: 639px) {
+  .activitySections { gap: 12px; }
+  .activityTable .activityRow, .signTable tbody tr { padding: 10px; gap: 8px 10px; }
+  .activityTable td[data-label='Timestamp'] { grid-column: 1 / -1; }
+  .signTable td[data-label='Status'] { order: 1; }
+  .signTable td[data-label='Print name'] { order: 2; }
+  .signTable td[data-label='Date'] { order: 3; }
+  .signTable .signatureCell { order: 4; }
+  .document { grid-template-columns: minmax(0, 1fr); }
+  .activityTrigger, .documentActions > :is(button, a) { min-height: 40px; }
+}

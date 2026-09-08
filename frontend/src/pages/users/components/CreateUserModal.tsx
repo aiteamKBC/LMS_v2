@@ -2,7 +2,14 @@ import { useEffect, useState } from 'react';
 import { useToast } from '@/hooks/useToast';
 import { fetchProgrammes, fetchCohorts, fetchGroups } from '@/api/curriculum';
 import { fetchCaseOwners } from '@/api/staffUsers';
-import { createEnrolmentUser } from '@/api/enrolmentUsers';
+import {
+  createEnrolmentUser,
+  fetchEnrolmentUserFields,
+  updateEnrolmentUser,
+  PROGRAMME_STATUS_OPTIONS,
+  STATUS_OPTIONS,
+  TYPE_OPTIONS,
+} from '@/api/enrolmentUsers';
 import { listEmployers, type EmployerRow } from '@/api/employers';
 import { COUNTRY_OPTIONS as ALL_COUNTRIES, DEFAULT_COUNTRY } from '@/lib/countries';
 import type { UserListRow } from '../types';
@@ -11,7 +18,12 @@ import { formatError } from '../wizard/steps/fields';
 import { inputClass, btnPrimary, btnSecondary } from './ui';
 
 // ============================================================================
-// Create user — Aptem-shaped "Add user" form, opened from the Users list.
+// Create *and edit* a learner — the Aptem-shaped form opened from the Users list.
+//
+// One form for both, because it is one record: an edit that lived in its own
+// component would drift from the create fields, and the two would disagree
+// about what a learner is. `editing` switches the mode; everything else is
+// shared. Three fields differ by mode and are marked `phase` below.
 //
 // The layout mirrors Aptem's own Add-user screen (label column on the left,
 // field on the right, grouped into sections) so staff moving between the two
@@ -37,6 +49,16 @@ interface FieldDef {
   hint?: string;
   /** Restrict this field to one destination table (default: both). */
   only?: LearnerKind;
+  /**
+   * Restrict this field to creating or to editing (default: both).
+   *
+   * Three fields differ. Create asks for a first name and a surname and joins
+   * them, because that is how the person is introduced; the column itself holds
+   * one name, so editing shows that one name rather than guessing where to
+   * split it. And the two statuses are stamped on create — asking would offer a
+   * choice that is not really there — but are the whole point of editing.
+   */
+  phase?: 'create' | 'edit';
   /**
    * Options are loaded from the database rather than given in `options`.
    * The programme/cohort/group trio is a cascade — each level stays disabled
@@ -75,8 +97,9 @@ const SECTIONS: SectionDef[] = [
     title: 'Identity',
     icon: 'ri-user-line',
     fields: [
-      { name: 'firstName', label: 'First name', type: 'text', required: true, placeholder: 'firstname' },
-      { name: 'lastName', label: 'Surname', type: 'text', required: true, placeholder: 'lastname' },
+      { name: 'firstName', label: 'First name', type: 'text', required: true, placeholder: 'firstname', phase: 'create' },
+      { name: 'lastName', label: 'Surname', type: 'text', required: true, placeholder: 'lastname', phase: 'create' },
+      { name: 'username', label: 'Name', type: 'text', required: true, placeholder: 'firstname lastname', phase: 'edit' },
       { name: 'preferredName', label: 'Preferred name', type: 'text', placeholder: 'e.g. Soph' },
       { name: 'title', label: 'Title', type: 'text', placeholder: 'title' },
       { name: 'gender', label: 'Gender', type: 'radio', options: GENDER_OPTIONS },
@@ -105,6 +128,40 @@ const SECTIONS: SectionDef[] = [
       { name: 'programme', label: 'Programme', type: 'select', lookup: 'programme' },
       { name: 'cohort', label: 'Cohort', type: 'select', lookup: 'cohort' },
       { name: 'group', label: 'Group', type: 'select', lookup: 'group' },
+    ],
+  },
+  {
+    // All three are stamped on create (Type: User, Status: FullUser) and only
+    // become a question afterwards. Programme status is also editable on the
+    // learner's own board header — the same field and the same write, reached
+    // from the record instead of the directory.
+    title: 'Type & status',
+    icon: 'ri-shield-check-line',
+    fields: [
+      {
+        name: 'type',
+        label: 'Type',
+        type: 'select',
+        phase: 'edit',
+        options: opts(TYPE_OPTIONS),
+        hint: 'What this person is to the college. A label on the record — it does not change what they can reach, which follows from being a learner.',
+      },
+      {
+        name: 'status',
+        label: 'Subscription status',
+        type: 'select',
+        phase: 'edit',
+        options: opts(STATUS_OPTIONS),
+        hint: 'FullUser is a verified subscription; every other value shows as unverified in the directory.',
+      },
+      {
+        name: 'programmeStatus',
+        label: 'Programme status',
+        type: 'select',
+        phase: 'edit',
+        options: opts(PROGRAMME_STATUS_OPTIONS),
+        hint: 'Where the learner sits in the enrolment-to-delivery flow.',
+      },
     ],
   },
   {
@@ -151,18 +208,38 @@ const INITIAL: Record<string, string> = {
   country: DEFAULT_COUNTRY,
 };
 
-/** Fields visible for the chosen destination table. */
-function visibleFields(kind: LearnerKind): FieldDef[] {
-  return SECTIONS.flatMap((s) => s.fields).filter((f) => !f.only || f.only === kind);
+/** Whether a field belongs on the form as it is currently being used. */
+function shows(field: FieldDef, kind: LearnerKind, phase: 'create' | 'edit'): boolean {
+  if (field.only && field.only !== kind) return false;
+  if (field.phase && field.phase !== phase) return false;
+  return true;
 }
 
-export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: (row: UserListRow) => void }) {
+/** Fields visible for the chosen destination table and mode. */
+function visibleFields(kind: LearnerKind, phase: 'create' | 'edit'): FieldDef[] {
+  return SECTIONS.flatMap((s) => s.fields).filter((f) => shows(f, kind, phase));
+}
+
+export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
+  onClose: () => void;
+  onCreated: (row: UserListRow) => void;
+  /** The learner being edited. Omitted to create a new one. */
+  editing?: UserListRow;
+  /** Called with the edited row so the directory repaints without a refetch. */
+  onSaved?: (row: UserListRow) => void;
+}) {
   const { success, error } = useToast();
+  const phase: 'create' | 'edit' = editing ? 'edit' : 'create';
   const [formData, setFormData] = useState<Record<string, string>>(INITIAL);
   // Apprenticeship intake is temporarily switched off, so commercial is the
-  // only selectable kind and therefore the default.
+  // only selectable kind and therefore the default. When editing, the record's
+  // own kind replaces it once the fields load.
   const [kind, setKind] = useState<LearnerKind>('commercial');
   const [submitting, setSubmitting] = useState(false);
+  // Editing starts empty and fills in, so the form must say it is still loading
+  // rather than presenting blank fields as though the learner had none.
+  const [hydrating, setHydrating] = useState(Boolean(editing));
+  const [hydrateError, setHydrateError] = useState<string | null>(null);
 
   // Live curriculum cascade: programmes load once, then cohorts follow the chosen
   // programme and groups follow the chosen cohort.
@@ -199,6 +276,32 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
       }
       return next;
     });
+
+  // Prefill from the record. Written straight into formData rather than through
+  // setField, because setField's job is to clear a cohort when its programme
+  // changes — running that over a hydration would wipe the placement we are
+  // loading. Booleans arrive as real booleans and are stored as the 'true' /
+  // 'false' strings the checkbox inputs read.
+  useEffect(() => {
+    if (!editing) return;
+    let cancelled = false;
+    setHydrating(true);
+    setHydrateError(null);
+    fetchEnrolmentUserFields(editing.id)
+      .then((fields) => {
+        if (cancelled) return;
+        const next: Record<string, string> = {};
+        for (const [key, value] of Object.entries(fields)) {
+          if (value === null || value === undefined) continue;
+          next[key] = typeof value === 'boolean' ? String(value) : String(value);
+        }
+        setFormData(next);
+        setKind(fields.learnerType === 'apprenticeship' ? 'apprenticeship' : 'commercial');
+      })
+      .catch((e: Error) => { if (!cancelled) setHydrateError(e.message); })
+      .finally(() => { if (!cancelled) setHydrating(false); });
+    return () => { cancelled = true; };
+  }, [editing]);
 
   useEffect(() => {
     let cancelled = false;
@@ -264,7 +367,7 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    const missing = visibleFields(kind).filter((f) => f.required && !formData[f.name]?.trim());
+    const missing = visibleFields(kind, phase).filter((f) => f.required && !formData[f.name]?.trim());
     if (missing.length > 0) {
       error('Missing details', `Please complete: ${missing.map((f) => f.label).join(', ')}`);
       return;
@@ -272,7 +375,7 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
     // Typed fields must also be well-formed — `type="email"`/`type="tel"` don't
     // enforce anything on their own, so a single letter would otherwise be saved
     // as someone's email address.
-    const malformed = visibleFields(kind)
+    const malformed = visibleFields(kind, phase)
       .map((f) => {
         const msg = f.type === 'email' || f.type === 'tel'
           ? formatError(f.type, formData[f.name] ?? '')
@@ -284,7 +387,11 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
       error('Check these details', malformed.join('; '));
       return;
     }
-    const name = `${formData.firstName ?? ''} ${formData.lastName ?? ''}`.trim();
+    // Create composes the name from the two fields it asked for; edit shows the
+    // stored column itself, so there is nothing to join.
+    const name = editing
+      ? (formData.username ?? '').trim()
+      : `${formData.firstName ?? ''} ${formData.lastName ?? ''}`.trim();
 
     // Every Aptem field the two endpoints share. Booleans are sent as real
     // booleans; the backend coerces and stores them in boolean columns.
@@ -297,8 +404,11 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
       // stamped rather than left null: the directory reads Type for its
       // learner-vs-admin styling and the Learning-plan link, and Status for its
       // Subscription-status column and status filter.
-      type: 'User',
-      status: 'FullUser',
+      type: formData.type || 'User',
+      // Stamped on create, where asking would offer a choice that isn't real.
+      // On edit the form owns both, so the record's own values are sent back.
+      status: editing ? (formData.status ?? '') : 'FullUser',
+      ...(editing ? { programmeStatus: formData.programmeStatus ?? '' } : {}),
       // Programme / cohort / group come from the live curriculum cascade.
       programme: formData.programme,
       cohort: formData.cohort,
@@ -333,6 +443,38 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
     };
 
     setSubmitting(true);
+    if (editing) {
+      try {
+        // learnerType is deliberately not sent: switching an apprenticeship
+        // learner to commercial would drop their funded-ILR compliance trail,
+        // which is not an edit to make from a details form.
+        await updateEnrolmentUser(editing.id, shared);
+        // The row repaints from what was just saved rather than from the board
+        // the PATCH returns, which describes the programme rather than this
+        // table's columns. The directory reloads behind the toast for anything
+        // the server derived — Subscription verified follows Status, and
+        // placing a learner re-stamps their delivery window.
+        onSaved?.({
+          ...editing,
+          name,
+          type: (shared.type || 'User') as UserListRow['type'],
+          email: shared.email,
+          group: shared.group ?? '',
+          programme: shared.programme ?? '',
+          cohort: shared.cohort ?? '',
+          subscriptionStatus: shared.status ?? '',
+          subscriptionVerified: (shared.status ?? '').toLowerCase() === 'fulluser',
+          programmeStatus: (formData.programmeStatus ?? '') as UserListRow['programmeStatus'],
+        });
+        success('Learner updated', `${name}'s record was saved.`);
+        onClose();
+      } catch (err) {
+        error('Could not save changes', err instanceof Error ? err.message : 'Unexpected error');
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
     try {
       // One table, one endpoint: the learner-type switch is just a field now, so
       // both kinds take the same path and the response already carries the row's
@@ -380,7 +522,7 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
 
   /** One Aptem-style row: label on the left, control on the right. */
   const renderField = (field: FieldDef, index: number) => {
-    if (field.only && field.only !== kind) return null;
+    if (!shows(field, kind, phase)) return null;
     const value = formData[field.name] ?? '';
     return (
       <div
@@ -511,21 +653,49 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
 
   return (
     <Modal
-      title="Add user"
+      title={editing ? `Edit ${editing.name || 'user'}` : 'Add user'}
       size="max-w-3xl"
       onClose={onClose}
       footer={
         <>
           <button type="button" className={btnSecondary} onClick={onClose} disabled={submitting}>Close</button>
-          <button type="button" className={btnPrimary} onClick={() => handleSubmit()} disabled={submitting}>
-            {submitting ? <><AppIcon className="ri-loader-4-line animate-spin" />Saving…</> : <><AppIcon className="ri-user-add-line" />Create</>}
+          {/* Saving is held back until the record has loaded: submitting a form
+              that is still filling in would write the blanks over what is
+              there. */}
+          <button
+            type="button"
+            className={btnPrimary}
+            onClick={() => handleSubmit()}
+            disabled={submitting || hydrating || Boolean(hydrateError)}
+          >
+            {submitting
+              ? <><AppIcon className="ri-loader-4-line animate-spin" />Saving…</>
+              : editing
+                ? <><AppIcon className="ri-save-line" />Save changes</>
+                : <><AppIcon className="ri-user-add-line" />Create</>}
           </button>
         </>
       }
     >
+      {hydrateError && (
+        <div className="mb-4 rounded-xl border border-red-200/70 bg-red-50 px-4 py-3">
+          <p className="text-[12px] text-red-700">
+            <AppIcon className="ri-error-warning-line mr-1" />
+            Could not load this learner&apos;s details: {hydrateError}
+          </p>
+          <p className="mt-1 text-[11px] text-red-600">
+            Nothing is editable until they load, so a blank field cannot be saved over a real value.
+          </p>
+        </div>
+      )}
+      {hydrating && !hydrateError && (
+        <p className="mb-4 text-[12px] text-foreground-500">
+          <AppIcon className="ri-loader-4-line animate-spin mr-1" />Loading {editing?.name || 'this learner'}&apos;s details…
+        </p>
+      )}
       <form onSubmit={handleSubmit} className="space-y-5">
         {SECTIONS.map((section) => {
-          const fields = section.fields.filter((f) => !f.only || f.only === kind);
+          const fields = section.fields.filter((f) => shows(f, kind, phase));
           if (fields.length === 0) return null;
           return (
             <section key={section.title} className="rounded-xl border border-foreground-200/70 overflow-hidden">
@@ -556,7 +726,12 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
         })}
 
         {/* Destination table. Last in the form, as requested — this is the switch
-            that decides which table the row is written to. */}
+            that decides which table the row is written to.
+
+            Read-only once the record exists. Both kinds share the table, so the
+            switch is one column — but an apprenticeship learner turned
+            commercial loses their funded-ILR compliance trail, and a details
+            form is not where that decision belongs. */}
         <section className="rounded-xl border-2 border-primary-200 overflow-hidden">
           <header className="flex items-center gap-2 px-4 py-2.5 bg-primary-50 border-b border-primary-200/60">
             <AppIcon className="ri-git-branch-line text-primary-500" />
@@ -564,7 +739,9 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
           </header>
           <div className="p-4 space-y-2.5">
             <p className="text-[12px] text-foreground-500">
-              Both kinds are stored in the same learner table; this sets which kind the record is.
+              {editing
+                ? 'Set when the learner was created. Changing it would drop or invent a funded-ILR compliance trail, so it is not editable here.'
+                : 'Both kinds are stored in the same learner table; this sets which kind the record is.'}
             </p>
             {([
               {
@@ -577,16 +754,19 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
                 value: 'commercial' as LearnerKind,
                 label: 'Commercial learner',
                 detail: 'Commercial delivery, no funded-ILR compliance trail.',
-                disabled: false,
+                disabled: Boolean(editing),
               },
             ]).map((opt) => (
               <label
                 key={opt.value}
                 className={`flex items-start gap-3 p-3 rounded-lg border transition-smooth ${
-                  opt.disabled
-                    ? 'border-foreground-200 bg-background-100/40 opacity-60 cursor-not-allowed'
-                    : kind === opt.value
-                      ? 'border-primary-400 bg-primary-50/60 cursor-pointer'
+                  // The record's own kind stays highlighted while editing: it is
+                  // fixed, not unavailable, and greying it out would read as
+                  // though the learner had no kind at all.
+                  kind === opt.value
+                    ? `border-primary-400 bg-primary-50/60 ${opt.disabled ? 'cursor-not-allowed' : 'cursor-pointer'}`
+                    : opt.disabled
+                      ? 'border-foreground-200 bg-background-100/40 opacity-60 cursor-not-allowed'
                       : 'border-foreground-200 hover:bg-background-100/60 cursor-pointer'
                 }`}
               >

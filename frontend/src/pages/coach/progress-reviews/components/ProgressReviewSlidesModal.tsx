@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
 import { useToast } from '@/hooks/useToast';
@@ -228,10 +228,12 @@ export default function ProgressReviewSlidesModal({
   open,
   deck,
   onClose,
+  primaryAction,
 }: {
   open: boolean;
   deck: ProgressReviewSlidesDeck | null;
   onClose: () => void;
+  primaryAction?: ReactNode;
 }) {
   const [currentSlide, setCurrentSlide] = useState(0);
   const [mounted, setMounted] = useState(false);
@@ -322,6 +324,7 @@ export default function ProgressReviewSlidesModal({
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                {primaryAction}
                 <button
                   type="button"
                   onClick={handleExportPdf}

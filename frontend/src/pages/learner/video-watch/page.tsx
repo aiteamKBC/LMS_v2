@@ -10,20 +10,20 @@ import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerK
 import { submitVideoProgress } from '@/api/videos';
 import { submitComponentProgress } from '@/api/components';
 import { startTimeTracking, type TimeTrackingSession, type TrackingCountingMode } from '@/api/timeTracking';
-import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
 import { EvidenceFilesButton, EvidencePreviewModal, type EvidencePreview } from '@/components/feature/EvidenceFilesButton';
 import {
   buildLearnerJourney, componentTypeMeta, componentContentKind, componentNoun, hasComponentContent, isOpenableComponent, gradePercent, formatHoursMinutes,
   componentCriteria, componentRequiresEvidence, completedComponentIds, isComponentComplete,
   type JourneyComponent,
 } from '@/utils/learnerJourney';
-import { fetchEvidence, getEvidenceDownloadUrl, type EvidenceRecord } from '@/api/evidence';
+import { fetchEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
 import { ReflectionWindow, formatClock, formatRecordedClock, parseClockSeconds } from '@/components/feature/ReflectionWindow';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { useAuth } from '@/hooks/useAuth';
 import { isInspectionDemoAccount } from '@/lib/learnerFlowAccess';
+import { formatSystemTimestamp, systemTimeZoneName } from '@/lib/format';
 import { demoTimeKey, expectedMinutesFor, setDemoTimeOverride, useDemoTimeOverrides } from '@/lib/demoTime';
 import {
   activityTimerStorageKey,
@@ -35,12 +35,17 @@ import {
 } from '@/lib/activityTimer';
 import { DemoTimeChip } from '@/components/feature/DemoTimePanel';
 import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
+import { ComponentAccessNotice } from '@/components/feature/ComponentAccessNotice';
+import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { ActivitySidebar } from './ActivitySidebar';
+import { isNavigableComponent } from './weekPreview';
+import { componentRoute } from './componentRoute';
+import { AssignmentSubmissionWizard, type AssignmentAnswers } from './AssignmentSubmissionWizard';
 import { resolveDocEmbed } from '@/lib/docEmbed';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 import {
   loadTeamsMeetingArtifacts,
-  syncTeamsMeetingArtifacts,
   teamsMeetingArtifactContentUrl,
   type TeamsMeetingArtifactsResult,
 } from '@/pages/curriculum/module-builder/moduleAuthoringData';
@@ -167,8 +172,21 @@ function CompletionTimeInput({
   );
 }
 
-function ActivityTimeSpentInput({ onChange }: { onChange: (seconds: number | null) => void }) {
-  const [parts, setParts] = useState({ hours: '', minutes: '', seconds: '' });
+function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange: (seconds: number | null) => void; initialSeconds?: number | null }) {
+  const partsFromSeconds = (seconds: number | null) => {
+    if (seconds == null || seconds <= 0) return { hours: '', minutes: '', seconds: '' };
+    const [hours, minutes, secondsPart] = formatClock(seconds).split(':');
+    return { hours, minutes, seconds: secondsPart };
+  };
+  const [parts, setParts] = useState(() => partsFromSeconds(initialSeconds));
+
+  useEffect(() => {
+    setParts(current => (
+      current.hours || current.minutes || current.seconds
+        ? current
+        : partsFromSeconds(initialSeconds)
+    ));
+  }, [initialSeconds]);
 
   const totalSeconds = (next: typeof parts): number | null => {
     if (!next.hours && !next.minutes && !next.seconds) return null;
@@ -191,7 +209,7 @@ function ActivityTimeSpentInput({ onChange }: { onChange: (seconds: number | nul
   };
 
   const fields: { key: keyof typeof parts; label: string; ariaLabel: string }[] = [
-    { key: 'hours', label: 'hr', ariaLabel: 'Hours spent' },
+    { key: 'hours', label: 'hour', ariaLabel: 'Hours spent' },
     { key: 'minutes', label: 'min', ariaLabel: 'Minutes spent' },
     { key: 'seconds', label: 'sec', ariaLabel: 'Seconds spent' },
   ];
@@ -229,27 +247,15 @@ function ActivityTimeSpentInput({ onChange }: { onChange: (seconds: number | nul
                 aria-label={field.ariaLabel}
                 className="w-7 bg-transparent text-center font-mono text-sm font-bold tabular-nums outline-none placeholder:text-foreground-300"
               />
-              <span className="text-[8px] font-bold uppercase tracking-wide text-foreground-400">{field.label}</span>
+              {/* No tracking: "HOUR" is wider than the 00 input above it, and
+                  letter-spacing pushed it into the neighbouring field. */}
+              <span className="text-[8px] font-bold uppercase text-foreground-400">{field.label}</span>
             </label>
           </span>
         ))}
       </span>
     </div>
   );
-}
-
-/** Route a component to the right learner page (video and quiz keep their own routes). */
-function componentRoute(kind: string | undefined, id: string | undefined, c: JourneyComponent, module: string, week: string): string {
-  if (c.isQuiz && c.quizMeta?.quizId != null) {
-    return `/learner/quiz/${kind}/${id}/${c.quizMeta.quizId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`;
-  }
-  const base = (c.type || '').toLowerCase() === 'video' ? 'video' : 'component';
-  return `/learner/${base}/${kind}/${id}/${c.componentId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`;
-}
-
-/** Can this sidebar row be clicked (a quiz, or any other openable component)? */
-function isNavigableComponent(c: JourneyComponent): boolean {
-  return (c.isQuiz && hasComponentContent(c)) || isOpenableComponent(c);
 }
 
 /** Find the target component + its week/module context inside the built journey. */
@@ -304,6 +310,8 @@ export default function ComponentViewPage() {
   // Reachable by URL even now the plan rows are inert for a staff viewer.
   // Completing the component here would be recorded as the learner's own work.
   const { canProgress } = useLearnerWorkspaceAccess(id);
+  const componentAccess = useComponentAccessWindow();
+  const canUseComponent = canProgress && componentAccess.open;
 
   const [detail, setDetail] = useState<LearnerDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -319,6 +327,7 @@ export default function ComponentViewPage() {
   );
   const [manualTimeSeconds, setManualTimeSeconds] = useState<number | null>(null);
   const [timeSource, setTimeSource] = useState<TimeSource>('timer');
+  const [outsideWorkingHoursConfirmed, setOutsideWorkingHoursConfirmed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [record, setRecord] = useState<DoneRecord | null>(null);
@@ -326,6 +335,8 @@ export default function ComponentViewPage() {
   const [evidenceVersion, setEvidenceVersion] = useState(0);
   const [evidenceFiles, setEvidenceFiles] = useState<EvidenceRecord[]>([]);
   const [pendingEvidenceFileName, setPendingEvidenceFileName] = useState<string | null>(null);
+  const [confirmingEvidenceRemoval, setConfirmingEvidenceRemoval] = useState(false);
+  const [removingEvidence, setRemovingEvidence] = useState(false);
   const [evidencePreview, setEvidencePreview] = useState<EvidencePreview | null>(null);
   const evidenceInputId = useId();
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -338,10 +349,17 @@ export default function ComponentViewPage() {
     setWallElapsed(readActivityTimer(timerStorageKey)?.elapsedSeconds ?? 0);
     setManualTimeSeconds(null);
     setTimeSource('timer');
+    setOutsideWorkingHoursConfirmed(false);
     setPendingEvidenceFileName(null);
     setEvidenceFiles([]);
     setEvidencePreview(null);
+    // A pending "Remove this file?" must not survive onto the next activity.
+    setConfirmingEvidenceRemoval(false);
   }, [timerStorageKey]);
+
+  useEffect(() => {
+    if (!componentAccess.outsideWorkingHours) setOutsideWorkingHoursConfirmed(false);
+  }, [componentAccess.outsideWorkingHours]);
 
   useEffect(() => {
     if ((kind !== 'commercial' && kind !== 'apprenticeship') || !id) {
@@ -372,6 +390,12 @@ export default function ComponentViewPage() {
 
   const contentKind = componentContentKind(component?.type);
   const isVideo = contentKind === 'video';
+  const isAudio = contentKind === 'audio';
+  // Live sessions and assignments use learner-entered time instead of exposing
+  // a page timer. The signed session still runs invisibly so the server can cap
+  // and verify the submitted duration.
+  const isLiveSession = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session';
+  const isAssignment = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'assignment';
   const noun = componentNoun(component?.type);
   const openable = component ? isOpenableComponent(component) : false;
 
@@ -379,6 +403,13 @@ export default function ComponentViewPage() {
   // uploader) because the completion gate depends on it.
   const [evidenceCount, setEvidenceCount] = useState(0);
   const needsEvidence = componentRequiresEvidence(component?.type);
+  const usesManualTimeOnly = isLiveSession || needsEvidence;
+  const manualTimeMissing = usesManualTimeOnly && (manualTimeSeconds == null || manualTimeSeconds <= 0);
+
+  useEffect(() => {
+    if (usesManualTimeOnly) setTimeSource('input');
+  }, [usesManualTimeOnly]);
+
   useEffect(() => {
     // Only assignments collect evidence — nothing to look up elsewhere.
     if (!needsEvidence || !kind || !id || !componentId) return;
@@ -399,7 +430,7 @@ export default function ComponentViewPage() {
   const moduleTitle = ctx?.moduleTitle ?? searchParams.get('module') ?? '';
   const weekTitle = ctx?.weekTitle ?? searchParams.get('week') ?? '';
   const backHref = kind && id ? `/workspace/learner/${kind}/${id}` : '/workspace/learner';
-  const weekDoneCount = ctx?.weeks.find((w) => w.active)?.completed ?? 0;
+
 
   // Inspection-demo accounts only — see isInspectionDemoAccount. The results
   // screen shows an editable "demo time" beside the expected time; everyone
@@ -438,6 +469,9 @@ export default function ComponentViewPage() {
         onUploaded: (files) => {
           setEvidenceFiles(files);
           setEvidenceVersion((version) => version + 1);
+          // Also fires when a file is removed, and the optimistic label set at
+          // file-choice time would otherwise keep naming a file that is gone.
+          if (files.length === 0) setPendingEvidenceFileName(null);
         },
         trainingPlanDetails: {
           moduleId: component.moduleId ?? null,
@@ -453,6 +487,26 @@ export default function ComponentViewPage() {
   const visibleEvidenceFile = evidenceFiles[0] ?? null;
   const evidenceFileLabel = pendingEvidenceFileName || visibleEvidenceFile?.filename || null;
   const evidenceFileStatus = visibleEvidenceFile?.status || (pendingEvidenceFileName ? 'pending' : null);
+  // Deleting the stored file and letting the control fall back to its upload
+  // state *is* the reupload path — there is no separate replace call.
+  const removeEvidenceFile = async (fileId: string) => {
+    setSubmitError(null);
+    setRemovingEvidence(true);
+    try {
+      await deleteEvidence(kind as LearnerKind, id || '', fileId);
+      setPendingEvidenceFileName(null);
+      setConfirmingEvidenceRemoval(false);
+      // Bumping the version re-runs the fetch effect above, which is what keeps
+      // `evidenceCount` — and so the criteria gate and the Finish button — in
+      // step. Setting the file list here directly would leave that count stale.
+      setEvidenceVersion((version) => version + 1);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : 'Could not remove the evidence file.');
+    } finally {
+      setRemovingEvidence(false);
+    }
+  };
+
   const openEvidenceFile = async (file: EvidenceRecord) => {
     try {
       const url = await getEvidenceDownloadUrl(kind as LearnerKind, id || '', file.id);
@@ -467,7 +521,11 @@ export default function ComponentViewPage() {
 
   // Seeking changes the playhead/duration metadata, but cannot add watched time.
   const elapsedSeconds = wallElapsed;
-  const submittedTimeSeconds = timeSource === 'input' && manualTimeSeconds != null ? manualTimeSeconds : elapsedSeconds;
+  const submittedTimeSeconds = usesManualTimeOnly
+    ? manualTimeSeconds ?? 0
+    : timeSource === 'input' && manualTimeSeconds != null
+      ? manualTimeSeconds
+      : elapsedSeconds;
   // Planned time preset in the reflection window: always the component's
   // authored expected_otjh (its OTJ hours) when set, so "the planned time"
   // means the same thing for every component type in the training plan.
@@ -500,7 +558,7 @@ export default function ComponentViewPage() {
   // The server stamps and signs the start, preventing claims for time before
   // this learner opened this specific activity.
   useEffect(() => {
-    if (phase !== 'consume' || !openable || !componentId || !kind || !id || !canProgress) return;
+    if (phase !== 'consume' || !openable || !componentId || !kind || !id || !canUseComponent) return;
     const learnerKind = kind as LearnerKind;
     const activityKind = isVideo ? 'video' : 'component';
     let cancelled = false;
@@ -535,23 +593,32 @@ export default function ComponentViewPage() {
         if (!cancelled) setSubmitError(error instanceof Error ? error.message : 'Could not start activity timing');
       });
     return () => { cancelled = true; };
-  }, [phase, openable, componentId, kind, id, canProgress, isVideo, trackingMode, timerStorageKey]);
+  }, [phase, openable, componentId, kind, id, canUseComponent, isVideo, trackingMode, timerStorageKey]);
 
-  // Only visible time counts. Supported videos must also actually be playing;
-  // iframe-only players use the explicit visible-page fallback.
+  // Only visible time counts for ordinary page content. Audio is intentionally
+  // allowed to keep counting in a background tab because playback can continue
+  // while the learner works elsewhere. Hidden tabs throttle intervals, so audio
+  // uses the real wall-clock delta instead of assuming every callback is exactly
+  // one second apart.
   useEffect(() => {
-    if (phase !== 'consume' || (!unsupported && !playerPlaying)) return;
+    if (phase !== 'consume' || !canUseComponent || (!unsupported && !playerPlaying)) return;
     timerRef.current = setInterval(() => {
-      if (document.visibilityState === 'visible') {
+      if (isAudio || document.visibilityState === 'visible') {
+        const now = Date.now();
+        const increment = isAudio
+          ? Math.floor((now - lastAudioTickAt) / 1000)
+          : 1;
+        if (increment < 1) return;
+        if (isAudio) lastAudioTickAt += increment * 1000;
         setWallElapsed((seconds) => {
-          const next = seconds + 1;
+          const next = seconds + increment;
           saveActivityTimerElapsed(timerStorageKey, next);
           return next;
         });
       }
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [phase, unsupported, playerPlaying, timerStorageKey]);
+  }, [phase, canUseComponent, unsupported, playerPlaying, timerStorageKey]);
 
   const finishConsuming = () => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -571,8 +638,17 @@ export default function ComponentViewPage() {
     });
   };
 
-  const finalizeSubmit = async (reflection: { ksbs: string[]; feedback: string; reportedTime: string }) => {
-    if (!component || !componentId || !kind || !id || submitting || !canProgress) return;
+  const finalizeSubmit = async (
+    reflection: { ksbs: string[]; feedback: string; reportedTime: string },
+    options: { stayOnPage?: boolean; rethrow?: boolean } = {},
+  ) => {
+    if (!component || !componentId || !kind || !id || submitting || !canUseComponent) return;
+    if (componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed) {
+      const message = 'Confirm that you completed this activity outside UK working hours before submitting.';
+      setSubmitError(message);
+      if (options.rethrow) throw new Error(message);
+      return;
+    }
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -582,6 +658,8 @@ export default function ComponentViewPage() {
         const res = await submitVideoProgress(componentId, kind as 'commercial' | 'apprenticeship', id, {
           week: weekTitle || null, module: moduleTitle || null,
           startedAt: tracking.startedAt, timeTakenSeconds: submittedTimeSeconds, trackingToken: tracking.trackingToken,
+          timeEntrySource: timeSource,
+          outsideWorkingHoursConfirmed,
           videoTitle: meta?.detail || meta?.label || 'Video',
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
         });
@@ -590,6 +668,8 @@ export default function ComponentViewPage() {
         const res = await submitComponentProgress(componentId, kind as 'commercial' | 'apprenticeship', id, {
           week: weekTitle || null, module: moduleTitle || null,
           startedAt: tracking.startedAt, timeTakenSeconds: submittedTimeSeconds, trackingToken: tracking.trackingToken,
+          timeEntrySource: timeSource,
+          outsideWorkingHoursConfirmed,
           componentTitle: pageTitle, componentType: component.type || undefined,
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
         });
@@ -605,14 +685,17 @@ export default function ComponentViewPage() {
       }
       setWallElapsed(0);
       setManualTimeSeconds(null);
-      setTimeSource('timer');
+      setTimeSource(usesManualTimeOnly ? 'input' : 'timer');
       const refreshed = await fetchLearnerDetail(kind as LearnerKind, id);
       setDetail(refreshed);
       setPhase('consume');
-      const nextHref = nextActivityRoute(refreshed, componentId, kind, id);
-      if (nextHref) navigate(nextHref, { replace: true });
+      if (!options.stayOnPage) {
+        const nextHref = nextActivityRoute(refreshed, componentId, kind, id);
+        if (nextHref) navigate(nextHref, { replace: true });
+      }
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : 'Could not save progress');
+      if (options.rethrow) throw e;
     } finally {
       setSubmitting(false);
     }
@@ -637,6 +720,32 @@ export default function ComponentViewPage() {
           Back to training plan
         </button>
 
+        {component && canProgress && componentAccess.outsideWorkingHours && (
+          <div role="note" className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-4 text-amber-950 shadow-sm sm:px-5">
+            <div className="flex items-start gap-3">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-700">
+                <AppIcon className="ri-time-line text-lg" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold">You are accessing this component outside UK working hours</p>
+                <p className="mt-1 text-xs leading-5 text-amber-900/80">
+                  Working hours are Monday to Friday, 07:00-19:00 UK time. The current UK time is {componentAccess.currentTimeLabel}.
+                  Your activity time will continue to be calculated automatically. Confirm the declaration below before completing this component.
+                </p>
+                <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-xl border border-amber-200 bg-white/75 px-3 py-2.5 text-xs font-semibold leading-5 text-amber-950">
+                  <input
+                    type="checkbox"
+                    checked={outsideWorkingHoursConfirmed}
+                    onChange={event => setOutsideWorkingHoursConfirmed(event.target.checked)}
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-amber-700"
+                  />
+                  <span>I confirm that I completed this activity outside UK working hours.</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        )}
+
         {loading ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
         ) : loadError ? (
@@ -645,6 +754,8 @@ export default function ComponentViewPage() {
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Component not found in this learner's plan." /></div>
         ) : !canProgress ? (
           <ReadOnlyLearnerNotice what="complete their own training-plan activities" onBack={() => navigate(backHref)} />
+        ) : !componentAccess.open ? (
+          <ComponentAccessNotice onBack={() => navigate(backHref)} />
         ) : !openable ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="This component can't be completed here yet." /></div>
         ) : isVideo && !parsed ? (
@@ -679,14 +790,15 @@ export default function ComponentViewPage() {
           /* ── consume phase: content + details + sidebar ── */
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
             <div className="min-w-0">
-              <ComponentContent component={component} contentKind={contentKind} parsed={parsed} title={pageTitle}
-                onDuration={(d) => setRealDuration((prev) => prev ?? d)}
-                onProgress={() => undefined}
-                onPlayingChange={setPlayerPlaying}
-                onEnded={finishConsuming}
-                onUnsupported={() => setUnsupported(true)}
-                evidenceContext={null}
-              />
+              {!isAssignment && (
+                <ComponentContent component={component} contentKind={contentKind} parsed={parsed} title={pageTitle}
+                  onDuration={(d) => setRealDuration((prev) => prev ?? d)}
+                  onProgress={() => undefined}
+                  onPlayingChange={setPlayerPlaying}
+                  onEnded={finishConsuming}
+                  onUnsupported={() => setUnsupported(true)}
+                />
+              )}
               {(component.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session' && component.teamsLiveSessionId && (
                 <LiveSessionResultsCard
                   liveSessionId={component.teamsLiveSessionId}
@@ -715,33 +827,73 @@ export default function ComponentViewPage() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 shrink-0">
-                  <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-mono text-sm font-semibold tabular-nums bg-background-100 text-foreground-700" title="Time on this activity">
-                    <AppIcon className="ri-timer-line" /> {formatClock(elapsedSeconds)}
-                  </div>
+                {!isAssignment && <div className="flex items-center gap-3 shrink-0">
+                  {!usesManualTimeOnly && (
+                    <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-mono text-sm font-semibold tabular-nums bg-background-100 text-foreground-700" title="Time on this activity">
+                      <AppIcon className="ri-timer-line" /> {formatClock(elapsedSeconds)}
+                    </div>
+                  )}
                   <ActivityTimeSpentInput
+                    key={timerStorageKey}
                     onChange={(seconds) => {
                       setManualTimeSeconds(seconds);
-                      setTimeSource(seconds == null ? 'timer' : 'input');
+                      setTimeSource(seconds == null && !usesManualTimeOnly ? 'timer' : 'input');
                     }}
                   />
-                  {activityEvidenceContext && canProgress && (
+                  {activityEvidenceContext && canUseComponent && (
                     evidenceFileLabel ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (visibleEvidenceFile?.status === 'approved') void openEvidenceFile(visibleEvidenceFile);
-                        }}
-                        disabled={visibleEvidenceFile?.status !== 'approved'}
-                        className="inline-flex max-w-[220px] items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 transition-colors enabled:cursor-pointer enabled:hover:border-emerald-300 enabled:hover:bg-emerald-100 disabled:cursor-default"
-                        title={evidenceFileLabel}
-                      >
-                        <AppIcon className={evidenceFileStatus === 'approved' ? 'ri-file-check-line' : 'ri-file-line'} />
-                        <span className="truncate">{evidenceFileLabel}</span>
-                        {evidenceFileStatus === 'pending' && (
-                          <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">Scanning</span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (visibleEvidenceFile?.status === 'approved') void openEvidenceFile(visibleEvidenceFile);
+                          }}
+                          disabled={visibleEvidenceFile?.status !== 'approved'}
+                          className="inline-flex max-w-[220px] items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 transition-colors enabled:cursor-pointer enabled:hover:border-emerald-300 enabled:hover:bg-emerald-100 disabled:cursor-default"
+                          title={evidenceFileLabel}
+                        >
+                          <AppIcon className={evidenceFileStatus === 'approved' ? 'ri-file-check-line' : 'ri-file-line'} />
+                          <span className="truncate">{evidenceFileLabel}</span>
+                          {evidenceFileStatus === 'pending' && (
+                            <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">Scanning</span>
+                          )}
+                        </button>
+                        {/* Wrong file uploaded? Remove it here and the control
+                            reverts to "Upload evidence" for the right one.
+                            Only for a real stored row — an optimistic label
+                            from a still-uploading file has no id to delete. */}
+                        {visibleEvidenceFile && (
+                          removingEvidence ? (
+                            <span className="text-[11px] font-semibold text-foreground-400">Removing…</span>
+                          ) : confirmingEvidenceRemoval ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => void removeEvidenceFile(visibleEvidenceFile.id)}
+                                className="rounded-lg bg-red-600 px-2.5 py-2 text-[11px] font-semibold text-white transition-colors hover:bg-red-700 cursor-pointer"
+                              >
+                                Remove
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmingEvidenceRemoval(false)}
+                                className="rounded-lg border border-background-300 px-2.5 py-2 text-[11px] font-semibold text-foreground-600 transition-colors hover:bg-background-100 cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmingEvidenceRemoval(true)}
+                              className="rounded-lg border border-background-300 bg-white px-2.5 py-2 text-foreground-400 transition-colors hover:border-red-200 hover:text-red-600 cursor-pointer"
+                              title="Remove this file and upload a different one"
+                            >
+                              <AppIcon className="ri-delete-bin-line" />
+                            </button>
+                          )
                         )}
-                      </button>
+                      </span>
                     ) : (
                       <label
                         htmlFor={evidenceInputId}
@@ -754,18 +906,26 @@ export default function ComponentViewPage() {
                   )}
                   <button
                     onClick={finishConsuming}
-                    disabled={!!criteria && !criteria.met}
-                    title={criteria && !criteria.met ? 'Complete the criteria below before finishing.' : undefined}
-                    className={`inline-flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-xl transition-colors ${
+                    disabled={(!!criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed)}
+                    title={
                       criteria && !criteria.met
+                        ? 'Complete the criteria below before finishing.'
+                        : manualTimeMissing
+                          ? 'Enter the time spent before finishing.'
+                          : componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed
+                            ? 'Confirm the out-of-hours declaration before finishing.'
+                          : undefined
+                    }
+                    className={`inline-flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-xl transition-colors ${
+                      (criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed)
                         ? 'bg-background-200 text-foreground-400 cursor-not-allowed'
                         : 'bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer'
                     }`}
                   >
-                    <AppIcon className={criteria && !criteria.met ? 'ri-lock-line' : 'ri-check-line'} />
+                    <AppIcon className={(criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed) ? 'ri-lock-line' : 'ri-check-line'} />
                     Finish
                   </button>
-                </div>
+                </div>}
               </div>
 
               {component.description && (
@@ -775,7 +935,53 @@ export default function ComponentViewPage() {
                 </div>
               )}
 
-              {criteria?.gated && (
+              {isAssignment && activityEvidenceContext && kind && id && componentId && (
+                <div className="mt-4">
+                  <AssignmentSubmissionWizard
+                    kind={kind as LearnerKind}
+                    learnerId={id}
+                    learnerName={detail?.name || 'Learner'}
+                    programmeName={detail?.programme || 'Programme not set'}
+                    componentId={componentId}
+                    title={pageTitle}
+                    moduleTitle={moduleTitle}
+                    weekTitle={weekTitle}
+                    plannedOtjh={component.expectedOtjh ?? null}
+                    questionHtml={component.assignmentBriefHtml}
+                    questionText={component.assignmentBrief}
+                    ksbMappings={component.ksbMappings || []}
+                    evidenceFiles={evidenceFiles}
+                    evidenceDetails={activityEvidenceContext.trainingPlanDetails}
+                    timeSeconds={manualTimeSeconds}
+                    timeControl={(
+                      <ActivityTimeSpentInput
+                        initialSeconds={manualTimeSeconds}
+                        onChange={(seconds) => {
+                          setManualTimeSeconds(seconds);
+                          setTimeSource('input');
+                        }}
+                      />
+                    )}
+                    outsideWorkingHours={componentAccess.outsideWorkingHours}
+                    outsideWorkingHoursConfirmed={outsideWorkingHoursConfirmed}
+                    submittingProgress={submitting}
+                    onEvidenceChanged={activityEvidenceContext.onUploaded}
+                    onRestoreTime={(seconds) => {
+                      setManualTimeSeconds(seconds);
+                      setTimeSource('input');
+                    }}
+                    onSubmitProgress={async (answers: AssignmentAnswers) => {
+                      await finalizeSubmit({
+                        ksbs: (component.ksbMappings || []).map(mapping => mapping.code),
+                        feedback: `${answers.whatYouLearned}\n\nBusiness impact:\n${answers.businessImpact}`,
+                        reportedTime: manualTimeSeconds ? formatClock(manualTimeSeconds) : '',
+                      }, { stayOnPage: true, rethrow: true });
+                    }}
+                  />
+                </div>
+              )}
+
+              {criteria?.gated && !isAssignment && (
                 <div className={`mt-4 rounded-xl border p-4 ${
                   criteria.met ? 'border-emerald-200 bg-emerald-50/60' : 'border-amber-200 bg-amber-50/60'
                 }`}>
@@ -798,173 +1004,59 @@ export default function ComponentViewPage() {
                 </div>
               )}
 
-              {activityEvidenceContext && canProgress && (
-                <AssignmentEvidence
-                  kind={activityEvidenceContext.kind}
-                  learnerId={activityEvidenceContext.learnerId}
-                  componentId={activityEvidenceContext.componentId}
-                  trainingPlanDetails={activityEvidenceContext.trainingPlanDetails}
-                  onUploaded={activityEvidenceContext.onUploaded}
-                  onFileSelected={setPendingEvidenceFileName}
-                  inputId={evidenceInputId}
-                  showPanel={false}
-                />
-              )}
             </div>
 
-            {/* Sidebar: week components + other weeks */}
-            <aside className="space-y-4 lg:sticky lg:top-4">
-              <div className="rounded-xl border border-background-300 bg-white overflow-hidden">
-                <div className="px-4 py-3 border-b border-background-300">
-                  <h2 className="text-sm font-heading font-bold text-foreground-800">{weekTitle || 'This week'}</h2>
-                  <p className="text-[11px] text-foreground-400 mt-0.5">
-                    {ctx?.weekComponents.length ?? 0} components{' '}
-                    {weekDoneCount > 0 && <span className="text-emerald-600 font-semibold"> · {weekDoneCount} done</span>}
-                  </p>
-                </div>
-                <ul className="divide-y divide-background-300">
-                  {(ctx?.weekComponents ?? []).map((c) => {
-                    const cm = componentTypeMeta(c.title);
-                    const isCurrent = !c.isQuiz && c.componentId === componentId;
-                    const contentAvailable = hasComponentContent(c);
-                    const clickable = contentAvailable && isNavigableComponent(c) && !isCurrent;
-                    const attempts = c.isQuiz ? (c.quizAttempts || []) : [];
-                    const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
-                    const completed = isComponentComplete(c, completedIds);
-                    const timeKey = c.componentId
-                      ? demoTimeKey({ isQuiz: c.isQuiz, quizId: c.quizMeta?.quizId, componentId: c.componentId })
-                      : '';
-                    const overrideMinutes = timeKey ? demoTimeOverrides[timeKey] : null;
-                    const completionTime = completed
-                      ? overrideMinutes != null
-                        ? formatClock(Math.round(overrideMinutes * 60))
-                        : completionTimeFor(c, detail)
-                      : null;
-                    return (
-                      <li key={c.componentId || c.title}>
-                        <button
-                          disabled={!clickable}
-                          onClick={() => clickable && navigate(componentRoute(kind, id, c, moduleTitle, weekTitle))}
-                          className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
-                            !contentAvailable
-                              ? 'cursor-not-allowed bg-background-100/70 opacity-55 grayscale'
-                              : isCurrent
-                                ? 'bg-primary-50'
-                                : completed
-                                  ? `bg-emerald-50/70 ${clickable ? 'hover:bg-emerald-50 cursor-pointer' : 'cursor-default'}`
-                                  : clickable ? 'hover:bg-background-50 cursor-pointer' : 'cursor-default'
-                          }`}
-                        >
-                          <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${completed ? 'bg-emerald-100' : cm.bg}`}>
-                            <AppIcon className={completed ? 'ri-check-line text-[12px] text-emerald-700' : `${cm.icon} text-[12px] ${cm.color}`} />
-                          </span>
-                          <span className="flex-1 min-w-0">
-                            <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{cm.label}</span>
-                            <span className={`block text-[13px] font-semibold leading-snug truncate ${
-                              isCurrent ? 'text-primary-700' : completed ? 'text-emerald-900' : 'text-foreground-800'
-                            }`}>
-                              {cm.detail || cm.label}
-                            </span>
-                            {completionTime && !isDemoAccount && (
-                              <span className="mt-0.5 flex items-center gap-1 font-mono text-[10px] font-semibold tabular-nums text-emerald-700" title="Time taken">
-                                <AppIcon className="ri-timer-line text-[10px]" />
-                                {completionTime}
-                              </span>
-                            )}
-                          </span>
-                          {c.isQuiz && lastAttempt && (
-                            <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
-                              lastAttempt.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                            }`}>
-                              {gradePercent(lastAttempt.grade)}%
-                            </span>
-                          )}
-                          {!contentAvailable ? (
-                            <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
-                          ) : completed ? (
-                            <AppIcon className="ri-checkbox-circle-fill text-emerald-600 text-sm shrink-0" />
-                          ) : isCurrent ? (
-                            <AppIcon className="ri-focus-3-line text-primary-600 text-sm shrink-0" />
-                          ) : clickable ? (
-                            <AppIcon className="ri-arrow-right-s-line text-foreground-400 text-sm shrink-0" />
-                          ) : null}
-                        </button>
-                        {completed && isDemoAccount && timeKey && (
-                          <CompletionTimeInput
-                            value={completionTime || '00:00:00'}
-                            label={overrideMinutes != null ? 'Input' : 'Time taken'}
-                            rightAddon={
-                              !c.isQuiz && c.componentId && kind && id ? (
-                                <EvidenceFilesButton kind={kind as LearnerKind} learnerId={id} componentId={c.componentId} />
-                              ) : null
-                            }
-                            onSave={(seconds) => setDemoTimeOverride(
-                              demoScopeKey,
-                              timeKey,
-                              seconds == null ? null : seconds / 60,
-                            )}
-                          />
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-
-              {(ctx?.weeks?.length ?? 0) > 1 && (
-                <div className="rounded-xl border border-background-300 bg-white overflow-hidden">
-                  <div className="px-4 py-3 border-b border-background-300">
-                    <h2 className="text-sm font-heading font-bold text-foreground-800">{moduleTitle || 'Module'}</h2>
-                    <p className="text-[11px] text-foreground-400 mt-0.5">{ctx?.weeks.length} weeks</p>
-                  </div>
-                  <ul className="divide-y divide-background-300">
-                    {(ctx?.weeks ?? []).map((w) => {
-                      const weekComplete = w.count > 0 && w.completed >= w.count;
-                      const navigable = w.components.filter((item) => hasComponentContent(item) && isNavigableComponent(item));
-                      const target = navigable.find((item) => !isComponentComplete(item, completedIds)) || navigable[0] || null;
-                      return (
-                        <li key={w.week}>
-                          <button
-                            disabled={!target}
-                            onClick={() => target && navigate(componentRoute(kind, id, target, moduleTitle, w.week))}
-                            className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
-                              !target
-                                ? 'cursor-not-allowed bg-background-100/70 opacity-55'
-                                : weekComplete
-                                ? 'bg-emerald-50 text-emerald-900 hover:bg-emerald-100'
-                                : w.active ? 'bg-background-100' : 'hover:bg-background-50 cursor-pointer'
-                            }`}
-                          >
-                            <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
-                              weekComplete ? 'bg-emerald-100 text-emerald-700' : 'bg-background-100 text-foreground-500'
-                            }`}>
-                              <AppIcon className={`${weekComplete ? 'ri-check-line' : 'ri-calendar-line'} text-[12px]`} />
-                            </span>
-                            <span className="flex-1 min-w-0">
-                              <span className={`block text-[13px] font-semibold leading-snug truncate ${
-                                weekComplete ? 'text-emerald-900' : w.active ? 'text-foreground-900' : 'text-foreground-700'
-                              }`}>
-                                {w.week}
-                              </span>
-                              <span className={`block text-[10px] ${weekComplete ? 'text-emerald-700' : 'text-foreground-400'}`}>
-                                {w.count} components{weekComplete ? ' complete' : ''}
-                              </span>
-                            </span>
-                            {!target ? (
-                              <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
-                            ) : weekComplete ? (
-                              <span className="text-[10px] font-semibold text-emerald-700 shrink-0">Done</span>
-                            ) : w.active && (
-                              <span className="text-[10px] font-semibold text-primary-600 shrink-0">Current</span>
-                            )}
-                          </button>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              )}
-            </aside>
+            {/* The list beside the activity — shared with the quiz page, which
+                is another way into the same week. */}
+            <ActivitySidebar
+              weekComponents={ctx?.weekComponents ?? []}
+              weekTitle={weekTitle}
+              moduleTitle={moduleTitle}
+              weeks={ctx?.weeks ?? []}
+              completedIds={completedIds}
+              kind={kind}
+              id={id}
+              currentComponentId={componentId}
+              // The demo accounts edit their own completion times, so the plain
+              // read-only time is shown to everyone else.
+              completionTimeFor={(c) => {
+                const key = c.componentId
+                  ? demoTimeKey({ isQuiz: c.isQuiz, quizId: c.quizMeta?.quizId, componentId: c.componentId })
+                  : '';
+                const override = key ? demoTimeOverrides[key] : null;
+                if (override != null) return isDemoAccount ? null : formatClock(Math.round(override * 60));
+                return isDemoAccount ? null : completionTimeFor(c, detail);
+              }}
+              rowExtras={(c, completed) => {
+                const key = c.componentId
+                  ? demoTimeKey({ isQuiz: c.isQuiz, quizId: c.quizMeta?.quizId, componentId: c.componentId })
+                  : '';
+                if (!completed || !isDemoAccount || !key) return null;
+                const override = demoTimeOverrides[key];
+                return (
+                  <CompletionTimeInput
+                    value={
+                      (override != null
+                        ? formatClock(Math.round(override * 60))
+                        : completionTimeFor(c, detail)) || '00:00:00'
+                    }
+                    label={override != null ? 'Input' : 'Time taken'}
+                    rightAddon={
+                      !c.isQuiz && c.componentId && kind && id ? (
+                        <EvidenceFilesButton kind={kind as LearnerKind} learnerId={id} componentId={c.componentId} />
+                      ) : null
+                    }
+                    onSave={(seconds) => setDemoTimeOverride(
+                      demoScopeKey,
+                      key,
+                      seconds == null ? null : seconds / 60,
+                    )}
+                  />
+                );
+              }}
+              routeFor={(c, week) => componentRoute(kind, id, c, moduleTitle, week)}
+              accessOpen={componentAccess.open}
+            />
           </div>
         )}
         {phase === 'confirm' && (
@@ -974,6 +1066,7 @@ export default function ComponentViewPage() {
             timerLabel={formatClock(elapsedSeconds)}
             inputLabel={manualTimeSeconds == null ? null : formatClock(manualTimeSeconds)}
             selectedSource={timeSource}
+            manualTimeOnly={usesManualTimeOnly}
             evidenceFileName={evidenceFileLabel}
             submitting={submitting}
             error={submitError}
@@ -996,6 +1089,7 @@ function CompletionConfirmPopup({
   timerLabel,
   inputLabel,
   selectedSource,
+  manualTimeOnly,
   evidenceFileName,
   submitting,
   error,
@@ -1003,11 +1097,13 @@ function CompletionConfirmPopup({
   onCancel,
   onConfirm,
 }: {
-  title: string; noun: string; timerLabel: string; inputLabel: string | null; selectedSource: TimeSource; evidenceFileName?: string | null;
+  title: string; noun: string; timerLabel: string; inputLabel: string | null; selectedSource: TimeSource; manualTimeOnly: boolean; evidenceFileName?: string | null;
   submitting: boolean; error: string | null;
   onSelectSource: (source: TimeSource) => void; onCancel: () => void; onConfirm: () => void;
 }) {
-  const selectedTimeLabel = selectedSource === 'input' && inputLabel ? inputLabel : timerLabel;
+  const selectedTimeLabel = selectedSource === 'input'
+    ? inputLabel || '--:--:--'
+    : timerLabel;
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-foreground-950/35 px-4 py-6 backdrop-blur-[2px]">
@@ -1034,22 +1130,24 @@ function CompletionConfirmPopup({
               </span>
             </div>
           )}
-          <button
-            type="button"
-            onClick={() => onSelectSource('timer')}
-            disabled={submitting}
-            className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-colors ${
-              selectedSource === 'timer'
-                ? 'border-primary-300 bg-primary-50 text-primary-800'
-                : 'border-background-300 bg-white text-foreground-700 hover:bg-background-50'
-            } disabled:cursor-not-allowed disabled:opacity-60`}
-          >
-            <span className="inline-flex items-center gap-2 text-sm font-semibold">
-              <AppIcon className="ri-timer-line" />
-              Timer
-            </span>
-            <span className="font-mono text-sm font-bold tabular-nums">{timerLabel}</span>
-          </button>
+          {!manualTimeOnly && (
+            <button
+              type="button"
+              onClick={() => onSelectSource('timer')}
+              disabled={submitting}
+              className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-colors ${
+                selectedSource === 'timer'
+                  ? 'border-primary-300 bg-primary-50 text-primary-800'
+                  : 'border-background-300 bg-white text-foreground-700 hover:bg-background-50'
+              } disabled:cursor-not-allowed disabled:opacity-60`}
+            >
+              <span className="inline-flex items-center gap-2 text-sm font-semibold">
+                <AppIcon className="ri-timer-line" />
+                Timer
+              </span>
+              <span className="font-mono text-sm font-bold tabular-nums">{timerLabel}</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => inputLabel && onSelectSource('input')}
@@ -1086,7 +1184,7 @@ function CompletionConfirmPopup({
           <button
             type="button"
             onClick={onConfirm}
-            disabled={submitting}
+            disabled={submitting || (manualTimeOnly && !inputLabel)}
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <AppIcon className={submitting ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} />
@@ -1169,6 +1267,271 @@ type AttachmentPreviewState =
   | { status: 'ready'; kind: 'text'; text: string }
   | { status: 'error'; message: string };
 
+type ReadingColourMode = 'paper' | 'cream' | 'monochrome' | 'dark';
+type ReadingFont = 'default' | 'dyslexia' | 'sans';
+
+interface ReadingPreferences {
+  colourMode: ReadingColourMode;
+  font: ReadingFont;
+  fontSize: number;
+  lineHeight: number;
+  letterSpacing: number;
+  ruler: boolean;
+}
+
+const DEFAULT_READING_PREFERENCES: ReadingPreferences = {
+  colourMode: 'paper',
+  font: 'default',
+  fontSize: 16,
+  lineHeight: 1.7,
+  letterSpacing: 0,
+  ruler: false,
+};
+
+function readingStorageKey(componentId: string, suffix: string): string {
+  return `kbc-reading:${componentId || 'unknown'}:${suffix}`;
+}
+
+function readStoredJson<T>(key: string, fallback: T): T {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value ? { ...fallback, ...JSON.parse(value) } : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function readingSurfaceStyle(preferences: ReadingPreferences): React.CSSProperties {
+  const colourStyles: Record<ReadingColourMode, React.CSSProperties> = {
+    paper: { backgroundColor: '#ffffff', color: '#1f2937' },
+    cream: { backgroundColor: '#fff7dc', color: '#292524' },
+    monochrome: { backgroundColor: '#ffffff', color: '#000000', filter: 'grayscale(1)' },
+    dark: { backgroundColor: '#111827', color: '#f9fafb' },
+  };
+  const fontFamily = preferences.font === 'dyslexia'
+    ? '"OpenDyslexic", "Comic Sans MS", "Trebuchet MS", sans-serif'
+    : preferences.font === 'sans'
+      ? 'Arial, Helvetica, sans-serif'
+      : 'inherit';
+  return {
+    ...colourStyles[preferences.colourMode],
+    fontFamily,
+    fontSize: `${preferences.fontSize}px`,
+    lineHeight: preferences.lineHeight,
+    letterSpacing: `${preferences.letterSpacing}em`,
+  };
+}
+
+function ReadingAccessibilityToolbar({
+  preferences,
+  onChange,
+  onHighlight,
+  onClearHighlights,
+  onSave,
+  onRead,
+  speaking,
+  saved,
+}: {
+  preferences: ReadingPreferences;
+  onChange: (next: ReadingPreferences) => void;
+  onHighlight?: () => void;
+  onClearHighlights?: () => void;
+  onSave: () => void;
+  onRead?: () => void;
+  speaking: boolean;
+  saved: boolean;
+}) {
+  const update = <K extends keyof ReadingPreferences>(key: K, value: ReadingPreferences[K]) => {
+    onChange({ ...preferences, [key]: value });
+  };
+  return (
+    <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50/70 p-3" aria-label="Reading accessibility tools">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="mr-1 inline-flex items-center gap-1.5 text-xs font-black text-blue-900">
+          <AppIcon className="ri-accessibility-line text-base" />
+          Reading tools
+        </span>
+        <button type="button" onClick={() => update('fontSize', Math.max(12, preferences.fontSize - 2))} className="rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-bold text-blue-800" aria-label="Decrease text size">A−</button>
+        <button type="button" onClick={() => update('fontSize', Math.min(30, preferences.fontSize + 2))} className="rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-bold text-blue-800" aria-label="Increase text size">A+</button>
+        <select value={preferences.font} onChange={(event) => update('font', event.target.value as ReadingFont)} className="h-8 rounded-lg border border-blue-200 bg-white px-2 text-xs font-bold text-blue-900" aria-label="Reading font">
+          <option value="default">Default font</option>
+          <option value="dyslexia">Dyslexia-friendly</option>
+          <option value="sans">Clear sans serif</option>
+        </select>
+        <select value={preferences.colourMode} onChange={(event) => update('colourMode', event.target.value as ReadingColourMode)} className="h-8 rounded-lg border border-blue-200 bg-white px-2 text-xs font-bold text-blue-900" aria-label="Reading colour mode">
+          <option value="paper">White paper</option>
+          <option value="cream">Warm cream</option>
+          <option value="monochrome">Black & white</option>
+          <option value="dark">Dark mode</option>
+        </select>
+        <button type="button" onClick={() => update('lineHeight', preferences.lineHeight >= 2.1 ? 1.5 : Number((preferences.lineHeight + 0.2).toFixed(1)))} className="rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-bold text-blue-800" title="Cycle line spacing">
+          <AppIcon className="ri-line-height" /> Spacing
+        </button>
+        <button type="button" onClick={() => update('letterSpacing', preferences.letterSpacing >= 0.1 ? 0 : Number((preferences.letterSpacing + 0.05).toFixed(2)))} className="rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-bold text-blue-800" title="Cycle letter spacing">
+          Letter gap
+        </button>
+        <button type="button" onClick={() => update('ruler', !preferences.ruler)} aria-pressed={preferences.ruler} className={`rounded-lg border px-2.5 py-1.5 text-xs font-bold ${preferences.ruler ? 'border-blue-600 bg-blue-600 text-white' : 'border-blue-200 bg-white text-blue-800'}`}>
+          <AppIcon className="ri-focus-3-line" /> Reading ruler
+        </button>
+        {onRead && (
+          <button type="button" onClick={onRead} aria-pressed={speaking} className={`rounded-lg border px-2.5 py-1.5 text-xs font-bold ${speaking ? 'border-violet-600 bg-violet-600 text-white' : 'border-blue-200 bg-white text-blue-800'}`}>
+            <AppIcon className={speaking ? 'ri-stop-circle-line' : 'ri-volume-up-line'} /> {speaking ? 'Stop reading' : 'Read aloud'}
+          </button>
+        )}
+        {onHighlight && <button type="button" onClick={onHighlight} className="rounded-lg border border-amber-300 bg-amber-100 px-2.5 py-1.5 text-xs font-bold text-amber-900"><AppIcon className="ri-mark-pen-line" /> Highlight selection</button>}
+        {onClearHighlights && <button type="button" onClick={onClearHighlights} className="rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-xs font-bold text-blue-800">Clear highlights</button>}
+        <button type="button" onClick={onSave} className="ml-auto rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">
+          <AppIcon className="ri-save-line" /> {saved ? 'Saved' : 'Save changes'}
+        </button>
+      </div>
+      <p className="mt-2 text-[10px] font-semibold text-blue-700">Preferences are kept on this device. Select text then choose Highlight selection; PDF pages have their own marker.</p>
+    </div>
+  );
+}
+
+function AccessibleReadingMaterial({
+  component,
+  title,
+}: {
+  component: JourneyComponent;
+  title: string;
+}) {
+  const componentId = component.componentId || title;
+  const sourceHtml = normalizeReadingHtml(component.contentHtml || '');
+  const savedDocument = readStoredJson(readingStorageKey(componentId, 'document'), { sourceHtml: '', html: '' });
+  const [html, setHtml] = useState(
+    savedDocument.sourceHtml === sourceHtml && savedDocument.html
+      ? DOMPurify.sanitize(savedDocument.html)
+      : sourceHtml,
+  );
+  const [preferences, setPreferences] = useState<ReadingPreferences>(() => readStoredJson(readingStorageKey(componentId, 'preferences'), DEFAULT_READING_PREFERENCES));
+  const [saved, setSaved] = useState(true);
+  const [speaking, setSpeaking] = useState(false);
+  const [rulerY, setRulerY] = useState<number | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const readingBodyRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => () => window.speechSynthesis?.cancel(), []);
+
+  const highlightSelection = () => {
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    if (!range || range.collapsed || !contentRef.current?.contains(range.commonAncestorContainer)) return;
+    const mark = document.createElement('mark');
+    mark.dataset.learnerHighlight = 'true';
+    mark.style.backgroundColor = '#fde047';
+    mark.style.color = '#111827';
+    try {
+      range.surroundContents(mark);
+    } catch {
+      const contents = range.extractContents();
+      mark.appendChild(contents);
+      range.insertNode(mark);
+    }
+    selection?.removeAllRanges();
+    setHtml(contentRef.current.innerHTML);
+    setSaved(false);
+  };
+
+  const clearHighlights = () => {
+    const root = contentRef.current;
+    if (!root) return;
+    root.querySelectorAll('mark[data-learner-highlight]').forEach((mark) => mark.replaceWith(...Array.from(mark.childNodes)));
+    root.normalize();
+    setHtml(root.innerHTML);
+    setSaved(false);
+  };
+
+  const save = () => {
+    try {
+      window.localStorage.setItem(readingStorageKey(componentId, 'preferences'), JSON.stringify(preferences));
+      window.localStorage.setItem(readingStorageKey(componentId, 'document'), JSON.stringify({ sourceHtml, html }));
+      setSaved(true);
+    } catch {
+      setSaved(false);
+    }
+  };
+
+  const readAloud = () => {
+    if (!window.speechSynthesis) return;
+    if (speaking) {
+      window.speechSynthesis.cancel();
+      setSpeaking(false);
+      return;
+    }
+    const text = readingBodyRef.current?.textContent?.trim();
+    if (!text) return;
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.onend = () => setSpeaking(false);
+    utterance.onerror = () => setSpeaking(false);
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+    setSpeaking(true);
+  };
+
+  const downloadNotes = () => {
+    const documentHtml = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>body{max-width:850px;margin:40px auto;padding:0 24px;font-family:Arial,sans-serif;font-size:${preferences.fontSize}px;line-height:${preferences.lineHeight};letter-spacing:${preferences.letterSpacing}em}mark{background:#fde047;color:#111827}</style></head><body><h1>${title}</h1>${html}</body></html>`;
+    const blob = new Blob([documentHtml], { type: 'text/html;charset=utf-8' });
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = href;
+    anchor.download = `${title.replace(/[^a-z0-9-_]+/gi, '-').replace(/^-|-$/g, '') || 'reading'}-highlights.html`;
+    anchor.click();
+    URL.revokeObjectURL(href);
+  };
+
+  return (
+    <>
+      <ReadingAccessibilityToolbar
+        preferences={preferences}
+        onChange={(next) => { setPreferences(next); setSaved(false); }}
+        onHighlight={component.contentHtml ? highlightSelection : undefined}
+        onClearHighlights={component.contentHtml ? clearHighlights : undefined}
+        onSave={save}
+        onRead={readAloud}
+        speaking={speaking}
+        saved={saved}
+      />
+      <div ref={readingBodyRef}>
+      {component.contentHtml && (
+        <div className="mb-3 flex justify-end">
+          <button type="button" onClick={downloadNotes} className="inline-flex items-center gap-1.5 rounded-lg border border-background-300 bg-white px-3 py-1.5 text-xs font-bold text-foreground-700 hover:bg-background-50"><AppIcon className="ri-download-2-line" />Download highlighted reading</button>
+        </div>
+      )}
+      {component.contentHtml && (
+        <div
+          className="relative overflow-hidden rounded-xl border border-background-200 p-5"
+          style={readingSurfaceStyle(preferences)}
+          onMouseMove={(event) => preferences.ruler && setRulerY(event.nativeEvent.offsetY)}
+          onMouseLeave={() => setRulerY(null)}
+        >
+          {preferences.ruler && rulerY != null && <span className="pointer-events-none absolute inset-x-0 z-10 h-8 border-y border-blue-400/50 bg-blue-300/20" style={{ top: Math.max(0, rulerY - 16) }} />}
+          <div
+            ref={contentRef}
+            className="relative z-0 max-w-none [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:font-heading [&_h2]:text-lg [&_h2]:font-bold [&_h3]:mb-1.5 [&_h3]:mt-3 [&_h3]:font-heading [&_h3]:text-base [&_h3]:font-semibold [&_p]:mb-3 [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_li]:mb-1 [&_strong]:font-semibold [&_em]:italic [&_a]:text-blue-600 [&_a]:underline"
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
+        </div>
+      )}
+      {component.resourceUrl ? (
+        <div className={component.contentHtml ? 'mt-4 border-t border-background-200 pt-4' : ''}>
+          <InlineAttachmentPreview
+            url={component.resourceUrl}
+            title={title}
+            fileName={component.fileName}
+            readingPreferences={preferences}
+            annotationKey={componentId}
+            allowAnnotatedDownload={Boolean(component.downloadAllowed)}
+          />
+        </div>
+      ) : !component.contentHtml ? (
+        <p className="text-sm text-foreground-500">No reading content was set. You can still record your reflection below.</p>
+      ) : null}
+      </div>
+    </>
+  );
+}
+
 function InlineMediaPreview({ url, title, fileName }: { url: string; title: string; fileName?: string | null }) {
   const media = displayableMediaSource(url, fileName);
   if (!media) return null;
@@ -1195,7 +1558,47 @@ function decodeInlineText(value: string): string {
     .replace(/&#39;/g, "'");
 }
 
-function AttachedFileCard({ url, fileName }: { url: string; fileName?: string | null }) {
+/**
+ * Download the file itself.
+ *
+ * Shown only where the author allowed it (`downloadAllowed` on the component —
+ * a PowerPoint's authoring form calls it "Download allowed"). The learner page
+ * carried the flag all the way from the database and then never offered the
+ * download, so a deck marked downloadable could only be read in the viewer.
+ *
+ * `download` names the saved file rather than leaving the learner with the
+ * upload's timestamped name; it works because these are served same-origin.
+ */
+function DownloadFileButton({ url, fileName, label = 'Download' }: {
+  url: string;
+  fileName?: string | null;
+  label?: string;
+}) {
+  return (
+    <a
+      href={proxiedMaterialUrl(url)}
+      download={fileLabelFrom(url, fileName)}
+      className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-primary-200 bg-primary-50 px-3.5 py-2 text-xs font-bold text-primary-700 transition-colors hover:border-primary-300 hover:bg-primary-100"
+    >
+      <AppIcon className="ri-download-2-line" />
+      {label}
+    </a>
+  );
+}
+
+/**
+ * The file itself, under whatever preview was shown.
+ *
+ * `previewed` says whether the reader is already looking at the content: this
+ * card sits under the in-house deck viewer as well as standing in for the
+ * previews we cannot draw, and telling somebody a preview is unavailable while
+ * they read one is simply untrue.
+ */
+function AttachedFileCard({ url, fileName, previewed = false }: {
+  url: string;
+  fileName?: string | null;
+  previewed?: boolean;
+}) {
   const href = proxiedMaterialUrl(url);
   return (
     <div className="rounded-xl border border-background-300 bg-background-50 p-4">
@@ -1206,24 +1609,38 @@ function AttachedFileCard({ url, fileName }: { url: string; fileName?: string | 
           </span>
           <div className="min-w-0">
             <p className="truncate text-sm font-bold text-foreground-900">{fileLabelFrom(url, fileName)}</p>
-            <p className="text-xs text-foreground-500">Preview is not available for this file type.</p>
+            <p className="text-xs text-foreground-500">
+              {previewed
+                ? 'Save a copy to read it outside the platform.'
+                : 'Preview is not available for this file type.'}
+            </p>
           </div>
         </div>
+        {/* Saved, not opened in a tab: the browser has no viewer for these
+            types either, so opening one only moved the download a click away
+            (and, for a deck, downloaded it under the upload's timestamped
+            name). `download` names the file as the author uploaded it. */}
         <a
           href={href}
-          target="_blank"
-          rel="noreferrer"
+          download={fileLabelFrom(url, fileName)}
           className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl bg-primary-600 px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-primary-700"
         >
-          <AppIcon className="ri-external-link-line" />
-          Open file
+          <AppIcon className="ri-download-2-line" />
+          Download file
         </a>
       </div>
     </div>
   );
 }
 
-function InlineAttachmentPreview({ url, title, fileName }: { url: string; title: string; fileName?: string | null }) {
+function InlineAttachmentPreview({ url, title, fileName, readingPreferences, annotationKey, allowAnnotatedDownload = false }: {
+  url: string;
+  title: string;
+  fileName?: string | null;
+  readingPreferences?: ReadingPreferences;
+  annotationKey?: string;
+  allowAnnotatedDownload?: boolean;
+}) {
   const media = displayableMediaSource(url, fileName);
   const previewUrl = proxiedMaterialUrl(url);
   const legacyId = legacyAttachmentId(url);
@@ -1251,7 +1668,7 @@ function InlineAttachmentPreview({ url, title, fileName }: { url: string; title:
 
         if (isWord) {
           const arrayBuffer = await response.arrayBuffer();
-          const mammoth = await import('mammoth/mammoth.browser');
+          const mammoth = await import('mammoth');
           const result = await mammoth.convertToHtml({ arrayBuffer });
           if (!cancelled) {
             setPreview({ status: 'ready', kind: 'html', html: DOMPurify.sanitize(result.value || '<p>No preview content found.</p>') });
@@ -1294,10 +1711,10 @@ function InlineAttachmentPreview({ url, title, fileName }: { url: string; title:
   if (media) return <InlineMediaPreview url={url} title={title} fileName={fileName} />;
 
   if (isPdf) {
-    if (legacyId) return <LegacyPdfImagePreview attachmentId={legacyId} title={title} fileName={fileName} />;
+    if (legacyId) return <LegacyPdfImagePreview attachmentId={legacyId} title={title} fileName={fileName} readingPreferences={readingPreferences} />;
     const hostedPdfEmbed = resolveDocEmbed(previewUrl);
     if (hostedPdfEmbed.mode === 'deck') return <DocumentEmbed url={previewUrl} title={title} />;
-    return <PdfCanvasPreview url={previewUrl} title={title} fileName={fileName} />;
+    return <PdfCanvasPreview url={previewUrl} title={title} fileName={fileName} readingPreferences={readingPreferences} annotationKey={annotationKey} allowAnnotatedDownload={allowAnnotatedDownload} />;
   }
 
   if (preview?.status === 'loading') {
@@ -1310,7 +1727,7 @@ function InlineAttachmentPreview({ url, title, fileName }: { url: string; title:
 
   if (preview?.status === 'ready' && preview.kind === 'html') {
     return (
-      <div className="max-h-[72vh] overflow-auto rounded-xl border border-background-300 bg-white p-6 shadow-sm">
+      <div className="max-h-[72vh] overflow-auto rounded-xl border border-background-300 bg-white p-6 shadow-sm" style={readingPreferences ? readingSurfaceStyle(readingPreferences) : undefined}>
         <div
           className="learner-file-preview max-w-none text-sm leading-relaxed text-foreground-800 [&_h1]:mb-3 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:text-xl [&_h2]:font-bold [&_h3]:mb-2 [&_h3]:mt-3 [&_h3]:text-lg [&_h3]:font-semibold [&_p]:mb-3 [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-background-300 [&_td]:px-3 [&_td]:py-2 [&_th]:border [&_th]:border-background-300 [&_th]:bg-background-100 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left"
           dangerouslySetInnerHTML={{ __html: preview.html }}
@@ -1321,7 +1738,7 @@ function InlineAttachmentPreview({ url, title, fileName }: { url: string; title:
 
   if (preview?.status === 'ready' && preview.kind === 'text') {
     return (
-      <pre className="max-h-[72vh] overflow-auto whitespace-pre-wrap rounded-xl border border-background-300 bg-white p-6 text-sm leading-relaxed text-foreground-800 shadow-sm">
+      <pre className="max-h-[72vh] overflow-auto whitespace-pre-wrap rounded-xl border border-background-300 bg-white p-6 text-sm leading-relaxed text-foreground-800 shadow-sm" style={readingPreferences ? readingSurfaceStyle(readingPreferences) : undefined}>
         {preview.text}
       </pre>
     );
@@ -1340,15 +1757,24 @@ function InlineAttachmentPreview({ url, title, fileName }: { url: string; title:
     <>
       <DocumentEmbed url={url} title={title} />
       <div className="mt-3">
-        <AttachedFileCard url={url} fileName={fileName} />
+        {/* DocumentEmbed above draws the deck itself where it can, so the card
+            below offers the file rather than apologising for a missing
+            preview. */}
+        <AttachedFileCard url={url} fileName={fileName} previewed />
       </div>
     </>
   );
 }
 
-function LegacyPdfImagePreview({ attachmentId, title, fileName }: { attachmentId: string; title: string; fileName?: string | null }) {
+function LegacyPdfImagePreview({ attachmentId, title, fileName, readingPreferences }: {
+  attachmentId: string;
+  title: string;
+  fileName?: string | null;
+  readingPreferences?: ReadingPreferences;
+}) {
   const [pageNumber, setPageNumber] = useState(1);
   const [pageCount, setPageCount] = useState(1);
+  const [scale, setScale] = useState(1);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
   const infoUrl = `/learner_api/media/legacy-attachment/${attachmentId}/pdf-info/`;
@@ -1407,6 +1833,23 @@ function LegacyPdfImagePreview({ attachmentId, title, fileName }: { attachmentId
         <div className="flex items-center gap-2">
           <button
             type="button"
+            onClick={() => setScale((value) => Math.max(0.75, Number((value - 0.25).toFixed(2))))}
+            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50"
+            aria-label="Zoom out"
+          >
+            <AppIcon className="ri-subtract-line" />
+          </button>
+          <span className="min-w-12 text-center text-xs font-bold text-foreground-600">{Math.round(scale * 100)}%</span>
+          <button
+            type="button"
+            onClick={() => setScale((value) => Math.min(2.5, Number((value + 0.25).toFixed(2))))}
+            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50"
+            aria-label="Zoom in"
+          >
+            <AppIcon className="ri-add-line" />
+          </button>
+          <button
+            type="button"
             onClick={() => setPageNumber((value) => Math.max(1, value - 1))}
             disabled={pageNumber <= 1}
             className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50 disabled:cursor-not-allowed disabled:opacity-40"
@@ -1425,26 +1868,58 @@ function LegacyPdfImagePreview({ attachmentId, title, fileName }: { attachmentId
           </button>
         </div>
       </div>
-      <div className="max-h-[72vh] overflow-auto p-4">
+      <div
+        className="max-h-[72vh] overflow-auto p-4"
+        style={{ backgroundColor: readingPreferences?.colourMode === 'cream' ? '#fff7dc' : readingPreferences?.colourMode === 'dark' ? '#111827' : undefined }}
+      >
         <img
           key={pageUrl}
           src={pageUrl}
           alt={`${title} page ${pageNumber}`}
-          className="mx-auto block max-w-full rounded-lg bg-white shadow-sm"
+          className="mx-auto block rounded-lg bg-white shadow-sm"
+          style={{
+            width: `${scale * 100}%`,
+            maxWidth: scale <= 1 ? '100%' : 'none',
+            filter: readingPreferences?.colourMode === 'monochrome' ? 'grayscale(1) contrast(1.15)' : readingPreferences?.colourMode === 'dark' ? 'grayscale(1) invert(1)' : undefined,
+          }}
         />
       </div>
     </div>
   );
 }
 
-function PdfCanvasPreview({ url, title, fileName }: { url: string; title: string; fileName?: string | null }) {
+interface PdfHighlight {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotationKey, allowAnnotatedDownload }: {
+  url: string;
+  title: string;
+  fileName?: string | null;
+  readingPreferences?: ReadingPreferences;
+  annotationKey?: string;
+  allowAnnotatedDownload: boolean;
+}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [pageCount, setPageCount] = useState(0);
   const [scale, setScale] = useState(1.25);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
+  const [markerActive, setMarkerActive] = useState(false);
+  const [draftHighlight, setDraftHighlight] = useState<PdfHighlight | null>(null);
+  const highlightStorageKey = readingStorageKey(annotationKey || url, 'pdf-highlights');
+  const [highlights, setHighlights] = useState<Record<number, PdfHighlight[]>>(() => readStoredJson(highlightStorageKey, {}));
+  const [annotationsSaved, setAnnotationsSaved] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const [rulerY, setRulerY] = useState<number | null>(null);
+  const preferences = readingPreferences || DEFAULT_READING_PREFERENCES;
 
   useEffect(() => {
     let cancelled = false;
@@ -1528,6 +2003,87 @@ function PdfCanvasPreview({ url, title, fileName }: { url: string; title: string
     };
   }, [pageNumber, pdf, scale]);
 
+  useEffect(() => () => window.speechSynthesis?.cancel(), []);
+
+  const pointFromPointer = (event: React.PointerEvent<SVGSVGElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return {
+      x: Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width)),
+      y: Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height)),
+    };
+  };
+
+  const updateDraftHighlight = (start: { x: number; y: number }, end: { x: number; y: number }): PdfHighlight => ({
+    x: Math.min(start.x, end.x),
+    y: Math.min(start.y, end.y),
+    width: Math.abs(end.x - start.x),
+    height: Math.abs(end.y - start.y),
+  });
+
+  const saveHighlights = () => {
+    try {
+      window.localStorage.setItem(highlightStorageKey, JSON.stringify(highlights));
+      setAnnotationsSaved(true);
+    } catch {
+      setAnnotationsSaved(false);
+    }
+  };
+
+  const readCurrentPage = async () => {
+    if (!pdf || !window.speechSynthesis) return;
+    if (speaking) {
+      window.speechSynthesis.cancel();
+      setSpeaking(false);
+      return;
+    }
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const text = content.items.map((item) => ('str' in item ? item.str : '')).join(' ').trim();
+    if (!text) return;
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.onend = () => setSpeaking(false);
+    utterance.onerror = () => setSpeaking(false);
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+    setSpeaking(true);
+  };
+
+  const downloadAnnotatedPdf = async () => {
+    if (!pdf || exporting) return;
+    setExporting(true);
+    try {
+      const { jsPDF } = await import('jspdf');
+      let output: InstanceType<typeof jsPDF> | null = null;
+      for (let pageIndex = 1; pageIndex <= pdf.numPages; pageIndex += 1) {
+        const page = await pdf.getPage(pageIndex);
+        const viewport = page.getViewport({ scale: 1.6 });
+        const exportCanvas = document.createElement('canvas');
+        exportCanvas.width = Math.floor(viewport.width);
+        exportCanvas.height = Math.floor(viewport.height);
+        const context = exportCanvas.getContext('2d');
+        if (!context) continue;
+        await page.render({ canvas: exportCanvas, canvasContext: context, viewport }).promise;
+        context.save();
+        context.globalAlpha = 0.38;
+        context.fillStyle = '#fde047';
+        (highlights[pageIndex] || []).forEach((mark) => {
+          context.fillRect(mark.x * exportCanvas.width, mark.y * exportCanvas.height, mark.width * exportCanvas.width, mark.height * exportCanvas.height);
+        });
+        context.restore();
+        const orientation: 'landscape' | 'portrait' = exportCanvas.width > exportCanvas.height ? 'landscape' : 'portrait';
+        if (!output) {
+          output = new jsPDF({ orientation, unit: 'px', format: [exportCanvas.width, exportCanvas.height], hotfixes: ['px_scaling'] });
+        } else {
+          output.addPage([exportCanvas.width, exportCanvas.height], orientation);
+        }
+        output.addImage(exportCanvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, exportCanvas.width, exportCanvas.height);
+      }
+      output?.save(`${fileLabelFrom(url, fileName).replace(/\.pdf$/i, '') || title}-highlighted.pdf`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   if (status === 'loading') {
     return (
       <div className="grid min-h-[420px] place-items-center rounded-xl border border-background-300 bg-white text-sm font-semibold text-foreground-500 shadow-sm">
@@ -1553,6 +2109,17 @@ function PdfCanvasPreview({ url, title, fileName }: { url: string; title: string
           <p className="text-xs text-foreground-500">Page {pageNumber} of {pageCount || 1}</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setMarkerActive((value) => !value)}
+            aria-pressed={markerActive}
+            className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-bold ${markerActive ? 'border-amber-400 bg-amber-300 text-amber-950' : 'border-background-300 bg-white text-foreground-700 hover:bg-background-50'}`}
+          >
+            <AppIcon className="ri-mark-pen-line" /> Marker
+          </button>
+          <button type="button" onClick={() => void readCurrentPage()} className={`grid h-9 w-9 place-items-center rounded-lg border ${speaking ? 'border-violet-500 bg-violet-600 text-white' : 'border-background-300 bg-white text-foreground-700 hover:bg-background-50'}`} aria-label={speaking ? 'Stop reading page' : 'Read page aloud'}>
+            <AppIcon className={speaking ? 'ri-stop-circle-line' : 'ri-volume-up-line'} />
+          </button>
           <button
             type="button"
             onClick={() => setScale((value) => Math.max(0.75, value - 0.25))}
@@ -1587,10 +2154,65 @@ function PdfCanvasPreview({ url, title, fileName }: { url: string; title: string
           >
             <AppIcon className="ri-arrow-right-s-line" />
           </button>
+          <button type="button" onClick={saveHighlights} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-xs font-bold text-emerald-700">
+            <AppIcon className="ri-save-line" /> {annotationsSaved ? 'Saved' : 'Save marks'}
+          </button>
+          {allowAnnotatedDownload && (
+            <button type="button" onClick={() => void downloadAnnotatedPdf()} disabled={exporting} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-xs font-bold text-white disabled:opacity-50">
+              <AppIcon className={exporting ? 'ri-loader-4-line animate-spin' : 'ri-download-2-line'} /> {exporting ? 'Preparing…' : 'Download marked PDF'}
+            </button>
+          )}
         </div>
       </div>
-      <div className="max-h-[72vh] overflow-auto p-4">
-        <canvas ref={canvasRef} className="mx-auto block max-w-full rounded-lg bg-white shadow-sm" />
+      <div
+        className="relative max-h-[72vh] overflow-auto p-4"
+        style={{ backgroundColor: preferences.colourMode === 'cream' ? '#fff7dc' : preferences.colourMode === 'dark' ? '#111827' : undefined }}
+        onMouseMove={(event) => preferences.ruler && setRulerY(event.clientY - event.currentTarget.getBoundingClientRect().top + event.currentTarget.scrollTop)}
+        onMouseLeave={() => setRulerY(null)}
+      >
+        {preferences.ruler && rulerY != null && <span className="pointer-events-none absolute inset-x-0 z-20 h-9 border-y border-blue-400/50 bg-blue-300/20" style={{ top: Math.max(0, rulerY - 18) }} />}
+        <div className="relative mx-auto w-fit max-w-full">
+          <canvas
+            ref={canvasRef}
+            className="block max-w-full rounded-lg bg-white shadow-sm"
+            style={{ filter: preferences.colourMode === 'monochrome' ? 'grayscale(1) contrast(1.15)' : preferences.colourMode === 'dark' ? 'grayscale(1) invert(1)' : undefined }}
+          />
+          <svg
+            className={`absolute inset-0 h-full w-full rounded-lg ${markerActive ? 'cursor-crosshair touch-none' : 'pointer-events-none'}`}
+            viewBox="0 0 1000 1000"
+            preserveAspectRatio="none"
+            aria-label="PDF highlight layer"
+            onPointerDown={(event) => {
+              if (!markerActive) return;
+              event.currentTarget.setPointerCapture(event.pointerId);
+              dragStartRef.current = pointFromPointer(event);
+              setDraftHighlight({ ...dragStartRef.current, width: 0, height: 0 });
+            }}
+            onPointerMove={(event) => {
+              if (!markerActive || !dragStartRef.current) return;
+              setDraftHighlight(updateDraftHighlight(dragStartRef.current, pointFromPointer(event)));
+            }}
+            onPointerUp={(event) => {
+              const start = dragStartRef.current;
+              if (!markerActive || !start) return;
+              const mark = updateDraftHighlight(start, pointFromPointer(event));
+              if (mark.width > 0.003 && mark.height > 0.003) {
+                setHighlights((current) => ({ ...current, [pageNumber]: [...(current[pageNumber] || []), mark] }));
+                setAnnotationsSaved(false);
+              }
+              dragStartRef.current = null;
+              setDraftHighlight(null);
+            }}
+          >
+            {(highlights[pageNumber] || []).map((mark, index) => (
+              <rect key={index} x={mark.x * 1000} y={mark.y * 1000} width={mark.width * 1000} height={mark.height * 1000} fill="#fde047" fillOpacity="0.4" />
+            ))}
+            {draftHighlight && <rect x={draftHighlight.x * 1000} y={draftHighlight.y * 1000} width={draftHighlight.width * 1000} height={draftHighlight.height * 1000} fill="#fde047" fillOpacity="0.4" stroke="#ca8a04" strokeWidth="2" />}
+          </svg>
+        </div>
+        {(highlights[pageNumber] || []).length > 0 && (
+          <button type="button" onClick={() => { setHighlights((current) => ({ ...current, [pageNumber]: [] })); setAnnotationsSaved(false); }} className="mx-auto mt-3 block text-xs font-bold text-red-600 hover:underline">Clear marks on this page</button>
+        )}
       </div>
     </div>
   );
@@ -1602,8 +2224,20 @@ function PdfCanvasPreview({ url, title, fileName }: { url: string; title: string
  * published on the public internet. See @/lib/docEmbed. */
 function DocumentEmbed({ url, title }: { url: string; title: string }) {
   const embed = resolveDocEmbed(url);
-  const unavailable = () => null;
-  if (embed.mode === 'unavailable') return null;
+  // Say why there is no preview. Returning null left a learner looking at a
+  // header, a download card, and nothing in between — with no way to tell a
+  // file that cannot be shown from one that failed to load. The file itself is
+  // offered by the card below this, so the note only has to explain.
+  const unavailable = (reason: string) => (
+    <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+      <p className="flex items-center gap-2 text-sm font-bold text-amber-900">
+        <AppIcon className="ri-information-line" />
+        This file can&apos;t be shown here
+      </p>
+      <p className="mt-1 text-xs leading-5 text-amber-800">{reason}</p>
+    </div>
+  );
+  if (embed.mode === 'unavailable') return unavailable(embed.reason);
   if (embed.mode === 'deck') return <SlideDeckViewer src={embed.src} title={title} fallback={unavailable} />;
   return (
     // A 4:3 box on a wide card is taller than the screen, which puts the top of
@@ -1655,25 +2289,8 @@ interface EvidenceContext {
 /** Content for the component, plus the evidence uploader when one is required.
  * The uploader is appended outside the per-kind renderers so a gated video or
  * reading gets it too — not just the activity/assignment fallback. */
-function ComponentContent({ evidenceContext, ...props }: Parameters<typeof ComponentBody>[0] & {
-  evidenceContext: EvidenceContext | null;
-}) {
-  return (
-    <>
-      <ComponentBody {...props} />
-      {evidenceContext && (
-        <div className="mt-4 rounded-2xl border border-background-300 bg-white p-6">
-          <AssignmentEvidence
-            kind={evidenceContext.kind}
-            learnerId={evidenceContext.learnerId}
-            componentId={evidenceContext.componentId}
-            trainingPlanDetails={evidenceContext.trainingPlanDetails}
-            onUploaded={evidenceContext.onUploaded}
-          />
-        </div>
-      )}
-    </>
-  );
+function ComponentContent(props: Parameters<typeof ComponentBody>[0]) {
+  return <ComponentBody {...props} />;
 }
 
 function LiveSessionResultsCard({
@@ -1687,48 +2304,17 @@ function LiveSessionResultsCard({
 }) {
   const [data, setData] = useState<TeamsMeetingArtifactsResult | null>(null);
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-
-  const loadResults = useCallback(async () => {
-    const result = await loadTeamsMeetingArtifacts(liveSessionId);
-    setData(result);
-    return result;
-  }, [liveSessionId]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setError(null);
+    setData(null);
     loadTeamsMeetingArtifacts(liveSessionId)
       .then((result) => { if (!cancelled) setData(result); })
-      .catch((reason) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : 'Unable to load Teams results.');
-      })
+      .catch(() => undefined)
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [liveSessionId]);
-
-  const handleSync = async () => {
-    if (syncing) return;
-    setSyncing(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const result = await syncTeamsMeetingArtifacts(liveSessionId);
-      await loadResults();
-      setNotice(
-        `Synced ${result.synced.attendanceRecords} attendance record${result.synced.attendanceRecords === 1 ? '' : 's'}`
-        + ` and ${result.synced.recordings} recording${result.synced.recordings === 1 ? '' : 's'}.`,
-      );
-      if (result.errors.length) setError(result.errors.join(' · '));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Unable to sync Teams results.');
-    } finally {
-      setSyncing(false);
-    }
-  };
 
   const occurrence = data?.occurrences.find((item) => Number(item.session_number) === sessionNumber)
     || data?.occurrences[sessionNumber - 1]
@@ -1764,20 +2350,11 @@ function LiveSessionResultsCard({
 
   return (
     <section className="mt-4 overflow-hidden rounded-2xl border border-primary-200 bg-white shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-primary-100 bg-primary-50/70 px-5 py-4">
+      <div className="border-b border-primary-100 bg-primary-50/70 px-5 py-4">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.14em] text-primary-600">Microsoft Teams results</p>
           <h2 className="mt-1 text-sm font-heading font-black text-foreground-900">Attendance, absence and recording</h2>
         </div>
-        <button
-          type="button"
-          onClick={handleSync}
-          disabled={syncing}
-          className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[11px] font-black text-white shadow-sm transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <AppIcon className={`${syncing ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} text-sm`} />
-          {syncing ? 'Syncing…' : 'Sync Teams results'}
-        </button>
       </div>
 
       <div className="p-5">
@@ -1818,9 +2395,6 @@ function LiveSessionResultsCard({
             </div>
           </div>
         )}
-
-        {notice && <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-[10px] font-bold text-emerald-700">{notice}</p>}
-        {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-[10px] font-bold text-red-700">{error}</p>}
       </div>
     </section>
   );
@@ -1886,27 +2460,17 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
       <div className="rounded-2xl border border-background-300 bg-white p-6">
         <div className="flex items-center gap-3 mb-4">
           <span className="w-11 h-11 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center"><AppIcon className="ri-book-open-line text-xl" /></span>
-          <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Read the material, then finish and reflect below.</p></div>
-        </div>
-        {/* A reading can have written content, an attached document, or both —
-            imported material routinely has a sentence of framing plus the PDF —
-            so neither one hides the other. */}
-        {component.contentHtml && (
-          // Reading content is coach-authored curriculum (trusted staff authors).
-          <div
-            className="max-w-none text-sm text-foreground-700 leading-relaxed [&_h2]:font-heading [&_h2]:font-bold [&_h2]:text-lg [&_h2]:text-foreground-900 [&_h2]:mt-4 [&_h2]:mb-2 [&_h3]:font-heading [&_h3]:font-semibold [&_h3]:text-base [&_h3]:text-foreground-900 [&_h3]:mt-3 [&_h3]:mb-1.5 [&_p]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-3 [&_li]:mb-1 [&_strong]:font-semibold [&_strong]:text-foreground-900 [&_em]:italic [&_a]:text-blue-600 [&_a]:underline"
-            dangerouslySetInnerHTML={{ __html: normalizeReadingHtml(component.contentHtml) }}
-          />
-        )}
-        {component.resourceUrl ? (
-          <div className={component.contentHtml ? 'mt-4 pt-4 border-t border-background-200' : ''}>
-            {/* Reading material stored as an external link/file — shown inline
-                through the same document embed PowerPoint uses. */}
-            <InlineAttachmentPreview url={component.resourceUrl} title={title} fileName={component.fileName} />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-foreground-900">{title}</p>
+            <p className="text-xs text-foreground-400">Read the material, then finish and reflect below.</p>
           </div>
-        ) : !component.contentHtml && (
-          <p className="text-sm text-foreground-500">No reading content was set. You can still record your reflection below.</p>
-        )}
+          {/* Same flag, same promise: an attached document the author marked
+              downloadable can be taken away, not only read here. */}
+          {component.downloadAllowed && component.resourceUrl && (
+            <DownloadFileButton url={component.resourceUrl} fileName={component.fileName} />
+          )}
+        </div>
+        <AccessibleReadingMaterial component={component} title={title} />
         {component.audioUrl && (
           <div className="mt-4 pt-4 border-t border-background-200">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-2">Audio version</p>
@@ -1922,7 +2486,19 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
       <div className="rounded-2xl border border-background-300 bg-white p-6">
         <div className="flex items-center gap-3 mb-4">
           <span className="w-11 h-11 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center"><AppIcon className="ri-slideshow-line text-xl" /></span>
-          <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Review the slide deck, then finish and reflect below.</p></div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-foreground-900">{title}</p>
+            <p className="text-xs text-foreground-400">Review the slide deck, then finish and reflect below.</p>
+          </div>
+          {/* The author said this deck may be taken away; the inline viewer is
+              not the only way to read it. */}
+          {component.downloadAllowed && component.resourceUrl && (
+            <DownloadFileButton
+              url={component.resourceUrl}
+              fileName={component.fileName}
+              label="Download deck"
+            />
+          )}
         </div>
         {component.resourceUrl ? (
           <InlineAttachmentPreview url={component.resourceUrl} title={title} fileName={component.fileName} />
@@ -1938,9 +2514,13 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
     const validStart = parsedStart && !Number.isNaN(parsedStart.getTime()) ? parsedStart : null;
     const dateLabel = component.sessionDate
       ? new Date(`${component.sessionDate}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
-      : validStart?.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) || 'Date to be confirmed';
+      : (validStart
+        ? formatSystemTimestamp(validStart, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+        : 'Date to be confirmed');
     const timeLabel = component.sessionTime
-      || (validStart ? `${validStart.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' })} UTC` : 'Time to be confirmed');
+      || (validStart
+        ? `${formatSystemTimestamp(validStart, { hour: '2-digit', minute: '2-digit', hour12: false })} ${systemTimeZoneName(validStart)}`
+        : 'Time to be confirmed');
 
     return (
       <div className="overflow-hidden rounded-2xl border border-primary-200 bg-white shadow-sm">

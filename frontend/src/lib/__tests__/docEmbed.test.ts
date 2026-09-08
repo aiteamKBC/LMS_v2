@@ -71,6 +71,27 @@ describe('resolveDocEmbed', () => {
     expect(resolveDocEmbed('/uploads/old.ppt', LOCAL).mode).toBe('unavailable');
   });
 
+  it('tells the reader a legacy deck is the reason, not just the server', () => {
+    // On localhost a .ppt has no route to a preview at all: our renderer reads
+    // OOXML only and Microsoft cannot fetch the file. Saying "we cannot reach
+    // this server" alone leaves nothing to act on; the format is the fixable
+    // part.
+    const embed = resolveDocEmbed('/uploads/old.ppt', LOCAL);
+
+    expect(embed.mode).toBe('unavailable');
+    if (embed.mode !== 'unavailable') throw new Error('expected unavailable');
+    expect(embed.reason).toMatch(/97-2003/);
+    expect(embed.reason).toMatch(/\.pptx/);
+  });
+
+  it('keeps the plain server message for a modern file it cannot reach', () => {
+    const embed = resolveDocEmbed('https://intranet.local/brief.docx', LOCAL);
+
+    expect(embed.mode).toBe('unavailable');
+    if (embed.mode !== 'unavailable') throw new Error('expected unavailable');
+    expect(embed.reason).not.toMatch(/97-2003/);
+  });
+
   it('renders one of our own PDFs in-house, page by page', () => {
     // Not the browser's viewer: whether a browser previews a PDF in a frame or
     // offers it as a download is a setting on the reader's machine, and the

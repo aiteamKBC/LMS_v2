@@ -34,8 +34,9 @@ from learner_api import evidence_storage
 logger = logging.getLogger(__name__)
 
 # The current storage connection times out on one multi-megabyte Put Blob
-# request. Curriculum authoring files are capped at 5 MB, so 256 KB blocks keep
-# each socket write short while still allowing two blocks to upload together.
+# request. Curriculum authoring files are capped at 300 MB, so 256 KB blocks keep
+# each socket write short while still allowing two blocks to upload together —
+# and a large file is streamed as many short blocks rather than one long PUT.
 CURRICULUM_UPLOAD_BLOCK_BYTES = 256 * 1024
 CURRICULUM_UPLOAD_ATTEMPTS = 3
 CURRICULUM_AZURE_TIMEOUT_SECONDS = 30

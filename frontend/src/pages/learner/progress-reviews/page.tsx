@@ -1,13 +1,19 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
-import { fetchLearnerCalendarEvents, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { fetchLearnerCalendarEvents, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, signLearnerProgressReview, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { fetchEvidence } from '@/api/evidence';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { responsesForSection, type ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
+import ProgressReviewSlidesModal, { type ProgressReviewSlidesDeck } from '@/pages/coach/progress-reviews/components/ProgressReviewSlidesModal';
+import { buildProgressReviewSlidesDeck } from '@/pages/coach/progress-reviews/page';
+import type { CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
+import ProgressReviewSignModal from './components/ProgressReviewSignModal';
 
 const learnerNav = roleNavMap.learner;
 
@@ -35,6 +41,7 @@ function statusLabel(status?: string): string {
     'not-scheduled': 'Planning required',
     scheduled: 'Scheduled',
     'in-progress': 'In progress',
+    'awaiting-signature': 'Awaiting signatures',
     completed: 'Completed',
     cancelled: 'Cancelled',
   };
@@ -45,6 +52,7 @@ function statusStyle(status?: string): string {
   if (status === 'completed') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
   if (status === 'scheduled') return 'border-primary-200 bg-primary-50 text-primary-700';
   if (status === 'in-progress') return 'border-amber-200 bg-amber-50 text-amber-700';
+  if (status === 'awaiting-signature') return 'border-violet-200 bg-violet-50 text-violet-700';
   if (status === 'cancelled') return 'border-red-200 bg-red-50 text-red-700';
   return 'border-amber-200 bg-amber-50 text-amber-700';
 }
@@ -58,28 +66,6 @@ function asNumber(value?: string | number | null): number | null {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
-}
-
-function reportedMinutes(value?: string | null): number {
-  if (!value) return 0;
-  const text = value.trim().toLowerCase();
-  const hours = Number(text.match(/([\d.]+)\s*(?:hours?|hrs?|h)\b/i)?.[1] || 0);
-  const minutes = Number(text.match(/([\d.]+)\s*(?:minutes?|mins?|m)\b/i)?.[1] || 0);
-  if (hours || minutes) return (hours * 60) + minutes;
-  const numeric = Number.parseFloat(text.match(/\d+(?:\.\d+)?/)?.[0] || '0');
-  return Number.isFinite(numeric) ? numeric * 60 : 0;
-}
-
-function formatMinutes(minutes: number): string {
-  if (!minutes) return '0 hrs';
-  const hours = Math.round((minutes / 60) * 10) / 10;
-  return `${hours} ${hours === 1 ? 'hr' : 'hrs'}`;
-}
-
-function withinWindow(value: string | null | undefined, from: Date | null, to: Date): boolean {
-  if (!value) return false;
-  const date = new Date(value);
-  return !Number.isNaN(date.getTime()) && (!from || date > from) && date <= to;
 }
 
 function Empty({ children = 'No information has been recorded for this review.' }: { children?: ReactNode }) {
@@ -145,15 +131,14 @@ function Accordion({
   id: string; title: string; icon: string; open: boolean; onToggle: (id: string) => void; children: ReactNode;
 }) {
   const steps: Record<string, number> = {
-    learning: 1,
-    'progress-checks': 2,
-    'learner-reflection': 3,
-    'manager-reflection': 4,
-    'tutor-reflection': 5,
-    safeguarding: 6,
-    'additional-support': 7,
-    actions: 8,
-    rag: 9,
+    'progress-checks': 1,
+    'learner-reflection': 2,
+    'manager-reflection': 3,
+    'tutor-reflection': 4,
+    safeguarding: 5,
+    'additional-support': 6,
+    actions: 7,
+    rag: 8,
   };
   const step = steps[id];
   return (
@@ -164,7 +149,7 @@ function Accordion({
           <span className={`absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-white px-1 text-[8px] font-extrabold ${open ? 'bg-secondary-500' : 'bg-primary-700'} text-white`}>{step}</span>
         </span>
         <span className="min-w-0 flex-1">
-          <span className={`block text-[9px] font-bold uppercase tracking-[0.12em] ${open ? 'text-primary-600' : 'text-foreground-400'}`}>Review section {step} of 9</span>
+          <span className={`block text-[9px] font-bold uppercase tracking-[0.12em] ${open ? 'text-primary-600' : 'text-foreground-400'}`}>Review section {step} of 8</span>
           <span className="mt-0.5 block text-sm font-bold text-foreground-900 sm:text-[15px]">{title}</span>
         </span>
         <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all ${open ? 'rotate-180 bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500'}`}><AppIcon className="ri-arrow-down-s-line text-lg" /></span>
@@ -338,9 +323,14 @@ export default function ProgressReviewsPage() {
   const [learner, setLearner] = useState<LearnerDetail | null>(null);
   const [events, setEvents] = useState<LearnerCalendarEvent[]>([]);
   const [selectedId, setSelectedId] = useState(reviewId || '');
-  const [openSections, setOpenSections] = useState<string[]>(['learning']);
+  const [openSections, setOpenSections] = useState<string[]>(['progress-checks']);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [slidesDeck, setSlidesDeck] = useState<ProgressReviewSlidesDeck | null>(null);
+  const [slidesBusy, setSlidesBusy] = useState(false);
+  const [signing, setSigning] = useState(false);
+  const [signatureBusy, setSignatureBusy] = useState(false);
+  const [signatureError, setSignatureError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -382,52 +372,6 @@ export default function ProgressReviewsPage() {
   const selectedIndex = selected ? reviews.findIndex((review) => review.id === selected.id) : -1;
   const previousReview = selectedIndex > 0 ? reviews[selectedIndex - 1] : null;
 
-  const learningWindow = useMemo(() => {
-    const previousValue = reviewDate(previousReview);
-    const selectedValue = reviewDate(selected);
-    const from = previousValue ? new Date(`${previousValue}T23:59:59`) : null;
-    const reviewEnd = selectedValue ? new Date(`${selectedValue}T23:59:59`) : new Date();
-    const to = reviewEnd > new Date() ? new Date() : reviewEnd;
-    return { from, to };
-  }, [previousReview, selected]);
-
-  const progressRecords = useMemo(() => {
-    if (!learner) return [];
-    return [
-      ...learner.quizAttempts.filter((item) => item.passed),
-      ...(learner.videoProgress || []),
-      ...(learner.componentProgress || []),
-    ].filter((item) => withinWindow(item.submittedAt, learningWindow.from, learningWindow.to));
-  }, [learner, learningWindow]);
-
-  const learnedKsbCodes = useMemo(() => {
-    const values = new Set<string>();
-    progressRecords.forEach((record) => (record.ksbs || []).forEach((code) => values.add(code)));
-    return [...values].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  }, [progressRecords]);
-  const loggedMinutes = progressRecords.reduce((sum, record) => sum + reportedMinutes(record.reportedTime), 0);
-  const completedActivityIds = new Set(progressRecords.map((record) => 'quizId' in record ? `quiz:${record.quizId}` : `component:${record.componentId}`));
-  const learningItems = useMemo(() => progressRecords.map((record) => {
-    if ('quizId' in record) {
-      const component = learner?.components.find((item) => item.quizMeta?.quizId === record.quizId);
-      return {
-        key: `quiz:${record.quizId}:${record.submittedAt}`,
-        title: component?.component || `Quiz #${record.quizId}`,
-        detail: record.totalScore ? `Passed quiz · ${record.achievedScore || 0}/${record.totalScore}` : 'Passed quiz',
-        at: record.submittedAt,
-      };
-    }
-    const component = learner?.components.find((item) => item.componentId === record.componentId);
-    const type = 'componentType' in record ? record.componentType : 'Video';
-    return {
-      key: `component:${record.componentId}:${record.submittedAt}`,
-      title: component?.component || type,
-      detail: `${type} completed${record.reportedTime ? ` · ${record.reportedTime}` : ''}`,
-      at: record.submittedAt,
-    };
-  }), [learner, progressRecords]);
-  const totalActivities = learner?.components.length || 0;
-  const overallLearningPercent = totalActivities ? Math.round((completedActivityIds.size / totalActivities) * 100) : null;
   const progressVariance = asNumber(learner?.progressVariance);
 
   const toggleSection = (id: string) => {
@@ -448,6 +392,50 @@ export default function ProgressReviewsPage() {
     anchor.download = `progress-review-${selected.sequence}.ics`;
     anchor.click();
     URL.revokeObjectURL(url);
+  };
+
+  const loadArtifacts = useCallback((eventKey: string, signal?: AbortSignal) => (
+    fetchLearnerMeetingArtifacts(myLearner.kind, myLearner.id, eventKey, signal)
+  ), [myLearner.id, myLearner.kind]);
+  const artifactContentUrl = useCallback((eventKey: string, artifactType: string, artifactId: string, options: { preview?: boolean } = {}) => (
+    learnerMeetingArtifactContentUrl(myLearner.kind, myLearner.id, eventKey, artifactType, artifactId, options)
+  ), [myLearner.id, myLearner.kind]);
+
+  const showSlides = async () => {
+    if (!selected || !learner) return;
+    setSlidesBusy(true);
+    setError('');
+    try {
+      const evidence = await fetchEvidence(myLearner.kind, myLearner.id).catch(() => []);
+      const review = {
+        ...selected,
+        learner: learner.name,
+        learnerId: myLearner.id,
+        learnerType: myLearner.kind,
+        programme: learner.programme,
+        ownerName: selected.coachName,
+      } as unknown as CoachCalendarEvent;
+      setSlidesDeck(buildProgressReviewSlidesDeck(review, selected.coachName || 'Coach', myLearner.kind, learner, evidence));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not prepare the progress review slides.');
+    } finally {
+      setSlidesBusy(false);
+    }
+  };
+
+  const saveSignature = async (signature: string) => {
+    if (!selected) return;
+    setSignatureBusy(true);
+    setSignatureError('');
+    try {
+      const result = await signLearnerProgressReview(myLearner.kind, myLearner.id, selected.eventKey || selected.id, { name: learner?.name || 'Learner', signature });
+      setEvents((current) => current.map((event) => event.id === selected.id ? { ...event, ...result.event } : event));
+      setSigning(false);
+    } catch (reason) {
+      setSignatureError(reason instanceof Error ? reason.message : 'Could not save your signature.');
+    } finally {
+      setSignatureBusy(false);
+    }
   };
 
   return (
@@ -514,14 +502,24 @@ export default function ProgressReviewsPage() {
                       <h2 className="mt-2 text-xl font-bold text-white">Progress Review #{selected?.sequence}</h2>
                       <p className="mt-1 text-sm text-white/60">{formatDate(reviewDate(selected), true)} at {formatTime(selected?.scheduledTime)}</p>
                     </div>
-                    <div className="flex gap-2">
-                      {selected?.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action rounded-lg px-3.5 py-2 text-xs font-bold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}
+                    <div className="flex flex-wrap gap-2">
+                      {selected?.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action inline-flex items-center rounded-lg px-4 py-2.5 text-xs font-extrabold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}
+                      <button type="button" onClick={() => void showSlides()} disabled={slidesBusy} className="inline-flex items-center rounded-lg border border-white/25 bg-white px-3.5 py-2 text-xs font-bold text-primary-900 shadow-sm hover:bg-primary-50 disabled:opacity-60"><AppIcon className={slidesBusy ? 'ri-loader-4-line mr-1.5 animate-spin' : 'ri-slideshow-line mr-1.5'} />{slidesBusy ? 'Preparing slides…' : 'Show slides'}</button>
                       <button type="button" onClick={addToCalendar} disabled={!selected?.scheduledDate || !selected.scheduledTime} className="rounded-lg border border-white/15 bg-white/10 px-3.5 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-calendar-check-line mr-1.5" />Add to calendar</button>
                     </div>
                   </div>
                 </div>
 
                 <div className="space-y-5 p-5 sm:p-6">
+                  {selected ? <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" /> : null}
+
+                  {selected && ['awaiting-signature', 'completed'].includes(selected.status) ? (
+                    <div className="flex flex-col gap-3 rounded-xl border border-violet-200 bg-violet-50 p-4 sm:flex-row sm:items-center">
+                      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100 text-violet-700"><AppIcon className={selected.learnerSigned ? 'ri-checkbox-circle-line' : 'ri-file-sign-line'} /></span>
+                      <div className="flex-1"><p className="text-sm font-bold text-violet-950">{selected.learnerSigned ? 'Slides signed by learner' : 'Your formal acknowledgement is required'}</p><p className="mt-1 text-xs text-violet-700">{selected.learnerSigned ? `Signed ${selected.learnerSignedAt ? formatDate(selected.learnerSignedAt.split('T')[0]) : ''}` : 'Review the slides, then sign to confirm the progress review record.'}</p></div>
+                      {!selected.learnerSigned ? <button type="button" onClick={() => void showSlides()} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-violet-700 px-4 text-xs font-bold text-white shadow-sm hover:bg-violet-800"><AppIcon className="ri-slideshow-line" />Show slides & sign</button> : null}
+                    </div>
+                  ) : null}
                   <div>
                     <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-foreground-400">Review participants</p>
                     <div className="grid gap-3 sm:grid-cols-3">
@@ -548,45 +546,6 @@ export default function ProgressReviewsPage() {
                 </div>
               </section>
 
-              <Accordion id="learning" title="Learning Progress & Summary" icon="ri-graduation-cap-line" open={openSections.includes('learning')} onToggle={toggleSection}>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-xl bg-primary-50 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-primary-500">Completed activities</p><p className="mt-1 text-2xl font-bold text-primary-800">{completedActivityIds.size}</p><p className="text-xs text-primary-600/70">during this review period</p></div>
-                  <div className="rounded-xl bg-accent-50 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-accent-600">Completed activity time</p><p className="mt-1 text-2xl font-bold text-accent-800">{formatMinutes(loggedMinutes)}</p><p className="text-xs text-accent-600/70">during this review period</p></div>
-                  <div className="rounded-xl bg-emerald-50 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600">KSBs evidenced</p><p className="mt-1 text-2xl font-bold text-emerald-800">{learnedKsbCodes.length}</p><p className="text-xs text-emerald-600/70">during this review period</p></div>
-                </div>
-
-                <div className="mt-4 rounded-xl border border-background-200 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div><p className="text-sm font-bold text-foreground-900">Overall learning plan</p><p className="text-xs text-foreground-400">Successful unique activities against the current plan</p></div>
-                    <span className="text-sm font-bold text-primary-700">{overallLearningPercent === null ? '-' : `${overallLearningPercent}%`}</span>
-                  </div>
-                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-background-200"><div className="h-full rounded-full bg-primary-500" style={{ width: `${overallLearningPercent || 0}%` }} /></div>
-                </div>
-
-                <div className="mt-4">
-                  <div className="mb-2 flex items-center justify-between"><h3 className="text-xs font-bold text-foreground-800">What the learner completed</h3><span className="text-[10px] text-foreground-400">{learningItems.length} {learningItems.length === 1 ? 'record' : 'records'}</span></div>
-                  {learningItems.length === 0 ? <Empty>No completed learning was recorded in this review period.</Empty> : (
-                    <div className="divide-y divide-background-200 rounded-xl border border-background-200">
-                      {learningItems.slice(0, 8).map((activity) => (
-                        <div key={activity.key} className="flex items-start gap-3 p-3.5">
-                          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><AppIcon className="ri-checkbox-circle-line" /></span>
-                          <div className="min-w-0 flex-1"><p className="text-sm font-semibold text-foreground-800">{activity.title}</p><p className="mt-0.5 text-xs text-foreground-400">{activity.detail}</p></div>
-                          <span className="shrink-0 text-[10px] text-foreground-400">{new Date(activity.at).toLocaleDateString('en-GB')}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {learnedKsbCodes.length > 0 && <div className="mt-4"><p className="mb-2 text-xs font-bold text-foreground-800">KSBs covered</p><div className="flex flex-wrap gap-1.5">{learnedKsbCodes.map((code) => <span key={code} className="rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">{code}</span>)}</div></div>}
-                {responsesForSection(selected?.reviewResponses, 'learning').length > 0 && (
-                  <div className="mt-4">
-                    <p className="mb-2 text-xs font-bold text-foreground-800">Coach review summary</p>
-                    <SavedReviewAnswers sectionId="learning" responses={selected?.reviewResponses} emptyMessage="No coach summary has been recorded for this PR." />
-                  </div>
-                )}
-              </Accordion>
-
               <Accordion id="progress-checks" title="Progress Checks" icon="ri-check-double-line" open={openSections.includes('progress-checks')} onToggle={toggleSection}>
                 <SavedReviewAnswers sectionId="progress-checks" responses={selected?.reviewResponses} emptyMessage="No progress checks have been recorded for this PR." />
               </Accordion>
@@ -608,6 +567,17 @@ export default function ProgressReviewsPage() {
           </div>
         )}
       </div>
+      <ProgressReviewSlidesModal
+        open={Boolean(slidesDeck)}
+        deck={slidesDeck}
+        onClose={() => setSlidesDeck(null)}
+        primaryAction={selected && ['awaiting-signature', 'completed'].includes(selected.status) && !selected.learnerSigned ? (
+          <button type="button" onClick={() => setSigning(true)} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-violet-700 px-4 text-[12px] font-bold text-white shadow-sm transition hover:bg-violet-800">
+            <AppIcon className="ri-quill-pen-line" />Sign slides
+          </button>
+        ) : null}
+      />
+      {signing ? <ProgressReviewSignModal name={learner?.name || 'Learner'} saving={signatureBusy} error={signatureError} onClose={() => setSigning(false)} onSign={(signature) => void saveSignature(signature)} /> : null}
     </WorkspaceShell>
   );
 }

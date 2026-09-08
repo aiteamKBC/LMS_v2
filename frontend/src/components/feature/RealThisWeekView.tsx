@@ -6,7 +6,7 @@ import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import { fetchLmsSchema, type LmsCourse, type LmsMaterial, type LmsSection, type LmsStudent } from '@/api/lmsSchema';
 import {
-  buildLearnerJourney, quizAggregateStats, componentTypeMeta, gradePercent, hasComponentContent, isOpenableComponent,
+  buildLearnerJourney, quizAggregateStats, componentTypeMeta, formatHoursMinutes, gradePercent, hasComponentContent, isOpenableComponent,
   type JourneyModule, type JourneyWeek, type JourneyComponent,
 } from '@/utils/learnerJourney';
 import { EvidenceFilesButton } from '@/components/feature/EvidenceFilesButton';
@@ -84,7 +84,7 @@ export function RealThisWeekView({
             {quizStats.quizzesTaken > 0 && (
               <div className="lg:w-[220px] shrink-0 px-5 md:px-7 py-5 md:py-6 border-t lg:border-t-0 lg:border-l border-accent-400/10 flex items-center justify-center">
                 <div className="flex flex-col items-center gap-1">
-                  <span className="text-3xl font-heading font-bold text-white">{quizStats.totalHours}h</span>
+                  <span className="text-3xl font-heading font-bold text-white">{formatHoursMinutes(quizStats.totalHours)}</span>
                   <span className="text-[11px] text-white/50 font-medium uppercase tracking-wider">Logged via quizzes</span>
                 </div>
               </div>
@@ -96,7 +96,7 @@ export function RealThisWeekView({
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
           <SnapshotCard icon="ri-stack-line" label="Components" value={`${totalComponents}`} detail="Learning items" color="primary" />
           <SnapshotCard icon="ri-award-line" label="KSBs Covered" value={`${ksbCount}`} detail="Knowledge, Skills & Behaviours" color="accent" />
-          <SnapshotCard icon="ri-time-line" label="Planned OTJH" value={`${totalOtjh}h`} detail="On-the-job training hours" color="secondary" />
+          <SnapshotCard icon="ri-time-line" label="Planned OTJH" value={formatHoursMinutes(totalOtjh)} detail="On-the-job training hours" color="secondary" />
           <SnapshotCard
             icon="ri-questionnaire-line"
             label="Quizzes"
@@ -464,7 +464,7 @@ function ModuleSection({ module, defaultOpen, kind, learnerId, navigate, complet
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {moduleOtjh > 0 && <span className="hidden sm:inline text-xs font-semibold text-primary-600">{Math.round(moduleOtjh * 10) / 10}h</span>}
+          {moduleOtjh > 0 && <span className="hidden sm:inline text-xs font-semibold text-primary-600">{formatHoursMinutes(moduleOtjh)}</span>}
           <div className="w-7 h-7 flex items-center justify-center rounded-lg bg-background-100">
             <AppIcon className={`ri-arrow-down-s-line text-foreground-400 transition-transform text-sm ${collapsed ? '' : 'rotate-180'}`} />
           </div>
@@ -520,7 +520,7 @@ function WeekCard({ week, module, kind, learnerId, navigate, completedIds }: {
             <p className="text-[11px] text-foreground-400 mt-0.5">{componentCount} {componentCount === 1 ? 'component' : 'components'}</p>
           </div>
           <div className="flex items-center gap-3 shrink-0">
-            {week.otjh > 0 && <span className="text-xs font-semibold text-foreground-500">{Math.round(week.otjh * 10) / 10}h</span>}
+            {week.otjh > 0 && <span className="text-xs font-semibold text-foreground-500">{formatHoursMinutes(week.otjh)}</span>}
             <div className="flex items-center justify-center rounded-lg bg-background-100 w-6 h-6">
               <AppIcon className={`ri-arrow-down-s-line text-foreground-400 transition-transform ${open ? 'rotate-180' : ''} text-xs`} />
             </div>

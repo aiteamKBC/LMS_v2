@@ -13,11 +13,13 @@ both produced visibly broken slides during development:
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from django.test import Client, SimpleTestCase, override_settings
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
+from pptx.oxml import parse_xml
 from pptx.oxml.ns import qn
 from pptx.util import Emu, Inches, Pt
 
@@ -64,6 +66,49 @@ class SlideModelTests(SimpleTestCase):
 
     def render(self, path=None):
         return pptx_slides._deck_model(path or self.deck_path, self.root / 'assets', '/assets')
+
+    def test_a_shape_filled_with_a_picture_is_drawn_as_that_picture(self):
+        """Artwork is routinely a picture *fill*, not a <p:pic> element.
+
+        PowerPoint's "Picture fill" — and most pasted diagrams, logos and
+        screenshots — put the image in <a:blipFill> inside the shape's <p:spPr>.
+        Such a shape has no solid fill and no line, and a freeform carries an
+        empty text frame, so before this it matched no branch and was dropped:
+        the slide rendered its text and silently lost every graphic on it.
+        """
+        from pptx import Presentation as _P
+        from pptx.oxml.ns import qn as _qn
+
+        path = self.root / 'picfill.pptx'
+        presentation = _P()
+        slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+        # A 1x1 PNG is enough: the test is about the shape being drawn at all.
+        png = (
+            b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01'
+            b'\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01'
+            b'\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82'
+        )
+        image_path = self.root / 'dot.png'
+        image_path.write_bytes(png)
+        # Add a picture to get the image part + relationship, then move its blip
+        # onto a plain shape's spPr — which is what a picture fill looks like.
+        picture = slide.shapes.add_picture(str(image_path), 0, 0, 100, 100)
+        rel_id = picture._element.blip_rId
+        picture._element.getparent().remove(picture._element)
+
+        box = slide.shapes.add_textbox(0, 0, 914400, 914400)
+        blip_fill = parse_xml(
+            '<a:blipFill xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            '<a:blip r:embed="%s"/><a:stretch><a:fillRect/></a:stretch></a:blipFill>' % rel_id
+        )
+        box._element.find(_qn('p:spPr')).append(blip_fill)
+        presentation.save(str(path))
+
+        shapes = self.render(path)['slides'][0]['shapes']
+        images = [entry for entry in shapes if entry['kind'] == 'image']
+        self.assertEqual(len(images), 1, 'the picture fill must be drawn')
+        self.assertTrue(images[0]['src'].startswith('/assets/'))
 
     def test_stage_matches_the_decks_own_dimensions(self):
         deck = self.render()
@@ -170,6 +215,27 @@ class RenderCacheTests(SimpleTestCase):
         import os
         os.utime(self.source, (0, 0))
         self.assertEqual(self.render()['slideCount'], 1)
+
+    def test_a_caller_supplied_stamp_is_invalidated_by_the_model_version(self):
+        """A blob's stamp identifies bytes, not the model they were rendered into.
+
+        A deck read from blob storage passes the blob's own stamp (size+etag),
+        which never changes when this renderer improves. Without the model
+        version folded in, every already-cached deck replayed its old model
+        forever and a parser fix looked like it had done nothing.
+        """
+        blob_stamp = 'azure:1234:"0xETAG"'
+        with override_settings(MEDIA_ROOT=self.media):
+            pptx_slides.render_uploaded_deck(self.relative, self.source, stamp=blob_stamp)
+            # Same bytes, same stamp: the render is reused.
+            self.assertIsNotNone(
+                pptx_slides.deck_model_for_stamp(self.relative, blob_stamp)
+            )
+            # A newer renderer must not be handed the older model.
+            with patch.object(pptx_slides, 'MODEL_VERSION', pptx_slides.MODEL_VERSION + 1):
+                self.assertIsNone(
+                    pptx_slides.deck_model_for_stamp(self.relative, blob_stamp)
+                )
 
     def test_legacy_powerpoint_is_refused_with_an_explanation(self):
         legacy = self.media / 'deck.ppt'
