@@ -19,6 +19,7 @@ import {
   statusLabel,
   statusPillClass,
 } from '@/pages/coach/shared/calendarEvents';
+import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
 import { LearnerAvatar, LearnerIdentity } from '@/pages/coach/shared/LearnerIdentity';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { EventDetailLine } from './components/EventDetailLine';
@@ -66,6 +67,8 @@ interface TimetableEvent {
   cohort?: string;
   group?: string;
   learnerId?: string;
+  learnerType?: 'commercial' | 'apprenticeship' | null;
+  enrolmentId?: string | null;
   ownerEmail?: string;
   ownerName?: string;
   targetDate?: string;
@@ -2462,6 +2465,7 @@ export default function CoachTimetablePage() {
                         <p className="text-[12px] leading-5 text-foreground-700">{selectedEventNotes}</p>
                       </div>
                     )}
+                    <CoachMeetingArtifactsPanel event={selectedEvent} />
                   </div>
                   {selectedEventFeedback && (
                     <div className={`mt-4 rounded-lg border px-3 py-2 text-[12px] ${eventActionError ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>

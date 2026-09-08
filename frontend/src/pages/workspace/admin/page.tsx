@@ -207,6 +207,13 @@ export default function AdminDashboard() {
             <p className="mt-1 text-[11px] text-foreground-500 md:text-xs">Monitor platform health, user engagement and system performance in real time.</p>
           </div>
           <div className="flex items-center gap-2">
+            <Link
+              to="/workspace/admin/certificates"
+              className="inline-flex h-10 items-center gap-2 rounded-xl border border-primary-200 bg-white px-3.5 text-xs font-extrabold text-primary-700 shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-300 hover:bg-primary-50 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+            >
+              <AppIcon className="ri-award-line text-base"></AppIcon>
+              Certificate Builder
+            </Link>
             <div className="super-admin-filters-anchor relative">
               <button
                 type="button"
@@ -320,6 +327,7 @@ export default function AdminDashboard() {
             <QuickAction href="/admin/roles" icon="ri-shield-star-line" label="Manage roles" />
             <QuickAction href="/admin/platform-report" icon="ri-file-chart-line" label="Generate platform report" />
             <QuickAction href="/admin/platform-report" icon="ri-download-2-line" label="Export data" />
+            <QuickAction href="/workspace/admin/certificates" icon="ri-award-line" label="Certificate builder" />
           </div>
         </section>
         </div>

@@ -5,7 +5,7 @@ import { AuthError, apiAuthHealth, apiMicrosoftStart } from '@/api/auth';
 import { AppIcon } from '@/components/feature/AppIcon';
 // Shared with RequireAuth, so the page you are sent to after signing in and
 // the page you are sent back to when refused are decided by one definition.
-import { homeRouteFor } from '@/lib/routeAccess';
+import { isBareLearnerWorkspacePath, postLoginRouteFor } from '@/lib/routeAccess';
 import styles from './page.module.css';
 
 const CAMPUS_IMAGE_URL = '/kent-business-college-campus.png';
@@ -57,7 +57,7 @@ export default function LoginPage() {
   // and round again.
   useEffect(() => {
     if (!isInitialized || !auth.account) return;
-    navigate(auth.account.hasLegacyRecord || auth.account.access === 'record-monitor' ? homeRouteFor(auth.account) : from || homeRouteFor(auth.account), { replace: true });
+    navigate(postLoginRouteFor(auth.account, from), { replace: true });
   }, [isInitialized, auth.account, from, navigate]);
 
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -81,7 +81,7 @@ export default function LoginPage() {
     setIsLoading(true);
     try {
       const account = await login(email, password, rememberMe);
-      navigate(account.hasLegacyRecord || account.access === 'record-monitor' ? homeRouteFor(account) : from || homeRouteFor(account), { replace: true });
+      navigate(postLoginRouteFor(account, from), { replace: true });
     } catch (err) {
       setError(
         err instanceof AuthError
@@ -98,7 +98,7 @@ export default function LoginPage() {
     try {
       // This is a full navigation so Microsoft can return to the callback that
       // creates the server session cookie.
-      window.location.href = await apiMicrosoftStart(from);
+      window.location.href = await apiMicrosoftStart(isBareLearnerWorkspacePath(from) ? undefined : from);
     } catch (err) {
       setError(
         err instanceof AuthError

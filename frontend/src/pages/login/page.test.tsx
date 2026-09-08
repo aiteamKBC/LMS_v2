@@ -2,18 +2,20 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import LoginPage from './page';
-import { AuthError } from '@/api/auth';
+import { AuthError, type AuthUser } from '@/api/auth';
 
-const { login } = vi.hoisted(() => ({ login: vi.fn() }));
+const { login, authState } = vi.hoisted(() => ({ login: vi.fn(), authState: {
+  account: null as Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord'> | null,
+} }));
 vi.mock('@/hooks/useAuth', () => ({
-  useAuth: () => ({ login, auth: { account: null }, isInitialized: true }),
+  useAuth: () => ({ login, auth: authState, isInitialized: true }),
 }));
 vi.mock('@/api/auth', async importOriginal => ({
   ...await importOriginal<typeof import('@/api/auth')>(),
   apiAuthHealth: vi.fn().mockResolvedValue({ microsoftSso: { configured: false } }),
 }));
 
-beforeEach(() => { login.mockReset(); login.mockImplementation(() => new Promise(() => {})); });
+beforeEach(() => { authState.account = null; login.mockReset(); login.mockImplementation(() => new Promise(() => {})); });
 afterEach(cleanup);
 
 function openForm() {
@@ -85,9 +87,9 @@ it('reads updated autofill on retry after a rejected sign-in', async () => {
   expect(login).toHaveBeenCalledTimes(2);
 });
 
-it('opens monitoring after normal email/password login even with an old learner destination', async () => {
+it.each(['/workspace/learner', '/coach/caseload'])('opens monitoring after email/password login despite return target %s', async from => {
   login.mockResolvedValue({ id: 700, role: 'staff', access: 'record-monitor', accessHome: '/old-otjh/monitor' });
-  render(<MemoryRouter initialEntries={[{ pathname: '/login', state: { from: '/workspace/learner' } }]}><Routes>
+  render(<MemoryRouter initialEntries={[{ pathname: '/login', state: { from } }]}><Routes>
     <Route path="/login" element={<LoginPage />} />
     <Route path="/old-otjh/monitor" element={<h1>Monitoring destination</h1>} />
     <Route path="/workspace/learner" element={<h1>Learner destination</h1>} />
@@ -97,4 +99,24 @@ it('opens monitoring after normal email/password login even with an old learner 
   fireEvent.click(screen.getByRole('button', { name: 'Sign in to Workspace' }));
   expect(await screen.findByRole('heading', { name: 'Monitoring destination' })).toBeInTheDocument();
   expect(screen.queryByRole('heading', { name: 'Learner destination' })).not.toBeInTheDocument();
+});
+
+it.each([false, true])('opens the legacy portal despite an LMS return target (existing session: %s)', async existingSession => {
+  const account = { role: 'learner' as const, subjectId: 42, hasLegacyRecord: true, accessHome: '/workspace/learner' };
+  if (existingSession) authState.account = account;
+  else login.mockResolvedValue(account);
+  render(<MemoryRouter initialEntries={[{ pathname: '/login', state: { from: '/workspace/learner' } }]}><Routes>
+    <Route path="/login" element={<LoginPage />} />
+    <Route path="/old-otjh" element={<h1>Transition portal</h1>} />
+    <Route path="/workspace/learner" element={<h1>LMS destination</h1>} />
+  </Routes></MemoryRouter>);
+  if (!existingSession) {
+    autofill(screen.getByLabelText('Email address', { exact: true }) as HTMLInputElement, 'learner@example.test');
+    autofill(screen.getByLabelText('Password', { exact: true }) as HTMLInputElement, ' Example password 7! ');
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in to Workspace' }));
+  }
+  expect(await screen.findByRole('heading', { name: 'Transition portal' })).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: 'LMS destination' })).not.toBeInTheDocument();
+  if (existingSession) expect(login).not.toHaveBeenCalled();
+  else expect(login).toHaveBeenCalledWith('learner@example.test', ' Example password 7! ', false);
 });
