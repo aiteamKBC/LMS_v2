@@ -146,14 +146,19 @@ export default function AttendanceRiskPage() {
       pageTitle="Attendance Risk" pageSubtitle="Real attendance signals from verified Teams sessions — track learners at risk and log interventions"
       userName={operator.name} userRole={operator.role}
     >
-      <div className="p-6 space-y-6">
+      <div className="attendance-risk-page p-6 space-y-6">
         <WorkspaceHeroBanner
+          className="attendance-risk-hero"
           title="Attendance Risk Monitoring"
           description={`${criticalCount} critical, ${highCount} high-risk learners${onTrackCount ? `, ${onTrackCount} on track` : ''}.`}
           icon="ri-alert-line"
           imageUrl="https://readdy.ai/api/search-image?query=UK%20workplace%20attendance%20monitoring%20dashboard%20professional%20office%20setting%20warm%20neutral%20lighting%20modern&width=400&height=160&seq=attendance-risk-01&orientation=landscape"
           imageAlt="Attendance Risk"
-          stats={[{ label: 'Critical', value: String(criticalCount), variant: 'danger' }, { label: 'High', value: String(highCount) }, { label: 'On track', value: String(onTrackCount) }]}
+          stats={[
+            { label: 'Critical', value: String(criticalCount), icon: 'ri-error-warning-line', variant: 'danger' },
+            { label: 'High', value: String(highCount), icon: 'ri-alert-line', variant: 'warning' },
+            { label: 'On track', value: String(onTrackCount), icon: 'ri-checkbox-circle-line', variant: 'success' },
+          ]}
         />
 
         <div className="flex items-center gap-2 flex-wrap">

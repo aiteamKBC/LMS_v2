@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { fetchCurriculumStandards, type CurriculumStandard } from '@/lib/curriculumApi';
 import { curriculumNavItems } from '@/mocks/navigation';
@@ -143,43 +144,21 @@ export default function CurriculumStandards() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Skills England Standards" pageSubtitle={`${numberText(totals.standards)} standards from standard_ksbs`} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
-        <section
-          className="relative overflow-hidden rounded-2xl border border-primary-900/20 bg-primary-950 text-white shadow-lg"
-        >
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(255,255,255,0.18),transparent_34%),linear-gradient(135deg,rgba(109,40,217,0.35),rgba(15,23,42,0))]" />
-          <div className="relative px-5 py-6 sm:px-7 sm:py-7">
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex items-start gap-4">
-                <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-white/15 ring-1 ring-white/20">
-                  <AppIcon className="ri-database-2-line text-2xl" />
-                </span>
-                <div className="max-w-3xl">
-                  <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <span className="rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[10px] font-semibold uppercase text-white/75">Source table</span>
-                    <span className="text-[11px] font-semibold text-cyan-100">curriculum.standard_ksbs</span>
-                  </div>
-                  <h2 className="font-heading text-xl font-bold text-white">Government standard library</h2>
-                  <p className="mt-1 text-[13px] font-medium leading-relaxed text-white/90">
-                    Live KSB definitions grouped by apprenticeship standard, version, funding, route and delivery status.
-                  </p>
-                </div>
-              </div>
-              <div className="grid w-full grid-cols-3 gap-2 sm:w-auto">
-                {[
-                  { label: 'Standards', value: totals.standards, color: 'text-white' },
-                  { label: 'KSBs', value: totals.ksbs, color: 'text-primary-100' },
-                  { label: 'Approved', value: totals.active, color: 'text-primary-100' },
-                ].map(item => (
-                  <div key={item.label} className="rounded-xl bg-white px-4 py-3 text-center shadow-sm ring-1 ring-white/70">
-                    <p className="text-2xl font-black text-primary-950">{numberText(item.value)}</p>
-                    <p className="text-[10px] font-black uppercase text-foreground-500">{item.label}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
+      <div className="curriculum-library-page min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
+        <WorkspaceHeroBanner
+          className="curriculum-library-hero"
+          decorative
+          eyebrow="Learning resources"
+          title="Government standard library"
+          description="Live KSB definitions grouped by apprenticeship standard, version, funding, route and delivery status. Source table: curriculum.standard_ksbs."
+          icon="ri-database-2-line"
+          statIconPosition="leading"
+          stats={[
+            { label: 'Standards', value: numberText(totals.standards), icon: 'ri-database-2-line' },
+            { label: 'KSBs', value: numberText(totals.ksbs), icon: 'ri-node-tree' },
+            { label: 'Approved', value: numberText(totals.active), icon: 'ri-checkbox-circle-line' },
+          ]}
+        />
 
         {error && (
           <div className="rounded-xl border border-red-200/70 bg-red-50 px-4 py-3 text-[12px] font-bold text-red-800">

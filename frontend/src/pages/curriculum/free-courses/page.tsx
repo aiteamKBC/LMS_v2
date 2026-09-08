@@ -6,6 +6,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Link } from 'react-router-dom';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { formatHoursMinutes } from '@/lib/format';
 import { fetchFreeProgrammeModules, saveFreeProgrammeModules, type FreeProgrammeComponentInput, type FreeProgrammeModule, type FreeProgrammeModuleInput } from '@/lib/curriculumApi';
@@ -557,38 +558,33 @@ export default function FreeCoursesPage() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <main className="min-h-[calc(100vh-150px)] bg-background-50 px-4 py-4 md:px-6">
-        <section className="overflow-hidden rounded-lg border border-background-200 bg-white shadow-sm">
-          <div className="bg-primary-950 px-5 py-5 text-white md:px-7">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-white/80">
-                  <AppIcon name="ri-graduation-cap-line" size={14} />
-                  Free learning catalogue
-                </div>
-                <h1 className="font-heading text-2xl font-bold text-white md:text-3xl">Free Courses</h1>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-white/72">
-                  Build short open-access courses from customised video, reading, PowerPoint, audio and quiz components.
-                </p>
-              </div>
-              <div className="grid grid-cols-3 gap-2 lg:w-[390px]">
-                <Metric label="Weeks" value={totals.weeks} />
-                <Metric label="Components" value={totals.components} />
-                <Metric label="Quizzes" value={totals.quizzes} />
-              </div>
-            </div>
-            <div className="mt-5 flex justify-end">
-              <button
-                type="button"
-                onClick={openAddWizard}
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-bold text-primary-900 transition hover:bg-primary-50"
-              >
-                <AppIcon name="ri-add-line" size={16} />
-                Add free course
-              </button>
-            </div>
-          </div>
+      <main className="curriculum-library-page min-h-[calc(100vh-150px)] space-y-4 bg-background-50 px-4 py-4 md:px-6">
+        <WorkspaceHeroBanner
+          className="curriculum-library-hero"
+          decorative
+          eyebrow="Learning resources"
+          title="Free Courses"
+          description="Build short open-access courses from customised video, reading, PowerPoint, audio and quiz components."
+          icon="ri-graduation-cap-line"
+          statIconPosition="leading"
+          stats={[
+            { label: 'Weeks', value: String(totals.weeks), icon: 'ri-calendar-line' },
+            { label: 'Components', value: String(totals.components), icon: 'ri-layout-4-line' },
+            { label: 'Quizzes', value: String(totals.quizzes), icon: 'ri-questionnaire-line' },
+          ]}
+          actions={(
+            <button
+              type="button"
+              onClick={openAddWizard}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-bold text-primary-900 transition hover:bg-primary-50"
+            >
+              <AppIcon name="ri-add-line" size={16} />
+              Add free course
+            </button>
+          )}
+        />
 
+        <section className="overflow-hidden rounded-lg border border-background-200 bg-white shadow-sm">
           <div className="border-b border-background-200 bg-background-50 px-5 py-5 md:px-7">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
@@ -598,7 +594,7 @@ export default function FreeCoursesPage() {
               {savedCoursesLoading && <AppIcon name="ri-loader-4-line" className="animate-spin text-foreground-400" size={16} />}
             </div>
             {savedCourseCards.length > 0 ? (
-              <div className="grid max-w-7xl gap-4 xl:grid-cols-[repeat(2,minmax(520px,600px))] 2xl:grid-cols-[repeat(2,minmax(520px,600px))]">
+  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {savedCourseCards.map(card => (
                   <SavedFreeCourseCardView
                     key={card.key}
@@ -1011,7 +1007,7 @@ function SavedFreeCourseCardView({ card, onEdit, onDelete }: { card: SavedFreeCo
   }, [card.coverImageUrl]);
 
   return (
-    <article className="group flex min-h-[620px] w-full max-w-[600px] flex-col overflow-hidden rounded-lg border border-background-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-md">
+    <article className="group flex min-h-[620px] w-full flex-col overflow-hidden rounded-lg border border-background-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-md">
       <div className="relative h-60 overflow-hidden bg-background-100">
         {showCoverImage ? (
           <img

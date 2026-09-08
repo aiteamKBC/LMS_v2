@@ -73,7 +73,7 @@ export const MetricCard = memo(function MetricCard({
   );
 
   const surface = cn(
-    'coach-metric-card rounded-xl border border-foreground-100/70 bg-background-50 p-4 text-left shadow-sm',
+    'ui-metric-card coach-metric-card rounded-xl border border-foreground-100/70 bg-background-50 p-4 text-left shadow-sm',
     active ? 'ring-1 ring-primary-200' : '',
     className,
   );

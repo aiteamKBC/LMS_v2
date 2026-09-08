@@ -21,7 +21,7 @@ interface SkeletonProps {
 }
 
 export function SkeletonBlock({ className = '' }: SkeletonProps) {
-  return <span className={`block rounded bg-background-200 animate-pulse ${className}`} />;
+  return <span className={`kbc-skeleton block rounded bg-background-200 animate-pulse ${className}`} />;
 }
 
 /** A paragraph's worth of lines. The last one is short, as prose usually is. */

@@ -17,7 +17,7 @@ export const learnerNavItems: SidebarNavItem[] = [
 
   // My Learning — training plan, learning journey and quizzes merged into
   // Overview/Modules/Quizzes tabs on one page.
-  { id: 'learner-my-learning', label: 'My Learning', icon: 'ri-book-open-line', href: '/learner/my-learning', badge: 1 },
+  { id: 'learner-my-learning', label: 'My Learning', icon: 'ri-book-open-line', href: '/learner/my-learning', matchPaths: ['/learner/learning-plan'], badge: 1 },
 
   // Training plan — the learner's Aptem training plan, month by month. Its
   // "View components" action drops into My Learning to actually work through it.

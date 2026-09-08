@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { QuestionAnswersView } from '@/components/feature/QuestionTypeRenderer';
 import { useToast } from '@/hooks/useToast';
@@ -261,36 +262,26 @@ export default function QuestionBankPage() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel={curriculumNav.label} navItems={curriculumNav.items} workspaceLabel={curriculumNav.workspaceLabel} pageTitle="Question Bank" pageSubtitle="Programme-scoped quiz questions" userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="min-h-full bg-[#f7f6f4] p-4 sm:p-5 lg:p-6 space-y-4">
-        <div className="relative rounded-2xl overflow-hidden shadow-sm" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 52%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
-          <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
-          <div className="relative p-6 sm:p-8 flex flex-col lg:flex-row lg:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <AppIcon className="ri-database-2-line text-white text-2xl"></AppIcon>
-            </span>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-lg font-heading font-bold text-white mb-1">Question Bank</h2>
-              <p className="text-[13px] text-white/80 leading-relaxed">
-                <strong>{activeBankCount}</strong> active banks from <strong>{totalBankCount}</strong> programmes containing <strong>{totalQuestionCount}</strong> questions. {visibleQuestionCount} shown, {ksbTaggedPercent}% of shown questions KSB tagged.
-              </p>
-            </div>
-            <div className="grid grid-cols-3 gap-3 shrink-0 w-full sm:w-auto">
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{activeBankCount}</p>
-                <p className="text-[10px] text-white/70 uppercase tracking-wide">Banks</p>
-              </div>
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{totalQuestionCount}</p>
-                <p className="text-[10px] text-white/70 uppercase tracking-wide">Questions</p>
-              </div>
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{ksbTaggedPercent}%</p>
-                <p className="text-[10px] text-white/70 uppercase tracking-wide">KSB Tagged</p>
-              </div>
-            </div>
-          </div>
-        </div>
+      <div className="curriculum-library-page min-h-full bg-[#f7f6f4] p-4 sm:p-5 lg:p-6 space-y-4">
+        <WorkspaceHeroBanner
+          className="curriculum-library-hero question-bank-hero"
+          decorative
+          eyebrow="Learning resources"
+          title="Question Bank"
+          description="Create, manage and organize questions to support assessment and learning."
+          icon="ri-database-2-line"
+          statIconPosition="leading"
+          stats={[
+            { label: 'Banks', value: String(activeBankCount), icon: 'ri-database-2-line' },
+            { label: 'Questions', value: String(totalQuestionCount), icon: 'ri-file-line' },
+            { label: 'KSB Tagged', value: `${ksbTaggedPercent}%`, icon: 'ri-price-tag-3-line' },
+          ]}
+          actions={(
+            <button type="button" className="inline-flex h-[4.5rem] min-w-[7.5rem] items-center justify-center whitespace-nowrap rounded-[0.75rem] bg-[#b27715] px-3 text-xs font-semibold text-white transition-smooth hover:bg-[#986511]">
+              <AppIcon className="mr-1" name="ri-add-line" size={13} /> Create Bank
+            </button>
+          )}
+        />
 
         <section className="rounded-2xl border border-[#ded8e8] bg-white shadow-sm overflow-hidden">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 px-6 py-5 border-b border-[#e2e8f0] bg-[#fbfbfd]">
@@ -305,7 +296,7 @@ export default function QuestionBankPage() {
               <p className="text-sm text-[#647083] mt-1">Questions are grouped by the linked Training Plan programme and stay quietly up to date for concurrent curriculum work.</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Link to="/curriculum/quiz-xml" className="h-10 px-4 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95] transition-smooth flex items-center">
+              <Link to="/curriculum/quiz-xml" className="h-10 px-4 rounded-lg bg-[#b27715] text-white text-sm font-semibold hover:bg-[#986511] transition-smooth flex items-center">
                 <AppIcon className="ri-arrow-left-line mr-1"></AppIcon> Quiz Workspace
               </Link>
             </div>

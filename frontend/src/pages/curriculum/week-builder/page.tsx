@@ -7,6 +7,7 @@ import { CSS } from '@dnd-kit/utilities';
 import DOMPurify from 'dompurify';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
@@ -251,9 +252,9 @@ function TemplateListView({
   const totalOtjh = Math.round(templates.reduce((sum, t) => sum + t.totalOtjh, 0) * 10) / 10;
 
   return (
-    <div className="p-4 sm:p-5 lg:p-6 max-w-[1400px] mx-auto space-y-5">
+    <div className="curriculum-library-page mx-auto max-w-[1400px] space-y-4 p-4 sm:p-5 lg:p-6">
       {/* Masthead */}
-      <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+      <header className="hidden">
         <div>
           <p className="text-[11px] font-bold tracking-[0.2em] uppercase text-primary-500">Curriculum · Week Builder</p>
           <h1 className="mt-1 font-heading text-[28px] leading-none font-black text-foreground-950">Week templates</h1>
@@ -266,12 +267,34 @@ function TemplateListView({
       </header>
 
       {/* Ledger stats — quiet, tabular, no gradient tiles */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-background-200 rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
+      <div className="hidden">
         <LedgerCell value={String(templates.length)} label="Templates" />
         <LedgerCell value={String(paidCount)} label="Paid" accent="text-primary-600" />
         <LedgerCell value={String(freeCount)} label="Free" accent="text-emerald-600" />
         <LedgerCell value={`${totalOtjh}`} label="OTJH banked" />
       </div>
+
+      <WorkspaceHeroBanner
+        className="curriculum-library-hero"
+        decorative
+        eyebrow="Learning resources"
+        title="Week templates"
+        description="A week is a sequence of learning. Build the shape once, drop it into any module."
+        icon="ri-calendar-schedule-line"
+        statIconPosition="leading"
+        stats={[
+          { label: 'Templates', value: String(templates.length), icon: 'ri-calendar-schedule-line' },
+          { label: 'Paid', value: String(paidCount), icon: 'ri-vip-crown-2-line' },
+          { label: 'Free', value: String(freeCount), icon: 'ri-compass-3-line' },
+          { label: 'OTJH banked', value: String(totalOtjh), icon: 'ri-time-line' },
+        ]}
+        actions={(
+          <button onClick={onNew} className="primary-action group inline-flex h-10 items-center gap-2 rounded-lg bg-white px-4 text-[13px] font-bold text-primary-900 transition-smooth hover:bg-primary-50">
+            New template
+            <AppIcon className="ri-add-line" />
+          </button>
+        )}
+      />
 
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-3">
