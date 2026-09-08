@@ -910,6 +910,18 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
 
         self.assertEqual(completed_hours_from_progress(progress), "1.5")
 
+    def test_completed_hours_uses_bounded_mba_import_time(self):
+        progress = [{
+            "kind": "component", "componentId": "component-1",
+            "reportedTime": "", "claimedSeconds": 26418634,
+            "verifiedSeconds": 7200,
+            "timeTrackingSource": "mba_import_bounded_by_authored_otjh",
+        }]
+
+        # The import keeps the raw MBA duration in claimedSeconds for audit,
+        # but only verifiedSeconds is eligible for OTJH credit.
+        self.assertEqual(completed_hours_from_progress(progress), "2")
+
     def test_completed_hours_counts_reported_time_before_tracked_time(self):
         # The learner entered 2h for both activities, so that input is used even
         # when the automatic timer captured a much shorter duration.

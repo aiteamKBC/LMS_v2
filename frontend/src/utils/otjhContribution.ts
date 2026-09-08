@@ -26,7 +26,10 @@ function manualClaimedSeconds(input: OtjhContributionInput): number | null {
   const verified = finiteNumber(input.verifiedSeconds);
   const source = String(input.timeTrackingSource || '').toLowerCase();
   const explicitlyManual = source.endsWith(':input') || source.includes('manual_input');
-  const inferredLegacyManual = verified != null && claimed > verified + 2;
+  // MBA imports keep their raw source duration in claimedSeconds for the
+  // audit trail. verifiedSeconds is the bounded duration eligible for OTJH.
+  const importedSourceDuration = source.startsWith('mba_import_');
+  const inferredLegacyManual = !importedSourceDuration && verified != null && claimed > verified + 2;
   return explicitlyManual || inferredLegacyManual ? claimed : null;
 }
 

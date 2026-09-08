@@ -249,7 +249,10 @@ function OverviewTab({
       <Panel>
         <SectionHeader title="My Apprenticeship Journey" icon="ri-road-map-line" />
         <div className="mt-4">
-          <JourneyStepper statuses={stageStatuses} />
+          <JourneyStepper
+            statuses={stageStatuses}
+            moduleProgress={stations.length ? (modulesDone / stations.length) * 100 : 0}
+          />
         </div>
       </Panel>
 
@@ -376,7 +379,7 @@ const JOURNEY_STAGES = [
   { key: 'epa', label: 'EPA', icon: 'ri-trophy-line' },
 ];
 
-function JourneyStepper({ statuses }: { statuses: StageStatus[] }) {
+function JourneyStepper({ statuses, moduleProgress }: { statuses: StageStatus[]; moduleProgress: number }) {
   return (
     <div className="flex items-start">
       {JOURNEY_STAGES.map((stage, i) => {
@@ -391,7 +394,9 @@ function JourneyStepper({ statuses }: { statuses: StageStatus[] }) {
           : status === 'current'
             ? 'font-semibold text-primary-700'
             : 'text-foreground-400';
-        const lineFilled = status === 'done';
+        const linePercent = status === 'done'
+          ? 100
+          : stage.key === 'module' ? Math.max(0, Math.min(100, moduleProgress)) : 0;
         return (
           <div key={stage.key} className={`flex items-start ${i < JOURNEY_STAGES.length - 1 ? 'flex-1' : 'shrink-0'}`}>
             <div className="flex shrink-0 flex-col items-center gap-1.5">
@@ -401,7 +406,19 @@ function JourneyStepper({ statuses }: { statuses: StageStatus[] }) {
               <span className={`whitespace-nowrap text-[10px] ${labelCls}`}>{stage.label}</span>
             </div>
             {i < JOURNEY_STAGES.length - 1 && (
-              <div className={`mx-1.5 mt-4 h-0.5 min-w-[16px] flex-1 rounded-full ${lineFilled ? 'bg-emerald-400' : 'bg-background-200'}`} />
+              <div
+                className="mx-1.5 mt-4 h-0.5 min-w-[16px] flex-1 overflow-hidden rounded-full bg-background-200"
+                role={stage.key === 'module' ? 'progressbar' : undefined}
+                aria-label={stage.key === 'module' ? 'Modules completed' : undefined}
+                aria-valuemin={stage.key === 'module' ? 0 : undefined}
+                aria-valuemax={stage.key === 'module' ? 100 : undefined}
+                aria-valuenow={stage.key === 'module' ? linePercent : undefined}
+              >
+                <div
+                  className="h-full rounded-full bg-emerald-400 transition-[width] duration-500 motion-reduce:transition-none"
+                  style={{ width: `${linePercent}%` }}
+                />
+              </div>
             )}
           </div>
         );
