@@ -5,6 +5,7 @@ drop modules and attendance/assignment hours cannot inflate activity totals.
 """
 
 from audit_api.last_audit_ledger_views import _activity_payload, _dict_rows
+from audit_api.last_audit_ledger_views import _json_list
 
 
 ACTIVITY_SQL = '''
@@ -42,6 +43,39 @@ ITEM_FIELDS = (
     "category", "activity", "status", "completed", "actual", "planned",
     "hours_mapped", "quiz_score", "quiz_maximum_score",
 )
+
+
+def read_student_material(cursor, aptem_id, group_id, activity_id):
+    # Membership must match BOTH activity and group for this learner.
+    cursor.execute('''
+        SELECT l.learner_name, a.title, a.video_iframe_url,
+               a.reading_iframe_url, a.reading_text_body,
+               a.raw #>> '{audio,iframe_url}' AS audio_url,
+               a.quiz_body, a.quiz_questions
+        FROM "Last_audit".learners l
+        JOIN "Last_audit".activity_results r ON r.learner_id = l.learner_id
+        JOIN "Last_audit".activities a ON a.activity_id = r.activity_id
+        WHERE l.aptem_id = %s AND r.group_id = %s AND r.activity_id = %s
+        LIMIT 1
+    ''', [aptem_id, group_id, activity_id])
+    rows = _dict_rows(cursor)
+    if not rows:
+        return None
+    row = rows[0]
+    # Expose the question and options only, never source grading keys.
+    questions = []
+    for question in _json_list(row.get("quiz_questions")):
+        if not isinstance(question, dict):
+            continue
+        questions.append({
+            "text": question.get("question_body") or "",
+            "options": [str(option.get("option_body") or option.get("option_text") or "")
+                        for option in _json_list(question.get("options")) if isinstance(option, dict)],
+        })
+    return {"learner_name": row["learner_name"], "title": row["title"],
+            "video_url": row["video_iframe_url"], "audio_url": row["audio_url"],
+            "reading_url": row["reading_iframe_url"], "reading_html": row["reading_text_body"],
+            "quiz_description": row["quiz_body"], "questions": questions}
 
 
 def summarize_activities(items):

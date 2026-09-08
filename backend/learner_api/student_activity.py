@@ -1,4 +1,4 @@
-"""Learner-scoped pilot view over the historical Last_audit activity mirror."""
+"""Learner-scoped view over the historical Last_audit activity mirror."""
 
 from django.db import DatabaseError
 from django.http import JsonResponse
@@ -9,8 +9,8 @@ from audit_api.learner_exclusions import is_excluded_learner
 from login.permissions import learner_self_or_staff
 
 from .learner_detail import SOURCE_MODELS
-from .student_activity_data import read_student_activity
-from .student_activity_pilot import student_activity_available
+from .student_activity_data import read_student_activity, read_student_material
+from .student_activity_access import student_activity_available
 
 
 def _error(message, status):
@@ -43,14 +43,24 @@ def student_activity(request, kind, pk):
     except (TypeError, ValueError):
         return _error("This learner is not linked to Aptem.", 404)
     if not student_activity_available(aptem_id):
-        return _error("Student activity is not enabled for this learner yet.", 404)
+        return _error("This learner is not linked to Aptem.", 404)
 
     # Never forward client filters or Aptem ids into the historical reader.
     try:
         with _connection().cursor() as cursor:
-            payload = read_student_activity(cursor, aptem_id)
+            if request.GET.get("activity_id") is not None:
+                try:
+                    activity_id = int(request.GET["activity_id"])
+                    group_id = int(request.GET.get("group_id", ""))
+                except (ValueError, TypeError):
+                    return _error("Invalid activity reference.", 400)
+                payload = read_student_material(cursor, aptem_id, group_id, activity_id)
+            else:
+                payload = read_student_activity(cursor, aptem_id)
     except DatabaseError:
         return _error("Could not read Last_audit activities. Please try again.", 503)
     if payload is None or is_excluded_learner(aptem_id, payload["learner_name"]):
         return _error("No audit activity record is linked to this learner.", 404)
-    return JsonResponse(payload)
+    response = JsonResponse(payload)
+    response["Cache-Control"] = "private, no-store"
+    return response

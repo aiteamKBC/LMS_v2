@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { StudentMaterial } from './StudentMaterial';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -463,6 +464,7 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
       )}
       {activityAvailable && kind && id ? (
         <StudentActivityPanel
+          kind={kind} learnerId={id}
           data={activityData}
           loading={activityLoading}
           error={activityError}
@@ -488,7 +490,9 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
   );
 }
 
-export function StudentActivityPanel({ data, loading, error, onRetry }: {
+export function StudentActivityPanel({ data, loading, error, onRetry, kind, learnerId }: {
+  kind?: string;
+  learnerId?: string;
   data: StudentActivityResponse | null;
   loading: boolean;
   error: string | null;
@@ -583,7 +587,7 @@ export function StudentActivityPanel({ data, loading, error, onRetry }: {
                         </button>
                         {isExpanded && (
                           <div className="divide-y divide-foreground-100 border-t border-foreground-100">
-                            {module.visibleActivities.map((item) => <StudentActivityRow key={item.activity_id} item={item} />)}
+                            {module.visibleActivities.map((item) => <StudentActivityRow key={item.activity_id} item={item} kind={kind} learnerId={learnerId} />)}
                           </div>
                         )}
                       </div>
@@ -602,12 +606,13 @@ function ActivityStat({ label, value }: { label: string; value: number | string 
   return <div className="rounded-xl border border-foreground-100 bg-background-100/60 px-3 py-2.5"><p className="text-[10px] uppercase tracking-wider text-foreground-400">{label}</p><p className="mt-0.5 text-lg font-bold text-foreground-900">{value}</p></div>;
 }
 
-function StudentActivityRow({ item }: { item: StudentActivityItem }) {
+function StudentActivityRow({ item, kind, learnerId }: { item: StudentActivityItem; kind?: string; learnerId?: string }) {
+  const [open, setOpen] = useState(false);
   const score = item.quiz_score != null && item.quiz_maximum_score
     ? `${item.quiz_score}/${item.quiz_maximum_score}`
     : null;
   return (
-    <div className="flex items-center gap-3 px-4 py-3">
+    <div><div className="flex flex-wrap items-center gap-3 px-4 py-3">
       <span className={`h-2 w-2 shrink-0 rounded-full ${item.completed ? 'bg-emerald-500' : 'bg-foreground-300'}`} />
       <div className="min-w-0 flex-1">
         <p className="truncate text-[12px] font-semibold text-foreground-800">{item.activity}</p>
@@ -618,6 +623,9 @@ function StudentActivityRow({ item }: { item: StudentActivityItem }) {
         <span className="block">Planned: {item.planned_hours_mapped ? formatHoursMinutes(item.planned) : 'Unavailable'}</span>
       </span>
       <StatusBadge tone={item.completed ? 'positive' : 'neutral'} label={item.completed ? 'Completed' : (item.status || 'Not started')} />
+      {kind && learnerId && <button type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)} className="rounded-lg border px-3 py-2 text-sm font-semibold text-primary-700">{open ? 'Close material' : 'Open material'}</button>}
+    </div>
+    {open && kind && learnerId && <StudentMaterial kind={kind} learnerId={learnerId} groupId={item.group_id} activityId={item.source_activity_id} />}
     </div>
   );
 }

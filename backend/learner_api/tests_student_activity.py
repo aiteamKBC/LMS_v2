@@ -8,16 +8,28 @@ from django.db import DatabaseError
 from django.test import RequestFactory, SimpleTestCase
 
 from learner_api.student_activity import student_activity
-from learner_api.student_activity_data import read_student_activity, summarize_activities
-from learner_api.student_activity_pilot import PILOT_APTEM_IDS, student_activity_available
+from learner_api.student_activity_data import read_student_activity, summarize_activities, read_student_material
+from learner_api.student_activity_access import student_activity_available
 
 
 class StudentActivityTests(SimpleTestCase):
-    def test_fixed_ten_learner_pilot_keeps_original_learner(self):
-        self.assertEqual(len(PILOT_APTEM_IDS), 11)
-        for value in (92, "4176", " 2030 ", 14183):
+    def test_material_is_membership_scoped_and_omits_grading_keys(self):
+        cursor = MagicMock()
+        row = dict(learner_name='Anna', title='Quiz', video_iframe_url=None,
+                   reading_iframe_url=None, reading_text_body=None, audio_url=None,
+                   quiz_body='Brief', quiz_questions=[{'question_body': 'Question',
+                       'correct_answer': 'Secret', 'options': [{'option_body': 'A', 'is_correct': True}]}])
+        with patch('learner_api.student_activity_data._dict_rows', return_value=[row]):
+            result = read_student_material(cursor, 4176, 1, 10)
+        self.assertEqual(cursor.execute.call_args.args[1], [4176, 1, 10])
+        self.assertEqual(result['questions'], [{'text': 'Question', 'options': ['A']}])
+        with patch('learner_api.student_activity_data._dict_rows', return_value=[]):
+            self.assertIsNone(read_student_material(cursor, 4176, 2, 10))
+
+    def test_every_valid_aptem_identity_is_eligible(self):
+        for value in (92, "4176", " 2030 ", 14183, 999999):
             self.assertTrue(student_activity_available(value))
-        for value in (None, "", "Anna Rundell", 999999, "4176.0"):
+        for value in (None, "", "Anna Rundell", 0, -1, "4176.0"):
             self.assertFalse(student_activity_available(value))
 
     def test_missing_hours_are_not_zero_and_shared_activities_count_once(self):
@@ -106,15 +118,16 @@ class StudentActivityTests(SimpleTestCase):
 
     @patch("login.permissions._auth_gate_enabled", return_value=True)
     @patch("login.permissions.authenticate_request")
-    def test_learner_outside_pilot_remains_disabled(self, authenticate, _gate):
+    def test_unknown_audit_identity_returns_not_found(self, authenticate, _gate):
         authenticate.return_value = SimpleNamespace(role="staff")
         model = MagicMock()
         model.all_learners.only.return_value.get.return_value = SimpleNamespace(aptem_id="999999")
         with patch("learner_api.student_activity.SOURCE_MODELS", {"commercial": model}), \
-             patch("learner_api.student_activity.read_student_activity") as reader:
+             patch("learner_api.student_activity._connection") as connection, \
+             patch("learner_api.student_activity.read_student_activity", return_value=None) as reader:
             response = student_activity(self.factory.get("/"), kind="commercial", pk=900)
         self.assertEqual(response.status_code, 404)
-        reader.assert_not_called()
+        reader.assert_called_once_with(connection.return_value.cursor.return_value.__enter__.return_value, 999999)
 
     @patch("login.permissions._auth_gate_enabled", return_value=True)
     @patch("login.permissions.authenticate_request")
