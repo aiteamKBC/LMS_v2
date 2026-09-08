@@ -5,17 +5,11 @@ import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 import type { LearnerKind } from '@/api/learnerDetail';
-import { fetchEvidence, getEvidenceDownloadUrl, type EvidenceRecord } from '@/api/evidence';
 import { PanelSkeleton } from '@/components/feature/Skeletons';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { MetricCard } from '@/components/ui/MetricCard';
-import { PageTabs } from '@/components/ui/PageTabs';
-import { StatusBadge } from '@/components/ui/StatusBadge';
 import { EmptyState, EmptyStateAction } from '@/components/ui/EmptyState';
 import { Panel } from '@/components/ui/Panel';
-import { SectionHeader } from '@/components/ui/SectionHeader';
-import { statusTone } from '@/lib/statusTone';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/marking-queue';
@@ -58,8 +52,7 @@ interface Submission {
   submittedDisplay: string;
 }
 
-type ReviewTab = 'overview' | 'learning' | 'evidence';
-type ReviewDecision = 'accepted' | 'partial' | 'referred' | 'escalated' | 'rejected';
+type ReviewDecision = 'accepted' | 'rejected';
 
 function statusLabel(status: string) {
   if (status === 'accepted') return 'Accepted';
@@ -70,38 +63,17 @@ function statusLabel(status: string) {
   return 'Pending review';
 }
 
-function formatFileSize(bytes: number) {
-  if (!bytes) return '';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-/** A bordered detail section inside the review page — Panel + SectionHeader
- * standing in for what used to be a one-off wrapper repeated per section. */
-function ReviewBlock({ title, icon, children }: { title: string; icon: string; children: React.ReactNode }) {
-  return (
-    <Panel>
-      <SectionHeader title={title} icon={icon} />
-      <div className="mt-3">{children}</div>
-    </Panel>
-  );
-}
-
 export default function CoachMarkingReviewPage() {
   const { submissionId } = useParams<{ submissionId: string }>();
   const navigate = useNavigate();
   const coach = useCoachIdentity();
   const [items, setItems] = useState<Submission[]>([]);
   const [feedback, setFeedback] = useState('');
-  const [tab, setTab] = useState<ReviewTab>('overview');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [aiNotice, setAiNotice] = useState('');
   const [error, setError] = useState('');
-  const [evidenceRecords, setEvidenceRecords] = useState<EvidenceRecord[]>([]);
-  const [evidenceLoading, setEvidenceLoading] = useState(false);
-  const [evidenceError, setEvidenceError] = useState('');
-  const [openingEvidenceId, setOpeningEvidenceId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!coach.isInitialized) return;
@@ -134,70 +106,65 @@ export default function CoachMarkingReviewPage() {
     () => items.find(item => item.id === submissionId) || null,
     [items, submissionId],
   );
-  const submissionEvidenceRecords = useMemo(() => {
-    if (!selected?.evidenceFiles.length) return [];
-    const submittedNames = new Set(selected.evidenceFiles);
-    const seenNames = new Set<string>();
-    return evidenceRecords.filter(record => {
-      if (!submittedNames.has(record.filename) || seenNames.has(record.filename)) return false;
-      seenNames.add(record.filename);
-      return true;
-    });
-  }, [evidenceRecords, selected]);
-
   useEffect(() => {
     if (selected) {
       setFeedback(selected.coachFeedback ?? '');
     }
   }, [selected]);
 
-  useEffect(() => {
-    if (!selected) {
-      setEvidenceRecords([]);
-      return;
-    }
-
-    let cancelled = false;
-    setEvidenceRecords([]);
-    setEvidenceLoading(true);
-    setEvidenceError('');
-    fetchEvidence(selected.learnerKind, selected.learnerId, { sectionRef: selected.activityId })
-      .then(records => {
-        if (!cancelled) setEvidenceRecords(records);
-      })
-      .catch(loadError => {
-        if (!cancelled) {
-          setEvidenceRecords([]);
-          setEvidenceError(loadError instanceof Error ? loadError.message : 'Could not load the uploaded evidence.');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setEvidenceLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selected]);
-
-  const openEvidence = async (record: EvidenceRecord) => {
-    if (record.status !== 'approved' || openingEvidenceId) return;
-    setOpeningEvidenceId(record.id);
-    setEvidenceError('');
+  // A draft, never a decision. The response only ever populates the textarea
+  // below; the marking policy requires a qualified coach to review, edit and
+  // decide, so nothing is saved until they press one of the buttons themselves.
+  const generateAiFeedback = async () => {
+    if (!selected || generating) return;
+    setGenerating(true);
+    setError('');
+    setAiNotice('');
     try {
-      const url = await getEvidenceDownloadUrl(selected!.learnerKind, selected!.learnerId, record.id);
-      window.open(url, '_blank', 'noopener,noreferrer');
-    } catch (openError) {
-      setEvidenceError(openError instanceof Error ? openError.message : 'Could not open the uploaded file.');
+      const response = await coachFetch(`${API_ENDPOINT}/${selected.id}/ai-feedback`, { method: 'POST' });
+      const text = await response.text();
+      // A server error returns an HTML page, not JSON, so parsing is guarded:
+      // otherwise the coach is shown "Unexpected token '<'" instead of what
+      // actually went wrong.
+      let data: { feedback?: string; error?: string; detail?: string; meta?: { ksbCount?: number; epaFile?: string } } = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error(
+          response.ok
+            ? 'The server returned an unreadable response.'
+            : `The draft could not be generated (server error ${response.status}).`,
+        );
+      }
+      if (!response.ok) throw new Error(data.error || data.detail || 'The draft could not be generated.');
+      setFeedback(data.feedback || '');
+      // Said plainly rather than left for the coach to notice: with no KSBs on
+      // the activity there is nothing authoritative to map against, so the
+      // draft cannot verify any -- which is worth knowing before reading it.
+      const ksbCount = data.meta?.ksbCount ?? 0;
+      const epaFile = data.meta?.epaFile;
+      const scope = ksbCount > 0
+        ? `against the ${ksbCount} KSB${ksbCount === 1 ? '' : 's'} assigned to this activity`
+        : 'but no KSBs are assigned to this activity, so none could be verified';
+      setAiNotice(
+        `AI-assisted draft generated ${scope}`
+        + (epaFile ? `, using ${epaFile}` : '')
+        + '. Review and edit before deciding.',
+      );
+    } catch (aiError) {
+      setError(aiError instanceof Error ? aiError.message : 'The draft could not be generated.');
     } finally {
-      setOpeningEvidenceId(null);
+      setGenerating(false);
     }
   };
 
   const saveDecision = async (decision: ReviewDecision) => {
     if (!selected || saving) return;
-    if (decision !== 'accepted' && !feedback.trim()) {
-      setError('Add feedback explaining the reason for this decision.');
+    // Required for both decisions, not just rejection: each button says it
+    // sends feedback, so accepting with an empty box would quietly send the
+    // learner nothing.
+    if (!feedback.trim()) {
+      setError('Write feedback for the learner before sending this decision.');
       return;
     }
     setSaving(true);
@@ -209,8 +176,23 @@ export default function CoachMarkingReviewPage() {
         body: JSON.stringify({ decision, feedback: feedback.trim(), reviewedBy: coach.name }),
       });
       const text = await response.text();
-      const data = text ? JSON.parse(text) : {};
-      if (!response.ok) throw new Error(data.detail || 'The review could not be saved.');
+      // A server error returns HTML, not JSON — parse defensively so the coach
+      // is told the status rather than shown a parser complaint.
+      let data: { detail?: string; error?: string; fields?: Record<string, string[] | string> } = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error(`The review could not be saved (server error ${response.status}).`);
+      }
+      if (!response.ok) {
+        // A validation failure names the field it rejected; surfacing it beats
+        // "could not be saved", which leaves the coach guessing which part of
+        // their decision the server refused.
+        const fieldMessages = Object.entries(data.fields ?? {})
+          .map(([field, message]) => `${field}: ${Array.isArray(message) ? message.join(' ') : message}`)
+          .join('; ');
+        throw new Error(fieldMessages || data.detail || data.error || 'The review could not be saved.');
+      }
       navigate('/coach/marking-queue');
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'The review could not be saved.');
@@ -218,18 +200,6 @@ export default function CoachMarkingReviewPage() {
       setSaving(false);
     }
   };
-
-  const suggestion = selected
-    ? selected.qualityScore === 100
-      ? `The learner completed all required sections and claimed ${selected.ksbCodes.length} mapped KSBs. Review the explanations and evidence before accepting the submission.`
-      : `The learner's quality score is ${selected.qualityScore}/100. Check the incomplete or weak sections before making a final decision.`
-    : '';
-  const unresolvedEvidenceFiles = selected
-    ? selected.evidenceFiles.filter(name => !submissionEvidenceRecords.some(record => record.filename === name))
-    : [];
-  const mappedKsbWeight = selected
-    ? Object.values(selected.ksbWeights || {}).reduce((total, weight) => total + Number(weight || 0), 0)
-    : 0;
 
   return (
     <WorkspaceShell
@@ -296,165 +266,63 @@ export default function CoachMarkingReviewPage() {
             </aside>
 
             <main className="flex min-w-0 flex-col gap-6">
+              {/* What the learner actually wrote, above the decision. A coach
+                  validating a reflection had no way to read it on this page —
+                  only an empty feedback box — so the judgement they were being
+                  asked to make was not in front of them. */}
               <Panel className="order-1" padding="lg">
-                <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
-                  <div>
-                    <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">{selected.activityType} submission</p>
-                    <h3 className="mt-1 text-sm font-heading font-bold text-foreground-900">{selected.activityTitle}</h3>
-                    <p className="mt-2 text-base text-foreground-500">
-                      {selected.learner} · {[selected.module, selected.week].filter(Boolean).join(' · ')} · Submitted {selected.submittedDisplay}
-                    </p>
-                  </div>
-                  <StatusBadge status={selected.status} label={statusLabel(selected.status)} size="sm" className="w-fit" />
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <h3 className="text-lg font-bold text-foreground-950">
+                    {selected.activityType === 'assignment'
+                      ? "The learner's submission"
+                      : "The learner's reflection"}
+                  </h3>
+                  <span className="text-xs font-semibold text-foreground-400">
+                    {[selected.activityTitle, selected.module, selected.week].filter(Boolean).join(' · ')}
+                  </span>
                 </div>
 
-                <div className="mt-5">
-                  <p className="text-sm font-semibold uppercase tracking-wider text-foreground-400">KSBs claimed by learner</p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {selected.ksbCodes.map(code => (
-                      <span key={code} className="inline-flex items-center gap-2 rounded-lg bg-primary-50 px-3.5 py-1.5 text-sm font-semibold text-primary-800">
-                        {code}
-                        <span className="rounded-md bg-background-50 px-1.5 py-0.5 text-[12px] text-primary-600 shadow-sm">
-                          {selected.ksbWeights?.[code] ?? 0}% weight
-                        </span>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                  <MetricCard label="Quality score" value={`${selected.qualityScore}/100`} />
-                  <MetricCard label="Mapped KSB weight" value={`${mappedKsbWeight}%`} />
-                  <MetricCard label="Actual OTJH" value={`${selected.actualTimeHours || '0'}h`} />
-                  <MetricCard
-                    label="Marking status"
-                    value={statusLabel(selected.status)}
-                    tone={statusTone(selected.status)}
-                  />
-                </div>
-
-                <div className="mt-6 rounded-lg border border-primary-200 bg-primary-50/40 p-5">
-                  <p className="text-sm font-semibold text-primary-700"><AppIcon className="ri-sparkling-line mr-2" />AI-assisted suggestion · requires coach validation</p>
-                  <p className="mt-4 text-base leading-7 text-foreground-800"><strong>Submission summary:</strong> {suggestion}</p>
-                  <p className="mt-3 text-base leading-7 text-foreground-800">
-                    <strong>Suggested action:</strong> Review the KSB explanations, workplace application and uploaded evidence, then accept or request resubmission.
+                {selected.learningReflection ? (
+                  <p className="mt-4 whitespace-pre-wrap text-base leading-7 text-foreground-800">
+                    {selected.learningReflection}
                   </p>
-                </div>
-              </Panel>
-
-              <Panel className="order-2" padding="lg">
-                <div className="mb-5">
-                  <h3 className="text-lg font-bold text-foreground-950">Full submission details</h3>
-                  <p className="mt-1 text-sm text-foreground-500">Review the learner’s responses and supporting evidence before finalising your decision.</p>
-                </div>
-                <PageTabs
-                  label="View submission sections"
-                  value={tab}
-                  onChange={(next) => setTab(next as ReviewTab)}
-                  items={[
-                    { value: 'overview', label: 'Overview' },
-                    { value: 'learning', label: 'Learning & KSBs' },
-                    { value: 'evidence', label: 'Evidence & OTJH' },
-                  ]}
-                />
-
-                {tab === 'overview' && (
-                  <div className="mt-5 grid gap-4 md:grid-cols-2">
-                    <ReviewBlock title="Workplace application" icon="ri-briefcase-line">
-                      <p className="text-xs font-semibold capitalize text-primary-700">{selected.applicationType}</p>
-                      <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground-700">{selected.applicationText}</p>
-                    </ReviewBlock>
-                    <ReviewBlock title="Employer benefit" icon="ri-building-line">
-                      <div className="flex flex-wrap gap-1.5">
-                        {selected.selectedBenefits.map(benefit => <span key={benefit} className="rounded-full bg-primary-50 px-2.5 py-1 text-[12px] text-primary-700">{benefit}</span>)}
-                      </div>
-                      <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground-700">{selected.benefitExplanation}</p>
-                    </ReviewBlock>
-                  </div>
+                ) : (
+                  <p className="mt-4 text-base text-foreground-400">
+                    The learner did not write a reflection for this activity.
+                  </p>
                 )}
 
-                {tab === 'learning' && (
-                  <div className="mt-5 space-y-4">
-                    <ReviewBlock title="Learning reflection" icon="ri-book-open-line">
-                      <p className="whitespace-pre-wrap text-sm leading-6 text-foreground-700">{selected.learningReflection}</p>
-                    </ReviewBlock>
-                    {selected.ksbCodes.map(code => (
-                      <ReviewBlock key={code} title={code} icon="ri-links-line">
-                        <p className="mb-2 text-xs font-bold text-primary-700">{selected.ksbWeights?.[code] ?? 0}% curriculum weight</p>
-                        <p className="text-xs font-semibold text-foreground-500">Confidence {selected.confidenceBefore[code] || 1}/5 → {selected.confidenceAfter[code] || 1}/5</p>
-                        <p className="mt-2 text-sm leading-6 text-foreground-700">{selected.ksbExplanations[code]}</p>
-                      </ReviewBlock>
-                    ))}
+                <dl className="mt-6 grid grid-cols-1 gap-4 border-t border-foreground-100 pt-4 sm:grid-cols-3">
+                  <div>
+                    <dt className="text-[11px] font-semibold uppercase tracking-wide text-foreground-400">
+                      Workplace application
+                    </dt>
+                    <dd className="mt-1 text-sm text-foreground-700">
+                      {[selected.applicationType, selected.applicationText].filter(Boolean).join(' — ') || '—'}
+                    </dd>
                   </div>
-                )}
-
-                {tab === 'evidence' && (
-                  <div className="mt-5 grid gap-4 md:grid-cols-2">
-                    <ReviewBlock title="Uploaded evidence" icon="ri-attachment-2">
-                      {evidenceLoading && (
-                        <div className="flex items-center gap-2 rounded-lg bg-background-100 px-3 py-3 text-xs text-foreground-500">
-                          <AppIcon className="ri-loader-4-line animate-spin" /> Loading uploaded evidence...
-                        </div>
-                      )}
-                      {!evidenceLoading && submissionEvidenceRecords.map(record => {
-                        const canOpen = record.status === 'approved';
-                        const isOpening = openingEvidenceId === record.id;
-                        return (
-                          <button
-                            type="button"
-                            key={record.id}
-                            disabled={!canOpen || isOpening}
-                            onClick={() => void openEvidence(record)}
-                            className={`mb-2 flex w-full items-center gap-3 rounded-lg border px-3 py-3 text-left transition ${
-                              canOpen
-                                ? 'border-primary-100 bg-primary-50/50 hover:border-primary-300 hover:bg-primary-50 hover:shadow-sm'
-                                : 'cursor-not-allowed border-foreground-100 bg-background-100 opacity-70'
-                            }`}
-                          >
-                            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${canOpen ? 'bg-background-50 text-primary-700 shadow-sm' : 'bg-background-200 text-foreground-400'}`}>
-                              <AppIcon className={isOpening ? 'ri-loader-4-line animate-spin' : 'ri-file-line'} />
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-xs font-semibold text-foreground-800">{record.filename}</span>
-                              <span className="mt-0.5 block text-[12px] text-foreground-400">
-                                {[formatFileSize(record.sizeBytes), canOpen ? 'Ready to view' : record.status === 'pending' ? 'Security scan in progress' : 'File unavailable'].filter(Boolean).join(' · ')}
-                              </span>
-                            </span>
-                            {canOpen && (
-                              <span className="inline-flex items-center gap-1 rounded-lg bg-background-50 px-2.5 py-1.5 text-[12px] font-bold text-primary-700 shadow-sm">
-                                View <AppIcon className="ri-external-link-line" />
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
-                      {!evidenceLoading && unresolvedEvidenceFiles.map(file => (
-                        <div key={file} className="mb-2 flex items-center gap-3 rounded-lg border border-amber-100 bg-amber-50/60 px-3 py-3">
-                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background-50 text-amber-600 shadow-sm"><AppIcon className="ri-file-warning-line" /></span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-xs font-semibold text-foreground-800">{file}</span>
-                            <span className="mt-0.5 block text-[12px] text-amber-700">The file record could not be found.</span>
-                          </span>
-                        </div>
-                      ))}
-                      {!evidenceLoading && !submissionEvidenceRecords.length && !unresolvedEvidenceFiles.length && (
-                        <p className="text-sm text-foreground-400">No file uploaded.</p>
-                      )}
-                      {evidenceError && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-700">{evidenceError}</p>}
-                      <p className="mt-2 text-xs text-emerald-700">{selected.evidenceConsentConfirmed ? 'Consent confirmed' : 'No consent confirmation required'}</p>
-                    </ReviewBlock>
-                    <ReviewBlock title="OTJH declaration" icon="ri-time-line">
-                      <dl className="grid grid-cols-2 gap-3 text-xs">
-                        <div><dt className="text-foreground-400">Planned</dt><dd className="font-semibold">{selected.plannedOtjh}</dd></div>
-                        <div><dt className="text-foreground-400">Actual</dt><dd className="font-semibold">{selected.actualTimeHours}h</dd></div>
-                        <div><dt className="text-foreground-400">Date</dt><dd className="font-semibold">{selected.dateCompleted}</dd></div>
-                        <div><dt className="text-foreground-400">Paid hours</dt><dd className="font-semibold capitalize">{selected.completedDuringPaidHours}</dd></div>
-                        <div><dt className="text-foreground-400">Confirmed</dt><dd className="font-semibold">{selected.otjhConfirmed ? 'Yes' : 'No'}</dd></div>
-                        <div><dt className="text-foreground-400">Signed</dt><dd className="font-semibold">{selected.signedDeclaration ? 'Yes' : 'No'}</dd></div>
-                      </dl>
-                    </ReviewBlock>
+                  <div>
+                    <dt className="text-[11px] font-semibold uppercase tracking-wide text-foreground-400">
+                      Employer benefits
+                    </dt>
+                    <dd className="mt-1 text-sm text-foreground-700">
+                      {selected.selectedBenefits?.length
+                        ? selected.selectedBenefits.join(', ')
+                        : '—'}
+                    </dd>
                   </div>
-                )}
+                  <div>
+                    <dt className="text-[11px] font-semibold uppercase tracking-wide text-foreground-400">
+                      Time · planned vs recorded
+                    </dt>
+                    {/* Side by side because the gap is the thing worth seeing:
+                        a fifteen-minute video logged as three hours is what a
+                        coach is checking for. */}
+                    <dd className="mt-1 text-sm text-foreground-700">
+                      {selected.plannedOtjh || '—'} planned · {selected.actualTimeHours || '—'} recorded
+                    </dd>
+                  </div>
+                </dl>
               </Panel>
 
               <Panel className="order-3" padding="lg">
@@ -468,6 +336,15 @@ export default function CoachMarkingReviewPage() {
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={generating || saving}
+                      onClick={() => void generateAiFeedback()}
+                      className="inline-flex items-center rounded-lg border border-primary-200 bg-primary-50 px-4 py-2 text-sm font-semibold text-primary-800 shadow-sm transition hover:bg-primary-100 disabled:opacity-50"
+                    >
+                      <AppIcon className={`mr-2 ${generating ? 'ri-loader-4-line animate-spin' : 'ri-sparkling-line'}`} />
+                      {generating ? 'Generating draft…' : 'Generate AI feedback'}
+                    </button>
                     <span className="rounded-full bg-background-100 px-3 py-1.5 text-xs font-semibold text-foreground-700">
                       Marking status: {statusLabel(selected.status)}
                     </span>
@@ -486,21 +363,18 @@ export default function CoachMarkingReviewPage() {
                   placeholder="Write clear, actionable coach feedback for the learner..."
                 />
                 {error && <p className="mt-2 text-xs font-semibold text-red-600">{error}</p>}
+                {aiNotice && (
+                  <p className="mt-2 flex items-start gap-1.5 text-xs font-semibold text-primary-700">
+                    <AppIcon className="ri-sparkling-line mt-0.5 shrink-0" />
+                    <span>{aiNotice}</span>
+                  </p>
+                )}
                 <div className="mt-4 flex flex-wrap items-center gap-2.5">
                   <button disabled={saving} onClick={() => void saveDecision('accepted')} className="rounded-lg bg-primary-900 px-5 py-3 text-base font-semibold text-white shadow-sm disabled:opacity-50">
-                    <AppIcon className="ri-check-line mr-2" />Accept &amp; award KSBs
+                    <AppIcon className="ri-check-line mr-2" />Accept assignment and send feedback
                   </button>
-                  <button disabled={saving} onClick={() => void saveDecision('partial')} className="rounded-lg border border-foreground-200 bg-background-50 px-5 py-3 text-base font-semibold text-foreground-800 shadow-sm disabled:opacity-50">
-                    <AppIcon className="ri-edit-line mr-2" />Partial award
-                  </button>
-                  <button disabled={saving} onClick={() => void saveDecision('referred')} className="rounded-lg border border-foreground-200 bg-background-50 px-5 py-3 text-base font-semibold text-foreground-800 shadow-sm disabled:opacity-50">
-                    <AppIcon className="ri-arrow-go-back-line mr-2" />Request resubmission
-                  </button>
-                  <button disabled={saving} onClick={() => void saveDecision('escalated')} className="rounded-lg border border-foreground-200 bg-background-50 px-5 py-3 text-base font-semibold text-foreground-800 shadow-sm disabled:opacity-50">
-                    <AppIcon className="ri-shield-line mr-2" />Escalate
-                  </button>
-                  <button disabled={saving} onClick={() => void saveDecision('rejected')} className="rounded-lg px-4 py-3 text-base font-semibold text-red-600 disabled:opacity-50">
-                    <AppIcon className="ri-close-line mr-2" />Reject
+                  <button disabled={saving} onClick={() => void saveDecision('rejected')} className="rounded-lg border border-red-200 bg-red-50 px-5 py-3 text-base font-semibold text-red-700 shadow-sm disabled:opacity-50">
+                    <AppIcon className="ri-close-line mr-2" />Reject assignment and send feedback
                   </button>
                 </div>
                 <p className="mt-4 text-xs text-foreground-400">

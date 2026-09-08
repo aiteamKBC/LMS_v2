@@ -1,5 +1,6 @@
 from django.urls import path
 
+from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, time_tracking, videos, views
 from . import certificates
 from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, videos, views
 
@@ -118,6 +119,16 @@ urlpatterns = [
     path("reflection/transcribe/", reflection_ai.transcribe_reflection, name="reflection-transcribe"),
     path("reflection/proofread/", reflection_ai.proofread_reflection, name="reflection-proofread"),
     path("reflection/submissions/", reflection_submissions.create_reflection_submission, name="reflection-submission-create"),
+    # The learner's end-of-month report: GET lists the months already submitted
+    # (or one month with ?month=YYYY-MM), POST submits/updates a month.
+    # Declared before the bare list route, which would otherwise never be
+    # reached for an attachment URL.
+    path(
+        "monthly-reports/<str:kind>/<int:pk>/attachments/<uuid:file_id>/",
+        monthly_reports.monthly_report_attachment,
+        name="learner-monthly-report-attachment",
+    ),
+    path("monthly-reports/<str:kind>/<int:pk>/", monthly_reports.monthly_reports, name="learner-monthly-reports"),
     path("reflection/assignment/check/", monthly_assignment.check_assignment, name="monthly-assignment-check"),
     path("reflection/assignment/presentation/", monthly_assignment.export_presentation, name="monthly-assignment-presentation"),
     # learner calendar (coaching sessions from Coach.coach_calendar_event)

@@ -1405,7 +1405,8 @@ def _resolve_from_master(modules, weeks, components):
 
             cur.execute(
                 "SELECT id, week_id, module_catalogue_id, type, title, description, settings_json, "
-                "live_sessions_link, display_order, ksb_mappings, reflection_required, \"Reflection_Question\" "
+                "live_sessions_link, display_order, ksb_mappings, reflection_required, \"Reflection_Question\", "
+                "tutor_validation_required "
                 "FROM curriculum.components WHERE module_catalogue_id = ANY(%s) "
                 "AND deleted_at IS NULL AND COALESCE(is_programme_deleted, false) = false "
                 "ORDER BY week_id, display_order, id",
@@ -1419,7 +1420,7 @@ def _resolve_from_master(modules, weeks, components):
             # of treating a linked quiz as an ordinary generic component.
             quiz_id_by_component = {}
             component_ids = [row[0] for row in master_components]
-            for comp_id, _week_id, _mid, _ctype, _ctitle, _cdesc, settings, _live_link, _order, _ksb_mappings, _reflection_required, _reflection_question in master_components:
+            for comp_id, _week_id, _mid, _ctype, _ctitle, _cdesc, settings, _live_link, _order, _ksb_mappings, _reflection_required, _reflection_question, _tutor_validation in master_components:
                 if isinstance(settings, str):
                     try:
                         settings = json.loads(settings) if settings else {}
@@ -1465,7 +1466,7 @@ def _resolve_from_master(modules, weeks, components):
             # Authored KSB weight per component. Used to calculate and display
             # weighted KSB progress; it does not block activity completion.
             ksbs_by_component = {}
-            for comp_id, _week_id, _mid, _ctype, _ctitle, _cdesc, _settings, _live_link, _order, ksb_mappings, _reflection_required, _reflection_question in master_components:
+            for comp_id, _week_id, _mid, _ctype, _ctitle, _cdesc, _settings, _live_link, _order, ksb_mappings, _reflection_required, _reflection_question, _tutor_validation in master_components:
                 items = _component_ksb_items(ksb_mappings)
                 if items:
                     ksbs_by_component[comp_id] = items
@@ -1508,7 +1509,7 @@ def _resolve_from_master(modules, weeks, components):
         weeks_by_module.setdefault(mid, []).append((week_id, live_title))
 
     comps_by_week = {}
-    for comp_id, week_id, _mid, ctype, ctitle, cdesc, settings, stored_live_link, _order, _ksb_mappings, reflection_required, reflection_question in master_components:
+    for comp_id, week_id, _mid, ctype, ctitle, cdesc, settings, stored_live_link, _order, _ksb_mappings, reflection_required, reflection_question, tutor_validation_required in master_components:
         # settings_json comes back from the raw cursor as a JSON string (JSONField
         # auto-parsing only happens through the ORM), so parse it here.
         if isinstance(settings, str):
@@ -1625,6 +1626,10 @@ def _resolve_from_master(modules, weeks, components):
             "downloadAllowed": download_allowed,
             "reflectionPrompt": reflection_prompt,
             "reflectionRequired": bool(reflection_required),
+            # Authored on the component and, until now, read by nothing. When
+            # true the activity must reach a coach, so the learner page cannot
+            # let it complete without a reflection to hand in.
+            "tutorValidationRequired": bool(tutor_validation_required),
             "reflectionQuestion": _s(reflection_question) or None,
             "resourceUrl": resource_url,
             "liveSessionUrl": live_session_url,
@@ -1686,6 +1691,7 @@ def _resolve_from_master(modules, weeks, components):
                     "downloadAllowed": comp["downloadAllowed"],
                     "reflectionPrompt": comp["reflectionPrompt"],
                     "reflectionRequired": comp["reflectionRequired"],
+                    "tutorValidationRequired": comp["tutorValidationRequired"],
                     "reflectionQuestion": comp["reflectionQuestion"],
                     "resourceUrl": comp["resourceUrl"],
                     "liveSessionUrl": comp["liveSessionUrl"],

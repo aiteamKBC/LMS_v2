@@ -27,7 +27,12 @@ from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from django.utils import timezone
 from django.views.decorators.http import require_GET
 
-from coach_api.auth import authenticated_coach_email, coach_access_required
+from coach_api.auth import (
+    attributed_write_view,
+    authenticated_coach_email,
+    coach_access_required,
+    is_coach_view_as,
+)
 from coach_api.errors import coach_error
 from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, CoachCalendarSequence
 from coach_api.validation import (
@@ -255,6 +260,22 @@ DEFAULT_ATTENDANCE_DATABASE = "AiTeamKBC"
 DEFAULT_MARKING_OWNER_ID = 6452
 ATTENDANCE_INCLUDED_STATUSES = {"active", "break"}
 MARKING_OVERDUE_DAYS = 7
+
+#: Ceiling on coach feedback. Generous rather than tight: the stored column is
+#: unbounded text, and the AI-assisted draft alone runs to 6000-7500 characters
+#: before the coach edits it. Mirrored by the SPA's own counter.
+MARKING_FEEDBACK_MAX_LENGTH = 20000
+
+#: Activity types marked as a work product rather than through the learner's
+#: reflection on the activity. An assignment produces an artefact the coach
+#: assesses against the KSBs it carries and the end-point assessment plan;
+#: a video, reading, podcast or quiz is evidenced by the reflection written
+#: about it, which is a shorter and different judgement. Mirrored in the SPA by
+#: frontend/src/lib/markingKind.ts -- keep the two in step.
+ASSIGNMENT_ACTIVITY_TYPES = ("assignment",)
+
+#: The two values the queue's ``kind`` parameter accepts.
+MARKING_KINDS = ("assignment", "reflection")
 TIMETABLE_SCHEDULE_SLOTS = (9, 10, 11, 13, 14, 15, 16)
 ENV_FILE_NAME = ".env"
 LEARNER_ABSENCE_RELATION_CANDIDATES = (
@@ -8343,6 +8364,8 @@ def empty_marking_queue_response(owner_email, *, page=1, page_size=25):
             "acceptedItems": 0,
             "referredItems": 0,
             "overdueItems": 0,
+            "assignmentItems": 0,
+            "reflectionItems": 0,
             "oldestSubmission": "--",
             "overdueThresholdDays": MARKING_OVERDUE_DAYS,
         },
@@ -8359,6 +8382,7 @@ def empty_marking_queue_response(owner_email, *, page=1, page_size=25):
 
 
 @coach_access_required
+@attributed_write_view
 def coach_marking_queue(request, submission_id=None):
     """List and review complete reflections, scoped and paged in PostgreSQL."""
     owner_email = authenticated_coach_email(request)
@@ -8416,8 +8440,26 @@ def coach_marking_queue(request, submission_id=None):
                 lower=True,
                 choices={"accepted", "partial", "referred", "escalated", "rejected"},
             )
-            feedback = validator.text("feedback", max_length=4000)
+            # 4000 was sized for a hand-typed note. An AI-assisted draft is
+            # written to the marking policy's own brief -- 1000 to 1200 words,
+            # so 6000-7500 characters -- and was rejected with a bare 400 the
+            # moment a coach tried to save one. The column itself is unbounded
+            # text; this ceiling only exists to stop something absurd being
+            # posted, so it is raised to clear a full draft with room to edit.
+            feedback = validator.text("feedback", max_length=MARKING_FEEDBACK_MAX_LENGTH)
             reviewed_by = validator.text("reviewedBy", max_length=255, default="Progress Coach") or "Progress Coach"
+            # A super-admin marking from inside a coach's workspace is recorded
+            # as themselves, not as the coach: "Demo Admin (for Test Coach)".
+            # The client sends the coach's name because that is whose workspace
+            # is open, so the correction has to happen here, where the real
+            # actor is known. Without it the audit trail would show a coach
+            # accepting work they never saw.
+            if is_coach_view_as(request):
+                admin = getattr(request, "coach_view_as_admin", None)
+                admin_name = clean_text(
+                    getattr(admin, "username", "") or getattr(admin, "email", "")
+                ) or "Administrator"
+                reviewed_by = f"{admin_name} (for {reviewed_by})"[:255]
             if decision and decision != "accepted" and not feedback:
                 validator.error("feedback", "Feedback is required for this decision.")
             validator.check()
@@ -8431,7 +8473,7 @@ def coach_marking_queue(request, submission_id=None):
                     update "Learner"."learning_reflection_submissions"
                     set status = %s, coach_feedback = %s, reviewed_by = %s, reviewed_at = %s
                     where id = %s and learner_id = any(%s)
-                    returning id, status, reviewed_at
+                    returning id, status, reviewed_at, learner_kind, learner_id
                     """,
                     [decision, feedback, reviewed_by, timezone.now(), str(submission_id), allowed_learner_ids],
                 )
@@ -8446,6 +8488,15 @@ def coach_marking_queue(request, submission_id=None):
             )
         if not updated:
             return JsonResponse({"detail": "Submission not found."}, status=404)
+
+        # The learner's accepted/rejected counts are recomputed from the
+        # submissions, so they always agree with what a coach has actually
+        # decided -- including after a decision is changed. Best-effort: a
+        # counter that could not be written must not fail a saved decision.
+        from learner_api.marking_tally import refresh_tally_for_submission
+
+        refresh_tally_for_submission(updated[3], updated[4])
+
         return JsonResponse({
             "id": str(updated[0]),
             "status": updated[1],
@@ -8459,6 +8510,11 @@ def coach_marking_queue(request, submission_id=None):
     page = query_validator.integer("page", default=1, minimum=1)
     requested_page_size = query_validator.integer("page_size", default=25, minimum=1)
     status_filter = clean_text(request.GET.get("status")).lower()
+    # Which kind of marking the coach is working through. An assignment is
+    # assessed as a work product; everything else is validated through the
+    # learner's reflection. Applied to the summary as well as the rows, so the
+    # status counts describe the kind on screen rather than the whole queue.
+    kind_filter = clean_text(request.GET.get("kind")).lower()
     status_groups = {
         "pending": ["submitted_for_tutor_review", "escalated"],
         "overdue": ["submitted_for_tutor_review"],
@@ -8472,6 +8528,8 @@ def coach_marking_queue(request, submission_id=None):
     }
     if status_filter and status_filter not in status_groups and status_filter not in valid_database_statuses:
         query_validator.error("status", "Select a valid marking status.")
+    if kind_filter and kind_filter not in MARKING_KINDS:
+        query_validator.error("kind", "Select a valid marking kind.")
     date_from = query_validator.iso_date("date_from")
     date_to = query_validator.iso_date("date_to")
     if date_from and date_to and date_from > date_to:
@@ -8503,6 +8561,18 @@ def coach_marking_queue(request, submission_id=None):
         )
         search_pattern = f"%{search_filter}%"
         base_params.extend([search_pattern] * 4)
+
+    # Snapshot before narrowing: the kind tabs each show their own total, so
+    # they cannot be counted under a WHERE that has already picked one kind.
+    kind_scope_clauses = list(base_clauses)
+    kind_scope_params = list(base_params)
+
+    if kind_filter == "assignment":
+        base_clauses.append("lower(btrim(activity_type)) = any(%s)")
+        base_params.append(list(ASSIGNMENT_ACTIVITY_TYPES))
+    elif kind_filter == "reflection":
+        base_clauses.append("lower(btrim(activity_type)) <> all(%s)")
+        base_params.append(list(ASSIGNMENT_ACTIVITY_TYPES))
 
     item_clauses = list(base_clauses)
     item_params = list(base_params)
@@ -8539,6 +8609,22 @@ def coach_marking_queue(request, submission_id=None):
                 [overdue_before, *base_params],
             )
             summary_row = cur.fetchone()
+            # Both kinds, over everything this coach can see -- so switching
+            # tabs never changes the number on the tab you are switching from.
+            cur.execute(
+                f"""
+                select count(*) filter (
+                           where lower(btrim(activity_type)) = any(%s)
+                       ) as assignment_items,
+                       count(*) filter (
+                           where lower(btrim(activity_type)) <> all(%s)
+                       ) as reflection_items
+                  from "Learner".learning_reflection_submissions
+                 where {" and ".join(kind_scope_clauses)}
+                """,
+                [list(ASSIGNMENT_ACTIVITY_TYPES), list(ASSIGNMENT_ACTIVITY_TYPES), *kind_scope_params],
+            )
+            kind_row = cur.fetchone()
             cur.execute(
                 f'select count(*) from "Learner".learning_reflection_submissions where {item_where}',
                 item_params,
@@ -8578,6 +8664,9 @@ def coach_marking_queue(request, submission_id=None):
             "acceptedItems": accepted_items,
             "referredItems": referred_items,
             "overdueItems": overdue_items,
+            # Both kinds, always -- see the kind_row query above.
+            "assignmentItems": kind_row[0] if kind_row else 0,
+            "reflectionItems": kind_row[1] if kind_row else 0,
             "oldestSubmission": oldest.strftime("%d/%m/%Y %H:%M") if oldest else "--",
             "overdueThresholdDays": MARKING_OVERDUE_DAYS,
         },

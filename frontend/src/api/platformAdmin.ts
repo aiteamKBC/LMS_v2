@@ -243,6 +243,12 @@ export interface PlatformAccount {
    */
   access: string;
   /**
+   * Every grant this account holds, in canonical order — the primary above is
+   * one of them. An account may hold several, so a row showing only `access`
+   * would hide the second workspace somebody can reach.
+   */
+  accesses?: string[];
+  /**
    * Which of the two learner kinds sits behind a learner account — '' for
    * staff and employer accounts. The record board reads its documents by kind,
    * so the console cannot link to a learner without it.

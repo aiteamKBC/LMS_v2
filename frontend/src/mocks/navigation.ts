@@ -26,10 +26,14 @@ export const learnerNavItems: SidebarNavItem[] = [
   // Calendar
   { id: 'learner-calendar', label: 'Calendar', icon: 'ri-calendar-2-line', href: '/learner/calendar', statusDot: 'green' },
 
-  // Evidence & Progress — evidence, OTJ hours and KSBs live together as tabs on
-  // the "My Progress" page. Labeled distinctly from the "My Progress" group
-  // below (Monthly Cycle/Coaching/Reviews) so the two aren't confused.
-  { id: 'learner-progress', label: 'Evidence & Progress', icon: 'ri-bar-chart-2-line', href: '/learner/progress', badge: 7 },
+  // Evidence — the learner's own submissions and where each one is in review.
+  { id: 'learner-evidence', label: 'Evidence', icon: 'ri-folder-upload-line', href: '/learner/evidence', badge: 7 },
+
+  // OTJH & KSBs progress — what those submissions add up to: off-the-job hours
+  // and KSB coverage, as Overview/OTJ Hours/KSBs tabs on one page. Labeled
+  // distinctly from the "My Progress" group below (Monthly
+  // Cycle/Coaching/Reviews) so the two aren't confused.
+  { id: 'learner-progress', label: 'OTJH & KSBs progress', icon: 'ri-bar-chart-2-line', href: '/learner/progress' },
 
   // Attendance — single item; reporting an absence is an action inside the page.
   { id: 'learner-attendance', label: 'Attendance', icon: 'ri-calendar-check-line', href: '/learner/attendance' },
@@ -141,6 +145,7 @@ export const coachNavItems: SidebarNavItem[] = [
     children: [
       { id: 'coach-ksb-impact', label: 'KSB Impact', icon: 'ri-bar-chart-2-line', href: '/coach/ksb-impact' },
       { id: 'coach-otjh-reports', label: 'OTJH Reports', icon: 'ri-time-line', href: '/coach/otjh-reports' },
+      { id: 'coach-monthly-reports', label: 'Monthly Reports', icon: 'ri-file-list-3-line', href: '/coach/monthly-reports' },
     ],
   },
 ];

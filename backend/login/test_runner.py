@@ -68,6 +68,7 @@ SETUP_COMMANDS = (
     # Staff_users."Access" — the staff access grant. Added after the base table
     # command, which does not know about it.
     "apply_staff_access_column",
+    "apply_staff_access_extra_column",
     # Staff_users/Employers/Created_users."uuid" — the permanent public user
     # identifier. The models declare it, so every INSERT names the column and a
     # test database without it fails on the first row created.
@@ -173,16 +174,14 @@ class EnrolmentTestRunner(DiscoverRunner):
         with connection.cursor() as cursor:
             cursor.execute('CREATE SCHEMA IF NOT EXISTS "enrolment"')
 
-        # Reflection schema is deployed from reviewed SQL rather than runtime
-        # request code. Apply that same deployment artifact to the test DB.
-        reflection_sql = (
-            Path(__file__).resolve().parents[1]
-            / "learner_api"
-            / "sql"
-            / "learning_reflection_submissions.sql"
-        ).read_text(encoding="utf-8")
-        with connection.cursor() as cursor:
-            cursor.execute(reflection_sql)
+        # Some "Learner" schema tables are deployed from reviewed SQL rather
+        # than runtime request code. Apply those same deployment artifacts to
+        # the test DB.
+        sql_dir = Path(__file__).resolve().parents[1] / "learner_api" / "sql"
+        for artifact in ("learning_reflection_submissions.sql", "learner_monthly_reports.sql"):
+            statements = (sql_dir / artifact).read_text(encoding="utf-8")
+            with connection.cursor() as cursor:
+                cursor.execute(statements)
 
         for command in SETUP_COMMANDS:
             try:

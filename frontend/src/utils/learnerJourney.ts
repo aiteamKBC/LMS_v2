@@ -21,6 +21,9 @@ export interface JourneyComponent {
   downloadAllowed?: boolean;
   reflectionPrompt?: string | null;
   reflectionRequired?: boolean;
+  /** The author sent this activity for coach validation, so finishing it hands
+   *  it in rather than completing it. */
+  tutorValidationRequired?: boolean;
   reflectionQuestion?: string | null;
   resourceUrl?: string | null;
   liveSessionUrl?: string | null;
@@ -544,7 +547,9 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt,
-            reflectionRequired: c.reflectionRequired, reflectionQuestion: c.reflectionQuestion,
+            reflectionRequired: c.reflectionRequired,
+            tutorValidationRequired: c.tutorValidationRequired,
+            reflectionQuestion: c.reflectionQuestion,
             resourceUrl: c.resourceUrl,
             liveSessionUrl: c.liveSessionUrl, sessionDate: c.sessionDate, sessionTime: c.sessionTime,
             teamsLiveSessionId: c.teamsLiveSessionId,

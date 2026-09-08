@@ -28,6 +28,18 @@ export interface EvidenceRecord {
   sectionRef: string;
   uploadedAt: string | null;
   trainingPlanDetails: EvidenceTrainingPlanDetails | null;
+  /** False once the activity has been submitted for marking — the file is part
+   *  of what was handed in, and the server refuses to delete it. Offer Remove
+   *  only when this is true, or the learner gets a 409 from an action the page
+   *  appeared to allow. Older responses omit it; treat a missing value as
+   *  deletable so the server stays the one that decides. */
+  canDelete?: boolean;
+  /** The coach's decision on the activity this file belongs to, or '' when the
+   *  work has not been handed in. Distinct from `status`, which is the
+   *  malware-scan verdict from the upload pipeline — a file can be stored and
+   *  clean while no coach has ever seen it. Use this, not `status`, for
+   *  anything the learner reads as validation. */
+  markingStatus?: string;
 }
 
 export interface UploadEvidenceResult {

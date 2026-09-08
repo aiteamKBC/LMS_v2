@@ -15,6 +15,7 @@ import { DemoMaterialCard } from '@/components/feature/DemoTimePanel';
 import { SignOutConfirmModal } from '@/components/feature/Header';
 import { buildLearnerJourney, completedComponentIds, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, hasComponentContent, isOpenableComponent, parseHours, recordedKsbEvidenceCodes, type JourneyComponent, type JourneyModule, type JourneyWeek } from '@/utils/learnerJourney';
 import type {
+  ComponentMarking,
   LearnerComponentProgress,
   LearnerDetail,
   LearnerKind,
@@ -53,7 +54,7 @@ import { isNavigableComponent } from '@/pages/learner/video-watch/weekPreview';
    Real-learner component progress + current-week UI
    ───────────────────────────────────────────── */
 
-type CompState = 'passed' | 'attempted' | 'watched' | 'completed' | 'todo';
+type CompState = 'passed' | 'attempted' | 'watched' | 'completed' | 'awaiting' | 'todo';
 
 /**
  * Derive a component's real progress from what the learner has recorded.
@@ -68,7 +69,25 @@ function componentProgress(
   c: JourneyComponent,
   videos: LearnerVideoProgress[],
   completions: LearnerComponentProgress[] = [],
+  markingStatus: Record<string, ComponentMarking> = {},
 ): { state: CompState; label: string; percent: number; detail?: string } {
+  // An activity the author marked for tutor validation is not finished when the
+  // learner submits it — it is finished when a coach accepts it. Completing it
+  // records the work and hands it in; showing it green at that point told the
+  // learner their assignment was done before anybody had assessed it.
+  if (c.componentId && c.tutorValidationRequired) {
+    const decision = markingStatus[c.componentId]?.status;
+    if (decision === 'referred' || decision === 'rejected') {
+      return { state: 'attempted', label: 'Needs work', percent: 0 };
+    }
+    if (decision && decision !== 'accepted' && decision !== 'partial') {
+      return { state: 'awaiting', label: 'Awaiting coach', percent: 50 };
+    }
+    if (!decision) {
+      // Submitted or not, nothing has reached a coach yet.
+      return { state: 'todo', label: 'To do', percent: 0 };
+    }
+  }
   if (c.isQuiz && c.quizAttempts && c.quizAttempts.length > 0) {
     const best = c.quizAttempts.reduce((b, a) => (gradePercent(a.grade) > gradePercent(b.grade) ? a : b));
     const pct = gradePercent(best.grade);
@@ -98,6 +117,7 @@ const STATE_STYLE: Record<CompState, { pill: string; dot: string; bar: string }>
   attempted: { pill: 'bg-amber-100 text-amber-700', dot: 'bg-amber-500', bar: 'bg-amber-500' },
   watched:   { pill: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', bar: 'bg-emerald-500' },
   completed: { pill: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', bar: 'bg-emerald-500' },
+  awaiting:  { pill: 'bg-sky-100 text-sky-700', dot: 'bg-sky-500', bar: 'bg-sky-500' },
   todo:      { pill: 'bg-background-200 text-foreground-500', dot: 'bg-foreground-300', bar: 'bg-foreground-300' },
 };
 
@@ -509,7 +529,7 @@ export default function LearnerOverview() {
             } else if (isOpenableComponent(component)) {
               href = `/learner/component/${kind}/${id}/${component.componentId}${query}`;
             }
-            const state = componentProgress(component, real?.videoProgress ?? [], real?.componentProgress ?? []).state;
+            const state = componentProgress(component, real?.videoProgress ?? [], real?.componentProgress ?? [], real?.componentMarkingStatus ?? {}).state;
             const complete = state === 'passed' || state === 'watched' || state === 'completed';
             return { href, complete };
           }),
@@ -1011,6 +1031,7 @@ export default function LearnerOverview() {
                         components={currentWeek.week.components}
                         videos={real?.videoProgress ?? []}
                         completions={real?.componentProgress ?? []}
+                        markingStatus={real?.componentMarkingStatus ?? {}}
                         kind={kind}
                         learnerId={id}
                         reflectionStatuses={reflectionStatuses}
@@ -1277,17 +1298,18 @@ function UpcomingRow({ day, month, timeLabel, title, subtitle, tone = 'neutral',
 }
 
 /** One component row inside the Continue Learning card. */
-function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen, accessRestricted = false }: {
+function CurrentWeekRow({ c, videos, completions, markingStatus, reflectionStatus, onOpen, accessRestricted = false }: {
   c: JourneyComponent;
   videos: LearnerVideoProgress[];
   completions: LearnerComponentProgress[];
+  markingStatus?: Record<string, ComponentMarking>;
   reflectionStatus?: string;
   onOpen?: () => void;
   accessRestricted?: boolean;
   /** Inspection-demo accounts only — see isInspectionDemoAccount. */
 }) {
   const meta = componentTypeMeta(c.title);
-  const prog = componentProgress(c, videos, completions);
+  const prog = componentProgress(c, videos, completions, markingStatus);
   const style = STATE_STYLE[prog.state];
   const actionable = !!onOpen;
   const reflection = REFLECTION_STATUS[reflectionStatus || ''];
@@ -1364,9 +1386,12 @@ function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen, acce
 }
 
 /** The Continue Learning card body: progress + this week's components. */
-function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, components, videos, completions, kind, learnerId, reflectionStatuses, canProgress, showWeekHeading = false, hideHeader = false, showReadOnlyNotice = false }: {
+function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, components, videos, completions, markingStatus, kind, learnerId, reflectionStatuses, canProgress, showWeekHeading = false, hideHeader = false, showReadOnlyNotice = false }: {
   moduleTitle: string; weekLabel: string; weekIndex: number; totalWeeks: number; components: JourneyComponent[];
   videos: LearnerVideoProgress[]; completions: LearnerComponentProgress[];
+  /** Coach decision per component id — an activity needing tutor validation is
+   *  not counted as done until this says accepted. */
+  markingStatus?: Record<string, ComponentMarking>;
   kind?: string; learnerId?: string;
   reflectionStatuses: LearningReflectionStatusMap;
   /** False for a staff/coach viewer: the rows still show progress, but none of
@@ -1386,7 +1411,9 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
   const availableComponents = components.filter(hasComponentContent);
   const total = availableComponents.length;
   const done = availableComponents.filter((c) => {
-    const s = componentProgress(c, videos, completions).state;
+    // "Awaiting coach" is deliberately not counted: the week is not finished
+    // while an activity is still with a coach.
+    const s = componentProgress(c, videos, completions, markingStatus).state;
     return s === 'passed' || s === 'watched' || s === 'completed';
   }).length;
   const percent = total ? Math.round((done / total) * 100) : 0;
@@ -1478,6 +1505,7 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
               c={c}
               videos={videos}
               completions={completions}
+              markingStatus={markingStatus}
               reflectionStatus={reflectionStatusFor(c)}
               onOpen={openFor(c)}
               accessRestricted={Boolean(canProgress && hasComponentContent(c) && isNavigableComponent(c) && !componentAccess.open)}
