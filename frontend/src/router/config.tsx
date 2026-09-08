@@ -112,6 +112,7 @@ const FinanceWorkspace = lazyRoute(() => import("../pages/workspace/finance/page
 const FlashCardsPage = lazyRoute(() => import("../pages/engagement/flash-cards/page"));
 const ForgotPasswordPage = lazyRoute(() => import("../pages/forgot-password/page"));
 const LoginPage = lazyRoute(() => import("../pages/login/page"));
+const OldOtjhPage = lazyRoute(() => import("../features/old-otjh/page"));
 const AccessRequiredPage = lazyRoute(() => import("../pages/access-required/page"));
 // Serves both emailed-token flows; `mode` picks which.
 const SetPasswordPage = lazyRoute(() => import("../pages/set-password/page"));
@@ -260,6 +261,13 @@ const WhatsAppLogsPage = lazyRoute(() => import("../pages/engagement/whatsapp-lo
 const WizardPage = lazyRoute(() => import("../pages/users/wizard/WizardPage"));
 
 const routes: RouteObject[] = [
+  { path: '/old-otjh', element: <OldOtjhPage /> },
+  { path: '/old-otjh/months', element: <OldOtjhPage /> },
+  { path: '/old-otjh/months/:month', element: <OldOtjhPage /> },
+  { path: '/old-otjh/coach', element: <OldOtjhPage /> },
+  { path: '/old-otjh/monitor', element: <OldOtjhPage /> },
+  { path: '/old-otjh/coach/:aptemId', element: <OldOtjhPage /> },
+  { path: '/old-otjh/coach/:aptemId/months/:month', element: <OldOtjhPage /> },
   {
     // Sign-in is the front door. LoginPage bounces an already-signed-in visitor
     // to their own workspace (see homeFor there), so "/" is the login form for a

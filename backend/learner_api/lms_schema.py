@@ -26,6 +26,25 @@ _CACHE = {"expires_at": 0.0, "payload": None}
 _STAFF_QUERY_KEYS = {"page", "per_page", "student_id", "email", "search"}
 
 
+def _learner_payload(payload, own_email):
+    """The upstream ignores email filters: apply ownership after every fetch."""
+    email = str(own_email).strip().casefold()
+    groups = []
+    if not isinstance(payload, dict) or not isinstance(payload.get('groups'), list):
+        return {'groups': []}
+    for group in payload['groups']:
+        learners = [learner for learner in group.get('learners', [])
+                    if str(learner.get('learner_email') or '').strip().casefold() == email]
+        if learners:
+            groups.append({**group, 'learners': learners})
+    # Do not forward future/unrecognized top-level roster fields to learners.
+    result = {key: payload[key] for key in ('success', 'plugin_version', 'schema_version', 'generated_at_utc', 'url_contract') if key in payload}
+    result['groups'] = groups
+    result['pagination'] = {'page': 1, 'per_page': 1, 'total_students': int(bool(groups)),
+                            'total_pages': int(bool(groups)), 'has_next_page': False, 'next_page': None}
+    return result
+
+
 def _scoped_query(request):
     """(query, error) — the upstream params this caller is allowed to drive.
 
@@ -73,6 +92,12 @@ def all_students_schema(request):
     if error is not None:
         return error
 
+    def reply(payload):
+        account = authenticate_request(request) if _auth_gate_enabled() else None
+        if account is not None and account.role == 'learner':
+            payload = _learner_payload(payload, account.email)
+        return JsonResponse(payload, safe=False)
+
     api_key = getattr(settings, "KBC_LMS_API_KEY", "")
     endpoint = getattr(settings, "KBC_LMS_SCHEMA_URL", "")
     if not api_key or not endpoint:
@@ -82,7 +107,7 @@ def all_students_schema(request):
     now = monotonic()
     cached = _CACHE.get(cache_key)
     if cached is not None and cached["expires_at"] > now:
-        return JsonResponse(cached["payload"], safe=False)
+        return reply(cached["payload"])
 
     headers = {
         "Accept": "application/json",
@@ -112,4 +137,4 @@ def all_students_schema(request):
         return JsonResponse({"error": "Could not read KBC LMS API."}, status=502)
 
     _CACHE[cache_key] = {"payload": payload, "expires_at": now + 300}
-    return JsonResponse(payload, safe=False)
+    return reply(payload)

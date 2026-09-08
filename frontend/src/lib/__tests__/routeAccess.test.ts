@@ -126,6 +126,18 @@ describe('homeRouteFor', () => {
 });
 
 describe('postLoginRouteFor', () => {
+  it('always starts legacy learners at the transition portal', () => {
+    for (const requested of ['/workspace/learner', '/learner/attendance', '/old-otjh/months/2026-07', undefined]) {
+      expect(postLoginRouteFor({ role: 'learner', subjectId: 42, hasLegacyRecord: true }, requested)).toBe('/old-otjh');
+    }
+  });
+
+  it('always starts record monitors at the monitoring dashboard', () => {
+    for (const requested of ['/workspace/learner', '/coach/caseload', '/old-otjh/coach/42', undefined]) {
+      expect(postLoginRouteFor({ role: 'staff', subjectId: 86, access: 'record-monitor' }, requested)).toBe('/old-otjh/monitor');
+    }
+  });
+
   it('keeps a learner on their own bare learner workspace', () => {
     expect(
       postLoginRouteFor({ role: 'learner', accessHome: null, subjectId: 42 }, '/workspace/learner'),

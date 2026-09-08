@@ -346,6 +346,12 @@ SLOW_REQUEST_THRESHOLD_MS = int(os.environ.get('SLOW_REQUEST_THRESHOLD_MS', '750
 
 ROOT_URLCONF = 'config.urls'
 
+# Enable only after the owner applies the reviewed SQL metadata tables.
+OLD_OTJH_ENABLED = os.environ.get('OLD_OTJH_ENABLED', 'false').lower() == 'true'
+# Optional email-keyed overrides for the bundled public coach booking catalogue.
+# Parsing/validation stays local so links never delay record access.
+OLD_OTJH_COACH_BOOKING_URLS = os.environ.get('OLD_OTJH_COACH_BOOKING_URLS', '{}')
+
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',

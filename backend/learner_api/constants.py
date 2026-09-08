@@ -60,6 +60,7 @@ ACCESS_CURRICULUM = "curriculum"
 ACCESS_COACH = "coach"
 ACCESS_TUTOR = "tutor"
 ACCESS_SUPER_ADMIN = "super-admin"
+ACCESS_RECORD_MONITOR = "record-monitor"
 
 #: Canonical order — also the order the console offers them in.
 ACCESS_CHOICES = [
@@ -67,6 +68,7 @@ ACCESS_CHOICES = [
     ACCESS_CURRICULUM,
     ACCESS_COACH,
     ACCESS_TUTOR,
+    ACCESS_RECORD_MONITOR,
     ACCESS_SUPER_ADMIN,
 ]
 
@@ -76,6 +78,7 @@ ACCESS_LABELS = {
     ACCESS_CURRICULUM: "Curriculum access",
     ACCESS_COACH: "Coach access",
     ACCESS_TUTOR: "Tutor access",
+    ACCESS_RECORD_MONITOR: "Learning record monitoring",
     ACCESS_SUPER_ADMIN: "Super Admin access",
 }
 
@@ -88,6 +91,7 @@ ACCESS_DESCRIPTIONS = {
     ACCESS_CURRICULUM: "The curriculum workspace — programmes, modules and their content.",
     ACCESS_COACH: "The coach workspace — their caseload, reviews and evidence validation.",
     ACCESS_TUTOR: "The tutor workspace — their teaching groups and session delivery.",
+    ACCESS_RECORD_MONITOR: "Read-only monitoring of active enrolled learners, previous records and signatures.",
     ACCESS_SUPER_ADMIN: "Everything, including this console. Can edit any data on the platform.",
 }
 
@@ -107,6 +111,7 @@ ACCESS_HOME_ROUTES = {
     ACCESS_CURRICULUM: "/workspace/curriculum",
     ACCESS_COACH: "/workspace/coach",
     ACCESS_TUTOR: "/workspace/tutor",
+    ACCESS_RECORD_MONITOR: "/old-otjh/monitor",
     ACCESS_SUPER_ADMIN: "/workspace/admin",
 }
 
@@ -118,6 +123,7 @@ ACCESS_NAV_ROLES = {
     ACCESS_CURRICULUM: "curriculum",
     ACCESS_COACH: "coach",
     ACCESS_TUTOR: "tutor",
+    ACCESS_RECORD_MONITOR: "record-monitor",
     ACCESS_SUPER_ADMIN: "admin",
 }
 

@@ -407,8 +407,8 @@ export function Sidebar({
     <div className={`kbc-sidebar-panel kbc-sidebar-${variant} flex h-screen w-full flex-col border-r border-foreground-100 bg-background-50`}>
       {/* Header — brand, and the pin control on desktop */}
       <div className={`kbc-sidebar-header flex h-14 shrink-0 items-center gap-2 border-b border-foreground-100/70 ${variant === 'rail' ? 'justify-center px-2' : 'px-3'}`}>
-        <span className="kbc-sidebar-brand flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-600 font-heading text-[12px] font-bold text-white">
-          KBC
+        <span className="kbc-sidebar-brand">
+          <img src="/assets/kbc-logo.png" alt="Kent Business College" width={430} height={195} />
         </span>
         {variant === 'expanded' && (
           <>

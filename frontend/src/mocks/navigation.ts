@@ -90,6 +90,7 @@ export const learnerNavItems: SidebarNavItem[] = [
 // ============================================================================
 export const coachNavItems: SidebarNavItem[] = [
   { id: 'coach-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/coach' },
+  { id: 'coach-previous-records', label: 'Previous learning records', icon: 'ri-history-line', href: '/old-otjh/coach' },
   {
     id: 'coach-group-learners',
     label: 'My Learners',
@@ -774,6 +775,7 @@ function stripChatNavItems(items: SidebarNavItem[]): SidebarNavItem[] {
 }
 
 const baseRoleNavMap: Record<string, { items: SidebarNavItem[]; label: string; workspaceLabel: string }> = {
+  'record-monitor': { items: [{ id: 'record-monitor', label: 'Record monitoring', href: '/old-otjh/monitor', icon: 'ri-dashboard-line' }], label: 'Record monitor', workspaceLabel: 'Learning record monitoring' },
   learner: { items: learnerNavItems, label: 'Learner', workspaceLabel: 'Learner Workspace' },
   coach: { items: coachNavItems, label: 'Coach', workspaceLabel: 'Coach Workspace' },
   tutor: { items: tutorNavItems, label: 'Tutor', workspaceLabel: 'Tutor Workspace' },

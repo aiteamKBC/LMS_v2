@@ -39,6 +39,7 @@ ENV/
 *.sqlite3-shm
 /backend/staticfiles/
 /backend/media/
+/backend/private_media/
 /backend/logs/
 local_settings.py
 celerybeat-schedule
