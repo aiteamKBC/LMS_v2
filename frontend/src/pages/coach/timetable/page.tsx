@@ -108,6 +108,7 @@ interface TimetableSummary extends TimetableSummaryMetrics {
     mcr: TimetableSummaryMetrics;
     progressReview: TimetableSummaryMetrics;
     catchUp: TimetableSummaryMetrics;
+    support?: TimetableSummaryMetrics;
   };
 }
 
@@ -166,6 +167,7 @@ const EMPTY_SUMMARY: TimetableSummary = {
     mcr: { ...EMPTY_SUMMARY_METRICS },
     progressReview: { ...EMPTY_SUMMARY_METRICS },
     catchUp: { ...EMPTY_SUMMARY_METRICS },
+    support: { ...EMPTY_SUMMARY_METRICS },
   },
 };
 const UPCOMING_WINDOW_DAYS = 7;
@@ -499,6 +501,7 @@ function buildFallbackSummary(events: TimetableEvent[], referenceDate = new Date
       mcr: buildSummaryMetrics(events.filter(event => event.source === 'mcr'), referenceDate),
       progressReview: buildSummaryMetrics(events.filter(event => event.source === 'progress-review'), referenceDate),
       catchUp: buildSummaryMetrics(events.filter(event => event.source === 'catch-up'), referenceDate),
+      support: buildSummaryMetrics(events.filter(event => event.source === 'student-support'), referenceDate),
     },
   };
 }
@@ -553,7 +556,7 @@ function formatDateInputValue(year: number, month: number, day: number) {
 type ViewMode = 'month' | 'week' | 'day';
 type StatusFilter = 'all' | 'overdue' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'in-progress' | 'completed' | 'cancelled';
 type SourceFilter = 'all' | 'live-session' | 'mcr' | 'progress-review' | 'catch-up' | 'student-support';
-type SchedulableSource = 'mcr' | 'progress-review' | 'catch-up';
+type SchedulableSource = 'mcr' | 'progress-review' | 'catch-up' | 'student-support';
 
 const SOURCE_FILTER_ORDER: SourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'catch-up', 'student-support'];
 const STATUS_FILTER_ORDER: StatusFilter[] = ['all', 'overdue', 'due-soon', 'needs-schedule', 'scheduled', 'in-progress', 'completed', 'cancelled'];
@@ -603,7 +606,7 @@ const SOURCE_FILTER_DOTS: Record<SourceFilter, string> = {
   'student-support': 'bg-blue-500',
 };
 
-const SCHEDULABLE_SOURCE_ORDER: SchedulableSource[] = ['mcr', 'progress-review', 'catch-up'];
+const SCHEDULABLE_SOURCE_ORDER: SchedulableSource[] = ['mcr', 'progress-review', 'catch-up', 'student-support'];
 const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; icon: string; accent: string; surface: string }> = {
   mcr: {
     description: 'Monthly coaching reviews waiting for a slot.',
@@ -623,10 +626,16 @@ const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; 
     accent: 'text-rose-700',
     surface: 'from-rose-500/10 via-rose-400/5 to-transparent',
   },
+  'student-support': {
+    description: 'Learner support requests waiting for coach approval.',
+    icon: 'ri-hand-heart-line',
+    accent: 'text-blue-700',
+    surface: 'from-blue-500/10 via-blue-400/5 to-transparent',
+  },
 };
 
 function isSchedulableSource(value?: string): value is SchedulableSource {
-  return value === 'mcr' || value === 'progress-review' || value === 'catch-up';
+  return value === 'mcr' || value === 'progress-review' || value === 'catch-up' || value === 'student-support';
 }
 
 function isSourceFilterValue(value?: string): value is SourceFilter {
@@ -2497,7 +2506,7 @@ export default function CoachTimetablePage() {
                           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
                             <AppIcon className="ri-calendar-schedule-line"></AppIcon>
                           </span>
-                          Schedule Meeting
+                          {selectedEvent.status === 'not-scheduled' && (selectedEvent.source === 'catch-up' || selectedEvent.source === 'student-support') ? 'Approve & Schedule' : 'Schedule Meeting'}
                         </h4>
                         {selectedEvent.status === 'not-scheduled' && (
                           <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[12px] font-bold text-rose-700">Needs scheduling</span>
@@ -2542,7 +2551,7 @@ export default function CoachTimetablePage() {
                           className="rounded-lg bg-primary-500 px-3.5 py-2.5 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
                         >
                           <AppIcon className="ri-calendar-check-line mr-1"></AppIcon>
-                          {selectedEvent.status === 'cancelled' ? 'Schedule Again' : selectedEvent.status === 'scheduled' || selectedEvent.status === 'in-progress' ? 'Reschedule' : 'Schedule'}
+                          {selectedEvent.status === 'cancelled' ? 'Schedule Again' : selectedEvent.status === 'scheduled' || selectedEvent.status === 'in-progress' ? 'Reschedule' : selectedEvent.source === 'catch-up' || selectedEvent.source === 'student-support' ? 'Approve & Schedule' : 'Schedule'}
                         </button>
                         {selectedEvent.status === 'scheduled' && (
                         <button
@@ -3003,9 +3012,9 @@ export default function CoachTimetablePage() {
                     <AppIcon className="ri-calendar-schedule-line"></AppIcon>
                     Coach Scheduler
                   </div>
-                  <h2 className="text-[21px] font-heading font-bold tracking-tight text-foreground-950">Place session on calendar</h2>
+                  <h2 className="text-[21px] font-heading font-bold tracking-tight text-foreground-950">Approve and place session</h2>
                   <p className="mt-1 text-[13px] leading-5 text-foreground-500">
-                    Choose source, select item, then set time.
+                    Choose source, select item, then approve the final calendar slot.
                   </p>
                 </div>
                 <button
@@ -3027,7 +3036,7 @@ export default function CoachTimetablePage() {
                     <p className="mt-1 text-[12px] text-foreground-500">Pick the queue.</p>
                   </div>
                 </div>
-                <div className="grid gap-3 md:grid-cols-3">
+                <div className="grid gap-3 md:grid-cols-4">
                   {SCHEDULABLE_SOURCE_ORDER.map(source => {
                     const isActive = scheduleModalType === source;
                     const meta = SCHEDULABLE_SOURCE_META[source];
@@ -3207,7 +3216,7 @@ export default function CoachTimetablePage() {
 
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-background-200/70 pt-3">
                 <p className="text-[12px] text-foreground-500">
-                  The original learner item stays linked to its source record.
+                  Learner requests become official Teams meetings after coach approval.
                 </p>
                 <div className="flex items-center gap-3">
                   <button
@@ -3224,7 +3233,7 @@ export default function CoachTimetablePage() {
                     className="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <AppIcon className={`${scheduleModalBusy ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'} text-base`}></AppIcon>
-                    {scheduleModalBusy ? 'Scheduling...' : 'Place on Calendar'}
+                    {scheduleModalBusy ? 'Scheduling...' : 'Approve & Schedule'}
                   </button>
                 </div>
               </div>

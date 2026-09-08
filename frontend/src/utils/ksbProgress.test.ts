@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildKsbProgress, completedComponentIds, ksbParentCode, ksbTypeCode, progressCountsAsAchieved, recordedKsbEvidenceCodes } from './learnerJourney';
+import { buildKsbProgress, completedComponentIds, evidencedTargetKsbCodes, ksbParentCode, ksbTypeCode, progressCountsAsAchieved, recordedKsbEvidenceCodes } from './learnerJourney';
 import fixture from './ksbProgress.fixture.json';
 
 /* Real learner payload (commercial/2): 62 programme KSBs (31 K / 26 S / 5 B),
@@ -82,6 +82,22 @@ describe('recordedKsbEvidenceCodes', () => {
     } as never);
 
     expect(Array.from(codes)).toEqual([]);
+  });
+});
+
+describe('evidencedTargetKsbCodes', () => {
+  it('only counts evidenced KSBs that belong to the learner target profile', () => {
+    const codes = evidencedTargetKsbCodes({
+      ksbs: [
+        { code: 'K1', type: 'Knowledge', number: '1', description: '' },
+        { code: 'S2', type: 'Skills', number: '2', description: '' },
+      ],
+      quizAttempts: [{ passed: true, ksbs: ['K1.1', 'S2.3', 'B9'] }],
+      videoProgress: [{ componentId: 'video-1', ksbs: ['K1.2', 'S7'] }],
+      componentProgress: [],
+    } as never);
+
+    expect(Array.from(codes).sort()).toEqual(['K1', 'S2']);
   });
 });
 

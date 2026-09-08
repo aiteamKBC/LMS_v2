@@ -77,11 +77,11 @@ export const LearnerCard = memo(function LearnerCard({
   const otjh = otjhNote(insight);
   const otjhProgress = learner.overallProgressAvailable ? learner.overallProgress : null;
   const otjhProgrammeTarget = learner.otjhPlanned || learner.otjhMinimum || learner.otjhTarget;
-  const componentProgrammeProgress = learner.attendanceRateAvailable ? learner.attendanceRate : null;
-  // Against components expected by now (same pacing as otjhTarget), not
-  // componentsPlanned's whole-plan total -- see OTJH's own to-date tile above.
-  const componentsProgress = learner.componentsTargetToDate && learner.componentsTargetToDate > 0
+  const componentsTargetProgress = learner.componentsTargetToDate && learner.componentsTargetToDate > 0
     ? clampPercent(((learner.componentsCompleted ?? 0) / learner.componentsTargetToDate) * 100)
+    : null;
+  const componentsTotalProgress = learner.componentsPlanned && learner.componentsPlanned > 0
+    ? clampPercent(((learner.componentsCompleted ?? 0) / learner.componentsPlanned) * 100)
     : null;
 
   return (
@@ -156,10 +156,10 @@ export const LearnerCard = memo(function LearnerCard({
           <div className="mb-1 flex items-baseline justify-between gap-2">
             <SectionLabel>Components target progress</SectionLabel>
             <span className="text-[12px] font-bold tabular-nums text-foreground-900">
-              {componentsProgress === null ? EMPTY_VALUE : `${componentsProgress}% - ${formatRatio(learner.componentsCompleted, learner.componentsTargetToDate)}`}
+              {componentsTargetProgress === null ? EMPTY_VALUE : `${componentsTargetProgress}% - ${formatRatio(learner.componentsCompleted, learner.componentsTargetToDate)}`}
             </span>
           </div>
-          <ProgressBar percent={componentsProgress} />
+          <ProgressBar percent={componentsTargetProgress} />
         </div>
       </div>
 
@@ -180,7 +180,7 @@ export const LearnerCard = memo(function LearnerCard({
         <Metric
           label="Components"
           value={formatRatio(learner.componentsCompleted, learner.componentsPlanned)}
-          note={componentProgrammeProgress === null ? null : `${componentProgrammeProgress}% complete`}
+          note={componentsTotalProgress === null ? null : `${componentsTotalProgress}% complete`}
         />
         <Metric
           label="KSB"

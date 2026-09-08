@@ -62,7 +62,7 @@ from learner_api.models import (
     learner_ksbs_relation_exists,
 )
 from learner_api.constants import ACCESS_COACH, ACCESS_SUPER_ADMIN
-from learner_api.active_users import components_target_to_date, current_week_label, dedupe_otjh_progress_records, hydrate_training_plan, refresh_learner_ksb_snapshot
+from learner_api.active_users import components_target_to_date, current_curriculum_ksb_items_for_learner, current_week_label, dedupe_otjh_progress_records, hydrate_training_plan, refresh_learner_ksb_snapshot
 from learner_api.calendar_connections import (
     booking_conflicts as personal_calendar_booking_conflicts,
 )
@@ -1743,13 +1743,17 @@ def serialize_caseload_learner(
     *,
     refresh_live_snapshots: bool = True,
 ) -> dict:
+    live_snapshot = {}
+    source_row = getattr(row, "_caseload_source", None)
     if refresh_live_snapshots:
         refresh_caseload_learner_ksb_snapshot(row)
         if callable(getattr(row, "save", None)) and hasattr(row, "training_plan_progress"):
             try:
                 # Keep coach-facing caseload cards aligned with the live learner
                 # detail OTJ calculation instead of stale stored snapshot values.
-                refresh_learner_otjh_snapshot(row)
+                if source_row is None and getattr(row, "enrolment_id", None):
+                    source_row = EnrolmentUser.all_learners.filter(pk=row.enrolment_id).first()
+                live_snapshot = refresh_learner_otjh_snapshot(row, source=source_row)
             except Exception as exc:
                 logger.warning(
                     "Could not refresh live OTJ snapshot for learner %s: %s",
@@ -1760,7 +1764,7 @@ def serialize_caseload_learner(
     progress_entries = [entry for entry in list_or_empty(row.training_plan_progress) if isinstance(entry, dict)]
     activity_entries = learner_activity_feed_entries(row)
     otjh_completed_entries = build_otjh_completed_entries(progress_entries, activity_entries, row.training_plan)
-    planned_components = count_planned_components(row.training_plan)
+    planned_components = int(live_snapshot.get("componentsPlanned") or count_planned_components(row.training_plan))
     completed_components = count_completed_components(progress_entries)
     component_available = planned_components > 0
     component_progress = percentage(completed_components, planned_components) if component_available else 0
@@ -1773,11 +1777,17 @@ def serialize_caseload_learner(
     hours_available = bool(clean_text(row.completed_hours) or target_hours_value)
     hours_progress = percentage(row.completed_hours, target_hours_value) if target_hours_value else 0
 
-    target_ksb_lookup = ksb_target_lookup(row.ksbs)
+    curriculum_ksbs = current_curriculum_ksb_items_for_learner(
+        row,
+        source=source_row,
+        training_plan=getattr(row, "training_plan", None),
+    )
+    target_ksbs = curriculum_ksbs or row.ksbs
+    target_ksb_lookup = ksb_target_lookup(target_ksbs)
     target_ksb_codes = set(target_ksb_lookup)
     completed_codes = completed_ksb_codes(progress_entries, activity_entries)
     ksb_completed_details = build_ksb_completed_details(
-        row.ksbs,
+        target_ksbs,
         completed_codes,
         progress_entries,
         activity_entries,
@@ -2803,7 +2813,7 @@ def build_monthly_activity_learner(
 
     for index, event in enumerate(learner_events):
         event_status = clean_text(event.get("status")).lower()
-        if monthly_event_is_unscheduled(event_status) or event_status == CoachCalendarEvent.STATUS_CANCELLED:
+        if event_status == CoachCalendarEvent.STATUS_CANCELLED:
             continue
         event_date = monthly_event_display_date(event)
         if not event_date:
@@ -3856,6 +3866,10 @@ def build_timetable_summary(
                     [event for event in events if event["source"] == CATCH_UP_EVENT_TYPE],
                     source_needs_scheduling.get(CATCH_UP_EVENT_TYPE, 0),
                 ),
+                "support": summarize_timetable_events(
+                    [event for event in events if event["source"] == "student-support"],
+                    source_needs_scheduling.get("student-support", 0),
+                ),
             },
             "timeAvailability": "Times are not available in MCR/progress_review; events are shown as Time TBC.",
             "sourceCounts": source_counts,
@@ -4336,6 +4350,7 @@ def build_booked_calendar_event(record: CoachCalendarEvent) -> dict:
     """
     title = BOOKED_EVENT_TITLES.get(record.event_type, "Coaching Session")
     target_date = record.target_date or date.today()
+    is_request = clean_text(record.status).lower() == CoachCalendarEvent.STATUS_NOT_SCHEDULED
     return {
         "eventKey": record.event_key,
         "id": record.event_key,
@@ -4371,7 +4386,7 @@ def build_booked_calendar_event(record: CoachCalendarEvent) -> dict:
         "graphWebLink": "",
         "platform": "--",
         "location": "--",
-        "notes": f"{title} booked by the learner.",
+        "notes": f"{title} requested by the learner." if is_request else f"{title} booked by the learner.",
         "rawPlanned": target_date.isoformat(),
         "rawStatus": schedule_status_label(record.status),
     }
@@ -4379,7 +4394,9 @@ def build_booked_calendar_event(record: CoachCalendarEvent) -> dict:
 
 def event_note_lines(base_event: dict, record: CoachCalendarEvent | None) -> list[str]:
     if base_event.get("source") in LEARNER_BOOKED_EVENT_TYPES:
-        lines = [f"{base_event.get('title') or 'Session'} booked by the learner."]
+        is_request = bool(record and clean_text(record.status).lower() == CoachCalendarEvent.STATUS_NOT_SCHEDULED)
+        verb = "requested" if is_request else "booked"
+        lines = [f"{base_event.get('title') or 'Session'} {verb} by the learner."]
     else:
         lines = [f"Generated from learner start date. Target date: {format_date(parse_date_value(base_event.get('targetDate')))}."]
     if record and record.scheduled_date and record.scheduled_time:
@@ -6107,6 +6124,11 @@ def collect_generated_timetable(
             for event in events
             if event["source"] == CATCH_UP_EVENT_TYPE and event["status"] == CoachCalendarEvent.STATUS_NOT_SCHEDULED
         ),
+        "student-support": sum(
+            1
+            for event in events
+            if event["source"] == "student-support" and event["status"] == CoachCalendarEvent.STATUS_NOT_SCHEDULED
+        ),
     }
     needs_scheduling = sum(source_needs_scheduling.values())
     events = assign_timetable_slots(events)
@@ -6215,6 +6237,7 @@ def find_learner_calendar_conflict(
         scheduled_date__range=(scheduled_date - timedelta(days=1), requested_end.date()),
         scheduled_time__isnull=False,
         status__in=(
+            CoachCalendarEvent.STATUS_NOT_SCHEDULED,
             CoachCalendarEvent.STATUS_SCHEDULED,
             CoachCalendarEvent.STATUS_IN_PROGRESS,
             CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
@@ -6349,6 +6372,7 @@ def reserve_coach_calendar_booking(
     duration_minutes: int,
     notes: str,
     idempotency_key: str,
+    initial_status: str = CoachCalendarEvent.STATUS_SCHEDULED,
 ) -> tuple[CoachCalendarEvent, bool]:
     """Durably reserve one booking before any external call.
 
@@ -6359,6 +6383,8 @@ def reserve_coach_calendar_booking(
 
     owner_email = normalize_email(owner_email)
     session_type = clean_text(session_type).lower()
+    if initial_status not in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_NOT_SCHEDULED}:
+        raise ValueError("Unsupported initial booking status.")
 
     def existing_replay() -> CoachCalendarEvent | None:
         return CoachCalendarEvent.objects.filter(
@@ -6452,7 +6478,7 @@ def reserve_coach_calendar_booking(
                 scheduled_date=scheduled_date,
                 scheduled_time=scheduled_time,
                 duration_minutes=duration_minutes,
-                status=CoachCalendarEvent.STATUS_SCHEDULED,
+                status=initial_status,
                 sync_state=CoachCalendarEvent.SYNC_PENDING,
                 notes=notes,
             )
@@ -6663,7 +6689,7 @@ def find_catchup_calendar_record(owner_email: str, event_key: str) -> tuple[Coac
     record = CoachCalendarEvent.objects.filter(
         owner_email__iexact=owner_email,
         event_key=event_key,
-        event_type__iexact=CATCH_UP_EVENT_TYPE,
+        event_type__in=[CATCH_UP_EVENT_TYPE, "student-support"],
     ).first()
     if record and calendar_record_needs_schedule_repair(record):
         record = repair_calendar_record_to_needs_schedule(
