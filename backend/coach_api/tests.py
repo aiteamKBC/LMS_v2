@@ -33,6 +33,7 @@ from coach_api.views import (
     fetch_source_schedule_rows,
     graph_organizer_mailbox,
     iterate_generated_schedule_dates,
+    monthly_event_is_between,
     reported_minutes,
     route_absence_report_evidence,
     serialize_caseload_learner,
@@ -797,6 +798,15 @@ class MonthlyActivityTests(SimpleTestCase):
         self.assertEqual(reported_minutes("120"), 120.0)
         self.assertEqual(reported_minutes("90 min"), 90.0)
 
+    def test_monthly_event_includes_scheduled_date_even_when_target_is_in_another_month(self):
+        event = {
+            "targetDate": "2026-10-26",
+            "scheduledDate": "2026-09-07",
+            "date": "2026-09-07",
+        }
+
+        self.assertTrue(monthly_event_is_between(event, date(2026, 9, 1), date(2026, 9, 30)))
+
     def test_monthly_target_uses_training_plan_weeks_and_component_expected_otjh(self):
         training_plan = [{
             "moduleTitle": "Module A",
@@ -1132,8 +1142,6 @@ class MonthlyActivityTests(SimpleTestCase):
         )
         collect_generated_timetable.assert_called_once_with(
             "coach@example.com",
-            start_date=date(2026, 8, 1),
-            end_date=date(2026, 8, 31),
             include_live_sessions=False,
             include_scheduler_queues=False,
         )

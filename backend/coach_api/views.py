@@ -2654,6 +2654,17 @@ def monthly_event_display_date(event: dict) -> date | None:
     return date_only(event.get("scheduledDate") or event.get("date") or event.get("targetDate"))
 
 
+def monthly_event_is_between(event: dict, start_date: date, end_date: date) -> bool:
+    """Include a coaching event when either its target or booked date is in the month."""
+    event_dates = {
+        parsed
+        for value in (event.get("scheduledDate"), event.get("targetDate"), event.get("date"))
+        for parsed in [date_only(value)]
+        if parsed
+    }
+    return any(start_date <= event_date <= end_date for event_date in event_dates)
+
+
 def monthly_event_matches_learner(event: dict, learner: dict) -> bool:
     event_learner_id = clean_text(event.get("learnerId"))
     learner_id = clean_text(learner.get("id"))
@@ -7631,14 +7642,16 @@ def coach_monthly_activity(request):
         rows = fetch_caseload_learner_profiles(owner_email)
         timetable_payload = collect_generated_timetable(
             owner_email,
-            start_date=start_date,
-            end_date=end_date,
             # Attendance is loaded from its dedicated projection below, and
             # Monthly Cycle does not render timetable scheduler queues.
             include_live_sessions=False,
             include_scheduler_queues=False,
         )
-        events = timetable_payload.get("events", [])
+        events = [
+            event
+            for event in timetable_payload.get("events", [])
+            if monthly_event_is_between(event, start_date, end_date)
+        ]
         active_pairs = [
             (row, learner)
             for row in rows
