@@ -363,20 +363,39 @@ def overview(request):
 # ---------------------------------------------------------------------------
 
 def _staff_access_map(accounts):
-    """{subject_id: access} for the staff accounts in this page of results.
+    """{subject_id: {"access": primary, "accesses": [...]}} for this page.
 
     One query for the page rather than one per row: the accounts list is the
     console's busiest table and an N+1 here is felt immediately.
+
+    Both are carried because they answer different questions: ``access`` is
+    where the account lands at sign-in, ``accesses`` is everything it may reach.
+    A row showing only the primary would hide the second grant a person holds.
     """
     ids = [a.subject_id for a in accounts if a.subject_type == "staff"]
     if not ids:
         return {}
+    from learner_api.constants import ACCESS_CHOICES
     from learner_api.models import StaffUser
+
+    from .identity import accesses_for_staff
 
     try:
         with transaction.atomic(using="enrolment"):
-            rows = StaffUser.objects.filter(pk__in=ids).values_list("pk", "access")
-        return {pk: (access or "").strip().lower() for pk, access in rows}
+            rows = list(
+                StaffUser.objects.filter(pk__in=ids).only(
+                    "pk", "access", "access_extra"
+                )
+            )
+        return {
+            row.pk: {
+                "access": (row.access or "").strip().lower(),
+                "accesses": [
+                    value for value in ACCESS_CHOICES if value in accesses_for_staff(row)
+                ],
+            }
+            for row in rows
+        }
     except DatabaseError:
         # The list is still worth showing without the grants.
         return {}
@@ -431,8 +450,12 @@ def _account_json(account, now, extras=None):
         # The staff access grant, so the console can show and edit it without a
         # second request per row. "" for non-staff subjects and for staff whose
         # access has not been set yet.
-        "access": extras.get("access", {}).get(account.subject_id, "")
+        "access": (extras.get("access", {}).get(account.subject_id) or {}).get("access", "")
         if account.subject_type == "staff" else "",
+        # Every grant the account holds, so a row can show more than one badge
+        # for somebody who both coaches and teaches.
+        "accesses": (extras.get("access", {}).get(account.subject_id) or {}).get("accesses", [])
+        if account.subject_type == "staff" else [],
         # Which of the two learner kinds this is, so the console can link to the
         # right record board. "" for staff and employers, who have no kind.
         "learnerType": extras.get("learner_type", {}).get(account.subject_id, "")

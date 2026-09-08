@@ -26,8 +26,12 @@ interface LogRow {
   tint: string;
   at: string;        // ISO
   ksbs: string[];
-  /** What this activity put towards the total, in hours. */
+  /** What this activity put towards the total, in hours — the actual. */
   hours: number;
+  /** The authored off-the-job hours for this activity: what the plan budgeted,
+   *  independent of how long the learner took. NaN when the activity carries
+   *  no authored figure. */
+  planned: number;
   /** What the learner said it took, shown under the contribution when they differ. */
   reported: string;
   /** One row per quiz/component; repeats of the same one are folded in here. */
@@ -171,6 +175,7 @@ export function OtjhBody({
       tint: a.passed ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600',
       at: a.submittedAt, ksbs: a.ksbs || [],
       hours: contributedHours(a.expectedOtjh, a.reportedTime || a.timeTaken || '', undefined, a.verifiedSeconds),
+      planned: Number(a.expectedOtjh ?? expectedFor(a.componentId)),
       reported: a.reportedTime || a.timeTaken || '',
       // A quiz is one activity however many attempts it took, which is how the
       // total counts it.
@@ -185,6 +190,7 @@ export function OtjhBody({
       hours: contributedHours(
         v.expectedOtjh, v.reportedTime || v.timeTaken || '', expectedFor(v.componentId), v.verifiedSeconds,
       ),
+      planned: Number(v.expectedOtjh ?? expectedFor(v.componentId)),
       reported: v.reportedTime || v.timeTaken || '',
       dedupeKey: `component:${v.componentId || v.submittedAt}`,
       isQuiz: false,
@@ -201,6 +207,7 @@ export function OtjhBody({
         hours: contributedHours(
           c.expectedOtjh, c.reportedTime || c.timeTaken || '', expectedFor(c.componentId), c.verifiedSeconds,
         ),
+        planned: Number(c.expectedOtjh ?? expectedFor(c.componentId)),
         reported: c.reportedTime || c.timeTaken || '',
         dedupeKey: `component:${c.componentId || c.submittedAt}`,
         isQuiz: false,
@@ -326,6 +333,15 @@ export function OtjhBody({
               <div className="p-5"><EmptyState text={isObserver ? 'No logged activity yet.' : 'No logged activity yet — finish a video, reading, quiz or assignment to see it here.'} /></div>
             ) : (
               <div className="max-h-[520px] divide-y divide-foreground-100 overflow-y-auto">
+                {/* Column headings, so the two figures on each row are not left
+                    to be guessed at. Sticky because the log scrolls. */}
+                <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-foreground-100 bg-background-100/95 px-4 py-1.5 backdrop-blur md:px-5">
+                  <span className="w-9 shrink-0" aria-hidden="true" />
+                  <span className="flex-1 text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Activity</span>
+                  <span className="hidden sm:block max-w-[160px] shrink-0" aria-hidden="true" />
+                  <span className="w-16 shrink-0 text-right text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Planned</span>
+                  <span className="w-16 shrink-0 text-right text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Actual</span>
+                </div>
                 {rows.map((r, i) => (
                   <div key={i} className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-primary-50/25 md:px-5">
                     <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${r.tint}`}>
@@ -343,17 +359,27 @@ export function OtjhBody({
                         {r.ksbs.length > 4 && <span className="text-[10px] text-foreground-400">+{r.ksbs.length - 4}</span>}
                       </div>
                     )}
-                    <span className="shrink-0 w-20 text-right">
-                      <span className="block text-[12px] font-semibold text-foreground-700 tabular-nums">
+                    {/* Planned and actual side by side. Planned is what the
+                        curriculum budgeted for the activity; actual is what the
+                        learner recorded — their typed input or the tracked
+                        session, whichever they submitted. Kept as separate
+                        columns because the gap between them is the thing a
+                        coach reads this log for. */}
+                    <span className="shrink-0 w-16 text-right">
+                      <span className="block text-[12px] text-foreground-500 tabular-nums">
+                        {Number.isFinite(r.planned) && r.planned > 0 ? formatHoursMinutes(r.planned) : '—'}
+                      </span>
+                    </span>
+                    <span className="shrink-0 w-16 text-right">
+                      <span className={`block text-[12px] font-semibold tabular-nums ${
+                        // Over the planned budget is worth noticing, not
+                        // flagging: learners legitimately take longer.
+                        Number.isFinite(r.planned) && r.planned > 0 && r.hours > r.planned + 0.01
+                          ? 'text-amber-700'
+                          : 'text-foreground-800'
+                      }`}>
                         {r.hours > 0 ? formatHoursMinutes(r.hours) : '—'}
                       </span>
-                      {/* What the learner said it took, shown only when that is
-                          not the same as what the component is worth — "2h ·
-                          said 2h" is noise. */}
-                      {r.reported && r.hours > 0
-                        && Math.abs(contributedHours(0, r.reported) - r.hours) > 0.01 && (
-                        <span className="block text-[10px] text-foreground-400">said {r.reported}</span>
-                      )}
                     </span>
                     {r.isQuiz && (
                       <span className={`shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full ${r.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>

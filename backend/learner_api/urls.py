@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, time_tracking, videos, views
+from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, time_tracking, videos, views
 
 urlpatterns = [
     path("tutor-learners/", views.tutor_learners, name="tutor-learners"),
@@ -111,6 +111,16 @@ urlpatterns = [
     path("reflection/transcribe/", reflection_ai.transcribe_reflection, name="reflection-transcribe"),
     path("reflection/proofread/", reflection_ai.proofread_reflection, name="reflection-proofread"),
     path("reflection/submissions/", reflection_submissions.create_reflection_submission, name="reflection-submission-create"),
+    # The learner's end-of-month report: GET lists the months already submitted
+    # (or one month with ?month=YYYY-MM), POST submits/updates a month.
+    # Declared before the bare list route, which would otherwise never be
+    # reached for an attachment URL.
+    path(
+        "monthly-reports/<str:kind>/<int:pk>/attachments/<uuid:file_id>/",
+        monthly_reports.monthly_report_attachment,
+        name="learner-monthly-report-attachment",
+    ),
+    path("monthly-reports/<str:kind>/<int:pk>/", monthly_reports.monthly_reports, name="learner-monthly-reports"),
     # learner calendar (coaching sessions from Coach.coach_calendar_event)
     path("calendar/<str:kind>/<int:pk>/", calendar.learner_calendar, name="learner-calendar"),
     path("calendar/<str:kind>/<int:pk>/book/", calendar.learner_calendar_book, name="learner-calendar-book"),

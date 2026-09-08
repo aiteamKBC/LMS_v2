@@ -106,7 +106,11 @@ export interface CreateStaffUserInput {
   /** Required — one of POSITION_OPTIONS. */
   position: string;
   /** One of ACCESS_OPTIONS. Omitted on create; granted from the Accounts page. */
+  /** The PRIMARY grant — where this account lands at sign-in. */
   access?: StaffAccess;
+  /** Every grant the account holds, including the primary. Omit to leave the
+   *  existing set alone; send it to replace the set wholesale. */
+  accesses?: StaffAccess[];
   type?: string;
   status?: string;
   phone?: string;

@@ -455,16 +455,18 @@ def _refresh_staff_role(account):
 
         from learner_api.models import StaffUser
 
-        from .identity import role_for_staff
+        from .identity import accesses_for_staff, role_for_staff
 
         row = (
             StaffUser.objects.filter(pk=account.subject_id)
-            .only("position", "access")
+            .only("position", "access", "access_extra")
             .first()
         )
         if row is None:
             return
-        derived = role_for_staff(row.position, row.access)
+        # The whole grant set, not just the primary: super-admin held as an
+        # additional access must still carry the platform role.
+        derived = role_for_staff(row.position, accesses_for_staff(row))
         if derived != account.role:
             account.role = derived
             account.save(update_fields=["role", "updated_at"])

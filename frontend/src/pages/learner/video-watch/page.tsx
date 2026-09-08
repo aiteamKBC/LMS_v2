@@ -7,6 +7,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerKsbItem } from '@/api/learnerDetail';
+import { markingVerdict } from '@/lib/markingVerdict';
 import { submitVideoProgress } from '@/api/videos';
 import { submitComponentProgress } from '@/api/components';
 import { startTimeTracking, type TimeTrackingSession, type TrackingCountingMode } from '@/api/timeTracking';
@@ -361,6 +362,16 @@ export default function ComponentViewPage() {
     [detail, componentId, completedIds],
   );
   const component = ctx?.component ?? null;
+  // Where this activity stands with the coach. Only meaningful for an activity
+  // the author sent for validation: everything else is finished when the
+  // learner completes it. Without this the page said "Ready to complete" on
+  // work that had already been submitted and rejected.
+  const marking = componentId ? detail?.componentMarkingStatus?.[componentId] : undefined;
+  // Driven by whether the work was actually submitted, not by the component's
+  // validation flag. A coach can review anything a learner hands in, and most
+  // reflection components carry no flag — gating on it hid a rejection with
+  // 692 characters of feedback behind a "Ready to complete" banner.
+  const verdict = markingVerdict(marking?.status);
   const meta = component ? componentTypeMeta(component.title) : null;
   const learnerKsbs: LearnerKsbItem[] = detail?.ksbs ?? [];
 
@@ -797,8 +808,13 @@ export default function ComponentViewPage() {
                         {/* Wrong file uploaded? Remove it here and the control
                             reverts to "Upload evidence" for the right one.
                             Only for a real stored row — an optimistic label
-                            from a still-uploading file has no id to delete. */}
-                        {visibleEvidenceFile && (
+                            from a still-uploading file has no id to delete.
+
+                            Hidden once the activity has been handed in:
+                            `canDelete` is the server's own answer, and offering
+                            Remove without it produced a 409 Conflict on a button
+                            the page had just invited the learner to press. */}
+                        {visibleEvidenceFile && visibleEvidenceFile.canDelete !== false && (
                           removingEvidence ? (
                             <span className="text-[11px] font-semibold text-foreground-400">Removing…</span>
                           ) : confirmingEvidenceRemoval ? (
@@ -869,7 +885,39 @@ export default function ComponentViewPage() {
                 </div>
               )}
 
-              {criteria?.gated && !hasEditableAssignmentDocument && (
+              {/* Where this stands with the coach. Shown above the completion
+                  criteria and instead of them: once the work is with a coach,
+                  "Ready to complete" is not the useful thing to say — and on a
+                  rejected submission it was actively wrong. */}
+              {verdict && (
+                <div className={`mt-4 rounded-xl border p-4 ${verdict.panel}`}>
+                  <h2 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-foreground-500">
+                    <AppIcon className={`${verdict.icon} ${verdict.panelIcon}`} />
+                    {verdict.label}
+                  </h2>
+                  <p className="text-sm leading-relaxed text-foreground-700">{verdict.detail}</p>
+                  {marking?.feedback && (
+                    <div className="mt-3 rounded-lg border border-foreground-200/70 bg-white/70 p-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-foreground-400">
+                        Coach feedback
+                      </p>
+                      <p className="mt-1.5 whitespace-pre-wrap text-sm leading-6 text-foreground-700">
+                        {marking.feedback}
+                      </p>
+                      {marking.reviewedBy && (
+                        <p className="mt-2 text-[11px] text-foreground-400">
+                          {marking.reviewedBy}
+                          {marking.reviewedAt
+                            ? ` · ${new Date(marking.reviewedAt).toLocaleDateString('en-GB')}`
+                            : ''}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!verdict && criteria?.gated && !hasEditableAssignmentDocument && (
                 <div className={`mt-4 rounded-xl border p-4 ${
                   criteria.met ? 'border-emerald-200 bg-emerald-50/60' : 'border-amber-200 bg-amber-50/60'
                 }`}>

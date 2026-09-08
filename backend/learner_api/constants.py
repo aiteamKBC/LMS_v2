@@ -53,8 +53,19 @@ POSITION_CHOICES = [
 # member would hold full platform access. Access is that grant, and it is the
 # only thing narrowing what an account can do.
 #
-# Exactly one per account: 'super-admin' already means "everything", which is the
-# only case combining values would serve.
+# An account may hold MORE THAN ONE, so somebody who both coaches a caseload and
+# teaches a group reaches both workspaces from one sign-in. 'super-admin' is the
+# exception: it already means "everything", so it is held alone.
+#
+# "Access" holds the PRIMARY grant — where the account lands at sign-in, and the
+# value every pre-existing reader compares against. "Access_extra" holds any
+# others, comma-separated. Splitting them this way keeps a single-access row
+# byte-for-byte what it was: turning "Access" itself into a list would make
+# every `access == "coach"` check in the codebase false for a dual-access
+# account, locking them out of the very workspace they were granted.
+#
+# `identity.accesses_for_staff` is the one place that unions the two; nothing
+# else should read "Access_extra" directly.
 ACCESS_ENROLMENT = "enrolment"
 ACCESS_CURRICULUM = "curriculum"
 ACCESS_COACH = "coach"

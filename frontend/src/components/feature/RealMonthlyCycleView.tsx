@@ -11,6 +11,16 @@ import {
   type LearnerCalendarEvent,
 } from '@/api/learnerCalendar';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { MonthlyReportWizard } from '@/components/feature/MonthlyReportWizard';
+import {
+  fetchMonthlyReports,
+  type MonthlyReport,
+  type MonthlyReportActivity,
+  type MonthlyReportAttachment,
+} from '@/api/monthlyReports';
+import { downloadMonthlyReportPdf } from '@/lib/monthlyReportPdf';
+import { canOpenAttachment, openMonthlyReportAttachment } from '@/lib/monthlyReportAttachments';
+import { useKsbProgress } from '@/hooks/useKsbProgress';
 
 const learnerNav = roleNavMap.learner;
 const MONTHS = [
@@ -38,7 +48,6 @@ interface MonthActivity {
   passed?: boolean;
   coach?: string;
   notes?: string;
-  meetingLink?: string;
 }
 
 const TYPE_META: Record<ActivityType, { label: string; icon: string; colour: string; soft: string; line: string }> = {
@@ -50,12 +59,12 @@ const TYPE_META: Record<ActivityType, { label: string; icon: string; colour: str
 };
 
 const FILTER_DESCRIPTIONS: Record<'all' | ActivityType, string> = {
-  all: 'Every recorded event for this student during the selected month.',
+  all: 'Everything the student has already done during the selected month. Sessions still to come, and cancelled ones, are not listed.',
   learning: 'Completed learning activities such as readings, podcasts, reflections and uploaded resources.',
   video: 'Videos the student finished watching, including repeat views and time spent.',
   quiz: 'Every submitted quiz attempt, including score, pass status, duration and evidenced KSBs.',
-  coaching: 'Scheduled, completed or cancelled coaching sessions with the student’s coach.',
-  review: 'Formal progress-review meetings recorded for the selected month.',
+  coaching: 'Coaching sessions with the student’s coach that have already taken place.',
+  review: 'Formal progress-review meetings that have already taken place in the selected month.',
 };
 
 function monthKey(value?: string | null) {
@@ -214,27 +223,46 @@ function buildActivities(real: LearnerDetail | null, events: LearnerCalendarEven
     }
   }
 
+  // This page is a record of what the learner HAS done, so a calendar session
+  // only earns a place once it has happened. A session still in the diary — or
+  // one that was cancelled and so never took place — is not activity, and
+  // counting either inflated the month's totals and active days.
+  const now = Date.now();
   for (const event of events) {
     const at = eventDate(event);
     if (!at) continue;
+    if (event.status === 'cancelled') continue;
+    const startedAt = event.scheduledTime && /^\d{2}:\d{2}/.test(event.scheduledTime)
+      ? `${at.slice(0, 10)}T${event.scheduledTime.slice(0, 5)}:00`
+      : at;
+    const startedTime = new Date(startedAt).getTime();
+    if (Number.isNaN(startedTime) || startedTime > now) continue;
     result.push({
       id: `event-${event.id}`,
-      at: event.scheduledTime && /^\d{2}:\d{2}/.test(event.scheduledTime)
-        ? `${at.slice(0, 10)}T${event.scheduledTime.slice(0, 5)}:00`
-        : at,
+      at: startedAt,
       type: event.type === 'review' ? 'review' : 'coaching',
       title: `${event.title}${event.sequence ? ` ${event.sequence}` : ''}`,
-      action: event.status === 'completed' ? 'Session completed' : event.status === 'cancelled' ? 'Session cancelled' : 'Calendar session',
+      // Only a session the coach marked complete may be described as completed.
+      // A past session still sitting at 'scheduled' has no attendance record
+      // behind it, and calling it attended would be a false claim about the
+      // learner's own activity in what is an audit trail for OTJH hours.
+      action: event.status === 'completed' ? 'Session completed' : 'Calendar session',
       detail: event.durationMinutes ? `${event.durationMinutes} minute session${event.meetingProvider ? ` · ${event.meetingProvider}` : ''}` : undefined,
       ksbs: [],
       status: event.status,
       coach: event.coachName,
       notes: event.notes,
-      meetingLink: event.meetingLink,
     });
   }
 
-  return result.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+  // Completed work is dated when it was submitted, so a future timestamp means a
+  // clock or data problem rather than something the learner has done.
+  return result
+    .filter((activity) => {
+      const time = new Date(activity.at).getTime();
+      return !Number.isNaN(time) && time <= now;
+    })
+    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
 }
 
 function statusLabel(status: string) {
@@ -302,11 +330,11 @@ function ActivityCard({ activity }: { activity: MonthActivity }) {
             <button onClick={() => setExpanded(false)} className="mt-2 text-[11px] font-semibold text-primary-600 hover:text-primary-700">Show less</button>
           )}
 
-          {activity.meetingLink && activity.status !== 'cancelled' && (
-            <a href={activity.meetingLink} target="_blank" rel="noreferrer" className="meeting-join-action mt-3 inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold">
-              <AppIcon className="ri-video-chat-line"></AppIcon>Open meeting
-            </a>
-          )}
+          {/* No join link here. This page lists only what has already
+              happened, so every session on it is in the past — offering to
+              open the meeting invites a click that leads nowhere. The join
+              link belongs on the calendar and This Week, where a session is
+              still ahead of the learner. */}
         </div>
       </div>
     </article>
@@ -328,7 +356,43 @@ export function RealMonthlyCycleView({
   const [filter, setFilter] = useState<'all' | ActivityType>('all');
   const [query, setQuery] = useState('');
   const [monthMenuOpen, setMonthMenuOpen] = useState(false);
+  const [reports, setReports] = useState<MonthlyReport[]>([]);
+  const [savedSignature, setSavedSignature] = useState('');
+  const [savedSignatureName, setSavedSignatureName] = useState('');
+  const [reportsError, setReportsError] = useState('');
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [openingAttachmentId, setOpeningAttachmentId] = useState<string | null>(null);
+  const [attachmentError, setAttachmentError] = useState('');
+  const [buildingPdf, setBuildingPdf] = useState(false);
   const monthMenuRef = useRef<HTMLDivElement>(null);
+
+  /** Build and save the month's report. Async because any attached documents
+   *  are fetched and converted into it, which takes a moment. */
+  const downloadReport = async (report: MonthlyReport) => {
+    if (buildingPdf) return;
+    setBuildingPdf(true);
+    setAttachmentError('');
+    try {
+      await downloadMonthlyReportPdf(report, { learnerKind, learnerId });
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : 'The report could not be built.');
+    } finally {
+      setBuildingPdf(false);
+    }
+  };
+
+  const openAttachment = async (attachment: MonthlyReportAttachment) => {
+    if (openingAttachmentId) return;
+    setOpeningAttachmentId(attachment.id);
+    setAttachmentError('');
+    try {
+      await openMonthlyReportAttachment(learnerKind, learnerId, attachment);
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : 'That document could not be opened.');
+    } finally {
+      setOpeningAttachmentId(null);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -337,6 +401,26 @@ export function RealMonthlyCycleView({
       .then((response) => { if (!cancelled) setEvents(response.events || []); })
       .catch(() => { if (!cancelled) setEvents([]); })
       .finally(() => { if (!cancelled) setEventsLoading(false); });
+    return () => { cancelled = true; };
+  }, [learnerKind, learnerId]);
+
+  // Which months already have a submitted report — that is what turns the hero
+  // button from "Monthly report" into "Download report".
+  useEffect(() => {
+    let cancelled = false;
+    setReportsError('');
+    fetchMonthlyReports(learnerKind, learnerId)
+      .then((response) => {
+        if (cancelled) return;
+        setReports(response.reports);
+        setSavedSignature(response.savedSignature);
+        setSavedSignatureName(response.savedSignatureName);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setReports([]);
+        setReportsError(error instanceof Error ? error.message : 'Could not load your monthly reports.');
+      });
     return () => { cancelled = true; };
   }, [learnerKind, learnerId]);
 
@@ -356,6 +440,10 @@ export function RealMonthlyCycleView({
     };
   }, [monthMenuOpen]);
 
+  // Every KSB on the learner's programme, with its progress — the same
+  // derivation the KSB page and progress overview use, so the wizard's list
+  // agrees with what the learner sees elsewhere.
+  const programmeKsbs = useKsbProgress(real);
   const allActivities = useMemo(() => buildActivities(real, events), [real, events]);
   const currentMonth = monthKey(new Date().toISOString())!;
   const months = useMemo(() => {
@@ -401,9 +489,38 @@ export function RealMonthlyCycleView({
   }), [monthActivities]);
 
   const loggedMinutes = monthActivities.reduce((total, activity) => total + minutesFromText(activity.reportedTime), 0);
-  const ksbCount = new Set(monthActivities.flatMap((activity) => activity.ksbs)).size;
+  const ksbCodes = Array.from(new Set(monthActivities.flatMap((activity) => activity.ksbs))).sort();
+  const ksbCount = ksbCodes.length;
   const activeDays = new Set(monthActivities.map((activity) => activity.at.slice(0, 10))).size;
   const busy = loading || eventsLoading;
+
+  // The report always covers the whole selected month, never the filtered or
+  // searched subset — a filter is a way of reading the page, not of choosing
+  // what the month's report says.
+  const reportForActiveMonth = reports.find((report) => report.monthKey === activeMonth) || null;
+  const reportSnapshot: MonthlyReportActivity[] = monthActivities.map((activity) => ({
+    at: activity.at,
+    type: activity.type,
+    title: activity.title,
+    action: activity.action,
+    detail: activity.detail ?? null,
+    module: activity.module ?? null,
+    week: activity.week ?? null,
+    duration: activity.duration ?? null,
+    reportedTime: activity.reportedTime ?? null,
+    ksbs: activity.ksbs,
+    status: activity.status ?? null,
+    score: activity.score ?? null,
+    passed: activity.passed ?? null,
+  }));
+  const reportMetrics = {
+    totalEvents: monthActivities.length,
+    activeDays,
+    loggedMinutes: Math.round(loggedMinutes),
+    loggedLabel: formatMinutes(loggedMinutes),
+    ksbCount,
+    ksbCodes,
+  };
   const summaryMetrics = [
     { label: 'Total events', value: monthActivities.length, icon: 'ri-pulse-line', tone: 'brand' as const, iconClassName: 'bg-violet-100 text-violet-700' },
     { label: 'Active days', value: activeDays, icon: 'ri-calendar-check-line', tone: 'positive' as const, iconClassName: 'bg-emerald-100 text-emerald-700' },
@@ -435,6 +552,35 @@ export function RealMonthlyCycleView({
               </div>
               <h1 className="font-heading text-[22px] font-bold leading-tight text-white sm:text-2xl md:text-3xl">Everything you did in {monthLabel(activeMonth)}</h1>
               <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/65">One clear timeline for every lesson, attempt, watched video, logged minute, KSB and session.</p>
+            </div>
+            <div className="flex w-full flex-col gap-2.5 sm:flex-row sm:items-center lg:w-auto">
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+              {/* Solid white, not translucent: at 10% white on the purple hero
+                  this read as a disabled control beside the green download. */}
+              <button
+                type="button"
+                onClick={() => setWizardOpen(true)}
+                disabled={busy}
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-white px-4 text-sm font-bold text-primary-900 shadow-lg shadow-primary-950/20 transition-all hover:-translate-y-0.5 hover:bg-primary-50 focus:outline-none focus:ring-4 focus:ring-white/50 disabled:translate-y-0 disabled:opacity-60"
+              >
+                <AppIcon className="ri-file-text-line text-base"></AppIcon>
+                {reportForActiveMonth ? 'Update report' : 'Monthly report'}
+              </button>
+              {reportForActiveMonth && (
+                <button
+                  type="button"
+                  onClick={() => void downloadReport(reportForActiveMonth)}
+                  disabled={buildingPdf}
+                  className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-4 text-sm font-bold text-emerald-950 shadow-lg shadow-emerald-900/20 transition-all hover:-translate-y-0.5 hover:bg-emerald-300 focus:outline-none focus:ring-4 focus:ring-emerald-200/50 disabled:translate-y-0 disabled:opacity-60"
+                >
+                  <AppIcon className={`text-base ${buildingPdf ? 'ri-loader-4-line animate-spin' : 'ri-download-2-line'}`}></AppIcon>
+                  {buildingPdf
+                    ? reportForActiveMonth.attachments.length
+                      ? 'Building report…'
+                      : 'Preparing…'
+                    : 'Download report'}
+                </button>
+              )}
             </div>
             <div ref={monthMenuRef} className="relative z-20 w-full sm:min-w-56 lg:w-auto">
               <button
@@ -487,17 +633,69 @@ export function RealMonthlyCycleView({
                 </div>
               )}
             </div>
+            </div>
           </div>
 
           <div className="relative z-0 mt-5 grid grid-cols-2 gap-2 border-t border-white/10 pt-4 sm:mt-6 sm:grid-cols-2 sm:pt-5 md:gap-3 lg:grid-cols-4">
             {summaryMetrics.map((metric) => <MetricCard key={metric.label} {...metric} className="progress-review-hero-metric" />)}
           </div>
+
+          {reportForActiveMonth && (
+            <div className="relative z-0 mt-3 space-y-2">
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-white/70">
+                <AppIcon className="ri-checkbox-circle-line text-emerald-300"></AppIcon>
+                <span>
+                  Report submitted for {monthLabel(activeMonth)}
+                  {reportForActiveMonth.submittedAt
+                    ? ` on ${new Date(reportForActiveMonth.submittedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`
+                    : ''}
+                </span>
+              </p>
+              {/* The documents the learner attached, openable straight from here
+                  so fetching one does not mean re-entering the update flow. */}
+              {reportForActiveMonth.attachments.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {reportForActiveMonth.attachments.map((attachment) => {
+                    const openable = canOpenAttachment(attachment);
+                    return (
+                      <button
+                        key={attachment.id}
+                        type="button"
+                        disabled={!openable || openingAttachmentId === attachment.id}
+                        onClick={() => void openAttachment(attachment)}
+                        title={openable ? `Open ${attachment.filename}` : 'Security scan in progress'}
+                        className={`inline-flex max-w-[15rem] items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-semibold ring-1 ring-inset transition ${
+                          openable
+                            ? 'bg-white/10 text-white ring-white/25 hover:bg-white/20'
+                            : 'cursor-not-allowed bg-white/5 text-white/45 ring-white/10'
+                        }`}
+                      >
+                        <AppIcon className={openingAttachmentId === attachment.id ? 'ri-loader-4-line animate-spin' : openable ? 'ri-attachment-2' : 'ri-shield-check-line'}></AppIcon>
+                        <span className="truncate">{attachment.filename}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {attachmentError && (
+                <p className="text-[11px] font-semibold text-red-200">
+                  <AppIcon className="ri-error-warning-line mr-1"></AppIcon>{attachmentError}
+                </p>
+              )}
+            </div>
+          )}
         </section>
 
         {(busy || loadError) && (
           <div className={`rounded-xl border px-4 py-3 text-sm ${loadError ? 'border-red-200 bg-red-50 text-red-700' : 'border-background-300 bg-background-50 text-foreground-500'}`}>
             <AppIcon className={`${loadError ? 'ri-error-warning-line' : 'ri-loader-4-line animate-spin'} mr-2`}></AppIcon>
             {loadError || 'Loading the complete monthly record…'}
+          </div>
+        )}
+
+        {reportsError && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <AppIcon className="ri-error-warning-line mr-2"></AppIcon>{reportsError}
           </div>
         )}
 
@@ -557,7 +755,8 @@ export function RealMonthlyCycleView({
                       <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-100 text-lg font-bold text-primary-700">{new Date(`${day}T12:00:00`).getDate()}</span>
                       <div>
                         <p className="text-xs font-semibold text-foreground-800">{formatDay(day).split(' ')[0]}</p>
-                        <p className="mt-0.5 text-[10px] text-foreground-400">{new Date(`${day}T12:00:00`).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })} · {activities.length} {activities.length === 1 ? 'event' : 'events'}</p>
+                        <p className="text-[11px] font-medium text-foreground-600">{new Date(`${day}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                        <p className="mt-0.5 text-[10px] text-foreground-400">{activities.length} {activities.length === 1 ? 'event' : 'events'}</p>
                       </div>
                     </div>
                   </div>
@@ -569,6 +768,38 @@ export function RealMonthlyCycleView({
             </div>
           )}
         </section>
+
+        <MonthlyReportWizard
+          open={wizardOpen}
+          onClose={() => setWizardOpen(false)}
+          onSubmitted={(report, signatureWasSaved) => {
+            // Replace the month's row in place so the hero switches to
+            // "Download report" without a refetch.
+            setReports((current) => [
+              report,
+              ...current.filter((item) => item.monthKey !== report.monthKey),
+            ]);
+            // Only a signature the learner asked to keep becomes the saved one,
+            // so the next month offers it without a refetch.
+            if (signatureWasSaved && report.signature) {
+              setSavedSignature(report.signature);
+              setSavedSignatureName(report.signedName || real?.name || '');
+            }
+            setWizardOpen(false);
+          }}
+          learnerKind={learnerKind}
+          learnerId={learnerId}
+          learnerName={real?.name || 'Learner'}
+          programmeName={real?.programme || ''}
+          monthKey={activeMonth}
+          monthLabel={monthLabel(activeMonth)}
+          activities={reportSnapshot}
+          metrics={reportMetrics}
+          existing={reportForActiveMonth}
+          programmeKsbs={programmeKsbs}
+          savedSignature={savedSignature}
+          savedSignatureName={savedSignatureName}
+        />
       </main>
     </WorkspaceShell>
   );

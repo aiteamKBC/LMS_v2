@@ -38,6 +38,10 @@ from login.permissions import learner_self_only, learner_self_or_staff
 logger = logging.getLogger(__name__)
 
 VALID_KINDS = {"commercial", "apprenticeship"}
+
+#: Returned when the marking lookup itself fails. Distinct from "" (never
+#: submitted) so a database problem locks the file rather than unlocking it.
+MARKING_STATUS_UNKNOWN = "unknown"
 #: What a learner may upload as evidence. Browsers send the type, so this is
 #: keyed on it — but a browser with no mapping for .docx sends
 #: application/octet-stream, and Windows sometimes sends the legacy
@@ -322,6 +326,18 @@ def list_evidence(request, kind, pk):
         logger.warning("Could not list evidence: %s", exc)
         return _error("Could not load evidence.", 502)
 
+    # Whether each file may still be removed, answered the same way delete_evidence
+    # answers it, so the page never offers a Remove the server will refuse.
+    #
+    # Cached per section: every file under one activity shares its answer, and
+    # an assignment can carry several.
+    marking_by_section = {}
+
+    def _marking(section_ref):
+        if section_ref not in marking_by_section:
+            marking_by_section[section_ref] = _marking_status(kind, pk, section_ref)
+        return marking_by_section[section_ref]
+
     return JsonResponse({"results": [
         {
             "id": str(r[0]), "filename": r[1], "contentType": r[2], "sizeBytes": r[3],
@@ -330,6 +346,16 @@ def list_evidence(request, kind, pk):
             "trainingPlanDetails": r[8],
             "componentRef": r[9],
             "progressEntryId": r[10],
+            # False once the activity has been handed in: the file is part of
+            # what was submitted for marking and is no longer the learner's to
+            # withdraw. The UI hides Remove on this rather than offering an
+            # action the server will refuse.
+            "canDelete": _marking(r[6]) == "",
+            # The coach's decision on the activity this file belongs to, or ""
+            # when it has not been handed in. Distinct from `status` above,
+            # which is the malware-scan verdict: a file can be stored and clean
+            # while no coach has ever looked at it.
+            "markingStatus": _marking(r[6]),
         }
         for r in rows
     ]})
@@ -369,28 +395,61 @@ def download_evidence(request, kind, pk, file_id):
     return JsonResponse({"url": url})
 
 
-def _is_submitted_for_marking(progress_entry_id):
-    """Has this progress entry actually been handed in?
+def _marking_status(kind, learner_id, section_ref):
+    """The coach's decision on the activity this file belongs to, or ''.
 
-    Today only `submit_component_progress` writes these rows and it always sets
-    `submitted_at`, so the mere existence of an entry means "submitted". Asking
-    about `submitted_at` directly states what the evidence gate actually cares
-    about, so a future draft/in-progress row would not silently start locking
-    learners out of files they have not handed in. Unreadable => treat as
-    submitted: refusing a delete is the safe direction.
+    '' means the work has not been handed in, so no coach has seen it. Anything
+    else is the status of the submission -- 'submitted_for_tutor_review' while
+    it waits, 'accepted' once a coach has validated it.
+
+    The learner's Evidence Library needs this because a file's own `status`
+    column is the malware-scan verdict from the upload pipeline: 'approved'
+    there means "scanned clean and stored", not "a coach agreed with it".
+    Labelling a freshly-uploaded file "Validated" told the learner their
+    evidence had been accepted when nobody had looked at it.
     """
+    section_ref = str(section_ref or "").strip()
+    if not section_ref:
+        return ""
     try:
         with _conn().cursor() as cur:
+            learner_ids = _learner_profile_ids_for_source(cur, learner_id)
+            candidates = sorted({str(learner_id), *(learner_ids or [])})
             cur.execute(
-                'select submitted_at is not null '
-                'from "Learner"."learner_progress_entries" where id = %s',
-                [progress_entry_id],
+                """
+                select status
+                  from "Learner"."learning_reflection_submissions"
+                 where activity_id = %s
+                   and learner_kind = %s
+                   and learner_id::text = any(%s)
+                 order by submitted_at desc nulls last
+                 limit 1
+                """,
+                [section_ref, kind, candidates],
             )
             row = cur.fetchone()
+            return str(row[0] or "") if row else ""
     except DatabaseError as exc:
-        logger.warning("Could not check progress entry %s: %s", progress_entry_id, exc)
-        return True
-    return bool(row[0]) if row else False
+        logger.warning(
+            "Could not read marking status for %s/%s: %s", kind, section_ref, exc
+        )
+        # Not "" -- that would read as "never submitted" and unlock a file the
+        # delete gate exists to protect. Refusing is the recoverable direction:
+        # a learner can ask a tutor, whereas a file removed from a submission a
+        # coach has read cannot be put back. The library shows it as pending,
+        # which is honest: we do not currently know.
+        return MARKING_STATUS_UNKNOWN
+
+
+def _is_submitted_for_marking(kind, learner_id, section_ref):
+    """Whether this activity has been handed to a coach, so its evidence is
+    no longer the learner's to withdraw.
+
+    Expressed in terms of _marking_status so the list endpoint and the delete
+    gate cannot drift apart: both ask one function the same question, and a
+    change to the rule lands in one place.
+    """
+    return _marking_status(kind, learner_id, section_ref) != ""
 
 
 @csrf_exempt
@@ -435,9 +494,7 @@ def delete_evidence(request, kind, pk, file_id):
         return _error("Evidence not found.", 404)
     blob_name, container, section_ref, progress_entry_id = row
 
-    if progress_entry_id is None:
-        progress_entry_id = _evidence_lineage(kind, pk, section_ref).get("progress_entry_id")
-    if progress_entry_id is not None and _is_submitted_for_marking(progress_entry_id):
+    if _is_submitted_for_marking(kind, pk, section_ref):
         return _error(
             "This file has been submitted for marking and can no longer be removed. "
             "Ask your tutor if it needs to be replaced.",

@@ -328,6 +328,14 @@ export function CreateEmployerModal({
           'Not permitted to invite',
           invite.error || 'You do not have permission to invite this person.',
         );
+      } else if (invite.awaitingInvitation) {
+        // The account exists but nobody has been emailed. That is the intended
+        // outcome of creating somebody: an administrator sends the invitation
+        // from Accounts once the record has been checked.
+        success(
+          label,
+          `${created} Send their invitation from Accounts in the Super Admin workspace when you are ready.`,
+        );
       } else if (!invite.invited) {
         success('Employer created', `${saved.name} was saved.`);
         error(
@@ -470,7 +478,7 @@ export function CreateEmployerModal({
             </header>
             <div className="p-4">
               <p className="text-[13px] font-medium text-foreground-800">
-                They will be emailed an invitation when you save.
+                They will get a platform account when you save.
               </p>
               <p className="text-[12px] text-foreground-500 mt-0.5">
                 A single-use link to set their own password, giving them access to the employer

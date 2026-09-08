@@ -3,7 +3,7 @@ import { useNavigate, type NavigateFunction } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
-import type { LearnerDetail, LearnerKind, LearnerQuizAttempt, LearnerQuizQuestionResult } from '@/api/learnerDetail';
+import type { ComponentMarking, LearnerDetail, LearnerKind, LearnerQuizAttempt, LearnerQuizQuestionResult } from '@/api/learnerDetail';
 import { fetchQuiz, type Quiz } from '@/api/quizzes';
 import { EvidenceFilesButton } from '@/components/feature/EvidenceFilesButton';
 import { buildLearnerJourney, componentTypeMeta, formatHoursMinutes, gradePercent, hasComponentContent, isOpenableComponent, type JourneyModule, type JourneyWeek, type JourneyComponent } from '@/utils/learnerJourney';
@@ -212,6 +212,7 @@ export function LearnerPlanBody({
                 kind={kind}
                 learnerId={learnerId}
                 completedIds={completedIds}
+                marking={real?.componentMarkingStatus}
                 compact={compact}
                 currentWeekKey={currentWeekKey}
               />
@@ -242,8 +243,10 @@ export function LearnerPlanBody({
 /* ═══════════════════════════════════════════════════════
    MODULE SECTION — collapsible group of weeks
    ═══════════════════════════════════════════════════════ */
-function ModuleSection({ module, defaultOpen, kind, learnerId, completedIds, compact, currentWeekKey }: {
+function ModuleSection({ module, defaultOpen, kind, learnerId, completedIds, marking, compact, currentWeekKey }: {
   module: JourneyModule; defaultOpen: boolean; kind?: string; learnerId?: string; completedIds: Set<string>;
+  /** Coach verdicts by component id, for activities awaiting validation. */
+  marking?: Record<string, ComponentMarking>;
   compact?: boolean; currentWeekKey?: string | null;
 }) {
   const [collapsed, setCollapsed] = useState(!defaultOpen);
@@ -293,6 +296,7 @@ function ModuleSection({ module, defaultOpen, kind, learnerId, completedIds, com
                     kind={kind}
                     learnerId={learnerId}
                     completedIds={completedIds}
+                    marking={marking}
                     compact={compact}
                     isCurrentWeek={compact && currentWeekKey === `${module.module}::${w.week}`}
                   />
@@ -309,8 +313,10 @@ function ModuleSection({ module, defaultOpen, kind, learnerId, completedIds, com
 /* ═══════════════════════════════════════════════════════
    WEEK CARD — collapsible list of components
    ═══════════════════════════════════════════════════════ */
-function WeekCard({ week, module, kind, learnerId, completedIds, compact, isCurrentWeek }: {
+function WeekCard({ week, module, kind, learnerId, completedIds, marking, compact, isCurrentWeek }: {
   week: JourneyWeek; module: string; kind?: string; learnerId?: string; completedIds: Set<string>;
+  /** Coach verdicts by component id, for activities awaiting validation. */
+  marking?: Record<string, ComponentMarking>;
   compact?: boolean; isCurrentWeek?: boolean;
 }) {
   const [open, setOpen] = useState(!!isCurrentWeek);
@@ -385,6 +391,7 @@ function WeekCard({ week, module, kind, learnerId, completedIds, compact, isCurr
                     learnerId={learnerId}
                     canStartQuiz={canStartQuiz}
                     completed={!!c.componentId && completedIds.has(c.componentId)}
+                    marking={c.componentId ? marking?.[c.componentId] : undefined}
                     navigate={navigate}
                   />
                 ))}
@@ -400,7 +407,33 @@ function WeekCard({ week, module, kind, learnerId, completedIds, compact, isCurr
 /* ═══════════════════════════════════════════════════════
    COMPONENT ROW — with quiz start/retake + past-attempt breakdown
    ═══════════════════════════════════════════════════════ */
-function ComponentRow({ component: c, module, week, kind, learnerId, canStartQuiz, completed, navigate }: {
+/** How an activity awaiting a coach reads to the learner.
+ *
+ * Deliberately never "Done" until the coach has accepted it: handing work in
+ * and having it marked are different things, and conflating them told learners
+ * their assignment was finished while it still sat in a queue.
+ */
+function verdictBadge(status: string | undefined, completed?: boolean) {
+  switch (status) {
+    case 'accepted':
+    case 'partial':
+      return { label: 'Accepted', icon: 'ri-checkbox-circle-line', tone: 'bg-emerald-100 text-emerald-700' };
+    case 'referred':
+    case 'rejected':
+      return { label: 'Rejected', icon: 'ri-close-circle-line', tone: 'bg-red-100 text-red-700' };
+    case 'submitted_for_tutor_review':
+    case 'escalated':
+      return { label: 'Pending coach review', icon: 'ri-time-line', tone: 'bg-amber-100 text-amber-700' };
+    default:
+      // Finished but not yet in a queue — a submission that has not landed, or
+      // one written before this flow existed.
+      return completed
+        ? { label: 'Pending coach review', icon: 'ri-time-line', tone: 'bg-amber-100 text-amber-700' }
+        : null;
+  }
+}
+
+function ComponentRow({ component: c, module, week, kind, learnerId, canStartQuiz, completed, marking, navigate }: {
   component: JourneyComponent;
   module: string;
   week: string;
@@ -408,15 +441,26 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
   learnerId?: string;
   canStartQuiz: boolean;
   completed?: boolean;
+  /** The coach's verdict, for an activity that needs validating. Absent for
+   *  everything else, which completes on its own. */
+  marking?: ComponentMarking;
   navigate: NavigateFunction;
 }) {
   const [showBreakdown, setShowBreakdown] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
   const [selectedAttempt, setSelectedAttempt] = useState<number | null>(null);
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const meta = componentTypeMeta(c.title);
   const attempts = c.quizAttempts || [];
   const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
   const contentAvailable = hasComponentContent(c);
+  // Only an activity the author sent for validation waits on a coach; the rest
+  // are finished the moment the learner completes them.
+  // Keyed on a real submission rather than the component's validation flag: a
+  // coach can review anything handed in, and most reflection components carry
+  // no flag, so gating on it hid genuine verdicts behind a plain "Done" tick.
+  const verdict = verdictBadge(marking?.status, false);
+  const needsValidation = !!verdict || !!c.tutorValidationRequired;
   const canOpenComponent = canStartQuiz && isOpenableComponent(c);
   // Only assignments collect uploaded evidence, so only they get the view-file affordance.
   const isAssignment = (c.type || '').toLowerCase() === 'assignment';
@@ -449,14 +493,21 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
       <div className={`flex w-full flex-wrap items-center gap-3 px-3 py-3 transition-colors sm:px-4 ${
         !contentAvailable
           ? 'bg-background-100/70 opacity-55 grayscale'
+          : verdict ? verdict.row
           : completed ? 'border-l-4 border-emerald-500 bg-emerald-50/70' : ''
       }`}>
-        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${completed ? 'bg-emerald-100' : meta.bg}`}>
-          <AppIcon className={`${completed ? 'ri-check-line text-emerald-700' : `${meta.icon} ${meta.color}`} text-[13px]`} />
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+          verdict ? verdict.iconBg : completed ? 'bg-emerald-100' : meta.bg
+        }`}>
+          <AppIcon className={`${
+            verdict ? verdict.iconFg : completed ? 'ri-check-line text-emerald-700' : `${meta.icon} ${meta.color}`
+          } text-[13px]`} />
         </div>
         <div className="flex-1 min-w-0">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">{meta.label}</span>
-          <p className={`text-sm font-semibold leading-snug ${completed ? 'text-emerald-950' : 'text-foreground-900'}`}>{meta.detail || meta.label}</p>
+          <p className={`text-sm font-semibold leading-snug ${
+            verdict ? verdict.title : completed ? 'text-emerald-950' : 'text-foreground-900'
+          }`}>{meta.detail || meta.label}</p>
         </div>
         {c.isQuiz && c.quizMeta?.questions != null ? (
           <span className="shrink-0 text-[11px] text-foreground-400 inline-flex items-center gap-1">
@@ -495,10 +546,29 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
             {lastAttempt ? 'Retake Quiz' : 'Start Quiz'}
           </button>
         )}
-        {completed && !c.isQuiz && (
+        {/* An activity that needs a coach is not done when the learner finishes
+            it — it is done when the coach accepts it. Showing "Done" on hand-in
+            told the learner their assignment was marked before anybody had
+            read it. */}
+        {completed && !c.isQuiz && !needsValidation && (
           <span className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 bg-emerald-100 text-emerald-700">
             <AppIcon className="ri-checkbox-circle-line text-[10px]" />Done
           </span>
+        )}
+        {needsValidation && verdict && (
+          <span className={`shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${verdict.tone}`}>
+            <AppIcon className={`${verdict.icon} text-[10px]`} />{verdict.label}
+          </span>
+        )}
+        {marking?.feedback && (
+          <button
+            type="button"
+            onClick={() => setShowFeedback((open) => !open)}
+            className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-xs font-semibold text-primary-800 transition-colors hover:bg-primary-100 sm:py-1.5 sm:text-[11px]"
+          >
+            <AppIcon className="ri-feedback-line text-[10px]" />
+            {showFeedback ? 'Hide feedback' : 'Coach feedback'}
+          </button>
         )}
         {!contentAvailable && (
           <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-background-200 px-2 py-0.5 text-[11px] font-semibold text-foreground-500">
@@ -529,6 +599,27 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
           </button>
         )}
       </div>
+
+      {/* The coach's own words, on request. Their name and the date are shown
+          with it so the learner knows who reviewed the work and when. */}
+      {showFeedback && marking?.feedback && (
+        <div className="px-4 pb-4 -mt-1">
+          <div className="rounded-lg border border-primary-200/70 bg-primary-50/50 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-primary-700">
+              Coach feedback
+            </p>
+            <p className="mt-2 whitespace-pre-wrap text-[13px] leading-6 text-foreground-700">
+              {marking.feedback}
+            </p>
+            {(marking.reviewedBy || marking.reviewedAt) && (
+              <p className="mt-2 text-[11px] text-foreground-400">
+                {marking.reviewedBy || 'Coach'}
+                {marking.reviewedAt ? ` · ${new Date(marking.reviewedAt).toLocaleDateString('en-GB')}` : ''}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Past-attempt breakdown */}
       {showBreakdown && hasBreakdown && viewAttempt && (

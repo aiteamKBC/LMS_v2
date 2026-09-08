@@ -68,8 +68,18 @@ def _authorise(inviter, target_role):
 
 
 def invite_subject(subject_type, subject_id, *, subject=None, inviter=None,
-                   invited_by=None, ip=None, user_agent=None):
-    """Ensure an account exists for a person and email them an invitation.
+                   invited_by=None, ip=None, user_agent=None, send_email=True):
+    """Ensure an account exists for a person, and optionally email them.
+
+    ``send_email=False`` provisions the account and stops there: the person
+    appears on the Accounts page with no password set, and an administrator
+    sends the invitation when they choose to with the button there. That is what
+    the creation forms now do -- enrolling somebody should not put a live
+    set-password link in their inbox before anybody has checked the record.
+
+    The account is still created either way, because the Accounts page lists
+    accounts: skipping it would leave the new person invisible on the very page
+    the invitation button lives on.
 
     ``inviter`` is the ``LoginAccount`` of the signed-in caller, or None for an
     anonymous request. It is **required** in practice: an anonymous caller is
@@ -92,6 +102,10 @@ def invite_subject(subject_type, subject_id, *, subject=None, inviter=None,
         "error": None,
         "expiresAt": None,
         "forbidden": False,
+        # True when an account was provisioned but deliberately not emailed, so
+        # the console can say "account created - send the invitation from
+        # Accounts" rather than implying a mail failure.
+        "awaitingInvitation": False,
     }
 
     # Resolve the role this invitation would confer *before* creating anything,
@@ -128,6 +142,14 @@ def invite_subject(subject_type, subject_id, *, subject=None, inviter=None,
         return result
 
     result["accountCreated"] = created
+
+    if not send_email:
+        # Provisioned, not invited. No invitation row is written either: a token
+        # nobody has been sent is a live credential with no audit trail behind
+        # it, and the Accounts button mints a fresh one when it is actually
+        # wanted.
+        result["awaitingInvitation"] = True
+        return result
 
     try:
         invitation, sent, detail = send_invitation(

@@ -1,6 +1,6 @@
+import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import type { LearnerDetail } from '@/api/learnerDetail';
-import type { EvidenceRecord } from '@/api/evidence';
 import { parseHours, formatHoursMinutes } from '@/utils/learnerJourney';
 import { useKsbProgress } from '@/hooks/useKsbProgress';
 import { Panel } from '@/components/ui/Panel';
@@ -11,7 +11,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
 
-export type ProgressTabKey = 'overview' | 'evidence' | 'otjh' | 'ksbs';
+export type ProgressTabKey = 'overview' | 'otjh' | 'ksbs';
 
 interface AttentionItem {
   tone: 'critical' | 'caution';
@@ -56,22 +56,14 @@ function ProgressStat({
 export function OverviewTab({
   real,
   realLoading,
-  evidenceRecords,
-  evidenceLoading,
   onNavigateTab,
 }: {
   real: LearnerDetail | null;
   realLoading: boolean;
-  evidenceRecords: EvidenceRecord[];
-  evidenceLoading: boolean;
   onNavigateTab: (tab: ProgressTabKey) => void;
 }) {
-  const loading = realLoading || evidenceLoading;
-
-  const totalEvidence = evidenceRecords.length;
-  const validatedEvidence = evidenceRecords.filter(r => r.status === 'approved').length;
-  const needsWorkEvidence = evidenceRecords.filter(r => r.status === 'rejected').length;
-  const evidencePct = totalEvidence > 0 ? Math.round((validatedEvidence / totalEvidence) * 100) : null;
+  const navigate = useNavigate();
+  const loading = realLoading;
 
   const completedHours = parseHours(real?.completedHours);
   const targetHours = parseHours(real?.targetHours);
@@ -87,12 +79,6 @@ export function OverviewTab({
   const ksbPct = ksbTotal > 0 ? Math.round((ksbComplete / ksbTotal) * 100) : null;
 
   const candidateItems: (AttentionItem | false)[] = [
-    needsWorkEvidence > 0 && {
-      tone: 'critical',
-      title: `${needsWorkEvidence} evidence ${needsWorkEvidence === 1 ? 'item needs' : 'items need'} rework`,
-      subtitle: 'Marked as needing changes — resubmit once addressed.',
-      tab: 'evidence', cta: 'Review evidence',
-    },
     otjhAtRisk && {
       tone: 'caution',
       title: `OTJH hours ${(otjhStatus || 'need attention').toLowerCase()}`,
@@ -115,14 +101,7 @@ export function OverviewTab({
   return (
     <div className="space-y-4">
       {/* Compact summary tiles */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <ProgressStat
-          icon="ri-book-open-line" label="Evidence" tone="brand" accent="purple"
-          value={`${validatedEvidence}/${totalEvidence}`}
-          percent={evidencePct}
-          caption={totalEvidence ? `${totalEvidence - validatedEvidence - needsWorkEvidence} awaiting review` : 'No evidence uploaded yet'}
-          onClick={() => onNavigateTab('evidence')}
-        />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <ProgressStat
           icon="ri-calendar-check-line" label="OTJ Hours" tone={otjhStatus ? (otjhAtRisk ? 'caution' : 'positive') : 'brand'} accent="green"
           value={formatHoursMinutes(completedHours)}
@@ -139,6 +118,13 @@ export function OverviewTab({
         />
       </div>
 
+      {/* Evidence lives on its own page — this is the way across to it. */}
+      <ActionRow
+        title="Evidence library"
+        subtitle="Upload new evidence and track what your tutor has validated."
+        actions={<RowAction label="Open evidence" icon="ri-arrow-right-line" onClick={() => navigate('/learner/evidence')} />}
+      />
+
       {/* Needs your attention */}
       <Panel>
         <SectionHeader
@@ -153,7 +139,7 @@ export function OverviewTab({
               variant="empty"
               icon="ri-checkbox-circle-line"
               title="You're all caught up"
-              description="Evidence, hours and KSBs all look on track."
+              description="Hours and KSBs both look on track."
             />
           ) : (
             attentionItems.map((item, i) => (

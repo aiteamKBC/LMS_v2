@@ -67,19 +67,63 @@ def role_for_staff(position, access=None):
     ``/access-required`` so the person is told to ask for one rather than
     dropped into a workspace they cannot use.
     """
-    resolved = (access or "").strip().lower()
-    if resolved == ACCESS_SUPER_ADMIN:
+    # Accepts either a single grant or the whole set: an account may hold
+    # several, and super-admin anywhere in them means the platform role. Passing
+    # a bare string keeps every existing caller working.
+    if isinstance(access, (set, frozenset, list, tuple)):
+        resolved = {str(value or "").strip().lower() for value in access}
+    else:
+        resolved = {(access or "").strip().lower()}
+    if ACCESS_SUPER_ADMIN in resolved:
         return ROLE_ADMIN
     return ROLE_STAFF
 
 
 def access_for_staff(subject):
-    """The staff row's recorded access, or "" when none has been set.
+    """The staff row's PRIMARY access, or "" when none has been set.
 
     Normalised to lower case so a value typed with different capitalisation
     still matches ``ACCESS_CHOICES``.
+
+    This is the grant the account lands on at sign-in. To ask whether an account
+    *may reach* something, use ``accesses_for_staff`` — an account holding coach
+    and tutor has only one of them here.
     """
     return (getattr(subject, "access", "") or "").strip().lower()
+
+
+def parse_access_list(value):
+    """Split the comma-separated ``Access_extra`` column into clean values."""
+    return [
+        part.strip().lower()
+        for part in str(value or "").split(",")
+        if part.strip()
+    ]
+
+
+def accesses_for_staff(subject):
+    """Every access grant the staff row holds, as a frozenset.
+
+    The union of ``Access`` (the primary) and ``Access_extra`` (any others).
+    This is the ONE place the two columns are combined; everything asking "may
+    this account reach X" goes through here rather than comparing a column, so
+    a person who both coaches and teaches is not refused one of them.
+
+    ``super-admin`` collapses the set to itself: it means "everything", so
+    listing anything alongside it is noise that would only invite a reader to
+    treat the extras as a limit.
+
+    Returns an empty set when nothing is recorded — "unset" means nobody has
+    decided yet, which ``require_access`` refuses.
+    """
+    primary = access_for_staff(subject)
+    values = set(parse_access_list(getattr(subject, "access_extra", "")))
+    if primary:
+        values.add(primary)
+    values = {value for value in values if value in ACCESS_CHOICES}
+    if ACCESS_SUPER_ADMIN in values:
+        return frozenset({ACCESS_SUPER_ADMIN})
+    return frozenset(values)
 
 
 def subject_model(subject_type):
@@ -129,7 +173,9 @@ def describe_subject(subject_type, subject):
     if subject_type == SUBJECT_STAFF:
         email = normalize_email(subject.email)
         name = (subject.username or "").strip() or (subject.preferred_name or "").strip()
-        return email or None, name or None, role_for_staff(subject.position, subject.access)
+        return email or None, name or None, role_for_staff(
+            subject.position, accesses_for_staff(subject)
+        )
 
     raise ValueError(f"Unknown subject_type: {subject_type!r}")
 
@@ -264,6 +310,21 @@ def account_payload(account, *, subject=None):
             # ask, rather than on a workspace that would refuse them anyway.
             payload["accessHome"] = ACCESS_HOME_ROUTES.get(access) or NO_ACCESS_ROUTE
             payload["accessNavRole"] = ACCESS_NAV_ROLES.get(access)
+            # Every grant the account holds, in canonical order, with where each
+            # one leads. `access`/`accessHome` above stay the PRIMARY — this is
+            # what lets the workspace switcher offer the others.
+            accesses = accesses_for_staff(subject)
+            payload["accesses"] = [
+                value for value in ACCESS_CHOICES if value in accesses
+            ]
+            payload["accessWorkspaces"] = [
+                {
+                    "access": value,
+                    "home": ACCESS_HOME_ROUTES.get(value) or NO_ACCESS_ROUTE,
+                    "navRole": ACCESS_NAV_ROLES.get(value),
+                }
+                for value in payload["accesses"]
+            ]
         elif account.subject_type == SUBJECT_LEARNER:
             payload["learnerType"] = subject.learner_type
             payload["programme"] = subject.programme

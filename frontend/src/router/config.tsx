@@ -55,6 +55,7 @@ const CoachMarkingReviewPage = lazyRoute(() => import("../pages/coach/marking-re
 const CoachMeetings = lazyRoute(() => import("../pages/coach/meetings/page"));
 const CoachMonthlyCycle = lazyRoute(() => import("../pages/coach/monthly-cycle/page"));
 const CoachOtjhReports = lazyRoute(() => import("../pages/coach/otjh-reports/page"));
+const CoachMonthlyReports = lazyRoute(() => import("../pages/coach/monthly-reports/page"));
 const CoachProgressReviews = lazyRoute(() => import("../pages/coach/progress-reviews/page"));
 const CoachReportsPage = lazyRoute(() => import("../pages/coach/reports/page"));
 const CoachTimetable = lazyRoute(() => import("../pages/coach/timetable/page"));
@@ -184,6 +185,7 @@ const NotFound = lazyRoute(() => import("../pages/NotFound"));
 const PaymentsPage = lazyRoute(() => import("../pages/finance/payments/page"));
 const PointsRulesPage = lazyRoute(() => import("../pages/engagement/points-rules/page"));
 const ProgressPage = lazyRoute(() => import("../pages/learner/progress/page"));
+const EvidencePage = lazyRoute(() => import("../pages/learner/evidence/page"));
 const ProgrammeDetailPage = lazyRoute(() => import("../pages/curriculum/programme-detail/page"));
 const QADashboard = lazyRoute(() => import("../pages/workspace/qa/page"));
 const QaDeliverySetup = lazyRoute(() => import("../pages/qa/delivery-setup/page"));
@@ -507,7 +509,11 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/evidence",
-    element: <ProgressPage />,
+    element: <EvidencePage />,
+  },
+  {
+    path: "/learner/evidence/:kind/:id",
+    element: <EvidencePage />,
   },
   {
     path: "/learner/quizzes",
@@ -702,6 +708,10 @@ const routes: RouteObject[] = [
   {
     path: "/coach/otjh-reports",
     element: <CoachOtjhReports />,
+  },
+  {
+    path: "/coach/monthly-reports",
+    element: <CoachMonthlyReports />,
   },
   {
     path: "/coach/evidence-validation",

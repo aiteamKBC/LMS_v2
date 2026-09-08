@@ -25,6 +25,8 @@ from .models import CommercialUser, EnrolmentUser
 from .time_tracking import TrackingSessionError, tracking_session_already_used, verify_tracking_session
 from login.permissions import learner_self_only
 
+from .marking_queue_entry import queue_for_marking, requires_tutor_validation
+
 logger = logging.getLogger(__name__)
 
 SOURCE_MODELS = {
@@ -343,10 +345,40 @@ def submit_component_progress(request, component_id):
     except DatabaseError as exc:
         return _error(f"Database error saving progress: {exc}", 502)
 
+    # An activity the author marked for tutor validation is handed in here, not
+    # finished here: the marking queue reads
+    # Learner.learning_reflection_submissions, so without a row there the coach
+    # never sees the work. Components with a reflection flow write their own on
+    # submit; an assignment authored with reflection_required=false has none, so
+    # it is written from the completion with the evidence the learner uploaded.
+    awaiting_validation = False
+    if requires_tutor_validation(component_id):
+        queue_for_marking(
+            component_id=component_id,
+            kind=kind,
+            learner_id=learner_id,
+            context={
+                "learnerName": str(getattr(source, "username", "") or "").strip(),
+                "programmeName": str(getattr(source, "programme", "") or "").strip(),
+                "activityType": component_type,
+                "activityTitle": component_title or "Activity",
+                "moduleTitle": module_title or "",
+                "weekTitle": week_title or "",
+                "plannedOtjh": reported_time,
+                "actualTimeHours": time_taken,
+                "progressEntryId": None,
+            },
+        )
+        awaiting_validation = True
+
     return JsonResponse({
         "record": record,
         "componentTitle": component_title or "Activity",
         "componentType": component_type,
         "week": week_title,
         "module": module_title,
+        # True when the activity now sits with a coach: the learner has finished
+        # their part, and the component shows as complete only once it is
+        # accepted.
+        "awaitingCoachValidation": awaiting_validation,
     })

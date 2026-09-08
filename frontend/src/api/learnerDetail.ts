@@ -48,6 +48,12 @@ export interface LearnerComponentEntry {
   downloadAllowed?: boolean;            // powerpoint download flag
   reflectionPrompt?: string | null;     // authored reflection prompt / learner guidance
   reflectionRequired?: boolean;         // false completes the activity without the reflection flow
+  /** Authored on the component: this activity must be validated by a tutor or
+   *  coach. The reflection is what creates the marking record, so an activity
+   *  with this set always goes through the reflection flow even when
+   *  reflectionRequired is false — otherwise it completes without ever
+   *  reaching the marking queue. */
+  tutorValidationRequired?: boolean;
   reflectionQuestion?: string | null;   // custom Apply-tab question; null uses the default copy
   resourceUrl?: string | null;          // generic external/download URL
   liveSessionUrl?: string | null;       // Microsoft Teams join URL for live sessions
@@ -108,6 +114,18 @@ export interface LearnerQuizAttempt {
   verifiedSeconds?: number | null;  // server-checked seconds actually spent; the OTJ total
 }
 
+/** A coach's verdict on one submitted activity. */
+export interface ComponentMarking {
+  /** '' when nothing has been handed in; 'submitted_for_tutor_review' while it
+   *  waits; 'accepted' | 'partial' once validated; 'referred' | 'rejected'
+   *  when sent back for more work. */
+  status: string;
+  /** The coach's written feedback. Empty until they have reviewed it. */
+  feedback: string;
+  reviewedBy: string;
+  reviewedAt: string | null;
+}
+
 export interface LearnerDetail {
   id: string;
   name: string;
@@ -137,6 +155,10 @@ export interface LearnerDetail {
   quizAttempts: LearnerQuizAttempt[];
   videoProgress?: LearnerVideoProgress[];
   componentProgress?: LearnerComponentProgress[];  // non-quiz, non-video completions
+  /** The coach's decision per component id, for activities that need
+   *  validating. An activity whose component sets tutorValidationRequired is
+   *  not finished until `status` reads 'accepted' — finishing only hands it in. */
+  componentMarkingStatus?: Record<string, ComponentMarking>;
   activityFeed?: LearnerActivityEntry[];   // newest first
   totalExpectedOtjh: number;
   plannedHours?: string;      // planned OTJ hours (also stored in Active_users.planned_hours)
