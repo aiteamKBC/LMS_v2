@@ -33,9 +33,19 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  const contentType = res.headers.get('content-type') || '';
+  let data: unknown = null;
+  if (text && contentType.includes('application/json')) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`The server returned invalid JSON (${res.status}).`);
+    }
+  }
   if (!res.ok) {
-    throw new Error((data && data.error) || `Request failed (${res.status})`);
+    const payload = data && typeof data === 'object' ? data as { error?: string } : null;
+    const htmlError = text.trim().startsWith('<') ? 'The server rejected the request before the API could handle it. If you uploaded a background image, try a smaller/compressed image.' : '';
+    throw new Error(payload?.error || htmlError || text.slice(0, 240) || `Request failed (${res.status})`);
   }
   return data as T;
 }
