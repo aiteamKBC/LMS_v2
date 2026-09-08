@@ -80,6 +80,15 @@ export default {
             900: 'oklch(var(--foreground-900) / <alpha-value>)',
             950: 'oklch(var(--foreground-950) / <alpha-value>)',
           },
+          brand: {
+            deep: 'var(--kbc-primary-deep)',
+            DEFAULT: 'var(--kbc-primary)',
+            secondary: 'var(--kbc-primary-secondary)',
+            accent: 'var(--kbc-primary-accent)',
+            light: 'var(--kbc-purple-soft)',
+            wash: 'var(--kbc-purple-wash)',
+            gold: 'var(--kbc-brand-gold)',
+          },
           surface: 'oklch(var(--llp-surface) / <alpha-value>)',
           card: 'oklch(var(--llp-card) / <alpha-value>)',
           popover: {

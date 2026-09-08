@@ -1,4 +1,6 @@
 from django.urls import path
+from old_otjh import views as transition_views
+from old_otjh.urls import urlpatterns as transition_patterns
 
 from .views import audit_blob, contract_file, evidence_file, learner_activity_stats, learner_audit, learner_audit_list, learner_signoff
 from .actual_hours import views as journal_hours_views
@@ -56,19 +58,19 @@ urlpatterns = [
     # separate from the legacy Audit.mre / Audit.learner_match routes while the
     # frontend is migrated incrementally.
     path("last-audit/health", last_audit_health, name="last-audit-health"),
-    path("last-audit/cohort/", last_audit_cohort, name="last-audit-cohort"),
+    path("last-audit/cohort/", transition_views.dispatch(last_audit_cohort, transition_views.cohort), name="last-audit-cohort"),
     path("last-audit/activities/", last_audit_activities, name="last-audit-activities"),
     path("last-audit/activity/", last_audit_activity, name="last-audit-activity"),
     path("last-audit/quiz-attempt/", last_audit_quiz_attempt, name="last-audit-quiz-attempt"),
     path("last-audit/attendance-sheet/", last_audit_attendance_sheet, name="last-audit-attendance-sheet"),
     # Employee-arranged monthly ledger (structured_manual_activities schema).
     # Additive: nothing above changes, the sibling learner-log-pro keeps working.
-    path("last-audit/manual/summary", manual_summary, name="last-audit-manual-summary"),
+    path("last-audit/manual/summary", transition_views.dispatch(manual_summary, transition_views.summary), name="last-audit-manual-summary"),
     path("last-audit/manual/cohort-totals", manual_cohort_totals, name="last-audit-manual-cohort-totals"),
     path("last-audit/manual/groups", manual_groups, name="last-audit-manual-groups"),
     path("last-audit/manual/group-activities", manual_group_activities, name="last-audit-manual-group-activities"),
     path("last-audit/manual/attendance-options", manual_attendance_options, name="last-audit-manual-attendance-options"),
-    path("last-audit/manual/rows", manual_rows, name="last-audit-manual-rows"),
+    path("last-audit/manual/rows", transition_views.dispatch(manual_rows, transition_views.rows), name="last-audit-manual-rows"),
     path("last-audit/manual/rows/bulk", manual_rows_bulk, name="last-audit-manual-rows-bulk"),
     path("last-audit/manual/rows/auto-import", manual_rows_auto_import, name="last-audit-manual-rows-auto-import"),
     path("last-audit/manual/import-candidates", manual_import_candidates, name="last-audit-manual-import-candidates"),
@@ -114,7 +116,7 @@ urlpatterns = [
     path("learners/", learner_audit_list, name="audit-learners"),
     path("learners/stats/", learner_activity_stats, name="audit-learner-activity-stats"),
     path("learners/<int:learner_id>/", learner_audit, name="audit-learner"),
-    path("learners/<int:learner_id>/signoff/", learner_signoff, name="audit-learner-signoff"),
+    path("learners/<int:learner_id>/signoff/", transition_views.dispatch(learner_signoff, transition_views.signoff), name="audit-learner-signoff"),
     path("contracts/<int:contract_id>/open", contract_file, name="audit-contract-file"),
     path("evidence/<str:evidence_id>/open", evidence_file, name="audit-evidence-file"),
     path("evidence/<str:evidence_id>/date", update_evidence_date, name="audit-evidence-date"),
@@ -126,3 +128,4 @@ urlpatterns = [
     path("contracts/upload", upload_contract, name="audit-contract-upload"),
     path("blob/", audit_blob, name="audit-blob"),
 ]
+urlpatterns += transition_patterns

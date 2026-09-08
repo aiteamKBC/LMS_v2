@@ -1,6 +1,7 @@
 import json
 from datetime import timedelta
 
+from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 from django.test import RequestFactory
 from django.utils import timezone
@@ -36,6 +37,17 @@ class Command(BaseCommand):
             default=[],
             help='Sync only this live-session series. May be supplied more than once.',
         )
+        parser.add_argument(
+            '--skip-coach-meetings',
+            action='store_true',
+            help='Only sync curriculum live sessions; skip MCM/PR/catch-up coach meeting snapshots.',
+        )
+        parser.add_argument(
+            '--coach-limit',
+            type=int,
+            default=100,
+            help='Maximum number of recently ended coach meetings to sync in one run (default: 100).',
+        )
 
     def handle(self, *args, **options):
         if not has_graph_credentials():
@@ -43,8 +55,10 @@ class Command(BaseCommand):
 
         lookback_hours = max(1, int(options['lookback_hours']))
         limit = max(1, int(options['limit']))
+        coach_limit = max(1, int(options['coach_limit']))
         requested_ids = [value.strip() for value in options['live_session_ids'] if value.strip()]
         now = timezone.now()
+        should_sync_coach_meetings = not options['skip_coach_meetings'] and not requested_ids
 
         queryset = LiveSessionOccurrence.objects.filter(
             scheduled_end__lte=now,
@@ -60,7 +74,9 @@ class Command(BaseCommand):
             queryset.order_by('scheduled_end').values_list('live_session_id', flat=True)
         ))[:limit]
         if not live_session_ids:
-            self.stdout.write('No recently ended Teams meetings need checking.')
+            self.stdout.write('No recently ended live-session Teams meetings need checking.')
+            if should_sync_coach_meetings:
+                self._sync_coach_meeting_snapshots(lookback_hours, coach_limit)
             return
 
         factory = RequestFactory()
@@ -108,6 +124,9 @@ class Command(BaseCommand):
             else:
                 succeeded += 1
 
+        if should_sync_coach_meetings:
+            self._sync_coach_meeting_snapshots(lookback_hours, coach_limit)
+
         self.stdout.write(self.style.SUCCESS(
             'Teams artifact sync finished: '
             f'{succeeded} succeeded, {partial} partial, {failed} failed; '
@@ -118,3 +137,17 @@ class Command(BaseCommand):
         ))
         if failed:
             raise CommandError(f'{failed} Teams meeting series failed to sync.')
+
+    def _sync_coach_meeting_snapshots(self, lookback_hours: int, limit: int) -> None:
+        self.stdout.write('Checking recently ended coach meetings for Teams artifacts and attendance...')
+        call_command(
+            'sync_coach_meeting_snapshots',
+            '--recent',
+            '--lookback-hours',
+            str(lookback_hours),
+            '--limit',
+            str(limit),
+            '--allow-missing-tables',
+            stdout=self.stdout,
+            stderr=self.stderr,
+        )

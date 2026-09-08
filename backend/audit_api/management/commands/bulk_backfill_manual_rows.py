@@ -59,6 +59,7 @@ def _signed_off_pairs():
                 SELECT learner_id::text, report_month
                 FROM "Audit"."monthly_audit_signoffs"
                 WHERE coalesce(signature_data, '') <> ''
+                  AND coalesce(audit_version, '') <> 'old-otjh-transition-v1'
                 GROUP BY learner_id::text, report_month
                 HAVING count(DISTINCT signer_role) >= 2
                 """

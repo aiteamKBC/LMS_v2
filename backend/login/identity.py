@@ -306,6 +306,8 @@ def account_payload(account, *, subject=None):
             # route and the permission it reflects change in one place.
             access = access_for_staff(subject)
             payload["access"] = access
+            if access == 'record-monitor':
+                payload['permissions'] = ['previous_records.view']
             # No grant: land them on the page that explains why and lets them
             # ask, rather than on a workspace that would refuse them anyway.
             payload["accessHome"] = ACCESS_HOME_ROUTES.get(access) or NO_ACCESS_ROUTE
@@ -328,6 +330,8 @@ def account_payload(account, *, subject=None):
         elif account.subject_type == SUBJECT_LEARNER:
             payload["learnerType"] = subject.learner_type
             payload["programme"] = subject.programme
+            from old_otjh.service import enabled
+            payload["hasLegacyRecord"] = enabled() and bool(str(getattr(subject, 'aptem_id', '') or '').strip())
         elif account.subject_type == SUBJECT_EMPLOYER:
             payload["organisationIds"] = list(subject.employer_group_ids or [])
 

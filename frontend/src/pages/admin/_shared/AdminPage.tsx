@@ -49,7 +49,7 @@ export function AdminPage({
       userRole="Super Administrator"
     >
       <div className="p-3 md:p-6 space-y-4 md:space-y-6">
-        <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 30%, oklch(var(--primary-100)) 66%, oklch(var(--background-50)) 100%)' }}>
+        <div className="super-admin-hero relative rounded-2xl overflow-hidden" style={{ background: 'var(--kbc-hero-gradient)' }}>
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-5 sm:p-7 flex flex-col sm:flex-row items-start sm:items-center gap-5">

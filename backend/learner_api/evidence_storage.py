@@ -11,6 +11,7 @@ to APPROVED or moved to REJECTED. Callers explicitly choose which containers
 may receive a short-lived read-only SAS URL.
 """
 from datetime import datetime, timedelta, timezone
+from pathlib import PurePosixPath
 from time import sleep
 from urllib.parse import quote, unquote, urlparse
 
@@ -120,10 +121,15 @@ def move_blob(src_container, dst_container, blob_name):
     src.delete_blob()
 
 
-def download_blob_bytes(container, blob_name) -> bytes:
-    """Used by the scanner to pull a file out of quarantine for inspection."""
+def download_blob_bytes(container, blob_name, max_bytes=None) -> bytes:
+    """Download a blob, optionally refusing content above a safe byte limit."""
     client = _service_client().get_blob_client(container, blob_name)
-    return client.download_blob().readall()
+    if max_bytes is None:
+        return client.download_blob().readall()
+    content = client.download_blob(offset=0, length=max_bytes + 1).readall()
+    if len(content) > max_bytes:
+        raise ValueError("Blob exceeds the permitted preview size.")
+    return content
 
 
 def blob_exists(container, blob_name) -> bool:
@@ -161,7 +167,7 @@ def delete_blob(container, blob_name):
     )
 
 
-def get_read_sas(container, blob_name) -> str:
+def get_read_sas(container, blob_name, *, content_disposition=None) -> str:
     """Build a short-lived read-only URL for an explicitly authorised blob."""
     token = generate_blob_sas(
         account_name=settings.AZURE_STORAGE_ACCOUNT,
@@ -170,6 +176,7 @@ def get_read_sas(container, blob_name) -> str:
         account_key=settings.AZURE_STORAGE_KEY,
         permission=BlobSasPermissions(read=True),
         expiry=datetime.now(timezone.utc) + timedelta(minutes=settings.AZURE_SAS_TTL_MINUTES),
+        content_disposition=content_disposition,
     )
     return f"{blob_url(container, blob_name)}?{token}"
 
@@ -185,6 +192,14 @@ def resolve_read_url(stored_url, allowed_containers) -> str:
     return get_read_sas(container, blob_name)
 
 
-def get_download_sas(container, blob_name) -> str:
+def get_download_sas(container, blob_name, filename=None) -> str:
     """Backward-compatible approved-evidence download helper."""
-    return get_read_sas(container, blob_name)
+    if not filename:
+        return get_read_sas(container, blob_name)
+    # Response headers are signed into the SAS.  Strip control/quote characters
+    # so a stored display name cannot inject another Content-Disposition header.
+    safe_name = PurePosixPath(str(filename).replace("\\", "/")).name
+    safe_name = safe_name.replace('"', "").replace("\r", "").replace("\n", "") or "document"
+    return get_read_sas(
+        container, blob_name, content_disposition=f'attachment; filename="{safe_name}"',
+    )

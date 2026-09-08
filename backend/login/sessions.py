@@ -445,8 +445,9 @@ def _refresh_staff_role(account):
     changed, so this costs one indexed read per authenticated staff request and
     no write on the overwhelming majority of them.
 
-    Never raises: a failure here must not sign somebody out. The stale role is
-    then still in force for that request, which is the pre-existing behaviour.
+    Never raises: a failure here must not sign somebody out. The API gate
+    reports unreadable staff grants as temporary unavailability instead of
+    letting a restricted monitoring account use a broader stale role.
     """
     if account is None or account.subject_type != "staff":
         return
@@ -463,16 +464,17 @@ def _refresh_staff_role(account):
             .first()
         )
         if row is None:
+            account._staff_access_unavailable = True
             return
-        # The whole grant set, not just the primary: super-admin held as an
-        # additional access must still carry the platform role.
-        derived = role_for_staff(row.position, accesses_for_staff(row))
+        account._staff_access = (row.access or '').strip().lower()
+        derived = role_for_staff(row.position, row.access)
         if derived != account.role:
             account.role = derived
             account.save(update_fields=["role", "updated_at"])
     except DatabaseError:
-        pass
+        account._staff_access_unavailable = True
     except Exception:  # noqa: BLE001 - never break authentication over this
+        account._staff_access_unavailable = True
         import logging
 
         logging.getLogger("login").exception("Could not refresh staff role")

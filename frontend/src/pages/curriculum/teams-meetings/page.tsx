@@ -523,6 +523,20 @@ interface PeopleForm {
   coOrganizers: string;
 }
 
+interface CreateForm {
+  title: string;
+  organizerEmail: string;
+  attendees: string;
+  presenters: string;
+  coOrganizers: string;
+  details: string;
+  durationMinutes: string;
+  lobbyBypass: string;
+  recording: string;
+  spokenLanguage: string;
+  meetingType: string;
+}
+
 export default function CurriculumTeamsMeetingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { programmes, cohorts, groups, modules, tutors, holidays, loading, loaded, error, reload } = useCurriculumEntities({ includeHolidays: true, includeStaff: true });
@@ -574,7 +588,11 @@ export default function CurriculumTeamsMeetingsPage() {
   }, [autoSyncEnabled]);
 
   const peopleDrawer = useDrawerState<PeopleForm>({ attendees: '', presenters: '', coOrganizers: '' });
-  const createDrawer = useDrawerState<TeamsCalendarForm>(emptyTeamsCalendarForm());
+  const createDrawer = useDrawerState<CreateForm>({
+    title: '', organizerEmail: '', attendees: '', presenters: '', coOrganizers: '', details: '',
+    durationMinutes: String(DEFAULT_DURATION_MINUTES),
+    lobbyBypass: 'invited', recording: 'record-transcribe', spokenLanguage: 'en-GB', meetingType: 'live-session',
+  });
   const [drawerTarget, setDrawerTarget] = useState<MeetingRow | null>(null);
   const [invitedPrefilling, setInvitedPrefilling] = useState(false);
   // Guards a fetchModuleMeetingInvitees() response against landing after the
@@ -1040,8 +1058,6 @@ export default function CurriculumTeamsMeetingsPage() {
     peopleDrawer.openWith({
       attendees: attendees.join('\n'),
       presenters: presenters.join('\n'),
-      // Nothing in the LMS decides who co-runs a meeting, so this list is only
-      // ever what was typed here last time -- read back off the saved series.
       coOrganizers: (row.summary?.coOrganizers || []).join('\n'),
     });
   };
@@ -1051,10 +1067,10 @@ export default function CurriculumTeamsMeetingsPage() {
     const summary = row?.summary;
     if (!row || !summary) return;
     const presenters = emailList(peopleDrawer.form.presenters);
-    const attendees = emailList(peopleDrawer.form.attendees);
     const coOrganizers = emailList(peopleDrawer.form.coOrganizers);
-    if (!presenters.length && !attendees.length) {
-      peopleDrawer.setError('Name at least one attendee or presenter.');
+    const attendees = emailList(peopleDrawer.form.attendees);
+    if (!coOrganizers.length && !presenters.length && !attendees.length) {
+      peopleDrawer.setError('Name at least one co-organizer, presenter or attendee.');
       return;
     }
     // Only the invitation list is being changed, so the dates sent back are the
@@ -1086,6 +1102,7 @@ export default function CurriculumTeamsMeetingsPage() {
         scheduledOccurrences: occurrences,
         attendees,
         presenters,
+        coOrganizers,
         coOrganizers,
       });
       peopleDrawer.close();
@@ -1125,6 +1142,8 @@ export default function CurriculumTeamsMeetingsPage() {
       // in, so the invite list always matches who is actually assigned.
       attendees: attendees.join('\n'),
       presenters: presenters.join('\n'),
+      coOrganizers: '',
+      details: '',
       durationMinutes: String(row.durationMinutes),
     });
     // Starts from blank, so there is nothing typed by hand to overwrite.
@@ -1141,8 +1160,33 @@ export default function CurriculumTeamsMeetingsPage() {
       return;
     }
     if (!row.sessions.length) { createDrawer.setError('This module has no stored session dates yet.'); return; }
-    const input = buildTeamsCalendarInput(row, form);
-    const occurrences = input.scheduledOccurrences || [];
+    const meetingTitle = cleanText(row.name, 'Live session');
+    const duration = Math.max(15, Number(form.durationMinutes) || row.durationMinutes);
+    const occurrences = scheduledOccurrences(row).map(occurrence => ({ ...occurrence, durationMinutes: duration }));
+    const input: TeamsMeetingInput = {
+      title: meetingTitle,
+      organizerEmail: organizer,
+      attendees: emailList(form.attendees),
+      presenters: emailList(form.presenters),
+      coOrganizers: emailList(form.coOrganizers),
+      moduleCatalogueId: row.catalogueId,
+      moduleTitle: meetingTitle,
+      localStartDateTime: sessionNaiveLocal(row.sessions[0]),
+      startDateTimeUtc: occurrences[0].startDateTimeUtc,
+      durationMinutes: duration,
+      repeat: occurrences.length > 1 ? 'weekly' : 'none',
+      repeatOccurrences: occurrences.length,
+      scheduledOccurrences: occurrences,
+      lobbyBypass: form.lobbyBypass,
+      recording: form.recording,
+      spokenLanguage: form.spokenLanguage,
+      meetingType: form.meetingType,
+      details: form.details,
+      requestResponses: true,
+      allowNewTimeProposals: true,
+      hideAttendees: false,
+      transactionId: `TEAMS-${row.catalogueId}`,
+    };
     createDrawer.setSaving(true);
     createDrawer.setError(null);
     try {
@@ -1152,7 +1196,11 @@ export default function CurriculumTeamsMeetingsPage() {
       // endpoint is the one place that writes it into all of them.
       let attached = 0;
       try {
-        attached = (await restoreModuleTeamsMeeting(row.catalogueId)).updatedComponents;
+        const attachment = await restoreModuleTeamsMeeting(
+          row.catalogueId,
+          { createMissingComponents: true },
+        );
+        attached = (attachment.updatedComponents || 0) + (attachment.createdComponents || 0);
       } catch {
         setNotice({
           tone: 'warning',
@@ -1614,10 +1662,10 @@ export default function CurriculumTeamsMeetingsPage() {
                       : 'None — everyone joins as an attendee'}
                   />
                   <DetailRow
-                    label="Co-organisers"
+                    label={'Co-organizers'}
                     value={(selected.summary.coOrganizers || []).length
                       ? (selected.summary.coOrganizers || []).join(', ')
-                      : 'None — only the organizer can manage this meeting'}
+                      : 'None'}
                   />
                   <DetailRow
                     label="Attendees"
@@ -1745,20 +1793,138 @@ export default function CurriculumTeamsMeetingsPage() {
                 </p>
               </div>
             ) : (
-              /* No calendar yet, so this dialog *is* the create form -- the very
-                 same one the Module Builder opens from a live session, rendered
-                 from the one component both doors share so they cannot drift. */
-              <>
-                <TeamsCalendarFormBody
-                  row={selected}
-                  form={createDrawer.form}
-                  patch={createDrawer.patch}
-                  holidayLabelFor={holidayLabelFor}
-                  prefilling={invitedPrefilling}
-                  onPrefill={() => void prefillInvitees(selected, createDrawer.patch)}
-                />
-                {createDrawer.error && <InlineError message={createDrawer.error} />}
-              </>
+              /* No calendar yet, so this dialog *is* the create form: the dates
+                 it will be built on, the settings Teams needs, and one Create
+                 at the end. There is no second drawer to step through. */
+              <div className="space-y-4">
+                <div className="flex items-start gap-3 rounded-xl border border-primary-100 bg-primary-50/60 px-4 py-3">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-600 text-white">
+                    <AppIcon className="ri-microsoft-teams-line text-base"></AppIcon>
+                  </span>
+                  <p className="text-[12px] text-foreground-600">
+                    {selected.sessions.length
+                      ? `Create puts one Teams meeting on each of the ${selected.sessions.length} session date${selected.sessions.length === 1 ? '' : 's'} below and writes the join link into this module’s live-session components. The dates come from the module, not from this form.`
+                      : 'This module has no stored session dates yet, so there is nothing to put on a calendar. Save its schedule first — those dates are what the calendar is built from.'}
+                  </p>
+                </div>
+
+                {Boolean(selected.sessions.length) && (
+                  <>
+                    <ModuleSessionSchedulePreview
+                      row={selected}
+                      title="Dates the calendar will be created on"
+                      holidayLabelFor={holidayLabelFor}
+                    />
+
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <FormField
+                        label="Organizer Microsoft 365 email"
+                        required
+                        hint="The calendar this series is created in. The selected account must allow this app to manage Teams meetings."
+                      >
+                        <TextControl
+                          value={createDrawer.form.organizerEmail}
+                          onChange={value => createDrawer.patch({ organizerEmail: value })}
+                        />
+                      </FormField>
+                      <FormField
+                        label="Co-organizers"
+                        hint="Internal Microsoft 365 users who can manage the meeting. They are invited automatically."
+                      >
+                        <EmailChipsInput
+                          value={createDrawer.form.coOrganizers}
+                          onChange={value => createDrawer.patch({ coOrganizers: value })}
+                        />
+                      </FormField>
+                      <FormField
+                        label="Duration"
+                        hint={`First session ${calendarLabel(selected.plannedStarts[0])}.`}
+                      >
+                        <SelectControl
+                          value={createDrawer.form.durationMinutes}
+                          onChange={value => createDrawer.patch({ durationMinutes: value })}
+                          options={[
+                            { value: '30', label: '30 minutes' },
+                            { value: '45', label: '45 minutes' },
+                            { value: '60', label: '1 hour' },
+                            { value: '90', label: '1 hour 30 minutes' },
+                            { value: '120', label: '2 hours' },
+                            { value: '180', label: '3 hours' },
+                          ]}
+                        />
+                      </FormField>
+                      <FormField label="Who can bypass the lobby?">
+                        <SelectControl
+                          value={createDrawer.form.lobbyBypass}
+                          onChange={value => createDrawer.patch({ lobbyBypass: value })}
+                          options={[
+                            { value: 'invited', label: 'People invited to this meeting' },
+                            { value: 'organization', label: 'People in my organization' },
+                            { value: 'organization-excluding-guests', label: 'Organization, excluding guests' },
+                            { value: 'everyone', label: 'Everyone' },
+                            { value: 'organizer', label: 'Only organizers' },
+                          ]}
+                        />
+                      </FormField>
+                      <FormField label="Recording">
+                        <SelectControl
+                          value={createDrawer.form.recording}
+                          onChange={value => createDrawer.patch({ recording: value })}
+                          options={[
+                            { value: 'none', label: 'Do not start automatically' },
+                            { value: 'record', label: 'Record automatically' },
+                            { value: 'record-transcribe', label: 'Record and transcribe' },
+                          ]}
+                        />
+                      </FormField>
+                      <FormField label="Spoken language">
+                        <SelectControl
+                          value={createDrawer.form.spokenLanguage}
+                          onChange={value => createDrawer.patch({ spokenLanguage: value })}
+                          options={[
+                            { value: 'en-GB', label: 'English (UK)' },
+                            { value: 'en-US', label: 'English (US)' },
+                            { value: 'ar-EG', label: 'Arabic (Egypt)' },
+                            { value: 'fr-FR', label: 'French' },
+                          ]}
+                        />
+                      </FormField>
+                      <FormField label="Details" hint="Optional. Included in the calendar invitation.">
+                        <TextAreaControl
+                          value={createDrawer.form.details}
+                          onChange={value => createDrawer.patch({ details: value })}
+                          rows={2}
+                        />
+                      </FormField>
+                      <div className="sm:col-span-2 -mb-2 flex items-center justify-end">
+                        <button
+                          type="button"
+                          disabled={invitedPrefilling}
+                          onClick={() => void prefillInvitees(selected, createDrawer.patch)}
+                          className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:underline disabled:opacity-50"
+                        >
+                          <AppIcon className="ri-refresh-line text-sm"></AppIcon>
+                          {invitedPrefilling ? 'Loading…' : "Prefill from the module's tutor and learner plans"}
+                        </button>
+                      </div>
+                      <FormField label="Presenters" hint="These people can share and record.">
+                        <EmailChipsInput
+                          value={createDrawer.form.presenters}
+                          onChange={value => createDrawer.patch({ presenters: value })}
+                        />
+                      </FormField>
+                      <FormField label="Attendees" hint="Presenters are invited automatically.">
+                        <EmailChipsInput
+                          value={createDrawer.form.attendees}
+                          onChange={value => createDrawer.patch({ attendees: value })}
+                        />
+                      </FormField>
+                    </div>
+
+                    {createDrawer.error && <InlineError message={createDrawer.error} />}
+                  </>
+                )}
+              </div>
             )}
           </Modal>
         )}
@@ -1809,7 +1975,10 @@ export default function CurriculumTeamsMeetingsPage() {
         <FormField label="Presenters" hint="Only these people get the presenter role in Teams.">
           <EmailChipsInput value={peopleDrawer.form.presenters} onChange={value => peopleDrawer.patch({ presenters: value })} />
         </FormField>
-        <FormField label="Co-organisers" hint="They run the meeting with the organizer — recording, lobby and meeting options. Invited automatically.">
+        <FormField
+          label={'Co-organizers'}
+          hint={'Internal Microsoft 365 users who can manage the meeting. They are invited automatically.'}
+        >
           <EmailChipsInput value={peopleDrawer.form.coOrganizers} onChange={value => peopleDrawer.patch({ coOrganizers: value })} />
         </FormField>
         <FormField label="Attendees" hint="Presenters are invited automatically — no need to repeat them.">

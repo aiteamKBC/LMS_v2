@@ -42,11 +42,11 @@ function makeSession(overrides: Partial<DeliverySession>): DeliverySession {
 }
 
 describe('sessionMonthBucket', () => {
-  it('buckets a dated session by its UTC month regardless of local zone', () => {
-    // Late-evening UTC on the last day of the month must not roll into next month.
+  it('buckets a timestamp by the UK calendar month', () => {
+    // During BST this instant is 00:30 on 1 September in London.
     const bucket = sessionMonthBucket('2026-08-31T23:30:00Z');
-    expect(bucket.key).toBe('2026-08');
-    expect(bucket.label).toBe('August 2026');
+    expect(bucket.key).toBe('2026-09');
+    expect(bucket.label).toBe('September 2026');
   });
 
   it('keeps a date-only string on its own calendar day', () => {
@@ -169,15 +169,15 @@ describe('completed session artifacts', () => {
     expect(rows).toEqual([expect.objectContaining({
       'Attendee name': 'Ahmed Lotfi',
       Email: 'ahmed@example.com',
-      'Meeting started': '2026-08-31T08:00:00Z',
+      'Meeting started (UK)': '31 Aug 2026, 09:00:00 BST',
       Status: 'Attended',
       Expected: 'Yes',
       Role: 'presenter',
       'Join sessions': 1,
       'Time in session': '19m',
       'Attendance seconds': 1140,
-      'Joined at': '2026-08-31T08:00:00Z',
-      'Left at': '2026-08-31T08:19:00Z',
+      'Joined at (UK)': '31 Aug 2026, 09:00:00 BST',
+      'Left at (UK)': '31 Aug 2026, 09:19:00 BST',
     })]);
   });
 
@@ -216,5 +216,15 @@ describe('completed session artifacts', () => {
     expect(groups.map(group => group.dateKey)).toEqual(['2026-09-02', '2026-09-03']);
     expect(groups.map(group => group.sheetName)).toEqual(['02 Sept 2026', '03 Sept 2026']);
     expect(groups[0].attendance.map(person => person.id)).toEqual(['ATT-DAY-2-A', 'ATT-DAY-2-B']);
+  });
+
+  it('groups an attendance run by its London date across a UTC midnight boundary', () => {
+    const groups = attendanceSheetGroups([{
+      id: 'ATT-BST-MIDNIGHT', occurrence_id: 'OCC-1', display_name: 'Late attendee',
+      attendance_report_start: '2026-08-31T23:30:00Z', intervals: [],
+    }]);
+
+    expect(groups[0].dateKey).toBe('2026-09-01');
+    expect(groups[0].sheetName).toBe('01 Sept 2026');
   });
 });

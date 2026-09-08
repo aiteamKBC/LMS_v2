@@ -688,7 +688,7 @@ function PodiumSpot({ learner, rank, revealDelay, gapLabel, reduceMotion, onOpen
 function TopAchieverCard({ learner }: { learner: RankedLearner }) {
   const initials = learner.name.split(' ').map(w => w[0]).join('').slice(0, 2);
   return (
-    <div className="w-full rounded-xl bg-white p-4 flex items-center gap-4 border" style={{ borderColor: withAlpha(BRAND_PURPLE, 0.15) }}>
+    <div className="engagement-top-achiever w-full rounded-xl bg-white p-4 flex items-center gap-4 border" style={{ borderColor: withAlpha(BRAND_PURPLE, 0.15) }}>
       {/* Avatar */}
       <div className="w-14 h-14 rounded-full border-4 border-white bg-primary-700 shrink-0 overflow-hidden" style={{ boxShadow: `0 0 0 2px ${GOLD}` }}>
         <div className="w-full h-full flex items-center justify-center text-base font-semibold text-white">{initials}</div>
@@ -699,17 +699,17 @@ function TopAchieverCard({ learner }: { learner: RankedLearner }) {
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-medium bg-accent-50 text-accent-600 border border-accent-200/60 mb-1">
           <AppIcon className="ri-vip-crown-fill text-[10px]"></AppIcon> Top achiever
         </span>
-        <p className="text-sm font-medium truncate" style={{ color: TEXT_DARK }}>{learner.name}</p>
-        <p className="text-[11px] truncate" style={{ color: TEXT_MUTED }}>{learner.cohort || '—'}</p>
+        <p className="engagement-top-achiever__name text-sm font-medium truncate" style={{ color: TEXT_DARK }}>{learner.name}</p>
+        <p className="engagement-top-achiever__cohort text-[11px] truncate" style={{ color: TEXT_MUTED }}>{learner.cohort || '—'}</p>
       </div>
 
       {/* Points + this-month delta, right-aligned */}
       <div className="text-right shrink-0">
-        <p className="text-xl font-medium leading-tight" style={{ color: BRAND_PURPLE }}>
+        <p className="engagement-top-achiever__points text-xl font-medium leading-tight" style={{ color: BRAND_PURPLE }}>
           {learner.points.toLocaleString()}
-          <span className="text-[9px] font-medium ml-1" style={{ color: TEXT_MUTED }}>pts</span>
+          <span className="engagement-top-achiever__meta text-[9px] font-medium ml-1" style={{ color: TEXT_MUTED }}>pts</span>
         </p>
-        <p className="mt-0.5 text-[11px] font-medium" style={{ color: TEXT_MUTED }}>
+        <p className="engagement-top-achiever__meta mt-0.5 text-[11px] font-medium" style={{ color: TEXT_MUTED }}>
           +{learner.pointsThisMonth} this month
         </p>
       </div>

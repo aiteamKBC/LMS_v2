@@ -234,6 +234,12 @@ if not SECRET_KEY:
 # `setdefault` so an explicit API_REQUIRE_AUTH=1 in the environment still wins.
 if "test" in sys.argv:
     os.environ.setdefault("API_REQUIRE_AUTH", "0")
+    # Curriculum cache warming runs on a background thread that reads the
+    # database. Under the test runner that thread would race the per-test
+    # transaction rollback and touch a connection the test case owns, so the
+    # suite runs with warming off. `setdefault` keeps an explicit
+    # CURRICULUM_WARM=1 working for the tests that cover warming itself.
+    os.environ.setdefault("CURRICULUM_WARM", "0")
 
 CHAT_DEMO_BOOTSTRAP_ENABLED = os.environ.get(
     "CHAT_DEMO_BOOTSTRAP_ENABLED",
@@ -248,6 +254,9 @@ CHAT_DEMO_BOOTSTRAP_ENABLED = os.environ.get(
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
+EVIDENCE_AUDIT_SERVICE_URL = os.environ.get(
+    "EVIDENCE_AUDIT_SERVICE_URL", "https://fetch-evidence.kentbusinesscollege.net"
+).rstrip("/")
 OPENAI_TRANSCRIPTION_MODEL = os.environ.get("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe")
 OPENAI_REFLECTION_MODEL = os.environ.get("OPENAI_REFLECTION_MODEL", "gpt-4o-mini")
 OPENAI_MODERATION_MODEL = os.environ.get("OPENAI_MODERATION_MODEL", "omni-moderation-latest")
@@ -339,6 +348,12 @@ PERFORMANCE_DIAGNOSTICS = os.environ.get('PERFORMANCE_DIAGNOSTICS', 'false').low
 SLOW_REQUEST_THRESHOLD_MS = int(os.environ.get('SLOW_REQUEST_THRESHOLD_MS', '750'))
 
 ROOT_URLCONF = 'config.urls'
+
+# Enable only after the owner applies the reviewed SQL metadata tables.
+OLD_OTJH_ENABLED = os.environ.get('OLD_OTJH_ENABLED', 'false').lower() == 'true'
+# Optional email-keyed overrides for the bundled public coach booking catalogue.
+# Parsing/validation stays local so links never delay record access.
+OLD_OTJH_COACH_BOOKING_URLS = os.environ.get('OLD_OTJH_COACH_BOOKING_URLS', '{}')
 
 TEMPLATES = [
     {
@@ -687,7 +702,10 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+# One business timezone across the LMS. With USE_TZ enabled Django still stores
+# absolute instants in UTC, while localtime/localdate and user-facing values use
+# the UK's GMT/BST rules automatically.
+TIME_ZONE = os.environ.get('SYSTEM_TIME_ZONE', 'Europe/London').strip() or 'Europe/London'
 
 USE_I18N = True
 
@@ -709,6 +727,12 @@ MEDIA_ROOT = BASE_DIR
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# Certificate templates can store a compressed background image inside their
+# JSON layout config. Django's default request-body limit is too small for that
+# and returns an HTML 400 page before the API view can respond with JSON.
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('DATA_UPLOAD_MAX_MEMORY_SIZE', str(12 * 1024 * 1024)))
+FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('FILE_UPLOAD_MAX_MEMORY_SIZE', str(12 * 1024 * 1024)))
 
 # Azure Blob Storage (learner evidence uploads — see learner_api/evidence_storage.py).
 AZURE_STORAGE_ACCOUNT = os.environ.get("AZURE_STORAGE_ACCOUNT", "")

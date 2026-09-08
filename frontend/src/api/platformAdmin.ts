@@ -33,9 +33,19 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  const contentType = res.headers.get('content-type') || '';
+  let data: unknown = null;
+  if (text && contentType.includes('application/json')) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`The server returned invalid JSON (${res.status}).`);
+    }
+  }
   if (!res.ok) {
-    throw new Error((data && data.error) || `Request failed (${res.status})`);
+    const payload = data && typeof data === 'object' ? data as { error?: string } : null;
+    const htmlError = text.trim().startsWith('<') ? 'The server rejected the request before the API could handle it. If you uploaded a background image, try a smaller/compressed image.' : '';
+    throw new Error(payload?.error || htmlError || text.slice(0, 240) || `Request failed (${res.status})`);
   }
   return data as T;
 }
@@ -53,6 +63,65 @@ export interface Paged<T> {
   page: number;
   pageSize: number;
   results: T[];
+}
+
+export interface CertificateTemplate {
+  id?: number; name: string; version?: number; status?: 'draft' | 'published' | 'archived';
+  title: string; bodyText: string; minimumProgress: number; requireFinalTest: boolean;
+  layoutConfig: {
+    primaryColor?: string;
+    accentColor?: string;
+    decorationStyle?: 'waves' | 'classic' | 'minimal' | 'executive' | 'royal' | 'laurel' | 'geometric' | 'ribbon' | 'flourish' | 'none';
+    backgroundImageUrl?: string;
+    backgroundOpacity?: number;
+    backgroundFit?: 'cover' | 'contain';
+    backgroundScale?: number;
+    backgroundPositionX?: number;
+    backgroundPositionY?: number;
+    showFrame?: boolean;
+    contentBackdropOpacity?: number;
+    footerText?: string;
+    instructorName?: string;
+    website?: string;
+    providerBlurb?: string;
+    logoUrl?: string;
+    certifyText?: string;
+    recognitionText?: string;
+    progressPrefix?: string;
+    instructorLabel?: string;
+    awardedLabel?: string;
+    certificateNumberLabel?: string;
+    showQr?: boolean;
+    showLogo?: boolean;
+    showInstructor?: boolean;
+    showAwardDate?: boolean;
+    showCertificateNumber?: boolean;
+    showFooter?: boolean;
+    showWebsite?: boolean;
+    showProgress?: boolean;
+    decorationSize?: number;
+    logoSize?: number;
+    titleSize?: number;
+    subtitleSize?: number;
+    certifySize?: number;
+    learnerNameSize?: number;
+    bodySize?: number;
+    signatureSize?: number;
+    footerSize?: number;
+    qrSize?: number;
+    extraSignatureFields?: Array<{ label?: string; value?: string }>;
+  };
+  publishedAt?: string | null;
+}
+
+export function fetchCertificateTemplate() {
+  return request<{ template: CertificateTemplate | null }>(`${BASE}/certificate-template/`);
+}
+
+export function saveCertificateTemplate(template: CertificateTemplate, publish = false) {
+  return request<{ template: CertificateTemplate | null }>(`${BASE}/certificate-template/`, {
+    method: 'POST', body: JSON.stringify({ ...template, publish }),
+  });
 }
 
 /* -------------------------------------------------------------------------- */

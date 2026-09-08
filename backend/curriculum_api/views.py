@@ -10,6 +10,7 @@ import os
 import re
 import threading
 import tempfile
+import time
 import uuid
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -62,6 +63,19 @@ CANONICAL_MODULE_ID_PATTERN = re.compile(r'^MOD-[A-Z0-9][A-Z0-9_-]*$', re.I)
 STAFF_PROFILE_EMAIL_PATTERN = re.compile(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
 STAFF_PROFILE_PHONE_PATTERN = re.compile(r'^[+()\d\s.\-]{7,20}$')
 CURRICULUM_CACHE_TTL_SECONDS = 1800
+# The raw table reads behind every payload are visibility-independent: whether a
+# row is operational or archived is decided in Python, in
+# _build_curriculum_payload_from_rows(). Caching the rows lets one set of Neon
+# round trips serve both visibilities, which a Curriculum page needs on every
+# load -- it asks for `?visibility=all` and the default in the same burst, and
+# each used to pay for its own full read.
+#
+# The TTL is deliberately short. The win is entirely within one page load, so a
+# minute covers it, while keeping the window in which a write from another
+# worker could be missed far below the payload TTL. A write in this process
+# clears the rows with everything else; a write in another one bumps the shared
+# epoch, which invalidates them here too whenever Redis is configured.
+CURRICULUM_ROWS_CACHE_TTL_SECONDS = 60
 _CURRICULUM_CACHE = {}
 _CURRICULUM_CACHE_LOCK = threading.Lock()
 # One lock per payload key, so concurrent misses on the same key rebuild once
@@ -118,6 +132,20 @@ def invalidate_curriculum_cache():
     # which still clears this outright.
     for key in [key for key, exists in _TABLE_EXISTS_CACHE.items() if not exists]:
         _TABLE_EXISTS_CACHE.pop(key, None)
+    # Rebuild what was just dropped, off the request path. Scheduling rather
+    # than building keeps this call as cheap as it was -- it is made from inside
+    # write handlers, sometimes once per written row -- and the delay in the
+    # warm loop collapses a burst of these into one rebuild.
+    #
+    # on_commit, because several handlers invalidate from inside their atomic
+    # block: a warm that started before the commit would read the pre-write
+    # rows and cache them for the full TTL, with no later invalidation to
+    # correct it. Outside an atomic block this runs straight away, and a
+    # rollback correctly warms nothing.
+    try:
+        transaction.on_commit(schedule_curriculum_warm)
+    except Exception:
+        logger.warning('Unable to schedule curriculum cache warm.', exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +345,7 @@ def curriculum_build_lock(key):
         return lock
 
 
-def cached_curriculum_value(key, factory, force=False):
+def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True):
     """The cached payload for ``key``, rebuilding it when it is not there.
 
     ``force`` skips both cache layers and rebuilds from the database, then stores
@@ -329,7 +357,14 @@ def cached_curriculum_value(key, factory, force=False):
     worker serving its own pre-write payload for the rest of the TTL, which is a
     new group or programme that does not appear until the page is reloaded enough
     times to land on the worker that took the write.
+
+    ``shared=False`` keeps a value in this process only, for one that is large
+    and cheap to reassemble but expensive to fetch -- the raw curriculum rows.
+    Round-tripping those through Redis costs more in pickling than the read it
+    saves, and every worker warms its own copy in a second anyway. The shared
+    epoch is still honoured, so a write elsewhere still invalidates it.
     """
+    ttl = CURRICULUM_CACHE_TTL_SECONDS if ttl is None else ttl
     now = datetime.now().timestamp()
     shared_epoch = shared_curriculum_epoch()
     with _CURRICULUM_CACHE_LOCK:
@@ -339,14 +374,14 @@ def cached_curriculum_value(key, factory, force=False):
 
     shared_key = shared_curriculum_cache_key(key, shared_epoch)
     try:
-        shared_value = None if force else cache.get(shared_key)
+        shared_value = None if (force or not shared) else cache.get(shared_key)
     except Exception:
         logger.warning('Unable to read shared curriculum payload cache.', exc_info=True)
         shared_value = None
     if shared_value is not None:
         with _CURRICULUM_CACHE_LOCK:
             _CURRICULUM_CACHE[key] = {
-                'expires_at': now + CURRICULUM_CACHE_TTL_SECONDS,
+                'expires_at': now + ttl,
                 'shared_epoch': shared_epoch,
                 'value': shared_value,
             }
@@ -382,18 +417,19 @@ def cached_curriculum_value(key, factory, force=False):
             # Only publish if no write invalidated the cache while we were building.
             if epoch == _CURRICULUM_CACHE_EPOCH and shared_epoch == shared_curriculum_epoch():
                 _CURRICULUM_CACHE[key] = {
-                    'expires_at': datetime.now().timestamp() + CURRICULUM_CACHE_TTL_SECONDS,
+                    'expires_at': datetime.now().timestamp() + ttl,
                     'shared_epoch': shared_epoch,
                     'value': value,
                 }
-                try:
-                    cache.set(
-                        shared_curriculum_cache_key(key, shared_epoch),
-                        value,
-                        timeout=CURRICULUM_CACHE_TTL_SECONDS,
-                    )
-                except Exception:
-                    logger.warning('Unable to populate shared curriculum payload cache.', exc_info=True)
+                if shared:
+                    try:
+                        cache.set(
+                            shared_curriculum_cache_key(key, shared_epoch),
+                            value,
+                            timeout=ttl,
+                        )
+                    except Exception:
+                        logger.warning('Unable to populate shared curriculum payload cache.', exc_info=True)
     return value
 
 
@@ -407,6 +443,133 @@ def request_bypasses_curriculum_cache(request):
         or truthy(request.GET.get('skipCache'))
         or clean_str(request.GET.get('_ts'))
     )
+
+
+# ---------------------------------------------------------------------------
+# Cache warming
+#
+# Every payload above used to be built on the request path: the first person to
+# open Curriculum Studio after a restart or a save paid the whole multi-table
+# rebuild, holding the per-key build lock while the rest of the page queued
+# behind it. A page load asks for these keys at two visibilities, so that cost
+# was paid several times over in one load.
+#
+# Warming moves it off the request path. A background thread builds the same
+# keys the same way, so a request only ever reads. It is best-effort by
+# construction: a failed warm logs and leaves the cache empty, and the request
+# path rebuilds exactly as it does today.
+# ---------------------------------------------------------------------------
+
+CURRICULUM_WARM_ENABLED = os.environ.get('CURRICULUM_WARM', 'true').lower() not in {'false', '0', 'no'}
+# The delay coalesces a burst. A tree save calls invalidate_curriculum_cache()
+# once per written entity, and warming after each one would rebuild dozens of
+# times over a payload that is still moving. Waiting also keeps the warm behind
+# the commit of the write that triggered it -- and if it does land early, the
+# epoch check in cached_curriculum_value() discards the result rather than
+# publishing pre-write rows.
+CURRICULUM_WARM_DELAY_SECONDS = float(os.environ.get('CURRICULUM_WARM_DELAY', '2'))
+_CURRICULUM_WARM_LOCK = threading.Lock()
+_CURRICULUM_WARM_RUNNING = False
+_CURRICULUM_WARM_REQUESTED = False
+
+
+def warm_curriculum_caches():
+    """Build the payload keys a Curriculum page load reads, for both visibilities.
+
+    Deliberately the compact keys only. They are what the page actually asks for
+    -- overview, modules, programmes -- and they share one rows read, so warming
+    both visibilities costs a single trip to the database.
+
+    The whole warm runs inside one read scope. On the request path each build
+    opens its own, which is right there -- a request must not read back rows
+    memoised before someone else's write. Here there is no such caller: this is
+    one batch, assembling one consistent snapshot, and the two visibilities plus
+    the enrichments otherwise re-read the same authoring tables several times
+    over. curriculum.components alone is ~18k rows on a remote database and
+    dominates the build, so reading it once is most of what warming saves.
+    """
+    with curriculum_read_scope():
+        for visibility in ('operational', 'all'):
+            payload = cached_curriculum_value(
+                f'overview:{visibility}:compact',
+                lambda visibility=visibility: build_curriculum_payload(visibility, compact=True),
+            )
+            enriched_modules = cached_curriculum_value(
+                f'modules:{visibility}:enriched',
+                lambda visibility=visibility: enrich_modules_with_authoring(
+                    payload['modules'], include_programme_deleted=visibility == 'all',
+                ),
+            )
+            cached_curriculum_value(
+                f'programmes:{visibility}:with-module-counts',
+                lambda visibility=visibility: enrich_programmes_with_module_counts(
+                    payload['programmes'], enriched_modules,
+                    modules_enriched=True, include_archived=visibility == 'all',
+                ),
+            )
+
+
+def _curriculum_warm_loop():
+    global _CURRICULUM_WARM_RUNNING, _CURRICULUM_WARM_REQUESTED
+    try:
+        while True:
+            time.sleep(CURRICULUM_WARM_DELAY_SECONDS)
+            with _CURRICULUM_WARM_LOCK:
+                _CURRICULUM_WARM_REQUESTED = False
+            started = datetime.now().timestamp()
+            try:
+                warm_curriculum_caches()
+                logger.info(
+                    'Curriculum cache warm finished in %.1fs.',
+                    datetime.now().timestamp() - started,
+                )
+            except Exception:
+                # A warm that fails must never take the process with it; the
+                # request path still rebuilds on demand.
+                logger.warning('Curriculum cache warm failed.', exc_info=True)
+            finally:
+                # This thread opened its own connection. Neon counts it, and a
+                # warm runs rarely enough that holding one between runs is pure
+                # cost.
+                connections.close_all()
+            with _CURRICULUM_WARM_LOCK:
+                if not _CURRICULUM_WARM_REQUESTED:
+                    _CURRICULUM_WARM_RUNNING = False
+                    return
+    except BaseException:
+        with _CURRICULUM_WARM_LOCK:
+            _CURRICULUM_WARM_RUNNING = False
+        raise
+
+
+def schedule_curriculum_warm():
+    """Ask for a warm, coalescing with one already pending.
+
+    Returns whether a warm is now scheduled, so callers and tests can tell the
+    disabled case from the queued one.
+    """
+    if not CURRICULUM_WARM_ENABLED:
+        return False
+    global _CURRICULUM_WARM_RUNNING, _CURRICULUM_WARM_REQUESTED
+    with _CURRICULUM_WARM_LOCK:
+        _CURRICULUM_WARM_REQUESTED = True
+        if _CURRICULUM_WARM_RUNNING:
+            # The running loop re-reads the flag after it publishes and goes
+            # round again, so a write during a warm is never lost.
+            return True
+        _CURRICULUM_WARM_RUNNING = True
+    try:
+        threading.Thread(
+            target=_curriculum_warm_loop,
+            name='curriculum-cache-warm',
+            daemon=True,
+        ).start()
+    except Exception:
+        with _CURRICULUM_WARM_LOCK:
+            _CURRICULUM_WARM_RUNNING = False
+        logger.warning('Unable to start curriculum cache warm thread.', exc_info=True)
+        return False
+    return True
 
 
 def reference_json_response(request, payload):
@@ -1119,7 +1282,7 @@ def replace_live_session_occurrences(live_session_id, payload, utc_start, durati
     return rows
 
 
-def persist_live_session_series(payload, event, warnings, graph_settings, organizer, attendees, presenters, co_organizers=(), online_meeting_id=''):
+def persist_live_session_series(payload, event, warnings, graph_settings, organizer, attendees, presenters, online_meeting_id='', co_organizers=()):
     ensure_module_authoring_tables()
     ensure_live_session_tracking_tables()
     module_catalogue_id = clean_str(payload.get('moduleCatalogueId'))
@@ -1155,7 +1318,7 @@ def persist_live_session_series(payload, event, warnings, graph_settings, organi
         'id': live_session_id,
         'module_catalogue_id': module_catalogue_id or None,
         'module_draft_id': module_draft_id,
-        'module_title': clean_str(payload.get('moduleTitle') or payload.get('title')),
+        'module_title': clean_str(event.get('subject')) or teams_calendar_subject(payload),
         'provider': 'Microsoft Teams',
         'graph_event_id': clean_str(event.get('id')) or None,
         'online_meeting_id': online_meeting_id,
@@ -1165,7 +1328,7 @@ def persist_live_session_series(payload, event, warnings, graph_settings, organi
         'organizer_email': organizer,
         'attendees': json_db_value(attendees),
         'presenters': json_db_value(presenters),
-        'co_organizers': json_db_value(list(co_organizers)),
+        'co_organizers': json_db_value(co_organizers),
         'start_datetime': start_datetime,
         'timezone': graph_settings.get('timezone') or '',
         'duration_minutes': max(15, min(1440, int(payload.get('durationMinutes') or 60))),
@@ -1334,8 +1497,39 @@ def teams_event_body_html(title, details=''):
     return ''.join(parts)
 
 
+def teams_calendar_subject(payload, series=None):
+    """Return the module title that owns a Teams calendar series.
+
+    A live-session component may be called "Live Teams Session 1", but the
+    Outlook event represents the module-wide delivery calendar. Prefer the
+    authoritative saved module title, then explicit/stored module labels, and
+    only use the generic title for legacy unlinked meetings.
+    """
+    series = series if isinstance(series, dict) else {}
+    requested_id = clean_str(
+        payload.get('moduleCatalogueId')
+        or series.get('module_catalogue_id')
+    )
+    module_id = resolve_authoring_catalogue_id(requested_id) or requested_id
+    if module_id and table_exists(AUTHORING_MODULES_TABLE):
+        rows = authoring_fetch_all(
+            AUTHORING_MODULES_TABLE,
+            'module_catalogue_id = %s',
+            [module_id],
+        )
+        saved_title = clean_str(rows[0].get('title')) if rows else ''
+        if saved_title:
+            return saved_title
+    return clean_str(
+        payload.get('moduleTitle')
+        or series.get('module_title')
+        or payload.get('title')
+        or 'Live session'
+    )
+
+
 def teams_event_payload(payload, graph_settings):
-    title = clean_str(payload.get('title')) or 'Live session'
+    title = teams_calendar_subject(payload)
     local_start_raw = clean_str(payload.get('localStartDateTime'))
     utc_start_raw = clean_str(payload.get('startDateTimeUtc'))
     try:
@@ -1352,13 +1546,17 @@ def teams_event_payload(payload, graph_settings):
     if repeat not in TEAMS_REPEAT_VALUES:
         raise ValueError('Unsupported repeat option.')
     occurrences = max(2, min(52, int(payload.get('repeatOccurrences') or 12)))
-    attendees = teams_attendee_emails(payload.get('attendees'))
-    presenters = teams_attendee_emails(payload.get('presenters'))
-    # Co-organizers run the meeting alongside the organizer -- they can start and
-    # manage the recording, admit people from the lobby and change the meeting
-    # options -- so they are invited like anyone else and given their own role on
-    # the online meeting below.
     co_organizers = teams_attendee_emails(payload.get('coOrganizers'))
+    co_organizer_set = set(co_organizers)
+    presenters = [
+        email for email in teams_attendee_emails(payload.get('presenters'))
+        if email not in co_organizer_set
+    ]
+    elevated = co_organizer_set | set(presenters)
+    attendees = [
+        email for email in teams_attendee_emails(payload.get('attendees'))
+        if email not in elevated
+    ]
     invited_people = list(dict.fromkeys([*co_organizers, *presenters, *attendees]))
     details = clean_str(payload.get('details'))
 
@@ -1834,9 +2032,18 @@ def apply_teams_meeting_options(
     if lobby_choice not in TEAMS_LOBBY_VALUES:
         lobby_choice = 'invited'
     recording_choice = clean_str(recording).lower() or 'none'
-    presenter_emails = teams_series_email_list(list(presenters))
     co_organizer_emails = teams_series_email_list(list(co_organizers))
-    roster = teams_series_email_list(co_organizer_emails, presenter_emails, list(attendees))
+    co_organizer_set = set(co_organizer_emails)
+    presenter_emails = [
+        email for email in teams_series_email_list(list(presenters))
+        if email not in co_organizer_set
+    ]
+    presenter_set = set(presenter_emails)
+    attendee_emails = [
+        email for email in teams_series_email_list(list(attendees))
+        if email not in co_organizer_set and email not in presenter_set
+    ]
+    roster = [*co_organizer_emails, *presenter_emails, *attendee_emails]
     patch = {
         'lobbyBypassSettings': {
             'scope': TEAMS_LOBBY_VALUES[lobby_choice],
@@ -1852,20 +2059,16 @@ def apply_teams_meeting_options(
     # found the link. `allowedPresenters` stays at the tenant default until a
     # presenter is actually named, because naming nobody would mute the tutor too.
     if roster:
-        presenter_set = set(presenter_emails)
-        co_organizer_set = set(co_organizer_emails)
-
-        def participant_role(email):
-            # Co-organizer outranks presenter for anyone named in both lists: they
-            # were named to run the meeting, and the weaker role would take back
-            # the recording and lobby controls that is the whole point of it.
-            if email in co_organizer_set:
-                return 'coorganizer'
-            return 'presenter' if email in presenter_set else 'attendee'
-
         patch['participants'] = {
             'attendees': [
-                {'upn': email, 'role': participant_role(email)}
+                {
+                    'upn': email,
+                    'role': (
+                        'coorganizer' if email in co_organizer_set
+                        else 'presenter' if email in presenter_set
+                        else 'attendee'
+                    ),
+                }
                 for email in roster
             ],
         }
@@ -2095,6 +2298,12 @@ def curriculum_teams_meeting(request):
         event_payload, attendees, presenters, co_organizers, utc_start, duration, repeat, occurrences = teams_event_payload(payload, graph_settings)
     except (TypeError, ValueError) as exc:
         return json_error(str(exc), status=400)
+    if co_organizers and not has_column(LIVE_SESSIONS_TABLE, 'co_organizers'):
+        return json_error(
+            'Co-organizers cannot be saved until the curriculum.live_sessions co_organizers column is added.',
+            status=409,
+            code='teams_co_organizers_schema_required',
+        )
 
     owner_key = urllib_parse.quote(organizer, safe='')
     try:
@@ -2137,7 +2346,7 @@ def curriculum_teams_meeting(request):
         shift_warnings, recreated_details = apply_teams_occurrence_shifts(
             owner_key,
             urllib_parse.quote(event_id, safe=''),
-            clean_str(payload.get('title')) or 'Live session',
+            clean_str(event_payload.get('subject')) or teams_calendar_subject(payload),
             teams_shifted_occurrence_targets(payload, duration),
             attendees,
             meeting_options,
@@ -2179,8 +2388,8 @@ def curriculum_teams_meeting(request):
             organizer,
             attendees,
             presenters,
+            clean_str(graph_meeting.get('id')),
             co_organizers=co_organizers,
-            online_meeting_id=clean_str(graph_meeting.get('id')),
         )
         persist_recreated_occurrence_details(live_session_id, recreated_details)
     except Exception:
@@ -2490,7 +2699,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         return json_error('This Teams meeting is missing organizer or calendar event identifiers.', status=409)
 
     graph_settings = get_graph_settings()
-    title = clean_str(payload.get('title') or series.get('module_title') or 'Live session')
+    title = teams_calendar_subject(payload, series)
     local_start_raw = clean_str(payload.get('localStartDateTime'))
     utc_start_raw = clean_str(payload.get('startDateTimeUtc'))
     try:
@@ -2505,13 +2714,36 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     stored_attendees = teams_series_email_list(series.get('attendees'))
     stored_presenters = teams_series_email_list(series.get('presenters'))
     stored_co_organizers = teams_series_email_list(series.get('co_organizers'))
-    people_changed = 'attendees' in payload or 'presenters' in payload or 'coOrganizers' in payload
+    people_changed = any(key in payload for key in ('attendees', 'presenters', 'coOrganizers'))
     try:
-        attendees = teams_attendee_emails(payload['attendees']) if 'attendees' in payload else stored_attendees
-        presenters = teams_attendee_emails(payload['presenters']) if 'presenters' in payload else stored_presenters
-        co_organizers = teams_attendee_emails(payload['coOrganizers']) if 'coOrganizers' in payload else stored_co_organizers
+        co_organizers = (
+            teams_attendee_emails(payload['coOrganizers'])
+            if 'coOrganizers' in payload else stored_co_organizers
+        )
+        co_organizer_set = set(co_organizers)
+        presenters = [
+            email for email in (
+                teams_attendee_emails(payload['presenters'])
+                if 'presenters' in payload else stored_presenters
+            )
+            if email not in co_organizer_set
+        ]
+        elevated = co_organizer_set | set(presenters)
+        attendees = [
+            email for email in (
+                teams_attendee_emails(payload['attendees'])
+                if 'attendees' in payload else stored_attendees
+            )
+            if email not in elevated
+        ]
     except (TypeError, ValueError) as exc:
         return json_error(str(exc), status=400)
+    if co_organizers and not has_column(LIVE_SESSIONS_TABLE, 'co_organizers'):
+        return json_error(
+            'Co-organizers cannot be saved until the curriculum.live_sessions co_organizers column is added.',
+            status=409,
+            code='teams_co_organizers_schema_required',
+        )
     invited_people = list(dict.fromkeys([*co_organizers, *presenters, *attendees]))
 
     duration = max(15, min(1440, int(payload.get('durationMinutes') or series.get('duration_minutes') or 60)))
@@ -8851,10 +9083,29 @@ def build_ksb_data(ksb_profiles, modules, training_rows):
     return frameworks, sets
 
 
-def build_curriculum_payload(visibility='operational', compact=False):
+def get_cached_curriculum_rows(compact=False, force=False):
+    """The raw curriculum rows, read once and shared by both visibilities.
+
+    Nothing downstream mutates these dicts -- the payload builders only read
+    them and emit new ones -- so the two visibility builds can hold the same
+    lists. ``force`` reaches here from a caller that has just written and is
+    asking for its own state back; it must not be answered from rows read
+    before that write.
+    """
+    return cached_curriculum_value(
+        f'rows:{"compact" if compact else "full"}',
+        lambda: get_curriculum_rows(compact=compact),
+        force=force,
+        ttl=CURRICULUM_ROWS_CACHE_TTL_SECONDS,
+        shared=False,
+    )
+
+
+def build_curriculum_payload(visibility='operational', compact=False, force=False):
     logger.info('build_curriculum_payload: running DB build for visibility=%s compact=%s', visibility, compact)
     with curriculum_read_scope():
-        return build_curriculum_payload_from_rows(get_curriculum_rows(compact=compact), visibility, compact=compact)
+        rows = get_cached_curriculum_rows(compact=compact, force=force)
+        return build_curriculum_payload_from_rows(rows, visibility, compact=compact)
 
 
 def build_curriculum_payload_from_rows(rows, visibility='operational', compact=False):
@@ -10038,28 +10289,28 @@ def curriculum_overview(request):
     visibility = curriculum_visibility(request)
     compact = request.GET.get('compact') in {'1', 'true', 'yes'}
     cache_key = f'overview:{visibility}:{"compact" if compact else "full"}'
+    force = request_bypasses_curriculum_cache(request)
 
     def build_overview():
-        return build_curriculum_payload(visibility, compact=compact)
+        return build_curriculum_payload(visibility, compact=compact, force=force)
 
     # A client that asks for fresh data gets it. Every Curriculum Studio screen
     # reloads with `skipCache` straight after a save, which sends Cache-Control:
     # no-cache -- and that reload is exactly the one that must not be answered
-    # out of a payload cache built before the write.
-    return JsonResponse(cached_curriculum_value(
-        cache_key,
-        build_overview,
-        force=request_bypasses_curriculum_cache(request),
-    ))
+    # out of a payload cache built before the write. `force` travels down to the
+    # rows read as well, or the rebuilt payload would be assembled from rows
+    # cached before the same write.
+    return JsonResponse(cached_curriculum_value(cache_key, build_overview, force=force))
 
 
 def get_cached_payload(request, compact=False):
     visibility = curriculum_visibility(request)
     cache_key = f'overview:{visibility}:{"compact" if compact else "full"}'
+    force = request_bypasses_curriculum_cache(request)
     return cached_curriculum_value(
         cache_key,
-        lambda: build_curriculum_payload(visibility, compact=compact),
-        force=request_bypasses_curriculum_cache(request),
+        lambda: build_curriculum_payload(visibility, compact=compact, force=force),
+        force=force,
     )
 
 
@@ -10196,7 +10447,9 @@ def programme_config_by_identifier(identifier):
 
 
 def programme_response(identifier):
-    payload = build_curriculum_payload('all')
+    # force: this answers a caller that has just written and is asking for the
+    # record it saved, so it must never be assembled from cached rows.
+    payload = build_curriculum_payload('all', force=True)
     programme = find_programme(payload, identifier)
     if not programme:
         return None
@@ -10213,7 +10466,7 @@ def first_programme_response(*identifiers):
     wanted = [clean_str(identifier) for identifier in identifiers if clean_str(identifier)]
     if not wanted:
         return None
-    payload = build_curriculum_payload('all')
+    payload = build_curriculum_payload('all', force=True)
     for identifier in wanted:
         programme = find_programme(payload, identifier)
         if programme:
@@ -10290,7 +10543,8 @@ def ensure_programme_config_for_authoring(programme_name, programme_id=None, sta
 
 
 def module_response(identifier):
-    payload = build_curriculum_payload('all')
+    # force: see programme_response() -- this is a just-saved module read back.
+    payload = build_curriculum_payload('all', force=True)
     ident = clean_str(identifier)
     for module in enrich_modules_with_authoring(payload['modules'], include_programme_deleted=True):
         identifiers = {
@@ -13082,13 +13336,11 @@ def component_builder_response(row, module_by_id=None, week_by_id=None, mappings
         'tutorValidationRequired': bool_payload(row.get('tutor_validation_required')),
         'ksbRefs': ksb_refs,
         'ksbMappings': ksb_mappings,
-        'ksbMappings': ksb_mappings,
         'status': settings.get('componentBuilderStatus') or 'draft',
         'lastEdited': format_date(row.get('updated_at')),
         'contentSections': parse_int(settings.get('contentSections'), 0),
         'quizQuestions': parse_int(settings.get('quizQuestions'), 0) or None,
         'hasResources': bool_payload(settings.get('hasResources')),
-        'settings': settings,
         'settings': settings,
     }
 
@@ -17729,7 +17981,7 @@ def curriculum_programme_cohort_collection(request, programme_id):
     body = json_body(request)
     if body is None:
         return json_error('Invalid JSON body.')
-    programme = find_programme(build_curriculum_payload('all'), programme_id)
+    programme = find_programme(build_curriculum_payload('all', force=True), programme_id)
     if not programme:
         return json_error('Programme not found.', status=404)
     body['programme'] = programme.get('name') or programme_id
@@ -17741,7 +17993,7 @@ def curriculum_modules(request):
     visibility = curriculum_visibility(request)
     bypass_cache = request_bypasses_curriculum_cache(request)
     if bypass_cache:
-        payload = build_curriculum_payload(visibility, compact=True)
+        payload = build_curriculum_payload(visibility, compact=True, force=True)
         modules = enrich_modules_with_authoring(payload['modules'], include_programme_deleted=visibility == 'all')
     else:
         payload = cached_curriculum_value(f'overview:{visibility}:compact', lambda: build_curriculum_payload(visibility, compact=True))

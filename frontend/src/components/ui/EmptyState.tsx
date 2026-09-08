@@ -56,7 +56,7 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        'flex flex-col items-center justify-center px-6 text-center',
+        'ui-empty-state flex flex-col items-center justify-center px-6 text-center',
         size === 'md' ? 'py-10' : 'py-7',
         className,
       )}

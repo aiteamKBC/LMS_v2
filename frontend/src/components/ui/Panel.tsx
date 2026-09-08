@@ -38,7 +38,7 @@ export function Panel({
   return (
     <section
       className={cn(
-        'rounded-xl border border-foreground-100/70 bg-background-50 shadow-sm',
+        'ui-panel rounded-xl border border-foreground-100/70 bg-background-50 shadow-sm',
         PADDING_CLASS[padding],
         className,
       )}

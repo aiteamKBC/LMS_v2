@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { KsbFrameworkManager } from '@/components/feature/KsbFrameworkManager';
 import { useCurriculumKsbFrameworks } from '@/hooks/useCurriculumKsbFrameworks';
 import { useCurriculumKsbSets } from '@/hooks/useCurriculumKsbSets';
@@ -45,7 +46,21 @@ export default function CurriculumKsbFrameworks() {
       userName="Emma Walsh"
       userRole="Curriculum Lead"
     >
-      <div className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
+      <div className="curriculum-library-page min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
+        <WorkspaceHeroBanner
+          className="curriculum-library-hero"
+          decorative
+          eyebrow="Learning resources"
+          title="KSB Frameworks"
+          description="Create, edit and manage KSB profiles for curriculum standards."
+          icon="ri-git-branch-line"
+          statIconPosition="leading"
+          stats={[
+            { label: 'Frameworks', value: String(frameworks.length), icon: 'ri-git-branch-line' },
+            { label: 'KSB Sets', value: String(ksbSets.length), icon: 'ri-node-tree' },
+            { label: 'Programmes', value: String(programmes.length), icon: 'ri-stack-line' },
+          ]}
+        />
         {error && (
           <div className="rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
             Curriculum API error: {error}. Start the Django backend on port 8000 and refresh.

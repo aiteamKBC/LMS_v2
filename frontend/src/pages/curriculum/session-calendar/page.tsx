@@ -375,7 +375,7 @@ export default function SessionCalendarPage() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Session Calendar" pageSubtitle={loading ? 'Loading live LMS sessions...' : `${filteredSessions.length} module sessions`} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="h-[calc(100vh-96px)] min-h-[720px] overflow-auto bg-[#f6f4f8] text-slate-950">
+      <div className="curriculum-session-calendar-page h-[calc(100vh-96px)] min-h-[720px] overflow-auto bg-[#f6f4f8] text-slate-950">
         <div className="grid h-full min-w-[1460px] border border-slate-200 bg-white" style={{ gridTemplateColumns: '280px minmax(1180px, 1fr)' }}>
           <TeamsSidebar currentDate={currentDate} miniMonthDays={miniMonthDays} isToday={isToday} isCurrentMonth={isCurrentMonth} holidaysAvailable={holidays.length > 0} showUkHolidays={showUkHolidays} onToggleUkHolidays={setShowUkHolidays} onPickDate={setCurrentDate} onMonthNavigate={direction => {
             const next = new Date(currentDate);

@@ -88,7 +88,7 @@ export function LearnerOverviewPanel({
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <JournalMetric label="Monthly target" value={formatHoursLabel(learner.otjh.monthlyTarget)} accent="bg-foreground-700" />
+          <JournalMetric label="Planned hours" value={formatHoursLabel(learner.otjh.monthlyTarget)} accent="bg-foreground-700" />
           <JournalMetric label="Actual hours" value={learner.otjh.monthlyHoursLabel} accent="bg-primary-600" />
           <JournalMetric label="Variance" value={varianceLabel} accent={variance < 0 ? 'bg-red-500' : 'bg-emerald-500'} />
           <JournalMetric label="KSBs evidenced" value={String(learner.ksb.touched)} accent="bg-amber-500" />

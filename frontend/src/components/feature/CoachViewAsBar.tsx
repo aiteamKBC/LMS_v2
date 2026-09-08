@@ -24,16 +24,24 @@ export function CoachViewAsBar() {
 
   return (
     <div className="px-3 pt-3 md:px-6 md:pt-6">
-      <div className="flex flex-col gap-3 rounded-2xl bg-primary-50/60 p-3 md:flex-row md:items-center md:justify-between md:p-4">
+      <div className="flex flex-col gap-3 rounded-2xl border border-primary-200/70 bg-primary-50/60 p-3 shadow-sm md:flex-row md:items-center md:justify-between md:p-4">
         <div className="flex items-start gap-3">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-100">
             <AppIcon className="ri-eye-line text-base text-primary-600"></AppIcon>
           </span>
           <div className="min-w-0">
             <p className="text-sm font-semibold text-primary-900">Viewing {coach.name}'s workspace</p>
-            <p className="mt-0.5 truncate text-[12px] text-primary-700/80">
-              {coach.email} &middot; read-only, so changes are still made from the admin area
-            </p>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+              <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-primary-200/70 bg-primary-100 px-2 py-1 font-medium text-primary-800">
+                <AppIcon className="ri-mail-line shrink-0 text-[12px]"></AppIcon>
+                <span className="break-all">{coach.email}</span>
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-amber-200/70 bg-amber-100 px-2 py-1 font-semibold text-amber-800">
+                <AppIcon className="ri-lock-line shrink-0 text-[12px]"></AppIcon>
+                Read-only
+              </span>
+              <span className="text-primary-700">Changes are made from the admin area</span>
+            </div>
           </div>
         </div>
         <button

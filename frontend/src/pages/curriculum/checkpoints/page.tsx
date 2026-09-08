@@ -1,6 +1,7 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { roleNavMap } from '@/mocks/navigation';
 
@@ -457,36 +458,21 @@ export default function CheckpointsPage() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel={curriculumNav.label} navItems={curriculumNav.items} workspaceLabel={curriculumNav.workspaceLabel} pageTitle="Checkpoint Assessments" pageSubtitle="Monthly checkpoint quizzes and learner KSB performance" userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
-        <section className="relative overflow-hidden rounded-2xl shadow-sm" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 52%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
-          <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
-          <div className="relative p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center gap-4">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <AppIcon className="ri-check-double-line text-white" size={24}></AppIcon>
-            </span>
-            <div className="min-w-0 flex-1">
-              <h2 className="text-lg font-heading font-bold text-white mb-1">Monthly Checkpoint Assessments</h2>
-              <p className="text-[13px] text-white/80 leading-relaxed">
-                {checkpoints.length} checkpoint quizzes, {liveCount} published. Coaches can review monthly learner results and KSB achievement from one place.
-              </p>
-            </div>
-            <div className="grid w-full grid-cols-3 gap-3 shrink-0 sm:w-auto">
-              <div className="rounded-xl bg-white/15 backdrop-blur-sm px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{checkpoints.length}</p>
-                <p className="text-[10px] uppercase tracking-wide text-white/70">Quizzes</p>
-              </div>
-              <div className="rounded-xl bg-white/15 backdrop-blur-sm px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{completedStudents}/{totalStudents}</p>
-                <p className="text-[10px] uppercase tracking-wide text-white/70">Completed</p>
-              </div>
-              <div className="rounded-xl bg-white/15 backdrop-blur-sm px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{avgKsbCoverage}%</p>
-                <p className="text-[10px] uppercase tracking-wide text-white/70">KSBs</p>
-              </div>
-            </div>
-          </div>
-        </section>
+      <div className="curriculum-library-page min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
+        <WorkspaceHeroBanner
+          className="curriculum-library-hero"
+          decorative
+          eyebrow="Learning resources"
+          title="Monthly Checkpoint Assessments"
+          description={`${checkpoints.length} checkpoint quizzes, ${liveCount} published. Coaches can review monthly learner results and KSB achievement from one place.`}
+          icon="ri-check-double-line"
+          statIconPosition="leading"
+          stats={[
+            { label: 'Quizzes', value: String(checkpoints.length), icon: 'ri-questionnaire-line' },
+            { label: 'Completed', value: `${completedStudents}/${totalStudents}`, icon: 'ri-checkbox-circle-line' },
+            { label: 'KSBs', value: `${avgKsbCoverage}%`, icon: 'ri-price-tag-3-line' },
+          ]}
+        />
 
         <section className="rounded-xl border border-foreground-200/50 bg-background-100 p-3">
           <div className="flex flex-wrap items-center gap-3">

@@ -1,6 +1,6 @@
 import json
 from contextlib import nullcontext
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from io import BytesIO
 from types import SimpleNamespace
@@ -27,7 +27,7 @@ from .active_users import (
     save_progress_record,
 )
 from .active_users import connections as active_users_connections
-from .components import submit_component_progress
+from .components import _assignment_form_ready, submit_component_progress
 from . import evidence_storage, progress_rules
 from .progress_rules import (
     progress_achievement_status,
@@ -155,6 +155,39 @@ class LearnerReflectionStatusTests(SimpleTestCase):
         self.assertNotIn("create ", sql)
         self.assertNotIn("alter ", sql)
         self.assertNotIn("drop ", sql)
+
+
+class AssignmentFormReadinessTests(SimpleTestCase):
+    def _connection_with_payload(self, payload):
+        cursor = MagicMock()
+        cursor.__enter__.return_value = cursor
+        cursor.fetchone.return_value = None if payload is None else (payload,)
+        connection = MagicMock()
+        connection.cursor.return_value = cursor
+        return connection, cursor
+
+    def test_requires_all_three_written_sections(self):
+        connection, _cursor = self._connection_with_payload({
+            "assignmentAnswer": "My answer",
+            "whatYouLearned": "What I learned",
+            "businessImpact": "",
+        })
+
+        with patch("learner_api.components.connections", {"enrolment": connection}):
+            self.assertFalse(_assignment_form_ready("COMP-1", "commercial", "19"))
+
+    def test_accepts_complete_json_assignment_payload(self):
+        connection, cursor = self._connection_with_payload(json.dumps({
+            "assignmentAnswer": "My answer",
+            "whatYouLearned": "What I learned",
+            "businessImpact": "Faster customer response",
+        }))
+
+        with patch("learner_api.components.connections", {"enrolment": connection}):
+            self.assertTrue(_assignment_form_ready("COMP-1", "commercial", "19"))
+
+        params = cursor.execute.call_args.args[1]
+        self.assertEqual(params, ["commercial", "19", "COMP-1"])
 
 
 class LearnerProgressionTests(SimpleTestCase):
@@ -666,8 +699,10 @@ class ScriptedCursor:
     def __init__(self, results):
         self._results = list(results)
         self._current = []
+        self.queries = []
 
     def execute(self, sql, params=None):
+        self.queries.append(sql)
         self._current = self._results.pop(0) if self._results else []
 
     def fetchall(self):
@@ -723,6 +758,31 @@ class LearnerReflectionQuestionTests(SimpleTestCase):
 
     def test_exposes_whether_reflection_is_required(self):
         self.assertFalse(self._resolved_component(None, False)["reflectionRequired"])
+
+
+class LearnerSoftDeletedCurriculumVisibilityTests(SimpleTestCase):
+    def test_live_resolution_excludes_soft_deleted_curriculum_at_every_level(self):
+        cursor = ScriptedCursor([[], [], []])
+        weeks = [{
+            "module": "Deleted module", "week": "Deleted week",
+            "moduleId": "MOD-DELETED", "weekId": "WEEK-DELETED",
+        }]
+        components = [{
+            "module": "Deleted module", "week": "Deleted week", "component": "Deleted assignment",
+            "moduleId": "MOD-DELETED", "weekId": "WEEK-DELETED", "componentId": "COMP-DELETED",
+        }]
+
+        with patch("learner_api.learner_detail.connections", {"enrolment": ScriptedConnection(cursor)}):
+            resolved = _resolve_from_master(["Deleted module"], weeks, components)
+
+        self.assertEqual(resolved, ([], [], []))
+        module_query, week_query, component_query = [" ".join(query.lower().split()) for query in cursor.queries[:3]]
+        self.assertIn("m.deleted_at is null", module_query)
+        self.assertIn("g.deleted_at is null", module_query)
+        self.assertIn("ch.deleted_at is null", module_query)
+        self.assertIn("p.deleted_at is null", module_query)
+        self.assertIn("deleted_at is null", week_query)
+        self.assertIn("deleted_at is null", component_query)
 
 
 class LearnerWeekQuizVisibilityTests(SimpleTestCase):
@@ -852,12 +912,31 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
 
         self.assertEqual(completed_hours_from_progress(progress), "6")
 
+    def test_completed_hours_uses_highest_reported_attempt_per_activity(self):
+        progress = [
+            {
+                "kind": "video", "componentId": "component-1",
+                "attempt": 1, "reportedTime": "1h", "submittedAt": "2026-07-27T08:00:00Z",
+            },
+            {
+                "kind": "video", "componentId": "component-1",
+                "attempt": 2, "reportedTime": "3h", "submittedAt": "2026-07-27T09:00:00Z",
+            },
+            {
+                "kind": "component", "componentId": "component-2",
+                "attempt": 1, "reportedTime": "2h", "submittedAt": "2026-07-27T10:00:00Z",
+            },
+        ]
+
+        # Highest video attempt (3h) + the other activity (2h).
+        self.assertEqual(completed_hours_from_progress(progress), "5")
+
     def test_completed_hours_include_actual_quiz_time(self):
         progress = [{"kind": "quiz", "quizId": "42", "reportedTime": "30 min"}]
 
         self.assertEqual(completed_hours_from_progress(progress), "0.5")
 
-    def test_completed_hours_prefers_curriculum_expected_otjh_for_known_components(self):
+    def test_completed_hours_prefers_learner_reported_time_for_known_components(self):
         progress = [
             {"kind": "video", "componentId": "component-1", "reportedTime": "120"},
             {"kind": "component", "componentId": "component-2", "reportedTime": "5"},
@@ -867,11 +946,45 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
             {"componentId": "component-2", "expectedOtjh": 2},
         ]
 
-        self.assertEqual(completed_hours_from_progress(progress, components), "3.5")
+        # Learner input is authoritative: 120 is 120 minutes and 5 is 5 hours.
+        self.assertEqual(completed_hours_from_progress(progress, components), "7")
 
-    def test_completed_hours_counts_tracked_time_not_planned_hours(self):
-        # The learner finished a 2h assignment in 30 minutes and a 2h reading in
-        # 33 seconds: the total is what they actually did, not what was planned.
+    def test_completed_hours_prefers_manual_time_spent_input(self):
+        progress = [{
+            "kind": "video", "componentId": "component-1",
+            "reportedTime": "60", "claimedSeconds": 7200,
+            "verifiedSeconds": 11,
+            "timeTrackingSource": "signed_session_capped_active_playback:input",
+        }]
+
+        # The explicit 2h Time spent input wins over the default reported 60m.
+        self.assertEqual(completed_hours_from_progress(progress), "2")
+
+    def test_completed_hours_recognises_existing_capped_manual_input(self):
+        progress = [{
+            "kind": "video", "componentId": "component-1",
+            "reportedTime": "60", "claimedSeconds": 5400,
+            "verifiedSeconds": 11,
+            "timeTrackingSource": "signed_session_capped_active_playback",
+        }]
+
+        self.assertEqual(completed_hours_from_progress(progress), "1.5")
+
+    def test_completed_hours_uses_bounded_mba_import_time(self):
+        progress = [{
+            "kind": "component", "componentId": "component-1",
+            "reportedTime": "", "claimedSeconds": 26418634,
+            "verifiedSeconds": 7200,
+            "timeTrackingSource": "mba_import_bounded_by_authored_otjh",
+        }]
+
+        # The import keeps the raw MBA duration in claimedSeconds for audit,
+        # but only verifiedSeconds is eligible for OTJH credit.
+        self.assertEqual(completed_hours_from_progress(progress), "2")
+
+    def test_completed_hours_counts_reported_time_before_tracked_time(self):
+        # The learner entered 2h for both activities, so that input is used even
+        # when the automatic timer captured a much shorter duration.
         progress = [
             {
                 "kind": "component", "componentId": "component-1",
@@ -887,18 +1000,23 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
             {"componentId": "component-2", "expectedOtjh": 2},
         ]
 
-        # 1800s = 0.5h, 33s ≈ 0.01h — not the 4h the plan allocated.
-        self.assertEqual(completed_hours_from_progress(progress, components), "0.5")
+        self.assertEqual(completed_hours_from_progress(progress, components), "4")
 
-    def test_completed_hours_counts_a_zero_second_completion_as_zero(self):
-        # An activity clicked straight through contributes nothing, rather than
-        # falling through to its planned hours.
+    def test_completed_hours_counts_reported_time_when_tracked_time_is_zero(self):
         progress = [{
             "kind": "component", "componentId": "component-1",
             "expectedOtjh": 3, "reportedTime": "3h", "verifiedSeconds": 0,
         }]
 
-        self.assertEqual(completed_hours_from_progress(progress), "0")
+        self.assertEqual(completed_hours_from_progress(progress), "3")
+
+    def test_completed_hours_uses_tracked_time_when_no_time_was_reported(self):
+        progress = [{
+            "kind": "component", "componentId": "component-1",
+            "expectedOtjh": 3, "reportedTime": "", "verifiedSeconds": 1800,
+        }]
+
+        self.assertEqual(completed_hours_from_progress(progress), "0.5")
 
     def test_coerce_ksb_items_parses_profile_json_payload(self):
         items = _coerce_ksb_items(
@@ -1343,25 +1461,30 @@ class ComponentWriteSoftDeleteTests(SimpleTestCase):
 class ComponentWriteEndpointRejectionTests(SimpleTestCase):
     """The service-layer rejections must surface as a client error, not a 200."""
 
-    def _post(self, component_id):
+    def _post(self, component_id, *, access_time=None, payload=None):
+        access_time = access_time or datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
         tracking = issue_tracking_session(
             activity_kind="component",
             activity_id=component_id,
             learner_kind="apprenticeship",
             learner_id="19",
             counting_mode="visible_page",
+            issued_at=access_time - timedelta(seconds=20),
         )
+        body = {"trackingToken": tracking["trackingToken"], "timeTakenSeconds": 0}
+        body.update(payload or {})
         request = RequestFactory().post(
             f"/learner_api/components/{component_id}/complete/?kind=apprenticeship&learnerId=19",
-            data=json.dumps({"trackingToken": tracking["trackingToken"], "timeTakenSeconds": 0}),
+            data=json.dumps(body),
             content_type="application/json",
         )
         view = submit_component_progress
         while hasattr(view, "__wrapped__"):
             view = view.__wrapped__
-        return view(request, component_id)
+        with patch("learner_api.components.timezone.now", return_value=access_time):
+            return view(request, component_id)
 
-    def _run(self, save_side_effect):
+    def _run(self, save_side_effect=None, **post_options):
         profile = SimpleNamespace(training_plan_progress=[])
         with patch("learner_api.components.SOURCE_MODELS", {"apprenticeship": Mock()}) as models:
             models["apprenticeship"].objects.get.return_value = SimpleNamespace(id=19)
@@ -1374,7 +1497,7 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
                                     "learner_api.components.save_progress_record",
                                     side_effect=save_side_effect,
                                 ):
-                                    return self._post("COMP-UNDER-TEST")
+                                    return self._post("COMP-UNDER-TEST", **post_options)
 
     def test_unknown_component_write_returns_400(self):
         response = self._run(OrphanComponentReferenceError("COMP-GHOST"))
@@ -1387,6 +1510,35 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
         payload = json.loads(response.content)
         self.assertIn("COMP-DEAD", payload["error"])
         self.assertIn("week", payload["error"])
+
+    def test_out_of_hours_timer_is_accepted_after_confirmation_and_audited(self):
+        save = Mock()
+        response = self._run(
+            save,
+            access_time=datetime(2026, 1, 18, 22, 0, tzinfo=timezone.utc),
+            payload={
+                "timeTakenSeconds": 10,
+                "timeEntrySource": "timer",
+                "outsideWorkingHoursConfirmed": True,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        record = save.call_args.args[1]
+        self.assertEqual(record["verifiedSeconds"], 10)
+        self.assertTrue(record["outsideWorkingHours"])
+        self.assertTrue(record["outsideWorkingHoursConfirmed"])
+        self.assertEqual(record["outsideWorkingHoursConfirmedAt"], record["submittedAt"])
+
+    def test_out_of_hours_completion_requires_confirmation(self):
+        save = Mock()
+        response = self._run(
+            save,
+            access_time=datetime(2026, 1, 18, 22, 0, tzinfo=timezone.utc),
+            payload={"timeTakenSeconds": 10, "timeEntrySource": "timer"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Confirm", json.loads(response.content)["error"])
+        save.assert_not_called()
 
 
 class ProgressAchievementRuleTests(SimpleTestCase):

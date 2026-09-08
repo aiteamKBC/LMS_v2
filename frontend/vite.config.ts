@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
 import AutoImport from "unplugin-auto-import/vite";
@@ -8,7 +8,12 @@ const base = process.env.BASE_PATH || "/";
 const isPreview = process.env.IS_PREVIEW ? true : false;
 //const proxyPlugins = isPreview ? [readdyJsxRuntimeProxyPlugin()] : [];
 // https://vite.dev/config/
-export default defineConfig(({ mode }) => ({
+export default defineConfig(({ mode }) => {
+  // Read the local backend address before configuring the dev proxy. All API
+  // prefixes belong to the same Django application and must follow this target.
+  const env = loadEnv(mode, __dirname, "VITE_API_");
+  const apiTarget = env.VITE_API_TARGET || env.VITE_API_PROXY || "http://127.0.0.1:8000";
+  return {
   define: {
     __BASE_PATH__: JSON.stringify(base),
     __IS_PREVIEW__: JSON.stringify(isPreview),
@@ -95,67 +100,69 @@ export default defineConfig(({ mode }) => ({
     port: 3000,
     host: "0.0.0.0",
     // Forward API calls to the Django backend so the browser sees them as
-    // same-origin (no CORS). Django runs on :8000 by default.
+    // same-origin (no CORS). Override :8000 with VITE_API_TARGET when another
+    // checkout already uses it, for example in .env.development.local.
     proxy: {
       "/curriculum_api": {
-        target: "http://127.0.0.1:8000",
+        target: apiTarget,
         changeOrigin: true,
       },
       "/coach_api": {
-        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
+        target: apiTarget,
         changeOrigin: true,
       },
       "/quiz_api": {
-        target: process.env.VITE_API_PROXY || "http://127.0.0.1:8000",
+        target: apiTarget,
         changeOrigin: true,
       },
       // 127.0.0.1, NOT localhost: on Windows, Node resolves localhost to ::1
       // first and Django listens on IPv4 only — the failed IPv6 attempt costs
       // ~2.3s on EVERY proxied request.
       "/learner_api": {
-        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
+        target: apiTarget,
         changeOrigin: true,
       },
       "/audit_api": {
-        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
+        target: apiTarget,
         changeOrigin: true,
       },
       // HOURS-TEST workspace: same Django audit views, cloned database.
       "/hours_test_api": {
-        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
+        target: apiTarget,
         changeOrigin: true,
       },
       "/manual_audit_api": {
-        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
+        target: apiTarget,
         changeOrigin: true,
       },
       "/engagement_api": {
-        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
+        target: apiTarget,
         changeOrigin: true,
       },
       "/enrolment_api": {
-        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
+        target: apiTarget,
         changeOrigin: true,
       },
       // Authentication. Same-origin through the proxy so the kbc_session
       // cookie (HttpOnly, SameSite=Lax) is set on and sent back to :3000.
       "/login_api": {
-        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
+        target: apiTarget,
         changeOrigin: true,
       },
       "/api": {
-        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
+        target: apiTarget,
         changeOrigin: true,
       },
       "/ws": {
-        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
+        target: apiTarget,
         changeOrigin: true,
         ws: true,
       },
       "/media": {
-        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
+        target: apiTarget,
         changeOrigin: true,
       },
     },
   },
-}));
+  };
+});

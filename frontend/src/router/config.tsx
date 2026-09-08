@@ -13,7 +13,9 @@ import { lazyRoute } from "./lazyRoute";
 // fail with "Failed to fetch dynamically imported module". See ./lazyRoute.
 const AdminAccessLogsPage = lazyRoute(() => import("../pages/admin/access-logs/page"));
 const AdminDashboard = lazyRoute(() => import("../pages/workspace/admin/page"));
+const AdminCertificatesPage = lazyRoute(() => import("../pages/admin/certificates/page"));
 const AdminDocumentsPage = lazyRoute(() => import("../pages/admin/documents/page"));
+const AdminEvidencePage = lazyRoute(() => import("../pages/admin/evidence/page"));
 const AdminNotificationsPage = lazyRoute(() => import("../pages/admin/notifications/page"));
 const AdminPermissionsPage = lazyRoute(() => import("../pages/admin/permissions/page"));
 const AdminRolesPage = lazyRoute(() => import("../pages/admin/roles/page"));
@@ -34,6 +36,7 @@ const EmployerLearnerPage = lazyRoute(() => import("../pages/employer/EmployerLe
 const BudgetsPage = lazyRoute(() => import("../pages/finance/budgets/page"));
 const CallLogsPage = lazyRoute(() => import("../pages/engagement/call-logs/page"));
 const CatchUpPage = lazyRoute(() => import("../pages/learner/catchup/page"));
+const CertificateVerificationPage = lazyRoute(() => import("../pages/certificates/verify/page"));
 const CheckpointsPage = lazyRoute(() => import("../pages/curriculum/checkpoints/page"));
 const ClubBadgeDetailPage = lazyRoute(() => import("../pages/learner/clubs/badge-detail/page"));
 const ClubDetailPage = lazyRoute(() => import("../pages/learner/clubs/detail/page"));
@@ -110,6 +113,7 @@ const FinanceWorkspace = lazyRoute(() => import("../pages/workspace/finance/page
 const FlashCardsPage = lazyRoute(() => import("../pages/engagement/flash-cards/page"));
 const ForgotPasswordPage = lazyRoute(() => import("../pages/forgot-password/page"));
 const LoginPage = lazyRoute(() => import("../pages/login/page"));
+const OldOtjhPage = lazyRoute(() => import("../features/old-otjh/page"));
 const AccessRequiredPage = lazyRoute(() => import("../pages/access-required/page"));
 // Serves both emailed-token flows; `mode` picks which.
 const SetPasswordPage = lazyRoute(() => import("../pages/set-password/page"));
@@ -179,7 +183,9 @@ const MisTutorAssignmentPage = lazyRoute(() => import("../pages/mis/tutor-assign
 const ModuleBuilder = lazyRoute(() => import("../pages/curriculum/module-builder/page"));
 const ModulesPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
 const MonthlyCyclePage = lazyRoute(() => import("../pages/learner/monthly-cycle/page"));
+const MonthlySubmissionPage = lazyRoute(() => import("../pages/learner/monthly-submission/page"));
 const MyLearningPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
+const TrainingPlanTimelinePage = lazyRoute(() => import("../pages/learner/training-plan-timeline/page"));
 const MySchedulePage = lazyRoute(() => import("../pages/learner/clubs/events/schedule/page"));
 const NotFound = lazyRoute(() => import("../pages/NotFound"));
 const PaymentsPage = lazyRoute(() => import("../pages/finance/payments/page"));
@@ -259,6 +265,13 @@ const WhatsAppLogsPage = lazyRoute(() => import("../pages/engagement/whatsapp-lo
 const WizardPage = lazyRoute(() => import("../pages/users/wizard/WizardPage"));
 
 const routes: RouteObject[] = [
+  { path: '/old-otjh', element: <OldOtjhPage /> },
+  { path: '/old-otjh/months', element: <OldOtjhPage /> },
+  { path: '/old-otjh/months/:month', element: <OldOtjhPage /> },
+  { path: '/old-otjh/coach', element: <OldOtjhPage /> },
+  { path: '/old-otjh/monitor', element: <OldOtjhPage /> },
+  { path: '/old-otjh/coach/:aptemId', element: <OldOtjhPage /> },
+  { path: '/old-otjh/coach/:aptemId/months/:month', element: <OldOtjhPage /> },
   {
     // Sign-in is the front door. LoginPage bounces an already-signed-in visitor
     // to their own workspace (see homeFor there), so "/" is the login form for a
@@ -363,8 +376,16 @@ const routes: RouteObject[] = [
     element: <AdminDashboard />,
   },
   {
+    path: "/workspace/admin/certificates",
+    element: <AdminCertificatesPage />,
+  },
+  {
     path: "/admin/users",
     element: <AdminUsersPage />,
+  },
+  {
+    path: "/admin/certificates",
+    element: <Navigate to="/workspace/admin/certificates" replace />,
   },
   {
     path: "/admin/roles",
@@ -377,6 +398,14 @@ const routes: RouteObject[] = [
   {
     path: "/admin/documents",
     element: <AdminDocumentsPage />,
+  },
+  {
+    path: "/admin/evidence",
+    element: <AdminEvidencePage />,
+  },
+  {
+    path: "/admin/evidence/:learnerId",
+    element: <AdminEvidencePage />,
   },
   {
     path: "/admin/notifications",
@@ -437,6 +466,17 @@ const routes: RouteObject[] = [
   {
     path: "/learner/my-learning/:kind/:id",
     element: <MyLearningPage />,
+  },
+  {
+    // The learner's Aptem training plan, month-by-month accordion. Distinct
+    // from "/learner/training-plan" below, which is a legacy alias onto the
+    // My Learning "Modules" tab.
+    path: "/learner/training-plan-timeline",
+    element: <TrainingPlanTimelinePage />,
+  },
+  {
+    path: "/learner/training-plan-timeline/:kind/:id",
+    element: <TrainingPlanTimelinePage />,
   },
   {
     path: "/learner/training-plan",
@@ -526,6 +566,18 @@ const routes: RouteObject[] = [
   {
     path: "/learner/monthly-cycle",
     element: <MonthlyCyclePage />,
+  },
+  {
+    path: "/learner/monthly-submission",
+    element: <MonthlySubmissionPage />,
+  },
+  {
+    path: "/learner/monthly-submission/:kind/:id",
+    element: <MonthlySubmissionPage />,
+  },
+  {
+    path: "/learner/monthly-submission/:kind/:id/:componentId",
+    element: <VideoWatchPage />,
   },
   {
     path: "/learner/monthly-cycle/:kind/:id",
@@ -1398,6 +1450,10 @@ const routes: RouteObject[] = [
     element: <StarredMessagesPage />,
   },
   {
+    path: "/verify-certificate/:token",
+    element: <CertificateVerificationPage />,
+  },
+  {
     path: "*",
     element: <NotFound />,
   },
@@ -1430,8 +1486,13 @@ const PUBLIC_PATHS = new Set([
   "/reset-password",
 ]);
 
+const PUBLIC_PREFIXES = [
+  "/verify-certificate/",
+];
+
 const isPublic = (route: RouteObject) =>
-  typeof route.path === "string" && PUBLIC_PATHS.has(route.path);
+  typeof route.path === "string"
+  && (PUBLIC_PATHS.has(route.path) || PUBLIC_PREFIXES.some((prefix) => route.path?.startsWith(prefix)));
 
 export default [
   ...routes.filter(isPublic),

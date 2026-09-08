@@ -111,7 +111,9 @@ export interface LearnerQuizAttempt {
   startedAt: string;
   submittedAt: string;
   timeTaken?: string;         // "MM:SS", e.g. "00:26" (auto-tracked)
-  verifiedSeconds?: number | null;  // server-checked seconds actually spent; the OTJ total
+  timeTrackingSource?: string | null;
+  claimedSeconds?: number | null;   // learner/browser supplied duration
+  verifiedSeconds?: number | null;  // fallback for the OTJ total when reportedTime is blank
 }
 
 /** A coach's verdict on one submitted activity. */
@@ -128,6 +130,8 @@ export interface ComponentMarking {
 
 export interface LearnerDetail {
   id: string;
+  /** Pilot feature flag; Aptem identity itself remains server-side. */
+  studentActivityAvailable?: boolean;
   name: string;
   email: string;
   phone: string;
@@ -196,7 +200,9 @@ export interface LearnerComponentProgress {
   startedAt: string | null;
   submittedAt: string;
   timeTaken: string | null;
-  verifiedSeconds?: number | null;  // server-checked seconds actually spent; the OTJ total
+  timeTrackingSource?: string | null;
+  claimedSeconds?: number | null;   // learner/browser supplied duration
+  verifiedSeconds?: number | null;  // fallback for the OTJ total when reportedTime is blank
   // Ungraded completions leave this absent — the row itself is the completion.
   // An explicit false is a recorded failure and never counts as achievement.
   passed?: boolean | null;
@@ -232,7 +238,9 @@ export interface LearnerVideoProgress {
   startedAt: string | null;
   submittedAt: string;
   timeTaken: string | null;
-  verifiedSeconds?: number | null;  // server-checked seconds actually spent; the OTJ total
+  timeTrackingSource?: string | null;
+  claimedSeconds?: number | null;   // learner/browser supplied duration
+  verifiedSeconds?: number | null;  // fallback for the OTJ total when reportedTime is blank
   // See LearnerComponentProgress.passed.
   passed?: boolean | null;
 }

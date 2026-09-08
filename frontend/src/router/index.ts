@@ -5,6 +5,7 @@ import { PageSkeleton } from "@/components/feature/Skeletons";
 import { useAuth } from "@/hooks/useAuth";
 import { isLearnerFlowAccount, isLearnerFlowPath } from "@/lib/learnerFlowAccess";
 import routes from "./config";
+import { OldOtjhProvider } from '@/features/old-otjh/hooks';
 
 let navigateResolver: (navigate: ReturnType<typeof useNavigate>) => void;
 
@@ -52,9 +53,9 @@ export function AppRoutes() {
 
   // Keyed by pathname so the boundary resets on navigation: a crashed page must
   // not survive a Back or a link click as a permanent error screen.
-  return createElement(
-    RouteErrorBoundary,
-    { key: pathname },
-    createElement(Suspense, { fallback: createElement(RouteLoadingFallback) }, guardedElement),
-  );
+  return createElement(OldOtjhProvider, {
+    key: auth.account?.id ?? 'signed-out',
+    children: createElement(RouteErrorBoundary, { key: pathname },
+      createElement(Suspense, { fallback: createElement(RouteLoadingFallback) }, guardedElement)),
+  });
 }

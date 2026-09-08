@@ -162,11 +162,19 @@ def _submit_reflection(request):
     except (TypeError, ValueError):
         return _error("Request body must be valid JSON.")
 
+    if not isinstance(payload, dict):
+        return _error("Request body must be a JSON object.")
+
     learner_kind = _text(payload.get("learnerKind"))
     learner_id = _text(payload.get("learnerId"))
     activity_type = _text(payload.get("activityType"))
     activity_id = _text(payload.get("activityId"))
     learning_reflection = _text(payload.get("learningReflection"))
+    submission_mode = "draft" if _text(payload.get("submissionMode")).lower() == "draft" else "submit"
+    is_assignment_form = activity_type.lower() == "assignment"
+    assignment_answer = _text(payload.get("assignmentAnswer"))
+    what_you_learned = _text(payload.get("whatYouLearned"))
+    business_impact = _text(payload.get("businessImpact"))
 
     if learner_kind not in VALID_KINDS:
         return _error("A valid learnerKind is required.")
@@ -174,8 +182,26 @@ def _submit_reflection(request):
         return _error("learnerId is required.")
     if not activity_type or not activity_id:
         return _error("activityType and activityId are required.")
-    if not learning_reflection:
-        return _error("learningReflection is required.")
+    if submission_mode != "draft":
+        if is_assignment_form:
+            missing = []
+            if not assignment_answer:
+                missing.append("assignmentAnswer")
+            if not what_you_learned:
+                missing.append("whatYouLearned")
+            if not business_impact:
+                missing.append("businessImpact")
+            if missing:
+                return _error("Complete all assignment sections before submitting: " + ", ".join(missing) + ".")
+        elif not learning_reflection:
+            return _error("learningReflection is required.")
+
+    # The existing column is non-null and remains the searchable summary for
+    # every reflection-like submission. Assignment forms keep their complete
+    # versioned monthly payload in full_submission and use the learning answer here.
+    if is_assignment_form:
+        learning_reflection = what_you_learned or assignment_answer
+    submission_status = "draft" if submission_mode == "draft" else "submitted_for_tutor_review"
 
     raw_date = _text(payload.get("dateCompleted"))
     try:
@@ -202,7 +228,7 @@ def _submit_reflection(request):
             with connections["enrolment"].cursor() as cur:
                 cur.execute(
                     """
-                    select status
+                    select status, full_submission
                     from "Learner"."learning_reflection_submissions"
                     where learner_kind = %s
                       and learner_id = %s
@@ -213,18 +239,50 @@ def _submit_reflection(request):
                     [learner_kind, learner_id, activity_type, activity_id],
                 )
                 existing = cur.fetchone()
+                # Provenance is server-owned. A learner cannot bypass the new
+                # checks by posting an import flag or by omitting version 2.
+                stored = existing[1] if existing else {}
+                if isinstance(stored, str):
+                    try:
+                        stored = json.loads(stored)
+                    except (TypeError, ValueError):
+                        stored = {}
+                stored = _dict(stored)
+                imported = stored.get("submissionOrigin") == "imported_legacy"
+                full_submission["submissionOrigin"] = "imported_legacy" if imported else "learner"
+                if is_assignment_form and imported:
+                    return _error("Imported assignments are historical records and cannot be overwritten here.", 409)
                 if existing and existing[0] == "accepted":
                     return _error(
                         "This reflection has been accepted by the coach and can no longer be changed.",
                         409,
                     )
+                if (
+                    existing
+                    and existing[0] == "submitted_for_tutor_review"
+                    and is_assignment_form
+                ):
+                    return _error(
+                        "This assignment has already been submitted for tutor review.",
+                        409,
+                    )
+
+                if is_assignment_form and submission_mode == "submit":
+                    from .monthly_assignment import assignment_checks
+                    checks = assignment_checks(payload)
+                    missing_checks = [check["label"] for check in checks if not check["passed"]]
+                    if missing_checks:
+                        return JsonResponse({"error": "Complete the outstanding submission requirements. Your draft is saved.", "checks": checks}, status=400)
+                    quality_score = 100
+                    full_submission["qualityScore"] = quality_score
+                    full_submission["qualityChecks"] = checks
 
                 cur.execute(
                 """
                 insert into "Learner"."learning_reflection_submissions" (
                     id, learner_kind, learner_id, learner_name, programme_name,
                     activity_type, activity_id, activity_title, module_title,
-                    week_title, planned_otjh, learning_reflection, ksb_codes,
+                    week_title, planned_otjh, status, learning_reflection, ksb_codes,
                     ksb_weights, ksb_explanations, confidence_before, confidence_after,
                     application_type, application_text, evidence_files,
                     evidence_consent_confirmed, selected_benefits,
@@ -236,7 +294,7 @@ def _submit_reflection(request):
                 ) values (
                     %s, %s, %s, %s, %s,
                     %s, %s, %s, %s,
-                    %s, %s, %s, %s::jsonb,
+                    %s, %s, %s, %s, %s::jsonb,
                     %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb,
                     %s, %s, %s::jsonb,
                     %s, %s::jsonb,
@@ -254,7 +312,7 @@ def _submit_reflection(request):
                     module_title = excluded.module_title,
                     week_title = excluded.week_title,
                     planned_otjh = excluded.planned_otjh,
-                    status = 'submitted_for_tutor_review',
+                    status = excluded.status,
                     learning_reflection = excluded.learning_reflection,
                     ksb_codes = excluded.ksb_codes,
                     ksb_weights = excluded.ksb_weights,
@@ -296,6 +354,7 @@ def _submit_reflection(request):
                     _text(payload.get("moduleTitle")),
                     _text(payload.get("weekTitle")),
                     _text(payload.get("plannedOtjh")),
+                    submission_status,
                     learning_reflection,
                     json.dumps(_list(payload.get("ksbCodes"))),
                     json.dumps(ksb_weights),
@@ -332,7 +391,7 @@ def _submit_reflection(request):
     return JsonResponse(
         {
             "id": str(stored_id),
-            "status": "submitted_for_tutor_review",
+            "status": submission_status,
         },
         status=201,
     )
