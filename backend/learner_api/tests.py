@@ -27,6 +27,13 @@ from .active_users import (
     save_progress_record,
 )
 from .active_users import connections as active_users_connections
+from .absence_reports import (
+    KBC_ATTENDANCE_ID_BASE,
+    KBC_ATTENDANCE_ID_RANGE,
+    _fetch_missed_sessions,
+    _kbc_attendance_report_id,
+    _resolve_absent_attendance,
+)
 from .components import _assignment_form_ready, submit_component_progress
 from . import evidence_storage, progress_rules
 from .progress_rules import (
@@ -552,6 +559,78 @@ class AttendanceSummaryTests(SimpleTestCase):
         self.assertEqual(summary['attendanceRate'], 100)
 
 
+class KbcAbsenceSessionTests(SimpleTestCase):
+    def setUp(self):
+        self.learner = SimpleNamespace(
+            aptem_id='92',
+            username='Test Learner',
+            email='learner@example.com',
+        )
+        self.absent_row = {
+            'session_id': '92_2026-08-14_project_management',
+            'session_date': date(2026, 8, 14),
+            'attendance_status': 'absent',
+            'session_title': 'Ray-Project Management Office (PMO)',
+            'session_type': 'KBC attendance',
+            'session_start_time': None,
+            'session_end_time': None,
+            'coach_name': '',
+            'module_title': 'Ray-Project Management Office (PMO)',
+        }
+
+    @patch('learner_api.absence_reports.fetch_kbc_attendance_rows')
+    def test_missed_session_dropdown_uses_absent_kbc_rows(self, fetch_rows):
+        fetch_rows.return_value = [
+            self.absent_row,
+            {
+                **self.absent_row,
+                'session_id': '92_2026-08-21_project_management',
+                'session_date': date(2026, 8, 21),
+                'attendance_status': 'present',
+            },
+        ]
+
+        sessions = _fetch_missed_sessions(self.learner, 272)
+
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(sessions[0]['sessionId'], self.absent_row['session_id'])
+        self.assertEqual(sessions[0]['dateIso'], '2026-08-14')
+        self.assertEqual(sessions[0]['title'], self.absent_row['session_title'])
+        fetch_rows.assert_called_once_with(
+            aptem_id='92',
+            learner_id=272,
+            learner_name='Test Learner',
+            learner_email='learner@example.com',
+        )
+
+    @patch('learner_api.absence_reports.fetch_kbc_attendance_rows')
+    def test_submission_resolves_the_selected_kbc_session(self, fetch_rows):
+        fetch_rows.return_value = [self.absent_row]
+
+        attendance_id = _resolve_absent_attendance(
+            self.learner,
+            272,
+            self.absent_row['session_id'],
+            self.absent_row['session_title'].upper(),
+            self.absent_row['session_date'],
+            None,
+        )
+
+        self.assertEqual(
+            attendance_id,
+            _kbc_attendance_report_id(self.absent_row['session_id']),
+        )
+
+    def test_kbc_report_id_is_stable_and_fits_a_signed_bigint(self):
+        first = _kbc_attendance_report_id(self.absent_row['session_id'])
+        second = _kbc_attendance_report_id(self.absent_row['session_id'])
+
+        self.assertEqual(first, second)
+        self.assertGreaterEqual(first, KBC_ATTENDANCE_ID_BASE)
+        self.assertLess(first, KBC_ATTENDANCE_ID_BASE + KBC_ATTENDANCE_ID_RANGE)
+        self.assertLessEqual(first, 9_223_372_036_854_775_807)
+
+
 class TeamsAttendanceEligibilityTests(SimpleTestCase):
     def test_reads_every_invited_email_off_the_session(self):
         session = SimpleNamespace(attendees=['Learner@Example.com', ' second@example.com '])
@@ -587,12 +666,14 @@ class TeamsAttendanceEligibilityTests(SimpleTestCase):
 
 
 class LearnerAttendanceEndpointTests(SimpleTestCase):
-    @patch('learner_api.attendance.fetch_verified_teams_attendance_rows', return_value=[])
-    @patch('learner_api.attendance.learner_profile_for_source')
-    def test_reads_projection_with_profile_id_not_enrolment_id(self, resolve_profile, fetch_rows):
-        source = SimpleNamespace(id=19, email='learner@example.com')
-        profile = SimpleNamespace(id=2, email='learner@example.com')
-        resolve_profile.return_value = profile
+    @patch('learner_api.attendance.fetch_kbc_attendance_rows', return_value=[])
+    def test_reads_kbc_register_with_the_enrolments_aptem_id(self, fetch_rows):
+        source = SimpleNamespace(
+            id=19,
+            username='Test Learner',
+            email='learner@example.com',
+            aptem_id='APT-92',
+        )
         source_model = MagicMock()
         source_model.DoesNotExist = type('SourceDoesNotExist', (Exception,), {})
         source_model.all_learners.only.return_value.get.return_value = source
@@ -602,15 +683,19 @@ class LearnerAttendanceEndpointTests(SimpleTestCase):
             {'apprenticeship': source_model},
             clear=True,
         ):
-            response = learner_attendance(
+            response = learner_attendance.__wrapped__(
                 RequestFactory().get('/learner_api/attendance/apprenticeship/19/'),
                 'apprenticeship',
                 19,
             )
 
         self.assertEqual(response.status_code, 200)
-        resolve_profile.assert_called_once_with(source, 19)
-        fetch_rows.assert_called_once_with(learner_ids=[2])
+        fetch_rows.assert_called_once_with(
+            aptem_id='APT-92',
+            learner_id=19,
+            learner_name='Test Learner',
+            learner_email='learner@example.com',
+        )
 
 
 class TeamsAttendanceSyncTests(SimpleTestCase):

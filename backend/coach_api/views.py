@@ -86,6 +86,7 @@ from curriculum_api.views import (
     delivery_days_per_week,
     get_program_config_rows,
     get_training_rows,
+    group_authoring_detail_rows,
     is_operational_training_row,
     LIVE_SESSION_OCCURRENCES_TABLE,
     LIVE_SESSIONS_TABLE,
@@ -5739,6 +5740,117 @@ def coach_staff_display_name(owner_email: str) -> str:
     return clean_text(getattr(row, "username", None))
 
 
+def staff_assignment_match_key(value: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", "", clean_text(value).casefold())
+
+
+def fetch_official_assigned_groups(owner_email: str, owner_name: str = "") -> list[dict]:
+    """Curriculum-owned group assignments for this coach.
+
+    The official source for a coach holding a delivery group is
+    ``curriculum.groups.coach_name``. Learner caseload assignment is deliberately
+    separate: a group can be assigned before any learners are allocated to it, so
+    this dashboard card must read curriculum's group rows rather than infer
+    ownership from active learners.
+    """
+    display_name = clean_text(owner_name) or coach_staff_display_name(owner_email)
+    owner_email = normalize_email(owner_email)
+    candidate_keys = {
+        staff_assignment_match_key(display_name),
+        staff_assignment_match_key(owner_email),
+    }
+    if owner_email and "@" in owner_email:
+        candidate_keys.add(staff_assignment_match_key(owner_email.split("@", 1)[0]))
+    candidate_keys.discard("")
+    if not candidate_keys:
+        return []
+
+    groups = []
+    for group in group_authoring_detail_rows():
+        coach_name = clean_text(group.get("coach"))
+        if staff_assignment_match_key(coach_name) not in candidate_keys:
+            continue
+        groups.append({
+            "id": clean_text(group.get("id")),
+            "name": clean_text(group.get("name")) or "Unnamed group",
+            "programmeId": clean_text(group.get("programmeId")),
+            "programme": clean_text(group.get("programme")) or "--",
+            "cohortId": clean_text(group.get("cohortId")),
+            "cohort": clean_text(group.get("cohort")) or "--",
+            "coach": coach_name,
+            "status": clean_text(group.get("status")) or "planned",
+            "schedule": clean_text(group.get("schedule")) or "--",
+            "startDate": clean_text(group.get("startDate")),
+            "endDate": clean_text(group.get("endDate")),
+        })
+    return sorted(
+        groups,
+        key=lambda item: (
+            item.get("programme", "").casefold(),
+            item.get("cohort", "").casefold(),
+            item.get("name", "").casefold(),
+        ),
+    )
+
+
+def live_session_matches_assigned_group(
+    *,
+    programme: str,
+    cohort: str,
+    group: str,
+    assigned_groups: list[dict],
+    programme_id: str = "",
+    cohort_id: str = "",
+    group_id: str = "",
+) -> bool:
+    """Return whether a curriculum live-session row belongs on this coach calendar.
+
+    MCM/PR ownership comes from the learner caseload. Live sessions are
+    curriculum-owned, so they must be limited to the groups officially assigned
+    to the coach in curriculum.groups. Prefer stable ids where present, then
+    fall back to normalized programme/cohort/group names for older rows.
+    """
+    if not assigned_groups:
+        return False
+
+    programme_key = staff_assignment_match_key(programme)
+    cohort_key = staff_assignment_match_key(cohort)
+    group_key = staff_assignment_match_key(group)
+    programme_id_key = staff_assignment_match_key(programme_id)
+    cohort_id_key = staff_assignment_match_key(cohort_id)
+    group_id_key = staff_assignment_match_key(group_id)
+
+    for assigned in assigned_groups:
+        assigned_group_id_key = staff_assignment_match_key(assigned.get("id"))
+        assigned_cohort_id_key = staff_assignment_match_key(assigned.get("cohortId"))
+        assigned_programme_id_key = staff_assignment_match_key(assigned.get("programmeId"))
+        assigned_group_key = staff_assignment_match_key(assigned.get("name"))
+        assigned_cohort_key = staff_assignment_match_key(assigned.get("cohort"))
+        assigned_programme_key = staff_assignment_match_key(assigned.get("programme"))
+
+        if group_id_key and assigned_group_id_key and group_id_key == assigned_group_id_key:
+            return True
+
+        group_matches = bool(group_key and assigned_group_key and group_key == assigned_group_key)
+        if not group_matches:
+            continue
+
+        cohort_matches = (
+            bool(cohort_id_key and assigned_cohort_id_key and cohort_id_key == assigned_cohort_id_key)
+            or bool(cohort_key and assigned_cohort_key and cohort_key == assigned_cohort_key)
+            or not (cohort_id_key or cohort_key or assigned_cohort_id_key or assigned_cohort_key)
+        )
+        programme_matches = (
+            bool(programme_id_key and assigned_programme_id_key and programme_id_key == assigned_programme_id_key)
+            or bool(programme_key and assigned_programme_key and programme_key == assigned_programme_key)
+            or not (programme_id_key or programme_key or assigned_programme_id_key or assigned_programme_key)
+        )
+        if cohort_matches and programme_matches:
+            return True
+
+    return False
+
+
 def fetch_cohort_selected_holidays(cohort_id: str) -> list[dict]:
     """The holidays actually ticked on a cohort, not every one in its period.
 
@@ -5764,6 +5876,10 @@ def collect_live_session_events(
     end_date: date | None = None,
 ) -> list[dict]:
     if not coach_has_live_session_access(owner_email):
+        return []
+
+    assigned_groups = fetch_official_assigned_groups(owner_email, owner_name)
+    if not assigned_groups:
         return []
 
     program_configs_by_id = program_config_by_id(get_program_config_rows())
@@ -5834,6 +5950,16 @@ def collect_live_session_events(
             continue
         group = actual_group_identity(row, cohort["id"])
         if not group:
+            continue
+        if not live_session_matches_assigned_group(
+            programme=programme,
+            cohort=cohort["name"],
+            group=group["name"],
+            assigned_groups=assigned_groups,
+            programme_id=clean_text(identity.get("sourceId")),
+            cohort_id=cohort["id"],
+            group_id=group["id"],
+        ):
             continue
 
         module_start = row.get("start_date")
@@ -5920,11 +6046,24 @@ def collect_tracked_live_session_events(
     if not coach_has_live_session_access(owner_email):
         return []
 
+    assigned_groups = fetch_official_assigned_groups(owner_email, owner_name)
+    if not assigned_groups:
+        return []
+
     module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, ensure_tables=False)
     modules_by_id = {
         clean_text(row.get("module_catalogue_id")): row
         for row in module_rows
         if clean_text(row.get("module_catalogue_id"))
+        and live_session_matches_assigned_group(
+            programme=clean_text(row.get("programme_name")),
+            cohort=clean_text(row.get("cohort_name")),
+            group=clean_text(row.get("group_name")),
+            assigned_groups=assigned_groups,
+            programme_id=clean_text(row.get("programme_id") or row.get("program_id")),
+            cohort_id=clean_text(row.get("cohort_id")),
+            group_id=clean_text(row.get("group_id")),
+        )
     }
     if not modules_by_id:
         return []
@@ -7656,15 +7795,23 @@ def coach_dashboard(request):
         finally:
             close_old_connections()
 
+    def load_assigned_groups():
+        try:
+            return fetch_official_assigned_groups(owner_email)
+        finally:
+            close_old_connections()
+
     try:
         # These sections use independent read-only connections. Running them
         # together makes initial page latency the duration of the slowest query
         # instead of the sum of both remote-database round trips.
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="coach-dashboard") as executor:
+        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="coach-dashboard") as executor:
             learners_future = executor.submit(load_dashboard_learners)
             timetable_future = executor.submit(load_dashboard_timetable)
+            groups_future = executor.submit(load_assigned_groups)
             learners = learners_future.result()
             timetable_payload = timetable_future.result()
+            assigned_groups = groups_future.result()
         owner_name = coach_staff_display_name(owner_email) or next(
             (clean_text(learner.get("coachName")) for learner in learners if clean_text(learner.get("coachName"))),
             "Coach",
@@ -7685,6 +7832,7 @@ def coach_dashboard(request):
                 "email": owner_email,
             },
             "learners": learners,
+            "assignedGroups": assigned_groups,
             # The compact dashboard cards do not render attendance or evidence.
             # Their dedicated pages load those expensive datasets on demand.
             "attendance": {"learners": []},

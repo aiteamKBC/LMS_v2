@@ -47,7 +47,7 @@ export const learnerNavItems: SidebarNavItem[] = [
     children: [
       { id: 'learner-monthly-cycle', label: 'Monthly Cycle', icon: 'ri-loop-left-line', href: '/learner/monthly-cycle' },
       { id: 'learner-monthly-submission', label: 'Monthly submission', icon: 'ri-file-text-line', href: '/learner/monthly-submission' },
-      { id: 'learner-monthly-coaching', label: 'Monthly Coaching', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
+      { id: 'learner-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
       { id: 'learner-progress-reviews', label: 'Progress Review', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
     ],
   },
@@ -132,7 +132,7 @@ export const coachNavItems: SidebarNavItem[] = [
     href: '',
     children: [
       { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable' },
-      { id: 'coach-meetings', label: 'Monthly Coache Meeting', icon: 'ri-calendar-check-line', href: '/coach/meetings' },
+      { id: 'coach-meetings', label: 'Monthly Coaching Meeting', icon: 'ri-calendar-check-line', href: '/coach/meetings' },
       { id: 'coach-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/coach/progress-reviews' },
       { id: 'coach-monthly-cycle', label: 'Monthly Cycle', icon: 'ri-loop-left-line', href: '/coach/monthly-cycle' },
     ],

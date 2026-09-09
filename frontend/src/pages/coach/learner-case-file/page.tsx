@@ -1040,7 +1040,7 @@ function ReferenceReviewsContent({ data }: { data: CoachLearnerCaseFileData }) {
           ? <ProfileEmpty text="No progress review records are available." />
           : <ReviewMeetingList items={data.progressReviews} />}
       </ReferencePanel>
-      <ReferencePanel title="Monthly Coach Meetings" icon="ri-calendar-todo-line" tone="primary">
+      <ReferencePanel title="Monthly Coaching Meetings" icon="ri-calendar-todo-line" tone="primary">
         {data.monthlyCoachMeetings.length === 0
           ? <ProfileEmpty text="No monthly coaching meeting data is available." />
           : <ReviewMeetingList items={data.monthlyCoachMeetings} />}
