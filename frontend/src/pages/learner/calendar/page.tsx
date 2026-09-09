@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
@@ -170,7 +170,11 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
   ) && (isLiveSession || ev.invited !== false);
   return {
     id: ev.id,
-    title: !isLiveSession && ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title,
+    title: ev.source === 'mcr' && ev.sequence
+      ? `Monthly Coaching Meeting ${ev.sequence}`
+      : ev.source === 'progress-review' && ev.sequence
+        ? `Progress Review ${ev.sequence}`
+        : !isLiveSession && ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title,
     date: `${d} ${MONTH_NAMES[m - 1].substring(0, 3)}`,
     dayName,
     time,
@@ -273,7 +277,7 @@ function getEventColorClass(type: string, customColor?: string) {
   }
   const map: Record<string, string> = {
     'Live Session': 'bg-violet-50 text-violet-800 border-l-violet-500',
-    'Monthly Coaching': 'bg-orange-50 text-orange-800 border-l-orange-500',
+    'Monthly Coaching Meeting': 'bg-orange-50 text-orange-800 border-l-orange-500',
     'Progress Review': 'bg-teal-50 text-teal-800 border-l-teal-500',
     'Catch-up': 'bg-rose-50 text-rose-800 border-l-rose-500',
     'Student Support': 'bg-blue-50 text-blue-800 border-l-blue-500',
@@ -299,7 +303,7 @@ function getEventDotColor(type: string, customColor?: string) {
     if (color) return color.dot;
   }
   const map: Record<string, string> = {
-    'Live Session': 'bg-violet-500', 'Monthly Coaching': 'bg-orange-500', 'Progress Review': 'bg-teal-500',
+    'Live Session': 'bg-violet-500', 'Monthly Coaching Meeting': 'bg-orange-500', 'Progress Review': 'bg-teal-500',
     'Catch-up': 'bg-rose-500', 'Student Support': 'bg-blue-500',
     Workshop: 'bg-primary-500', 'Hands-on Lab': 'bg-secondary-500', Masterclass: 'bg-accent-500',
     'Panel Discussion': 'bg-amber-500', 'Case Study': 'bg-emerald-500', Showcase: 'bg-rose-500',
@@ -398,8 +402,8 @@ const LEARNER_STATUS_FILTERS: LearnerStatusFilter[] = ['all', 'needs-schedule', 
 const LEARNER_SOURCE_META: Record<LearnerSourceFilter, { label: string; short: string; dot: string }> = {
   all: { label: 'All Sources', short: 'All', dot: 'bg-foreground-400' },
   'live-session': { label: 'Live Sessions', short: 'Live Session', dot: 'bg-violet-500' },
-  mcr: { label: 'Monthly Coaching', short: 'MCM', dot: 'bg-orange-500' },
-  'progress-review': { label: 'Progress Reviews', short: 'PR', dot: 'bg-teal-500' },
+  mcr: { label: 'Monthly Coaching Meeting', short: 'Monthly Coaching Meeting', dot: 'bg-orange-500' },
+  'progress-review': { label: 'Progress Review', short: 'Progress Review', dot: 'bg-teal-500' },
   'catch-up': { label: 'Catch-up', short: 'Catch-up', dot: 'bg-rose-500' },
   'student-support': { label: 'Student Support', short: 'Support', dot: 'bg-blue-500' },
   personal: { label: 'Personal Events', short: 'Personal', dot: 'bg-sky-500' },
@@ -453,7 +457,7 @@ function isProgrammeCycleSessionType(value?: CalendarEvent['bookingSessionType']
 function sessionTypeLabel(value?: CalendarEvent['bookingSessionType'] | BookableSessionType): string {
   switch (value) {
     case 'mcr':
-      return 'Monthly Coaching';
+      return 'Monthly Coaching Meeting';
     case 'progress-review':
       return 'Progress Review';
     case 'student-support':
@@ -512,6 +516,7 @@ export default function LearnerCalendarPage() {
 
 /** Calendar body without the page shell — reusable as an embedded section (e.g. on the learner overview page). */
 export function LearnerCalendarContent() {
+  const location = useLocation();
   const myLearner = useMyLearner();
   const loadArtifacts = useCallback((eventKey: string, signal?: AbortSignal) => fetchLearnerMeetingArtifacts(myLearner.kind, myLearner.id, eventKey, signal), [myLearner.id, myLearner.kind]);
   const artifactContentUrl = useCallback((eventKey: string, artifactType: string, artifactId: string, options: { preview?: boolean } = {}) => learnerMeetingArtifactContentUrl(myLearner.kind, myLearner.id, eventKey, artifactType, artifactId, options), [myLearner.id, myLearner.kind]);
@@ -569,6 +574,7 @@ export function LearnerCalendarContent() {
   const [visibleBusySlots, setVisibleBusySlots] = useState<CalendarBusySlot[]>([]);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const handledFocusEventRef = useRef<string | null>(null);
 
   const today = new Date();
   const todayDay = today.getDate();
@@ -589,6 +595,19 @@ export function LearnerCalendarContent() {
     return Array.from(unique.values()).map(mapBusySlot).filter((event): event is CalendarEvent => event !== null);
   }, [visibleBusySlots]);
   const displayedEvents = useMemo(() => [...myEvents, ...personalBusyEvents], [myEvents, personalBusyEvents]);
+  const focusedEventKey = useMemo(() => new URLSearchParams(location.search).get('event') || '', [location.search]);
+  useEffect(() => {
+    if (!focusedEventKey || handledFocusEventRef.current === focusedEventKey) return;
+    const focusEvent = displayedEvents.find((event) => event.eventKey === focusedEventKey || event.id === focusedEventKey);
+    const focusDate = focusEvent ? parseEventDate(focusEvent) : null;
+    if (!focusEvent || !focusDate) return;
+    handledFocusEventRef.current = focusedEventKey;
+    setViewMode('monthly');
+    setViewYear(focusDate.year ?? viewYear);
+    setViewMonth(focusDate.month);
+    setSelectedDay(focusDate.day);
+    setSelectedEvent(focusEvent);
+  }, [displayedEvents, focusedEventKey, viewYear]);
   const visibleRangeEvents = useMemo(() => (
     displayedEvents.filter((event) => {
       const eventDate = parseEventDate(event);
@@ -943,7 +962,7 @@ export function LearnerCalendarContent() {
     }
     if (selectedLmsConflict) {
       const cycleConflictHint = isProgrammeCycleSessionType(selectedLmsConflict.bookingSessionType)
-        ? ' Official Monthly Coaching and Progress Review sessions are scheduled from their own calendar cards.'
+        ? ' Official Monthly Coaching Meeting and Progress Review sessions are scheduled from their own calendar cards.'
         : '';
       setBookError(canRescheduleTimeConflict
         ? `That time is occupied by “${selectedLmsConflict.title}”, booked for ${describeCalendarEventSlot(selectedLmsConflict)}. Would you like to reschedule it instead?`
@@ -1167,7 +1186,7 @@ export function LearnerCalendarContent() {
                 : bookingSourceEvent
                   ? <>Choose a date and time for <strong className="text-foreground-700">{bookingSourceEvent.title}</strong>. This will book the official {sessionTypeLabel(bookingSourceEvent.bookingSessionType)} session for you and your coach.</>
                 : coach
-                  ? <>Choose the support you need. Catch-up and Student Support requests go to <strong className="text-foreground-700">{coach.name}</strong> for approval. Monthly Coaching and Progress Reviews are scheduled from their calendar cards.</>
+                  ? <>Choose the support you need. Catch-up and Student Support requests go to <strong className="text-foreground-700">{coach.name}</strong> for approval. Monthly Coaching Meeting and Progress Review sessions are scheduled from their calendar cards.</>
                   : 'No coach has been assigned to you yet — please contact your programme team.'}
             </p>
             <div className="space-y-4">
@@ -1239,7 +1258,7 @@ export function LearnerCalendarContent() {
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-semibold leading-relaxed">
                         That time {canRescheduleTimeConflict ? 'is occupied by' : 'overlaps'} “{selectedLmsConflict.title}”, booked for {describeCalendarEventSlot(selectedLmsConflict)}. {canRescheduleTimeConflict ? 'Would you like to reschedule it?' : 'Choose another time.'}
-                        {!canRescheduleTimeConflict && isProgrammeCycleSessionType(selectedLmsConflict.bookingSessionType) ? ' Official Monthly Coaching and Progress Review sessions are scheduled from their own calendar cards.' : ''}
+                        {!canRescheduleTimeConflict && isProgrammeCycleSessionType(selectedLmsConflict.bookingSessionType) ? ' Official Monthly Coaching Meeting and Progress Review sessions are scheduled from their own calendar cards.' : ''}
                       </p>
                       {canRescheduleTimeConflict && (
                         <div className="mt-2 flex flex-wrap gap-2">
