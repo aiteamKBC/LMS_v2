@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RowAction } from '@/components/ui/ActionRow';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { FilterToolbar, SearchInput } from '@/components/ui/FilterToolbar';
+import { FilterChip, FilterSelect, FilterToolbar, SearchInput } from '@/components/ui/FilterToolbar';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
@@ -87,6 +87,21 @@ const EMPTY_SCHEDULE_FORM: ScheduleFormState = {
 };
 
 const MEETINGS_PER_PAGE = 10;
+const ALL_GROUPS_FILTER = 'all-groups';
+
+function groupCohortFilterKey(event: CoachCalendarEvent) {
+  const value = event.group?.trim() || event.cohort?.trim();
+  if (!value) return '';
+  return `${event.group?.trim() ? 'group' : 'cohort'}:${value.toLowerCase()}`;
+}
+
+function groupCohortFilterLabel(event: CoachCalendarEvent) {
+  const group = event.group?.trim();
+  if (group) return `Group: ${group}`;
+  const cohort = event.cohort?.trim();
+  if (cohort) return `Cohort: ${cohort}`;
+  return '';
+}
 
 function matchesMeetingSearch(event: CoachCalendarEvent, searchTerm: string) {
   const normalized = searchTerm.trim().toLowerCase();
@@ -107,6 +122,7 @@ export default function CoachMeetings() {
   const coach = useCoachIdentity();
   const navigate = useNavigate();
   const [filter, setFilter] = useState<MeetingFilter>('this-month');
+  const [groupFilter, setGroupFilter] = useState(ALL_GROUPS_FILTER);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -159,6 +175,29 @@ export default function CoachMeetings() {
   const scheduledEvents = events.filter(event => isScheduledEvent(event));
   const inProgressEvents = events.filter(event => isInProgressEvent(event));
   const completedEvents = events.filter(event => isCompletedEvent(event));
+  const groupFilterOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const options = events.reduce<{ value: string; label: string }[]>((items, event) => {
+      const value = groupCohortFilterKey(event);
+      const label = groupCohortFilterLabel(event);
+      if (!value || !label || seen.has(value)) return items;
+      seen.add(value);
+      items.push({ value, label });
+      return items;
+    }, []);
+
+    return [
+      { value: ALL_GROUPS_FILTER, label: 'All groups / cohorts' },
+      ...options.sort((a, b) => a.label.localeCompare(b.label)),
+    ];
+  }, [events]);
+
+  useEffect(() => {
+    if (groupFilter === ALL_GROUPS_FILTER) return;
+    if (groupFilterOptions.some((option) => option.value === groupFilter)) return;
+    setGroupFilter(ALL_GROUPS_FILTER);
+  }, [groupFilter, groupFilterOptions]);
+
   const tabFiltered = events.filter(event => {
     if (filter === 'this-month') return isEventThisMonth(event);
     if (filter === 'at-risk') return isAtRiskEvent(event);
@@ -169,10 +208,13 @@ export default function CoachMeetings() {
     if (filter === 'completed') return isCompletedEvent(event);
     return true;
   });
+  const groupFiltered = groupFilter === ALL_GROUPS_FILTER
+    ? tabFiltered
+    : tabFiltered.filter(event => groupCohortFilterKey(event) === groupFilter);
   const normalizedSearchTerm = searchTerm.trim();
   const filtered = normalizedSearchTerm
-    ? tabFiltered.filter(event => matchesMeetingSearch(event, normalizedSearchTerm))
-    : tabFiltered;
+    ? groupFiltered.filter(event => matchesMeetingSearch(event, normalizedSearchTerm))
+    : groupFiltered;
   const pageCount = Math.ceil(filtered.length / MEETINGS_PER_PAGE);
   const activePage = Math.min(currentPage, Math.max(pageCount, 1));
   const paginatedEvents = filtered.slice(
@@ -199,6 +241,12 @@ export default function CoachMeetings() {
 
   const handleSearchChange = (value: string) => {
     setSearchTerm(value);
+    setCurrentPage(1);
+    setExpanded(null);
+  };
+
+  const handleGroupFilterChange = (value: string) => {
+    setGroupFilter(value);
     setCurrentPage(1);
     setExpanded(null);
   };
@@ -345,11 +393,29 @@ export default function CoachMeetings() {
                   ariaLabel="Search coaching meetings by learner"
                 />
               )}
+              filters={(
+                <FilterSelect
+                  value={groupFilter}
+                  onChange={handleGroupFilterChange}
+                  options={groupFilterOptions}
+                  label="Group"
+                  icon="ri-group-line"
+                  widthClass="w-full sm:w-64"
+                  tone={groupFilter === ALL_GROUPS_FILTER ? 'default' : 'active'}
+                />
+              )}
               trailing={(
                 <span className="whitespace-nowrap rounded-md bg-primary-50 px-3 py-1 text-[12px] font-bold text-primary-700">
-                  {normalizedSearchTerm ? `${filtered.length} of ${tabFiltered.length}` : filtered.length} {filtered.length === 1 ? 'meeting' : 'meetings'}
+                  {(normalizedSearchTerm || groupFilter !== ALL_GROUPS_FILTER) ? `${filtered.length} of ${tabFiltered.length}` : filtered.length} {filtered.length === 1 ? 'meeting' : 'meetings'}
                 </span>
               )}
+              chips={groupFilter !== ALL_GROUPS_FILTER ? (
+                <FilterChip
+                  label="Group/Cohort"
+                  value={groupFilterOptions.find((option) => option.value === groupFilter)?.label.replace(/^(Group|Cohort):\s*/, '') || 'Selected'}
+                  onRemove={() => handleGroupFilterChange(ALL_GROUPS_FILTER)}
+                />
+              ) : null}
             />
 
             <PageTabs items={filterTabs} value={filter} onChange={(next) => changeFilter(next as MeetingFilter)} label="Filter coaching meetings by status" />

@@ -144,6 +144,15 @@ function parseEventDate(ev: CalendarEvent): { day: number; month: number; year: 
   return { day, month, year: null };
 }
 
+function eventMonthLabel(isoDate?: string | null): string {
+  if (!isoDate) return '';
+  const [year, month, day] = isoDate.split('-').map(Number);
+  if (!year || !month || !day) return '';
+  const date = new Date(year, month - 1, day);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+}
+
 /** Map a Coach.coach_calendar_event row (backend JSON) to the page's display shape. */
 function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
   if (ev.status === 'cancelled') return null;
@@ -171,9 +180,9 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
   return {
     id: ev.id,
     title: ev.source === 'mcr' && ev.sequence
-      ? `Monthly Coaching Meeting ${ev.sequence}`
+      ? `Monthly Coaching Meeting — ${eventMonthLabel(iso)} #${ev.sequence}`
       : ev.source === 'progress-review' && ev.sequence
-        ? `Progress Review ${ev.sequence}`
+        ? `Progress Review — ${eventMonthLabel(iso)} #${ev.sequence}`
         : !isLiveSession && ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title,
     date: `${d} ${MONTH_NAMES[m - 1].substring(0, 3)}`,
     dayName,
@@ -487,6 +496,15 @@ function learnerEventStatus(event: CalendarEvent): LearnerStatusFilter {
   if (event.bookingStatus === 'completed') return 'completed';
   if (event.bookingStatus === 'scheduled') return 'scheduled';
   return 'scheduled';
+}
+
+function shouldShowMeetingArtifacts(event: CalendarEvent): boolean {
+  return Boolean(
+    event.eventKey
+    && event.meetingLink
+    && ['mcr', 'catch-up', 'progress-review', 'student-support'].includes(event.source || '')
+    && ['completed', 'awaiting-signature'].includes(event.bookingStatus || '')
+  );
 }
 
 function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-background-200' }: { pct: number; size?: number; stroke?: number; color: string; trackClass?: string }) {
@@ -956,8 +974,8 @@ export function LearnerCalendarContent() {
     }
     if (sameWeekSession) {
       setBookError(rescheduleEvent
-        ? `Another “${sameWeekSession.title}” is already booked for ${describeCalendarEventSlot(sameWeekSession)}. The same session type can only be booked once per week.`
-        : `You already have “${sameWeekSession.title}” booked for ${describeCalendarEventSlot(sameWeekSession)}. Would you like to reschedule it instead?`);
+        ? `Another ${sessionTypeLabel(bookType)} is already booked in this week. The same session type can only be booked once per week.`
+        : `You already have a ${sessionTypeLabel(bookType)} booked in this week. Would you like to reschedule it instead?`);
       return;
     }
     if (selectedLmsConflict) {
@@ -965,8 +983,8 @@ export function LearnerCalendarContent() {
         ? ' Official Monthly Coaching Meeting and Progress Review sessions are scheduled from their own calendar cards.'
         : '';
       setBookError(canRescheduleTimeConflict
-        ? `That time is occupied by “${selectedLmsConflict.title}”, booked for ${describeCalendarEventSlot(selectedLmsConflict)}. Would you like to reschedule it instead?`
-        : `That time overlaps “${selectedLmsConflict.title}”, scheduled for ${describeCalendarEventSlot(selectedLmsConflict)}. Please choose another time.${cycleConflictHint}`);
+        ? 'That time is already occupied by one of your coach-session bookings. Would you like to reschedule it instead?'
+        : `That time is unavailable because it overlaps another calendar event. Please choose another time.${cycleConflictHint}`);
       return;
     }
     if (selectedSlotConflicts) {
@@ -1233,8 +1251,8 @@ export function LearnerCalendarContent() {
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-semibold">
                         {rescheduleEvent
-                          ? <>Another “{sameWeekSession.title}” is booked for {describeCalendarEventSlot(sameWeekSession)}. The same session type can only be booked once per week, so choose a different week.</>
-                          : <>You already have “{sameWeekSession.title}” booked for {describeCalendarEventSlot(sameWeekSession)}. The same session type can only be booked once per week. Would you like to reschedule it?</>}
+                          ? <>Another {sessionTypeLabel(bookType)} is already booked in this week. The same session type can only be booked once per week, so choose a different week.</>
+                          : <>You already have a {sessionTypeLabel(bookType)} booked in this week. Would you like to reschedule it?</>}
                       </p>
                       {!rescheduleEvent && (
                         <div className="mt-2 flex flex-wrap gap-2">
@@ -1257,7 +1275,9 @@ export function LearnerCalendarContent() {
                     <AppIcon className={`${canRescheduleTimeConflict ? 'ri-calendar-schedule-line' : 'ri-calendar-close-line'} mt-0.5 shrink-0`} />
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-semibold leading-relaxed">
-                        That time {canRescheduleTimeConflict ? 'is occupied by' : 'overlaps'} “{selectedLmsConflict.title}”, booked for {describeCalendarEventSlot(selectedLmsConflict)}. {canRescheduleTimeConflict ? 'Would you like to reschedule it?' : 'Choose another time.'}
+                        {canRescheduleTimeConflict
+                          ? 'That time is already occupied by one of your coach-session bookings. Would you like to reschedule it?'
+                          : 'That time is unavailable because it overlaps another calendar event. Choose another time.'}
                         {!canRescheduleTimeConflict && isProgrammeCycleSessionType(selectedLmsConflict.bookingSessionType) ? ' Official Monthly Coaching Meeting and Progress Review sessions are scheduled from their own calendar cards.' : ''}
                       </p>
                       {canRescheduleTimeConflict && (
@@ -1353,7 +1373,7 @@ export function LearnerCalendarContent() {
               <div className="flex items-center gap-2 text-sm text-foreground-600"><AppIcon className="ri-team-line text-foreground-400"></AppIcon><span>{showEventDetails.club}</span></div>
             </div>
             <p className="text-sm text-foreground-500 leading-relaxed mb-5">{showEventDetails.description}</p>
-            {showEventDetails.eventKey && ['mcr', 'catch-up'].includes(showEventDetails.source || '') ? (
+            {shouldShowMeetingArtifacts(showEventDetails) ? (
               <CoachMeetingArtifactsPanel event={{ id: showEventDetails.id, eventKey: showEventDetails.eventKey, source: showEventDetails.source, meetingLink: showEventDetails.meetingLink }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="mb-5 border-primary-100 bg-primary-50/30" />
             ) : null}
             {showEventDetails.timeToBeConfirmed && showEventDetails.bookingSessionType && (

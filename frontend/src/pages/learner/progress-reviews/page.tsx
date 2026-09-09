@@ -24,6 +24,13 @@ function formatDate(value?: string | null, long = false): string {
     : { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+function monthLabel(value?: string | null): string {
+  if (!value) return '';
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+}
+
 function formatTime(value?: string | null): string {
   if (!value) return '-';
   const [hour, minute] = value.split(':').map(Number);
@@ -39,6 +46,19 @@ function calendarEventHref(review?: LearnerCalendarEvent | null): string {
 
 function reviewDate(review?: LearnerCalendarEvent | null): string | null {
   return review?.scheduledDate || review?.targetDate || review?.date || null;
+}
+
+function progressReviewTitle(review?: LearnerCalendarEvent | null): string {
+  const month = monthLabel(reviewDate(review));
+  return `Progress Review${month ? ` — ${month}` : ''}${review?.sequence ? ` #${review.sequence}` : ''}`;
+}
+
+function shouldShowLearnerMeetingRecording(review?: LearnerCalendarEvent | null): boolean {
+  return Boolean(
+    review?.eventKey
+    && review?.meetingLink
+    && ['completed', 'awaiting-signature'].includes(review.status),
+  );
 }
 
 function statusLabel(status?: string): string {
@@ -251,7 +271,7 @@ export function ProgressReviewsListPage() {
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <h3 className="text-sm font-bold text-foreground-900">Progress Review #{review.sequence}</h3>
+                              <h3 className="text-sm font-bold text-foreground-900">{progressReviewTitle(review)}</h3>
                               <p className="mt-1 text-[11px] text-foreground-500">Formal progress review</p>
                             </div>
                             <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${statusStyle(review.status)}`}>
@@ -290,7 +310,7 @@ export function ProgressReviewsListPage() {
                     const isBooked = Boolean(review.scheduledDate && review.scheduledTime) && !['not-scheduled', 'cancelled'].includes(review.status);
                     return (
                       <tr key={review.id} className="group transition-colors hover:bg-primary-50/35">
-                        <td className="px-5 py-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-background-100 text-xs font-extrabold text-primary-700 transition group-hover:bg-primary-100">#{review.sequence}</span><div><p className="text-xs font-bold text-foreground-900">Progress Review #{review.sequence}</p><p className="mt-1 text-[10px] text-foreground-400">Formal progress review</p></div></div></td>
+                        <td className="px-5 py-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-background-100 text-xs font-extrabold text-primary-700 transition group-hover:bg-primary-100">#{review.sequence}</span><div><p className="text-xs font-bold text-foreground-900">{progressReviewTitle(review)}</p><p className="mt-1 text-[10px] text-foreground-400">Formal progress review</p></div></div></td>
                         <td className="px-5 py-4"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary-100 text-[9px] font-bold text-secondary-700">{initials(review.coachName)}</span><span className="text-xs font-semibold text-foreground-700">{review.coachName || '-'}</span></div></td>
                         <td className="px-5 py-4"><div className="flex items-center gap-2"><AppIcon className="ri-calendar-line text-primary-500" /><div><p className="text-xs font-semibold text-foreground-700">{formatDate(isBooked ? review.scheduledDate : review.targetDate)}</p>{isBooked && <p className="mt-1 text-[10px] text-foreground-400">at {formatTime(review.scheduledTime)}</p>}</div></div></td>
                         <td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${statusStyle(review.status)}`}><AppIcon className={review.status === 'completed' ? 'ri-checkbox-circle-line' : review.status === 'cancelled' ? 'ri-close-circle-line' : review.status === 'scheduled' ? 'ri-calendar-check-line' : 'ri-time-line'} />{review.status === 'not-scheduled' ? 'Not Scheduled' : statusLabel(review.status)}</span></td>
@@ -390,7 +410,7 @@ export default function ProgressReviewsPage() {
     const endDate = new Date(startDate.getTime() + selected.durationMinutes * 60_000);
     const pad = (value: number) => String(value).padStart(2, '0');
     const end = `${endDate.getFullYear()}${pad(endDate.getMonth() + 1)}${pad(endDate.getDate())}T${pad(endDate.getHours())}${pad(endDate.getMinutes())}00`;
-    const content = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT', `DTSTART:${start}`, `DTEND:${end}`, `SUMMARY:Progress Review #${selected.sequence}`, selected.meetingLink ? `URL:${selected.meetingLink}` : '', 'END:VEVENT', 'END:VCALENDAR'].filter(Boolean).join('\r\n');
+    const content = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT', `DTSTART:${start}`, `DTEND:${end}`, `SUMMARY:${progressReviewTitle(selected)}`, selected.meetingLink ? `URL:${selected.meetingLink}` : '', 'END:VEVENT', 'END:VCALENDAR'].filter(Boolean).join('\r\n');
     const url = URL.createObjectURL(new Blob([content], { type: 'text/calendar' }));
     const anchor = document.createElement('a');
     anchor.href = url;
@@ -504,7 +524,7 @@ export default function ProgressReviewsPage() {
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                     <div className="relative">
                       <span className={`inline-flex rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[10px] font-bold text-white/80`}>{statusLabel(selected?.status)}</span>
-                      <h2 className="mt-2 text-xl font-bold text-white">Progress Review #{selected?.sequence}</h2>
+                      <h2 className="mt-2 text-xl font-bold text-white">{progressReviewTitle(selected)}</h2>
                       <p className="mt-1 text-sm text-white/60">{formatDate(reviewDate(selected), true)} at {formatTime(selected?.scheduledTime)}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -516,7 +536,9 @@ export default function ProgressReviewsPage() {
                 </div>
 
                 <div className="space-y-5 p-5 sm:p-6">
-                  {selected ? <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" /> : null}
+                  {shouldShowLearnerMeetingRecording(selected) ? (
+                    <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
+                  ) : null}
 
                   {selected && ['awaiting-signature', 'completed'].includes(selected.status) ? (
                     <div className="flex flex-col gap-3 rounded-xl border border-violet-200 bg-violet-50 p-4 sm:flex-row sm:items-center">
@@ -539,7 +561,7 @@ export default function ProgressReviewsPage() {
                       ['Duration', selected?.durationMinutes ? `${selected.durationMinutes} minutes` : '-', 'ri-time-line'],
                       ['Meeting type', selected?.meetingProvider || '-', 'ri-video-chat-line'],
                       ['Scheduled time', formatTime(selected?.scheduledTime), 'ri-calendar-schedule-line'],
-                      ['Review window', previousReview ? `Since Progress Review #${previousReview.sequence}` : 'Programme to date', 'ri-history-line'],
+                      ['Review window', previousReview ? `Since ${progressReviewTitle(previousReview)}` : 'Programme to date', 'ri-history-line'],
                     ].map(([label, value, icon]) => (
                       <div key={label} className="rounded-xl bg-background-100 p-3.5">
                         <AppIcon className={`${icon} text-primary-500`} />
