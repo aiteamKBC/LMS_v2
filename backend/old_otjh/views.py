@@ -147,7 +147,13 @@ def _coach_cohort(request):
         page = max(1, min(100000, int(request.GET.get('page', 1))))
     except (ValueError, TypeError):
         raise service.ServiceError('Invalid page.')
-    return JsonResponse(repo.coach_learners(actor['email'], actor['role'] == 'admin', page))
+    # Filtered in the query rather than in the page the client already has:
+    # these lists run to hundreds of records, so a client-side filter would
+    # search only the 25 rows on screen and appear to find nothing.
+    search = (request.GET.get('search') or '').strip()[:100]
+    return JsonResponse(
+        repo.coach_learners(actor['email'], actor['role'] == 'admin', page, search=search)
+    )
 
 
 @endpoint('GET')
