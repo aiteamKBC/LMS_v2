@@ -194,14 +194,23 @@ class TransitionTests(SimpleTestCase):
                 service.complete(self.learner(), '2026-07', self.user, 'learner')
         self.mocks['finalize'].assert_not_called()
 
-    def test_pending_revision_blocks_completion(self):
+    def test_pending_revision_does_not_block_completion(self):
         self.signed(); self.pending.append({'month': '2026-07', 'count': 1})
-        with self.assertRaises(service.ServiceError): service.complete(self.learner(), '2026-07', self.user, 'learner')
-        self.mocks['finalize'].assert_not_called()
+        self.assertTrue(service.summary(self.learner())['months'][0]['can_complete'])
+        result = service.complete(self.learner(), '2026-07', self.user, 'learner')
+        self.assertEqual(result['status'], 'complete')
+        self.assertEqual(result['pending_revisions'], 1)
 
-    def test_complete_without_source_rows_is_refused(self):
-        self.signed(); self.sources.clear()
-        with self.assertRaises(service.ServiceError): service.complete(self.learner(), '2026-07', self.user, 'learner')
+    def test_signed_required_month_can_complete_without_source_rows(self):
+        self.signed(); self.sources.clear(); self.rows.clear()
+        result = service.complete(self.learner(), '2026-07', self.user, 'learner')
+        self.assertEqual(result['status'], 'complete')
+        self.assertEqual(result['row_count'], 0)
+
+    def test_unsigned_months_await_signature_regardless_of_rows_or_revisions(self):
+        self.sources.clear(); self.pending.append({'month': '2026-07', 'count': 2})
+        self.signed('2026-08', roles=('coach',))
+        self.assertTrue(all(month['status'] == 'awaiting_signature' for month in service.summary(self.learner())['months']))
 
     def test_complete_is_idempotent_and_transactional(self):
         self.signed()
@@ -354,18 +363,51 @@ class TransitionTests(SimpleTestCase):
         args = self.mocks['activity_row'].call_args.args
         self.assertEqual((args[0]['aptem_id'], args[1], args[2]), (42, '2026-07', 3))
 
-    def test_missing_content_prevents_signature_storage_and_month_completion(self):
-        self.mocks['content_review'].side_effect = lambda *_: {'ready': False, 'issues': [{'id': 3}]}
-        with self.assertRaises(service.ServiceError) as error:
-            service.sign(self.learner(), '2026-07', self.user, 'learner', b'image', service.digest(self.rows), {})
-        self.assertEqual(error.exception.code, 'content_unavailable')
-        self.save_file.assert_not_called()
-        self.mocks['save_signature'].assert_not_called()
-        self.signed()
-        with self.assertRaises(service.ServiceError) as error:
-            service.complete(self.learner(), '2026-07', self.user, 'learner')
-        self.assertEqual(error.exception.code, 'content_unavailable')
+    def test_individual_signing_does_not_check_materials_or_block_on_revisions(self):
+        self.mocks['content_review'].side_effect = AssertionError('Signing must not read learning materials')
+        self.sources.clear(); self.rows.clear()
+        self.pending.extend([{'month': month, 'count': 2} for month in self.bulk_months()])
+        learner_result = service.sign(self.learner(), '2026-07', self.user, 'learner', b'image', service.digest(self.rows), {})
+        self.assertEqual(learner_result['status'], 'complete')
+        coach_result = service.sign(self.learner(), '2026-08', account('staff'), 'coach', b'coach', service.digest(self.rows), {})
+        self.assertEqual(coach_result['status'], 'awaiting_signature')
+        self.assertIsNotNone(coach_result['coach_signature'])
+        self.assertEqual(self.mocks['save_signature'].call_count, 2)
+        self.mocks['content_review'].assert_not_called()
+        self.assertTrue(all(event[5]['material_check_performed'] is False for event in self.events))
+
+    def test_completion_does_not_read_learning_materials(self):
+        self.mocks['content_review'].side_effect = AssertionError('Completion must not read learning materials')
+        self.signed(roles=('learner',))
+        result = service.complete(self.learner(), '2026-07', self.user, 'learner')
+        self.assertEqual(result['status'], 'complete')
+        self.mocks['content_review'].assert_not_called()
+
+    def test_signing_review_is_ready_without_material_checks_rows_or_revision_approval(self):
+        self.mocks['content_review'].side_effect = AssertionError('Signing readiness must not read materials')
+        self.sources.clear(); self.rows.clear(); self.pending.append({'month': '2026-07', 'count': 2})
+        for role in ['learner', 'coach']:
+            with self.subTest(role=role):
+                result = service.signing_review(self.learner(), '2026-07', role)
+                self.assertTrue(result['ready'])
+                self.assertEqual(result['issues'], [])
+                self.assertEqual(result['snapshot_digest'], service.digest([]))
+
+    def test_coach_can_add_signature_after_learner_completion_without_refinalizing(self):
+        service.sign(self.learner(), '2026-07', self.user, 'learner', b'learner', service.digest(self.rows), {})
+        learner_signature, finalizations = deepcopy(self.signs[0]), deepcopy(self.finals)
+        self.mocks['finalize'].reset_mock(); self.mocks['save_learner_signature'].reset_mock()
+        self.assertTrue(service.signing_review(self.learner(), '2026-07', 'coach')['ready'])
+        result = service.sign(self.learner(), '2026-07', account('staff'), 'coach', b'coach', service.digest(self.rows), {})
+        self.assertEqual(result['status'], 'complete')
+        self.assertIsNotNone(result['coach_signature'])
+        self.assertEqual(next(s for s in self.signs if s['signer_role'] == 'learner'), learner_signature)
+        self.assertEqual(self.finals, finalizations)
         self.mocks['finalize'].assert_not_called()
+        self.mocks['save_learner_signature'].assert_not_called()
+        self.assertFalse(service.signing_review(self.learner(), '2026-07', 'coach')['ready'])
+        with self.assertRaises(service.ServiceError):
+            service.sign(self.learner(), '2026-07', account('staff'), 'coach', b'replacement', service.digest(self.rows), {})
 
     def test_content_preflight_keeps_the_authenticated_learner_scope(self):
         response = views.content_review(self.request(path='/audit_api/old-otjh/content-check/?month=2026-07'))
@@ -490,6 +532,28 @@ class TransitionTests(SimpleTestCase):
         result = service.sign_months(self.learner(), self.bulk_months(), self.user, 'learner', b'learner', {})
         self.assertTrue(result['summary']['can_access_lms'])
         self.assertEqual(next(s for s in self.signs if s['signer_role'] == 'coach'), before)
+
+    def test_bulk_coach_can_sign_completed_months_and_preserves_saved_signatures(self):
+        self.signed('2026-07', roles=('coach',))
+        service.sign_months(self.learner(), self.bulk_months(), self.user, 'learner', b'learner', {})
+        before, finalizations = deepcopy(self.signs), deepcopy(self.finals)
+        self.mocks['finalize'].reset_mock(); self.mocks['save_learner_signature'].reset_mock(); self.save_file.reset_mock()
+        result = service.sign_months(self.learner(), self.bulk_months(), account('staff'), 'coach', b'coach', {})
+        self.assertEqual(result['signed_months'], ['2026-08'])
+        self.assertEqual(result['skipped_months'], ['2026-07'])
+        self.assertEqual(result['completed_months'], [])
+        self.assertTrue(result['summary']['can_access_lms'])
+        self.assertTrue(all(signature in self.signs for signature in before))
+        self.assertEqual(self.finals, finalizations)
+        self.mocks['finalize'].assert_not_called()
+        self.mocks['save_learner_signature'].assert_not_called()
+        self.save_file.assert_called_once_with(b'coach')
+        saved, events = deepcopy(self.signs), deepcopy(self.events)
+        retry = service.sign_months(self.learner(), self.bulk_months(), account('staff'), 'coach', b'retry', {})
+        self.assertEqual(retry['signed_months'], [])
+        self.assertEqual(self.signs, saved)
+        self.assertEqual(self.events, events)
+        self.save_file.assert_called_once()
 
     def test_bulk_retry_preserves_images_finalizations_and_enrolment_capture(self):
         selected = self.bulk_months()
