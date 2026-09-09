@@ -102,6 +102,7 @@ export function coachingDeliveryScheduleSource(kind: CoachingDeliveryKind): Coac
   if (kind === 'mcr') return 'mcr';
   if (kind === 'pr') return 'progress-review';
   if (kind === 'catch-up') return 'catch-up';
+  if (kind === 'support') return 'student-support';
   return null;
 }
 

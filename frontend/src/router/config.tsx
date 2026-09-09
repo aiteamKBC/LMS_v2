@@ -150,6 +150,8 @@ const LearnerCalendarPage = lazyRoute(() => import("../pages/learner/calendar/pa
 const LearnerCaseFile = lazyRoute(() => import("../pages/coach/learner-case-file/page"));
 const LearnerEngagementPage = lazyRoute(() => import("../pages/engagement/learner-engagement/page"));
 const LearnerKnowledgeBase = lazyRoute(() => import("../pages/learner/knowledge-base/page"));
+const LearnerLearningPlanPage = lazyRoute(() => import("../pages/learner/learning-plan/page"));
+const LearnerLearningPlanModulesPage = lazyRoute(() => import("../pages/learner/learning-plan/modules/page"));
 const LearnerOnboardingPage = lazyRoute(() => import("../pages/learner/onboarding/page"));
 const LearnerCompliancePage = lazyRoute(() => import("../pages/learner/compliance/page"));
 const LearnerOnboardingReviewsPage = lazyRoute(() => import("../pages/learner/onboarding/reviews/page"));
@@ -466,6 +468,24 @@ const routes: RouteObject[] = [
   {
     path: "/learner/my-learning/:kind/:id",
     element: <MyLearningPage />,
+  },
+  {
+    // The learning-plan hub reached from the Learner Workspace header button.
+    // Splits into the modules view and the booked-sessions calendar.
+    path: "/learner/learning-plan",
+    element: <LearnerLearningPlanPage />,
+  },
+  {
+    path: "/learner/learning-plan/:kind/:id",
+    element: <LearnerLearningPlanPage />,
+  },
+  {
+    path: "/learner/learning-plan/modules",
+    element: <LearnerLearningPlanModulesPage />,
+  },
+  {
+    path: "/learner/learning-plan/modules/:kind/:id",
+    element: <LearnerLearningPlanModulesPage />,
   },
   {
     // The learner's Aptem training plan, month-by-month accordion. Distinct

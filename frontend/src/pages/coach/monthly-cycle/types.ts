@@ -127,7 +127,7 @@ export interface CoachingDeliveryItem {
   timeLabel: string;
 }
 
-export type CoachingDeliveryScheduleSource = 'mcr' | 'progress-review' | 'catch-up';
+export type CoachingDeliveryScheduleSource = 'mcr' | 'progress-review' | 'catch-up' | 'student-support';
 export type CoachingDeliveryFocusSource = 'mcr' | 'progress-review' | 'catch-up' | 'student-support';
 
 export interface CoachingDeliverySummary {

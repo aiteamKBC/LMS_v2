@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react
 import { Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { Moon, Sun } from 'lucide-react';
-import { Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Menu } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 import { BrandLockup } from '@/components/BrandLockup';
@@ -15,8 +15,6 @@ interface HeaderProps {
   userName?: string;
   onToggleMobileSidebar?: () => void;
   mobileSidebarOpen?: boolean;
-  onToggleDesktopSidebar?: () => void;
-  sidebarPinned?: boolean;
   role?: string;
 }
 
@@ -160,7 +158,7 @@ export function SignOutConfirmModal({
 }
 
 // Notification sound
-export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, onToggleDesktopSidebar, sidebarPinned = false, role }: HeaderProps) {
+export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, role }: HeaderProps) {
   const { auth, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   // Profile is the only dropdown left in the header, so the state that used to
@@ -242,16 +240,6 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
         </button>
         </div>
       )}
-      {onToggleDesktopSidebar && (
-        <div className="hidden shrink-0 lg:block">
-          <button type="button" className="kbc-navigation-menu" onClick={onToggleDesktopSidebar}
-            title={sidebarPinned ? 'Collapse navigation menu' : 'Expand navigation menu'}
-            aria-label={sidebarPinned ? 'Collapse navigation menu' : 'Expand navigation menu'} aria-expanded={sidebarPinned}>
-            {sidebarPinned ? <PanelLeftClose size={18} aria-hidden="true" /> : <PanelLeftOpen size={18} aria-hidden="true" />}<span>Menu</span>
-          </button>
-        </div>
-      )}
-
       {/* Provider logo — below lg only. From lg up the sidebar carries the
           brand, and showing it twice was the duplication that read as clutter. */}
       <Link to="/" className="flex shrink-0 lg:hidden" aria-label="Kent Business College home">

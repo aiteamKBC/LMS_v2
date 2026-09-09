@@ -1094,6 +1094,9 @@ def refresh_learner_otjh_snapshot(learner_profile, *, source=None, detail=None):
         resolved_detail["modules"], resolved_detail["week"], resolved_detail["components"] = _resolve_from_master(
             resolved_detail["modules"], resolved_detail["week"], resolved_detail["components"]
         )
+        resolved_detail["components"] = _apply_programme_assignment_template(
+            resolved_detail["components"], getattr(resolved_source, "programme", "")
+        )
         resolved_detail["components"], resolved_detail["totalExpectedOtjh"] = _annotate_otjh(resolved_detail["components"])
         resolved_detail["week"], resolved_detail["components"] = _append_week_quizzes(
             resolved_detail["week"],
@@ -1101,6 +1104,8 @@ def refresh_learner_otjh_snapshot(learner_profile, *, source=None, detail=None):
         )
 
     snapshot = _live_otjh_snapshot(resolved_detail, learner_profile)
+    snapshot["components_planned"] = len(resolved_detail.get("components") or [])
+    snapshot["componentsPlanned"] = snapshot["components_planned"]
     _apply_live_otjh_snapshot(resolved_detail, snapshot)
     persist_live_otjh_snapshot(learner_profile, snapshot)
     return snapshot
