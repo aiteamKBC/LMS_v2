@@ -2,6 +2,7 @@ import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useSta
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { ImageMatchingPairFields } from '@/components/feature/ImageMatchingPairFields';
 import { QuestionAnswersView } from '@/components/feature/QuestionTypeRenderer';
@@ -1751,21 +1752,21 @@ export default function QuizXmlWorkspacePage() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel={curriculumNav.label} navItems={curriculumNav.items} workspaceLabel={curriculumNav.workspaceLabel} pageTitle={pageHeading} pageSubtitle={pageSubtitle} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="quiz-workspace-page w-full min-w-0 max-w-full p-4 sm:p-5 lg:p-6 space-y-4">
-        <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="relative p-5 sm:p-8 flex flex-col md:flex-row items-start md:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-code-box-line text-white text-2xl"></AppIcon></span>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-lg font-heading font-bold text-white mb-1">{pageHeading}</h2>
-              <p className="text-[13px] text-white/80 leading-relaxed"><strong>{visibleQuizzes.length} quiz packages</strong> - {heroSummary}</p>
-            </div>
-            <div className="grid grid-cols-3 gap-2 sm:gap-3 w-full md:w-auto shrink-0">
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-3 sm:px-4 py-3 text-center min-w-0"><p className="text-xl sm:text-2xl font-bold text-white">{visibleQuizzes.length}</p><p className="text-[10px] text-white/70 uppercase tracking-wide truncate">Quizzes</p></div>
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-3 sm:px-4 py-3 text-center min-w-0"><p className="text-xl sm:text-2xl font-bold text-white">{totalQuestions}</p><p className="text-[10px] text-white/70 uppercase tracking-wide truncate">Questions</p></div>
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-3 sm:px-4 py-3 text-center min-w-0"><p className="text-xl sm:text-2xl font-bold text-white">{tertiaryStat.value}</p><p className="text-[10px] text-white/70 uppercase tracking-wide truncate">{tertiaryStat.label}</p></div>
-            </div>
-          </div>
-        </div>
+      <div className="curriculum-library-page quiz-workspace-page w-full min-w-0 max-w-full space-y-4 p-4 sm:p-5 lg:p-6">
+        <WorkspaceHeroBanner
+          className="curriculum-library-hero"
+          decorative
+          eyebrow="Learning resources"
+          title={pageHeading}
+          description={`${visibleQuizzes.length} quiz packages - ${heroSummary}`}
+          icon="ri-code-box-line"
+          statIconPosition="leading"
+          stats={[
+            { label: 'Quizzes', value: String(visibleQuizzes.length), icon: 'ri-questionnaire-line' },
+            { label: 'Questions', value: String(totalQuestions), icon: 'ri-file-list-3-line' },
+            { label: tertiaryStat.label, value: String(tertiaryStat.value), icon: 'ri-checkbox-circle-line' },
+          ]}
+        />
 
         <input ref={fileInputRef} type="file" accept=".xml,.zip,.xlsx,.xlsm,.csv" className="hidden" onChange={handleFileChange} />
         <input

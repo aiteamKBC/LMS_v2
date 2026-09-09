@@ -1984,6 +1984,7 @@ export default function ModuleBuilder() {
             initialSourceId={workspaceKsbProfileValue}
             lockedSourceId={workspaceKsbProfileValue}
             existingMappings={mappingsForTarget(workingModule, ksbTarget)}
+            limitPerKind={ksbTarget.scope === 'component' ? COMPONENT_KSB_LIMIT_PER_KIND : undefined}
             onClose={() => setKsbTarget(null)}
             onAddMany={(items) => {
               updateWorkingModule(module => items.reduce(
@@ -3281,7 +3282,7 @@ function TypeSpecificFields({
   const [uploadError, setUploadError] = useState('');
   const [teamsMeetingOpen, setTeamsMeetingOpen] = useState(false);
 
-  const handleResourceUpload = async (file: File, componentType: 'podcast' | 'powerpoint' | 'reading' | 'assignment') => {
+  const handleResourceUpload = async (file: File, componentType: 'podcast' | 'powerpoint' | 'reading') => {
     setUploadingResource(true);
     setUploadError('');
     try {
@@ -3306,9 +3307,6 @@ function TypeSpecificFields({
       } else if (componentType === 'reading') {
         onSettingChange('readingSource', 'File');
         onSettingChange('resourceUrl', uploaded.url);
-      } else {
-        onSettingChange('assignmentFileName', uploaded.fileName);
-        onSettingChange('assignmentFileUrl', uploaded.url);
       }
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Unable to upload file.');
@@ -3611,18 +3609,10 @@ function TypeSpecificFields({
   if (component.type === 'assignment') {
     return (
       <EditorBlock title="Assignment">
-        <TextArea label="Assignment brief" value={getString('assignmentBrief')} onChange={value => onSettingChange('assignmentBrief', value)} rows={4} />
-        <ComponentResourceUpload
-          label="Upload assignment file"
-          accept=".doc,.docx,.pdf,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.zip,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/csv,application/zip"
-          uploadedName={getString('uploadedFileName') || getString('assignmentFileName')}
-          uploadedUrl={getString('uploadedFileUrl') || getString('assignmentFileUrl')}
-          uploadedSize={getNumber('uploadedFileSize')}
-          uploading={uploadingResource}
-          error={uploadError}
-          onUpload={file => handleResourceUpload(file, 'assignment')}
-        />
-        <TextArea label="Submission instructions" value={getString('submissionInstructions')} onChange={value => onSettingChange('submissionInstructions', value)} rows={3} />
+        <RichTextDraft label="Assignment question" value={getString('assignmentContent') || getString('assignmentBrief')} onChange={value => onSettingChange('assignmentContent', value)} rows={14} htmlOnly />
+        <p className="rounded-lg border border-primary-100 bg-primary-50 px-3 py-2 text-[11px] font-medium leading-5 text-primary-700">
+          Learners complete an eight-step monthly submission: answer and learning statements; evidence cross-references; KSBs and actual hours; full-month reflection; employer impact; action plan and EPA; quality checks; coaching booking and editable PowerPoint. Incomplete work can always be saved as a draft. There is no six-hour cap. Historical imports are handled separately and are exempt from new-submission checks.
+        </p>
         <TextInput label="Due timing relative to week" value={getString('dueTiming')} onChange={value => onSettingChange('dueTiming', value)} />
       </EditorBlock>
     );
@@ -4664,6 +4654,8 @@ function sessionKsbKind(code: string): 'knowledge' | 'skill' | 'behaviour' {
   return 'knowledge';
 }
 
+const COMPONENT_KSB_LIMIT_PER_KIND = 2;
+
 function componentGroupLabels(module: ModuleCatalogueItem, component: ModuleComponent) {
   const settings = component.settings || {};
   const names = Array.isArray(settings.selectedGroupNames) ? settings.selectedGroupNames : [];
@@ -4675,7 +4667,7 @@ function componentGroupLabels(module: ModuleCatalogueItem, component: ModuleComp
   return [...new Set(labels)];
 }
 
-function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading, initialSourceId, lockedSourceId, existingMappings, onClose, onAddMany }: {
+function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading, initialSourceId, lockedSourceId, existingMappings, limitPerKind, onClose, onAddMany }: {
   standards: CurriculumStandard[];
   standardsLoading: boolean;
   ksbSets: CurriculumKsbSet[];
@@ -4683,6 +4675,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
   initialSourceId: string;
   lockedSourceId?: string;
   existingMappings: KsbMapping[];
+  limitPerKind?: number;
   onClose: () => void;
   onAddMany: (items: Array<{ option: KsbOption; weight: number; weightClass: KsbWeightClass }>) => void;
 }) {
@@ -4693,7 +4686,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
   const [sourceMode, setSourceMode] = useState<'standard' | 'profile'>('profile');
   const [addingKsbs, setAddingKsbs] = useState(false);
   const [ksbSearch, setKsbSearch] = useState('');
-  const [ksbTypeFilter, setKsbTypeFilter] = useState<'all' | 'knowledge' | 'skill' | 'behaviour'>('all');
+  const [ksbTypeFilter, setKsbTypeFilter] = useState<'knowledge' | 'skill' | 'behaviour'>('knowledge');
   const sourceLocked = Boolean(lockedSourceId);
   const standardSourceOptions = useMemo(() => standards.map(standard => ({
       id: ksbStandardSourceId(standard),
@@ -4748,11 +4741,36 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
       return existing ? [[option.id, existing] as const] : [];
     }),
   ), [existingMappings, sourceKsbOptions]);
+  const existingKindCounts = useMemo(() => existingMappings.reduce(
+    (counts, mapping) => {
+      counts[sessionKsbKind(mapping.code)] += 1;
+      return counts;
+    },
+    { knowledge: 0, skill: 0, behaviour: 0 },
+  ), [existingMappings]);
+  const selectedKindCounts = useMemo(() => sourceKsbOptions.reduce(
+    (counts, option) => {
+      if (selectedKsbIds.has(option.id)) counts[sessionKsbKind(option.code)] += 1;
+      return counts;
+    },
+    { knowledge: 0, skill: 0, behaviour: 0 },
+  ), [selectedKsbIds, sourceKsbOptions]);
+  const availableKindCounts = useMemo(() => sourceKsbOptions.reduce(
+    (counts, option) => {
+      counts[sessionKsbKind(option.code)] += 1;
+      return counts;
+    },
+    { knowledge: 0, skill: 0, behaviour: 0 },
+  ), [sourceKsbOptions]);
+  const optionLimitReached = (option: KsbOption) => {
+    if (!limitPerKind || selectedKsbIds.has(option.id)) return false;
+    const kind = sessionKsbKind(option.code);
+    return existingKindCounts[kind] + selectedKindCounts[kind] >= limitPerKind;
+  };
   const filteredKsbOptions = useMemo(() => {
     const query = ksbSearch.trim().toLowerCase();
     return sourceKsbOptions.filter(option => {
-      const tone = ksbVisualTone(option.code, option.type);
-      if (ksbTypeFilter !== 'all' && tone.label.toLowerCase() !== ksbTypeFilter) return false;
+      if (sessionKsbKind(option.code) !== ksbTypeFilter) return false;
       if (!query) return true;
       return option.code.toLowerCase().includes(query) || option.description.toLowerCase().includes(query);
     });
@@ -4775,7 +4793,14 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
     setSelectedKsbIds(current => {
       const next = new Set(current);
       if (next.has(option.id)) next.delete(option.id);
-      else next.add(option.id);
+      else {
+        const kind = sessionKsbKind(option.code);
+        const selectedOfKind = sourceKsbOptions.filter(candidate => (
+          current.has(candidate.id) && sessionKsbKind(candidate.code) === kind
+        )).length;
+        if (limitPerKind && existingKindCounts[kind] + selectedOfKind >= limitPerKind) return current;
+        next.add(option.id);
+      }
       return next;
     });
   };
@@ -4842,34 +4867,54 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                 <p className="mt-0.5 truncate text-[12px] font-bold text-primary-950">{sourceLabels[selectedSourceValue] || selectedSourceValue.replace(/^(profile|standard):/, '')}</p>
               </div>
             )}
+            {limitPerKind ? (
+              <div role='note' className='rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sky-800'>
+                <p className='text-[10px] font-bold uppercase tracking-wide'>Component KSB selection limit</p>
+                <p className='mt-0.5 text-[11px] font-semibold'>Choose up to 2 Knowledge, 2 Skills and 2 Behaviours for this component. Previously added KSBs count towards each limit.</p>
+              </div>
+            ) : null}
           </div>
           {resolvedSelectedSource && Boolean(sourceKsbOptions.length) && (
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="relative flex-1 sm:max-w-[220px]">
+            <div className="space-y-3">
+              <div className="grid grid-cols-3 gap-2" role="tablist" aria-label="KSB categories">
+                {([
+                  { value: 'knowledge', code: 'K', label: 'Knowledge', activeClass: 'border-violet-400 bg-violet-600 text-white', iconClass: 'bg-violet-100 text-violet-700' },
+                  { value: 'skill', code: 'S', label: 'Skills', activeClass: 'border-amber-400 bg-amber-500 text-white', iconClass: 'bg-amber-100 text-amber-700' },
+                  { value: 'behaviour', code: 'B', label: 'Behaviours', activeClass: 'border-emerald-400 bg-emerald-600 text-white', iconClass: 'bg-emerald-100 text-emerald-700' },
+                ] as const).map(category => {
+                  const active = ksbTypeFilter === category.value;
+                  const chosen = existingKindCounts[category.value] + selectedKindCounts[category.value];
+                  return (
+                    <button
+                      key={category.value}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => setKsbTypeFilter(category.value)}
+                      className={`rounded-xl border px-2 py-2.5 text-left transition-smooth ${active ? category.activeClass : 'border-background-200 bg-background-100 text-foreground-700 hover:border-primary-200 hover:bg-background-50'}`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg text-[12px] font-black ${active ? 'bg-white/20 text-white' : category.iconClass}`}>{category.code}</span>
+                        <span className="min-w-0">
+                          <span className="block truncate text-[10px] font-black sm:text-[11px]">{category.label}</span>
+                          <span className={`block text-[9px] font-semibold ${active ? 'text-white/75' : 'text-foreground-400'}`}>
+                            {availableKindCounts[category.value]} available{limitPerKind ? ` · ${chosen}/${limitPerKind} chosen` : ''}
+                          </span>
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="relative">
                 <AppIcon className="ri-search-line absolute left-2.5 top-1/2 -translate-y-1/2 text-[12px] text-foreground-400"></AppIcon>
                 <input
                   type="text"
                   value={ksbSearch}
                   onChange={event => setKsbSearch(event.target.value)}
-                  placeholder="Search KSB code or text"
+                  placeholder={`Search ${ksbTypeFilter} KSBs`}
                   className="h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 pl-7 pr-2 text-[11px] font-semibold text-foreground-900 outline-none focus:border-primary-300"
                 />
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {(['all', 'knowledge', 'skill', 'behaviour'] as const).map(filterValue => (
-                  <button
-                    key={filterValue}
-                    type="button"
-                    onClick={() => setKsbTypeFilter(filterValue)}
-                    className={`rounded-full px-2.5 py-1 text-[10px] font-bold capitalize transition-smooth ${
-                      ksbTypeFilter === filterValue
-                        ? 'bg-primary-500 text-white'
-                        : 'bg-background-100 text-foreground-500 hover:bg-background-200'
-                    }`}
-                  >
-                    {filterValue}
-                  </button>
-                ))}
               </div>
             </div>
           )}
@@ -4877,6 +4922,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
             {filteredKsbOptions.map(option => {
               const tone = ksbVisualTone(option.code, option.type);
               const alreadyAdded = existingMappingByOptionId.has(option.id);
+              const limitReached = !alreadyAdded && optionLimitReached(option);
               const selected = alreadyAdded || selectedKsbIds.has(option.id);
               return (
               <div key={option.id} className={`rounded-xl border border-l-4 px-3 py-2 transition-smooth ${selected ? tone.selectedRow : tone.row}`}>
@@ -4885,9 +4931,9 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                     <input
                       type="checkbox"
                       checked={selected}
-                      disabled={alreadyAdded}
+                      disabled={alreadyAdded || limitReached}
                       onChange={() => toggleOption(option)}
-                      aria-label={alreadyAdded ? `${option.code} already added` : `Select ${option.code}`}
+                      aria-label={alreadyAdded ? `${option.code} already added` : limitReached ? `${option.code} unavailable because the component limit is reached` : `Select ${option.code}`}
                       className="mt-1 h-4 w-4 rounded border-foreground-300 text-primary-600 focus:ring-primary-300 disabled:cursor-not-allowed disabled:opacity-70"
                     />
                     <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${tone.iconClass}`}>
@@ -4908,7 +4954,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                       <span className="text-[9px] font-semibold uppercase text-foreground-400">Weight class</span>
                       <select
                         value={weightClassForOption(option)}
-                        disabled={alreadyAdded}
+                        disabled={alreadyAdded || limitReached}
                         onChange={event => updateOptionWeightClass(option, event.target.value)}
                         className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[11px] font-bold capitalize text-foreground-900 outline-none focus:border-primary-300 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-500"
                       >
@@ -4924,7 +4970,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                         min={1}
                         step={1}
                         value={clampPositiveKsbWeight(weightForOption(option), weightClassForOption(option))}
-                        disabled={alreadyAdded}
+                        disabled={alreadyAdded || limitReached}
                         onChange={event => updateOptionWeight(option, Number(event.target.value))}
                         className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[12px] font-bold text-foreground-900 outline-none focus:border-primary-300 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-500"
                       />
@@ -7366,6 +7412,10 @@ function mappingsForTarget(module: ModuleCatalogueItem, target: KsbTarget) {
 function addKsbMapping(module: ModuleCatalogueItem, target: KsbTarget, option: KsbOption, weight = defaultKsbWeight(), weightClass: KsbWeightClass = DEFAULT_KSB_WEIGHT_CLASS): ModuleCatalogueItem {
   const nextIdentity = ksbMappingIdentity(option);
   if (mappingsForTarget(module, target).some(mapping => ksbMappingIdentity(mapping) === nextIdentity)) return module;
+  if (
+    target.scope === 'component'
+    && mappingsForTarget(module, target).filter(mapping => sessionKsbKind(mapping.code) === sessionKsbKind(option.code)).length >= COMPONENT_KSB_LIMIT_PER_KIND
+  ) return module;
   const mapping: KsbMapping = {
     id: makeAuthoringId('KSBMAP'),
     ksbId: option.id,

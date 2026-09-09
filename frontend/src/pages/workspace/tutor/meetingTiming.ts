@@ -1,4 +1,6 @@
-export const UK_TIME_ZONE = 'Europe/London';
+import { SYSTEM_TIME_ZONE } from '@/lib/format';
+
+export const UK_TIME_ZONE = SYSTEM_TIME_ZONE;
 const JOIN_WINDOW_MS = 30 * 60 * 1000;
 
 /**

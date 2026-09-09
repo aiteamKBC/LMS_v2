@@ -1,0 +1,42 @@
+{
+  "as_of": "2026-09-08",
+  "learners": 368,
+  "rows": 101735,
+  "counts": {
+    "evidence_available": 6240,
+    "missing_saved_attempt": 6620,
+    "material_available": 70201,
+    "register_record": 9143,
+    "saved_quiz_available": 8576,
+    "missing_evidence": 857,
+    "missing_material": 98
+  },
+  "source_api_pages_checked": 54,
+  "unique_additional_source_attempts": 728,
+  "learners_with_additional_source_attempts": 128,
+  "arranged_rows_with_additional_source_attempts": 728,
+  "pdf_rows_using_actual_pdf_viewer": 30320,
+  "rows_with_external_player_or_unverified_url": 28118,
+  "original_network_checks": {
+    "unique_urls": 6674,
+    "states": {
+      "file_bytes_verified": 3347,
+      "player_shell_only": 3073,
+      "embedding_denied": 3,
+      "login_or_home_redirect": 77,
+      "authored_text_verified": 156,
+      "http_error": 13,
+      "network_error": 4,
+      "empty_lesson": 1
+    }
+  },
+  "linked_documents": 11803,
+  "original_blobs_checked": 11242,
+  "blob_states": {
+    "readable": 11242
+  },
+  "issues": 7575,
+  "affected_learners": 332,
+  "affected_months": 1653,
+  "scope": "All linked arranged rows through August 2026. Network/file checks and representative browser playback are separate evidence; an HTTP player shell does not prove playback. Source data may change. No DB writes."
+}

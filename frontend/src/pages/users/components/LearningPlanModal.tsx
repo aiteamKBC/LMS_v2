@@ -59,9 +59,16 @@ interface Props {
    * and nothing that could alter it.
    */
   readOnly?: boolean;
+  /**
+   * The learner is already being taught, so their plan may carry progress.
+   * Removing a module is still allowed — plans get corrected mid-programme —
+   * but it is confirmed first, because the progress recorded against that
+   * module is no longer reachable from the plan afterwards.
+   */
+  hasStarted?: boolean;
 }
 
-export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, readOnly = false }: Props) {
+export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, readOnly = false, hasStarted = false }: Props) {
   const toast = useToast();
   const [data, setData] = useState<LearningPlanResponse | null>(null);
   const [plan, setPlan] = useState<LearningPlanModule[]>([]);
@@ -234,6 +241,24 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
   };
 
   const save = async () => {
+    // Named rather than described in the abstract: an officer confirming a
+    // removal should see which module they are taking away.
+    const keptIds = new Set(plan.map((m) => m.moduleId));
+    const removed = (data?.plan ?? []).filter((m) => !keptIds.has(m.moduleId));
+
+    if (hasStarted && removed.length > 0) {
+      const names = removed.map((m) => m.moduleTitle || m.moduleId).join(', ');
+      const confirmed = window.confirm(
+        `${learnerName} is already being taught. Removing ${removed.length === 1 ? 'this module' : 'these modules'} ` +
+        `will take ${names} off their plan, and any progress they have recorded against ` +
+        `${removed.length === 1 ? 'it' : 'them'} will no longer show in their training plan.
+
+` +
+        `Continue?`,
+      );
+      if (!confirmed) return;
+    }
+
     setSaving(true);
     setError('');
     try {

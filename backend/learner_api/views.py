@@ -318,11 +318,57 @@ def _error(message, status):
     return JsonResponse({"error": message}, status=status)
 
 
-def _send_platform_invitation(request, subject_type, subject_id, subject=None):
-    """Invite a just-created person to the platform, and describe the outcome.
+def _annotate_account_state(rows, subject_type):
+    """Mark each directory row with whether that person can already sign in.
 
-    Called from the create paths when the form's "Invite to platform" flag is
-    set. Imported lazily so learner_api keeps no import-time dependency on the
+    Creating somebody provisions an account but sends no email, so the
+    directory needs to distinguish three states: no account at all (provisioning
+    failed, or the record predates that change), an account awaiting its
+    invitation, and somebody already onboarded. Only the first two are worth
+    offering an invitation for.
+
+    Best-effort: a lookup failure leaves the flags absent and the button simply
+    does not appear, which is better than blocking the directory over it.
+    """
+    from django.db import DatabaseError, connections
+
+    ids = [int(row["id"]) for row in rows if str(row.get("id") or "").isdigit()]
+    if not ids:
+        return
+    try:
+        with connections["enrolment"].cursor() as cur:
+            cur.execute(
+                'select "Subject_id", "Password_set_at" is not null '
+                'from login."Login_accounts" '
+                'where "Subject_type" = %s and "Subject_id" = any(%s)',
+                [subject_type, ids],
+            )
+            state = {int(row[0]): bool(row[1]) for row in cur.fetchall()}
+    except DatabaseError:
+        logger.warning("Could not read account state for the %s directory", subject_type,
+                       exc_info=True)
+        return
+
+    for row in rows:
+        if not str(row.get("id") or "").isdigit():
+            continue
+        onboarded = state.get(int(row["id"]))
+        row["hasAccount"] = onboarded is not None
+        row["hasSignedIn"] = bool(onboarded)
+
+
+def _send_platform_invitation(request, subject_type, subject_id, subject=None,
+                              send_email=False):
+    """Provision a just-created person's platform account.
+
+    ``send_email`` defaults to False: creating somebody gives them an account,
+    but the invitation email is sent deliberately from the Accounts page in the
+    Super Admin workspace, by somebody who has looked at the record. It used to
+    go out automatically on save, which meant a typo in an address, or a record
+    created to be finished later, put a live set-password link in an inbox
+    before anyone had checked it.
+
+    Imported lazily so learner_api keeps no import-time dependency on the
     login app — the two are wired together at the URL layer, and a circular
     import here would be easy to introduce and annoying to unpick.
 
@@ -349,6 +395,7 @@ def _send_platform_invitation(request, subject_type, subject_id, subject=None):
         invited_by=inviter.email if inviter else None,
         ip=client_ip(request),
         user_agent=user_agent(request),
+        send_email=send_email,
     )
 
 
@@ -668,6 +715,11 @@ def enrolment_users(request):
             for learner in learners:
                 advance_learner(learner)
             rows = [to_list_row(u) for u in learners]
+            # Whether each person already has a sign-in account, so the
+            # directory can offer "Send invitation" only where it applies.
+            # Batched deliberately: asking per row would be one query per
+            # learner across the whole directory.
+            _annotate_account_state(rows, "learner")
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
         return JsonResponse({"count": len(rows), "results": rows})
@@ -684,10 +736,12 @@ def enrolment_users(request):
         stamp = timezone.now().strftime("%d/%m/%Y %H:%M:%S")
         fields.setdefault("enrolled_time_and_user", f"{stamp} by Enrolment Officer")
 
-        # Every learner is invited on enrolment — the form no longer asks, and a
-        # caller cannot opt out by sending the flag as false. Assignment rather
-        # than setdefault for exactly that reason: the column now records what
-        # the platform does, not a choice somebody made on a form.
+        # Every learner gets a platform account on enrolment — the form no
+        # longer asks, and a caller cannot opt out by sending the flag as false.
+        # Assignment rather than setdefault for exactly that reason: the column
+        # records what the platform does, not a choice somebody made on a form.
+        # The invitation *email* is a separate, deliberate step from the
+        # Accounts page; this flag is about entitlement, not delivery.
         fields["invite_to_platform"] = True
 
         # Stamp the cohort's delivery window from the authored cohort table. The
@@ -721,11 +775,10 @@ def enrolment_users(request):
         # and review progression.
         advance_learner(user)
         row = to_list_row(user)
-        # Send the set-your-password email. Unconditional: enrolling somebody is
-        # what gives them a platform account, so there is no longer a form
-        # question gating it. Reported alongside the created learner rather than
-        # raising: the learner exists either way, and a mail outage must not turn
-        # a successful enrolment into a 5xx.
+        # Provision the platform account without emailing. Enrolling somebody
+        # gives them an account; an administrator sends the invitation from the
+        # Accounts page when the record has been checked. Reported alongside the
+        # created learner so the console can say the account is awaiting one.
         row["invitation"] = _send_platform_invitation(request, "learner", user.id, subject=user)
         return JsonResponse(row, status=201)
 
@@ -997,9 +1050,10 @@ def staff_users(request):
             return _error(f"Database error: {exc}", 502)
 
         row = to_staff_row(user)
-        # Unconditional. The authorisation in login.services still applies, so a
-        # staff member creating an Admin gets a refused invitation reported on
-        # the row — the record saves, the credential does not.
+        # Account only; the invitation email is sent from the Accounts page.
+        # The authorisation in login.services still applies, so a staff member
+        # creating an Admin gets a refused account reported on the row — the
+        # record saves, the credential does not.
         row["invitation"] = _send_platform_invitation(request, "staff", user.id, subject=user)
         return JsonResponse(row, status=201)
 

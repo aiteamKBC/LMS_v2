@@ -75,7 +75,7 @@ export function EntityHero({
   loading?: boolean;
 }) {
   return (
-    <section className="overflow-hidden rounded-2xl border border-white/10 bg-primary-950 text-white shadow-xl">
+    <section className="workspace-page-hero overflow-hidden rounded-2xl border border-white/10 bg-primary-950 text-white shadow-xl" style={{ background: 'var(--kbc-hero-gradient)' }}>
       <div className="relative p-5 sm:p-6">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(255,255,255,0.18),transparent_34%),linear-gradient(135deg,rgba(109,40,217,0.35),rgba(15,23,42,0))]" />
         <div className="relative flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">

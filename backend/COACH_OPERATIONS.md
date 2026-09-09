@@ -29,6 +29,26 @@ a dedicated PostgreSQL-outbox worker service), including startup, health checks,
 restart policy, and deployment ownership. The HTTP `202` contract must not be
 enabled until that worker is deployed and verified.
 
+## Scheduled Teams artifact sync
+
+Until a durable queue exists, Microsoft Teams artifact collection is driven by
+the deployment scheduler. The existing live-session sync command also checks
+recently ended coach meetings (MCM, progress reviews, catch-ups and support
+sessions) and stores their attendance/transcript/recording snapshots when the
+manual Coach snapshot tables have been created.
+
+Recommended scheduler entry:
+
+```cron
+*/5 * * * * cd /path/to/LMS/backend && .venv/bin/python manage.py sync_teams_meeting_artifacts --lookback-hours 24 --limit 100 --coach-limit 100
+```
+
+For coach meetings only, run:
+
+```bash
+.venv/bin/python manage.py sync_coach_meeting_snapshots --recent --lookback-hours 24 --limit 100
+```
+
 ## Recommended alerts (not configured)
 
 - 5xx responses above 2% for five minutes.

@@ -59,7 +59,7 @@ import type {
 
 const coachNav = roleNavMap.coach;
 
-const CASELOAD_ENDPOINT = '/coach_api/coach/caseload';
+const CASELOAD_ENDPOINT = '/coach_api/coach/caseload?live=1';
 const ATTENDANCE_ENDPOINT = '/coach_api/coach/attendance';
 const coachRagEndpoint = (learnerId: string) => `/coach_api/coach/caseload/${learnerId}/coach-rag`;
 
@@ -270,10 +270,10 @@ export default function CoachCaseload() {
         case 'progress': return learner.overallProgressAvailable ? learner.overallProgress : -1;
         case 'attendance': return learner.liveAttendanceRateAvailable ? learner.liveAttendanceRate ?? -1 : -1;
         case 'otjh': return learner.otjhCompleted;
-        // Matches the table's own Components column: against components
-        // expected by now, not learner.attendanceRate's whole-plan total.
-        case 'components': return learner.componentsTargetToDate && learner.componentsTargetToDate > 0
-          ? ((learner.componentsCompleted ?? 0) / learner.componentsTargetToDate) * 100
+        // Matches the card's Components display: completed against the whole
+        // programme component total, not the to-date target.
+        case 'components': return learner.componentsPlanned && learner.componentsPlanned > 0
+          ? ((learner.componentsCompleted ?? 0) / learner.componentsPlanned) * 100
           : -1;
         case 'ksb': return learner.ksbProgressAvailable ? learner.ksbProgress : -1;
         case 'gateway': return gatewayTime(learner);

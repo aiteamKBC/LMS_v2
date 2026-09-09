@@ -290,8 +290,10 @@ def require_access(*accesses):
             if account.role not in {"admin", "staff"}:
                 return _forbidden(required)
 
-            access = _access_of(account)
-            if access == ACCESS_SUPER_ADMIN or access in required:
+            # "Holds any of", not "is": an account may carry several grants,
+            # and needing only one of the required ones is the whole point.
+            accesses = _accesses_of(account)
+            if ACCESS_SUPER_ADMIN in accesses or (accesses & required):
                 return view(request, *args, **kwargs)
 
             return _forbidden(required)
@@ -301,25 +303,30 @@ def require_access(*accesses):
     return decorator
 
 
-def _access_of(account):
-    """The access grant on a staff account, or "" for anyone else.
+def _accesses_of(account):
+    """Every access grant on a staff account, or an empty set for anyone else.
 
     Read from the staff row rather than cached on the account, for the same
     reason ``role`` is recomputed per request: an access changed in the console
     must take effect on the account's next request, not their next sign-in.
     """
     if account.subject_type != "staff":
-        return ""
+        return frozenset()
     from django.db import DatabaseError
 
     from learner_api.models import StaffUser
+    from .identity import accesses_for_staff
 
     try:
-        row = StaffUser.objects.filter(pk=account.subject_id).only("access").first()
+        row = (
+            StaffUser.objects.filter(pk=account.subject_id)
+            .only("access", "access_extra")
+            .first()
+        )
     except DatabaseError:
         # Fail closed: an unreadable grant is not a grant.
-        return ""
-    return (getattr(row, "access", "") or "").strip().lower() if row else ""
+        return frozenset()
+    return accesses_for_staff(row) if row else frozenset()
 
 
 def require_permission(*permissions):

@@ -715,6 +715,14 @@ export interface CalendarEvent {
   isoDate?: string;
   /** Teams/meeting join URL for coach-scheduled sessions. */
   meetingLink?: string;
+  eventKey?: string;
+  source?: string;
+  /** Stored duration used when an existing booking is rescheduled. */
+  durationMinutes?: number;
+  /** Backend booking lifecycle status; kept separate from the display badge. */
+  bookingStatus?: string;
+  /** Session type used to turn an unscheduled coaching-cycle item into a real booking. */
+  bookingSessionType?: 'catch-up' | 'student-support' | 'mcr' | 'progress-review';
   /**
    * True when `time` is a placeholder rather than an agreed time — a coaching
    * slot the cycle says is due but nobody has booked yet. The grid still needs

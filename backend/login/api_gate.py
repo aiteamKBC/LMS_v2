@@ -200,6 +200,9 @@ def _enabled():
 
 def rule_for(path):
     """The ``(prefix, roles)`` governing ``path``, or None if it is not gated."""
+    from old_otjh.gate import is_transition_path
+    if is_transition_path(path):
+        return '/audit_api/', LEARNER_AND_STAFF
     for prefix, roles in _RULES_BY_SPECIFICITY:
         if path.startswith(prefix):
             return prefix, roles
@@ -266,6 +269,18 @@ def refusal_for(path, account, *, django_user_is_authenticated=False):
     ``account`` is a ``LoginAccount`` or None. ``django_user_is_authenticated``
     covers the admin-site operator, who has a session but no platform role.
     """
+    if account is not None and getattr(account, '_staff_access_unavailable', False):
+        return _unavailable()
+    if account is not None and getattr(account, '_staff_access', None) == 'record-monitor':
+        from old_otjh.gate import is_transition_path
+        # Applies to batch children too. Record endpoints enforce read-only
+        # methods and learner scope; authentication keeps its own handlers.
+        if not is_transition_path(path) and path not in {
+            '/login_api/me/', '/login_api/logout/', '/login_api/change-password/',
+            '/login_api/login/', '/login_api/health/',
+        }:
+            return _forbidden(['previous_records.view'])
+
     if not _enabled():
         return None
 
@@ -278,7 +293,8 @@ def refusal_for(path, account, *, django_user_is_authenticated=False):
 
     _, roles = rule
     if roles is ANY or account.role in roles:
-        return None
+        from old_otjh.gate import refusal
+        return refusal(path, account)
 
     return _forbidden(roles)
 

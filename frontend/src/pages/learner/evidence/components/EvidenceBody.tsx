@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
-import { getEvidenceDownloadUrl, uploadEvidence, type EvidenceRecord } from '@/api/evidence';
+import { getEvidenceDownloadUrl, uploadEvidence, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import { formatHoursMinutes } from '@/lib/format';
 
@@ -38,6 +38,9 @@ interface EvidenceItem {
   note?: string;
   fileId?: string;
   rawStatus?: string;
+  /** The server's answer on whether this file may still be removed — false once
+   *  the activity it belongs to has been submitted for marking. */
+  canDelete?: boolean;
   sortDate?: number;
 }
 
@@ -67,10 +70,32 @@ function recordType(record: EvidenceRecord): EvidenceType {
   return 'Document';
 }
 
-function recordStatus(status: string): EvidenceStatus {
-  if (status === 'approved') return 'Validated';
-  if (status === 'rejected') return 'Needs work';
-  return 'Pending tutor';
+/** What the learner is told about a piece of evidence.
+ *
+ * Driven by the coach's decision, not by the file's own `status` column: that
+ * column is the malware-scan verdict, so 'approved' there means "scanned clean
+ * and stored" and says nothing about whether anybody has assessed the work.
+ * Reading it as validation told learners their evidence had been accepted
+ * minutes after uploading it, before a coach had seen it at all.
+ *
+ * A file the scanner rejected is still "Needs work" — it never reaches a coach.
+ */
+function recordStatus(scanStatus: string, markingStatus?: string): EvidenceStatus {
+  if (scanStatus === 'rejected') return 'Needs work';
+  switch (markingStatus) {
+    case 'accepted':
+      return 'Validated';
+    case 'referred':
+    case 'rejected':
+      return 'Needs work';
+    case 'submitted_for_tutor_review':
+    case 'escalated':
+    case 'partial':
+      return 'Pending tutor';
+    default:
+      // Uploaded but not handed in: the learner still has to submit it.
+      return 'Draft';
+  }
 }
 
 function evidenceRecordToItem(record: EvidenceRecord): EvidenceItem {
@@ -78,7 +103,7 @@ function evidenceRecordToItem(record: EvidenceRecord): EvidenceItem {
   const weekLabel = details.weekTitle || 'General evidence';
   const weekMatch = weekLabel.match(/\d+/);
   const week = weekMatch ? Number(weekMatch[0]) : 0;
-  const status = recordStatus(record.status);
+  const status = recordStatus(record.status, record.markingStatus);
   const docStatus: EvidenceDocument['status'] = status === 'Validated' ? 'Accepted' : status === 'Needs work' ? 'Referred' : 'Pending';
   return {
     id: record.id,
@@ -93,6 +118,9 @@ function evidenceRecordToItem(record: EvidenceRecord): EvidenceItem {
     otjh: Number(details.otjhHours) || 0,
     status,
     rawStatus: record.status,
+    // Older responses omit the flag; a missing value means deletable, leaving
+    // the server as the one that decides.
+    canDelete: record.canDelete !== false,
     date: formatEvidenceDate(record.uploadedAt),
     sortDate: record.uploadedAt ? new Date(record.uploadedAt).getTime() : 0,
     description: details.evidenceDescription || `Uploaded file: ${record.filename}`,
@@ -384,7 +412,7 @@ function FilePreviewModal({ item, onClose, onDownload, opening }: {
    MAIN COMPONENT — tab content, no page chrome (the parent
    "My Progress" page owns the WorkspaceShell + page header).
    ═══════════════════════════════════════════════════════════════ */
-export function EvidenceTab({
+export function EvidenceBody({
   learnerKind,
   learnerId,
   real,
@@ -426,6 +454,11 @@ export function EvidenceTab({
   const [showFilePreview, setShowFilePreview] = useState<string | null>(null);
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  // Removal is destructive and has no undo, so the panel asks before it deletes
+  // rather than acting on a single stray click.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const filterRef = useRef<HTMLDivElement>(null);
 
   const allEvidence = useMemo(() => evidenceRecords.map(evidenceRecordToItem), [evidenceRecords]);
@@ -507,6 +540,30 @@ export function EvidenceTab({
       setOpeningEvidenceId(null);
     }
   }, [learnerKind, learnerId, openingEvidenceId]);
+
+  const openEvidence = useCallback((id: string | null) => {
+    setSelectedEvidence(id);
+    setConfirmingDelete(false);
+    setDeleteError(null);
+  }, []);
+
+  const handleDelete = useCallback(async (item: EvidenceItem) => {
+    if (!item.fileId || !learnerKind || !learnerId) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteEvidence(learnerKind, learnerId, item.fileId);
+      setConfirmingDelete(false);
+      // Close the panel first: the row it describes is about to disappear from
+      // the reloaded list, and a detail panel pointing at nothing renders empty.
+      setSelectedEvidence(null);
+      await reloadEvidence();
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : 'Could not remove this evidence.');
+    } finally {
+      setDeleting(false);
+    }
+  }, [learnerKind, learnerId, reloadEvidence]);
 
   const handleCloseUpload = () => {
     setUploadTitle('');
@@ -748,13 +805,13 @@ export function EvidenceTab({
           {viewMode === 'grid' ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {filtered.map(ev => (
-                <EvidenceCard key={ev.id} ev={ev} onClick={() => setSelectedEvidence(ev.id)} />
+                <EvidenceCard key={ev.id} ev={ev} onClick={() => openEvidence(ev.id)} />
               ))}
             </div>
           ) : (
             <div className="space-y-2">
               {filtered.map(ev => (
-                <EvidenceRow key={ev.id} ev={ev} onClick={() => setSelectedEvidence(ev.id)} />
+                <EvidenceRow key={ev.id} ev={ev} onClick={() => openEvidence(ev.id)} />
               ))}
             </div>
           )}
@@ -782,7 +839,7 @@ export function EvidenceTab({
           ═══════════════════════════════════ */}
       <RightSlidePanel
         isOpen={selectedEvidence !== null}
-        onClose={() => setSelectedEvidence(null)}
+        onClose={() => openEvidence(null)}
         title={selectedItem?.title || 'Evidence Detail'}
         width="w-[520px]"
       >
@@ -854,7 +911,7 @@ export function EvidenceTab({
             </div>
             <div className="flex flex-col gap-2 pt-2 border-t border-background-200/40">
               <button
-                onClick={() => { setSelectedEvidence(null); setShowFilePreview(selectedItem.id); }}
+                onClick={() => { openEvidence(null); setShowFilePreview(selectedItem.id); }}
                 className="w-full px-4 py-2.5 rounded-xl bg-primary-500 text-background-50 dark:text-foreground-950 text-sm font-semibold cursor-pointer whitespace-nowrap hover:bg-primary-600 transition-smooth"
               >
                 <AppIcon className="ri-eye-line mr-1.5"></AppIcon> View Full Evidence
@@ -867,6 +924,50 @@ export function EvidenceTab({
                 <AppIcon className={`${openingEvidenceId === selectedItem.id ? 'ri-loader-4-line animate-spin' : 'ri-download-line'} mr-1.5`}></AppIcon>
                 {openingEvidenceId === selectedItem.id ? 'Opening…' : selectedItem.rawStatus === 'approved' ? 'Open File' : 'File Awaiting Approval'}
               </button>
+
+              {/* Deleting is hidden once the work has been handed in:
+                  `canDelete` is the server's own answer, and offering Remove
+                  without it yields a 409 on a button the panel just invited the
+                  learner to press. A viewer who is not the learner gets the
+                  workspace read-only, so they do not see it either. */}
+              {canProgress && selectedItem.canDelete && selectedItem.fileId && (
+                confirmingDelete ? (
+                  <div className="rounded-xl border border-red-200 bg-red-50/60 px-3 py-3">
+                    <p className="text-sm font-semibold text-red-700">Delete this evidence?</p>
+                    <p className="mt-1 text-xs leading-relaxed text-red-600">
+                      “{selectedItem.title}” and its uploaded file are removed for good. This cannot be undone.
+                    </p>
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        onClick={() => void handleDelete(selectedItem)}
+                        disabled={deleting}
+                        className="flex-1 px-3 py-2 rounded-lg bg-red-600 text-sm font-semibold text-white cursor-pointer whitespace-nowrap transition-smooth hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <AppIcon className={`${deleting ? 'ri-loader-4-line animate-spin' : 'ri-delete-bin-line'} mr-1.5`}></AppIcon>
+                        {deleting ? 'Deleting…' : 'Yes, delete'}
+                      </button>
+                      <button
+                        onClick={() => setConfirmingDelete(false)}
+                        disabled={deleting}
+                        className="flex-1 px-3 py-2 rounded-lg border border-foreground-200 bg-background-50 text-sm font-medium text-foreground-600 cursor-pointer whitespace-nowrap transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => { setDeleteError(null); setConfirmingDelete(true); }}
+                    className="w-full px-4 py-2.5 rounded-xl border border-red-200 bg-background-50 text-sm font-medium text-red-600 cursor-pointer whitespace-nowrap transition-smooth hover:bg-red-50 hover:border-red-300"
+                  >
+                    <AppIcon className="ri-delete-bin-line mr-1.5"></AppIcon> Delete Evidence
+                  </button>
+                )
+              )}
+
+              {deleteError && (
+                <p role="alert" className="text-xs font-medium text-red-600">{deleteError}</p>
+              )}
             </div>
           </div>
         )}

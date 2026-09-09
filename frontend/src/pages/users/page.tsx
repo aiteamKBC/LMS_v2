@@ -10,6 +10,7 @@ import { fetchProgrammes, fetchCohorts, fetchGroups } from '@/api/curriculum';
 import { listEmployers, type EmployerRow } from '@/api/employers';
 import type { UserListRow, UsersFilter } from './types';
 import { StatusBadge, Pagination, inputClass, btnGold, btnSecondary } from './components/ui';
+import { SendInvitationButton } from './components/SendInvitationButton';
 import { CreateUserModal } from './components/CreateUserModal';
 import { CreateStaffModal } from './components/CreateStaffModal';
 import { CreateEmployerModal } from './components/CreateEmployerModal';
@@ -25,6 +26,17 @@ const PAGE_SIZE = 8;
 // signed and the learner has moved into delivery — see the backend's
 // promote_to_delivery_if_ready.
 const DELIVERY_STATUS = 'Delivery';
+
+/** Statuses whose learning plan can still be changed from the enrolment
+ *  directory. Delivery is the planning stage, but a plan is not frozen when
+ *  teaching starts: modules get added, swapped or corrected mid-programme, and
+ *  an enrolment officer had no way to do it without moving the learner
+ *  backwards. 'On break' is included for the same reason Shift module includes
+ *  it — a paused learner is still on a programme.
+ *
+ *  Anything else (Withdrawn, Completed, EnteredEpa, Onboarding) opens the plan
+ *  read-only: those plans are history or not yet started. */
+export const PLAN_EDITABLE_STATUSES: string[] = [DELIVERY_STATUS, 'Active', 'On break'];
 // Shifting a learner between modules is for learners already being taught: they
 // have a plan and have started on it. Not Delivery — nothing has begun there, so
 // the plan itself is still the thing to edit — and not Withdrawn or Completed,
@@ -191,7 +203,7 @@ function ActiveProgrammeCard({ active, total, onClick, selected = false }: { act
         </svg>
         <div
           className="flex h-[76px] w-[76px] items-center justify-center rounded-full"
-          style={{ background: `conic-gradient(#35b98a ${percentage}%, #ebeaf1 0)` }}
+          style={{ background: `conic-gradient(#35b98a ${percentage}%, var(--enrolment-ring-track, #ebeaf1) 0)` }}
         >
           <div className="flex h-[58px] w-[58px] items-center justify-center rounded-full bg-white text-[16px] font-semibold text-foreground-700">
             {percentage}%
@@ -493,9 +505,9 @@ export default function UsersListPage() {
 
   return (
     <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Users" pageSubtitle="Directory of learners and administrators" userName="Enrolment Officer" userRole="Enrolment Officer">
-      <div className="p-6 space-y-6">
+      <div className="enrolment-users-page p-6 space-y-6">
         <div
-          className="relative overflow-visible rounded-2xl border border-primary-100/80 p-5 shadow-sm sm:p-7"
+          className="enrolment-users-hero relative overflow-visible rounded-2xl border border-primary-100/80 p-5 shadow-sm sm:p-7"
           style={{
             backgroundColor: '#f8f6ff',
             backgroundImage: 'radial-gradient(circle at 82% 18%, rgba(126, 87, 220, 0.12), transparent 28%), repeating-radial-gradient(ellipse at 78% 10%, transparent 0 18px, rgba(126, 87, 220, 0.07) 19px 21px, transparent 22px 34px)',
@@ -679,7 +691,7 @@ export default function UsersListPage() {
                     </td>
                     <td className="py-2.5 px-3">
                       <span className="flex flex-wrap items-center gap-2">
-                        {isLearner && row.programmeStatus === DELIVERY_STATUS ? (
+                        {isLearner && PLAN_EDITABLE_STATUSES.includes(row.programmeStatus || '') ? (
                           <button
                             onClick={() => setPlanFor(row)}
                             title={`${row.hasLearningPlan ? 'Edit' : 'Add'} ${row.name}'s learning plan`}
@@ -714,6 +726,20 @@ export default function UsersListPage() {
                             <i className="ri-arrow-left-right-line" />
                             Shift module
                           </button>
+                        )}
+                        {/* Creating somebody no longer emails them, so the
+                            invitation is sent from here (or from Accounts once
+                            they have an account row). Hidden once they have
+                            signed in — at that point a password reset is the
+                            applicable action, not an invitation. */}
+                        {!row.hasSignedIn && (
+                          <SendInvitationButton
+                            subjectType={isStaff ? 'staff' : isEmployer ? 'employer' : 'learner'}
+                            subjectId={Number(row.id)}
+                            name={row.name}
+                            email={row.email}
+                            onSent={load}
+                          />
                         )}
                       </span>
                     </td>
@@ -813,8 +839,10 @@ export default function UsersListPage() {
         <LearningPlanModal
           learnerId={planFor.id}
           learnerName={planFor.name}
-          // Editing is a Delivery-stage action; every other status views.
-          readOnly={planFor.programmeStatus !== DELIVERY_STATUS}
+          readOnly={!PLAN_EDITABLE_STATUSES.includes(planFor.programmeStatus || '')}
+          // An active learner already has progress against these modules, so
+          // the modal warns before a removal orphans it.
+          hasStarted={planFor.programmeStatus !== DELIVERY_STATUS}
           onClose={() => setPlanFor(null)}
           onSaved={load}
         />

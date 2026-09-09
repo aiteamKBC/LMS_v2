@@ -1,7 +1,7 @@
 """URLs for the login app, mounted at /login_api/ (see config/urls.py)."""
 from django.urls import path
 
-from . import access_requests, microsoft_sso, platform_admin, views
+from . import admin_evidence, access_requests, microsoft_sso, platform_admin, views
 
 urlpatterns = [
     path("health/", views.health, name="login-health"),
@@ -47,4 +47,45 @@ urlpatterns = [
     path("admin/system/", platform_admin.system, name="admin-system"),
     path("admin/documents/", platform_admin.documents, name="admin-documents"),
     path("admin/curriculum/", platform_admin.curriculum, name="admin-curriculum"),
+    path(
+        "admin/evidence/classified-learners/",
+        admin_evidence.classified_learners,
+        name="admin-evidence-classified-learners",
+    ),
+    path(
+        "admin/evidence/classified-learners/<int:learner_id>/assignments/",
+        admin_evidence.learner_assignments,
+        name="admin-evidence-learner-assignments",
+    ),
+    path(
+        "admin/evidence/classified-learners/<int:learner_id>/evidence/<int:evidence_id>/open/",
+        admin_evidence.open_evidence_document,
+        name="admin-evidence-document-open",
+    ),
+    path(
+        "admin/evidence/classified-learners/<int:learner_id>/evidence/<int:evidence_id>/text/",
+        admin_evidence.evidence_text_preview,
+        name="admin-evidence-document-text",
+    ),
+    path(
+        "admin/evidence/classified-learners/<int:learner_id>/evidence/<int:evidence_id>/selection/",
+        admin_evidence.select_assignment,
+        name="admin-evidence-assignment-selection",
+    ),
+    path(
+        "admin/evidence/classified-learners/<int:learner_id>/evidence/<int:evidence_id>/ksb-codes/",
+        admin_evidence.update_ksb_codes,
+        name="admin-evidence-ksb-codes",
+    ),
+    path(
+        "admin/evidence/classified-learners/<int:learner_id>/evidence/<int:evidence_id>/report-form/",
+        admin_evidence.report_form,
+        name="admin-evidence-report-form",
+    ),
+    path(
+        "admin/evidence/classified-learners/<int:learner_id>/evidence/<int:evidence_id>/report-form/save/",
+        admin_evidence.save_report_form,
+        name="admin-evidence-report-form-save",
+    ),
+    path("admin/certificate-template/", platform_admin.certificate_template, name="admin-certificate-template"),
 ]

@@ -205,6 +205,17 @@ class EnrolmentUser(models.Model):
     all_learners = models.Manager()
 
     id = models.AutoField(primary_key=True, db_column="id")
+    # Aptem's learner identifier. It is the bridge to the read-only
+    # Last_audit mirror; it is text here because that is how Created_users was
+    # originally provisioned, while Last_audit stores the same value as bigint.
+    aptem_id = models.TextField(db_column="aptem_id", null=True, blank=True)
+
+    # The coach this learner is assigned to, on the enrolment side. The coach
+    # workspace itself scopes on Learner.learners.coach_email -- these are the
+    # enrolment record, kept in step by assign_audit_coaches, so the assignment
+    # survives a mirror being rebuilt.
+    coach_name = models.TextField(db_column="Coach_name", null=True, blank=True)
+    coach_email = models.TextField(db_column="Coach_email", null=True, blank=True)
 
     # The user's permanent public identifier, added by apply_user_uuid. The
     # integer pk above stays the internal join key — ~25 columns across three
@@ -228,6 +239,8 @@ class EnrolmentUser(models.Model):
     # --- flat text columns ---
     username = models.TextField(db_column="Username", null=True, blank=True)
     email = models.TextField(db_column="Email", null=True, blank=True)
+    # Existing column verified in Neon; this mapping does not create a column.
+    aptem_id = models.TextField(db_column="aptem_id", null=True, blank=True)
     status = models.TextField(db_column=" Status", null=True, blank=True)  # NB: leading space
     type = models.TextField(db_column="Type", null=True, blank=True)
     programme_status = models.TextField(db_column="Programme_status", null=True, blank=True)
@@ -297,6 +310,12 @@ class EnrolmentUser(models.Model):
     employer_address = models.TextField(db_column="Employer_address", null=True, blank=True)
     target_programme = models.TextField(db_column="Target_programme", null=True, blank=True)
     invite_to_platform = models.BooleanField(db_column="Invite_to_platform", null=True, blank=True)
+
+    # The Aptem learner id this record was imported from, when it came from
+    # the audit snapshot (see import_audit_learners). Text rather than an
+    # integer because that is how the column is defined, and null for anyone
+    # created directly on the platform.
+    aptem_id = models.TextField(db_column="aptem_id", null=True, blank=True)
     allow_access_to_checkpoint = models.BooleanField(db_column="Allow_access_to_checkpoint", null=True, blank=True)
     allow_access_to_console = models.BooleanField(db_column="Allow_access_to_console", null=True, blank=True)
     allow_access_to_classic = models.BooleanField(db_column="Allow_access_to_classic", null=True, blank=True)
@@ -429,7 +448,16 @@ class StaffUser(models.Model):
     # Null on rows created before the column existed, which resolves to the
     # least-privileged role rather than a guess (login.identity.role_for_staff).
     # Added by the apply_staff_access_column management command.
+    #
+    # This is the PRIMARY grant — where the account lands at sign-in. An account
+    # may hold others too; those live in `access_extra`.
     access = models.TextField(db_column="Access", null=True, blank=True)
+
+    # Any ADDITIONAL grants beyond `access`, comma-separated. Read through
+    # login.identity.accesses_for_staff, which unions the two — never compared
+    # directly, or a multi-access account is refused the workspace it holds.
+    # Added by the apply_staff_access_extra_column management command.
+    access_extra = models.TextField(db_column="Access_extra", null=True, blank=True)
 
     title = models.TextField(db_column="Title", null=True, blank=True)
     preferred_name = models.TextField(db_column="Preferred_name", null=True, blank=True)
@@ -541,6 +569,15 @@ class LearnerProfile(models.Model):
     coach_name = models.TextField(blank=True)
     coach_email = models.EmailField(max_length=320, blank=True)
     coach_rag = models.CharField(max_length=20, blank=True)
+
+    # What a coach has actually decided about this learner's work. Recomputed
+    # from Learner.learning_reflection_submissions after every marking decision
+    # (learner_api.marking_tally) rather than incremented, so a changed decision
+    # or a resubmission cannot leave them drifting from the submissions.
+    accepted_assignments = models.IntegerField(default=0)
+    rejected_assignments = models.IntegerField(default=0)
+    accepted_reflections = models.IntegerField(default=0)
+    rejected_reflections = models.IntegerField(default=0)
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
     gateway_review_date = models.DateField(null=True, blank=True)
@@ -683,6 +720,12 @@ class LearnerProfile(models.Model):
                 "claimedSeconds": entry.claimed_seconds,
                 "serverSessionSeconds": entry.server_session_seconds,
                 "verifiedSeconds": entry.verified_seconds,
+                "outsideWorkingHours": entry.outside_working_hours,
+                "outsideWorkingHoursConfirmed": entry.outside_working_hours_confirmed,
+                "outsideWorkingHoursConfirmedAt": (
+                    entry.outside_working_hours_confirmed_at.isoformat()
+                    if entry.outside_working_hours_confirmed_at else ""
+                ),
                 "ksbs": [
                     row.ksb_code
                     for row in entry.ksb_links.all()
@@ -901,6 +944,9 @@ class LearnerProgressEntry(models.Model):
     claimed_seconds = models.PositiveIntegerField(null=True, blank=True)
     server_session_seconds = models.PositiveIntegerField(null=True, blank=True)
     verified_seconds = models.PositiveIntegerField(null=True, blank=True)
+    outside_working_hours = models.BooleanField(default=False)
+    outside_working_hours_confirmed = models.BooleanField(default=False)
+    outside_working_hours_confirmed_at = models.DateTimeField(null=True, blank=True)
     feed_kind = models.CharField(max_length=30, blank=True)
     feed_action = models.TextField(blank=True)
     feed_title = models.TextField(blank=True)

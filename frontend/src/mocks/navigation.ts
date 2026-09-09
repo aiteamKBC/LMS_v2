@@ -17,15 +17,23 @@ export const learnerNavItems: SidebarNavItem[] = [
 
   // My Learning — training plan, learning journey and quizzes merged into
   // Overview/Modules/Quizzes tabs on one page.
-  { id: 'learner-my-learning', label: 'My Learning', icon: 'ri-book-open-line', href: '/learner/my-learning', badge: 1 },
+  { id: 'learner-my-learning', label: 'My Learning', icon: 'ri-book-open-line', href: '/learner/my-learning', matchPaths: ['/learner/learning-plan'], badge: 1 },
+
+  // Training plan — the learner's Aptem training plan, month by month. Its
+  // "View components" action drops into My Learning to actually work through it.
+  { id: 'learner-training-plan-view', label: 'Training plan', icon: 'ri-calendar-todo-line', href: '/learner/training-plan-timeline' },
 
   // Calendar
   { id: 'learner-calendar', label: 'Calendar', icon: 'ri-calendar-2-line', href: '/learner/calendar', statusDot: 'green' },
 
-  // Evidence & Progress — evidence, OTJ hours and KSBs live together as tabs on
-  // the "My Progress" page. Labeled distinctly from the "My Progress" group
-  // below (Monthly Cycle/Coaching/Reviews) so the two aren't confused.
-  { id: 'learner-progress', label: 'Evidence & Progress', icon: 'ri-bar-chart-2-line', href: '/learner/progress', badge: 7 },
+  // Evidence — the learner's own submissions and where each one is in review.
+  { id: 'learner-evidence', label: 'Evidence', icon: 'ri-folder-upload-line', href: '/learner/evidence', badge: 7 },
+
+  // OTJH & KSBs progress — what those submissions add up to: off-the-job hours
+  // and KSB coverage, as Overview/OTJ Hours/KSBs tabs on one page. Labeled
+  // distinctly from the "My Progress" group below (Monthly
+  // Cycle/Coaching/Reviews) so the two aren't confused.
+  { id: 'learner-progress', label: 'OTJH & KSBs progress', icon: 'ri-bar-chart-2-line', href: '/learner/progress' },
 
   // Attendance — single item; reporting an absence is an action inside the page.
   { id: 'learner-attendance', label: 'Attendance', icon: 'ri-calendar-check-line', href: '/learner/attendance' },
@@ -38,6 +46,7 @@ export const learnerNavItems: SidebarNavItem[] = [
     href: '',
     children: [
       { id: 'learner-monthly-cycle', label: 'Monthly Cycle', icon: 'ri-loop-left-line', href: '/learner/monthly-cycle' },
+      { id: 'learner-monthly-submission', label: 'Monthly submission', icon: 'ri-file-text-line', href: '/learner/monthly-submission' },
       { id: 'learner-monthly-coaching', label: 'Monthly Coaching', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
       { id: 'learner-progress-reviews', label: 'Progress Review', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
     ],
@@ -90,6 +99,7 @@ export const learnerNavItems: SidebarNavItem[] = [
 // ============================================================================
 export const coachNavItems: SidebarNavItem[] = [
   { id: 'coach-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/coach' },
+  { id: 'coach-previous-records', label: 'Previous learning records', icon: 'ri-history-line', href: '/old-otjh/coach' },
   {
     id: 'coach-group-learners',
     label: 'My Learners',
@@ -135,6 +145,7 @@ export const coachNavItems: SidebarNavItem[] = [
     children: [
       { id: 'coach-ksb-impact', label: 'KSB Impact', icon: 'ri-bar-chart-2-line', href: '/coach/ksb-impact' },
       { id: 'coach-otjh-reports', label: 'OTJH Reports', icon: 'ri-time-line', href: '/coach/otjh-reports' },
+      { id: 'coach-monthly-reports', label: 'Monthly Reports', icon: 'ri-file-list-3-line', href: '/coach/monthly-reports' },
     ],
   },
 ];
@@ -615,6 +626,8 @@ export const adminNavItems: SidebarNavItem[] = [
     icon: 'ri-settings-4-line',
     children: [
       { id: 'admin-documents', label: 'Documents', icon: 'ri-folder-line', href: '/admin/documents' },
+      { id: 'admin-evidence', label: 'Evidence', icon: 'ri-folder-shield-2-line', href: '/admin/evidence' },
+      { id: 'admin-certificates', label: 'Certificates', icon: 'ri-award-line', href: '/workspace/admin/certificates' },
       { id: 'admin-notifications', label: 'Email Delivery', icon: 'ri-mail-send-line', href: '/admin/notifications' },
       { id: 'admin-system', label: 'System Status', icon: 'ri-pulse-line', href: '/admin/system' },
     ],
@@ -772,6 +785,7 @@ function stripChatNavItems(items: SidebarNavItem[]): SidebarNavItem[] {
 }
 
 const baseRoleNavMap: Record<string, { items: SidebarNavItem[]; label: string; workspaceLabel: string }> = {
+  'record-monitor': { items: [{ id: 'record-monitor', label: 'Record monitoring', href: '/old-otjh/monitor', icon: 'ri-dashboard-line' }], label: 'Record monitor', workspaceLabel: 'Learning record monitoring' },
   learner: { items: learnerNavItems, label: 'Learner', workspaceLabel: 'Learner Workspace' },
   coach: { items: coachNavItems, label: 'Coach', workspaceLabel: 'Coach Workspace' },
   tutor: { items: tutorNavItems, label: 'Tutor', workspaceLabel: 'Tutor Workspace' },

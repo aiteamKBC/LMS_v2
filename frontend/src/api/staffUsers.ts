@@ -40,8 +40,8 @@ export const ADMIN_POSITION = 'Admin';
  */
 export const TUTOR_POSITION = 'Tutor';
 
-/** The five access grants. Mirrors ACCESS_CHOICES in learner_api/constants.py. */
-export type StaffAccess = 'enrolment' | 'curriculum' | 'coach' | 'tutor' | 'super-admin';
+/** Supported access grants. Mirrors ACCESS_CHOICES in learner_api/constants.py. */
+export type StaffAccess = 'enrolment' | 'curriculum' | 'coach' | 'tutor' | 'record-monitor' | 'super-admin';
 
 /**
  * What each access permits, and where it lands on sign-in.
@@ -58,6 +58,11 @@ export const ACCESS_OPTIONS: {
   home: string;
   icon: string;
 }[] = [
+  {
+    id: 'record-monitor', label: 'Learning record monitoring',
+    description: 'Read-only access to active enrolled learners, previous records and signatures.',
+    home: '/old-otjh/monitor', icon: 'ri-dashboard-line',
+  },
   {
     id: 'enrolment',
     label: 'Enrolment access',
@@ -106,7 +111,11 @@ export interface CreateStaffUserInput {
   /** Required — one of POSITION_OPTIONS. */
   position: string;
   /** One of ACCESS_OPTIONS. Omitted on create; granted from the Accounts page. */
+  /** The PRIMARY grant — where this account lands at sign-in. */
   access?: StaffAccess;
+  /** Every grant the account holds, including the primary. Omit to leave the
+   *  existing set alone; send it to replace the set wholesale. */
+  accesses?: StaffAccess[];
   type?: string;
   status?: string;
   phone?: string;
@@ -144,7 +153,7 @@ export interface StaffUserRow extends UserListRow {
   // invitation is always issued.
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+async function request<T>(url: string, init?: globalThis.RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, {

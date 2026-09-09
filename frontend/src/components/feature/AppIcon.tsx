@@ -4,6 +4,7 @@ import {
   AlarmClock,
   AlertCircle,
   AlertTriangle,
+  Accessibility,
   AlignCenter,
   AlignLeft,
   AlignRight,
@@ -30,6 +31,8 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  ChevronsLeft,
+  ChevronsRight,
   Circle,
   CircleAlert,
   CircleCheck,
@@ -40,10 +43,12 @@ import {
   ClipboardCheck,
   ClipboardList,
   Clock,
+  Coffee,
   Cloud,
   Code2,
   Compass,
   Copy,
+  Contrast,
   Database,
   Download,
   Ellipsis,
@@ -161,6 +166,8 @@ function resolveIcon(name: string): LucideIcon {
   const key = name.replace(/^ri-/, '').toLowerCase();
 
   if (/loader|loading/.test(key)) return Loader2;
+  if (/accessibility|wheelchair/.test(key)) return Accessibility;
+  if (/contrast/.test(key)) return Contrast;
   // These three sit above the generic branches deliberately. Further down,
   // `/search/` claims anything containing "search" and `/add/` claims anything
   // containing "add", which shadowed the specific branches meant for these
@@ -183,13 +190,15 @@ function resolveIcon(name: string): LucideIcon {
   if (/file-list|list-3/.test(key)) return LayoutList;
   if (/file-chart|bar-chart-box/.test(key)) return FileBarChart;
   if (/chat-1|chat|message|feedback|comment/.test(key)) return MessageCircle;
-  if (/programme-design/.test(key)) return Presentation;
+  if (/programme-design|slideshow|presentation/.test(key)) return Presentation;
   if (/curriculum-builder/.test(key)) return Workflow;
   if (/assessment-design/.test(key)) return ClipboardCheck;
   if (/delivery-planning/.test(key)) return CalendarDays;
   if (/quality.*publish/.test(key)) return ShieldCheck;
   if (/node-tree|network|mind-map/.test(key)) return GitBranch;
   if (/hammer|build|construction/.test(key)) return Hammer;
+  if (/arrow-left-double|skip-back/.test(key)) return ChevronsLeft;
+  if (/arrow-right-double|skip-forward/.test(key)) return ChevronsRight;
   if (/arrow-left-s/.test(key)) return ChevronLeft;
   if (/arrow-right-s/.test(key)) return ChevronRight;
   if (/arrow-up-s/.test(key)) return ChevronUp;
@@ -255,6 +264,7 @@ function resolveIcon(name: string): LucideIcon {
   if (/calendar-check|calendar-todo|calendar-close/.test(key)) return CalendarCheck;
   if (/calendar|timetable|schedule|event/.test(key)) return CalendarDays;
   if (/time|timer|clock|otjh|hours/.test(key)) return Timer;
+  if (/cup|coffee/.test(key)) return Coffee;
   if (/file-search|search-eye/.test(key)) return FileSearch;
   if (/file-sign/.test(key)) return FileSignature;
   if (/file-check/.test(key)) return FileCheck;

@@ -59,8 +59,13 @@ def _learner(**kwargs):
     return SimpleNamespace(**fields)
 
 
-def _record(event_type='mcr', learner_id=248, event_key='mcr:248:1:2026-09-02'):
-    return SimpleNamespace(event_type=event_type, learner_id=learner_id, event_key=event_key)
+def _record(event_type='mcr', learner_id=248, event_key='mcr:248:1:2026-09-02', idempotency_key=''):
+    return SimpleNamespace(
+        event_type=event_type,
+        learner_id=learner_id,
+        event_key=event_key,
+        idempotency_key=idempotency_key,
+    )
 
 
 class GeneratedCycleTests(SimpleTestCase):
@@ -150,6 +155,19 @@ class StoredRowOwnershipTests(SimpleTestCase):
         orphan = _record(learner_id=2, event_key='mcr:2:1:2026-08-07')
 
         self.assertFalse(_belongs_to_current_cycle(orphan, _mirror()))
+
+    def test_a_learner_booked_review_survives_source_and_mirror_id_difference(self):
+        # Learner calendar POSTs use the source learner id (101), while the
+        # current Active_users mirror can have a different id (248). The GET
+        # must return that durable booking after a page refresh.
+        booked = _record(
+            event_type='progress-review',
+            learner_id=101,
+            event_key='progress-review:101:1:2026-09-06',
+            idempotency_key='learner-book:operation-hash',
+        )
+
+        self.assertTrue(_belongs_to_current_cycle(booked, _mirror()))
 
     def test_a_booking_is_kept_whatever_mirror_it_was_made_under(self):
         # Somebody arranged these; they belong to the learner regardless.
