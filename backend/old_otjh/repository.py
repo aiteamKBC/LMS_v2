@@ -57,18 +57,47 @@ def staff(staff_id):
     return result[0] if result else None
 
 
-def coach_learners(email, is_admin, page, page_size=25):
+def coach_learners(email, is_admin, page, page_size=25, search=''):
+    """One page of a coach's previous-learning records, newest name order.
+
+    ``search`` filters on the learner's name or email, and is applied to the
+    count as well as the rows -- filtering only the rows would page through a
+    total that no longer matched what is on screen.
+
+    Ranked by how well the match starts rather than purely alphabetically: a
+    coach typing "moham" wants Mohamed at the top, not the first name
+    alphabetically among the matches. An exact prefix on the name sorts first,
+    then a prefix on any word in it, then anything else containing the term.
+    """
     where = "btrim(c.aptem_id) ~ '^[0-9]+$' AND l.aptem_id > 0"
     params = []
     if not is_admin:
         where += ' AND lower(btrim(l.coach_email))=%s'
         params.append(email)
+
+    search = str(search or '').strip()
+    if search:
+        where += ' AND (l.learner_name ILIKE %s OR l.learner_email ILIKE %s)'
+        params.extend([f'%{search}%', f'%{search}%'])
+
     base = ('FROM enrolment."Created_users" c JOIN "Last_audit".learners l '
             "ON ltrim(btrim(c.aptem_id), '0')=l.aptem_id::text WHERE " + where)
     total = query('SELECT count(*) AS n ' + base, params)[0]['n']
+
+    if search:
+        # 0 = the name starts with the term, 1 = a word inside it does,
+        # 2 = it appears anywhere (including the email).
+        rank = ('CASE WHEN l.learner_name ILIKE %s THEN 0 '
+                "WHEN l.learner_name ILIKE %s THEN 1 ELSE 2 END")
+        order = f'ORDER BY {rank}, lower(l.learner_name), c.id'
+        rank_params = [f'{search}%', f'% {search}%']
+    else:
+        order = 'ORDER BY lower(l.learner_name), c.id'
+        rank_params = []
+
     rows = query('SELECT l.aptem_id AS id, l.learner_name AS name, l.programme_name AS programme '
-                 + base + ' ORDER BY lower(l.learner_name), c.id LIMIT %s OFFSET %s',
-                 [*params, page_size, (page - 1) * page_size])
+                 + base + ' ' + order + ' LIMIT %s OFFSET %s',
+                 [*params, *rank_params, page_size, (page - 1) * page_size])
     return {'learners': rows, 'total': total, 'page': page, 'page_size': page_size}
 
 

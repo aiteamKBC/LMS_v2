@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Pagination } from '@/components/ui/Pagination';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { fetchCoachDirectory, type DirectoryCoach } from '@/api/coachDirectory';
@@ -27,6 +28,11 @@ function matches(coach: DirectoryCoach, query: string) {
  * instead of a dashboard of zeros: one card per account holding Coach access,
  * and the workspace loads that coach's data once one is chosen.
  */
+
+/** Cards per page. Six fills two rows of the three-column grid, so a page is
+ *  one glance rather than a scroll. Fixed rather than a control: this is a
+ *  pick-one screen, not a list somebody works through. */
+const PAGE_SIZE = 6;
 export function CoachDirectoryPicker({
   onSelect,
   onDirectoryLoaded,
@@ -65,6 +71,23 @@ export function CoachDirectoryPicker({
   }, [onDirectoryLoaded]);
 
   const filtered = useMemo(() => coaches.filter(coach => matches(coach, search)), [coaches, search]);
+
+  // Paged rather than one long grid: the directory now holds every staff
+  // member who has been named as a coach, and a wall of forty cards is harder
+  // to pick from than six.
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  // Clamped, not just capped: filtering down to fewer pages while on page 5
+  // would otherwise leave an empty grid with no way back.
+  const currentPage = Math.min(page, totalPages);
+  const visible = useMemo(
+    () => filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [filtered, currentPage],
+  );
+
+  // A new search starts at the beginning; staying on page 3 of the old results
+  // reads as "no matches".
+  useEffect(() => { setPage(1); }, [search]);
 
   return (
     <section className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm md:p-6">
@@ -119,7 +142,7 @@ export function CoachDirectoryPicker({
       {!loading && !error && filtered.length > 0 && (
         <>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {filtered.map(coach => (
+            {visible.map(coach => (
               <button
                 key={coach.email}
                 type="button"
@@ -156,6 +179,18 @@ export function CoachDirectoryPicker({
               </button>
             ))}
           </div>
+
+          {totalPages > 1 && (
+            <Pagination
+              page={currentPage}
+              totalPages={totalPages}
+              total={filtered.length}
+              pageSize={PAGE_SIZE}
+              onPageChange={setPage}
+              noun="coaches"
+              className="mt-4"
+            />
+          )}
 
           {!countsAvailable && (
             <p className="mt-4 text-[12px] text-foreground-400">
