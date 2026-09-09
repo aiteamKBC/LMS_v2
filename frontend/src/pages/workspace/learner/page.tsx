@@ -13,8 +13,9 @@ import { demoProgrammeFor, materialForModuleId, type DemoMaterialDef } from '@/l
 import { buildDemoTimings, currentWeekStatus, summariseDemoTimings, timingsForModuleIds, useDemoTimeOverrides, type DemoProgrammeSummary } from '@/lib/demoTime';
 import { DemoMaterialCard } from '@/components/feature/DemoTimePanel';
 import { SignOutConfirmModal } from '@/components/feature/Header';
-import { buildLearnerJourney, completedComponentIds, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, hasComponentContent, isOpenableComponent, parseHours, recordedKsbEvidenceCodes, type JourneyComponent, type JourneyModule, type JourneyWeek } from '@/utils/learnerJourney';
+import { buildLearnerJourney, completedComponentIds, componentTypeMeta, componentNoun, evidencedTargetKsbCodes, gradePercent, formatHoursMinutes, hasComponentContent, isOpenableComponent, parseHours, type JourneyComponent, type JourneyModule, type JourneyWeek } from '@/utils/learnerJourney';
 import type {
+  ComponentMarking,
   LearnerComponentProgress,
   LearnerDetail,
   LearnerKind,
@@ -26,9 +27,12 @@ import { fetchLearnerCalendarEvents, fetchLearnerCoach, type LearnerCalendarEven
 import { useFreshUserRedirect, useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
 import { syncLearnerStatus } from '@/hooks/useLearnerNavGate';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
+import { fetchLearnerCertificateStatus, issueLearnerCertificate, type LearnerCertificate, type LearnerCertificateStatus } from '@/api/learnerCertificates';
+import type { CertificateTemplate } from '@/api/platformAdmin';
 import { fetchEvidence, type EvidenceRecord } from '@/api/evidence';
 import type React from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { CertificateDocument } from '@/components/feature/CertificateDocument';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { Panel } from '@/components/ui/Panel';
@@ -42,12 +46,15 @@ import { toneStyle, statusTone, type StatusTone } from '@/lib/statusTone';
 import { waitingCopy } from '@/utils/learnerAccessGate';
 import { displayValue, EMPTY_VALUE, ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
 import { fetchDemoMaterialSummaries, type DemoMaterialTable } from '@/api/demoMaterials';
+import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
+import { COMPONENT_ACCESS_MESSAGE } from '@/lib/componentAccessWindow';
+import { isNavigableComponent } from '@/pages/learner/video-watch/weekPreview';
 
 /* ─────────────────────────────────────────────
    Real-learner component progress + current-week UI
    ───────────────────────────────────────────── */
 
-type CompState = 'passed' | 'attempted' | 'watched' | 'completed' | 'todo';
+type CompState = 'passed' | 'attempted' | 'watched' | 'completed' | 'awaiting' | 'todo';
 
 /**
  * Derive a component's real progress from what the learner has recorded.
@@ -62,7 +69,25 @@ function componentProgress(
   c: JourneyComponent,
   videos: LearnerVideoProgress[],
   completions: LearnerComponentProgress[] = [],
+  markingStatus: Record<string, ComponentMarking> = {},
 ): { state: CompState; label: string; percent: number; detail?: string } {
+  // An activity the author marked for tutor validation is not finished when the
+  // learner submits it — it is finished when a coach accepts it. Completing it
+  // records the work and hands it in; showing it green at that point told the
+  // learner their assignment was done before anybody had assessed it.
+  if (c.componentId && c.tutorValidationRequired) {
+    const decision = markingStatus[c.componentId]?.status;
+    if (decision === 'referred' || decision === 'rejected') {
+      return { state: 'attempted', label: 'Needs work', percent: 0 };
+    }
+    if (decision && decision !== 'accepted' && decision !== 'partial') {
+      return { state: 'awaiting', label: 'Awaiting coach', percent: 50 };
+    }
+    if (!decision) {
+      // Submitted or not, nothing has reached a coach yet.
+      return { state: 'todo', label: 'To do', percent: 0 };
+    }
+  }
   if (c.isQuiz && c.quizAttempts && c.quizAttempts.length > 0) {
     const best = c.quizAttempts.reduce((b, a) => (gradePercent(a.grade) > gradePercent(b.grade) ? a : b));
     const pct = gradePercent(best.grade);
@@ -92,6 +117,7 @@ const STATE_STYLE: Record<CompState, { pill: string; dot: string; bar: string }>
   attempted: { pill: 'bg-amber-100 text-amber-700', dot: 'bg-amber-500', bar: 'bg-amber-500' },
   watched:   { pill: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', bar: 'bg-emerald-500' },
   completed: { pill: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', bar: 'bg-emerald-500' },
+  awaiting:  { pill: 'bg-sky-100 text-sky-700', dot: 'bg-sky-500', bar: 'bg-sky-500' },
   todo:      { pill: 'bg-background-200 text-foreground-500', dot: 'bg-foreground-300', bar: 'bg-foreground-300' },
 };
 
@@ -372,7 +398,11 @@ export default function LearnerOverview() {
     : [`${p.programme} ${p.programmeLevel}`, p.employer, `Cohort ${p.cohort}`];
 
   const trainingPlanHref = kind && id ? `/learner/training-plan/${kind}/${id}` : '/learner/training-plan';
+  const learningPlanHubHref = kind && id ? `/learner/learning-plan/${kind}/${id}` : '/learner/learning-plan';
   const journeyHref = kind && id ? `/learner/modules/${kind}/${id}` : '/learner/modules';
+  const programmeProgressHref = kind && id ? `/learner/my-learning/${kind}/${id}` : '/learner/my-learning';
+  const otjhProgressHref = kind && id ? `/learner/otjh/${kind}/${id}` : '/learner/otjh';
+  const ksbProgressHref = kind && id ? `/learner/ksbs/${kind}/${id}` : '/learner/ksbs';
   const displayLearnerName = isRealMode ? heroFullName : p.fullName;
   const displayCohort = isRealMode ? (heroCohort || EMPTY_VALUE) : p.cohort;
   const headerDescription = isRealMode
@@ -412,7 +442,7 @@ export default function LearnerOverview() {
     }
     return null;
   }, [currentStation, currentWeekLabel, journey]);
-  const evidencedKsbCodes = useMemo(() => recordedKsbEvidenceCodes(real), [real]);
+  const evidencedKsbCodes = useMemo(() => evidencedTargetKsbCodes(real), [real]);
 
   /* ── Inspection-demo time overlay — scoped to the 3 provisioned accounts ──
      Everything here is derived from data already fetched above (journey,
@@ -502,7 +532,7 @@ export default function LearnerOverview() {
             } else if (isOpenableComponent(component)) {
               href = `/learner/component/${kind}/${id}/${component.componentId}${query}`;
             }
-            const state = componentProgress(component, real?.videoProgress ?? [], real?.componentProgress ?? []).state;
+            const state = componentProgress(component, real?.videoProgress ?? [], real?.componentProgress ?? [], real?.componentMarkingStatus ?? {}).state;
             const complete = state === 'passed' || state === 'watched' || state === 'completed';
             return { href, complete };
           }),
@@ -568,10 +598,7 @@ export default function LearnerOverview() {
 
   const otjPercent = isRealMode ? (otj.targetHours > 0 ? otj.targetPercent : otj.percent) : Math.round((p.otjhCompleted / p.otjhTarget) * 100);
   const otjValue = isRealMode
-    // Always the hours actually logged. Falling back to the planned total when
-    // nothing had been submitted yet showed a learner the programme's whole
-    // OTJ allocation as though they had already done it.
-    ? formatHoursMinutes(otj.completedHours)
+    ? formatHoursMinutes(otj.activities > 0 ? otj.completedHours : otj.plannedHours)
     : formatHoursMinutes(p.otjhCompleted);
   const otjCaption = isRealMode
     ? (otj.targetHours > 0 ? `Target ${formatHoursMinutes(otj.targetHours)}${otj.status ? ` · ${otj.status}` : ''}` : `${otj.activities} ${otj.activities === 1 ? 'activity' : 'activities'} logged`)
@@ -878,6 +905,14 @@ export default function LearnerOverview() {
                   <AppIcon className="ri-play-circle-line" />
                   Continue learning
                 </button>
+                <button
+                  type="button"
+                  onClick={() => navigate(learningPlanHubHref)}
+                  className="learner-overview-learning-plan-button inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/70 bg-white/15 px-3 text-[12px] font-semibold text-white shadow-sm transition"
+                >
+                  <AppIcon className="ri-book-2-line" />
+                  Learning Plan
+                </button>
               </div>
             </div>
             <div className="relative z-10 mt-5 flex flex-wrap items-center gap-2">
@@ -957,10 +992,10 @@ export default function LearnerOverview() {
         {!isDemoAccount && (
           <SectionReveal delay={60}>
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <ProgressStat icon="ri-road-map-line" label="Programme Progress" value={programmeProgressValue} percent={programmeProgressPercent} caption={programmeProgressCaption} tone="brand" />
-              <ProgressStat icon="ri-calendar-check-line" label="Attendance" value={attendanceValue} percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
-              <ProgressStat icon="ri-time-line" label="OTJ Hours" value={otjValue} percent={otjPercent} caption={otjCaption} tone={otjTone} />
-              <ProgressStat icon="ri-bar-chart-2-line" label="KSB Progress" value={ksbValue} percent={ksbPercent} caption={ksbCaption} tone={ksbTone} />
+              <ProgressStat href={programmeProgressHref} icon="ri-road-map-line" label="Programme Progress" value={programmeProgressValue} percent={programmeProgressPercent} caption={programmeProgressCaption} tone="brand" />
+              <ProgressStat href="/learner/attendance" icon="ri-calendar-check-line" label="Attendance" value={attendanceValue} percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
+              <ProgressStat href={otjhProgressHref} icon="ri-time-line" label="OTJ Hours" value={otjValue} percent={otjPercent} caption={otjCaption} tone={otjTone} />
+              <ProgressStat href={ksbProgressHref} icon="ri-bar-chart-2-line" label="KSB Progress" value={ksbValue} percent={ksbPercent} caption={ksbCaption} tone={ksbTone} />
             </div>
           </SectionReveal>
         )}
@@ -999,6 +1034,7 @@ export default function LearnerOverview() {
                         components={currentWeek.week.components}
                         videos={real?.videoProgress ?? []}
                         completions={real?.componentProgress ?? []}
+                        markingStatus={real?.componentMarkingStatus ?? {}}
                         kind={kind}
                         learnerId={id}
                         reflectionStatuses={reflectionStatuses}
@@ -1028,62 +1064,6 @@ export default function LearnerOverview() {
                 </div>
               </Panel>
 
-              <Panel>
-                <SectionHeader
-                  title="My Tasks"
-                  count={tasks.length}
-                  description="What needs your attention next"
-                  icon="ri-list-check-3"
-                  actions={<Link to="/tasks" className="text-[12px] font-semibold text-primary-600 hover:text-primary-700">View all tasks</Link>}
-                />
-                <div className="mt-3 space-y-2">
-                  {tasks.length === 0 ? (
-                    <div className="flex min-h-[112px] items-center justify-center gap-4 px-4 py-4 text-left">
-                      <TaskEmptyIllustration />
-                      <div>
-                        <p className="text-[13px] font-semibold text-foreground-900">You&apos;re all caught up</p>
-                        <p className="mt-1 text-[12px] text-foreground-500">Nothing needs your attention right now.</p>
-                      </div>
-                    </div>
-                  ) : (
-                    tasks.map((t) => (
-                      <ActionRow
-                        key={t.id}
-                        title={t.title}
-                        subtitle={t.subtitle}
-                        tone={t.tone}
-                        status={<StatusBadge tone={t.tone} label={t.tone === 'critical' ? 'Action needed' : 'Needs attention'} />}
-                        actions={<RowAction label={t.actionLabel} emphasis="primary" onClick={() => navigate(t.actionHref)} />}
-                      />
-                    ))
-                  )}
-                </div>
-              </Panel>
-
-              <Panel>
-                <SectionHeader
-                  title="My Apprenticeship Journey"
-                  icon="ri-road-map-line"
-                  actions={
-                    <Link to={journeyHref} className="compact-action text-[12px] font-semibold text-primary-600 hover:text-primary-700">
-                      View full journey <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
-                    </Link>
-                  }
-                />
-                <div className="mt-4">
-                  {isRealMode ? (
-                    <MiniJourney real={real} loading={loading} loadError={loadError} journeyHref={journeyHref} />
-                  ) : (
-                    <div>
-                      <div className="mb-2 flex items-center justify-between">
-                        <span className="text-[13px] font-semibold text-foreground-900">{p.overallProgress}% complete</span>
-                        <span className="text-[12px] text-foreground-400">Currently on: <span className="font-semibold text-foreground-700">{p.currentModule}</span></span>
-                      </div>
-                      <ProgressBar percent={p.overallProgress} />
-                    </div>
-                  )}
-                </div>
-              </Panel>
             </div>
 
             <div className="space-y-4 lg:col-span-1">
@@ -1140,15 +1120,24 @@ export default function LearnerOverview() {
           </div>
         </SectionReveal>}
 
-        {/* ================================================================
-            MY TASKS
-            ================================================================ */}
         {!isDemoAccount && <SectionReveal delay={140}>
           <Panel>
-            <SectionHeader title="My Tasks" count={tasks.length} description="What needs your attention next" icon="ri-list-check-3" />
+            <SectionHeader
+              title="My Tasks"
+              count={tasks.length}
+              description="What needs your attention next"
+              icon="ri-list-check-3"
+              actions={<Link to="/tasks" className="text-[12px] font-semibold text-primary-600 hover:text-primary-700">View all tasks</Link>}
+            />
             <div className="mt-3 space-y-2">
               {tasks.length === 0 ? (
-                <EmptyState size="sm" icon="ri-checkbox-circle-line" title="You're all caught up" description="Nothing needs your attention right now." />
+                <div className="flex min-h-[112px] items-center justify-center gap-4 px-4 py-4 text-left">
+                  <TaskEmptyIllustration />
+                  <div>
+                    <p className="text-[13px] font-semibold text-foreground-900">You&apos;re all caught up</p>
+                    <p className="mt-1 text-[12px] text-foreground-500">Nothing needs your attention right now.</p>
+                  </div>
+                </div>
               ) : (
                 tasks.map((t) => (
                   <ActionRow
@@ -1165,9 +1154,6 @@ export default function LearnerOverview() {
           </Panel>
         </SectionReveal>}
 
-        {/* ================================================================
-            MY APPRENTICESHIP JOURNEY
-            ================================================================ */}
         {!isDemoAccount && <SectionReveal delay={180}>
           <Panel>
             <SectionHeader
@@ -1175,7 +1161,7 @@ export default function LearnerOverview() {
               icon="ri-road-map-line"
               actions={
                 <Link to={journeyHref} className="compact-action text-[12px] font-semibold text-primary-600 hover:text-primary-700">
-                  Open <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
+                  View full journey <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
                 </Link>
               }
             />
@@ -1270,14 +1256,18 @@ function DashboardNextStep({ icon, label, href, tone = 'brand', iconTone }: { ic
   );
 }
 
-/** A compact stat card: label, value, progress bar, caption. The four "quick health check" cards. */
-function ProgressStat({ icon, label, value, percent, caption, tone = 'neutral' }: {
-  icon: string; label: string; value: string; percent: number | null; caption?: string; tone?: StatusTone;
+/** A compact linked stat card: label, value, progress bar, caption. The four "quick health check" cards. */
+function ProgressStat({ href, icon, label, value, percent, caption, tone = 'neutral' }: {
+  href: string; icon: string; label: string; value: string; percent: number | null; caption?: string; tone?: StatusTone;
 }) {
   const style = toneStyle(tone);
   return (
-    <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
-      <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${style.bg} ${tone === 'neutral' ? 'text-foreground-400' : style.text}`}>
+    <Link
+      to={href}
+      aria-label={`Open ${label}`}
+      className="group flex min-w-0 items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-primary-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+    >
+      <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-transform duration-200 group-hover:scale-105 ${style.bg} ${tone === 'neutral' ? 'text-foreground-400' : style.text}`}>
         <AppIcon className={`${icon} text-xl`} />
       </span>
       <div className="min-w-0 flex-1">
@@ -1286,7 +1276,8 @@ function ProgressStat({ icon, label, value, percent, caption, tone = 'neutral' }
         <ProgressBar percent={percent} tone={percent == null || tone === 'neutral' ? undefined : style.dot} className="mt-2.5" />
         {caption ? <p className="mt-1.5 truncate text-[12px] leading-snug text-foreground-500">{caption}</p> : null}
       </div>
-    </div>
+      <AppIcon aria-hidden="true" className="ri-arrow-right-s-line shrink-0 text-foreground-300 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-primary-500" />
+    </Link>
   );
 }
 
@@ -1315,16 +1306,18 @@ function UpcomingRow({ day, month, timeLabel, title, subtitle, tone = 'neutral',
 }
 
 /** One component row inside the Continue Learning card. */
-function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen }: {
+function CurrentWeekRow({ c, videos, completions, markingStatus, reflectionStatus, onOpen, accessRestricted = false }: {
   c: JourneyComponent;
   videos: LearnerVideoProgress[];
   completions: LearnerComponentProgress[];
+  markingStatus?: Record<string, ComponentMarking>;
   reflectionStatus?: string;
   onOpen?: () => void;
+  accessRestricted?: boolean;
   /** Inspection-demo accounts only — see isInspectionDemoAccount. */
 }) {
   const meta = componentTypeMeta(c.title);
-  const prog = componentProgress(c, videos, completions);
+  const prog = componentProgress(c, videos, completions, markingStatus);
   const style = STATE_STYLE[prog.state];
   const actionable = !!onOpen;
   const reflection = REFLECTION_STATUS[reflectionStatus || ''];
@@ -1335,9 +1328,9 @@ function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen }: {
       type="button"
       onClick={onOpen}
       disabled={!actionable}
-      title={unavailable ? 'Content unavailable' : undefined}
+      title={unavailable ? 'Content unavailable' : accessRestricted ? COMPONENT_ACCESS_MESSAGE : undefined}
       className={`group relative w-full flex items-center gap-3 overflow-hidden rounded-xl border px-3.5 py-3 text-left transition-smooth ${
-        unavailable
+        unavailable || accessRestricted
           ? 'border-foreground-100 bg-background-100/70 opacity-55 grayscale'
           : completed
           ? 'border-emerald-200 bg-emerald-50/60 shadow-sm shadow-emerald-100/60'
@@ -1371,6 +1364,10 @@ function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen }: {
           <span className="inline-flex items-center gap-1 rounded-full bg-background-200 px-2 py-0.5 text-[10px] font-semibold text-foreground-500">
             <AppIcon className="ri-lock-line text-[10px]" />Content unavailable
           </span>
+        ) : accessRestricted ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+            <AppIcon className="ri-time-line text-[10px]" />Available 07:0019:00 UK
+          </span>
         ) : (
         <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${style.pill}`}>
           {prog.state === 'passed' && <AppIcon className="ri-check-line text-[10px]" />}
@@ -1389,15 +1386,20 @@ function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen }: {
           <span className="text-[10px] text-foreground-400 inline-flex items-center gap-1"><AppIcon className="ri-time-line text-[10px]" />{c.expectedOtjh}h</span>
         )}
       </span>
-      {actionable && <AppIcon className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-500 transition-smooth shrink-0" />}
+      {accessRestricted
+        ? <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
+        : actionable && <AppIcon className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-500 transition-smooth shrink-0" />}
     </button>
   );
 }
 
 /** The Continue Learning card body: progress + this week's components. */
-function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, components, videos, completions, kind, learnerId, reflectionStatuses, canProgress, showWeekHeading = false, hideHeader = false, showReadOnlyNotice = false }: {
+function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, components, videos, completions, markingStatus, kind, learnerId, reflectionStatuses, canProgress, showWeekHeading = false, hideHeader = false, showReadOnlyNotice = false }: {
   moduleTitle: string; weekLabel: string; weekIndex: number; totalWeeks: number; components: JourneyComponent[];
   videos: LearnerVideoProgress[]; completions: LearnerComponentProgress[];
+  /** Coach decision per component id — an activity needing tutor validation is
+   *  not counted as done until this says accepted. */
+  markingStatus?: Record<string, ComponentMarking>;
   kind?: string; learnerId?: string;
   reflectionStatuses: LearningReflectionStatusMap;
   /** False for a staff/coach viewer: the rows still show progress, but none of
@@ -1412,10 +1414,14 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
   showReadOnlyNotice?: boolean;
 }) {
   const navigate = useNavigate();
+  const componentAccess = useComponentAccessWindow();
+  const [showAccessNotice, setShowAccessNotice] = useState(false);
   const availableComponents = components.filter(hasComponentContent);
   const total = availableComponents.length;
   const done = availableComponents.filter((c) => {
-    const s = componentProgress(c, videos, completions).state;
+    // "Awaiting coach" is deliberately not counted: the week is not finished
+    // while an activity is still with a coach.
+    const s = componentProgress(c, videos, completions, markingStatus).state;
     return s === 'passed' || s === 'watched' || s === 'completed';
   }).length;
   const percent = total ? Math.round((done / total) * 100) : 0;
@@ -1426,10 +1432,14 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
     // already draws that state for components with nowhere to open.
     if (!kind || !learnerId || !canProgress) return undefined;
     const q = `?module=${encodeURIComponent(moduleTitle)}&week=${encodeURIComponent(weekLabel)}`;
-    if (c.isQuiz && hasComponentContent(c)) return () => navigate(`/learner/quiz/${kind}/${learnerId}/${c.quizMeta!.quizId}${q}`);
-    if (c.type === 'video' && c.videoUrl && c.componentId) return () => navigate(`/learner/video/${kind}/${learnerId}/${c.componentId}${q}`);
-    if (isOpenableComponent(c)) return () => navigate(`/learner/component/${kind}/${learnerId}/${c.componentId}${q}`);
-    return undefined;
+    let destination = '';
+    if (c.isQuiz && hasComponentContent(c)) destination = `/learner/quiz/${kind}/${learnerId}/${c.quizMeta!.quizId}${q}`;
+    else if (c.type === 'video' && c.videoUrl && c.componentId) destination = `/learner/video/${kind}/${learnerId}/${c.componentId}${q}`;
+    else if (isOpenableComponent(c)) destination = `/learner/component/${kind}/${learnerId}/${c.componentId}${q}`;
+    if (!destination) return undefined;
+    return componentAccess.open
+      ? () => navigate(destination)
+      : () => setShowAccessNotice(true);
   };
 
   const reflectionStatusFor = (c: JourneyComponent): string => {
@@ -1471,6 +1481,18 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
         </div>
       )}
       {!hideHeader && <ProgressBar percent={total ? percent : null} className="mb-4" />}
+      {showAccessNotice && (
+        <div role="alert" className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-[12px] text-amber-900">
+          <AppIcon className="ri-time-line mt-0.5 shrink-0 text-sm" />
+          <span>
+            <strong>Components are currently closed.</strong> {COMPONENT_ACCESS_MESSAGE}{' '}
+            Current UK time: {componentAccess.currentTimeLabel}.
+          </span>
+          <button type="button" aria-label="Dismiss" onClick={() => setShowAccessNotice(false)} className="ml-auto text-amber-700">
+            <AppIcon className="ri-close-line" />
+          </button>
+        </div>
+      )}
       {total === 0 ? (
         <div className="mt-3 flex min-h-[138px] flex-col items-center justify-center rounded-xl border border-dashed border-primary-200/70 bg-primary-50/10 px-5 py-5 text-center">
           <LearningEmptyIllustration />
@@ -1491,8 +1513,10 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
               c={c}
               videos={videos}
               completions={completions}
+              markingStatus={markingStatus}
               reflectionStatus={reflectionStatusFor(c)}
               onOpen={openFor(c)}
+              accessRestricted={Boolean(canProgress && hasComponentContent(c) && isNavigableComponent(c) && !componentAccess.open)}
             />
           ))}
         </div>
@@ -1840,9 +1864,82 @@ function stationTone(s: ModuleStation): StationTone {
   return s.status === 'completed' ? 'done' : s.status === 'current' ? 'current' : 'upcoming';
 }
 
+function formatCertificateDate(value?: string | null): string {
+  if (!value) return 'Today';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? value
+    : new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(date);
+}
+
+function CertificatePreview({ certificate, template, onClose }: { certificate: LearnerCertificate; template: CertificateTemplate; onClose: () => void }) {
+  const snapshot = certificate.snapshot || {};
+  const layout = snapshot.layoutConfig || template.layoutConfig || {};
+  const learner = snapshot.learner;
+  const title = snapshot.certificateTitle || template.title;
+  const body = snapshot.bodyText || template.bodyText;
+  const learnerName = learner?.name || 'Learner';
+  const programme = snapshot.programme || learner?.programme || 'Programme';
+  const progress = snapshot.progressPercent ?? certificate.progressPercent;
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-5" onClick={onClose}>
+      <div className="w-full max-w-5xl rounded-2xl bg-background-100 p-4" onClick={(event) => event.stopPropagation()}>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div>
+            <p className="text-sm font-bold text-foreground-900">{certificate.certificateNumber}</p>
+            <p className="text-xs text-foreground-500">Issued {formatCertificateDate(certificate.issuedAt)}</p>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => window.print()} className="primary-action rounded-lg bg-primary-700 px-4 py-2 text-xs font-bold text-white">
+              Download / Print PDF
+            </button>
+            <button onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-xs font-bold">
+              Close
+            </button>
+          </div>
+        </div>
+        <CertificateDocument
+          title={title}
+          bodyText={body}
+          learnerName={learnerName}
+          programmeName={programme}
+          progressLabel={`${progress}%`}
+          certificateNumber={certificate.certificateNumber}
+          awardedOn={formatCertificateDate(certificate.issuedAt)}
+          verificationUrl={certificate.verificationUrl}
+          layoutConfig={layout}
+        />
+      </div>
+    </div>
+  );
+}
+
 function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerDetail | null; loading: boolean; loadError: string | null; journeyHref: string }) {
   const journey = useMemo(() => buildLearnerJourney(real), [real]);
   const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
+  const [certificateStatus, setCertificateStatus] = useState<LearnerCertificateStatus | null>(null);
+  const [issuedCertificate, setIssuedCertificate] = useState<LearnerCertificate | null>(null);
+  const [certificateBusy, setCertificateBusy] = useState(false);
+  const [certificateNotice, setCertificateNotice] = useState('');
+
+  useEffect(() => {
+    if (!real?.id || !real.learnerType) {
+      setCertificateStatus(null);
+      setIssuedCertificate(null);
+      return;
+    }
+    let cancelled = false;
+    setCertificateNotice('');
+    fetchLearnerCertificateStatus(real.learnerType, real.id)
+      .then((result) => {
+        if (!cancelled) setCertificateStatus(result);
+      })
+      .catch(() => {
+        if (!cancelled) setCertificateStatus(null);
+      });
+    return () => { cancelled = true; };
+  }, [real?.id, real?.learnerType]);
 
   if (loading) return <RowsSkeleton rows={4} className="py-2" />;
   if (loadError) return <EmptyState size="sm" title={loadError} />;
@@ -1866,6 +1963,49 @@ function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerD
           {current ? ` · currently on Module ${current.index + 1}` : allDone ? ' · Gateway ready' : ''}
         </p>
       </div>
+
+      {certificateStatus?.template ? (
+        <div className={`mb-4 flex items-center gap-3 rounded-xl border p-3.5 ${certificateStatus.eligibility?.eligible ? 'border-amber-200 bg-amber-50/60' : 'border-foreground-200 bg-background-100'}`}>
+          <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${certificateStatus.eligibility?.eligible ? 'bg-amber-500 text-white' : 'bg-background-200 text-foreground-400'}`}>
+            <AppIcon className={certificateStatus.eligibility?.eligible ? 'ri-award-fill' : 'ri-lock-2-line'} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold text-foreground-900">{certificateStatus.certificate ? 'Certificate issued' : certificateStatus.eligibility?.eligible ? 'Certificate unlocked' : 'Progress certificate'}</p>
+            <p className="text-xs text-foreground-500">
+              {certificateStatus.certificate
+                ? `${certificateStatus.certificate.certificateNumber} · issued ${formatCertificateDate(certificateStatus.certificate.issuedAt)}`
+                : certificateStatus.eligibility?.eligible
+                  ? `${certificateStatus.template.title} is ready to issue.`
+                  : `Reach ${certificateStatus.template.minimumProgress}% to unlock · ${Math.max(0, certificateStatus.template.minimumProgress - (certificateStatus.eligibility?.progressPercent ?? overallPct))}% remaining`}
+            </p>
+            {certificateNotice ? <p className="mt-1 text-xs font-semibold text-red-600">{certificateNotice}</p> : null}
+          </div>
+          {certificateStatus.eligibility?.eligible || certificateStatus.certificate ? (
+            <button
+              disabled={certificateBusy}
+              onClick={() => {
+                if (!real?.id || !real.learnerType) return;
+                if (certificateStatus.certificate) {
+                  setIssuedCertificate(certificateStatus.certificate);
+                  return;
+                }
+                setCertificateBusy(true);
+                setCertificateNotice('');
+                issueLearnerCertificate(real.learnerType, real.id)
+                  .then((result) => {
+                    setCertificateStatus(result);
+                    setIssuedCertificate(result.certificate);
+                  })
+                  .catch((error) => setCertificateNotice(error instanceof Error ? error.message : 'Could not issue certificate.'))
+                  .finally(() => setCertificateBusy(false));
+              }}
+              className="primary-action rounded-lg bg-primary-700 px-4 py-2 text-xs font-bold text-white disabled:opacity-60"
+            >
+              {certificateBusy ? 'Issuing...' : 'View certificate'}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* Milestone track */}
       <div className="overflow-x-auto pb-1">
@@ -1916,6 +2056,9 @@ function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerD
           <span className="w-8 h-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0"><AppIcon className="ri-trophy-fill" /></span>
           <p className="text-[13px] font-semibold text-emerald-700">All modules complete — you&apos;ve reached the Gateway!</p>
         </div>
+      ) : null}
+      {issuedCertificate && certificateStatus?.template ? (
+        <CertificatePreview certificate={issuedCertificate} template={certificateStatus.template} onClose={() => setIssuedCertificate(null)} />
       ) : null}
     </div>
   );

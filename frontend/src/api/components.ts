@@ -14,6 +14,8 @@ export interface ComponentProgressSubmission {
   module?: string | null;
   startedAt: string;
   timeTakenSeconds: number;
+  timeEntrySource?: 'timer' | 'input';
+  outsideWorkingHoursConfirmed?: boolean;
   trackingToken: string;
   componentTitle?: string | null;
   componentType?: string | null;
@@ -37,6 +39,9 @@ export interface ComponentProgressRecord {
   claimedSeconds: number;
   serverSessionSeconds: number;
   verifiedSeconds: number;
+  outsideWorkingHours?: boolean;
+  outsideWorkingHoursConfirmed?: boolean;
+  outsideWorkingHoursConfirmedAt?: string | null;
 }
 
 export interface ComponentProgressResponse {

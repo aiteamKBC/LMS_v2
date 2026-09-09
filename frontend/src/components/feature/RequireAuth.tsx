@@ -2,6 +2,7 @@ import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { PageSkeleton } from '@/components/feature/Skeletons';
 import { homeRouteFor, mayAccessRoute } from '@/lib/routeAccess';
+import { OldOtjhGate } from '@/features/old-otjh/hooks';
 
 /**
  * The router-level gate. Everything that is not explicitly public in
@@ -63,7 +64,7 @@ export function RequireAuth() {
     return <NoAccess />;
   }
 
-  return <Outlet />;
+  return <OldOtjhGate><Outlet /></OldOtjhGate>;
 }
 
 function NoAccess() {

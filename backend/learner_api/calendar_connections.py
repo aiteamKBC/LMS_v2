@@ -623,11 +623,17 @@ def cached_learner_busy_slots(kind, learner_id, start, end):
     ]
 
 
-def _cached_booking_conflicts(kind, learner_id, start_dt, end_dt, provider=None):
+def _cached_booking_conflicts(
+    kind, learner_id, start_dt, end_dt, provider=None, exclude_start_dt=None, exclude_end_dt=None
+):
     """Return True when cached privacy-safe busy slots overlap a proposed booking."""
     try:
         provider_clause = ""
+        exclude_clause = ""
         params = [kind, learner_id, end_dt, start_dt]
+        if exclude_start_dt is not None and exclude_end_dt is not None:
+            exclude_clause = "AND NOT (slot.starts_at = %s AND slot.ends_at = %s)"
+            params.extend([exclude_start_dt, exclude_end_dt])
         if provider:
             provider_clause = "AND connection.provider = %s"
             params.append(provider)
@@ -639,9 +645,10 @@ def _cached_booking_conflicts(kind, learner_id, start_dt, end_dt, provider=None)
                      ON connection.id = slot.connection_id
                    WHERE connection.learner_kind = %s
                      AND connection.learner_id = %s
-                     AND connection.status = 'connected'
-                     AND slot.starts_at < %s AND slot.ends_at > %s
-                     {provider_clause}
+                      AND connection.status = 'connected'
+                      AND slot.starts_at < %s AND slot.ends_at > %s
+                      {exclude_clause}
+                      {provider_clause}
                    LIMIT 1''',
                 params,
             )
@@ -667,10 +674,27 @@ def availability(request, kind, learner_id):
     return JsonResponse({"busy": busy, "errors": errors, "connectedProviders": providers})
 
 
-def booking_conflicts(kind, learner_id, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes=0):
+def booking_conflicts(
+    kind,
+    learner_id,
+    scheduled_date,
+    scheduled_time,
+    duration_minutes,
+    timezone_offset_minutes=0,
+    *,
+    exclude_scheduled_date=None,
+    exclude_scheduled_time=None,
+    exclude_duration_minutes=None,
+):
     """Return True when a proposed learner booking overlaps a connected calendar."""
     start_dt = datetime.combine(scheduled_date, scheduled_time, tzinfo=timezone.utc) + timedelta(minutes=timezone_offset_minutes)
     end_dt = start_dt + timedelta(minutes=duration_minutes)
+    exclude_start_dt = exclude_end_dt = None
+    if exclude_scheduled_date and exclude_scheduled_time and exclude_duration_minutes:
+        exclude_start_dt = datetime.combine(
+            exclude_scheduled_date, exclude_scheduled_time, tzinfo=timezone.utc
+        ) + timedelta(minutes=timezone_offset_minutes)
+        exclude_end_dt = exclude_start_dt + timedelta(minutes=exclude_duration_minutes)
     start, end = start_dt.isoformat().replace("+00:00", "Z"), end_dt.isoformat().replace("+00:00", "Z")
     try:
         with _db().cursor() as cursor:
@@ -678,19 +702,27 @@ def booking_conflicts(kind, learner_id, scheduled_date, scheduled_time, duration
                               WHERE learner_kind = %s AND learner_id = %s AND status = 'connected' ''', [kind, learner_id])
             providers = [item[0] for item in cursor.fetchall()]
     except Exception:
-        return _cached_booking_conflicts(kind, learner_id, start_dt, end_dt)
+        return _cached_booking_conflicts(
+            kind, learner_id, start_dt, end_dt,
+            exclude_start_dt=exclude_start_dt, exclude_end_dt=exclude_end_dt,
+        )
     for provider in providers:
         try:
             row = _row(kind, learner_id, provider)
             row.update({"kind": kind, "learnerId": learner_id})
             for slot in _sync_connection_busy(row, start, end):
                 slot_start, slot_end = _parse_dt(slot.get("start", "")), _parse_dt(slot.get("end", ""))
+                if slot_start == exclude_start_dt and slot_end == exclude_end_dt:
+                    continue
                 if slot_start and slot_end and start_dt < slot_end and end_dt > slot_start:
                     return True
         except Exception:
             # A transient provider failure should not make the whole LMS unusable;
             # cached busy slots still block known conflicts without exposing details.
-            if _cached_booking_conflicts(kind, learner_id, start_dt, end_dt, provider):
+            if _cached_booking_conflicts(
+                kind, learner_id, start_dt, end_dt, provider,
+                exclude_start_dt=exclude_start_dt, exclude_end_dt=exclude_end_dt,
+            ):
                 return True
             continue
     return False

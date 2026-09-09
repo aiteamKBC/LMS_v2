@@ -6,6 +6,7 @@ import { Header } from './Header';
 import { GlobalSearch } from './GlobalSearch';
 import { useAuth } from '@/hooks/useAuth';
 import { useLearnerNavGate } from '@/hooks/useLearnerNavGate';
+import { ArrowLeft } from 'lucide-react';
 import { isLearnerFlowAccount } from '@/lib/learnerFlowAccess';
 
 interface WorkspaceShellProps {
@@ -19,12 +20,16 @@ interface WorkspaceShellProps {
   userRole?: string;
   workspaceLabel?: string;
   showBackButton?: boolean;
+  /** Destination for a direct visit with no previous in-app history entry. */
+  backFallbackHref?: string;
   /** Replaces the route-derived final breadcrumb (which may contain a raw id). */
   breadcrumbCurrentLabel?: string;
   /** Removes the workspace title and breadcrumbs for focused, content-first pages. */
   hidePageChrome?: boolean;
   /** Removes only the breadcrumb row while keeping the top header. */
   hideBreadcrumbs?: boolean;
+  /** The transition portal has its own menu before programme delivery starts. */
+  filterLearnerNavigation?: boolean;
 }
 
 interface BreadcrumbItem {
@@ -155,9 +160,11 @@ export function WorkspaceShell({
   userRole,
   workspaceLabel,
   showBackButton = false,
+  backFallbackHref,
   breadcrumbCurrentLabel,
   hidePageChrome = false,
   hideBreadcrumbs = false,
+  filterLearnerNavigation = true,
 }: WorkspaceShellProps) {
   // A learner who is still onboarding, or who has finished enrolment but is not
   // yet being taught, gets a reduced sidebar — most of the workspace needs a
@@ -165,7 +172,7 @@ export function WorkspaceShell({
   const { auth } = useAuth();
   const signedInEmail = auth.account?.email || auth.user?.email;
   const hideFocusedLearnerSidebar = role === 'learner' && isLearnerFlowAccount(signedInEmail);
-  const navItems = useLearnerNavGate(role, navItemsProp, signedInEmail);
+  const navItems = useLearnerNavGate(filterLearnerNavigation ? role : '', navItemsProp, signedInEmail);
   const location = useLocation();
   const navigate = useNavigate();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -210,18 +217,20 @@ export function WorkspaceShell({
     setMobileSidebarOpen(prev => !prev);
   };
 
+  const fallbackRoute = backFallbackHref || breadcrumbs.find(crumb => crumb.isLink && crumb.href && crumb.href !== `${location.pathname}${location.search}`)?.href || '/';
+  const hasPreviousEntry = typeof window.history.state?.idx === 'number' && window.history.state.idx > 0;
+  const canGoBack = hasPreviousEntry || fallbackRoute !== `${location.pathname}${location.search}${location.hash}`;
   const handleReturnToPreviousWindow = () => {
-    if (window.history.length > 1) {
+    if (hasPreviousEntry) {
       navigate(-1);
       return;
     }
-    const fallbackRoute = breadcrumbs.find(crumb => crumb.isLink && crumb.href && crumb.href !== `${location.pathname}${location.search}`)?.href || '/';
-    navigate(fallbackRoute);
+    navigate(fallbackRoute, { replace: true });
   };
 
   return (
     <div
-      className="dashboard-theme workspace-shell flex h-screen bg-background-200 overflow-hidden"
+      className="dashboard-theme workspace-shell flex h-screen overflow-hidden"
       data-workspace-role={role}
       // The offset itself is applied under a `lg` media query in index.css —
       // below that breakpoint the sidebar is an off-canvas drawer and must
@@ -245,7 +254,7 @@ export function WorkspaceShell({
           same constants, so the content can never sit under the rail. The hover
           preview is deliberately not reserved: it floats above the page. */}
       <div
-        className="workspace-content flex-1 flex flex-col min-w-0 bg-background-200 transition-[margin] duration-300 ease-out"
+        className="workspace-content flex-1 flex flex-col min-w-0 transition-[margin] duration-300 ease-out"
         style={{ marginLeft: hideFocusedLearnerSidebar ? 0 : `var(--kbc-sidebar-offset, 0px)` }}
       >
         {!hidePageChrome && (
@@ -255,14 +264,20 @@ export function WorkspaceShell({
             onOpenSearch={() => setSearchOpen(true)}
             userName={displayName}
             onToggleMobileSidebar={hideFocusedLearnerSidebar ? undefined : handleToggleMobileSidebar}
+            mobileSidebarOpen={mobileSidebarOpen}
             role={role}
           />
         )}
 
         {/* Breadcrumbs */}
-        {!hidePageChrome && !hideBreadcrumbs && breadcrumbs.length > 0 && (
-          <div className="workspace-breadcrumbs flex h-8 shrink-0 items-center overflow-hidden border-b border-background-300/40 bg-background-200 px-3 md:px-5">
-            <nav className="flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Breadcrumb">
+        {!hidePageChrome && (showBackButton || (!hideBreadcrumbs && breadcrumbs.length > 0)) && (
+          <div className={`workspace-breadcrumbs flex ${showBackButton ? 'min-h-12 gap-3 py-1.5' : 'h-8'} shrink-0 items-center overflow-hidden border-b border-background-300/40 bg-background-200 px-3 md:px-5`}>
+            {showBackButton && <button type="button" onClick={handleReturnToPreviousWindow} disabled={!canGoBack}
+              className="kbc-workspace-back" aria-label="Back to previous page"
+              title={!canGoBack ? 'You are on the first page' : previousRoute ? 'Back to the previous page' : 'Back'}>
+              <ArrowLeft size={16} aria-hidden="true" /><span>Back</span>
+            </button>}
+            {!hideBreadcrumbs && <nav className="flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Breadcrumb">
               {roleLabel !== 'Super Admin' && (
                 <>
                   <Link to="/" className="text-foreground-300 hover:text-foreground-500 transition-smooth">
@@ -299,7 +314,7 @@ export function WorkspaceShell({
                   )}
                 </span>
               ))}
-            </nav>
+            </nav>}
           </div>
         )}
 
@@ -308,7 +323,7 @@ export function WorkspaceShell({
             change (router/index.ts keys the boundary by pathname), so a
             transition owned by this component could never run. It used to hold
             an opacity-0 state behind a 120ms timer that nothing ever set. */}
-        <main className="workspace-main flex-1 overflow-y-auto bg-background-200">
+        <main className="workspace-main flex-1 overflow-y-auto">
           {/* An administrator reading a coach's workspace: shown on every coach
               page, since the sidebar reaches most of them without passing the
               dashboard that chose the coach. */}
@@ -316,18 +331,6 @@ export function WorkspaceShell({
           {children}
         </main>
       </div>
-
-      {showBackButton && (
-        <button
-          type="button"
-          onClick={handleReturnToPreviousWindow}
-          className="fixed right-4 top-20 z-50 hidden h-10 items-center gap-2 rounded-xl border border-primary-200 bg-background-50 px-3 text-[12px] font-bold text-primary-700 shadow-lg shadow-primary-950/10 transition-smooth hover:-translate-y-0.5 hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-primary-300 sm:inline-flex"
-          title={previousRoute ? 'Back to the previous screen' : 'Back'}
-        >
-          <AppIcon className="ri-arrow-go-back-line text-base"></AppIcon>
-          <span className="hidden sm:inline">Back</span>
-        </button>
-      )}
 
       {/* Global Search Modal */}
       <GlobalSearch isOpen={searchOpen} onClose={() => setSearchOpen(false)} />

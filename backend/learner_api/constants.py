@@ -53,13 +53,25 @@ POSITION_CHOICES = [
 # member would hold full platform access. Access is that grant, and it is the
 # only thing narrowing what an account can do.
 #
-# Exactly one per account: 'super-admin' already means "everything", which is the
-# only case combining values would serve.
+# An account may hold MORE THAN ONE, so somebody who both coaches a caseload and
+# teaches a group reaches both workspaces from one sign-in. 'super-admin' is the
+# exception: it already means "everything", so it is held alone.
+#
+# "Access" holds the PRIMARY grant — where the account lands at sign-in, and the
+# value every pre-existing reader compares against. "Access_extra" holds any
+# others, comma-separated. Splitting them this way keeps a single-access row
+# byte-for-byte what it was: turning "Access" itself into a list would make
+# every `access == "coach"` check in the codebase false for a dual-access
+# account, locking them out of the very workspace they were granted.
+#
+# `identity.accesses_for_staff` is the one place that unions the two; nothing
+# else should read "Access_extra" directly.
 ACCESS_ENROLMENT = "enrolment"
 ACCESS_CURRICULUM = "curriculum"
 ACCESS_COACH = "coach"
 ACCESS_TUTOR = "tutor"
 ACCESS_SUPER_ADMIN = "super-admin"
+ACCESS_RECORD_MONITOR = "record-monitor"
 
 #: Canonical order — also the order the console offers them in.
 ACCESS_CHOICES = [
@@ -67,6 +79,7 @@ ACCESS_CHOICES = [
     ACCESS_CURRICULUM,
     ACCESS_COACH,
     ACCESS_TUTOR,
+    ACCESS_RECORD_MONITOR,
     ACCESS_SUPER_ADMIN,
 ]
 
@@ -76,6 +89,7 @@ ACCESS_LABELS = {
     ACCESS_CURRICULUM: "Curriculum access",
     ACCESS_COACH: "Coach access",
     ACCESS_TUTOR: "Tutor access",
+    ACCESS_RECORD_MONITOR: "Learning record monitoring",
     ACCESS_SUPER_ADMIN: "Super Admin access",
 }
 
@@ -88,6 +102,7 @@ ACCESS_DESCRIPTIONS = {
     ACCESS_CURRICULUM: "The curriculum workspace — programmes, modules and their content.",
     ACCESS_COACH: "The coach workspace — their caseload, reviews and evidence validation.",
     ACCESS_TUTOR: "The tutor workspace — their teaching groups and session delivery.",
+    ACCESS_RECORD_MONITOR: "Read-only monitoring of active enrolled learners, previous records and signatures.",
     ACCESS_SUPER_ADMIN: "Everything, including this console. Can edit any data on the platform.",
 }
 
@@ -107,6 +122,7 @@ ACCESS_HOME_ROUTES = {
     ACCESS_CURRICULUM: "/workspace/curriculum",
     ACCESS_COACH: "/workspace/coach",
     ACCESS_TUTOR: "/workspace/tutor",
+    ACCESS_RECORD_MONITOR: "/old-otjh/monitor",
     ACCESS_SUPER_ADMIN: "/workspace/admin",
 }
 
@@ -118,6 +134,7 @@ ACCESS_NAV_ROLES = {
     ACCESS_CURRICULUM: "curriculum",
     ACCESS_COACH: "coach",
     ACCESS_TUTOR: "tutor",
+    ACCESS_RECORD_MONITOR: "record-monitor",
     ACCESS_SUPER_ADMIN: "admin",
 }
 

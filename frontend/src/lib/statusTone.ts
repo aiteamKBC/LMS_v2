@@ -54,11 +54,11 @@ const TONE_STYLE: Record<StatusTone, ToneStyle> = {
     icon: 'ri-check-line',
   },
   caution: {
-    dot: 'bg-rose-500',
-    bg: 'bg-rose-50',
-    text: 'text-rose-700',
-    border: 'border-rose-200',
-    ring: 'ring-rose-300',
+    dot: 'bg-amber-500',
+    bg: 'bg-amber-50',
+    text: 'text-amber-700',
+    border: 'border-amber-200',
+    ring: 'ring-amber-300',
     icon: 'ri-error-warning-line',
   },
   critical: {
@@ -70,11 +70,11 @@ const TONE_STYLE: Record<StatusTone, ToneStyle> = {
     icon: 'ri-alarm-warning-line',
   },
   upcoming: {
-    dot: 'bg-rose-500',
-    bg: 'bg-rose-50',
-    text: 'text-rose-700',
-    border: 'border-rose-200',
-    ring: 'ring-rose-300',
+    dot: 'bg-primary-500',
+    bg: 'bg-primary-50',
+    text: 'text-primary-700',
+    border: 'border-primary-200',
+    ring: 'ring-primary-300',
     icon: 'ri-calendar-event-line',
   },
   info: {

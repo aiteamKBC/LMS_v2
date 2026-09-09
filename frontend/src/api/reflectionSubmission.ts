@@ -1,3 +1,5 @@
+import type { MonthlyAssignment } from './monthlyAssignment';
+
 export interface LearningReflectionSubmissionInput {
   learnerKind: 'commercial' | 'apprenticeship';
   learnerId: string;
@@ -27,9 +29,20 @@ export interface LearningReflectionSubmissionInput {
   otjhConfirmed: boolean;
   signedDeclaration: boolean;
   qualityScore: number;
+  /** Assignment wizard fields. Other reflection flows omit these. */
+  submissionMode?: 'draft' | 'submit';
+  assignmentAnswer?: string;
+  whatYouLearned?: string;
+  businessImpact?: string;
+  outsideWorkingHours?: boolean;
+  outsideWorkingHoursConfirmed?: boolean;
+  monthlyAssignment?: MonthlyAssignment;
+  assignmentTimeSource?: 'timer' | 'input';
 }
 
 export interface StoredLearningReflectionSubmission extends LearningReflectionSubmissionInput {
+  /** Server-owned provenance; learners cannot request the import exemption. */
+  submissionOrigin?: 'learner' | 'imported_legacy';
   id: string;
   status: string;
   coachFeedback: string | null;

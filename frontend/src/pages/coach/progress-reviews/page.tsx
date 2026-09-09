@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { fetchEvidence, type EvidenceRecord } from '@/api/evidence';
 import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerQuizAttempt } from '@/api/learnerDetail';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -17,6 +18,7 @@ import { cn } from '@/lib/cn';
 import { roleNavMap } from '@/mocks/navigation';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { CalendarEventMeta, CalendarEventRow } from '../shared/CalendarEventRow';
+import { CoachMeetingArtifactsPanel } from '../shared/CoachMeetingArtifactsPanel';
 import { InfoTile, ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '../shared/ScheduleControls';
 import ProgressReviewCompletionModal from '../shared/ProgressReviewCompletionModal';
 import {
@@ -129,6 +131,19 @@ function displayValue(value?: string | number | null) {
   return text || '--';
 }
 
+function cleanOptionalText(value?: string | number | null) {
+  if (value === null || value === undefined) return '';
+  return String(value).trim();
+}
+
+function isLearnerKind(value?: string | null): value is LearnerKind {
+  return value === 'commercial' || value === 'apprenticeship';
+}
+
+function reviewHasLearnerReference(review: CoachCalendarEvent) {
+  return Boolean(cleanOptionalText(review.enrolmentId) || cleanOptionalText(review.learnerId));
+}
+
 function matchesReviewSearch(review: CoachCalendarEvent, searchTerm: string) {
   const normalizedSearch = searchTerm.trim().toLowerCase();
   if (!normalizedSearch) return true;
@@ -140,6 +155,8 @@ function matchesReviewSearch(review: CoachCalendarEvent, searchTerm: string) {
     review.cohort,
     review.group,
     review.learnerId,
+    review.enrolmentId,
+    review.learnerType,
     eventPeriodLabel(review),
     statusLabel(review.status),
   ]
@@ -291,6 +308,41 @@ async function fetchAnyLearnerDetail(id: string) {
   throw new Error(non404 || commercialMessage || apprenticeshipMessage || 'Could not load learner detail.');
 }
 
+async function fetchReviewLearnerDetail(event: CoachCalendarEvent) {
+  const profileId = cleanOptionalText(event.learnerId);
+  const detailId = cleanOptionalText(event.enrolmentId);
+  const preferredKind = isLearnerKind(event.learnerType) ? event.learnerType : null;
+
+  if (preferredKind && detailId) {
+    try {
+      return {
+        kind: preferredKind,
+        detail: await fetchLearnerDetail(preferredKind, detailId),
+        detailId,
+      };
+    } catch (preferredError) {
+      try {
+        const { kind, detail } = await fetchAnyLearnerDetail(detailId);
+        return { kind, detail, detailId };
+      } catch {
+        throw preferredError;
+      }
+    }
+  }
+
+  if (detailId) {
+    const { kind, detail } = await fetchAnyLearnerDetail(detailId);
+    return { kind, detail, detailId };
+  }
+
+  if (profileId) {
+    const { kind, detail } = await fetchAnyLearnerDetail(profileId);
+    return { kind, detail, detailId: profileId };
+  }
+
+  throw new Error('This review is missing its learner id, so slides cannot be generated yet.');
+}
+
 function buildReviewActivities(detail: LearnerDetail): ProgressReviewActivity[] {
   const componentById = new Map(
     (detail.components || [])
@@ -357,7 +409,7 @@ function buildReviewActivities(detail: LearnerDetail): ProgressReviewActivity[] 
   return activities.sort((left, right) => right.at.localeCompare(left.at));
 }
 
-function buildProgressReviewSlidesDeck(
+export function buildProgressReviewSlidesDeck(
   review: CoachCalendarEvent,
   ownerName: string,
   kind: LearnerKind,
@@ -636,6 +688,7 @@ function buildProgressReviewSlidesDeck(
 
 export default function CoachProgressReviews() {
   const coach = useCoachIdentity();
+  const navigate = useNavigate();
   const [tab, setTab] = useState<ReviewTab>('this-month');
   const [currentPage, setCurrentPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
@@ -754,6 +807,20 @@ export default function CoachProgressReviews() {
     setActionNotice(event.syncWarning || null);
   };
 
+  const openEventInCalendar = (event: CoachCalendarEvent) => {
+    navigate('/coach/timetable', {
+      state: {
+        focusEvent: {
+          eventKey: eventIdentity(event),
+          source: event.source,
+          date: eventDisplayDate(event),
+          title: event.title,
+          scheduledTime: event.scheduledTime,
+        },
+      },
+    });
+  };
+
   const handleSchedule = async (event: CoachCalendarEvent) => {
     setBusyEventId(eventIdentity(event));
     setActionError(null);
@@ -802,7 +869,7 @@ export default function CoachProgressReviews() {
 
   const handleCreateSlides = async (event: CoachCalendarEvent) => {
     const reviewId = eventIdentity(event);
-    if (!event.learnerId) {
+    if (!reviewHasLearnerReference(event)) {
       setActionError('This review is missing its learner id, so slides cannot be generated yet.');
       setActionNotice(null);
       setExpanded(reviewId);
@@ -813,10 +880,11 @@ export default function CoachProgressReviews() {
     setActionError(null);
     setActionNotice(null);
     try {
-      const { kind, detail } = await fetchAnyLearnerDetail(event.learnerId);
+      const { kind, detail, detailId } = await fetchReviewLearnerDetail(event);
+      const evidenceLearnerId = detailId || cleanOptionalText(detail.id) || cleanOptionalText(event.learnerId);
       let evidence: EvidenceRecord[] = [];
       try {
-        evidence = await fetchEvidence(kind, event.learnerId);
+        evidence = await fetchEvidence(kind, evidenceLearnerId);
       } catch (evidenceError) {
         console.error(evidenceError);
         setActionNotice('Slides were created, but evidence records could not be loaded. The deck uses learner progress data only.');
@@ -953,13 +1021,14 @@ export default function CoachProgressReviews() {
                   )}
                   actions={(
                     <div className="hidden shrink-0 items-center gap-2 md:flex">
+                      <RowAction label="Calendar" icon="ri-calendar-schedule-line" emphasis="calendar" onClick={() => openEventInCalendar(review)} />
                       {joinAvailable ? (
                         <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" disabled={isBusy} onClick={() => { handleJoin(review); }} />
                       ) : null}
                       <RowAction
                         label={isSlidesBusy ? 'Creating slides' : 'Create slides'}
                         icon={isSlidesBusy ? 'ri-loader-4-line animate-spin' : 'ri-slideshow-line'}
-                        disabled={isSlidesBusy || !review.learnerId}
+                        disabled={isSlidesBusy || !reviewHasLearnerReference(review)}
                         onClick={() => { void handleCreateSlides(review); }}
                       />
                       <RowAction
@@ -985,6 +1054,8 @@ export default function CoachProgressReviews() {
                       </div>
                     ) : null}
 
+                    <CoachMeetingArtifactsPanel event={review} />
+
                     {(actionError || actionNotice) ? (
                       <div className={cn('rounded-lg border px-3 py-2 text-[12px]', actionError ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-800')}>
                         {actionError || actionNotice}
@@ -1009,13 +1080,14 @@ export default function CoachProgressReviews() {
                           </div>
                         </div>
                         <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <RowAction label="Open in Calendar" icon="ri-calendar-schedule-line" emphasis="calendar" onClick={() => openEventInCalendar(review)} />
                           {joinAvailable ? (
                             <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" onClick={() => { handleJoin(review); }} disabled={isBusy} />
                           ) : null}
                           <RowAction
                             label={isSlidesBusy ? 'Creating slides' : 'Create slides'}
                             icon={isSlidesBusy ? 'ri-loader-4-line animate-spin' : 'ri-slideshow-line'}
-                            disabled={isSlidesBusy || !review.learnerId}
+                            disabled={isSlidesBusy || !reviewHasLearnerReference(review)}
                             onClick={() => { void handleCreateSlides(review); }}
                           />
                           <RowAction

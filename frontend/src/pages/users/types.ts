@@ -35,6 +35,13 @@ export interface UserListRow {
   learningPlan: boolean; // show "Learning plan" link (User rows only)
   /** Whether a learning plan has actually been saved — drives Add vs Edit. */
   hasLearningPlan?: boolean;
+  /** True when this person has a sign-in account at all. Creating somebody
+   *  provisions one without emailing them, so false here means provisioning
+   *  never happened — the record predates that change, or it failed. */
+  hasAccount?: boolean;
+  /** True once they have set a password and can sign in. An invitation no
+   *  longer applies at that point; a password reset does. */
+  hasSignedIn?: boolean;
   programmeStatus?: ProgrammeStatus;
   /**
    * The programme the learner is on. Absent for staff, admin and employer rows,
@@ -71,6 +78,13 @@ export interface InvitationOutcome {
   /** The email reached the mail transport (false when Azure is unconfigured). */
   emailSent: boolean;
   accountCreated: boolean;
+  /**
+   * The account was provisioned but deliberately not emailed — the normal
+   * outcome of creating somebody. The invitation is sent from Accounts in the
+   * Super Admin workspace once the record has been checked, so this is not a
+   * failure and must not be reported as one.
+   */
+  awaitingInvitation?: boolean;
   /** Why the invitation did not go out, when it did not. */
   error: string | null;
   expiresAt: string | null;

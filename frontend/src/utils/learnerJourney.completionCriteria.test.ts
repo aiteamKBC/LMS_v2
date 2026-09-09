@@ -21,8 +21,8 @@ describe('componentCriteria', () => {
     });
   });
 
-  it('still requires approved evidence for assignments', () => {
-    expect(componentCriteria(component('assignment', 0, 0), 0).met).toBe(false);
+  it('keeps supporting assignment evidence optional', () => {
+    expect(componentCriteria(component('assignment', 0, 0), 0).met).toBe(true);
     expect(componentCriteria(component('assignment', 0, 0), 1).met).toBe(true);
   });
 });

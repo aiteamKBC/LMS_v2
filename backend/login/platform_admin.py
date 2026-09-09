@@ -70,11 +70,91 @@ MAX_PAGE_SIZE = 200
 DEFAULT_PAGE_SIZE = 50
 
 
+@csrf_exempt
+@require_role(ROLE_ADMIN)
+def certificate_template(request):
+    """Read or save the global learner progress-certificate template."""
+    if request.method not in {"GET", "POST"}:
+        return _error("Method not allowed.", 405)
+    if request.method == "POST":
+        rejected = _reject_cross_site(request)
+        if rejected:
+            return rejected
+        try:
+            payload = json.loads(request.body or b"{}")
+        except (TypeError, ValueError):
+            return _error("Invalid JSON.", 400)
+        title = str(payload.get("title") or "").strip()[:200]
+        body = str(payload.get("bodyText") or "").strip()[:2000]
+        try:
+            threshold = float(payload.get("minimumProgress", 85))
+        except (TypeError, ValueError):
+            return _error("Minimum progress must be a number.", 400)
+        if not title or not body or not 0 <= threshold <= 100:
+            return _error("Title, body text and a progress value from 0 to 100 are required.", 400)
+        publish = bool(payload.get("publish"))
+        actor = request.login_account.email
+        layout = payload.get("layoutConfig") if isinstance(payload.get("layoutConfig"), dict) else {}
+        try:
+            with transaction.atomic(using="enrolment"), connections["enrolment"].cursor() as cursor:
+                cursor.execute('SELECT COALESCE(MAX(version),0)+1 FROM "Learner".certificate_templates WHERE certificate_type=%s', ["progress-achievement"])
+                version = cursor.fetchone()[0]
+                if publish:
+                    cursor.execute('UPDATE "Learner".certificate_templates SET status=%s, updated_at=now() WHERE certificate_type=%s AND status=%s', ["archived", "progress-achievement", "published"])
+                cursor.execute('''INSERT INTO "Learner".certificate_templates
+                    (name,certificate_type,version,status,title,body_text,minimum_progress,require_final_test,layout_config,created_by,published_by,published_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,CASE WHEN %s THEN now() END)
+                    RETURNING id,published_at''',
+                    [str(payload.get("name") or "Progress certificate")[:160], "progress-achievement", version,
+                     "published" if publish else "draft", title, body, threshold, bool(payload.get("requireFinalTest")),
+                     json.dumps(layout), actor, actor if publish else "", publish])
+                template_id, published_at = cursor.fetchone()
+                cursor.execute('INSERT INTO "Learner".certificate_audit_logs (actor_email,action,template_id,details) VALUES (%s,%s,%s,%s::jsonb)', [actor, "published" if publish else "draft-saved", template_id, json.dumps({"version": version})])
+                return JsonResponse({"template": {
+                    "id": template_id,
+                    "name": str(payload.get("name") or "Progress certificate")[:160],
+                    "version": version,
+                    "status": "published" if publish else "draft",
+                    "title": title,
+                    "bodyText": body,
+                    "minimumProgress": threshold,
+                    "requireFinalTest": bool(payload.get("requireFinalTest")),
+                    "layoutConfig": layout,
+                    "publishedAt": published_at.isoformat() if published_at else None,
+                }})
+        except DatabaseError:
+            return _error("Certificate tables are not installed. Run learner_api/sql/certificate_management.sql in Neon.", 503)
+    try:
+        with connections["enrolment"].cursor() as cursor:
+            cursor.execute('''SELECT id,name,version,status,title,body_text,minimum_progress,require_final_test,layout_config,published_at
+                FROM "Learner".certificate_templates
+                ORDER BY CASE status WHEN 'draft' THEN 0 WHEN 'published' THEN 1 ELSE 2 END, version DESC
+                LIMIT 1''')
+            row = cursor.fetchone()
+    except DatabaseError:
+        return _error("Certificate tables are not installed. Run learner_api/sql/certificate_management.sql in Neon.", 503)
+    if not row:
+        return JsonResponse({"template": None})
+    return JsonResponse({"template": {"id": row[0], "name": row[1], "version": row[2], "status": row[3], "title": row[4], "bodyText": row[5], "minimumProgress": float(row[6]), "requireFinalTest": row[7], "layoutConfig": _json_dict(row[8]), "publishedAt": row[9].isoformat() if row[9] else None}})
+
+
 def _error(message, status, code=None):
     payload = {"error": message}
     if code:
         payload["code"] = code
     return JsonResponse(payload, status=status)
+
+
+def _json_dict(value):
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except ValueError:
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    return {}
 
 
 def _reject_cross_site(request):
@@ -363,20 +443,39 @@ def overview(request):
 # ---------------------------------------------------------------------------
 
 def _staff_access_map(accounts):
-    """{subject_id: access} for the staff accounts in this page of results.
+    """{subject_id: {"access": primary, "accesses": [...]}} for this page.
 
     One query for the page rather than one per row: the accounts list is the
     console's busiest table and an N+1 here is felt immediately.
+
+    Both are carried because they answer different questions: ``access`` is
+    where the account lands at sign-in, ``accesses`` is everything it may reach.
+    A row showing only the primary would hide the second grant a person holds.
     """
     ids = [a.subject_id for a in accounts if a.subject_type == "staff"]
     if not ids:
         return {}
+    from learner_api.constants import ACCESS_CHOICES
     from learner_api.models import StaffUser
+
+    from .identity import accesses_for_staff
 
     try:
         with transaction.atomic(using="enrolment"):
-            rows = StaffUser.objects.filter(pk__in=ids).values_list("pk", "access")
-        return {pk: (access or "").strip().lower() for pk, access in rows}
+            rows = list(
+                StaffUser.objects.filter(pk__in=ids).only(
+                    "pk", "access", "access_extra"
+                )
+            )
+        return {
+            row.pk: {
+                "access": (row.access or "").strip().lower(),
+                "accesses": [
+                    value for value in ACCESS_CHOICES if value in accesses_for_staff(row)
+                ],
+            }
+            for row in rows
+        }
     except DatabaseError:
         # The list is still worth showing without the grants.
         return {}
@@ -431,8 +530,12 @@ def _account_json(account, now, extras=None):
         # The staff access grant, so the console can show and edit it without a
         # second request per row. "" for non-staff subjects and for staff whose
         # access has not been set yet.
-        "access": extras.get("access", {}).get(account.subject_id, "")
+        "access": (extras.get("access", {}).get(account.subject_id) or {}).get("access", "")
         if account.subject_type == "staff" else "",
+        # Every grant the account holds, so a row can show more than one badge
+        # for somebody who both coaches and teaches.
+        "accesses": (extras.get("access", {}).get(account.subject_id) or {}).get("accesses", [])
+        if account.subject_type == "staff" else [],
         # Which of the two learner kinds this is, so the console can link to the
         # right record board. "" for staff and employers, who have no kind.
         "learnerType": extras.get("learner_type", {}).get(account.subject_id, "")

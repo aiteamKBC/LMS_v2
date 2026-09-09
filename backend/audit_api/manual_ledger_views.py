@@ -1712,6 +1712,7 @@ def _companion_reading_part(cursor, group_id, activity_id, quiz_title):
         "title": str(best.get("title") or ""),
         "content_url": content_url,
         "reading_text_body": text_body,
+        "reading_type": best.get("reading_type"),
         "quiz": None,
     }
 
@@ -2279,6 +2280,7 @@ def _month_is_signed_off(aptem_id, month):
     journal's own "signed" state (removal upserts an empty signature, so test
     emptiness, not row existence). Errors read as "not signed" so a missing
     table never blocks the journal."""
+    # Transition signatures attest a review and must not lock shared imports.
     try:
         with connections[resolve("enrolment")].cursor() as cursor:
             cursor.execute(
@@ -2287,6 +2289,7 @@ def _month_is_signed_off(aptem_id, month):
                 FROM "Audit"."monthly_audit_signoffs"
                 WHERE learner_id = %s AND report_month = %s
                   AND coalesce(signature_data, '') <> ''
+                  AND coalesce(audit_version, '') <> 'old-otjh-transition-v1'
                 """,
                 [str(aptem_id), month],
             )

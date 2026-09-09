@@ -352,6 +352,7 @@ export default function PlatformReportPage() {
         </button>
       ) : undefined}
     >
+      <div className="platform-report-page">
       <DataPanel loading={loading && !data} error={error} onRetry={reload}>
         {data && (
           <p className="text-[11px] text-foreground-400">
@@ -433,6 +434,7 @@ export default function PlatformReportPage() {
         Export produces a CSV of exactly the rows shown. Select any row to see the query behind its
         figure and the records that make it up.
       </SourceNote>
+      </div>
 
       {drilling && (
         <DrillPanel

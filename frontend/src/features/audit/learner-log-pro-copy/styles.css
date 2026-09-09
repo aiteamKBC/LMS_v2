@@ -85,14 +85,14 @@
   --card-foreground: oklch(0.24 0.03 235);
   --popover: oklch(0.998 0.003 100);
   --popover-foreground: oklch(0.24 0.03 235);
-  --primary: oklch(0.32 0.055 232);
+  --primary: oklch(0.43 0.2 295);
   --primary-foreground: oklch(0.98 0.008 100);
-  --secondary: oklch(0.93 0.016 95);
-  --secondary-foreground: oklch(0.3 0.04 232);
-  --muted: oklch(0.935 0.012 100);
-  --muted-foreground: oklch(0.5 0.024 235);
-  --accent: oklch(0.72 0.13 65);
-  --accent-foreground: oklch(0.24 0.05 60);
+  --secondary: oklch(0.96 0.035 295);
+  --secondary-foreground: oklch(0.34 0.14 295);
+  --muted: oklch(0.965 0.018 295);
+  --muted-foreground: oklch(0.5 0.035 295);
+  --accent: oklch(0.96 0.035 295);
+  --accent-foreground: oklch(0.34 0.14 295);
   --destructive: oklch(0.53 0.2 25);
   --destructive-foreground: oklch(0.98 0.008 100);
   --success: oklch(0.52 0.1 165);
@@ -102,22 +102,22 @@
   --knowledge: oklch(0.45 0.09 240);
   --skill: oklch(0.48 0.09 175);
   --behaviour: oklch(0.52 0.12 40);
-  --border: oklch(0.88 0.014 95);
-  --input: oklch(0.88 0.014 95);
-  --ring: oklch(0.45 0.06 232);
+  --border: oklch(0.9 0.02 295);
+  --input: oklch(0.9 0.02 295);
+  --ring: oklch(0.56 0.18 295);
   --chart-1: oklch(0.45 0.09 240);
   --chart-2: oklch(0.48 0.09 175);
   --chart-3: oklch(0.52 0.12 40);
   --chart-4: oklch(0.72 0.13 65);
   --chart-5: oklch(0.6 0.05 235);
-  --sidebar: oklch(0.955 0.012 95);
-  --sidebar-foreground: oklch(0.24 0.03 235);
-  --sidebar-primary: oklch(0.32 0.055 232);
+  --sidebar: oklch(0.28 0.14 295);
+  --sidebar-foreground: oklch(0.98 0.01 295);
+  --sidebar-primary: oklch(0.43 0.2 295);
   --sidebar-primary-foreground: oklch(0.98 0.008 100);
-  --sidebar-accent: oklch(0.93 0.016 95);
-  --sidebar-accent-foreground: oklch(0.3 0.04 232);
-  --sidebar-border: oklch(0.88 0.014 95);
-  --sidebar-ring: oklch(0.45 0.06 232);
+  --sidebar-accent: oklch(0.34 0.16 295);
+  --sidebar-accent-foreground: oklch(0.98 0.01 295);
+  --sidebar-border: oklch(0.4 0.14 295);
+  --sidebar-ring: oklch(0.56 0.18 295);
 }
 
 @layer base {
