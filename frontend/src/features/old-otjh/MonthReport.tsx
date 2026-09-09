@@ -13,7 +13,7 @@ import { ActivityLog, LearnerInformation, MonthlyHours } from './ReportSections'
 import { SignatureCapture } from './SignatureCapture';
 import { BulkSignDialog } from './BulkSignDialog';
 import { completeMonth, getMonth, getSignoffs, getSummary, reopenMonth, saveSignature, type Signature, type SignatureCaptureMethod } from './api';
-import { displayDate, monthLabel, monthStatus, nextOutstanding } from './report';
+import { displayDate, monthLabel, monthStatus, nextOutstanding, previousMonthSignature } from './report';
 import styles from './report.module.css';
 import design from './design.module.css';
 import { RecordBadge } from './RecordDesign';
@@ -86,9 +86,7 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
   const unsigned = months.filter(item => item.is_required !== false && (student ? item.status !== 'complete' : !item.coach_signature));
   const index = months.findIndex(item => item.month === month);
   const previous = months[index - 1]; const next = months[index + 1];
-  const reusableLearnerSignature = [...months]
-    .filter(item => item.month !== month && item.student_signature)
-    .sort((left, right) => right.month.localeCompare(left.month))[0];
+  const reusableSignature = previousMonthSignature(months, month, student ? 'learner' : 'coach');
   const signatureRows = [{ role: 'Learner', signature: data.student_signature, own: student },
     { role: 'Coach', signature: data.coach_signature, own: !student && !readOnly }];
   let completionHint = student
@@ -132,10 +130,7 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
             {row.signature && <img src={row.signature.url} alt={`${row.role} signature`} className={design.signatureImage} />}
             {row.own && canSign ? <SignatureCapture key={captureVersion} name={auth.account?.displayName || auth.user?.fullName || ''} busy={busy}
               dialogRole={student ? 'learner' : 'coach'} hasSavedSignature={Boolean(row.signature)} saveError={signing.error?.message}
-              importSignature={student && reusableLearnerSignature?.student_signature ? {
-                url: reusableLearnerSignature.student_signature.url,
-                monthLabel: monthLabel(reusableLearnerSignature.month),
-              } : undefined}
+              importSignature={reusableSignature}
               confirmationText={student ? "I confirm this is my signature. Save it and complete this month." : "I confirm this is my coach signature for this month."}
               onDraftStart={() => { draftDigest.current ??= data.snapshot_digest; }} onDraftReset={() => { draftDigest.current = null; }}
               onSave={(blob, capture) => signing.mutate({ blob, capture })} />

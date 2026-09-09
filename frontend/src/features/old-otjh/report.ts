@@ -32,6 +32,13 @@ export function nextOutstanding(summary: Summary, current?: string) {
   const remaining = summary.months.filter(item => item.status !== 'complete');
   return (remaining.find(item => !current || item.month > current) || remaining.find(item => item.month !== current))?.month;
 }
+export function previousMonthSignature(months: MonthState[], current: string, role: 'learner' | 'coach') {
+  const key = role === 'learner' ? 'student_signature' : 'coach_signature';
+  const previous = months.filter(item => item.month < current && item[key])
+    .sort((left, right) => right.month.localeCompare(left.month))[0];
+  const signature = previous?.[key];
+  return signature ? { url: signature.url, monthLabel: monthLabel(previous.month) } : undefined;
+}
 export function coachContact(summary?: Summary) {
   const email = summary?.learner?.coach_email?.trim();
   return email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? `mailto:${encodeURIComponent(email)}` : undefined;

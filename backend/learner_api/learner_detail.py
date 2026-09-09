@@ -1668,12 +1668,14 @@ def _resolve_from_master(modules, weeks, components):
         if mid not in master_module_title:
             continue  # module deleted from master; drop it (full sync)
         live_module = _s(master_module_title[mid])
-        # Skip blanks, and dedupe titles that would otherwise collide under the
-        # frontend's title-based grouping (keep the first).
-        if not live_module or live_module in seen_modules:
+        # The label list is unique for older consumers. Keep every module's
+        # weeks/components: the subject workspace groups by moduleId, and two
+        # assigned subjects must not lose content because they share a title.
+        if not live_module:
             continue
+        if live_module not in seen_modules:
+            out_modules.append(live_module)
         seen_modules.add(live_module)
-        out_modules.append(live_module)
 
         for week_id, live_wk in weeks_by_module.get(mid, []):
             out_weeks.append({

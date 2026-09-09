@@ -17,6 +17,8 @@ export type LearnerKind = 'commercial' | 'apprenticeship';
 export interface LearnerWeekEntry {
   module: string | null;
   week: string;
+  moduleId?: string | null;
+  weekId?: string | null;
 }
 /** A KSB authored against a component, with the weight it contributes. */
 export interface ComponentKsbMapping {

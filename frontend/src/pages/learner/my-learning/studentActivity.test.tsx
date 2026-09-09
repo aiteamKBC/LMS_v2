@@ -24,7 +24,7 @@ const data: StudentActivityResponse = {
   ],
 };
 
-describe('historical modules inline panel', () => {
+describe('learner subject cards', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it('loads on opening Modules and ignores an old learner response after navigation', async () => {
@@ -41,7 +41,7 @@ describe('historical modules inline panel', () => {
     expect(screen.queryByText('Anna Rundell')).not.toBeInTheDocument();
     expect(fetch.mock.calls[0][2]?.aborted).toBe(true);
   });
-  it('renders inline, distinguishes missing OTJH from recorded zero, and expands activities', () => {
+  it('opens a subject card and distinguishes missing OTJH from recorded zero', () => {
     render(<StudentActivityPanel data={data} loading={false} error={null} onRetry={vi.fn()} />);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByText('Anna Rundell')).toBeInTheDocument();
@@ -49,9 +49,11 @@ describe('historical modules inline panel', () => {
     expect(within(screen.getByText('Recorded OTJH').parentElement!).queryByText('Unavailable')).not.toBeInTheDocument();
     const module = screen.getByRole('button', { name: /Leadership/ });
     fireEvent.click(module);
-    expect(module).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: 'All subjects' })).toBeInTheDocument();
+    expect(screen.getByText('Complete')).toBeInTheDocument();
+    expect(screen.getByText('Not complete')).toBeInTheDocument();
     expect(screen.getByText('Reflection')).toBeInTheDocument();
-    expect(screen.getByText('OTJH: Unavailable')).toBeInTheDocument();
+    expect(screen.getByText(/OTJH: Unavailable/)).toBeInTheDocument();
   });
 
   it('filters activities without changing the full module completion or hours summary', () => {

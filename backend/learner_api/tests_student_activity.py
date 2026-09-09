@@ -88,6 +88,11 @@ class StudentActivityTests(SimpleTestCase):
 
     def setUp(self):
         self.factory = RequestFactory()
+        state_patch = patch('learner_api.student_activity.subject_store.state', return_value={
+            'ready': False, 'progress': [], 'history': [], 'covers': {},
+        })
+        state_patch.start()
+        self.addCleanup(state_patch.stop)
 
     @patch("login.permissions._auth_gate_enabled", return_value=True)
     @patch("login.permissions.authenticate_request")
