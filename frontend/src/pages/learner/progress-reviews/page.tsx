@@ -24,6 +24,13 @@ function formatDate(value?: string | null, long = false): string {
     : { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+function monthLabel(value?: string | null): string {
+  if (!value) return '';
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+}
+
 function formatTime(value?: string | null): string {
   if (!value) return '-';
   const [hour, minute] = value.split(':').map(Number);
@@ -32,8 +39,26 @@ function formatTime(value?: string | null): string {
   });
 }
 
+function calendarEventHref(review?: LearnerCalendarEvent | null): string {
+  const eventKey = review?.eventKey || review?.id;
+  return eventKey ? `/learner/calendar?event=${encodeURIComponent(eventKey)}` : '/learner/calendar';
+}
+
 function reviewDate(review?: LearnerCalendarEvent | null): string | null {
   return review?.scheduledDate || review?.targetDate || review?.date || null;
+}
+
+function progressReviewTitle(review?: LearnerCalendarEvent | null): string {
+  const month = monthLabel(reviewDate(review));
+  return `Progress Review${month ? ` — ${month}` : ''}${review?.sequence ? ` #${review.sequence}` : ''}`;
+}
+
+function shouldShowLearnerMeetingRecording(review?: LearnerCalendarEvent | null): boolean {
+  return Boolean(
+    review?.eventKey
+    && review?.meetingLink
+    && ['completed', 'awaiting-signature'].includes(review.status),
+  );
 }
 
 function statusLabel(status?: string): string {
@@ -207,7 +232,7 @@ export function ProgressReviewsListPage() {
       roleLabel={learnerNav.label}
       navItems={learnerNav.items}
       workspaceLabel={learnerNav.workspaceLabel}
-      pageTitle="Progress Reviews"
+      pageTitle="Progress Review"
       pageSubtitle="Your planned and completed progress review sessions"
       userName={learner?.name || 'Learner'}
       userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}
@@ -220,7 +245,7 @@ export function ProgressReviewsListPage() {
           <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-secondary-100"><AppIcon className="ri-team-line text-secondary-300" />Formal review</span>
-              <h1 className="mt-3 text-[22px] font-bold leading-tight text-white sm:text-2xl md:text-3xl">Progress reviews</h1>
+              <h1 className="mt-3 text-[22px] font-bold leading-tight text-white sm:text-2xl md:text-3xl">Progress Review</h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">Review your learning, progress and next actions with {reviewerName} and your line manager.</p>
             </div>
             <div className="grid grid-cols-2 gap-2 lg:min-w-[520px] lg:grid-cols-4">
@@ -231,7 +256,7 @@ export function ProgressReviewsListPage() {
 
         <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-[0_8px_30px_rgba(27,12,52,0.06)]">
           <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-            <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><AppIcon className="ri-file-list-3-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Progress review sessions</h2><p className="mt-0.5 text-xs text-foreground-500">Check each review status and open the full PR record.</p></div></div>
+            <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><AppIcon className="ri-file-list-3-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Progress Review sessions</h2><p className="mt-0.5 text-xs text-foreground-500">Check each review status and open the full Progress Review record.</p></div></div>
             <Link to="/learner/calendar" className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />Open calendar</Link>
           </div>
           {loading ? <div className="p-5"><RowsSkeleton rows={4} /></div> : reviews.length === 0 ? <div className="p-5"><Empty>No progress review sessions were found.</Empty></div> : (
@@ -246,7 +271,7 @@ export function ProgressReviewsListPage() {
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <h3 className="text-sm font-bold text-foreground-900">Progress Review #{review.sequence}</h3>
+                              <h3 className="text-sm font-bold text-foreground-900">{progressReviewTitle(review)}</h3>
                               <p className="mt-1 text-[11px] text-foreground-500">Formal progress review</p>
                             </div>
                             <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${statusStyle(review.status)}`}>
@@ -268,7 +293,7 @@ export function ProgressReviewsListPage() {
                       </div>
 
                       <div className="grid grid-cols-2 gap-2">
-                        <Link to="/learner/calendar" className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />{isBooked ? 'Reschedule' : 'Schedule'}</Link>
+                        <Link to={calendarEventHref(review)} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />{isBooked ? 'Reschedule' : 'Schedule'}</Link>
                         <Link to={`/learner/progress-reviews/${encodeURIComponent(review.id)}`} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-3 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700">View review <AppIcon className="ri-arrow-right-line" /></Link>
                       </div>
                     </article>
@@ -285,11 +310,11 @@ export function ProgressReviewsListPage() {
                     const isBooked = Boolean(review.scheduledDate && review.scheduledTime) && !['not-scheduled', 'cancelled'].includes(review.status);
                     return (
                       <tr key={review.id} className="group transition-colors hover:bg-primary-50/35">
-                        <td className="px-5 py-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-background-100 text-xs font-extrabold text-primary-700 transition group-hover:bg-primary-100">#{review.sequence}</span><div><p className="text-xs font-bold text-foreground-900">Progress Review #{review.sequence}</p><p className="mt-1 text-[10px] text-foreground-400">Formal progress review</p></div></div></td>
+                        <td className="px-5 py-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-background-100 text-xs font-extrabold text-primary-700 transition group-hover:bg-primary-100">#{review.sequence}</span><div><p className="text-xs font-bold text-foreground-900">{progressReviewTitle(review)}</p><p className="mt-1 text-[10px] text-foreground-400">Formal progress review</p></div></div></td>
                         <td className="px-5 py-4"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary-100 text-[9px] font-bold text-secondary-700">{initials(review.coachName)}</span><span className="text-xs font-semibold text-foreground-700">{review.coachName || '-'}</span></div></td>
                         <td className="px-5 py-4"><div className="flex items-center gap-2"><AppIcon className="ri-calendar-line text-primary-500" /><div><p className="text-xs font-semibold text-foreground-700">{formatDate(isBooked ? review.scheduledDate : review.targetDate)}</p>{isBooked && <p className="mt-1 text-[10px] text-foreground-400">at {formatTime(review.scheduledTime)}</p>}</div></div></td>
                         <td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${statusStyle(review.status)}`}><AppIcon className={review.status === 'completed' ? 'ri-checkbox-circle-line' : review.status === 'cancelled' ? 'ri-close-circle-line' : review.status === 'scheduled' ? 'ri-calendar-check-line' : 'ri-time-line'} />{review.status === 'not-scheduled' ? 'Not Scheduled' : statusLabel(review.status)}</span></td>
-                        <td className="px-5 py-4"><Link to="/learner/calendar" className="inline-flex h-9 items-center gap-2 rounded-xl px-3 text-xs font-semibold text-foreground-600 transition hover:bg-primary-50 hover:text-primary-700"><AppIcon className="ri-calendar-2-line" />{isBooked ? 'Reschedule' : 'Schedule'}</Link></td>
+                        <td className="px-5 py-4"><Link to={calendarEventHref(review)} className="inline-flex h-9 items-center gap-2 rounded-xl px-3 text-xs font-semibold text-foreground-600 transition hover:bg-primary-50 hover:text-primary-700"><AppIcon className="ri-calendar-2-line" />{isBooked ? 'Reschedule' : 'Schedule'}</Link></td>
                         <td className="px-5 py-4"><div className="flex items-center justify-end"><Link to={`/learner/progress-reviews/${encodeURIComponent(review.id)}`} className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary-600 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 hover:shadow-md">View <AppIcon className="ri-arrow-right-line" /></Link></div></td>
                       </tr>
                     );
@@ -385,7 +410,7 @@ export default function ProgressReviewsPage() {
     const endDate = new Date(startDate.getTime() + selected.durationMinutes * 60_000);
     const pad = (value: number) => String(value).padStart(2, '0');
     const end = `${endDate.getFullYear()}${pad(endDate.getMonth() + 1)}${pad(endDate.getDate())}T${pad(endDate.getHours())}${pad(endDate.getMinutes())}00`;
-    const content = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT', `DTSTART:${start}`, `DTEND:${end}`, `SUMMARY:Progress Review #${selected.sequence}`, selected.meetingLink ? `URL:${selected.meetingLink}` : '', 'END:VEVENT', 'END:VCALENDAR'].filter(Boolean).join('\r\n');
+    const content = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VEVENT', `DTSTART:${start}`, `DTEND:${end}`, `SUMMARY:${progressReviewTitle(selected)}`, selected.meetingLink ? `URL:${selected.meetingLink}` : '', 'END:VEVENT', 'END:VCALENDAR'].filter(Boolean).join('\r\n');
     const url = URL.createObjectURL(new Blob([content], { type: 'text/calendar' }));
     const anchor = document.createElement('a');
     anchor.href = url;
@@ -444,7 +469,7 @@ export default function ProgressReviewsPage() {
       roleLabel={learnerNav.label}
       navItems={learnerNav.items}
       workspaceLabel={learnerNav.workspaceLabel}
-      pageTitle="Progress Reviews"
+      pageTitle="Progress Review"
       pageSubtitle="Formal reviews with your coach and line manager"
       userName={learner?.name || 'Learner'}
       userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}
@@ -453,7 +478,7 @@ export default function ProgressReviewsPage() {
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}</div>}
 
         <button type="button" onClick={() => navigate(-1)} className="inline-flex h-9 items-center gap-2 self-start rounded-xl border border-primary-200 bg-primary-50 px-3.5 text-xs font-bold text-primary-700 shadow-sm transition hover:-translate-x-0.5 hover:bg-primary-100">
-          <AppIcon className="ri-arrow-left-line" /> Back to progress reviews
+          <AppIcon className="ri-arrow-left-line" /> Back to Progress Review
         </button>
 
         <section className="learner-super-admin-hero relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-5 text-white shadow-xl shadow-primary-950/10 sm:p-6">
@@ -474,7 +499,7 @@ export default function ProgressReviewsPage() {
               {([
                 { label: 'Completed', value: loading ? '-' : completed.length, color: 'text-emerald-600', icon: 'ri-checkbox-circle-line' },
                 { label: 'Planned', value: loading ? '-' : planned.length, color: 'text-primary-600', icon: 'ri-calendar-event-line' },
-                { label: 'All PRs', value: loading ? '-' : reviews.length, color: 'text-foreground-900', icon: 'ri-stack-line' },
+                { label: 'All Reviews', value: loading ? '-' : reviews.length, color: 'text-foreground-900', icon: 'ri-stack-line' },
               ] as const).map(({ label, value, color, icon }) => (
                 <div key={label} className="rounded-2xl border border-white/[0.08] bg-white/[0.07] px-3 py-3 text-center backdrop-blur">
                   <AppIcon className={`${icon} ${color === 'text-foreground-900' ? 'text-secondary-200' : color.replace('600', '300')} text-sm`} />
@@ -499,7 +524,7 @@ export default function ProgressReviewsPage() {
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                     <div className="relative">
                       <span className={`inline-flex rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[10px] font-bold text-white/80`}>{statusLabel(selected?.status)}</span>
-                      <h2 className="mt-2 text-xl font-bold text-white">Progress Review #{selected?.sequence}</h2>
+                      <h2 className="mt-2 text-xl font-bold text-white">{progressReviewTitle(selected)}</h2>
                       <p className="mt-1 text-sm text-white/60">{formatDate(reviewDate(selected), true)} at {formatTime(selected?.scheduledTime)}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -511,7 +536,9 @@ export default function ProgressReviewsPage() {
                 </div>
 
                 <div className="space-y-5 p-5 sm:p-6">
-                  {selected ? <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" /> : null}
+                  {shouldShowLearnerMeetingRecording(selected) ? (
+                    <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
+                  ) : null}
 
                   {selected && ['awaiting-signature', 'completed'].includes(selected.status) ? (
                     <div className="flex flex-col gap-3 rounded-xl border border-violet-200 bg-violet-50 p-4 sm:flex-row sm:items-center">
@@ -534,7 +561,7 @@ export default function ProgressReviewsPage() {
                       ['Duration', selected?.durationMinutes ? `${selected.durationMinutes} minutes` : '-', 'ri-time-line'],
                       ['Meeting type', selected?.meetingProvider || '-', 'ri-video-chat-line'],
                       ['Scheduled time', formatTime(selected?.scheduledTime), 'ri-calendar-schedule-line'],
-                      ['Review window', previousReview ? `Since PR #${previousReview.sequence}` : 'Programme to date', 'ri-history-line'],
+                      ['Review window', previousReview ? `Since ${progressReviewTitle(previousReview)}` : 'Programme to date', 'ri-history-line'],
                     ].map(([label, value, icon]) => (
                       <div key={label} className="rounded-xl bg-background-100 p-3.5">
                         <AppIcon className={`${icon} text-primary-500`} />
@@ -547,21 +574,21 @@ export default function ProgressReviewsPage() {
               </section>
 
               <Accordion id="progress-checks" title="Progress Checks" icon="ri-check-double-line" open={openSections.includes('progress-checks')} onToggle={toggleSection}>
-                <SavedReviewAnswers sectionId="progress-checks" responses={selected?.reviewResponses} emptyMessage="No progress checks have been recorded for this PR." />
+                <SavedReviewAnswers sectionId="progress-checks" responses={selected?.reviewResponses} emptyMessage="No progress checks have been recorded for this Progress Review." />
               </Accordion>
-              <Accordion id="learner-reflection" title="Learner Reflections & Ratings" icon="ri-user-heart-line" open={openSections.includes('learner-reflection')} onToggle={toggleSection}><SavedReviewAnswers sectionId="learner-reflection" responses={selected?.reviewResponses} emptyMessage="Learner reflection data is not available for this PR." /></Accordion>
-              <Accordion id="manager-reflection" title="Manager Reflections & Ratings" icon="ri-briefcase-line" open={openSections.includes('manager-reflection')} onToggle={toggleSection}><SavedReviewAnswers sectionId="manager-reflection" responses={selected?.reviewResponses} emptyMessage="Manager reflection data is not available for this PR." /></Accordion>
-              <Accordion id="tutor-reflection" title="Tutor Reflections & Ratings" icon="ri-user-star-line" open={openSections.includes('tutor-reflection')} onToggle={toggleSection}><SavedReviewAnswers sectionId="tutor-reflection" responses={selected?.reviewResponses} emptyMessage="Tutor reflection data is not available for this PR." /></Accordion>
-              <Accordion id="safeguarding" title="Safeguarding & Key Themes" icon="ri-shield-check-line" open={openSections.includes('safeguarding')} onToggle={toggleSection}><SavedReviewAnswers sectionId="safeguarding" responses={selected?.reviewResponses} emptyMessage="No safeguarding or key-theme discussion has been recorded for this PR." /></Accordion>
-              <Accordion id="additional-support" title="Additional Support" icon="ri-hand-heart-line" open={openSections.includes('additional-support')} onToggle={toggleSection}><SavedReviewAnswers sectionId="additional-support" responses={selected?.reviewResponses} emptyMessage="No additional support information has been recorded for this PR." /></Accordion>
-              <Accordion id="actions" title="Progress Targets & Actions" icon="ri-focus-3-line" open={openSections.includes('actions')} onToggle={toggleSection}><SavedReviewAnswers sectionId="actions" responses={selected?.reviewResponses} emptyMessage="No targets or actions have been recorded for this PR." /></Accordion>
+              <Accordion id="learner-reflection" title="Learner Reflections & Ratings" icon="ri-user-heart-line" open={openSections.includes('learner-reflection')} onToggle={toggleSection}><SavedReviewAnswers sectionId="learner-reflection" responses={selected?.reviewResponses} emptyMessage="Learner reflection data is not available for this Progress Review." /></Accordion>
+              <Accordion id="manager-reflection" title="Manager Reflections & Ratings" icon="ri-briefcase-line" open={openSections.includes('manager-reflection')} onToggle={toggleSection}><SavedReviewAnswers sectionId="manager-reflection" responses={selected?.reviewResponses} emptyMessage="Manager reflection data is not available for this Progress Review." /></Accordion>
+              <Accordion id="tutor-reflection" title="Tutor Reflections & Ratings" icon="ri-user-star-line" open={openSections.includes('tutor-reflection')} onToggle={toggleSection}><SavedReviewAnswers sectionId="tutor-reflection" responses={selected?.reviewResponses} emptyMessage="Tutor reflection data is not available for this Progress Review." /></Accordion>
+              <Accordion id="safeguarding" title="Safeguarding & Key Themes" icon="ri-shield-check-line" open={openSections.includes('safeguarding')} onToggle={toggleSection}><SavedReviewAnswers sectionId="safeguarding" responses={selected?.reviewResponses} emptyMessage="No safeguarding or key-theme discussion has been recorded for this Progress Review." /></Accordion>
+              <Accordion id="additional-support" title="Additional Support" icon="ri-hand-heart-line" open={openSections.includes('additional-support')} onToggle={toggleSection}><SavedReviewAnswers sectionId="additional-support" responses={selected?.reviewResponses} emptyMessage="No additional support information has been recorded for this Progress Review." /></Accordion>
+              <Accordion id="actions" title="Progress Targets & Actions" icon="ri-focus-3-line" open={openSections.includes('actions')} onToggle={toggleSection}><SavedReviewAnswers sectionId="actions" responses={selected?.reviewResponses} emptyMessage="No targets or actions have been recorded for this Progress Review." /></Accordion>
               <Accordion id="rag" title="RAG Status" icon="ri-traffic-light-line" open={openSections.includes('rag')} onToggle={toggleSection}>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="rounded-xl bg-background-100 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">OTJH status</p><p className="mt-1 text-base font-bold text-foreground-900">{learner?.otjhStatus || '-'}</p></div>
                   <div className="rounded-xl bg-background-100 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Progress variance</p><p className="mt-1 text-base font-bold text-foreground-900">{progressVariance === null ? '-' : `${Math.round(progressVariance * 100)}%`}</p></div>
                   <div className="rounded-xl bg-background-100 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Coach RAG</p><p className="mt-1 text-base font-bold text-foreground-900">{selected?.reviewResponses?.rag_status || '-'}</p></div>
                 </div>
-                {responsesForSection(selected?.reviewResponses, 'rag').length > 0 && <div className="mt-4"><SavedReviewAnswers sectionId="rag" responses={selected?.reviewResponses} emptyMessage="No RAG assessment has been recorded for this PR." /></div>}
+                {responsesForSection(selected?.reviewResponses, 'rag').length > 0 && <div className="mt-4"><SavedReviewAnswers sectionId="rag" responses={selected?.reviewResponses} emptyMessage="No RAG assessment has been recorded for this Progress Review." /></div>}
               </Accordion>
             </main>
           </div>
