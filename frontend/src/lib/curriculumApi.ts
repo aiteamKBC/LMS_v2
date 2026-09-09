@@ -1310,6 +1310,28 @@ export interface LiveSessionArtifactsResponse {
   occurrences: LiveSessionArtifactOccurrence[];
 }
 
+/**
+ * Occurrence statuses that no longer stand for a meeting on the calendar.
+ *
+ * Shrinking a series marks its leftover rows cancelled rather than deleting
+ * them, so those rows are the record of what Teams *used* to hold. Counted as
+ * current they shift a session-by-session comparison by a slot, which is what
+ * made "Teams still holds ..." survive every press of Update Teams calendar.
+ * The same set the backend's sync verdict has always excluded.
+ */
+const OFF_CALENDAR_OCCURRENCE_STATUSES = new Set([
+  'cancelled', 'canceled', 'declined', 'deleted', 'removed',
+]);
+
+/** The tracked occurrences that still stand for a meeting on the calendar. */
+export function onCalendarOccurrences<T extends { status?: string }>(
+  occurrences: T[] | undefined,
+): T[] {
+  return (occurrences || []).filter(item => (
+    !OFF_CALENDAR_OCCURRENCE_STATUSES.has(String(item?.status || '').trim().toLowerCase())
+  ));
+}
+
 export interface CurriculumHoliday {
   id: string | number;
   label: string;

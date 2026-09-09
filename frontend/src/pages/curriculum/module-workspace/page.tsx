@@ -6,6 +6,7 @@ import { formatHoursMinutes } from '@/lib/format';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
 import {
   fetchCurriculumModuleKsbCoverage,
+  onCalendarOccurrences,
   previewModuleSessionPlan,
   type CurriculumKsbCoverageResponse,
   type CurriculumModule,
@@ -405,7 +406,7 @@ export default function ModuleWorkspacePage() {
 
   /** What Teams holds today, session number first and position as the fallback. */
   const teamsOccurrenceFor = useCallback((sessionNumber: number, index: number) => {
-    const occurrences = teams?.occurrences || [];
+    const occurrences = onCalendarOccurrences(teams?.occurrences);
     return occurrences.find(occurrence => Number(occurrence.session_number) === sessionNumber) || occurrences[index];
   }, [teams]);
 
@@ -419,7 +420,10 @@ export default function ModuleWorkspacePage() {
 
   const teamsDatesMatch = useMemo(() => {
     if (!teamsSummary || !plannedOccurrences.length) return false;
-    const held = teams?.occurrences || [];
+    // Cancelled rows are what the calendar used to hold, not what it holds.
+    // Counted here, one leftover row made the count differ for ever and this
+    // tab said "on the plan's dates: No" whatever the calendar was moved to.
+    const held = onCalendarOccurrences(teams?.occurrences);
     if (held.length !== plannedOccurrences.length) return false;
     return plannedOccurrences.every((occurrence, index) => (
       minuteKey(occurrence.startDateTimeUtc) === minuteKey(held[index]?.scheduled_start)
