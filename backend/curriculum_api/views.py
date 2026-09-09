@@ -14551,8 +14551,13 @@ def curriculum_teams_meeting_summary(request):
     if session_ids:
         clause, values = curriculum_in_clause('live_session_id', session_ids)
         try:
+            # Session number first: every caller compares this list against the
+            # module's own plan session by session, and that plan is in session
+            # order. Ordered by date alone, a series whose tracked rows and
+            # plan had drifted in *count* paired each row with its neighbour's
+            # date, and every row after the first difference read as wrong.
             for row in authoring_fetch_all(
-                LIVE_SESSION_OCCURRENCES_TABLE, clause, values, 'scheduled_start'
+                LIVE_SESSION_OCCURRENCES_TABLE, clause, values, 'session_number, scheduled_start'
             ):
                 occurrences_by_session[clean_str(row.get('live_session_id'))].append(row)
         except (Exception, AssertionError):
@@ -14582,12 +14587,30 @@ def curriculum_teams_meeting_summary(request):
             continue
         seen_modules.add(module_id)
         session_id = clean_str(row.get('id'))
-        occurrences = occurrences_by_session.get(session_id, [])
-        occurrences_by_module[module_id] = occurrences
-        upcoming = [
-            item for item in occurrences
-            if (occurrence_start(item) or now) >= now and occurrence_start(item)
+        # A cancelled row is what the calendar *used* to hold. Shrinking a
+        # series marks its leftover rows cancelled rather than deleting them
+        # (see `replace_live_session_occurrences`), and the sync verdict has
+        # always excluded them for exactly that reason -- but nothing reported
+        # here excluded them anywhere. So one leftover row stayed in
+        # `occurrenceDates` for ever, shifting the caller's session-by-session
+        # comparison by a slot: the drawer said "Teams still holds <the
+        # previous session's date>" on every row after it, and pressing Update
+        # could never clear it, however correctly the push itself had run.
+        occurrences = [
+            item for item in occurrences_by_session.get(session_id, [])
+            if clean_str(item.get('status')).lower() not in TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES
         ]
+        occurrences_by_module[module_id] = occurrences
+        # Sorted by date in its own right, now that the read above is in
+        # session order: the next meeting is the soonest one, not the
+        # lowest-numbered one.
+        upcoming = sorted(
+            (
+                item for item in occurrences
+                if occurrence_start(item) and occurrence_start(item) >= now
+            ),
+            key=occurrence_start,
+        )
         synced = [item for item in occurrences if item.get('artifacts_synced_at')]
         entry = {
             'moduleCatalogueId': module_id,

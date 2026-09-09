@@ -11,6 +11,7 @@ import {
   fetchCurriculumScopeLearnerRoster,
   fetchCurriculumSessions,
   fetchCurriculumTeamsMeetingSummaries,
+  onCalendarOccurrences,
   type CurriculumModule,
   type CurriculumSession,
   type CurriculumTeamsMeetingSummary,
@@ -822,6 +823,20 @@ export default function CurriculumTeamsMeetingsPage() {
 
   // ---------------------------------------------------------- detail loader
 
+  /**
+   * The tracked occurrence for one session of the plan.
+   *
+   * By session number, with position only as the fallback -- the same pairing
+   * the module workspace's own schedule uses. Read by position alone, a series
+   * carrying a cancelled leftover row handed every session after it its
+   * neighbour's meeting: the wrong join link, and another session's attendance
+   * and recordings.
+   */
+  const detailOccurrenceFor = useCallback((index: number) => {
+    const occurrences = onCalendarOccurrences(detail?.occurrences);
+    return occurrences.find(item => Number(item.session_number) === index + 1) || occurrences[index];
+  }, [detail]);
+
   const loadDetail = useCallback(async (liveSessionId: string) => {
     if (!liveSessionId) { setDetail(null); return; }
     setDetailLoading(true);
@@ -948,6 +963,10 @@ export default function CurriculumTeamsMeetingsPage() {
         scheduledOccurrences: occurrences,
       });
       await loadTeamsState();
+      // The occurrence rows this drawer reads its join links and attendance
+      // from have just been rewritten, so the drawer's own read is stale until
+      // it is taken again.
+      if (summary.liveSessionId) await loadDetail(summary.liveSessionId);
       const warnings = result.warnings || [];
       if (warnings.length) {
         setNotice({
@@ -1664,7 +1683,7 @@ export default function CurriculumTeamsMeetingsPage() {
                     // A session Teams would only accept as an event of its own
                     // has a link of its own, so the row's own link comes first
                     // and the series' link is the fallback the rest share.
-                    const joinUrl = detail?.occurrences?.[index]?.join_url || selected.summary?.joinUrl || '';
+                    const joinUrl = detailOccurrenceFor(index)?.join_url || selected.summary?.joinUrl || '';
                     if (!joinUrl) {
                       return <span className="text-[11px] font-semibold text-foreground-400">Not on Teams yet</span>;
                     }
@@ -1685,7 +1704,7 @@ export default function CurriculumTeamsMeetingsPage() {
                     );
                   }}
                   renderFacts={index => {
-                    const occurrence = detail?.occurrences?.[index];
+                    const occurrence = detailOccurrenceFor(index);
                     // Nothing is written down for a meeting that has not run:
                     // "0 attended, nothing yet" on every future session is a
                     // column of absences, and the note under the list already
