@@ -83,6 +83,12 @@ export interface ModuleComponent {
   reflectionQuestion: string;
   workplaceEvidenceRequired: boolean;
   tutorValidationRequired: boolean;
+  /**
+   * Whether a coach signs this component off. On for every component - the
+   * builder makes you confirm before turning it off - so anything reading a
+   * component from outside this model treats "not set" as on, never as off.
+   */
+  coachValidationRequired: boolean;
   ksbMappings: KsbMapping[];
   settings: ComponentSettings;
 }
@@ -433,6 +439,7 @@ export function createEmptyComponent(weekId: string, type: ModuleComponentType, 
     reflectionQuestion: String(getDefaultComponentSettings(type).reflectionPrompt || ''),
     workplaceEvidenceRequired: definition.workplaceEvidenceDefault,
     tutorValidationRequired: definition.tutorValidationDefault,
+    coachValidationRequired: true,
     ksbMappings: [],
     settings: getDefaultComponentSettings(type),
   };
@@ -704,6 +711,7 @@ export function copyComponentIntoWeek(
     ),
     workplaceEvidenceRequired: Boolean(source.workplaceEvidenceRequired ?? definition.workplaceEvidenceDefault),
     tutorValidationRequired: Boolean(source.tutorValidationRequired ?? definition.tutorValidationDefault),
+    coachValidationRequired: source.coachValidationRequired !== false,
     ksbMappings: (source.ksbMappings || []).map(mapping => {
       const type = (mapping.type || mapping.classification || 'secondary') as KsbMappingType;
       const weightClass = (mapping.weightClass || mapping.weight_class || 'soft') as KsbWeightClass;
@@ -808,6 +816,22 @@ export async function loadModuleWeekSessionPlan(moduleCatalogueId: string, weeks
     console.warn('No session plan could be generated for this module.', err);
     return null;
   }
+}
+
+/**
+ * The same plan, for a caller that must fail loudly instead of showing nothing.
+ *
+ * Sending the plan to a Teams calendar is the one use that cannot treat "no
+ * plan" as "no dates yet": the reader would be told the invitations moved when
+ * nothing was sent. `weeks` is optional here because a caller acting on someone
+ * else's module (a group save, say) knows the module only by id -- the server
+ * falls back to the module's own stored count.
+ */
+export function fetchModuleSessionPlan(moduleCatalogueId: string, weeks?: number): Promise<ModuleWeekSessionPlan> {
+  const count = Math.max(0, Math.round(Number(weeks) || 0));
+  return apiJson<ModuleWeekSessionPlan>(
+    `/curriculum/modules/${encodeURIComponent(String(moduleCatalogueId || '').trim())}/session-plan/${count ? `?weeks=${count}` : ''}`,
+  );
 }
 
 export interface ModuleStructureResolveRequest {
@@ -920,6 +944,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
         reflectionQuestion: String(component.reflectionQuestion || ''),
         workplaceEvidenceRequired: Boolean(component.workplaceEvidenceRequired),
         tutorValidationRequired: Boolean(component.tutorValidationRequired),
+        coachValidationRequired: component.coachValidationRequired !== false,
         ksbMappings: (component.ksbMappings || []) as KsbMapping[],
         settings: normaliseComponentSettings(component.type as ModuleComponentType, (component.settings || {}) as ComponentSettings),
       })),
@@ -1027,6 +1052,9 @@ export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueI
           moduleId,
           weekId,
           workplaceEvidenceRequired: false,
+          // A component stored before the flag existed comes back without it,
+          // and absent means on - nobody has turned coach validation off.
+          coachValidationRequired: component.coachValidationRequired !== false,
           ksbMappings: normaliseKsbMappings(component.ksbMappings || [], fallbackKsbSource),
           settings: normaliseComponentSettings(component.type, component.settings || {}),
         })),
@@ -1055,7 +1083,11 @@ export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueI
     // delivery days) recomputes it.
     sessionsNumber: module.sessionsNumber,
     totalOtjh,
-    declaredTotalOtjh: module.declaredTotalOtjh,
+    // The module's OTJH is the sum of every component's Expected OTJH, across
+    // every week -- nothing else. `declaredTotalOtjh` is kept only because the
+    // API still returns it; it is pinned to the derived sum here so a stale
+    // server aggregate can never show up beside a freshly recalculated one.
+    declaredTotalOtjh: totalOtjh,
     ksbCount: hasStructure ? componentKsbCodes.size : module.ksbCount,
     lessonCount: hasStructure ? allComponents.length : module.lessonCount,
     quizCount: hasStructure ? allComponents.filter(component => ['quiz', 'checkpoint', 'monthly-ksb-quiz'].includes(component.type)).length : module.quizCount,

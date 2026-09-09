@@ -24,6 +24,12 @@ also feeds the delivery-side training plan.
 
     GET   /learner_api/learning-plan/<pk>/            -> {plan, preset, available, programmes, totals}
     PATCH /learner_api/learning-plan/<pk>/            -> save {modules:[...]}
+
+The module builder assigns the same record from the other end -- one module,
+every learner -- and that route is documented beside its view below:
+
+    GET   /learner_api/module-learners/<module_id>/   -> {module, learners, totals}
+    PATCH /learner_api/module-learners/<module_id>/   -> save {learnerIds:[...]}
 """
 import json
 import logging
@@ -33,7 +39,7 @@ from django.db import DatabaseError, connection
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from login.permissions import learner_self_or_staff
+from login.permissions import learner_self_or_staff, staff_only
 
 from .constants import DELIVERY_PROGRAMME_STATUS
 from .learner_progression import advance_learner
@@ -337,6 +343,244 @@ def learning_plan(request, pk):
     advance_learner(learner)
 
     return JsonResponse(_serialize(learner))
+
+
+# ---------------------------------------------------------------------------
+# The same assignment read from the module's side
+# ---------------------------------------------------------------------------
+# One module, every learner — the inverse of the plan above, and what the Module
+# builder's "Assign learners" picker writes. It is deliberately the *same*
+# record: a tick here appends this module to that learner's plan on
+# enrolment."Created_users", and an untick removes it. There is no separate
+# module-roster table to drift out of step with the plans.
+#
+#     GET   /learner_api/module-learners/<module_id>/   -> {module, learners, totals}
+#     PATCH /learner_api/module-learners/<module_id>/   -> save {learnerIds:[...]}
+# ---------------------------------------------------------------------------
+
+#: The columns the picker reports. Only these reach the client -- see
+#: _learner_picker_row -- but the rows themselves are read whole; see
+#: _picker_learners for why.
+_PICKER_FIELDS = (
+    "id", "username", "email", "learner_type",
+    "programme", "cohort", "group", "programme_status",
+    "learning_plan", "training_plan",
+)
+
+
+def _plan_field(learner):
+    """Which column holds this learner's plan.
+
+    Apprenticeships use "Learning_plan"; commercial learners use
+    "Training_plan". The same rule as
+    ``active_users.hydrate_source_training_plan``, so a plan written here lands
+    in the column the delivery-side sync reads back.
+    """
+    return "training_plan" if getattr(learner, "training_plan", None) else "learning_plan"
+
+
+def _plan_entries(learner):
+    """The plan stored on this learner, from whichever column holds it."""
+    plan = getattr(learner, "training_plan", None) or getattr(learner, "learning_plan", None)
+    if isinstance(plan, str):
+        try:
+            plan = json.loads(plan)
+        except ValueError:
+            return []
+    if not isinstance(plan, list):
+        return []
+    return [entry for entry in plan if isinstance(entry, dict)]
+
+
+def _preset_ids_for(learner, cache):
+    """The learner's group preset, cached per (programme, group).
+
+    A learner with no saved plan is *shown* their group's preset — see
+    ``_serialize`` — so that preset is their effective plan. Assigning one
+    module has to keep it: writing only the ticked module would silently drop
+    every other module their group teaches.
+    """
+    key = (_s(learner.programme), _s(learner.group))
+    if key not in cache:
+        cache[key] = _group_module_ids(*key)
+    return cache[key]
+
+
+def _effective_plan_ids(learner, preset_cache):
+    """The module ids this learner is currently taught: saved plan, else preset."""
+    saved = _plan_entries(learner)
+    if saved:
+        return [_s(entry.get("moduleId")) for entry in saved if _s(entry.get("moduleId"))]
+    return list(_preset_ids_for(learner, preset_cache))
+
+
+def _learner_picker_row(learner, module_id, preset_cache):
+    saved = _plan_entries(learner)
+    plan_ids = _effective_plan_ids(learner, preset_cache)
+    assigned = module_id in plan_ids
+    return {
+        "id": str(learner.id),
+        "name": _s(learner.username) or _s(learner.email) or f"Learner {learner.id}",
+        "email": _s(learner.email),
+        "learnerType": _s(learner.learner_type) or "apprenticeship",
+        "programme": _s(learner.programme),
+        "cohort": _s(learner.cohort),
+        "group": _s(learner.group),
+        "programmeStatus": _s(learner.programme_status),
+        "assigned": assigned,
+        # True when the tick comes from the group preset rather than a saved
+        # plan: nobody has agreed this learner's plan yet, so the module is
+        # inherited rather than chosen. Named so the picker can say which it is.
+        "fromPreset": assigned and not saved,
+        "moduleCount": len(plan_ids),
+    }
+
+
+def _module_facts(module):
+    """The module being assigned to, for the picker's own header."""
+    return {
+        "moduleId": module["moduleId"],
+        "moduleTitle": module["moduleTitle"],
+        "programmeId": module["programmeId"],
+        "programmeName": module["programmeName"],
+        "groupName": module["groupName"],
+        "hours": module["hours"],
+        "startDate": module["startDate"],
+        "endDate": module["endDate"],
+    }
+
+
+def _module_learners_payload(module, learners, preset_cache):
+    rows = [_learner_picker_row(learner, module["moduleId"], preset_cache) for learner in learners]
+    return {
+        "module": _module_facts(module),
+        "learners": rows,
+        "totals": {
+            "learnerCount": len(rows),
+            "assignedCount": sum(1 for row in rows if row["assigned"]),
+        },
+    }
+
+
+def _picker_learners():
+    """Every learner in enrolment."Created_users", both kinds, by name.
+
+    Whole rows, not ``.only(*_PICKER_FIELDS)``. A save runs advance_learner
+    on each learner it touches, and that reads columns the picker itself
+    never shows -- the delivery dates, the apprenticeship window. On a
+    deferred instance each of those reads is its own query, so narrowing the
+    select traded one wide read for dozens of narrow ones, and left the write
+    depending on which columns a caller happened to list.
+    """
+    return list(EnrolmentUser.all_learners.order_by("username", "id"))
+
+
+@csrf_exempt
+# The whole learner directory with names and email addresses, and a write that
+# changes what other people are taught. Staff/admin only, reads included.
+@staff_only()
+def module_learners(request, module_id):
+    """GET who is assigned to this module, or PATCH to set the assignment."""
+    module_id = _s(module_id)
+    if not module_id:
+        return _error("A module id is required.", 400)
+
+    try:
+        catalogue = {m["moduleId"]: m for m in _all_modules()}
+    except DatabaseError as exc:
+        logger.exception("module_learners: catalogue lookup failed")
+        return _error(f"Database error: {exc}", 502)
+
+    module = catalogue.get(module_id)
+    if module is None:
+        return _error(f"Module {module_id} is not in the module catalogue.", 404)
+
+    if request.method == "GET":
+        try:
+            return JsonResponse(_module_learners_payload(module, _picker_learners(), {}))
+        except DatabaseError as exc:
+            logger.exception("module_learners: read failed")
+            return _error(f"Database error: {exc}", 502)
+
+    if request.method not in ("PATCH", "PUT"):
+        return _error("Method not allowed.", 405)
+
+    # ---- save ----
+    try:
+        payload = json.loads(request.body or b"{}")
+    except ValueError:
+        return _error("Request body must be valid JSON.", 400)
+    if not isinstance(payload, dict):
+        return _error("Request body must be a JSON object.", 400)
+
+    learner_ids = payload.get("learnerIds")
+    if not isinstance(learner_ids, list):
+        return _error("learnerIds must be a list.", 400)
+    assigned_ids = {_s(value) for value in learner_ids if _s(value)}
+
+    try:
+        learners = _picker_learners()
+    except DatabaseError as exc:
+        logger.exception("module_learners: read failed")
+        return _error(f"Database error: {exc}", 502)
+
+    known_ids = {str(learner.id) for learner in learners}
+    unknown = sorted(assigned_ids - known_ids)
+    if unknown:
+        return _error(f"Learner {unknown[0]} is not in the learner directory.", 400)
+
+    preset_cache = {}
+    changed = 0
+    for learner in learners:
+        should_have = str(learner.id) in assigned_ids
+        saved = _plan_entries(learner)
+        plan_ids = _effective_plan_ids(learner, preset_cache)
+        # A learner whose effective plan already says the right thing is left
+        # alone — including one inheriting the module from their group preset.
+        # So opening this picker and saving it unchanged writes nothing, and
+        # never converts a preset into an agreed plan behind staff's back.
+        if should_have == (module_id in plan_ids):
+            continue
+        if should_have:
+            plan_ids = [*plan_ids, module_id]
+        else:
+            plan_ids = [value for value in plan_ids if value != module_id]
+
+        # Rebuilt from the catalogue, exactly as the learner's own plan save
+        # does it, so titles/hours/dates are current rather than whatever was
+        # stored last. A module retired since the plan was agreed has no
+        # catalogue row left, and keeps its saved snapshot instead of vanishing.
+        saved_by_id = {_s(entry.get("moduleId")): entry for entry in saved}
+        resolved, seen = [], set()
+        for plan_id in plan_ids:
+            if not plan_id or plan_id in seen:
+                continue
+            seen.add(plan_id)
+            resolved.append(
+                catalogue.get(plan_id)
+                or _orphan_module(saved_by_id.get(plan_id) or {"moduleId": plan_id})
+            )
+
+        field = _plan_field(learner)
+        setattr(learner, field, resolved)
+        try:
+            learner.save(update_fields=[field])
+        except DatabaseError as exc:
+            logger.exception("module_learners: save failed for learner %s", learner.id)
+            return _error(f"Database error: {exc}", 502)
+        # Agreeing a plan is the last gate before Active for a commercial
+        # learner, the same as on the learner's own plan save. Never raises.
+        advance_learner(learner)
+        changed += 1
+
+    try:
+        return JsonResponse({
+            **_module_learners_payload(module, _picker_learners(), {}),
+            "changedCount": changed,
+        })
+    except DatabaseError as exc:
+        logger.exception("module_learners: read-back failed")
+        return _error(f"Database error: {exc}", 502)
 
 
 # ---------------------------------------------------------------------------

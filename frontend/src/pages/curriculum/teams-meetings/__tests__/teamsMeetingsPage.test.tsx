@@ -99,6 +99,11 @@ const summaries: CurriculumTeamsMeetingSummary[] = [
     occurrenceCount: 2, upcomingCount: 2, syncedCount: 0, nextOccurrence: '2026-09-02T08:30:00Z',
     updatedAt: '2026-08-20T10:00:00Z',
     occurrenceDates: ['2026-09-02T08:30:00Z', '2026-09-09T08:30:00Z'],
+    // The backend's own verdict — the source of truth this page now displays
+    // rather than a comparison it derives itself against the (possibly
+    // cached) session list. Both sides agree here.
+    syncState: 'in-sync', expectedOccurrenceCount: 2, differingOccurrenceCount: 0,
+    missingFromTeams: [], extraInTeams: [],
   },
   {
     moduleCatalogueId: 'MOD-2', liveSessionId: 'LIVE-2', status: 'active',
@@ -109,6 +114,8 @@ const summaries: CurriculumTeamsMeetingSummary[] = [
     updatedAt: '2026-08-20T10:00:00Z',
     // Teams still holds the unbroken weekly slot the closure moved the module off.
     occurrenceDates: ['2026-09-03T08:30:00Z', '2026-09-10T08:30:00Z'],
+    syncState: 'out-of-sync', expectedOccurrenceCount: 2, differingOccurrenceCount: 1,
+    missingFromTeams: ['2026-09-17T08:30:00Z'], extraInTeams: ['2026-09-10T08:30:00Z'],
   },
   {
     moduleCatalogueId: 'MOD-4', liveSessionId: 'LIVE-4', status: 'active',
@@ -118,6 +125,9 @@ const summaries: CurriculumTeamsMeetingSummary[] = [
     occurrenceCount: 1, upcomingCount: 1, syncedCount: 0, nextOccurrence: '2026-09-08T07:30:00Z',
     updatedAt: '2026-08-20T10:00:00Z',
     occurrenceDates: ['2026-09-08T07:30:00Z'],
+    // Right day, wrong hour: still one occurrence that does not match.
+    syncState: 'out-of-sync', expectedOccurrenceCount: 1, differingOccurrenceCount: 1,
+    missingFromTeams: ['2026-09-08T08:30:00Z'], extraInTeams: ['2026-09-08T07:30:00Z'],
   },
 ];
 

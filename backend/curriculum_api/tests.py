@@ -386,6 +386,81 @@ CURRICULUM_HOLIDAY_ROWS = [
 ]
 
 
+class TeamsMultiDayRecurrenceTests(SimpleTestCase):
+    """A group delivering twice a week gets a recurrence that fires twice a week."""
+
+    @staticmethod
+    def _payload(dates):
+        return {
+            'scheduledOccurrences': [
+                {'sessionNumber': index + 1, 'startDateTimeUtc': value, 'durationMinutes': 120}
+                for index, value in enumerate(dates)
+            ],
+        }
+
+    def test_recurrence_covers_every_delivery_day(self):
+        # Mon + Thu, ten sessions from Monday 3 August 2026.
+        dates = [
+            '2026-08-03T08:00:00Z', '2026-08-06T08:00:00Z',
+            '2026-08-10T08:00:00Z', '2026-08-13T08:00:00Z',
+            '2026-08-17T08:00:00Z', '2026-08-20T08:00:00Z',
+            '2026-08-24T08:00:00Z', '2026-08-27T08:00:00Z',
+            '2026-08-31T08:00:00Z', '2026-09-03T08:00:00Z',
+        ]
+        payload = self._payload(dates)
+        anchor = datetime(2026, 8, 3, 8, 0)
+        days = views.teams_recurrence_weekdays(payload, anchor)
+        self.assertEqual(days, ['monday', 'thursday'])
+        slots = views.teams_recurrence_slot_count(payload, anchor, 'weekly', len(dates), days)
+        self.assertEqual(slots, 10)
+        recurrence = views.teams_event_recurrence('weekly', anchor, slots, days)
+        self.assertEqual(recurrence['pattern']['daysOfWeek'], ['monday', 'thursday'])
+        self.assertEqual(recurrence['range']['startDate'], '2026-08-03')
+        self.assertEqual(recurrence['range']['numberOfOccurrences'], 10)
+
+    def test_single_delivery_day_is_unchanged(self):
+        dates = [
+            '2026-07-30T12:30:00Z', '2026-08-06T12:30:00Z', '2026-08-13T12:30:00Z',
+            '2026-08-20T12:30:00Z', '2026-08-27T12:30:00Z', '2026-09-03T12:30:00Z',
+        ]
+        payload = self._payload(dates)
+        anchor = datetime(2026, 7, 30, 12, 30)
+        days = views.teams_recurrence_weekdays(payload, anchor)
+        self.assertEqual(days, ['thursday'])
+        self.assertEqual(
+            views.teams_recurrence_slot_count(payload, anchor, 'weekly', len(dates), days),
+            6,
+        )
+
+    def test_holiday_shift_stretches_the_range(self):
+        # Thursday 20 August is closed, so that session moves to the next Monday
+        # slot and the run reaches a week further out than ten sessions would.
+        dates = [
+            '2026-08-03T08:00:00Z', '2026-08-06T08:00:00Z',
+            '2026-08-10T08:00:00Z', '2026-08-13T08:00:00Z',
+            '2026-08-17T08:00:00Z', '2026-08-24T08:00:00Z',
+            '2026-08-27T08:00:00Z', '2026-08-31T08:00:00Z',
+            '2026-09-03T08:00:00Z', '2026-09-07T08:00:00Z',
+        ]
+        payload = self._payload(dates)
+        anchor = datetime(2026, 8, 3, 8, 0)
+        days = views.teams_recurrence_weekdays(payload, anchor)
+        self.assertEqual(days, ['monday', 'thursday'])
+        # Eleven Mon/Thu slots between 3 August and 7 September: the extra one is
+        # the closed 20 August, which the reconciliation deletes.
+        self.assertEqual(
+            views.teams_recurrence_slot_count(payload, anchor, 'weekly', len(dates), days),
+            11,
+        )
+
+    def test_local_anchor_rebases_utc_session_dates(self):
+        # The reschedule path anchors on naive local time while the sessions are
+        # sent as UTC; an hour of BST must not move a session onto another day.
+        dates = ['2026-08-03T08:00:00Z', '2026-08-06T08:00:00Z', '2026-08-10T08:00:00Z']
+        days = views.teams_recurrence_weekdays(self._payload(dates), datetime(2026, 8, 3, 9, 0))
+        self.assertEqual(days, ['monday', 'thursday'])
+
+
 class TeamsAttendanceRosterTests(SimpleTestCase):
     def test_join_launches_override_closest_scheduled_week(self):
         occurrences = [
@@ -1687,6 +1762,233 @@ class CurriculumTeamsMeetingTests(TestCase):
             [8, 8],
         )
         self.assertRegex(detailed_row['nextOccurrence'], r'(Z|[+-]\d{2}:\d{2})$')
+
+
+class TeamsCalendarSyncVerdictTests(TestCase):
+    """The Teams Meetings badge's real verdict: the module's *current* plan,
+    recomputed from the authoring rows, against what Teams actually holds.
+
+    Module: Monday-only or Monday+Thursday, 09:00-10:00 London time (08:00 UTC
+    in September, BST), starting Monday 2026-09-07. Session dates below are
+    picked from that pattern: 07/14/21 Sept are the Mondays, 10/17/24 Sept the
+    Thursdays.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        views.reset_schema_ready_flags()
+        views.ensure_module_authoring_tables()
+        views.ensure_live_session_tracking_tables()
+        views.authoring_delete(views.LIVE_SESSIONS_TABLE)
+        organizer_env = patch.dict(os.environ, {
+            'MICROSOFT_TEAMS_ORGANIZER_EMAIL': '',
+            'MICROSOFT_ORGANIZER_EMAIL': '',
+            'MICROSOFT_GRAPH_TIMEZONE_IANA': '',
+        })
+        organizer_env.start()
+        self.addCleanup(organizer_env.stop)
+
+    def _module(self, module_id, cohort_id='', **overrides):
+        row = {
+            'module_catalogue_id': module_id,
+            'programme_id': 'PROG-SYNC',
+            'programme_name': 'Programme',
+            'cohort_id': cohort_id,
+            'title': 'Risk module',
+            'sessions_number': 2,
+            'start_date': '2026-09-07',
+            'session_week_day': 'Monday',
+            'session_start_time': '09:00',
+            'session_end_time': '10:00',
+        }
+        row.update(overrides)
+        views.authoring_upsert(views.AUTHORING_MODULES_TABLE, ['module_catalogue_id'], row)
+        return views.authoring_fetch_all(
+            views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id],
+        )[0]
+
+    def _cohort(self, cohort_id, holiday_ids=None):
+        views.authoring_upsert(views.COHORT_AUTHORING_DETAILS_TABLE, ['cohort_id'], {
+            'cohort_id': cohort_id,
+            'cohort_name': 'C1',
+            'programme_id': 'PROG-SYNC',
+            'programme_name': 'Programme',
+            'start_date': '2026-08-01',
+            'end_date': '2027-08-31',
+            'holiday_ids': views.json_db_value(holiday_ids or []),
+            'selected_holidays': views.json_db_value([]),
+        })
+
+    @staticmethod
+    def _occurrence_rows(*starts, status='scheduled'):
+        return [
+            {'scheduled_start': start, 'status': status}
+            for start in starts
+        ]
+
+    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    def test_exact_match_is_in_sync(self, _holidays):
+        module = self._module('MOD-SYNC-1', sessions_number=2)  # Mondays 07, 14 Sept
+        verdict = views.teams_calendar_sync_verdict(
+            module, self._occurrence_rows('2026-09-07T08:00:00Z', '2026-09-14T08:00:00Z'),
+        )
+        self.assertEqual(verdict['syncState'], 'in-sync')
+        self.assertEqual(verdict['differingOccurrences'], 0)
+
+    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    def test_extra_teams_weekday_is_out_of_sync(self, _holidays):
+        # Plan is Monday only; Teams also holds a Thursday nobody authored.
+        module = self._module('MOD-SYNC-2', sessions_number=1, session_week_day='Monday')
+        verdict = views.teams_calendar_sync_verdict(
+            module, self._occurrence_rows('2026-09-07T08:00:00Z', '2026-09-10T08:00:00Z'),
+        )
+        self.assertEqual(verdict['syncState'], 'out-of-sync')
+        self.assertIn('extra_in_teams', verdict['syncReasons'])
+        self.assertEqual(verdict['differingOccurrences'], 1)
+
+    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    def test_missing_teams_weekday_is_out_of_sync(self, _holidays):
+        # Plan is Monday + Thursday; Teams only ever got the Monday.
+        module = self._module('MOD-SYNC-3', sessions_number=2, session_week_day='Monday,Thursday')
+        verdict = views.teams_calendar_sync_verdict(
+            module, self._occurrence_rows('2026-09-07T08:00:00Z'),
+        )
+        self.assertEqual(verdict['syncState'], 'out-of-sync')
+        self.assertIn('missing_from_teams', verdict['syncReasons'])
+        self.assertEqual(verdict['differingOccurrences'], 1)
+
+    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    def test_reordered_dates_are_still_in_sync(self, _holidays):
+        module = self._module('MOD-SYNC-4', sessions_number=2)  # Mondays 07, 14 Sept
+        verdict = views.teams_calendar_sync_verdict(
+            module, self._occurrence_rows('2026-09-14T08:00:00Z', '2026-09-07T08:00:00Z'),
+        )
+        self.assertEqual(verdict['syncState'], 'in-sync')
+
+    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    def test_holiday_removed_session_and_teams_matches_is_in_sync(self, _holidays):
+        # Christmas closure (ticked id 1080) covers 2026-12-19..2027-01-01, so a
+        # module starting there skips straight to the following Monday.
+        self._cohort('COHORT-SYNC-5', holiday_ids=['1080'])
+        module = self._module(
+            'MOD-SYNC-5', cohort_id='COHORT-SYNC-5', sessions_number=2,
+            start_date='2026-12-14', session_week_day='Monday',
+        )
+        verdict = views.teams_calendar_sync_verdict(
+            module, self._occurrence_rows('2026-12-14T09:00:00Z', '2027-01-04T09:00:00Z'),
+        )
+        self.assertEqual(verdict['syncState'], 'in-sync')
+
+    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    def test_teams_still_holding_the_closed_date_is_out_of_sync(self, _holidays):
+        self._cohort('COHORT-SYNC-6', holiday_ids=['1080'])
+        module = self._module(
+            'MOD-SYNC-6', cohort_id='COHORT-SYNC-6', sessions_number=2,
+            start_date='2026-12-14', session_week_day='Monday',
+        )
+        # Teams was never told about the closure: it still holds the plain
+        # weekly slot the holiday moved the plan off.
+        verdict = views.teams_calendar_sync_verdict(
+            module, self._occurrence_rows('2026-12-14T09:00:00Z', '2026-12-21T09:00:00Z'),
+        )
+        self.assertEqual(verdict['syncState'], 'out-of-sync')
+        self.assertIn('extra_in_teams', verdict['syncReasons'])
+        self.assertIn('missing_from_teams', verdict['syncReasons'])
+
+    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    def test_changed_start_date_is_out_of_sync(self, _holidays):
+        # Teams holds the dates from the module's old start date; the module
+        # was since moved a week later.
+        module = self._module('MOD-SYNC-7', sessions_number=2, start_date='2026-09-14')
+        verdict = views.teams_calendar_sync_verdict(
+            module, self._occurrence_rows('2026-09-07T08:00:00Z', '2026-09-14T08:00:00Z'),
+        )
+        self.assertEqual(verdict['syncState'], 'out-of-sync')
+        self.assertIn('extra_in_teams', verdict['syncReasons'])
+        self.assertIn('missing_from_teams', verdict['syncReasons'])
+
+    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    def test_cohorts_are_read_once_for_every_module_that_shares_one(self, _holidays):
+        # Three modules, one cohort: the holiday selection is the same for all
+        # three, so the grouped comparison must read the cohort table once, not
+        # once per module.
+        self._cohort('COHORT-SYNC-8', holiday_ids=['1080'])
+        for suffix in ('A', 'B', 'C'):
+            self._module(
+                f'MOD-SYNC-8{suffix}', cohort_id='COHORT-SYNC-8', sessions_number=2,
+                start_date='2026-12-14', session_week_day='Monday',
+            )
+        occurrences_by_module = {
+            f'MOD-SYNC-8{suffix}': self._occurrence_rows('2026-12-14T09:00:00Z', '2027-01-04T09:00:00Z')
+            for suffix in ('A', 'B', 'C')
+        }
+
+        cohort_reads = []
+        original_fetch_all = views.authoring_fetch_all
+
+        def counting_fetch_all(table, *args, **kwargs):
+            if table == views.COHORT_AUTHORING_DETAILS_TABLE:
+                cohort_reads.append(1)
+            return original_fetch_all(table, *args, **kwargs)
+
+        with patch('curriculum_api.views.authoring_fetch_all', side_effect=counting_fetch_all):
+            verdicts = views.teams_calendar_sync_verdicts(
+                ['MOD-SYNC-8A', 'MOD-SYNC-8B', 'MOD-SYNC-8C'], occurrences_by_module,
+            )
+
+        self.assertEqual(len(cohort_reads), 1)
+        self.assertTrue(all(v['syncState'] == 'in-sync' for v in verdicts.values()))
+
+    def test_missing_verification_data_is_not_reported_as_in_sync(self):
+        # A read that failed must never read as agreement.
+        module = self._module('MOD-SYNC-9', sessions_number=2)
+        unreadable = views.teams_calendar_sync_verdict(
+            module, [], occurrences_readable=False,
+        )
+        self.assertEqual(unreadable['syncState'], 'unverified')
+
+        # A module row that has gone (an orphaned live session) is the same story.
+        orphaned = views.teams_calendar_sync_verdict(
+            None, self._occurrence_rows('2026-09-07T08:00:00Z'),
+        )
+        self.assertEqual(orphaned['syncState'], 'unverified')
+
+        # And a series with nothing tracked against it yet has nothing to agree
+        # with the plan -- it is not silently "in sync" by default.
+        nothing_tracked = views.teams_calendar_sync_verdict(module, [])
+        self.assertEqual(nothing_tracked['syncState'], 'unverified')
+
+    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    def test_summary_endpoint_reports_a_correctly_synced_module_as_in_sync(self, _holidays):
+        module = self._module('MOD-SYNC-10', sessions_number=2)
+        views.authoring_upsert(views.LIVE_SESSIONS_TABLE, ['id'], {
+            'id': 'LIVE-SYNC-10',
+            'module_catalogue_id': 'MOD-SYNC-10',
+            'module_title': module['title'],
+            'organizer_email': 'tutor@example.com',
+            'graph_event_id': 'event-10',
+            'start_datetime': '2026-09-07T08:00:00Z',
+            'duration_minutes': 60,
+            'repeat_pattern': 'weekly',
+            'repeat_occurrences': 2,
+            'status': 'active',
+        })
+        for index, start in enumerate(['2026-09-07T08:00:00Z', '2026-09-14T08:00:00Z'], start=1):
+            views.authoring_upsert(views.LIVE_SESSION_OCCURRENCES_TABLE, ['live_session_id', 'session_number'], {
+                'id': f'OCC-SYNC-10-{index}',
+                'live_session_id': 'LIVE-SYNC-10',
+                'session_number': index,
+                'scheduled_start': start,
+                'scheduled_end': start,
+                'status': 'scheduled',
+            })
+
+        response = self.client.get(
+            '/curriculum_api/curriculum/teams-meetings/summary/?occurrence_dates=1'
+        ).json()['results']
+        row = next(item for item in response if item['moduleCatalogueId'] == 'MOD-SYNC-10')
+        self.assertEqual(row['syncState'], 'in-sync')
+        self.assertEqual(row['differingOccurrenceCount'], 0)
 
 
 def staff_user_row(name, email='', access='tutor', row_id=1, status='FullUser'):
@@ -5007,3 +5309,69 @@ class TutorAssignmentNotificationTests(TestCase):
             with self.sent_mail() as send:
                 tutor_notifications.dispatch_assignment_notifications()
         send.assert_not_called()
+
+
+class ModuleTotalOtjhTests(CurriculumPersistenceHarness):
+    """The stored module total is the sum of every component's expected OTJH.
+
+    Nothing else feeds it: not the week count, not the session plan, and not a
+    total sent by the client. Adding a component adds its hours; removing one
+    takes them away again.
+    """
+
+    def component(self, title, otjh):
+        return {'id': f'COMP-{title}', 'title': title, 'type': 'reading', 'expectedOtjh': otjh, 'points': 0}
+
+    def save(self, weeks, **extra):
+        payload = {'title': 'OTJH module', 'programmeName': 'OTJH Programme', 'weekStructure': weeks, **extra}
+        views.save_module_authoring_structure('MOD-OTJH', payload, repair_links=False)
+        row = views.authoring_fetch_all(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', ['MOD-OTJH'])[0]
+        return float(row['total_otjh'])
+
+    def test_total_is_the_sum_across_every_week_and_component(self):
+        # Week 1: 2h + 3h. Week 2: 4h. The module is 9h.
+        total = self.save([
+            {'id': 'WEEK-1', 'title': 'Week 1', 'components': [self.component('A', 2), self.component('B', 3)]},
+            {'id': 'WEEK-2', 'title': 'Week 2', 'components': [self.component('C', 4)]},
+        ])
+        self.assertEqual(total, 9)
+
+    def test_adding_a_component_adds_its_hours(self):
+        self.save([
+            {'id': 'WEEK-1', 'title': 'Week 1', 'components': [self.component('A', 2), self.component('B', 3)]},
+            {'id': 'WEEK-2', 'title': 'Week 2', 'components': [self.component('C', 4)]},
+        ])
+        # A 5h component on week 1 and a 0.5h one on week 2: 9 + 5.5 = 14.5h.
+        total = self.save([
+            {'id': 'WEEK-1', 'title': 'Week 1', 'components': [
+                self.component('A', 2), self.component('B', 3), self.component('D', 5),
+            ]},
+            {'id': 'WEEK-2', 'title': 'Week 2', 'components': [self.component('C', 4), self.component('E', 0.5)]},
+        ])
+        self.assertEqual(total, 14.5)
+
+    def test_removing_a_component_takes_its_hours_back(self):
+        self.save([
+            {'id': 'WEEK-1', 'title': 'Week 1', 'components': [self.component('A', 2), self.component('B', 3)]},
+        ])
+        total = self.save([
+            {'id': 'WEEK-1', 'title': 'Week 1', 'components': [self.component('A', 2)]},
+        ])
+        self.assertEqual(total, 2)
+
+    def test_a_total_sent_by_the_client_is_ignored(self):
+        total = self.save(
+            [{'id': 'WEEK-1', 'title': 'Week 1', 'components': [self.component('A', 2), self.component('B', 3)]}],
+            totalOtjh=40,
+            declaredTotalOtjh=40,
+        )
+        self.assertEqual(total, 5)
+
+    def test_each_component_row_stores_its_own_expected_otjh(self):
+        self.save([
+            {'id': 'WEEK-1', 'title': 'Week 1', 'components': [self.component('A', 2), self.component('B', 3)]},
+        ])
+        rows = views.authoring_fetch_all(
+            views.AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', ['MOD-OTJH'],
+        )
+        self.assertEqual(sorted(float(row['expected_otjh']) for row in rows), [2, 3])

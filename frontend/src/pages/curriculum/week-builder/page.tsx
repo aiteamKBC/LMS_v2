@@ -1241,6 +1241,7 @@ interface WeekStats {
   reflection: number;
   evidence: number;
   tutor: number;
+  coach: number;
   assessment: number;
   cleanParts: number;
   issues: number;
@@ -1250,7 +1251,7 @@ function computeWeekStats(components: ModuleComponent[], weekKsbs: KsbMapping[])
   const groups = new Map<string, { count: number; otjh: number }>();
   const codes = new Set<string>();
   weekKsbs.forEach(mapping => mapping.code && codes.add(mapping.code.toUpperCase()));
-  let reflection = 0, evidence = 0, tutor = 0, assessment = 0, partsWithKsb = 0, cleanParts = 0, issues = 0;
+  let reflection = 0, evidence = 0, tutor = 0, coach = 0, assessment = 0, partsWithKsb = 0, cleanParts = 0, issues = 0;
   components.forEach(component => {
     const definition = getComponentDefinition(component.type);
     const bucket = groups.get(definition.group) || { count: 0, otjh: 0 };
@@ -1260,6 +1261,7 @@ function computeWeekStats(components: ModuleComponent[], weekKsbs: KsbMapping[])
     if (component.reflectionRequired) reflection += 1;
     if (component.workplaceEvidenceRequired) evidence += 1;
     if (component.tutorValidationRequired) tutor += 1;
+    if (component.coachValidationRequired) coach += 1;
     if (definition.group === 'Assessment' || definition.group === 'Monthly cycle') assessment += 1;
     if (component.ksbMappings.length) { partsWithKsb += 1; component.ksbMappings.forEach(mapping => mapping.code && codes.add(mapping.code.toUpperCase())); }
     const componentIssues = validateWeekComponent(component).length;
@@ -1272,7 +1274,7 @@ function computeWeekStats(components: ModuleComponent[], weekKsbs: KsbMapping[])
     points: components.reduce((sum, c) => sum + (Number(c.points) || 0), 0),
     byGroup: [...groups.entries()].map(([group, value]) => ({ group, ...value })),
     ksbCodes: [...codes].sort(),
-    partsWithKsb, reflection, evidence, tutor, assessment, cleanParts, issues,
+    partsWithKsb, reflection, evidence, tutor, coach, assessment, cleanParts, issues,
   };
 }
 
@@ -1349,10 +1351,11 @@ export function WeekOverviewPanel({ components, ksbMappings, summary, learningOu
 
         {/* Assurance load */}
         <Section title="Assurance" hint="what the week demands of learners">
-          <div className="grid min-w-0 grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="grid min-w-0 grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-2">
             <AssureChip icon="ri-chat-quote-line" value={stats.reflection} label="Reflection" />
             <AssureChip icon="ri-briefcase-4-line" value={stats.evidence} label="Evidence" />
             <AssureChip icon="ri-user-star-line" value={stats.tutor} label="Tutor sign-off" />
+            <AssureChip icon="ri-shield-user-line" value={stats.coach} label="Coach sign-off" />
             <AssureChip icon="ri-award-line" value={stats.assessment} label="Assessments" />
           </div>
         </Section>
@@ -1511,6 +1514,7 @@ function GenericComponentBody({ component, onChange, setSetting, rulePoints }: C
           <Toggle label="Reflection" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
           <Toggle label="Workplace evidence" checked={component.workplaceEvidenceRequired} onChange={value => onChange({ workplaceEvidenceRequired: value })} />
           <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
           <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder={`What should the learner reflect on after this ${weekTypeLabel(component.type).toLowerCase()}?`} className={`${inputClass} resize-none`} /></Field>
@@ -1603,6 +1607,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
         <div className="flex flex-wrap gap-2">
           <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
           <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
           <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this session?" className={`${inputClass} resize-none`} /></Field>
@@ -1725,6 +1730,7 @@ function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBod
         <div className="flex flex-wrap gap-2">
           <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
           <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
           <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this video?" className={`${inputClass} resize-none`} /></Field>
@@ -1815,6 +1821,7 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
         <div className="flex flex-wrap gap-2">
           <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
           <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
           <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this reading?" className={`${inputClass} resize-none`} /></Field>
@@ -1926,6 +1933,7 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
         <div className="flex flex-wrap gap-2">
           <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
           <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
           <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this podcast?" className={`${inputClass} resize-none`} /></Field>
@@ -2019,6 +2027,7 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
         <div className="flex flex-wrap gap-2">
           <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
           <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
           <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this presentation?" className={`${inputClass} resize-none`} /></Field>
@@ -2243,6 +2252,7 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
         <div className="flex flex-wrap gap-2">
           <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
           <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
           <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this quiz?" className={`${inputClass} resize-none`} /></Field>
@@ -2318,6 +2328,7 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
         <div className="flex flex-wrap gap-2">
           <Toggle label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
           <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+          <CoachValidationToggle component={component} onChange={onChange} />
         </div>
         {component.reflectionRequired && (
           <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this assignment?" className={`${inputClass} resize-none`} /></Field>
@@ -2726,6 +2737,32 @@ function Field({ label, children, className = '' }: { label: string; children: R
       <span className="block text-[11px] font-semibold text-foreground-500 mb-1">{label}</span>
       {children}
     </label>
+  );
+}
+
+// Coach sign-off is on for every part unless an author deliberately exempts
+// one, so switching it off asks first — the same confirm the Module Builder
+// puts on its Coach validation checkbox.
+function CoachValidationToggle({ component, onChange }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void }) {
+  return (
+    <Toggle
+      label="Coach validation"
+      checked={component.coachValidationRequired}
+      onChange={value => {
+        if (value) {
+          onChange({ coachValidationRequired: true });
+          return;
+        }
+        void showCurriculumConfirm({
+          title: 'Turn off coach validation?',
+          text: 'Coach validation is on for every part. Turn it off and no coach has to sign this part off before it counts.',
+          icon: 'warning',
+          confirmButtonText: 'Turn it off',
+          cancelButtonText: 'Keep it on',
+          onConfirm: () => onChange({ coachValidationRequired: false }),
+        });
+      }}
+    />
   );
 }
 
