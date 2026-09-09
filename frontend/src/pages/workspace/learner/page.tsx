@@ -400,6 +400,9 @@ export default function LearnerOverview() {
   const trainingPlanHref = kind && id ? `/learner/training-plan/${kind}/${id}` : '/learner/training-plan';
   const learningPlanHubHref = kind && id ? `/learner/learning-plan/${kind}/${id}` : '/learner/learning-plan';
   const journeyHref = kind && id ? `/learner/modules/${kind}/${id}` : '/learner/modules';
+  const programmeProgressHref = kind && id ? `/learner/my-learning/${kind}/${id}` : '/learner/my-learning';
+  const otjhProgressHref = kind && id ? `/learner/otjh/${kind}/${id}` : '/learner/otjh';
+  const ksbProgressHref = kind && id ? `/learner/ksbs/${kind}/${id}` : '/learner/ksbs';
   const displayLearnerName = isRealMode ? heroFullName : p.fullName;
   const displayCohort = isRealMode ? (heroCohort || EMPTY_VALUE) : p.cohort;
   const headerDescription = isRealMode
@@ -989,10 +992,10 @@ export default function LearnerOverview() {
         {!isDemoAccount && (
           <SectionReveal delay={60}>
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <ProgressStat icon="ri-road-map-line" label="Programme Progress" value={programmeProgressValue} percent={programmeProgressPercent} caption={programmeProgressCaption} tone="brand" />
-              <ProgressStat icon="ri-calendar-check-line" label="Attendance" value={attendanceValue} percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
-              <ProgressStat icon="ri-time-line" label="OTJ Hours" value={otjValue} percent={otjPercent} caption={otjCaption} tone={otjTone} />
-              <ProgressStat icon="ri-bar-chart-2-line" label="KSB Progress" value={ksbValue} percent={ksbPercent} caption={ksbCaption} tone={ksbTone} />
+              <ProgressStat href={programmeProgressHref} icon="ri-road-map-line" label="Programme Progress" value={programmeProgressValue} percent={programmeProgressPercent} caption={programmeProgressCaption} tone="brand" />
+              <ProgressStat href="/learner/attendance" icon="ri-calendar-check-line" label="Attendance" value={attendanceValue} percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
+              <ProgressStat href={otjhProgressHref} icon="ri-time-line" label="OTJ Hours" value={otjValue} percent={otjPercent} caption={otjCaption} tone={otjTone} />
+              <ProgressStat href={ksbProgressHref} icon="ri-bar-chart-2-line" label="KSB Progress" value={ksbValue} percent={ksbPercent} caption={ksbCaption} tone={ksbTone} />
             </div>
           </SectionReveal>
         )}
@@ -1253,14 +1256,18 @@ function DashboardNextStep({ icon, label, href, tone = 'brand', iconTone }: { ic
   );
 }
 
-/** A compact stat card: label, value, progress bar, caption. The four "quick health check" cards. */
-function ProgressStat({ icon, label, value, percent, caption, tone = 'neutral' }: {
-  icon: string; label: string; value: string; percent: number | null; caption?: string; tone?: StatusTone;
+/** A compact linked stat card: label, value, progress bar, caption. The four "quick health check" cards. */
+function ProgressStat({ href, icon, label, value, percent, caption, tone = 'neutral' }: {
+  href: string; icon: string; label: string; value: string; percent: number | null; caption?: string; tone?: StatusTone;
 }) {
   const style = toneStyle(tone);
   return (
-    <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
-      <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${style.bg} ${tone === 'neutral' ? 'text-foreground-400' : style.text}`}>
+    <Link
+      to={href}
+      aria-label={`Open ${label}`}
+      className="group flex min-w-0 items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-primary-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+    >
+      <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-transform duration-200 group-hover:scale-105 ${style.bg} ${tone === 'neutral' ? 'text-foreground-400' : style.text}`}>
         <AppIcon className={`${icon} text-xl`} />
       </span>
       <div className="min-w-0 flex-1">
@@ -1269,7 +1276,8 @@ function ProgressStat({ icon, label, value, percent, caption, tone = 'neutral' }
         <ProgressBar percent={percent} tone={percent == null || tone === 'neutral' ? undefined : style.dot} className="mt-2.5" />
         {caption ? <p className="mt-1.5 truncate text-[12px] leading-snug text-foreground-500">{caption}</p> : null}
       </div>
-    </div>
+      <AppIcon aria-hidden="true" className="ri-arrow-right-s-line shrink-0 text-foreground-300 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-primary-500" />
+    </Link>
   );
 }
 
