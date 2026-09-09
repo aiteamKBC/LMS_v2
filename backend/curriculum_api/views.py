@@ -1418,7 +1418,34 @@ def teams_attendee_emails(value):
     return emails
 
 
-def teams_event_recurrence(repeat, local_start, occurrences):
+def teams_recurrence_weekdays(payload, local_start):
+    """The weekdays a weekly Graph recurrence has to fire on.
+
+    A group can deliver the same module on more than one day, so the anchor's own
+    weekday is not the pattern -- it is one day of it. Building the series from
+    that day alone lays a one-a-week grid under a twice-a-week plan: every
+    Thursday session lands on a Monday slot a week too late, and the shift pass
+    then has to drag each instance backwards across its neighbours, which Graph
+    refuses. Read the days off the plan the caller sent instead.
+
+    The sent dates are UTC while ``local_start`` is whatever frame the caller
+    builds its recurrence in, so they are re-based on the anchor -- the first
+    planned session by definition -- before their weekday is taken.
+    """
+    default = [local_start.strftime('%A').lower()]
+    starts = teams_scheduled_occurrence_starts(payload)
+    if not starts:
+        return default
+    offset = local_start - min(starts)
+    days = []
+    for start in sorted(starts):
+        name = (start + offset).strftime('%A').lower()
+        if name not in days:
+            days.append(name)
+    return days or default
+
+
+def teams_event_recurrence(repeat, local_start, occurrences, days_of_week=None):
     if repeat == 'none':
         return None
     start_date = local_start.date().isoformat()
@@ -1432,7 +1459,7 @@ def teams_event_recurrence(repeat, local_start, occurrences):
             'daysOfWeek': ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
         }
     else:
-        pattern = {'type': 'weekly', 'interval': 1, 'daysOfWeek': [day_name]}
+        pattern = {'type': 'weekly', 'interval': 1, 'daysOfWeek': list(days_of_week or [day_name])}
     return {
         'pattern': pattern,
         'range': {
@@ -1443,35 +1470,59 @@ def teams_event_recurrence(repeat, local_start, occurrences):
     }
 
 
-def teams_recurrence_slot_count(payload, local_start, repeat, occurrences):
-    """Weekly slots the recurrence must span to reach the last shifted session.
-
-    A holiday-shifted plan keeps the session count but stretches the calendar span,
-    so a series numbered by session count ends before the final shifted date and
-    Graph never materialises an instance for it. Count slots from the first to the
-    last supplied occurrence instead, keeping the session count as the floor.
-    """
-    if repeat == 'none':
-        return occurrences
-    supplied = payload.get('scheduledOccurrences')
+def teams_scheduled_occurrence_starts(payload):
+    """The planned session instants a caller sent, as naive UTC datetimes."""
+    supplied = (payload or {}).get('scheduledOccurrences')
     if not isinstance(supplied, list):
-        return occurrences
+        return []
     starts = []
     for item in supplied:
         if not isinstance(item, dict):
             continue
         parsed = parse_graph_datetime(item.get('startDateTimeUtc'))
-        if parsed:
-            if parsed.tzinfo is not None:
-                parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
-            starts.append(parsed)
+        if not parsed:
+            continue
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        starts.append(parsed)
+    return starts
+
+
+def teams_recurrence_slot_count(payload, local_start, repeat, occurrences, days_of_week=None):
+    """Occurrences the recurrence must hold to reach the last planned session.
+
+    Graph counts a numbered range in occurrences, not weeks, so the answer is how
+    many times the pattern fires between the first planned session and the last --
+    for a Mon+Thu group that is about twice the number of weeks, not once.
+
+    Two things stretch that span past a plain session count: a holiday-shifted
+    plan keeps the sessions but moves the later ones outwards, and a multi-day
+    pattern also fires on days no session was planned for. Either one leaves
+    trailing dates with no instance to move onto unless the range is sized off
+    the dates, so the count is taken from them and the session count is only the
+    floor. Instances the plan does not want are removed by the reconciliation
+    that follows.
+    """
+    if repeat == 'none':
+        return occurrences
+    starts = teams_scheduled_occurrence_starts(payload)
     if len(starts) < 2:
         return occurrences
-    span_days = (max(starts).date() - min(starts).date()).days
+    offset = local_start - min(starts)
+    first = (min(starts) + offset).date()
+    last = (max(starts) + offset).date()
+    span_days = (last - first).days
     if span_days <= 0:
         return occurrences
-    step = 1 if repeat in ('daily', 'weekdays') else 7
-    spanned = span_days // step + 1
+    if repeat in ('daily', 'weekdays'):
+        spanned = span_days + 1
+    else:
+        names = days_of_week or teams_recurrence_weekdays(payload, local_start)
+        indexes = {WEEKDAY_INDEX[name] for name in names if name in WEEKDAY_INDEX} or {first.weekday()}
+        spanned = sum(
+            1 for step in range(span_days + 1)
+            if (first + timedelta(days=step)).weekday() in indexes
+        )
     return max(occurrences, min(52, spanned))
 
 
@@ -1597,8 +1648,9 @@ def teams_event_payload(payload, graph_settings):
     # Holiday shifts stretch the calendar span past the Nth weekly slot, so size the
     # recurrence by the span the wizard actually needs. Sizing it by session count
     # leaves the trailing shifted dates with no instance to move onto.
-    recurrence_slots = teams_recurrence_slot_count(payload, anchor, repeat, occurrences)
-    recurrence = teams_event_recurrence(repeat, anchor, max(2, recurrence_slots))
+    recurrence_days = teams_recurrence_weekdays(payload, anchor)
+    recurrence_slots = teams_recurrence_slot_count(payload, anchor, repeat, occurrences, recurrence_days)
+    recurrence = teams_event_recurrence(repeat, anchor, max(2, recurrence_slots), recurrence_days)
     if recurrence:
         event['recurrence'] = recurrence
     # Return normalized timing too, for the component settings response.
@@ -2754,7 +2806,8 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     # Holiday shifts push later sessions beyond the Nth weekly slot, so the recurrence
     # range must span the shifted end date instead of the plain session count. Sizing it
     # by session count leaves the trailing shifted dates with no instance to move onto.
-    recurrence_slots = teams_recurrence_slot_count(payload, local_start, repeat, occurrences)
+    recurrence_days = teams_recurrence_weekdays(payload, local_start)
+    recurrence_slots = teams_recurrence_slot_count(payload, local_start, repeat, occurrences, recurrence_days)
     event_patch = {
         'subject': title,
         'start': {
@@ -2771,7 +2824,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             {'emailAddress': {'address': email, 'name': email.split('@', 1)[0]}, 'type': 'required'}
             for email in invited_people
         ]
-    recurrence = teams_event_recurrence(repeat, local_start, max(2, recurrence_slots))
+    recurrence = teams_event_recurrence(repeat, local_start, max(2, recurrence_slots), recurrence_days)
     event_patch['recurrence'] = recurrence if repeat != 'none' else None
 
     owner_key = urllib_parse.quote(organizer, safe='')
@@ -8488,8 +8541,8 @@ def module_session_dates(module, holiday_cache=None):
     return dates
 
 
-def module_cohort_selected_holidays(module_row):
-    """The parent cohort's ticked holidays for one module.
+def cohort_selected_holidays_by_cohort(cohort_ids):
+    """The ticked holidays of many cohorts at once, keyed by cohort id.
 
     ``holiday_ids`` is the selection; ``selected_holidays`` is only a cache of
     what those ids pointed at when the cohort was last written, and it does go
@@ -8502,42 +8555,70 @@ def module_cohort_selected_holidays(module_row):
     No period filter: the ticked selection applies to the module's own dates,
     which are free to run past the cohort's stored base period. An empty
     selection skips nothing, which is the cohort holiday rule.
+
+    Two reads for any number of cohorts -- the cohort rows in one ``in (...)``
+    and the holiday table once -- because every module in a cohort shares that
+    cohort's holidays. A caller planning a page of modules groups the ids first
+    and reads here once, instead of paying a cohort read and a holiday read per
+    module. ``module_cohort_selected_holidays`` is this same function for one
+    cohort, so the resolution rule above lives in exactly one place.
+    """
+    wanted = list(dict.fromkeys(
+        clean_str(value) for value in (cohort_ids or []) if clean_str(value)
+    ))
+    if not wanted:
+        return {}
+    clause, params = curriculum_in_clause('cohort_id', wanted)
+    try:
+        rows = authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE, clause, params)
+    except (Exception, AssertionError):
+        logger.debug('Unable to read cohort holidays for %s.', ', '.join(wanted), exc_info=True)
+        return {}
+    if not rows:
+        return {}
+    by_id = {}
+    try:
+        for row in get_holiday_rows():
+            holiday = serialize_holiday_row(row)
+            by_id[clean_str(holiday.get('id'))] = holiday
+    except (Exception, AssertionError):
+        logger.debug('Unable to read holidays for %s.', ', '.join(wanted), exc_info=True)
+        by_id = {}
+
+    grouped = {}
+    for cohort in rows:
+        cohort_id = clean_str(cohort.get('cohort_id'))
+        if not cohort_id:
+            continue
+        # The column is JSON, so it is decoded before the ids are read: splitting
+        # the raw text would hand back '["1090"' and match no holiday at all.
+        ticked = [
+            clean_str(value)
+            for value in parse_notes_id_list(as_json_value(cohort.get('holiday_ids'), []))
+            if clean_str(value)
+        ]
+        resolved = [by_id[value] for value in ticked if value in by_id] if ticked else []
+        if resolved:
+            grouped[cohort_id] = resolved
+            continue
+        cached = as_json_value(cohort.get('selected_holidays'), [])
+        grouped[cohort_id] = cached if isinstance(cached, list) else []
+    return grouped
+
+
+def module_cohort_selected_holidays(module_row):
+    """The parent cohort's ticked holidays for one module.
+
+    One cohort's slice of ``cohort_selected_holidays_by_cohort``, which owns the
+    rule; this is the single-module door onto it.
     """
     cohort_id = clean_str((module_row or {}).get('cohort_id'))
     if not cohort_id:
         return []
-    try:
-        rows = authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id])
-    except (Exception, AssertionError):
-        logger.debug('Unable to read cohort holidays for module %s.', cohort_id, exc_info=True)
-        return []
-    if not rows:
-        return []
-    cohort = rows[0]
-    # The column is JSON, so it is decoded before the ids are read: splitting the
-    # raw text would hand back '["1090"' and match no holiday at all.
-    ticked = [
-        clean_str(value)
-        for value in parse_notes_id_list(as_json_value(cohort.get('holiday_ids'), []))
-        if clean_str(value)
-    ]
-    if ticked:
-        try:
-            by_id = {}
-            for row in get_holiday_rows():
-                holiday = serialize_holiday_row(row)
-                by_id[clean_str(holiday.get('id'))] = holiday
-        except (Exception, AssertionError):
-            logger.debug('Unable to read holidays for cohort %s.', cohort_id, exc_info=True)
-            by_id = {}
-        resolved = [by_id[value] for value in ticked if value in by_id]
-        if resolved:
-            return resolved
-    cached = as_json_value(cohort.get('selected_holidays'), [])
-    return cached if isinstance(cached, list) else []
+    return cohort_selected_holidays_by_cohort([cohort_id]).get(cohort_id) or []
 
 
-def module_session_plan_for_count(module_row, session_count):
+def module_session_plan_for_count(module_row, session_count, holidays=None):
     """One module's dated plan for a session count of the caller's choosing.
 
     The count is taken as given rather than read off the module, which is what
@@ -8549,12 +8630,20 @@ def module_session_plan_for_count(module_row, session_count):
     Returns the full ``build_module_session_plan`` shape -- the sessions, the
     days skipped to reach them and the final date -- so a caller can say *why* a
     date moved.
+
+    ``holidays`` lets a caller that has already grouped the ticked selection by
+    cohort (a page planning every module of one cohort) hand it over rather than
+    have this re-read it per module. Left unset it is read here, so the answer is
+    identical either way.
     """
     count = max(0, parse_int(session_count, 0))
     start = parse_date((module_row or {}).get('start_date'))
     if count <= 0 or not start:
         return {'sessions': [], 'skippedHolidays': [], 'finalEndDate': '', 'warnings': []}
-    return module_delivery_session_plan(module_row, count, start, module_cohort_selected_holidays(module_row))
+    applied_holidays = (
+        module_cohort_selected_holidays(module_row) if holidays is None else (holidays or [])
+    )
+    return module_delivery_session_plan(module_row, count, start, applied_holidays)
 
 
 def delivery_days_per_week(module_row):
@@ -10968,6 +11057,7 @@ def provision_module_authoring_tables():
                 "Reflection_Question" text,
                 workplace_evidence_required boolean not null default false,
                 tutor_validation_required boolean not null default false,
+                coach_validation_required boolean not null default true,
                 display_order integer not null default 0,
                 is_programme_deleted boolean not null default false,
                 settings_json {json_type},
@@ -10992,6 +11082,13 @@ def provision_module_authoring_tables():
             cursor.execute(f'''
                 alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}
                 add column if not exists tutor_validation_required boolean not null default false
+            ''')
+            # Default true: coach validation is on for every component unless an
+            # author deliberately turns it off, so rows that predate the column
+            # come back on rather than silently unvalidated.
+            cursor.execute(f'''
+                alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}
+                add column if not exists coach_validation_required boolean not null default true
             ''')
             cursor.execute(f'''
                 alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}
@@ -11025,6 +11122,8 @@ def provision_module_authoring_tables():
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column workplace_evidence_required boolean not null default false')
             if 'tutor_validation_required' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column tutor_validation_required boolean not null default false')
+            if 'coach_validation_required' not in columns:
+                cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column coach_validation_required boolean not null default true')
             if 'settings_json' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column settings_json {json_type}')
             if 'live_sessions_link' not in columns:
@@ -13224,6 +13323,30 @@ def payload_reflection_question(component, settings=None):
     return clean_str(settings.get(LEGACY_REFLECTION_QUESTION_SETTING))
 
 
+def component_coach_validation(row):
+    """Whether a coach has to validate this component.
+
+    On unless the row says otherwise. The column arrived after the table, so a
+    row written before it - or a narrowed read that never selected it - reports
+    ``None``, and that means "nobody turned it off", not "off".
+    """
+    value = row.get('coach_validation_required')
+    return True if value is None else bool_payload(value)
+
+
+def payload_coach_validation(component, default=True):
+    """What a component payload is asking us to store for coach validation.
+
+    Either spelling counts, and an explicit ``False`` turns it off. A payload
+    naming neither is older than the field, so the default stands rather than
+    silently clearing a flag the author never saw.
+    """
+    for key in ('coachValidationRequired', 'coach_validation_required'):
+        if key in component:
+            return bool_payload(component.get(key))
+    return default
+
+
 def component_week_label(row):
     week_number = parse_int(row.get('week_number'), 0)
     return f'Week {week_number}' if week_number else (row.get('title') or 'Week 1')
@@ -13334,6 +13457,7 @@ def component_builder_response(row, module_by_id=None, week_by_id=None, mappings
         'reflectionQuestion': component_reflection_question(row, settings),
         'workplaceEvidenceRequired': bool_payload(row.get('workplace_evidence_required')),
         'tutorValidationRequired': bool_payload(row.get('tutor_validation_required')),
+        'coachValidationRequired': component_coach_validation(row),
         'ksbRefs': ksb_refs,
         'ksbMappings': ksb_mappings,
         'status': settings.get('componentBuilderStatus') or 'draft',
@@ -13421,7 +13545,8 @@ def library_component_origin(row):
 LIBRARY_LIST_COLUMNS = (
     'id', 'week_id', 'module_catalogue_id', 'type', 'title', 'display_order',
     'expected_otjh', 'points', 'reflection_required', 'workplace_evidence_required',
-    'tutor_validation_required', 'updated_at', 'deleted_at', 'is_programme_deleted',
+    'tutor_validation_required', 'coach_validation_required',
+    'updated_at', 'deleted_at', 'is_programme_deleted',
     'library_state', 'detached_at', 'copied_from_id',
     'origin_module_catalogue_id', 'origin_module_title',
     'origin_week_id', 'origin_week_label',
@@ -13711,6 +13836,9 @@ def save_component_builder_payload(payload, component_id=None):
         else bool_payload(payload.get('tutor_validation_required')) if 'tutor_validation_required' in payload
         else bool_payload(existing_row.get('tutor_validation_required'))
     )
+    # A payload that says nothing keeps what the row already had, and a row that
+    # predates the column counts as on - see component_coach_validation().
+    coach_validation_required = payload_coach_validation(payload, component_coach_validation(existing_row))
     display_order = parse_int(existing_row.get('display_order'), 0)
     display_order = parse_int((component_rows[0] if component_rows else {}).get('display_order'), 0)
     if not component_rows:
@@ -13758,6 +13886,7 @@ def save_component_builder_payload(payload, component_id=None):
             REFLECTION_QUESTION_COLUMN: reflection_question,
             'workplace_evidence_required': workplace_evidence_required,
             'tutor_validation_required': tutor_validation_required,
+            'coach_validation_required': coach_validation_required,
             'display_order': display_order,
             'settings_json': json_db_value(settings),
             'live_sessions_link': clean_str(settings.get('liveSessionUrl') or settings.get('teamsMeetingUrl')),
@@ -14202,6 +14331,238 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
     return JsonResponse(body)
 
 
+# --------------------------------------------------- Teams calendar sync state
+#
+# "Is this module's Teams calendar still the module's own plan?" used to be
+# answered in the browser, by comparing the occurrence dates this endpoint
+# returns against the session list from `/curriculum/sessions/`. That list is
+# served from the shared curriculum payload cache, so a plan changed inside the
+# TTL was compared against the *previous* plan -- and a calendar holding the old
+# delivery days read as "In sync". The verdict belongs here, where the plan can
+# be recomputed from the authoring rows themselves, with no cache in the way.
+#
+# Nothing in here writes: it never touches the stored occurrence dates, which
+# stay the record of what the Teams calendar was last known to hold.
+
+#: Occurrence statuses that no longer stand for a meeting on the calendar.
+#: `replace_live_session_occurrences` marks a shrunk series' trailing rows
+#: `cancelled` rather than deleting them, so counting those as extras would
+#: report every shortened module as out of sync forever.
+TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES = {'cancelled', 'canceled', 'declined', 'deleted', 'removed'}
+
+#: How many differing dates a verdict names before it stops listing them. The
+#: badge only needs the count; the list is for the drawer that shows them.
+TEAMS_SYNC_REPORTED_DATE_LIMIT = 12
+
+
+def module_expected_teams_occurrence_keys(module_row, holidays=None, group_row=None):
+    """The UTC minutes the module's *current* plan says Teams should hold.
+
+    The same scheduling logic ``GET /curriculum/modules/<id>/session-plan/``
+    serves -- it is the same ``module_session_plan_for_count`` call -- turned
+    into instants by ``calendar_clock_to_utc_iso``, exactly as the week
+    structure dates its own live sessions. So the expected dates here, the dates
+    that endpoint answers with and the dates the push sends are one plan.
+
+    Returns ``(keys, plan)``: the minute keys in plan order, and the plan itself
+    so a caller can see the holidays it skipped and the warnings it raised.
+    """
+    plan = module_session_plan_for_count(
+        module_row,
+        module_stored_session_count(module_row),
+        holidays=holidays,
+    )
+    start_time, _end_time, _duration = module_session_clock(module_row, group_row)
+    keys = []
+    for session in plan.get('sessions') or []:
+        key = teams_calendar_minute_key(calendar_clock_to_utc_iso(session.get('date'), start_time))
+        if key:
+            keys.append(key)
+    return keys, plan
+
+
+def teams_calendar_sync_verdict(
+    module_row,
+    occurrence_rows,
+    holidays=None,
+    group_row=None,
+    occurrences_readable=True,
+    holidays_readable=True,
+):
+    """Whether the tracked Teams occurrences still match the module's own plan.
+
+    Compared as multisets of UTC minutes, so the order the two sides arrive in
+    never decides the answer and a duplicated occurrence is still an extra. That
+    catches every way the two can drift -- a delivery day added or dropped, a
+    date moved, a holiday newly ticked or untied, a start or end date changed,
+    an occurrence Teams holds that the plan no longer has.
+
+    The verdict is never optimistic. Anything that stops the comparison being
+    real -- an unreadable occurrence read, a module row that is gone, a plan
+    that cannot be dated, a series with nothing tracked against it -- returns
+    ``unverified``, not ``in-sync``.
+    """
+    def verdict(state, reasons, **extra):
+        return {
+            'syncState': state,
+            'syncReasons': reasons,
+            'expectedOccurrenceCount': 0,
+            'trackedOccurrenceCount': 0,
+            'differingOccurrences': 0,
+            'missingFromTeams': [],
+            'extraInTeams': [],
+            **extra,
+        }
+
+    if not occurrences_readable:
+        return verdict('unverified', ['occurrences_unreadable'])
+    if not holidays_readable:
+        return verdict('unverified', ['cohort_holidays_unreadable'])
+    if not module_row:
+        # A live series whose module row has gone is an orphan: there is no plan
+        # left to compare it against, so it cannot be called in sync.
+        return verdict('unverified', ['module_missing'])
+
+    active = [
+        row for row in (occurrence_rows or [])
+        if clean_str((row or {}).get('status')).lower() not in TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES
+    ]
+    actual_keys = []
+    for row in active:
+        key = teams_calendar_minute_key(row.get('scheduled_start'))
+        if not key:
+            # A tracked occurrence with no readable start cannot be matched, and
+            # ignoring it would let a broken row pass as agreement.
+            return verdict('unverified', ['occurrence_date_unreadable'])
+        actual_keys.append(key)
+
+    expected_keys, plan = module_expected_teams_occurrence_keys(module_row, holidays, group_row)
+    if not expected_keys:
+        if not active:
+            return verdict('no-sessions', plan.get('warnings') or [])
+        return verdict(
+            'unverified',
+            ['plan_unavailable', *(plan.get('warnings') or [])],
+            trackedOccurrenceCount=len(active),
+        )
+    if not active:
+        # The read succeeded and the series has nothing tracked against it, so
+        # there is nothing to compare the plan with -- not an agreement.
+        return verdict(
+            'unverified',
+            ['no_tracked_occurrences'],
+            expectedOccurrenceCount=len(expected_keys),
+        )
+
+    expected_counts = Counter(expected_keys)
+    actual_counts = Counter(actual_keys)
+    missing = expected_counts - actual_counts
+    extra = actual_counts - expected_counts
+    missing_total = sum(missing.values())
+    extra_total = sum(extra.values())
+
+    reasons = []
+    if missing_total:
+        reasons.append('missing_from_teams')
+    if extra_total:
+        reasons.append('extra_in_teams')
+
+    def as_instants(counts):
+        # `teams_calendar_minute_key` already names a UTC minute
+        # (`YYYY-MM-DDTHH:MM`); seconds and the offset are appended so a caller
+        # can treat this the same as any other instant this endpoint returns.
+        return [
+            f'{key}:00Z'
+            for key in sorted(counts.elements())
+        ][:TEAMS_SYNC_REPORTED_DATE_LIMIT]
+
+    return verdict(
+        'out-of-sync' if reasons else 'in-sync',
+        reasons,
+        expectedOccurrenceCount=len(expected_keys),
+        trackedOccurrenceCount=len(active),
+        # The badge's caption counts sessions, not edits: a date that moved is
+        # one session that differs, which is one missing key and one extra.
+        differingOccurrences=max(missing_total, extra_total),
+        missingFromTeams=as_instants(missing),
+        extraInTeams=as_instants(extra),
+    )
+
+
+def teams_calendar_sync_verdicts(module_catalogue_ids, occurrences_by_module, occurrences_readable=True):
+    """A sync verdict per module, in bulk reads rather than reads per module.
+
+    Four reads for the whole page whatever its length: the module rows, their
+    cohorts, the holiday table and the groups. Modules sharing a cohort share
+    its holidays and modules sharing a group share its slot, so both are grouped
+    once and reused -- the curriculum overview's own 13-second lesson.
+    """
+    wanted = list(dict.fromkeys(
+        clean_str(value) for value in (module_catalogue_ids or []) if clean_str(value)
+    ))
+    if not wanted:
+        return {}
+    clause, params = curriculum_in_clause('module_catalogue_id', wanted)
+    try:
+        module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, clause, params)
+    except (Exception, AssertionError):
+        logger.warning('Could not read modules for the Teams calendar sync verdict.', exc_info=True)
+        # Fail closed: every module reports `unverified` rather than `in-sync`.
+        return {
+            module_id: teams_calendar_sync_verdict(None, [], occurrences_readable=occurrences_readable)
+            for module_id in wanted
+        }
+    modules_by_id = {
+        clean_str(row.get('module_catalogue_id')): row
+        for row in module_rows
+        if clean_str(row.get('module_catalogue_id'))
+    }
+
+    cohort_ids = list(dict.fromkeys(
+        clean_str(row.get('cohort_id')) for row in module_rows if clean_str(row.get('cohort_id'))
+    ))
+    holidays_by_cohort = cohort_selected_holidays_by_cohort(cohort_ids)
+    # Holidays move a module's dates, so a cohort read that came back with
+    # nothing at all cannot be told apart from one that failed -- and a plan
+    # dated without the ticked closures is not a plan worth comparing.
+    holidays_readable = bool(holidays_by_cohort) or not cohort_ids
+
+    groups_by_id = {}
+    group_ids = list(dict.fromkeys(
+        clean_str(row.get('group_id')) for row in module_rows if clean_str(row.get('group_id'))
+    ))
+    if group_ids:
+        group_clause, group_params = curriculum_in_clause('group_id', group_ids)
+        try:
+            groups_by_id = {
+                clean_str(row.get('group_id')): row
+                for row in authoring_fetch_all(GROUPS_TABLE, group_clause, group_params)
+                if clean_str(row.get('group_id'))
+            }
+        except (Exception, AssertionError):
+            # Only the slot-time fallback is lost, and the module row's own slot
+            # is the authority anyway -- a group edit writes it into these rows.
+            logger.debug('Could not read groups for the Teams calendar sync verdict.', exc_info=True)
+
+    verdicts = {}
+    for module_id in wanted:
+        module_row = modules_by_id.get(module_id)
+        cohort_id = clean_str((module_row or {}).get('cohort_id'))
+        try:
+            verdicts[module_id] = teams_calendar_sync_verdict(
+                module_row,
+                occurrences_by_module.get(module_id) or [],
+                holidays=holidays_by_cohort.get(cohort_id) or [],
+                group_row=groups_by_id.get(clean_str((module_row or {}).get('group_id'))),
+                occurrences_readable=occurrences_readable,
+                holidays_readable=holidays_readable or not cohort_id,
+            )
+        except Exception:
+            logger.exception('Unable to compare the Teams calendar for %s.', module_id)
+            verdicts[module_id] = teams_calendar_sync_verdict(None, [], occurrences_readable=False)
+    return verdicts
+
+
 @require_GET
 def curriculum_teams_meeting_summary(request):
     """One row per module that has a tracked Teams meeting.
@@ -14215,8 +14576,10 @@ def curriculum_teams_meeting_summary(request):
     additive and read-only.
 
     ``?module_catalogue_ids=A,B`` narrows it to the modules a page is showing, and
-    ``?occurrence_dates=1`` adds each meeting's occurrence dates so a caller can
-    compare them against the module's own session plan.
+    ``?occurrence_dates=1`` adds each meeting's occurrence dates *and the sync
+    verdict for them*: whether the tracked Teams occurrences still match the
+    module's own plan, decided here against the authoring rows rather than in the
+    browser against a cached session list (see the sync-state section above).
     """
     try:
         ensure_live_session_tracking_tables()
@@ -14250,6 +14613,7 @@ def curriculum_teams_meeting_summary(request):
         return curriculum_results_response([], request=request)
 
     occurrences_by_session = defaultdict(list)
+    occurrences_readable = True
     session_ids = [clean_str(row.get('id')) for row in sessions if clean_str(row.get('id'))]
     if session_ids:
         clause, values = curriculum_in_clause('live_session_id', session_ids)
@@ -14260,6 +14624,9 @@ def curriculum_teams_meeting_summary(request):
                 occurrences_by_session[clean_str(row.get('live_session_id'))].append(row)
         except (Exception, AssertionError):
             logger.warning('Could not read Teams occurrences.', exc_info=True)
+            # Remembered rather than swallowed: an empty read must report
+            # `unverified`, never agreement with the plan.
+            occurrences_readable = False
 
     now = datetime.utcnow()
 
@@ -14274,6 +14641,7 @@ def curriculum_teams_meeting_summary(request):
 
     results = []
     seen_modules = set()
+    occurrences_by_module = {}
     for row in sessions:
         module_id = clean_str(row.get('module_catalogue_id'))
         # Ordered newest-first above, so the first row for a module is the live one.
@@ -14282,6 +14650,7 @@ def curriculum_teams_meeting_summary(request):
         seen_modules.add(module_id)
         session_id = clean_str(row.get('id'))
         occurrences = occurrences_by_session.get(session_id, [])
+        occurrences_by_module[module_id] = occurrences
         upcoming = [
             item for item in occurrences
             if (occurrence_start(item) or now) >= now and occurrence_start(item)
@@ -14318,6 +14687,26 @@ def curriculum_teams_meeting_summary(request):
         if want_occurrence_dates:
             entry['occurrenceDates'] = [iso_value(item.get('scheduled_start')) for item in occurrences]
         results.append(entry)
+
+    if want_occurrence_dates and results:
+        # One grouped comparison for every module in the page rather than one
+        # per row: see `teams_calendar_sync_verdicts` for the reads it groups.
+        verdicts = teams_calendar_sync_verdicts(
+            (entry['moduleCatalogueId'] for entry in results),
+            occurrences_by_module,
+            occurrences_readable=occurrences_readable,
+        )
+        for entry in results:
+            verdict = verdicts.get(entry['moduleCatalogueId']) or teams_calendar_sync_verdict(
+                None, [], occurrences_readable=False,
+            )
+            entry['syncState'] = verdict['syncState']
+            entry['syncReasons'] = verdict['syncReasons']
+            entry['expectedOccurrenceCount'] = verdict['expectedOccurrenceCount']
+            entry['differingOccurrenceCount'] = verdict['differingOccurrences']
+            entry['missingFromTeams'] = verdict['missingFromTeams']
+            entry['extraInTeams'] = verdict['extraInTeams']
+
     return curriculum_results_response(results, request=request)
 
 
@@ -14550,6 +14939,7 @@ def get_authoring_structure_payload(module_catalogue_id):
             'reflectionQuestion': component_reflection_question(row),
             'workplaceEvidenceRequired': bool(row.get('workplace_evidence_required')),
             'tutorValidationRequired': bool(row.get('tutor_validation_required')),
+            'coachValidationRequired': component_coach_validation(row),
             'ksbMappings': component_mappings,
             'settings': component_builder_settings(row),
         })
@@ -14760,6 +15150,7 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
             'reflectionQuestion': component_reflection_question(row),
             'workplaceEvidenceRequired': bool(row.get('workplace_evidence_required')),
             'tutorValidationRequired': bool(row.get('tutor_validation_required')),
+            'coachValidationRequired': component_coach_validation(row),
             'ksbMappings': component_mappings,
             'settings': as_json_value(row.get('settings_json'), {}),
         }
@@ -14883,6 +15274,7 @@ CATALOGUE_SUMMARY_COMPONENT_COLUMNS = (
     'expected_otjh', 'points', 'display_order',
     'reflection_required', REFLECTION_QUESTION_COLUMN,
     'workplace_evidence_required', 'tutor_validation_required',
+    'coach_validation_required',
     'deleted_at', 'is_programme_deleted', 'library_state',
 )
 
@@ -15012,6 +15404,7 @@ def authoring_catalogue_summaries(include_programme_deleted=False):
                 'reflectionQuestion': component_reflection_question(row),
                 'workplaceEvidenceRequired': bool(row.get('workplace_evidence_required')),
                 'tutorValidationRequired': bool(row.get('tutor_validation_required')),
+                'coachValidationRequired': component_coach_validation(row),
                 'ksbMappings': [],
                 'settings': component_builder_settings(row),
             })
@@ -16076,6 +16469,7 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
                     REFLECTION_QUESTION_COLUMN: component_reflection,
                     'workplace_evidence_required': False,
                     'tutor_validation_required': bool_payload(component.get('tutorValidationRequired')),
+                    'coach_validation_required': payload_coach_validation(component),
                     'display_order': component_index,
                     'settings_json': json_db_value(component_settings),
                     'live_sessions_link': clean_str(component_settings.get('liveSessionUrl') or component_settings.get('teamsMeetingUrl')),
@@ -21940,7 +22334,23 @@ def curriculum_module_detail(request, identifier):
         # tutor_name while the notification queue never moved.
         if 'tutor' in payload or 'tutorName' in payload or 'tutor_name' in payload:
             notify_staff_assignment_change()
-        return JsonResponse({'updated': True, 'module': result})
+        # Same as the group PATCH: a date, week-count or delivery-day edit moves
+        # the generated plan out from under the Teams series it was sent to, and
+        # the drawer needs to be able to say so while the reader is still there.
+        schedule_changed = any(key in payload for key in (
+            'startDate', 'start_date', 'endDate', 'end_date',
+            'weeks', 'weeksNumber', 'weeks_number',
+            'sessionsNumber', 'sessions_number',
+            'weekDays', 'week_days', 'deliveryDays', 'sessionWeekDay', 'session_week_day',
+            'startTime', 'start_time', 'endTime', 'end_time',
+        ))
+        return JsonResponse({
+            'updated': True,
+            'module': result,
+            'teamsCalendarsToUpdate': (
+                stale_teams_calendar_modules([module_catalogue_id]) if schedule_changed else []
+            ),
+        })
 
     if request.method == 'DELETE' and module_catalogue_id and delete_module_authoring_structure(module_catalogue_id):
         return JsonResponse({'deleted': True, 'deletedAuthoring': True, 'id': identifier})
@@ -22797,6 +23207,93 @@ def curriculum_cohort_group_collection(request, cohort_id):
     return create_curriculum_group(payload)
 
 
+def stale_teams_calendar_modules(catalogue_ids):
+    """Modules whose Teams calendar has been left behind by a schedule edit.
+
+    Moving a module's dates -- or a group's delivery days, which moves every
+    module under it -- changes the plan this system generates. It does not touch
+    the Teams series that plan was sent to: that calendar lives in the
+    organizer's mailbox, and only the Teams Meetings page writes to it. So a save
+    that looks complete quietly leaves learners holding invitations for the old
+    days, and nothing says so until somebody opens the Teams tab.
+
+    Returned so the screen that made the change can say it at the moment it
+    happens. Only modules that actually have a calendar are named: most have
+    none, and warning about a calendar nobody created is noise.
+    """
+    ids = [clean_str(value) for value in (catalogue_ids or []) if clean_str(value)]
+    if not ids:
+        return []
+    try:
+        ensure_live_session_tracking_tables()
+    except (Exception, AssertionError):
+        return []
+    clause, values = curriculum_in_clause('module_catalogue_id', ids)
+    if not clause:
+        return []
+    try:
+        rows = authoring_fetch_all(LIVE_SESSIONS_TABLE, f"status = 'active' and {clause}", values)
+    except (Exception, AssertionError):
+        logger.warning('Could not check Teams calendars after a schedule change.', exc_info=True)
+        return []
+    seen = set()
+    results = []
+    for row in rows:
+        catalogue_id = clean_str(row.get('module_catalogue_id'))
+        if not catalogue_id or catalogue_id in seen:
+            continue
+        seen.add(catalogue_id)
+        results.append({
+            'moduleCatalogueId': catalogue_id,
+            'moduleName': clean_str(row.get('module_title')),
+        })
+    return results
+
+
+def resync_group_module_delivery_counts(previous_rows, delivery_updates):
+    """Re-derive session counts and end dates after a group's delivery days change.
+
+    ``sessions_number`` is the authored week count times the delivery days: a
+    group that starts running Mon+Thu delivers two sessions of every authored
+    week, not the same total squeezed into half the calendar. Pushing the new day
+    list onto the module rows without re-deriving the count left the figure from
+    the old one-day pattern in place, so the generated plan -- and the Teams
+    calendar fed from it -- still produced one date per authored week.
+
+    The end date moves with it, off the same plan every dated view of the module
+    runs, so a module whose calendar has just grown does not keep the finish date
+    of the shorter one.
+
+    ``previous_rows`` are the module rows as they stood *before* the new delivery
+    days were written. The week count is read from them on purpose: a legacy row
+    with no ``weeks_number`` derives its weeks by dividing sessions by the
+    delivery days, and doing that against the new day list would divide a
+    one-day-a-week module's sessions in half and then multiply them straight back
+    -- leaving the very count this is here to correct.
+    """
+    for previous_row in previous_rows or []:
+        catalogue_id = clean_str(previous_row.get('module_catalogue_id'))
+        weeks = module_stored_week_count(previous_row)
+        if not catalogue_id or weeks <= 0:
+            continue
+        module_row = {**previous_row, **delivery_updates}
+        sessions = weeks * delivery_days_per_week(module_row)
+        plan = module_session_plan_for_count(module_row, sessions)
+        end_date = plan.get('finalEndDate') or format_date(module_row.get('end_date'))
+        if (
+            sessions == parse_int(previous_row.get('sessions_number'), 0)
+            and weeks == parse_int(previous_row.get('weeks_number'), 0)
+            and end_date == format_date(previous_row.get('end_date'))
+        ):
+            continue
+        update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [catalogue_id], {
+            'sessions_number': sessions,
+            'weeks_number': weeks,
+            'end_date': end_date or None,
+            'updated_at': datetime.utcnow(),
+        })
+
+
 @csrf_exempt
 def curriculum_group_detail(request, identifier):
     if request.method not in {'PATCH', 'DELETE'}:
@@ -22889,6 +23386,12 @@ def curriculum_group_detail(request, identifier):
             for key in ('session_week_day', 'session_start_time', 'session_end_time')
             if key in updates
         }
+        # Read before the write: the session count is re-derived from the week
+        # count these rows carried under the *old* delivery pattern.
+        previous_module_rows = (
+            authoring_fetch_all(AUTHORING_MODULES_TABLE, 'group_id = %s', [group_id])
+            if module_delivery_updates else []
+        )
         if module_delivery_updates:
             module_delivery_updates['updated_at'] = datetime.utcnow()
             # Module rows are the source used to derive the session calendar.
@@ -22901,6 +23404,14 @@ def curriculum_group_detail(request, identifier):
                 [group_id],
                 module_delivery_updates,
             )
+            # Adding a delivery day adds sessions -- it does not compress the
+            # module into fewer weeks -- so the count derived from the old day
+            # list has to be re-derived before anything reads the calendar off
+            # these rows.
+            if 'session_week_day' in module_delivery_updates:
+                resync_group_module_delivery_counts(previous_module_rows, {
+                    'session_week_day': module_delivery_updates['session_week_day'],
+                })
         next_cohort_id = clean_str(updated_group.get('cohort_id'))
         if next_cohort_id and next_cohort_id != previous_cohort_id:
             if previous_cohort_id:
@@ -22941,7 +23452,16 @@ def curriculum_group_detail(request, identifier):
         reason=','.join(sorted(updates)) or 'no-columns',
     )
     invalidate_curriculum_cache()
-    return JsonResponse({'updated': True, 'id': group_id})
+    # The slot moved, so every Teams calendar under this group is now on the old
+    # days. Named back to the caller so the drawer that made the change can send
+    # the reader to update them rather than leaving it to be discovered.
+    return JsonResponse({
+        'updated': True,
+        'id': group_id,
+        'teamsCalendarsToUpdate': stale_teams_calendar_modules([
+            clean_str(row.get('module_catalogue_id')) for row in previous_module_rows
+        ]) if module_delivery_updates else [],
+    })
 
 
 def module_attachment_authoring_payload(item, group, cohort, catalogue_id, module_name, session_count, start_date, end_date, current_structure=None, source_type='module_authoring', source_id=''):
@@ -24120,6 +24640,7 @@ def provision_week_template_tables():
                 reflection_question text,
                 workplace_evidence_required boolean not null default false,
                 tutor_validation_required boolean not null default false,
+                coach_validation_required boolean not null default true,
                 ksb_mappings {json_type},
                 settings_json {json_type},
                 display_order integer not null default 0,
@@ -24167,6 +24688,22 @@ def provision_week_template_tables():
                 cursor.execute(
                     f'alter table {authoring_table_name(WEEK_TEMPLATE_COMPONENTS_TABLE)} '
                     f'add column {quote_ident(WEEK_TEMPLATE_REFLECTION_QUESTION_COLUMN)} text'
+                )
+        # Coach validation is authored in the same component editor too, so a
+        # template has to round-trip it rather than resetting every placed
+        # component back to on. Default true, matching curriculum.components.
+        if connection.vendor == 'postgresql':
+            cursor.execute(
+                f'alter table {authoring_table_name(WEEK_TEMPLATE_COMPONENTS_TABLE)} '
+                'add column if not exists coach_validation_required boolean not null default true'
+            )
+        else:
+            cursor.execute(f'pragma table_info({quote_ident(WEEK_TEMPLATE_COMPONENTS_TABLE)})')
+            existing = {row[1] for row in cursor.fetchall()}
+            if 'coach_validation_required' not in existing:
+                cursor.execute(
+                    f'alter table {authoring_table_name(WEEK_TEMPLATE_COMPONENTS_TABLE)} '
+                    'add column coach_validation_required boolean not null default 1'
                 )
     # soft_delete_rows() decides what to write through has_column, so a cache
     # entry taken before those columns landed would make the archive a no-op.
@@ -24259,6 +24796,7 @@ def week_template_component_payload(row):
         ),
         'workplaceEvidenceRequired': bool(row.get('workplace_evidence_required')),
         'tutorValidationRequired': bool(row.get('tutor_validation_required')),
+        'coachValidationRequired': component_coach_validation(row),
         'ksbMappings': as_json_value(row.get('ksb_mappings'), []),
         'settings': settings,
         'displayOrder': parse_int(row.get('display_order'), 0),
@@ -24312,6 +24850,7 @@ def save_week_template_components(template_id, components):
             WEEK_TEMPLATE_REFLECTION_QUESTION_COLUMN: reflection_question,
             'workplace_evidence_required': bool(component.get('workplaceEvidenceRequired')),
             'tutor_validation_required': bool(component.get('tutorValidationRequired')),
+            'coach_validation_required': payload_coach_validation(component),
             'ksb_mappings': json_db_value(component.get('ksbMappings') or []),
             'settings_json': json_db_value(component_settings),
             'display_order': index,

@@ -275,6 +275,8 @@ export interface CurriculumComponent {
   reflectionQuestion?: string;
   workplaceEvidenceRequired?: boolean;
   tutorValidationRequired?: boolean;
+  /** Coach sign-off. Absent means on - see ModuleComponent.coachValidationRequired. */
+  coachValidationRequired?: boolean;
   ksbRefs: string[];
   ksbMappings?: Array<{
     id: string;
@@ -1208,6 +1210,20 @@ export interface CurriculumTeamsMeetingSummary {
   updatedAt: string;
   /** Only present when asked for: the dates Teams currently holds, in order. */
   occurrenceDates?: string[];
+  /**
+   * Only present when `occurrenceDates` was asked for: the backend's own
+   * verdict on whether the tracked Teams occurrences still match the module's
+   * *current* plan — computed against the authoring rows, not the (possibly
+   * cached) session list this page also reads. `'unverified'` means the
+   * comparison could not be made safely (a Neon read failed, the module row is
+   * gone, nothing is tracked yet) and must never be shown as agreement.
+   */
+  syncState?: 'in-sync' | 'out-of-sync' | 'no-sessions' | 'unverified';
+  syncReasons?: string[];
+  expectedOccurrenceCount?: number;
+  differingOccurrenceCount?: number;
+  missingFromTeams?: string[];
+  extraInTeams?: string[];
 }
 
 /** One scheduled instance of a live-session series. `status` is authored by the
@@ -2637,7 +2653,7 @@ export function createCohortGroup(cohortId: string, input: Omit<CurriculumGroupI
 }
 
 export function updateCurriculumGroup(id: string, input: CurriculumGroupInput) {
-  return patchJson<{ updated: boolean; id: string }>(`/curriculum/groups/${encodeURIComponent(id)}/`, input);
+  return patchJson<{ updated: boolean; id: string; teamsCalendarsToUpdate?: StaleTeamsCalendar[] }>(`/curriculum/groups/${encodeURIComponent(id)}/`, input);
 }
 
 export function archiveCurriculumGroup(id: string) {
@@ -2755,8 +2771,19 @@ export function createCurriculumModule(input: CurriculumModuleInput) {
   return postJson<{ created: boolean; module: CurriculumModule }>('/curriculum/modules/', input);
 }
 
+/**
+ * A module whose Teams calendar a schedule edit has just left behind. The saves
+ * that move dates name these back so the drawer can say so on the spot: the
+ * calendar itself is only ever written from the Teams Meetings page, so nothing
+ * about a date change reaches Teams on its own.
+ */
+export interface StaleTeamsCalendar {
+  moduleCatalogueId: string;
+  moduleName: string;
+}
+
 export function updateCurriculumModule(id: string, input: CurriculumModuleInput) {
-  return patchJson<{ updated: boolean; module: CurriculumModule }>(`/curriculum/modules/${encodeURIComponent(id)}/`, input);
+  return patchJson<{ updated: boolean; module: CurriculumModule; teamsCalendarsToUpdate?: StaleTeamsCalendar[] }>(`/curriculum/modules/${encodeURIComponent(id)}/`, input);
 }
 
 export function archiveCurriculumModule(id: string) {

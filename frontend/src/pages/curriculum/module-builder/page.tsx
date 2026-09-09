@@ -10,6 +10,14 @@ import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { formatHoursMinutes } from '@/lib/format';
+// Assigning learners to a module is a learning-plan save, not a roster of its
+// own: the picker ticks this module on and off each learner's plan on
+// enrolment."Created_users". See backend/learner_api/learning_plan.py.
+import {
+  fetchModuleLearners,
+  saveModuleLearners,
+  type ModuleLearnerRow,
+} from '@/api/learningPlan';
 import {
   fetchCurriculumHolidays,
   fetchCurriculumOverview,
@@ -235,6 +243,22 @@ async function showBuilderDeleteSwal({
   });
 }
 
+/**
+ * Coach validation is on for every component. Turning it off is the exception,
+ * so it costs a confirmation rather than one stray click on a checkbox sitting
+ * between two that toggle freely.
+ */
+function confirmCoachValidationOff(onConfirm: () => void) {
+  return showCurriculumConfirm({
+    title: 'Turn off coach validation?',
+    text: 'Coach validation is on for every component. Turn it off and no coach has to sign this component off before it counts.',
+    icon: 'warning',
+    confirmButtonText: 'Turn it off',
+    cancelButtonText: 'Keep it on',
+    onConfirm,
+  });
+}
+
 export default function ModuleBuilder() {
   const reduceMotion = useReducedMotion();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -292,6 +316,10 @@ export default function ModuleBuilder() {
   const [ksbTarget, setKsbTarget] = useState<KsbTarget | null>(null);
   const [ksbMapModule, setKsbMapModule] = useState<ModuleBuilderListItem | null>(null);
   const [programmeKsbMap, setProgrammeKsbMap] = useState<ProgrammeKsbMapState | null>(null);
+  // The module whose learner assignment is open. Holds the catalogue id the
+  // plan refers to plus the title, so the modal names the module it is about
+  // without keeping a whole list item alive.
+  const [assignLearnersModule, setAssignLearnersModule] = useState<{ moduleId: string; title: string } | null>(null);
   const [ksbMapLoadingId, setKsbMapLoadingId] = useState<string | null>(null);
   const [programmeKsbLoading, setProgrammeKsbLoading] = useState(false);
   const [sessionKsbMappingOpen, setSessionKsbMappingOpen] = useState(false);
@@ -975,6 +1003,16 @@ export default function ModuleBuilder() {
       setOpeningModuleComplete(false);
     }
   }, [finishLoadingProgress, resolveModuleScopeLock]);
+
+  // The plan refers to modules by their catalogue id, so a module with no
+  // canonical one cannot be assigned. The picker says so itself rather than
+  // this hiding the button, so the gap is named where it is acted on.
+  const openAssignLearners = useCallback((module: ModuleCatalogueItem) => {
+    setAssignLearnersModule({
+      moduleId: moduleStructureIdentifier(module) || '',
+      title: module.title,
+    });
+  }, []);
 
   const openKsbMap = useCallback(async (module: ModuleBuilderListItem) => {
     const loadingId = module.catalogueId || moduleStructureIdentifier(module) || module.title;
@@ -2117,6 +2155,7 @@ export default function ModuleBuilder() {
                     teamsSummary={teamsByModule.get(normaliseDeepLinkValue(module.catalogueId))}
                     onKsbMap={() => { void openKsbMap(module); }}
                     ksbMapLoading={ksbMapLoadingId === (module.catalogueId || moduleStructureIdentifier(module) || module.title)}
+                    onAssignLearners={() => openAssignLearners(module)}
                     onBuild={() => openModule(module)}
                     onSettings={() => openPlacementForm(module)}
                     onDuplicate={() => duplicateModule(module)}
@@ -2244,6 +2283,13 @@ export default function ModuleBuilder() {
               setKsbMapModule(null);
               void openModule(module);
             }}
+          />
+        )}
+        {assignLearnersModule && (
+          <AssignLearnersModal
+            moduleId={assignLearnersModule.moduleId}
+            moduleTitle={assignLearnersModule.title}
+            onClose={() => setAssignLearnersModule(null)}
           />
         )}
         {programmeKsbMap && (
@@ -2482,6 +2528,34 @@ function WorkspaceActionFooter({ saving, saved, onPreview, onEditModule, onModul
   );
 }
 
+/** The Monday of the calendar week a session date falls in, as 'YYYY-MM-DD'. */
+function mondayKeyOf(sessionDate: string): string {
+  const date = new Date(`${sessionDate.slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return '';
+  date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * The month a calendar week belongs to: the one holding most of its seven days.
+ *
+ * A week straddling a month boundary has to be counted once, not in both
+ * months — otherwise a module whose last August session lands on the final
+ * Monday shows five weeks in August and two in September for six weeks of
+ * delivery. Seven days never split evenly, so there is always a clear owner.
+ */
+function owningMonthKeyOf(mondayKey: string): string {
+  const monday = new Date(`${mondayKey}T12:00:00`);
+  const daysPerMonth = new Map<string, number>();
+  for (let offset = 0; offset < 7; offset += 1) {
+    const day = new Date(monday);
+    day.setDate(monday.getDate() + offset);
+    const key = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}`;
+    daysPerMonth.set(key, (daysPerMonth.get(key) || 0) + 1);
+  }
+  return [...daysPerMonth.entries()].sort((left, right) => right[1] - left[1])[0][0];
+}
+
 // Course structure: a week navigator whose rows double as an accordion —
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
@@ -2518,6 +2592,20 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   // week but delivered and reported on by month, so the rail says which month
   // each stretch of weeks belongs to. Empty until the module has session dates.
   const monthGroups = groupWeeksByMonth(module.weekStructure);
+  // Which months have sessions in each calendar week the module runs in. A week
+  // is normally counted by the month owning most of its days, but if that month
+  // has no session in it the week would vanish from every count — so it stays
+  // with the month that does deliver in it.
+  const monthKeysByCalendarWeek = new Map<string, Set<string>>();
+  monthGroups.forEach(group => {
+    group.weeks.forEach(week => {
+      const mondayKey = week.sessionDate ? mondayKeyOf(week.sessionDate) : '';
+      if (!mondayKey) return;
+      const months = monthKeysByCalendarWeek.get(mondayKey) || new Set<string>();
+      months.add(group.key);
+      monthKeysByCalendarWeek.set(mondayKey, months);
+    });
+  });
   const monthHeadings = new Map(monthGroups.flatMap(group => {
     const first = group.weeks[0];
     if (!first) return [];
@@ -2526,8 +2614,39 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
       0,
     );
     const components = group.weeks.reduce((total, week) => total + week.components.length, 0);
-    return [[first.id, { label: group.label, weeks: group.weeks.length, components, otjh }]];
+    const sessionDates = group.weeks.map(week => week.sessionDate).filter((value): value is string => Boolean(value));
+    const mondayKeys = new Set(sessionDates.map(mondayKeyOf).filter(Boolean));
+    const calendarWeeks = [...mondayKeys].filter(mondayKey => {
+      const owner = owningMonthKeyOf(mondayKey);
+      return owner === group.key || !monthKeysByCalendarWeek.get(mondayKey)?.has(owner);
+    }).length;
+    // How many days a week the module runs on, to explain why the row numbers
+    // outrun the week count.
+    const daysPerWeek = new Set(
+      sessionDates.map(value => new Date(`${value.slice(0, 10)}T12:00:00`).getDay()),
+    ).size;
+    return [[first.id, { label: group.label, rows: group.weeks.length, calendarWeeks, daysPerWeek, components, otjh }]];
   }));
+  // Which month heading each week falls under, so collapsing a heading (keyed
+  // by its first week's id) can hide every week in that stretch, not just the
+  // heading row itself.
+  const monthGroupIdByWeekId = new Map(monthGroups.flatMap(group => {
+    const first = group.weeks[0];
+    if (!first) return [];
+    return group.weeks.map(week => [week.id, first.id] as const);
+  }));
+  const [collapsedMonthIds, setCollapsedMonthIds] = useState<Set<string>>(new Set());
+  const toggleMonthCollapsed = (monthId: string) => {
+    setCollapsedMonthIds(prev => {
+      const next = new Set(prev);
+      if (next.has(monthId)) {
+        next.delete(monthId);
+      } else {
+        next.add(monthId);
+      }
+      return next;
+    });
+  };
 
   const toggleExpanded = (weekId: string) => {
     const next = new Set(expandedWeekIds);
@@ -2619,17 +2738,41 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
           const expanded = expandedWeekIds.has(week.id);
           const totalOtjh = week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
           const monthHeading = monthHeadings.get(week.id);
+          const monthGroupId = monthGroupIdByWeekId.get(week.id);
+          const monthCollapsed = monthGroupId ? collapsedMonthIds.has(monthGroupId) : false;
+          if (monthCollapsed && !monthHeading) return null;
+          // Undated weeks sit in no calendar week, so the row count is the only
+          // week count there is.
+          const monthHeadingWeeks = monthHeading ? monthHeading.calendarWeeks || monthHeading.rows : 0;
           return (
             <Fragment key={week.id}>
             {monthHeading && (
-              <div className="flex items-baseline justify-between gap-2 px-1 pb-0.5 pt-2 first:pt-0">
-                <p className="text-[11px] font-heading font-bold uppercase tracking-wider text-primary-700">{monthHeading.label}</p>
-                <p className="text-[10px] font-semibold text-foreground-400">
-                  {monthHeading.weeks} {monthHeading.weeks === 1 ? 'week' : 'weeks'} · {formatHoursMinutes(monthHeading.otjh)}
-                </p>
-              </div>
+              <button
+                type="button"
+                onClick={() => toggleMonthCollapsed(week.id)}
+                aria-expanded={!monthCollapsed}
+                className="w-full rounded-lg px-1 pb-1 pt-2 text-left first:pt-0 hover:bg-background-100"
+              >
+                <span className="flex items-baseline justify-between gap-2">
+                  <span className="flex items-center gap-1 text-[11px] font-heading font-bold uppercase tracking-wider text-primary-700">
+                    <AppIcon className={monthCollapsed ? 'ri-arrow-right-s-line' : 'ri-arrow-down-s-line'}></AppIcon>
+                    {monthHeading.label}
+                  </span>
+                  <span className="text-[10px] font-semibold text-foreground-400">
+                    {monthHeadingWeeks} {monthHeadingWeeks === 1 ? 'week' : 'weeks'} · {formatHoursMinutes(monthHeading.otjh)}
+                  </span>
+                </span>
+                {/* Says why the row numbers run past the week count: a module
+                    delivered twice a week authors two "Week" rows per calendar
+                    week, so eight rows in August are four weeks, not eight. */}
+                {monthHeading.rows > monthHeadingWeeks && monthHeading.daysPerWeek > 1 && (
+                  <span className="mt-0.5 block pl-5 text-[10px] font-medium leading-snug text-foreground-400">
+                    {monthHeading.daysPerWeek} delivery days a week, so the {monthHeading.rows} rows below run over {monthHeadingWeeks} {monthHeadingWeeks === 1 ? 'week' : 'weeks'}
+                  </span>
+                )}
+              </button>
             )}
-            <div
+            {monthCollapsed ? null : <div
               className={`overflow-visible rounded-xl border transition-smooth ${dragging ? 'border-primary-300 bg-background-50 shadow-lg ring-2 ring-primary-200' : active ? 'border-primary-300 bg-primary-50/70 shadow-sm shadow-primary-100/60' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}
             >
               <div
@@ -2694,7 +2837,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                   />
                 </div>
               )}
-            </div>
+            </div>}
             </Fragment>
           );
         })}
@@ -3062,6 +3205,17 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
             <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
               <Checkbox label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
               <Checkbox label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+              <Checkbox
+                label="Coach validation"
+                checked={component.coachValidationRequired}
+                onChange={value => {
+                  if (value) {
+                    onChange({ coachValidationRequired: true });
+                    return;
+                  }
+                  void confirmCoachValidationOff(() => onChange({ coachValidationRequired: false }));
+                }}
+              />
             </div>
             <TextArea label="Completion rule" value={String(component.settings.completionRule ?? 'Mark complete')} onChange={value => onSettingChange('completionRule', value)} rows={2} />
             {/* Only asked for once reflection is required — there is nowhere for
@@ -4046,7 +4200,11 @@ function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, 
               <TextInput label="Module title" value={module.title} onChange={value => onChange({ title: value })} />
               <SelectInput label="Status" value={module.status} options={['draft', 'review', 'published']} onChange={value => onChange({ status: value })} />
               <NumberInput label="Weeks" value={module.weeks} min={1} step={1} onChange={value => resizeWeeks(module, value, onChange)} />
-              <NumberInput label="Total OTJH hours" value={module.declaredTotalOtjh ?? module.totalOtjh} min={0} step={0.25} onChange={value => onChange({ declaredTotalOtjh: value })} />
+              {/* Derived, never typed: the module total is the sum of every
+                  component's Expected OTJH across every week. It was an editable
+                  box, but the save recomputes it from the components anyway, so
+                  anything typed here was discarded on the next save. */}
+              <ReadOnlyInput label="Total OTJH hours" value={formatHoursMinutes(module.totalOtjh)} />
             </div>
             <TextArea label="Short description" value={module.description} onChange={value => onChange({ description: value })} rows={3} />
           </SettingsSection>
@@ -5702,11 +5860,453 @@ function ReadOnlyMetricChip({ label, value, suffix, tone }: {
   );
 }
 
+/**
+ * Who is taught this module.
+ *
+ * There is no module roster: a learner is taught a module because that module
+ * is on their learning plan, so ticking a box here appends it to their plan and
+ * unticking removes it (see backend/learner_api/learning_plan.py). The list is
+ * every learner in enrolment."Created_users", both apprenticeship and
+ * commercial, because a module can be taught outside its own programme.
+ *
+ * A tick the learner inherited from their group's preset is labelled as the
+ * group's rather than shown as an agreed choice, and saving with it untouched
+ * writes nothing -- opening this picker must not quietly turn presets into
+ * agreed plans.
+ */
+function AssignLearnersModal({ moduleId, moduleTitle, onClose }: {
+  moduleId: string;
+  moduleTitle: string;
+  onClose: () => void;
+}) {
+  const [learners, setLearners] = useState<ModuleLearnerRow[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [assignedAtLoad, setAssignedAtLoad] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [programmeFilter, setProgrammeFilter] = useState('');
+  const [cohortFilter, setCohortFilter] = useState('');
+  const [groupFilter, setGroupFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [assignedOnly, setAssignedOnly] = useState(false);
+
+  const applyResponse = useCallback((rows: ModuleLearnerRow[]) => {
+    setLearners(rows);
+    const assigned = new Set(rows.filter(row => row.assigned).map(row => row.id));
+    setSelected(new Set(assigned));
+    setAssignedAtLoad(assigned);
+  }, []);
+
+  useEffect(() => {
+    if (!moduleId) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetchModuleLearners(moduleId)
+      .then(response => {
+        if (cancelled) return;
+        applyResponse(response.learners);
+      })
+      .catch(err => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : 'Unable to load learners.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [moduleId, applyResponse]);
+
+  const programmes = useMemo(
+    () => Array.from(new Set(learners.map(row => row.programme).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [learners],
+  );
+  // Cohort and group options narrow to the placement already chosen: a
+  // programme's cohorts, then that cohort's groups. Offering all 60 cohorts
+  // under one programme would be a list of dead ends.
+  const cohorts = useMemo(
+    () => Array.from(new Set(learners
+      .filter(row => !programmeFilter || row.programme === programmeFilter)
+      .map(row => row.cohort)
+      .filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [learners, programmeFilter],
+  );
+  const groups = useMemo(
+    () => Array.from(new Set(learners
+      .filter(row => (!programmeFilter || row.programme === programmeFilter) && (!cohortFilter || row.cohort === cohortFilter))
+      .map(row => row.group)
+      .filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [learners, programmeFilter, cohortFilter],
+  );
+  const learnerTypes = useMemo(
+    () => Array.from(new Set(learners.map(row => row.learnerType.trim().toLowerCase()).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [learners],
+  );
+  const statuses = useMemo(
+    () => Array.from(new Set(learners.map(row => row.programmeStatus.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [learners],
+  );
+
+  const filtered = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return learners.filter(row => {
+      if (programmeFilter && row.programme !== programmeFilter) return false;
+      if (cohortFilter && row.cohort !== cohortFilter) return false;
+      if (groupFilter && row.group !== groupFilter) return false;
+      if (typeFilter && row.learnerType.trim().toLowerCase() !== typeFilter) return false;
+      if (statusFilter && row.programmeStatus.trim() !== statusFilter) return false;
+      if (assignedOnly && !selected.has(row.id)) return false;
+      if (!needle) return true;
+      return [row.name, row.email, row.programme, row.cohort, row.group]
+        .some(value => value.toLowerCase().includes(needle));
+    });
+  }, [learners, search, programmeFilter, cohortFilter, groupFilter, typeFilter, statusFilter, assignedOnly, selected]);
+
+  const activeFilterCount = [programmeFilter, cohortFilter, groupFilter, typeFilter, statusFilter].filter(Boolean).length
+    + (search.trim() ? 1 : 0)
+    + (assignedOnly ? 1 : 0);
+  const clearFilters = () => {
+    setSearch('');
+    setProgrammeFilter('');
+    setCohortFilter('');
+    setGroupFilter('');
+    setTypeFilter('');
+    setStatusFilter('');
+    setAssignedOnly(false);
+  };
+
+  const toAdd = useMemo(
+    () => Array.from(selected).filter(id => !assignedAtLoad.has(id)).length,
+    [selected, assignedAtLoad],
+  );
+  const toRemove = useMemo(
+    () => Array.from(assignedAtLoad).filter(id => !selected.has(id)).length,
+    [selected, assignedAtLoad],
+  );
+  const dirty = toAdd > 0 || toRemove > 0;
+
+  const toggle = (id: string) => {
+    setSelected(previous => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  // Select/clear act on what is on screen, not the whole directory: a filtered
+  // list with a "select all" that silently ticked 400 hidden learners would be
+  // the one mistake this picker must not make.
+  const setAllFiltered = (assign: boolean) => {
+    setSelected(previous => {
+      const next = new Set(previous);
+      filtered.forEach(row => { if (assign) next.add(row.id); else next.delete(row.id); });
+      return next;
+    });
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const response = await saveModuleLearners(moduleId, Array.from(selected));
+      applyResponse(response.learners);
+      const changed = response.changedCount ?? 0;
+      await showCurriculumAlert({
+        title: 'Learners assigned',
+        text: changed
+          ? `${changed} learner${changed === 1 ? "'s" : "s'"} plan${changed === 1 ? '' : 's'} updated for ${moduleTitle}.`
+          : `No plans needed changing for ${moduleTitle}.`,
+        timer: 1800,
+      });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to save the assignment.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[86] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={saving ? undefined : onClose}>
+      <div className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
+        <div className="flex flex-col gap-3 bg-primary-950 px-5 py-4 text-white lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-white/60">Learning plans</p>
+            <h3 className="mt-0.5 text-base font-heading font-bold text-white">Assign learners</h3>
+            <p className="mt-1 line-clamp-1 text-[12px] font-semibold text-white/70">{moduleTitle}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <MetricPill label="Assigned" value={String(selected.size)} />
+            <MetricPill label="Learners" value={String(learners.length)} />
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              className="ml-1 flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20 disabled:opacity-50"
+            >
+              <AppIcon className="ri-close-line"></AppIcon>
+            </button>
+          </div>
+        </div>
+
+        {!moduleId ? (
+          <div className="p-6">
+            <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] font-semibold text-amber-800">
+              This module has no catalogue id yet, and a learning plan refers to modules by that id. Save the module from Edit module first, then assign learners to it.
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="space-y-2 border-b border-background-200 bg-background-100/50 px-5 py-3">
+              <label className="relative block">
+                <span className="sr-only">Search learners</span>
+                <AppIcon className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
+                <input
+                  value={search}
+                  onChange={event => setSearch(event.target.value)}
+                  placeholder="Search by name, email, cohort or group"
+                  className="h-9 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[12px] font-semibold text-foreground-800 focus:border-primary-300 focus:outline-none"
+                />
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Changing a placement clears the narrower ones under it, so a
+                    programme's cohort can never sit over another programme's
+                    group and filter the list down to nobody. */}
+                <PickerFilter
+                  label="All programmes"
+                  value={programmeFilter}
+                  options={programmes}
+                  onChange={value => { setProgrammeFilter(value); setCohortFilter(''); setGroupFilter(''); }}
+                />
+                <PickerFilter
+                  label="All cohorts"
+                  value={cohortFilter}
+                  options={cohorts}
+                  onChange={value => { setCohortFilter(value); setGroupFilter(''); }}
+                />
+                <PickerFilter
+                  label="All groups"
+                  value={groupFilter}
+                  options={groups}
+                  onChange={setGroupFilter}
+                />
+                {learnerTypes.length > 1 && (
+                  <PickerFilter
+                    label="All learner types"
+                    value={typeFilter}
+                    options={learnerTypes}
+                    onChange={setTypeFilter}
+                    optionLabel={value => value.charAt(0).toUpperCase() + value.slice(1)}
+                  />
+                )}
+                {statuses.length > 1 && (
+                  <PickerFilter
+                    label="All statuses"
+                    value={statusFilter}
+                    options={statuses}
+                    onChange={setStatusFilter}
+                  />
+                )}
+                <label className="inline-flex h-9 items-center gap-2 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700">
+                  <input
+                    type="checkbox"
+                    checked={assignedOnly}
+                    onChange={event => setAssignedOnly(event.target.checked)}
+                    className="h-3.5 w-3.5 accent-primary-600"
+                  />
+                  Assigned only
+                </label>
+                {activeFilterCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
+                  >
+                    <AppIcon className="ri-filter-off-line text-[12px]"></AppIcon>
+                    Clear {activeFilterCount} filter{activeFilterCount === 1 ? '' : 's'}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-background-200 px-5 py-2">
+              <p className="text-[11px] font-semibold text-foreground-500">
+                {loading ? 'Loading learners...' : `Showing ${filtered.length} of ${learners.length} learners`}
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAllFiltered(true)}
+                  disabled={loading || saving || !filtered.length}
+                  className="rounded-lg border border-background-200 bg-background-50 px-2.5 py-1 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:opacity-40"
+                >
+                  Select shown
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAllFiltered(false)}
+                  disabled={loading || saving || !filtered.length}
+                  className="rounded-lg border border-background-200 bg-background-50 px-2.5 py-1 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:opacity-40"
+                >
+                  Clear shown
+                </button>
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              {loading ? (
+                <div className="space-y-2">
+                  {Array.from({ length: 6 }).map((_, index) => (
+                    <div key={index} className="h-14 animate-pulse rounded-xl bg-background-200/60" />
+                  ))}
+                </div>
+              ) : filtered.length ? (
+                <ul className="space-y-2">
+                  {filtered.map(row => {
+                    const checked = selected.has(row.id);
+                    return (
+                      <li key={row.id}>
+                        <label
+                          className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-smooth ${checked
+                            ? 'border-primary-200 bg-primary-50/60'
+                            : 'border-background-200 bg-background-50 hover:border-primary-100 hover:bg-background-100/50'}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={saving}
+                            onChange={() => toggle(row.id)}
+                            className="mt-0.5 h-4 w-4 accent-primary-600"
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="flex flex-wrap items-center gap-2">
+                              <span className="truncate text-[12.5px] font-bold text-foreground-950">{row.name}</span>
+                              {row.learnerType.toLowerCase() === 'commercial' && (
+                                <span className="rounded-full border border-background-200 bg-background-100 px-2 py-0.5 text-[9.5px] font-bold uppercase text-foreground-500">Commercial</span>
+                              )}
+                              {row.programmeStatus && (
+                                <span className="rounded-full border border-background-200 bg-background-100 px-2 py-0.5 text-[9.5px] font-bold text-foreground-500">{row.programmeStatus}</span>
+                              )}
+                            </span>
+                            <span className="mt-0.5 block truncate text-[11px] font-semibold text-foreground-500">
+                              {[row.programme, row.cohort, row.group].filter(Boolean).join(' - ') || 'No programme placement yet'}
+                            </span>
+                            <span className="mt-0.5 block truncate text-[10.5px] text-foreground-400">
+                              {row.email || 'No email on record'}
+                              {' - '}
+                              {row.moduleCount} module{row.moduleCount === 1 ? '' : 's'} on plan
+                            </span>
+                            {row.fromPreset && (
+                              <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[9.5px] font-bold text-amber-800">
+                                <AppIcon className="ri-group-line text-[10px]"></AppIcon>
+                                From {row.group || 'their group'}&apos;s preset, not an agreed plan
+                              </span>
+                            )}
+                          </span>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : learners.length ? (
+                <div className="px-4 py-8 text-center">
+                  <p className="text-[12px] font-semibold text-foreground-600">
+                    None of the {learners.length} learners match {activeFilterCount === 1 ? 'this filter' : 'these filters'}.
+                  </p>
+                  {activeFilterCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={clearFilters}
+                      className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 py-1.5 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100"
+                    >
+                      <AppIcon className="ri-filter-off-line text-[12px]"></AppIcon>
+                      Clear {activeFilterCount === 1 ? 'it' : 'them all'}
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <EmptyState text="There are no learners on record yet." />
+              )}
+            </div>
+          </>
+        )}
+
+        <div className="flex flex-col gap-3 border-t border-background-200 bg-background-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-[11px] font-semibold text-foreground-500">
+            {error
+              ? <span className="text-red-600">{error}</span>
+              : dirty
+                ? `${toAdd} to add, ${toRemove} to remove. Saving writes each learner's plan.`
+                : 'Ticking a learner adds this module to their learning plan.'}
+          </p>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              className="rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-semibold text-foreground-700 transition-smooth hover:bg-background-100 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => { void save(); }}
+              disabled={!moduleId || loading || saving || !dirty}
+              aria-busy={saving}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-4 py-2 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-check-line'}></AppIcon>
+              {saving ? 'Saving...' : 'Save assignment'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// One filter in the Assign learners picker. Disabled rather than hidden when
+// the rows above it leave nothing to choose from, so the filter bar keeps the
+// same shape and the greyed control says the narrowing already happened.
+function PickerFilter({ label, value, options, onChange, optionLabel }: {
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+  optionLabel?: (value: string) => string;
+}) {
+  return (
+    <label className="inline-flex">
+      <span className="sr-only">{label}</span>
+      <select
+        value={value}
+        onChange={event => onChange(event.target.value)}
+        disabled={options.length === 0}
+        className={`h-9 max-w-[190px] rounded-lg border px-2 text-[12px] font-semibold focus:outline-none disabled:cursor-not-allowed disabled:opacity-50 ${value
+          ? 'border-primary-300 bg-primary-50 text-primary-800'
+          : 'border-background-200 bg-background-50 text-foreground-700 focus:border-primary-300'}`}
+      >
+        <option value="">{options.length === 0 ? `${label} (none)` : label}</option>
+        {options.map(option => (
+          <option key={option} value={option}>{optionLabel ? optionLabel(option) : option}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function ModuleCatalogueCard({
   module,
   teamsSummary,
   onKsbMap,
   ksbMapLoading,
+  onAssignLearners,
   onBuild,
   onSettings,
   onDuplicate,
@@ -5716,6 +6316,7 @@ function ModuleCatalogueCard({
   teamsSummary?: CurriculumTeamsMeetingSummary;
   onKsbMap: () => void;
   ksbMapLoading: boolean;
+  onAssignLearners: () => void;
   onBuild: () => void;
   onSettings: () => void;
   onDuplicate: () => void;
@@ -5790,6 +6391,17 @@ function ModuleCatalogueCard({
               Open delivery
             </Link>
           )}
+          {/* Beside Open delivery, and shown whether or not the module has a
+              delivery row: who is taught a module is their learning plan, which
+              exists before the module is scheduled anywhere. */}
+          <button
+            type="button"
+            onClick={onAssignLearners}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-100 focus:ring-offset-1"
+          >
+            <AppIcon name="ri-user-add-line" size={15}></AppIcon>
+            Assign learners
+          </button>
           <button
             onClick={onKsbMap}
             disabled={ksbMapLoading}

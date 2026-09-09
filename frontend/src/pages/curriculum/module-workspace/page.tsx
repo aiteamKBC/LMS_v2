@@ -525,12 +525,20 @@ export default function ModuleWorkspacePage() {
   const componentCount = weekStructure.reduce((sum, week) => sum + (week.components?.length || 0), 0);
   const totalOtjh = structure?.totalOtjh ?? 0;
 
-  // Each week runs its own live session, one per session number -- so the plan
-  // preview built for the Schedule tab is also where a week's date lives. See
-  // "Every week gets its own live session" for why that pairing holds.
+  // A week's date is the first date it consumes, and a week can consume more
+  // than one: a group delivering Mon+Thu runs two live sessions of the same
+  // week, so week 2 starts on session 3 rather than session 2. The walk is the
+  // one `liveSessionNamesByNumber` does -- live components take the flat plan in
+  // week-then-display order, and a content-only week still takes one date -- so
+  // pairing week number with session number reads a week onto the wrong day the
+  // moment a group delivers more than once a week.
+  const planSessionDates = (plan?.sessions || []).map(session => session.date);
   const weekDateByNumber = new Map<number, string>();
-  (plan?.sessions || []).forEach(session => {
-    if (session.sessionNumber) weekDateByNumber.set(session.sessionNumber, session.date);
+  let planDateCursor = 0;
+  weekStructure.forEach(week => {
+    const liveComponents = (week.components || []).filter(component => component.type === 'live-session');
+    weekDateByNumber.set(week.weekNumber, planSessionDates[planDateCursor] || '');
+    planDateCursor += Math.max(1, liveComponents.length);
   });
   const weekMonthGroups: Array<{ key: string; label: string; weeks: typeof weekStructure }> = [];
   weekStructure.forEach(week => {

@@ -13,6 +13,10 @@ urlpatterns = [
     # The learner's learning plan: their group's modules, editable within the
     # same programme. Offered once the learner reaches Delivery.
     path("learning-plan/<int:pk>/", learning_plan.learning_plan, name="learning-plan"),
+    # The same assignment from the module's side: one module, every learner,
+    # ticked on or off. A tick is a plan save, so it writes the very same
+    # "Created_users" plan the route above reads.
+    path("module-learners/<str:module_id>/", learning_plan.module_learners, name="module-learners"),
     # The modules taught alongside one module — the alternatives a learner can be
     # shifted onto. The shift itself is a plan save, so it has no endpoint here.
     # "options/" before the <int:pk> route, which would otherwise never be

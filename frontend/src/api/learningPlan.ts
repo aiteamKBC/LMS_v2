@@ -8,6 +8,7 @@
 // ============================================================================
 import { formatHoursMinutes } from '@/lib/format';
 const BASE = '/learner_api/learning-plan';
+const MODULE_BASE = '/learner_api/module-learners';
 
 export interface LearningPlanModule {
   moduleId: string;
@@ -111,4 +112,73 @@ export function formatPlanDate(value?: string): string {
 
 export function formatHours(hours: number): string {
   return formatHoursMinutes(Number(hours || 0));
+}
+
+// ---------------------------------------------------------------------------
+// The same assignment from the module's side
+// ---------------------------------------------------------------------------
+// The Module builder's "Assign learners" picker: one module, every learner in
+// enrolment."Created_users", ticked on or off. A tick is a plan save — it
+// appends this module to that learner's plan and an untick removes it — so
+// there is no second roster to disagree with the plans above.
+// ---------------------------------------------------------------------------
+
+/** One learner in the picker, with whether this module is already theirs. */
+export interface ModuleLearnerRow {
+  id: string;
+  name: string;
+  email: string;
+  /** 'apprenticeship' | 'commercial'. */
+  learnerType: string;
+  programme: string;
+  cohort: string;
+  group: string;
+  programmeStatus: string;
+  assigned: boolean;
+  /**
+   * Assigned because their group teaches this module, not because anyone
+   * agreed their plan. Saving the picker unchanged leaves it that way.
+   */
+  fromPreset: boolean;
+  /** How many modules their plan holds in total, this one included. */
+  moduleCount: number;
+}
+
+export interface ModuleLearnersResponse {
+  module: {
+    moduleId: string;
+    moduleTitle: string;
+    programmeId: string;
+    programmeName: string;
+    groupName: string;
+    hours: number;
+    startDate: string;
+    endDate: string;
+  };
+  learners: ModuleLearnerRow[];
+  totals: { learnerCount: number; assignedCount: number };
+  /** Only on a save: how many learners' plans actually changed. */
+  changedCount?: number;
+}
+
+export async function fetchModuleLearners(moduleId: string): Promise<ModuleLearnersResponse> {
+  return parse(await fetch(`${MODULE_BASE}/${encodeURIComponent(moduleId)}/`));
+}
+
+/**
+ * Set who is assigned to this module. The list is the whole assignment, not a
+ * delta: a learner left out of it has the module removed from their plan.
+ *
+ */
+export async function saveModuleLearners(
+  moduleId: string,
+  learnerIds: Array<string | number>,
+): Promise<ModuleLearnersResponse> {
+  return parse(
+    await fetch(`${MODULE_BASE}/${encodeURIComponent(moduleId)}/`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ learnerIds: learnerIds.map(String) }),
+    }),
+  );
 }
