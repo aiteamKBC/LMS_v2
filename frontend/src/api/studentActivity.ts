@@ -30,6 +30,23 @@ export interface StudentActivityItem {
   new_attempt_count?: number;
 }
 
+export interface DirectOtjhActivity {
+  kind: string;
+  componentId?: string | null;
+  quizId?: string | number | null;
+  componentTitle?: string | null;
+  componentType?: string | null;
+  moduleTitle?: string | null;
+  weekTitle?: string | null;
+  reportedTime?: string | null;
+  claimedSeconds?: number | null;
+  verifiedSeconds?: number | null;
+  timeTrackingSource?: string | null;
+  expectedOtjh?: number | null;
+  submittedAt?: string | null;
+  passed?: boolean | null;
+}
+
 export interface StudentActivityResponse {
   learner_name: string;
   count: number;
@@ -37,6 +54,10 @@ export interface StudentActivityResponse {
   module_count: number;
   completed_count: number;
   actual_total: number | null;
+  /** Historical subject time plus later direct-platform OTJH, across every
+   * subject represented in the learner's combined workspace. */
+  recorded_otjh_total?: number | null;
+  direct_otjh_activities?: DirectOtjhActivity[];
   planned_total: number | null;
   mapped_count: number;
   planned_mapped_count: number;

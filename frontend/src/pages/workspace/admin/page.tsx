@@ -464,6 +464,89 @@ export default function AdminDashboard() {
                 </div>
               )}
             </section>
+<<<<<<< HEAD
+=======
+
+            {/* Audit trail */}
+            <section className="super-admin-recent-events bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
+              <div className={`flex items-center justify-between ${recentEventsOpen ? 'mb-4' : ''}`}>
+                <h3 className="text-sm font-heading font-semibold text-foreground-900">
+                  <button
+                    type="button"
+                    onClick={() => setRecentEventsOpen(open => !open)}
+                    aria-expanded={recentEventsOpen}
+                    aria-controls="super-admin-recent-events-content"
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md text-left transition-colors hover:text-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+                  >
+                    <span>Recent access events</span>
+                    <AppIcon className={recentEventsOpen ? 'ri-arrow-down-s-line text-xs text-foreground-400' : 'ri-arrow-right-s-line text-xs text-foreground-400'} aria-hidden="true"></AppIcon>
+                  </button>
+                </h3>
+                <Link to="/admin/access-logs" className="super-admin-arrow-link inline-flex items-center gap-1 text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Full log <AppIcon className="ri-arrow-right-line super-admin-arrow-icon text-[10px]"></AppIcon></Link>
+              </div>
+              {recentEventsOpen && (
+                <div id="super-admin-recent-events-content">
+                  <div className="admin-cool-table bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="recent-access-events-table w-full min-w-[640px] text-[13px]">
+                        <thead>
+                          <tr className="border-b border-foreground-400/50">
+                            <th scope="col" className="text-center px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Event</th>
+                            <th scope="col" className="min-w-[14rem] text-center px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Account</th>
+                            <th scope="col" className="text-center px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">IP address</th>
+                            <th scope="col" className="text-center px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Time</th>
+                            <th scope="col" className="text-center px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {loading ? (
+                            <tr>
+                              <td colSpan={5} className="px-4 py-6 text-center text-[12px] text-foreground-400">Loading audit trail…</td>
+                            </tr>
+                          ) : audit.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="px-4 py-6 text-center text-[12px] text-foreground-400">No access events recorded yet.</td>
+                            </tr>
+                          ) : audit.map(entry => (
+                            <tr key={entry.id} className="border-b border-background-100/50 hover:bg-background-100/40 transition-smooth">
+                              <td className="px-4 py-2.5 text-center">
+                                <div className="flex items-center justify-center gap-2">
+                                  <span
+                                    aria-hidden="true"
+                                    className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+                                      entry.severity === 'critical' ? 'bg-red-500' : entry.severity === 'warning' ? 'bg-amber-500' : 'bg-emerald-500'
+                                    }`}
+                                  />
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-medium text-foreground-800 whitespace-nowrap">{eventLabel(entry.event)}</p>
+                                    {!entry.succeeded && (
+                                      <p className="text-[10px] font-semibold text-red-600 truncate" title={entry.reason || 'Event failed'}>
+                                        failed{entry.reason ? ` · ${entry.reason}` : ''}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="min-w-[14rem] px-4 py-2.5 text-center">
+                                <p className="text-sm font-medium text-foreground-800 truncate" title={entry.email || 'unknown address'}>{entry.email || 'unknown address'}</p>
+                              </td>
+                              <td className="px-4 py-2.5 text-center text-[13px] text-foreground-500 whitespace-nowrap">{entry.ipAddress || '—'}</td>
+                              <td className="px-4 py-2.5 text-center text-[13px] text-foreground-500 whitespace-nowrap">{timeAgo(entry.createdAt)}</td>
+                              <td className="px-4 py-2.5 text-center">
+                                {/* A failed invitation is the one access-log row an
+                                    administrator can actually act on from here. */}
+                                {canResendInvitation(entry) && <ResendInvitationButton entry={entry} onResent={reloadAudit} />}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </section>
+>>>>>>> main
           </div>
         </div>
         <footer className="super-admin-footer text-center text-[10px] text-foreground-400">

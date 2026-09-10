@@ -56,19 +56,24 @@ function ProgressStat({
 export function OverviewTab({
   real,
   realLoading,
+  recordedOtjhTotal,
+  subjectCount,
   onNavigateTab,
 }: {
   real: LearnerDetail | null;
   realLoading: boolean;
+  recordedOtjhTotal?: number | null;
+  subjectCount?: number | null;
   onNavigateTab: (tab: ProgressTabKey) => void;
 }) {
   const navigate = useNavigate();
   const loading = realLoading;
 
-  const completedHours = parseHours(real?.completedHours);
-  const targetHours = parseHours(real?.targetHours);
+  const usesCombinedSubjects = recordedOtjhTotal != null;
+  const completedHours = usesCombinedSubjects ? recordedOtjhTotal : parseHours(real?.completedHours);
+  const targetHours = usesCombinedSubjects ? 0 : parseHours(real?.targetHours);
   const otjhPct = targetHours > 0 ? Math.min(100, Math.round((completedHours / targetHours) * 100)) : null;
-  const otjhStatus = real?.otjhStatus || null;
+  const otjhStatus = usesCombinedSubjects ? null : real?.otjhStatus || null;
   const otjhAtRisk = /at risk|attention/i.test(otjhStatus || '');
   const otjhBehind = Math.max(0, targetHours - completedHours);
 
@@ -106,7 +111,11 @@ export function OverviewTab({
           icon="ri-calendar-check-line" label="OTJ Hours" tone={otjhStatus ? (otjhAtRisk ? 'caution' : 'positive') : 'brand'} accent="green"
           value={formatHoursMinutes(completedHours)}
           percent={otjhPct}
-          caption={targetHours > 0 ? `Target ${formatHoursMinutes(targetHours)}${otjhStatus ? ` · ${otjhStatus}` : ''}` : 'No target set yet'}
+          caption={usesCombinedSubjects
+            ? `Across ${subjectCount || 0} subjects`
+            : targetHours > 0
+              ? `Target ${formatHoursMinutes(targetHours)}${otjhStatus ? ` · ${otjhStatus}` : ''}`
+              : 'No target set yet'}
           onClick={() => onNavigateTab('otjh')}
         />
         <ProgressStat

@@ -7,7 +7,6 @@ import { GlobalSearch } from './GlobalSearch';
 import { useAuth } from '@/hooks/useAuth';
 import { useLearnerNavGate } from '@/hooks/useLearnerNavGate';
 import { ArrowLeft } from 'lucide-react';
-import { isLearnerFlowAccount } from '@/lib/learnerFlowAccess';
 
 interface WorkspaceShellProps {
   children: ReactNode;
@@ -170,9 +169,7 @@ export function WorkspaceShell({
   // yet being taught, gets a reduced sidebar — most of the workspace needs a
   // running training plan. Applied here so every learner page inherits it.
   const { auth } = useAuth();
-  const signedInEmail = auth.account?.email || auth.user?.email;
-  const hideFocusedLearnerSidebar = role === 'learner' && isLearnerFlowAccount(signedInEmail);
-  const navItems = useLearnerNavGate(filterLearnerNavigation ? role : '', navItemsProp, signedInEmail);
+  const navItems = useLearnerNavGate(filterLearnerNavigation ? role : '', navItemsProp);
   const location = useLocation();
   const navigate = useNavigate();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -239,21 +236,19 @@ export function WorkspaceShell({
       // The offset itself is applied under a `lg` media query in index.css —
       // below that breakpoint the sidebar is an off-canvas drawer and must
       // reserve nothing.
-      style={{ '--kbc-sidebar-width': `${hideFocusedLearnerSidebar ? 0 : sidebarPinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH}px` } as CSSProperties}
+      style={{ '--kbc-sidebar-width': `${sidebarPinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH}px` } as CSSProperties}
     >
-      {!hideFocusedLearnerSidebar && (
-        <Sidebar
-          role={role}
-          roleLabel={roleLabel}
-          navItems={navItems}
-          userName={displayName}
-          userRole={displayRole}
-          pinned={sidebarPinned}
-          onPinChange={handlePinChange}
-          mobileOpen={mobileSidebarOpen}
-          onCloseMobile={() => setMobileSidebarOpen(false)}
-        />
-      )}
+      <Sidebar
+        role={role}
+        roleLabel={roleLabel}
+        navItems={navItems}
+        userName={displayName}
+        userRole={displayRole}
+        pinned={sidebarPinned}
+        onPinChange={handlePinChange}
+        mobileOpen={mobileSidebarOpen}
+        onCloseMobile={() => setMobileSidebarOpen(false)}
+      />
       {/* Reserve exactly the sidebar's own width — the two numbers come from the
           same constants, so the content can never sit under the rail. The hover
           preview is deliberately not reserved: it floats above the page. */}
@@ -268,7 +263,7 @@ export function WorkspaceShell({
             pageSubtitle={pageSubtitle}
             onOpenSearch={() => setSearchOpen(true)}
             userName={displayName}
-            onToggleMobileSidebar={hideFocusedLearnerSidebar ? undefined : handleToggleMobileSidebar}
+            onToggleMobileSidebar={handleToggleMobileSidebar}
             mobileSidebarOpen={mobileSidebarOpen}
             role={role}
           />

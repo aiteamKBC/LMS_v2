@@ -10,7 +10,7 @@ import { clearStaleChunkMarker, isStaleChunkError, lazyRoute, recoverFromStaleCh
 // other reason must not put the reader in a reload loop.
 // ---------------------------------------------------------------------------
 
-const PAGE = '/learner/materials';
+const PAGE = '/workspace/learner';
 
 describe('isStaleChunkError', () => {
   it.each([

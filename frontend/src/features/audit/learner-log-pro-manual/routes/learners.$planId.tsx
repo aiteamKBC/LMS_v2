@@ -9,8 +9,8 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
-  ArrowLeft, BookOpenText, CalendarDays, Check, ClipboardList, FileText,
-  Headphones, ListChecks, LoaderCircle, Pencil, Plus, Tags, Trash2, UserRound, Video, X,
+  ArrowLeft, ArrowRight, BookOpenText, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronUp, CircleX, ClipboardList, FileText,
+  Headphones, ListChecks, LoaderCircle, Pencil, Plus, Tags, Trash2, TriangleAlert, UserRound, Video, X,
 } from "lucide-react";
 import Swal from "sweetalert2";
 import { Button } from "@/features/audit/learner-log-pro-manual/components/ui/button";
@@ -464,7 +464,7 @@ function QuizAttemptView({ attempt, state, loading }) {
         {questions.map((question) => (
           <li key={question.question_id ?? question.question_order} className="border-t border-border pt-2 text-sm">
             <p className="font-medium text-foreground">
-              <span className={`mr-1 font-bold ${question.is_correct ? "text-success" : "text-destructive"}`}>{question.is_correct ? "✓" : "✗"}</span>
+              <span className={`mr-1 inline-flex align-[-0.15em] ${question.is_correct ? "text-success" : "text-destructive"}`}>{question.is_correct ? <CheckCircle2 aria-hidden="true" className="h-3.5 w-3.5" /> : <CircleX aria-hidden="true" className="h-3.5 w-3.5" />}</span>
               {question.question_order}. {question.question_text}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -527,10 +527,10 @@ function BundlePiece({ planId, member, item }: {
           : null}
         {state?.has_quiz && (
           <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${state.quiz_passed ? "bg-success/10 text-success" : state.quiz_attempted ? "bg-amber-100 text-amber-700" : "bg-[#fbf0df] text-[#8a5a10]"}`}>
-            quiz{state.quiz_score != null ? ` ${Math.round(state.quiz_score)}%` : ""}{state.quiz_passed ? " ✓" : ""}
+            quiz{state.quiz_score != null ? ` ${Math.round(state.quiz_score)}%` : ""}{state.quiz_passed ? <Check aria-hidden="true" className="ml-1 inline h-3 w-3 align-[-0.15em]" /> : null}
           </span>
         )}
-        <span className="text-xs text-muted-foreground">{open ? "▲" : "▼"}</span>
+        <span className="text-xs text-muted-foreground">{open ? <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" /> : <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />}</span>
       </button>
       {open && (
         <div className="space-y-2 border-t border-border p-3">
@@ -541,7 +541,7 @@ function BundlePiece({ planId, member, item }: {
               onClick={() => setPiece(piece === "content" ? null : "content")}
               className={`flex w-full items-center gap-2 rounded-md border px-3 py-1.5 text-left text-xs font-semibold transition-colors ${piece === "content" ? "border-[#182d48] bg-[#eef3f8] text-[#182d48]" : "border-border bg-card text-foreground hover:bg-secondary"}`}
             >
-              Reading <span className="ml-auto font-normal text-muted-foreground">{piece === "content" ? "▲" : "▼"}</span>
+              Reading <span className="ml-auto font-normal text-muted-foreground">{piece === "content" ? <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" /> : <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />}</span>
             </button>
           )}
           {piece === "content" && content.data?.iframe_url && (
@@ -553,7 +553,7 @@ function BundlePiece({ planId, member, item }: {
               onClick={() => setPiece(piece === "quiz" ? null : "quiz")}
               className={`flex w-full items-center gap-2 rounded-md border px-3 py-1.5 text-left text-xs font-semibold transition-colors ${piece === "quiz" ? "border-[#8a5a10] bg-[#fbf0df] text-[#8a5a10]" : "border-border bg-card text-foreground hover:bg-secondary"}`}
             >
-              Quiz <span className="ml-auto font-normal text-muted-foreground">{piece === "quiz" ? "▲" : "▼"}</span>
+              Quiz <span className="ml-auto font-normal text-muted-foreground">{piece === "quiz" ? <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" /> : <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />}</span>
             </button>
           )}
           {piece === "quiz" && content.data?.has_quiz && (
@@ -627,7 +627,7 @@ function PlanRowExpansion({ activity, member, planId }: {
               className={`flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left text-sm font-semibold transition-colors ${piece === "content" ? "border-[#182d48] bg-[#eef3f8] text-[#182d48]" : "border-border bg-card text-foreground hover:bg-secondary"}`}
             >
               <BookOpenText className="h-4 w-4" /> {contentLabel}
-              <span className="ml-auto text-xs font-normal text-muted-foreground">{piece === "content" ? "▲" : "▼"}</span>
+              <span className="ml-auto text-xs font-normal text-muted-foreground">{piece === "content" ? <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" /> : <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />}</span>
             </button>
           )}
           {piece === "content" && detail.data.iframe_url && (
@@ -643,12 +643,12 @@ function PlanRowExpansion({ activity, member, planId }: {
               <ListChecks className="h-4 w-4" /> Quiz
               {attempt ? (
                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${attempt.status === "passed" ? "bg-success/10 text-success" : "bg-amber-100 text-amber-700"}`}>
-                  {attempt.score != null ? `${Math.round(attempt.score)}%` : attempt.status}{attempt.status === "passed" ? " ✓" : ""}
+                  {attempt.score != null ? `${Math.round(attempt.score)}%` : attempt.status}{attempt.status === "passed" ? <Check aria-hidden="true" className="ml-1 inline h-3 w-3 align-[-0.15em]" /> : null}
                 </span>
               ) : quiz.data?.state === "not_attempted" ? (
                 <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">not attempted</span>
               ) : null}
-              <span className="ml-auto text-xs font-normal text-muted-foreground">{piece === "quiz" ? "▲" : "▼"}</span>
+              <span className="ml-auto text-xs font-normal text-muted-foreground">{piece === "quiz" ? <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" /> : <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />}</span>
             </button>
           )}
           {piece === "quiz" && detail.data.has_quiz && (
@@ -841,7 +841,7 @@ function PlanActivityRow({ activity, member, monthLabel, cell, planId, onQuickDo
             className="text-left font-medium text-foreground hover:text-primary hover:underline"
             aria-expanded={expanded}
           >
-            {activity.title} <span className="text-xs text-muted-foreground">{expanded ? "▲" : "▼"}</span>
+            {activity.title} <span className="text-xs text-muted-foreground">{expanded ? <ChevronUp aria-hidden="true" className="inline h-3.5 w-3.5" /> : <ChevronDown aria-hidden="true" className="inline h-3.5 w-3.5" />}</span>
           </button>
         ) : (
           <p className="font-medium text-foreground">{activity.title}</p>
@@ -850,7 +850,7 @@ function PlanActivityRow({ activity, member, monthLabel, cell, planId, onQuickDo
       </TableCell>
       <TableCell className="whitespace-nowrap">
         {done ? <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold text-success">Complete</span>
-        : suggestedDone ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700" title="Suggested from data — confirm it">Suggested ✓?</span>
+        : suggestedDone ? <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700" title="Suggested from data — confirm it">Suggested <Check aria-hidden="true" className="h-3 w-3" />?</span>
         : notAccepted ? <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold text-destructive">Not accepted</span>
         : absent ? <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold text-destructive">Absent</span>
         : <span className="text-xs text-muted-foreground">—</span>}
@@ -1130,7 +1130,7 @@ function AttendancePicker({ data, month, weekSlot, saving, onAdd, refresh, onClo
               key={value}
               type="button"
               onClick={() => setScope(value)}
-              title={value === "week" ? `${range.from} → ${range.to}` : undefined}
+              title={value === "week" ? `${range.from} to ${range.to}` : undefined}
               className={`px-3 py-1.5 text-xs font-semibold transition-colors ${scope === value ? "bg-[#182d48] text-white" : "text-muted-foreground hover:text-foreground"}`}
             >
               {label}
@@ -1159,7 +1159,7 @@ function AttendancePicker({ data, month, weekSlot, saving, onAdd, refresh, onClo
       {!grid.isLoading && rows.length === 0 && (
         <p className="py-8 text-center text-sm text-muted-foreground">
           No attendance records for {learnerName}
-          {scope === "week" ? ` in Week ${weekSlot} (${range.from} → ${range.to})` : scope === "month" ? ` in ${month.label}` : ""}
+          {scope === "week" ? ` in Week ${weekSlot} (${range.from} to ${range.to})` : scope === "month" ? ` in ${month.label}` : ""}
           {needle ? " matching the search" : ""}
           {scope !== "all" && (
             <>
@@ -1206,7 +1206,7 @@ function AttendancePicker({ data, month, weekSlot, saving, onAdd, refresh, onClo
                       {day.date}
                       {day.holiday && (
                         <span className="ml-2 rounded bg-warning/20 px-1.5 py-0.5 font-sans text-[10px] font-semibold text-foreground ring-1 ring-warning/40" title={day.holiday}>
-                          ⚠ {day.holiday}
+                          <TriangleAlert aria-hidden="true" className="mr-1 inline h-3 w-3" />{day.holiday}
                         </span>
                       )}
                     </td>
@@ -1330,7 +1330,7 @@ function CourseMaterialsPicker({ data, month, weekSlot, type, saving, onAdd, onC
                     <span className="block truncate text-sm font-medium text-foreground">{item.name}</span>
                     <span className="text-xs text-muted-foreground">{item.materials} lectures</span>
                   </span>
-                  <span className="text-xs font-semibold text-muted-foreground">Open →</span>
+                  <span className="inline-flex items-center gap-1 text-xs font-semibold text-muted-foreground">Open <ArrowRight aria-hidden="true" className="h-3 w-3" /></span>
                 </button>
               </li>
             ))}
@@ -1447,7 +1447,7 @@ function CourseMaterialsPicker({ data, month, weekSlot, type, saving, onAdd, onC
                               : item.quiz_attempted ? "bg-amber-100 text-amber-700"
                               : "bg-[#fbf0df] text-[#8a5a10]"
                             }`}>
-                              quiz{item.quiz_score != null ? ` ${Math.round(item.quiz_score)}%` : ""}{item.quiz_passed ? " ✓" : item.quiz_attempted ? "" : " —"}
+                              quiz{item.quiz_score != null ? ` ${Math.round(item.quiz_score)}%` : ""}{item.quiz_passed ? <Check aria-hidden="true" className="ml-1 inline h-3 w-3 align-[-0.15em]" /> : item.quiz_attempted ? "" : " —"}
                             </span>
                           )}
                         </span>

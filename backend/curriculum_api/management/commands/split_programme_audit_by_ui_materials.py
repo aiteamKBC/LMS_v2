@@ -1,4 +1,4 @@
-"""Create programme-audit tables using the material names shown in learner UI."""
+"""Create programme-audit tables grouped by material name."""
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
@@ -8,8 +8,7 @@ from curriculum_api import views as curriculum_views
 from curriculum_api.ai_marketing_curriculum import sync_projection as sync_ai_marketing_projection
 
 
-# Kept in sync with frontend/src/lib/demoProgrammeMaterials.ts. These are the
-# learner-facing groups, not the longer authored curriculum module titles.
+# Audit reporting groups, separate from the longer authored curriculum module titles.
 UI_MATERIALS = (
     {'key': 'impact-planning', 'name': 'Impact Planning', 'programme_id': 'ME', 'programme_name': 'Marketing Executive', 'module_ids': ('MOD-202608228DDFCB53074A',)},
     {'key': 'social-media', 'name': 'Social Media', 'programme_id': 'ME', 'programme_name': 'Marketing Executive', 'module_ids': ('MOD-2026082243BD5ED0A8EA',)},

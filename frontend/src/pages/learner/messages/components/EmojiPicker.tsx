@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { Smile } from 'lucide-react';
 
 interface EmojiPickerProps {
   isOpen: boolean;
@@ -183,9 +184,9 @@ export default function EmojiPicker({ isOpen, onClose, onEmojiSelect, position }
               key={`${emoji}-${idx}`}
               onClick={() => handleEmojiClick(emoji)}
               className="w-9 h-9 flex items-center justify-center text-xl hover:bg-background-100 rounded-lg transition-smooth cursor-pointer select-none"
-              title={emoji}
+              title="Select reaction"
             >
-              {emoji}
+              <Smile aria-hidden="true" className="h-5 w-5" />
             </button>
           ))}
         </div>

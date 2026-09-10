@@ -6463,12 +6463,36 @@ def is_placeholder_programme_id(value):
         return True
     if candidate in PLACEHOLDER_PROGRAMME_IDS:
         return True
+    # The display placeholder arrives spaced and capitalised ("Unassigned
+    # programme"); compare on the normalised form so it is recognised too.
+    if normalise(candidate) in PLACEHOLDER_PROGRAMME_IDS:
+        return True
     return candidate.startswith('local-')
 
 
 def sanitised_programme_id(value):
     """Return a persistable programme id, or '' when the value is a placeholder."""
     return '' if is_placeholder_programme_id(value) else clean_str(value)
+
+
+def persistable_programme_id(value):
+    """A programme id that exists in programmes, or '' when it does not.
+
+    programme_id is a foreign key (modules_programme_id_fkey and its siblings),
+    so a programme *name*, a placeholder or an id whose row has since gone must
+    be stored as NULL. Writing it verbatim made the database reject the insert.
+    """
+    identifier = sanitised_programme_id(value)
+    if not identifier:
+        return ''
+    try:
+        configs = get_program_config_rows()
+    except Exception:
+        logger.debug('Unable to verify programme %s against programmes.', identifier, exc_info=True)
+        return identifier
+    return identifier if any(
+        programme_config_identity(config) == identifier for config in configs
+    ) else ''
 
 
 def merge_duplicate_program_configs_by_name(*, allow_writes=False):
@@ -16358,7 +16382,13 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
         payload.get('programmeId') or payload.get('programme_id') or existing_module_row.get('programme_id'),
         payload.get('programmeStatus') or payload.get('programme_status'),
     )
-    programme_id = (programme or {}).get('sourceId') or payload.get('programmeId') or payload.get('programme_id') or existing_module_row.get('programme_id') or programme_name
+    # A module saved with no programme ("assign later") carries NULL, never the
+    # placeholder name: programme_id is a foreign key into programmes, so
+    # falling back to programme_name made the insert fail on
+    # modules_programme_id_fkey with key (programme_id)=(Unassigned programme).
+    programme_id = (programme or {}).get('sourceId') or persistable_programme_id(
+        payload.get('programmeId') or payload.get('programme_id') or existing_module_row.get('programme_id')
+    ) or None
     delivery_metadata = payload.get('deliveryMetadata') if isinstance(payload.get('deliveryMetadata'), dict) else {}
     cohort_id = clean_str(payload.get('cohortId') or payload.get('cohort_id') or delivery_metadata.get('cohortId') or delivery_metadata.get('cohort_id') or existing_module_row.get('cohort_id'))
     cohort_name = clean_str(payload.get('cohortName') or payload.get('cohort_name') or payload.get('cohort') or delivery_metadata.get('cohort') or existing_module_row.get('cohort_name'))
@@ -16577,7 +16607,11 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
             'modules': [payload.get('title') or payload.get('name') or f'Module {module_catalogue_id}'],
         }, [], [saved_module_row] if saved_module_row else [])
 
-    if repair_links:
+    if repair_links and programme_id:
+        # Scoped to the programme just saved. A module with none would pass ''
+        # here, which is the unscoped whole-estate sweep -- that blanks
+        # programme_id on groups whose cohort is missing and the foreign key
+        # then rejects the write.
         repair_curriculum_parent_links(programme_id)
     result = get_authoring_structure_payload(module_catalogue_id)
     result['qualityChecklist'] = checklist

@@ -100,9 +100,6 @@ urlpatterns = [
     path("certificates/<str:kind>/<int:pk>/issue/", certificates.issue_learner_certificate, name="learner-certificate-issue"),
     path("kbc-lms/all-students-schema/", lms_schema.all_students_schema, name="kbc-lms-all-students-schema"),
     path("media/google-drive/<str:file_id>/", media_proxy.google_drive_media, name="google-drive-media"),
-    path("media/legacy-attachment/<str:attachment_id>/", media_proxy.legacy_attachment_media, name="legacy-attachment-media"),
-    path("media/legacy-attachment/<str:attachment_id>/pdf-info/", media_proxy.legacy_attachment_pdf_info, name="legacy-attachment-pdf-info"),
-    path("media/legacy-attachment/<str:attachment_id>/pdf-page/<int:page_number>/", media_proxy.legacy_attachment_pdf_page, name="legacy-attachment-pdf-page"),
     path("attendance/<str:kind>/<int:learner_id>/", attendance.learner_attendance, name="learner-attendance"),
     path("learners/<int:pk>/coach/", views.learner_coach, name="learner-coach"),
     # curriculum lookups for the training-plan builder

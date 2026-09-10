@@ -11,6 +11,7 @@ import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { OverviewTab, type ProgressTabKey } from './components/OverviewTab';
 import { MockOtjhBody } from './components/MockOtjhBody';
 import { MockKsbBody } from './components/MockKsbBody';
+import { useUnifiedLearningSummary } from '@/pages/learner/my-learning/SubjectWorkspace';
 
 const learnerNav = roleNavMap.learner;
 
@@ -33,6 +34,14 @@ export default function ProgressPage() {
   const [searchParams] = useSearchParams();
   const { kind, id } = useResolvedLearner(urlKind, urlId);
   const { isRealMode, real, loading: realLoading } = useLearnerDetailParam(kind, id);
+  const combinedLearning = useUnifiedLearningSummary(
+    real,
+    kind,
+    id,
+    isRealMode && !!real?.studentActivityAvailable,
+  );
+  const combinedLoading = realLoading
+    || (isRealMode && !!real?.studentActivityAvailable && combinedLearning.loading);
 
   const [activeTab, setActiveTab] = useState<ProgressTabKey>(() => tabFromLocation(location.pathname, searchParams.get('tab')));
   useEffect(() => {
@@ -60,14 +69,16 @@ export default function ProgressPage() {
         {activeTab === 'overview' && (
           <OverviewTab
             real={real}
-            realLoading={realLoading}
+            realLoading={combinedLoading}
+            recordedOtjhTotal={combinedLearning.data?.recorded_otjh_total}
+            subjectCount={combinedLearning.summary?.subjectCount ?? combinedLearning.data?.module_count}
             onNavigateTab={setActiveTab}
           />
         )}
 
         {activeTab === 'otjh' && (
           isRealMode
-            ? <OtjhBody real={real} loading={realLoading} showHero={false} />
+            ? <OtjhBody real={real} loading={combinedLoading} showHero={false} activityData={combinedLearning.data} />
             : <MockOtjhBody showHero={false} />
         )}
 

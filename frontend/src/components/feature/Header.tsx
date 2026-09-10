@@ -4,6 +4,10 @@ import { createPortal } from 'react-dom';
 import { Moon, Sun } from 'lucide-react';
 import { LogOut, Menu } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { apiForgotPassword } from '@/api/auth';
+// Explicit rather than auto-imported: unplugin-auto-import does not run under
+// vitest, so an auto-imported AppIcon makes this component untestable.
+import { AppIcon } from '@/components/feature/AppIcon';
 import { useTheme } from '@/hooks/useTheme';
 import { BrandLockup } from '@/components/BrandLockup';
 import { WorkspaceSwitcher } from '@/components/feature/WorkspaceSwitcher';
@@ -168,9 +172,34 @@ export function Header({ pageTitle, pageIcon, pageSubtitle, onOpenSearch, userNa
   const [profileOpen, setProfileOpen] = useState(false);
   const [signOutOpen, setSignOutOpen] = useState(false);
   const [accessibilityOpen, setAccessibilityOpen] = useState(false);
+  // Sending the reset email is an action with an outcome, so the item reports
+  // it in place rather than closing the menu and leaving the person guessing
+  // whether anything happened.
+  const [resetState, setResetState] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
+  const [resetError, setResetError] = useState('');
   const [monochrome, setMonochrome] = useState(readMonochromePreference);
 
   const profileRef = useRef<HTMLDivElement>(null);
+
+  /** Email this person a password-reset link.
+   *
+   * Uses the same endpoint the sign-in page's "Forgot password?" uses, so there
+   * is one reset flow rather than a second one that could drift. That endpoint
+   * deliberately does not disclose whether an account exists, and its uniform
+   * message is what gets shown back.
+   */
+  async function sendPasswordReset(address: string) {
+    if (!address || resetState === 'sending') return;
+    setResetState('sending');
+    setResetError('');
+    try {
+      await apiForgotPassword(address);
+      setResetState('sent');
+    } catch (error) {
+      setResetState('failed');
+      setResetError(error instanceof Error ? error.message : 'Could not send the email.');
+    }
+  }
 
   // Black-and-white mode is deliberately scoped to Light Mode. The preference
   // is kept while Dark Mode is active so returning to Light Mode restores the
@@ -378,6 +407,47 @@ export function Header({ pageTitle, pageIcon, pageSubtitle, onOpenSearch, userNa
                       </button>
                     </div>
                   </div>
+                )}
+
+                {/* Reset by email rather than in place: the person may not
+                    remember the current password, and the emailed link is the
+                    one flow that proves they still control the address. */}
+                {email && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={resetState === 'sending' || resetState === 'sent'}
+                    onClick={() => void sendPasswordReset(email)}
+                    className="group flex w-full cursor-pointer items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-smooth hover:bg-background-100/70 focus:outline-none focus-visible:bg-background-100/70 disabled:cursor-default"
+                  >
+                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-smooth ${
+                      resetState === 'sent'
+                        ? 'bg-emerald-100 text-emerald-600'
+                        : 'bg-background-100 text-foreground-400 group-hover:bg-primary-100 group-hover:text-primary-600'
+                    }`}>
+                      <AppIcon className={`text-base ${
+                        resetState === 'sending' ? 'ri-loader-4-line animate-spin'
+                          : resetState === 'sent' ? 'ri-mail-check-line'
+                          : 'ri-lock-password-line'
+                      }`}></AppIcon>
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-[0.8125rem] font-semibold text-foreground-700 transition-smooth group-hover:text-foreground-900">
+                        {resetState === 'sending' ? 'Sending…'
+                          : resetState === 'sent' ? 'Reset email sent'
+                          : 'Reset password'}
+                      </span>
+                      {/* The address is named: somebody with two accounts needs
+                          to know which inbox to open. */}
+                      <span className="block truncate text-[0.6875rem] text-foreground-400">
+                        {resetState === 'sent'
+                          ? `Check ${email} for the link`
+                          : resetState === 'failed'
+                            ? resetError
+                            : `We will email a link to ${email}`}
+                      </span>
+                    </span>
+                  </button>
                 )}
 
                 <button

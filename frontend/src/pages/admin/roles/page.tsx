@@ -14,12 +14,21 @@ import { Link } from 'react-router-dom';
 import { AdminPage, DataPanel, SourceNote } from '../_shared/AdminPage';
 import { useAdminData } from '../_shared/useAdminData';
 import { fetchRoles } from '@/api/platformAdmin';
+import { Building2, GraduationCap, ShieldCheck, UserRound, Users, type LucideIcon } from 'lucide-react';
 
+<<<<<<< HEAD
 const ROLE_ICONS: Record<string, string> = {
   admin: 'ri-shield-line',
   staff: 'ri-team-line',
   employer: 'ri-building-2-line',
   learner: 'ri-graduation-cap-line',
+=======
+const ROLE_ICONS: Record<string, LucideIcon> = {
+  admin: ShieldCheck,
+  staff: Users,
+  employer: Building2,
+  learner: GraduationCap,
+>>>>>>> main
 };
 
 const ROLE_ICON_STYLES: Record<string, string> = {
@@ -54,8 +63,16 @@ export default function AdminRolesPage() {
           {roles.map(role => (
             <div key={role.id} className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] p-5">
               <div className="flex items-start gap-3 mb-4">
+<<<<<<< HEAD
                 <span className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 shadow-md shadow-primary-900/10 ring-1 ring-inset ${ROLE_ICON_STYLES[role.id] || 'bg-primary-100 text-primary-600'}`}>
                   <AppIcon name={ROLE_ICONS[role.id] || 'ri-user-line'} className="h-5 w-5" aria-hidden="true" />
+=======
+                <span className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${ROLE_ICON_STYLES[role.id] || 'bg-primary-100 text-primary-600'}`}>
+                  {(() => {
+                    const RoleIcon = ROLE_ICONS[role.id] || UserRound;
+                    return <RoleIcon aria-hidden="true" className="h-5 w-5" />;
+                  })()}
+>>>>>>> main
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
