@@ -969,6 +969,13 @@ def to_learner_detail(source, learner_profile):
     programme_start = getattr(source, "start_date", None)
     if hasattr(programme_start, "isoformat"):
         programme_start = programme_start.isoformat()
+    programme_end = (
+        getattr(source, "end_date", None)
+        or getattr(source, "practical_period_end_date", None)
+        or getattr(source, "apprenticeship_end_date", None)
+    )
+    if hasattr(programme_end, "isoformat"):
+        programme_end = programme_end.isoformat()
 
     return {
         "id": str(source.id),
@@ -991,6 +998,7 @@ def to_learner_detail(source, learner_profile):
         "programmeStatus": _s(source.programme_status) or DEFAULT_PROGRAMME_STATUS,
         "learnerType": _s(getattr(source, "learner_type", "")) or "apprenticeship",
         "programmeStartDate": _s(programme_start),
+        "programmeEndDate": _s(programme_end),
         "cohort": _s(source.cohort),
         "group": _s(source.group),
         "employer": _s(getattr(source, "employer", "")),

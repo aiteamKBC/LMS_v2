@@ -157,6 +157,10 @@ def _learner_progress(detail):
         for row in (detail.get("componentProgress") or [])
         if _clean_text(row.get("componentId")) and _progress_counts(row)
     }
+    # Older imports stored watched videos in the generic component bucket.
+    # Completion is keyed by component id, so both buckets are valid evidence
+    # regardless of which runner wrote the row.
+    completed_component_ids = video_done | component_done
 
     total = 0
     done = 0
@@ -171,7 +175,7 @@ def _learner_progress(detail):
             quiz_meta = component.get("quizMeta") if isinstance(component.get("quizMeta"), dict) else {}
             quiz_id = _clean_text(quiz_meta.get("quizId"))
             attempts = [row for row in quiz_attempts if _clean_text(row.get("quizId")) == quiz_id]
-            if attempts:
+            if any(row.get("passed") is True for row in attempts):
                 done += 1
             component_title = _clean_text(component.get("component") or component.get("componentTitle")).lower()
             if "final" in component_title and any(row.get("passed") is True for row in attempts):
@@ -179,11 +183,11 @@ def _learner_progress(detail):
         elif ctype == "video" or _has_url(component.get("videoUrl")):
             if component_id and _component_has_content(component):
                 total += 1
-                if component_id in video_done:
+                if component_id in completed_component_ids:
                     done += 1
         elif component_id and _component_has_content(component):
             total += 1
-            if component_id in component_done:
+            if component_id in completed_component_ids:
                 done += 1
     percent = round((done / total) * 100) if total else 0
     return {"progressPercent": percent, "trackableTotal": total, "trackableDone": done, "finalTestPassed": final_test_passed}

@@ -42,21 +42,15 @@ CURRENT_SUBJECTS_SQL = '''
     )
     SELECT DISTINCT cm.module_catalogue_id,cm.title
     FROM assigned JOIN curriculum.modules cm ON cm.module_catalogue_id=assigned.module_id
-    LEFT JOIN curriculum.groups g ON g.group_id=cm.group_id
-    LEFT JOIN curriculum.cohorts ch ON ch.cohort_id=cm.cohort_id
-    LEFT JOIN curriculum.programmes p ON p.programme_id=cm.programme_id
-    WHERE cm.deleted_at IS NULL AND NOT coalesce(cm.is_programme_deleted,false)
-      AND (g.group_id IS NULL OR (g.deleted_at IS NULL AND NOT coalesce(g.is_programme_deleted,false)))
-      AND (ch.cohort_id IS NULL OR (ch.deleted_at IS NULL AND NOT coalesce(ch.is_programme_deleted,false)))
-      AND (p.programme_id IS NULL OR (p.deleted_at IS NULL AND NOT coalesce(p.is_archived,false)))
+    WHERE (cm.deleted_at IS NULL OR cm.deleted_via_parent IS NOT NULL)
 '''
 
 CURRENT_DATES_SQL = '''
     SELECT c.id,c.title,c.created_at,w.title FROM curriculum.components c
     JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
     WHERE c.module_catalogue_id=ANY(%s)
-      AND c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted,false)
-      AND w.deleted_at IS NULL AND NOT coalesce(w.is_programme_deleted,false)
+      AND (c.deleted_at IS NULL OR c.deleted_via_parent IS NOT NULL)
+      AND (w.deleted_at IS NULL OR w.deleted_via_parent IS NOT NULL)
 '''
 
 def _direct_progress_records(enrolment_id):
@@ -331,13 +325,7 @@ def _builder_subject_metadata(cursor, refs):
     cursor.execute('''
         SELECT m.module_catalogue_id,m.title,m.cover_image_url
         FROM curriculum.modules m
-        LEFT JOIN curriculum.groups g ON g.group_id=m.group_id
-        LEFT JOIN curriculum.cohorts ch ON ch.cohort_id=m.cohort_id
-        LEFT JOIN curriculum.programmes p ON p.programme_id=m.programme_id
-        WHERE m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
-          AND (g.group_id IS NULL OR (g.deleted_at IS NULL AND NOT coalesce(g.is_programme_deleted,false)))
-          AND (ch.cohort_id IS NULL OR (ch.deleted_at IS NULL AND NOT coalesce(ch.is_programme_deleted,false)))
-          AND (p.programme_id IS NULL OR (p.deleted_at IS NULL AND NOT coalesce(p.is_archived,false)))
+        WHERE (m.deleted_at IS NULL OR m.deleted_via_parent IS NOT NULL)
           AND m.module_catalogue_id=ANY(%s)
     ''', [native])
     covers, links = {}, {}

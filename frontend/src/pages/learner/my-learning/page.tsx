@@ -536,6 +536,10 @@ export function StudentActivityPanel({ data, loading, error, onRetry, kind, lear
     });
   };
 
+  const recordedOtjh = data?.audit_lms_actual ?? data?.recorded_otjh_total ?? data?.actual_total ?? null;
+  const plannedOtjh = data?.audit_tp_planned ?? data?.planned_total ?? null;
+  const hasProgrammeOtjh = data?.audit_lms_actual != null || data?.audit_tp_planned != null;
+
   return (
       <section aria-labelledby="student-activity-title" className="overflow-hidden rounded-2xl border border-foreground-200 bg-white">
         <header className="flex items-center justify-between border-b border-foreground-100 px-5 py-4">
@@ -564,12 +568,13 @@ export function StudentActivityPanel({ data, loading, error, onRetry, kind, lear
                 <ActivityStat label="Modules" value={data.module_count} />
                 <ActivityStat label="Activities" value={data.count} />
                 <ActivityStat label="Completed" value={data.completed_count} />
-                <ActivityStat label="Recorded OTJH" value={data.actual_total == null ? 'Unavailable' : formatHoursMinutes(data.actual_total)} />
-                <ActivityStat label="Planned OTJH" value={data.planned_total == null ? 'Unavailable' : formatHoursMinutes(data.planned_total)} />
+                <ActivityStat label="Recorded OTJH" value={recordedOtjh == null ? 'Unavailable' : formatHoursMinutes(recordedOtjh)} />
+                <ActivityStat label="Planned OTJH" value={plannedOtjh == null ? 'Unavailable' : formatHoursMinutes(plannedOtjh)} />
               </div>
               <p className="text-[12px] text-foreground-500">
-                OTJ hours available for {data.mapped_count} of {data.unique_activity_count} unique activities; planned hours for {data.planned_mapped_count}.
-                {' '}Totals exclude attendance and separate assignment records. Shared activities count once. Missing hours are shown as unavailable, so totals may be incomplete.
+                {hasProgrammeOtjh
+                  ? 'Programme totals use TP Planned and accepted LMS Actual. Activity-level hours below only cover mapped historical activities.'
+                  : <>OTJ hours available for {data.mapped_count} of {data.unique_activity_count} unique activities; planned hours for {data.planned_mapped_count}. Totals exclude attendance and separate assignment records. Shared activities count once. Missing hours are shown as unavailable, so totals may be incomplete.</>}
               </p>
               <label className="relative block">
                 <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400" />
