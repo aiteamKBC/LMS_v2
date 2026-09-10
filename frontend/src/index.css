@@ -3138,8 +3138,7 @@ table tbody td:last-child {
    Width is reserved only from `lg` up, where the sidebar is a fixed rail.
    Below that it is an off-canvas drawer and must reserve nothing — the bug
    the previous stylesheet had, which pushed phone content 88px to the right.
-   The hover preview is deliberately not reserved: it floats above the page
-   rather than reflowing it. Pinning is what widens the reservation.
+   Opening secondary navigation widens the reservation in every workspace.
    ========================================================================== */
 .workspace-shell {
   --kbc-sidebar-offset: 0px;
@@ -3147,7 +3146,7 @@ table tbody td:last-child {
 
 @media (min-width: 1024px) {
   .workspace-shell {
-    --kbc-sidebar-offset: var(--kbc-sidebar-width, 92px);
+    --kbc-sidebar-offset: var(--kbc-sidebar-width, 112px);
   }
 }
 

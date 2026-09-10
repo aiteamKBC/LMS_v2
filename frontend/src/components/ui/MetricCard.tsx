@@ -13,7 +13,7 @@
 // every metric look urgent, which is how the amber ones stopped being read.
 // ============================================================================
 import { memo, type ReactNode } from 'react';
-import { AppIcon } from '@/components/feature/AppIcon';
+import { WorkspaceMetricContent } from '@/components/ui/WorkspaceMetricContent';
 import { cn } from '@/lib/cn';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
 
@@ -24,6 +24,7 @@ export const MetricCard = memo(function MetricCard({
   tone = 'neutral',
   icon,
   iconClassName,
+  valuePosition = 'inline',
   onClick,
   active = false,
   className,
@@ -37,6 +38,7 @@ export const MetricCard = memo(function MetricCard({
   icon?: string;
   /** Optional visual override for contexts with a fixed semantic icon palette. */
   iconClassName?: string;
+  valuePosition?: 'inline' | 'end';
   /** Given when the card filters the view below it. */
   onClick?: () => void;
   /** True when this card's filter is the one currently applied. */
@@ -47,33 +49,14 @@ export const MetricCard = memo(function MetricCard({
   const neutral = tone === 'neutral';
 
   const body = (
-    <div className="flex min-w-0 items-start gap-3">
-      {icon ? (
-        <span className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-xl', iconClassName || cn(style.bg, style.text))}>
-          <AppIcon className={cn(icon, 'text-[18px]')}></AppIcon>
-        </span>
-      ) : null}
-
-      <div className="min-w-0">
-        <p className="truncate text-[11px] font-medium text-foreground-500">{label}</p>
-        <p
-          className={cn(
-            'mt-1 text-[28px] font-semibold leading-none tabular-nums',
-            neutral ? 'text-foreground-900' : style.text,
-          )}
-        >
-          {value}
-        </p>
-
-        {note ? (
-          <p className="mt-1.5 truncate text-[11px] leading-snug text-foreground-500">{note}</p>
-        ) : null}
-      </div>
-    </div>
+    <WorkspaceMetricContent label={label} value={value} note={note} icon={icon}
+      valuePosition={valuePosition}
+      iconClassName={iconClassName || cn(style.bg, style.text)}
+      valueClassName={neutral ? 'text-primary-800' : style.text} />
   );
 
   const surface = cn(
-    'ui-metric-card coach-metric-card rounded-xl border border-foreground-100/70 bg-background-50 p-4 text-left shadow-sm',
+    'ui-metric-card coach-metric-card rounded-xl border border-foreground-100/70 bg-background-50 px-3.5 py-3 text-left shadow-sm md:px-4',
     active ? 'ring-1 ring-primary-200' : '',
     className,
   );
