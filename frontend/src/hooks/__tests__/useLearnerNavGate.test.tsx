@@ -27,6 +27,8 @@ const FULL_NAV: SidebarNavItem[] = [
   { id: 'learner-onboarding', label: 'My Enrolment', icon: 'ri-file-user-line', href: '/learner/onboarding' },
   { id: 'learner-compliance-documents', label: 'Compliance documents', icon: 'ri-file-line', href: '/learner/compliance-documents' },
   { id: 'learner-attendance', label: 'Attendance', icon: 'ri-calendar-line', href: '/learner/attendance' },
+  { id: 'learner-my-learning', label: 'My Learning', icon: 'ri-book-open-line', href: '/learner/my-learning' },
+  { id: 'learner-training-plan-view', label: 'Training plan', icon: 'ri-calendar-todo-line', href: '/learner/training-plan-timeline' },
   {
     id: 'learner-group-monthly',
     label: 'My Progress',
@@ -48,6 +50,29 @@ beforeEach(() => {
 });
 
 describe('useLearnerNavGate', () => {
+  it('offers previous learning to migrated Delivery learners while retaining the programme menu restrictions', async () => {
+    getRememberedLearner.mockReturnValue({ kind: 'commercial', id: 'migrated-delivery' });
+    fetchLearnerDetail.mockResolvedValue({ programmeStatus: 'Delivery', studentActivityAvailable: true });
+    const first = renderHook(() => useLearnerNavGate('learner', FULL_NAV));
+    await waitFor(() => expect(first.result.current.map((i) => i.id)).toEqual(['learner-overview', 'learner-my-learning', 'learner-training-plan-view']));
+    first.unmount();
+    sessionStorage.setItem('learner_kind:migrated-delivery', 'commercial');
+    fetchLearnerDetail.mockClear();
+    const cached = renderHook(() => useLearnerNavGate('learner', FULL_NAV));
+    expect(cached.result.current.map((i) => i.id)).toEqual(['learner-overview', 'learner-my-learning', 'learner-training-plan-view']);
+    expect(fetchLearnerDetail).not.toHaveBeenCalled();
+  });
+
+  it('refreshes an older Delivery cache that did not record previous-learning availability', async () => {
+    getRememberedLearner.mockReturnValue({ kind: 'commercial', id: 'old-delivery-cache' });
+    sessionStorage.setItem('learner_status:commercial:old-delivery-cache', 'Delivery');
+    sessionStorage.setItem('learner_kind:old-delivery-cache', 'commercial');
+    fetchLearnerDetail.mockResolvedValue({ programmeStatus: 'Delivery', studentActivityAvailable: true });
+    const { result } = renderHook(() => useLearnerNavGate('learner', FULL_NAV));
+    await waitFor(() => expect(result.current.map((i) => i.id)).toEqual(['learner-overview', 'learner-my-learning', 'learner-training-plan-view']));
+    expect(fetchLearnerDetail).toHaveBeenCalledOnce();
+  });
+
   it('shows only Materials to a focused learner account', () => {
     getRememberedLearner.mockReturnValue({ kind: 'apprenticeship', id: 'focused-1' });
     const { result } = renderHook(() => useLearnerNavGate(

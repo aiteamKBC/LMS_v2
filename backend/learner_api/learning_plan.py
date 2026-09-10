@@ -43,7 +43,7 @@ from login.permissions import learner_self_or_staff, staff_only
 
 from .constants import DELIVERY_PROGRAMME_STATUS
 from .learner_progression import advance_learner
-from .mappers import _s
+from .mappers import _s, stored_training_plan, training_plan_field
 from .models import EnrolmentUser
 
 logger = logging.getLogger(__name__)
@@ -179,15 +179,7 @@ def _group_module_ids(programme, group):
 
 def _saved_modules(learner):
     """The plan already stored on the learner, if any."""
-    plan = learner.learning_plan
-    if isinstance(plan, str):
-        try:
-            plan = json.loads(plan)
-        except ValueError:
-            return []
-    if not isinstance(plan, list):
-        return []
-    return [m for m in plan if isinstance(m, dict)]
+    return stored_training_plan(learner)
 
 
 def _orphan_module(entry):
@@ -230,7 +222,7 @@ def _serialize(learner):
     # A saved plan wins; an unsaved learner starts from their group's preset so
     # staff are editing something real rather than an empty list.
     saved = _saved_modules(learner)
-    if saved:
+    if saved is not None:
         # Re-read hours/titles from the catalogue so an edited module shows its
         # current values. Entries with no catalogue match are kept (the module
         # may have been retired) but normalised to the same shape — plans saved
@@ -264,7 +256,7 @@ def _serialize(learner):
         # the rest are a dropdown away.
         "available": [m for m in everything if m["moduleId"] not in chosen],
         "programmes": _programmes(everything),
-        "saved": bool(saved),
+        "saved": saved is not None,
         "totals": _totals(plan),
     }
 
@@ -328,9 +320,10 @@ def learning_plan(request, pk):
         seen.add(module_id)
         resolved.append(catalogue[module_id])
 
-    learner.learning_plan = resolved
+    field = training_plan_field(learner)
+    setattr(learner, field, resolved)
     try:
-        learner.save(update_fields=["learning_plan"])
+        learner.save(update_fields=[field])
     except DatabaseError as exc:
         logger.exception("learning_plan: save failed")
         return _error(f"Database error: {exc}", 502)
@@ -376,20 +369,12 @@ def _plan_field(learner):
     ``active_users.hydrate_source_training_plan``, so a plan written here lands
     in the column the delivery-side sync reads back.
     """
-    return "training_plan" if getattr(learner, "training_plan", None) else "learning_plan"
+    return training_plan_field(learner)
 
 
 def _plan_entries(learner):
     """The plan stored on this learner, from whichever column holds it."""
-    plan = getattr(learner, "training_plan", None) or getattr(learner, "learning_plan", None)
-    if isinstance(plan, str):
-        try:
-            plan = json.loads(plan)
-        except ValueError:
-            return []
-    if not isinstance(plan, list):
-        return []
-    return [entry for entry in plan if isinstance(entry, dict)]
+    return stored_training_plan(learner) or []
 
 
 def _preset_ids_for(learner, cache):
@@ -408,8 +393,8 @@ def _preset_ids_for(learner, cache):
 
 def _effective_plan_ids(learner, preset_cache):
     """The module ids this learner is currently taught: saved plan, else preset."""
-    saved = _plan_entries(learner)
-    if saved:
+    saved = stored_training_plan(learner)
+    if saved is not None:
         return [_s(entry.get("moduleId")) for entry in saved if _s(entry.get("moduleId"))]
     return list(_preset_ids_for(learner, preset_cache))
 

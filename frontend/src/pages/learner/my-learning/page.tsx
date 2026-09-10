@@ -45,8 +45,8 @@ export default function MyLearningPage() {
   const navigate = useNavigate();
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
   const { kind, id } = useResolvedLearner(urlKind, urlId);
-  const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
-  const { canProgress, showReadOnlyNotice } = useLearnerWorkspaceAccess(id);
+  const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id, true);
+  const { canProgress } = useLearnerWorkspaceAccess(id);
 
   const [tab, setTab] = useState<TabKey>(() => defaultTabForPath(location.pathname));
 
@@ -138,7 +138,7 @@ export default function MyLearningPage() {
             onGoToModules={() => setTab('modules')}
           />
         ) : tab === 'modules' ? (
-          <ModulesTab key={`${kind}:${id}`} real={real} loading={loading} loadError={loadError} kind={kind} id={id} showReadOnlyNotice={showReadOnlyNotice} />
+          <ModulesTab key={`${kind}:${id}`} real={real} loading={loading} loadError={loadError} kind={kind} id={id} />
         ) : (
           <QuizzesTab real={real} loading={loading} loadError={loadError} kind={kind} id={id} canTake={canTake} navigate={navigate} />
         )}
@@ -437,13 +437,12 @@ function JourneyStepper({ statuses, moduleProgress }: { statuses: StageStatus[];
 /* ═══════════════════════════════════════════════════════
    MODULES TAB — the old Training Plan, reused and tightened
    ═══════════════════════════════════════════════════════ */
-export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNotice }: {
+export function ModulesTab({ real, loading, loadError, kind, id }: {
   real: ReturnType<typeof useLearnerDetailParam>['real'];
   loading: boolean;
   loadError: string | null;
   kind?: LearnerKind;
   id?: string;
-  showReadOnlyNotice: boolean;
 }) {
   const [activityData, setActivityData] = useState<StudentActivityResponse | null>(null);
   const [activityLoading, setActivityLoading] = useState(true);
@@ -473,15 +472,6 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
         description="Your subjects, activities and progress"
         icon="ri-book-2-line"
       />
-      {showReadOnlyNotice && (
-        <div className="flex items-start gap-2.5 rounded-xl border border-primary-200/70 bg-primary-50/60 px-3.5 py-2.5">
-          <AppIcon className="ri-eye-line mt-0.5 shrink-0 text-[15px] text-primary-600" />
-          <p className="text-[12px] leading-snug text-foreground-600">
-            <span className="font-semibold text-foreground-800">Viewing read-only.</span>{' '}
-            Only the learner can complete activities, upload evidence or submit reflections.
-          </p>
-        </div>
-      )}
       <StudentActivityPanel
         kind={kind} learnerId={id} real={real}
         data={activityData}

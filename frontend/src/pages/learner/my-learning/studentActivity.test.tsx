@@ -1,10 +1,11 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { StudentActivityResponse, SubjectMaterial, SubjectAttemptResult } from '@/api/studentActivity';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import * as api from '@/api/studentActivity';
 import { ModulesTab, StudentActivityPanel } from './page';
 import { StudentMaterial } from './StudentMaterial';
+import { SubjectOverview, subjectsFrom, useSubjectMetadata } from './SubjectWorkspace';
 
 // AppIcon is normally supplied by the app build's auto-import plugin.
 vi.stubGlobal('AppIcon', () => <span />);
@@ -67,9 +68,9 @@ describe('learner subject cards', () => {
       .mockImplementationOnce(() => new Promise((resolve) => { resolveAnna = resolve; }))
       .mockResolvedValueOnce({ ...data, learner_name: 'Amy-Marie Field' });
     const real = { studentActivityAvailable: true } as LearnerDetail;
-    const { rerender } = render(<ModulesTab key="132" real={real} loading={false} loadError={null} kind="commercial" id="132" showReadOnlyNotice={false} />);
+    const { rerender } = render(<ModulesTab key="132" real={real} loading={false} loadError={null} kind="commercial" id="132" />);
     await waitFor(() => expect(fetch).toHaveBeenCalledWith('commercial', '132', expect.any(AbortSignal)));
-    rerender(<ModulesTab key="133" real={real} loading={false} loadError={null} kind="commercial" id="133" showReadOnlyNotice={false} />);
+    rerender(<ModulesTab key="133" real={real} loading={false} loadError={null} kind="commercial" id="133" />);
     expect(await screen.findByText('Amy-Marie Field')).toBeInTheDocument();
     await act(async () => { resolveAnna(data); });
     expect(screen.queryByText('Anna Rundell')).not.toBeInTheDocument();
@@ -106,6 +107,115 @@ describe('learner subject cards', () => {
     render(<StudentActivityPanel data={null} loading={false} error="Database unavailable" onRetry={retry} />);
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(retry).toHaveBeenCalledOnce();
+  });
+});
+
+const linkedMetadata = {
+  covers: {},
+  current_subjects: [{ id: 'MOD-1', title: 'Leadership' }],
+  builder_subjects: { 'legacy:1': { id: 'MOD-1', title: 'Leadership' } },
+  activity_sources: {
+    'COMP-10': { module_id: 'MOD-1', group_id: 1, activity_id: 10 },
+    'COMP-11': { module_id: 'MOD-1', group_id: 1, activity_id: 11 },
+  },
+};
+const linkedReal = {
+  modules: ['Leadership'], studentActivityAvailable: true,
+  components: [
+    { componentId: 'COMP-10', moduleId: 'MOD-1', module: 'Leadership', component: 'Introduction', type: 'video' },
+    { componentId: 'COMP-11', moduleId: 'MOD-1', module: 'Leadership', component: 'Reflection', type: 'reading' },
+    { componentId: 'NEW-12', moduleId: 'MOD-1', module: 'Leadership', component: 'Reflection', type: 'reading' },
+  ],
+  componentProgress: [{ componentId: 'COMP-11', kind: 'component' }],
+} as LearnerDetail;
+
+describe('subjects shared with Module Builder', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('refreshes assignment metadata even when a new module has no component ids yet', async () => {
+    const initial = { modules: [], components: [] } as unknown as LearnerDetail;
+    const updated = { ...initial, modules: ['New module'] };
+    const assigned = { covers: {}, current_subjects: [{ id: 'MOD-NEW', title: 'New module' }] };
+    const request = vi.spyOn(api, 'subjectRequest').mockResolvedValueOnce({ covers: {}, current_subjects: [] }).mockResolvedValueOnce(assigned);
+    const { result, rerender } = renderHook(({ real }) => useSubjectMetadata(null, real, 'commercial', '101'), { initialProps: { real: initial } });
+    await waitFor(() => expect(result.current.metadata?.current_subjects).toEqual([]));
+    rerender({ real: updated });
+    expect(result.current.metadata).toBeUndefined();
+    await waitFor(() => expect(result.current.metadata).toEqual(assigned));
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(subjectsFrom(null, updated, result.current.metadata)).toEqual([
+      { id: 'current:MOD-NEW', title: 'New module', source: 'current', activities: [] },
+    ]);
+  });
+
+  it('counts a linked course and original activities once, retaining new activities and both completion sources', () => {
+    const subjects = subjectsFrom(data, linkedReal, linkedMetadata);
+    expect(subjects).toHaveLength(1);
+    expect(subjects[0].id).toBe('legacy:1');
+    expect(subjects[0].activities.map((a) => [a.id, a.completed])).toEqual([
+      ['la:1:10', true], ['la:1:11', true], ['NEW-12', false],
+    ]);
+    expect(subjects[0].activities[1].legacy).toBe(data.activities[1]);
+    expect(data.activities[1].completed).toBe(false);
+  });
+
+  it('keeps distinct same-title courses and activities without a verified source link', () => {
+    const separate = { ...linkedReal, components: [
+      ...linkedReal.components,
+      { ...linkedReal.components[0], moduleId: 'OTHER', componentId: 'OTHER-10' },
+    ] };
+    const subjects = subjectsFrom(data, separate, linkedMetadata);
+    expect(subjects).toHaveLength(2);
+    expect(subjects.find((s) => s.id === 'current:OTHER')?.activities).toHaveLength(1);
+    const wrongScope = { ...linkedMetadata, activity_sources: { 'COMP-10': { module_id: 'OTHER', group_id: 1, activity_id: 10 } } };
+    expect(subjectsFrom(data, linkedReal, wrongScope)[0].activities).toHaveLength(5);
+    expect(subjectsFrom(data, linkedReal, { ...linkedMetadata, builder_subjects: {} })).toHaveLength(2);
+  });
+
+  it('keeps the highest quiz score and a previous pass after a failed retake', () => {
+    const history = { ...data, activities: [{ ...data.activities[0], quiz_score: 8, quiz_maximum_score: 10 }] };
+    const quizReal = { ...linkedReal, components: [{ ...linkedReal.components[0], isQuiz: true, quizMeta: { quizId: 7 } }],
+      quizAttempts: [{ quizId: 7, grade: .9, passed: true }, { quizId: 7, grade: .2, passed: false }] } as LearnerDetail;
+    const entry = subjectsFrom(history, quizReal, linkedMetadata)[0].activities[0];
+    expect(entry.completed).toBe(true);
+    expect(entry.bestScorePercent).toBe(90);
+    expect(entry.legacy).toBe(history.activities[0]);
+  });
+
+  it('fetches metadata once without flashing duplicate cards or refetching after Builder renames', async () => {
+    let resolve!: (value: typeof linkedMetadata) => void;
+    const request = vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise((done) => { resolve = done; }));
+    render(<StudentActivityPanel data={data} real={linkedReal} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
+    expect(screen.queryByRole('button', { name: /Leadership/ })).not.toBeInTheDocument();
+    await act(async () => resolve({ ...linkedMetadata, builder_subjects: { 'legacy:1': { id: 'MOD-1', title: 'Renamed Leadership' } } }));
+    expect(screen.getAllByRole('button', { name: /Renamed Leadership/ })).toHaveLength(1);
+    expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it('uses the same merged totals in Overview', async () => {
+    vi.spyOn(api, 'fetchStudentActivity').mockResolvedValue(data);
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue(linkedMetadata);
+    render(<SubjectOverview real={linkedReal} kind="commercial" learnerId="132" onOpen={vi.fn()} />);
+    expect(await screen.findByText('2 of 3 completed')).toBeInTheDocument();
+    expect(screen.getByText('Across 1 subjects')).toBeInTheDocument();
+  });
+
+  it('does not apply metadata from a previous learner when responses arrive out of order', async () => {
+    let first!: (value: typeof linkedMetadata) => void;
+    let second!: (value: typeof linkedMetadata) => void;
+    const request = vi.spyOn(api, 'subjectRequest')
+      .mockImplementationOnce(() => new Promise((resolve) => { first = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { second = resolve; }));
+    const props = { data, real: linkedReal, kind: 'commercial', loading: false, error: null, onRetry: vi.fn() };
+    const { rerender } = render(<StudentActivityPanel {...props} learnerId="132" />);
+    rerender(<StudentActivityPanel {...props} learnerId="133" />);
+    await act(async () => second(linkedMetadata));
+    await act(async () => first({ ...linkedMetadata, builder_subjects: { 'legacy:1': { id: 'MOD-1', title: 'Old learner title' } } }));
+    expect(screen.queryByText('Old learner title')).not.toBeInTheDocument();
+    expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
+    expect((request.mock.calls[0][1]?.signal as AbortSignal).aborted).toBe(true);
   });
 });
 
@@ -184,7 +294,7 @@ describe('subject months, weeks and completion', () => {
     expect(screen.getByText(/1 ÷ 3 × 100 = 33.33%/)).toBeInTheDocument();
   });
 
-  it('shows the parent lecture and keeps date confirmation visible when a month is folded', () => {
+  it('shows lecture details without exposing date-review messages to the learner', () => {
     const activities = scheduledData.activities.map((item) => item.source_activity_id === 12
       ? { ...item, section_title: 'Course templates', date_source: 'original_created_at', date_needs_review: true }
       : { ...item, section_title: 'Lecture 1 - 06/02/2026', date_source: 'section_title', date_needs_review: false });
@@ -193,10 +303,9 @@ describe('subject months, weeks and completion', () => {
     expandMonthAndWeek();
     expandMonthAndWeek('March 2026');
     expect(screen.getAllByText('Lecture: Lecture 1 - 06/02/2026')).toHaveLength(2);
-    expect(screen.getByText('Date awaiting confirmation (original record).')).toBeVisible();
+    expect(screen.queryByText(/Date awaiting confirmation|Date needs review|activity dates? needs? confirmation/i)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Collapse March 2026' }));
-    const month = screen.getByRole('region', { name: 'March 2026' });
-    expect(within(month).getAllByText('1 activity date needs confirmation.')[0]).toBeVisible();
+    expect(screen.queryByText(/Date awaiting confirmation|Date needs review|activity dates? needs? confirmation/i)).not.toBeInTheDocument();
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '33.33');
   });
 
@@ -205,7 +314,7 @@ describe('subject months, weeks and completion', () => {
     const pending = new Promise<SubjectAttemptResult>((resolve) => { finish = resolve; });
     const requests = mockMaterialRequests(activityMaterial, () => pending);
     vi.spyOn(api, 'fetchStudentActivity').mockResolvedValueOnce(scheduledData).mockRejectedValueOnce(new Error('Refresh unavailable'));
-    render(<ModulesTab real={{ studentActivityAvailable: true } as LearnerDetail} loading={false} loadError={null} kind="commercial" id="132" showReadOnlyNotice={false} />);
+    render(<ModulesTab real={{ studentActivityAvailable: true } as LearnerDetail} loading={false} loadError={null} kind="commercial" id="132" />);
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
     expandMonthAndWeek();
     fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
@@ -254,13 +363,14 @@ describe('subject months, weeks and completion', () => {
     expect(requests.mock.calls.filter(([url, options]) => url.endsWith('/attempts/') && options?.method === 'POST')).toHaveLength(1);
   });
 
-  it('explains the disabled Submit button to staff and removes it for a completed activity', async () => {
+  it('keeps staff submission disabled without read-only messages and removes Submit for a completed activity', async () => {
     const requests = mockMaterialRequests({ ...activityMaterial, can_attempt: false });
     const { unmount } = render(<StudentMaterial kind="commercial" learnerId="132" groupId={1} activityId={11} />);
     await screen.findByTitle('Reflection frame');
     const submit = screen.getByRole('button', { name: 'Submit & complete' });
     expect(submit).toBeDisabled();
-    expect(submit).toHaveAccessibleDescription(/Viewing read-only\. Only the learner can submit/);
+    expect(screen.queryByText(/Viewing read-only|Only the learner can submit/)).not.toBeInTheDocument();
+    expect(submit).not.toHaveAttribute('aria-describedby');
     fireEvent.click(submit);
     expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(0);
     unmount();

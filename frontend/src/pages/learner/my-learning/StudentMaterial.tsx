@@ -112,11 +112,13 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
   const needsConfirmation = !!quiz && data.has_reading;
   const blockedReason = !data.persistence_ready
     ? 'Saving progress is temporarily unavailable. Please contact your learning team.'
-    : !data.can_attempt
-      ? 'Viewing read-only. Only the learner can submit this activity from their own account.'
-      : !data.available
-        ? 'This activity has no available content to complete yet.'
-        : quiz && !quiz.ready ? quiz.message : '';
+    : !data.available
+      ? 'This activity has no available content to complete yet.'
+      : quiz && !quiz.ready ? quiz.message : '';
+  const actionsDisabled = busy || !data.can_attempt || !!blockedReason;
+  const completionHint = blockedReason || (data.can_attempt
+    ? quiz ? 'Complete the quiz and submit your answers. Passing records this activity as complete.' : isComplete ? 'This activity is complete and included in your progress.' : 'When you have finished, select Submit & complete to save your completion and update your progress.'
+    : '');
   const actionClass = 'shrink-0 rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50';
   return <div className="space-y-6 rounded-2xl border border-foreground-200 bg-white p-4 sm:p-6">
     <section aria-label="Activity completion" className="sticky top-3 z-10 space-y-3 rounded-xl border border-primary-100 bg-white p-4 shadow-sm">
@@ -124,13 +126,11 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
         <div><h4 className="text-sm font-bold text-foreground-900">Activity progress</h4>
           <p aria-live="polite" className={`mt-1 text-sm font-semibold ${isComplete ? 'text-emerald-700' : 'text-foreground-500'}`}>{isComplete ? 'Complete' : 'Not complete'}</p>
         </div>
-        {quiz && !attemptId ? <button type="button" onClick={start} disabled={busy || !!blockedReason} aria-describedby={completionHintId} className={actionClass}>{busy ? 'Starting…' : isComplete || data.history.length || data.historical.attempt_number ? 'Try quiz again' : 'Start quiz'}</button>
-          : (quiz || !isComplete) && <button type="button" onClick={submit} disabled={busy || !!blockedReason || !answered || (needsConfirmation && !confirmed)} aria-describedby={completionHintId} className={actionClass}>{busy ? 'Saving…' : quiz ? 'Submit answers' : 'Submit & complete'}</button>}
+        {quiz && !attemptId ? <button type="button" onClick={start} disabled={actionsDisabled} aria-describedby={completionHint ? completionHintId : undefined} className={actionClass}>{busy ? 'Starting…' : isComplete || data.history.length || data.historical.attempt_number ? 'Try quiz again' : 'Start quiz'}</button>
+          : (quiz || !isComplete) && <button type="button" onClick={submit} disabled={actionsDisabled || !answered || (needsConfirmation && !confirmed)} aria-describedby={completionHint ? completionHintId : undefined} className={actionClass}>{busy ? 'Saving…' : quiz ? 'Submit answers' : 'Submit & complete'}</button>}
       </div>
-      <p id={completionHintId} className={`text-sm ${blockedReason ? 'text-amber-800' : 'text-foreground-500'}`}>
-        {blockedReason || (quiz ? 'Complete the quiz and submit your answers. Passing records this activity as complete.' : isComplete ? 'This activity is complete and included in your progress.' : 'When you have finished, select Submit & complete to save your completion and update your progress.')}
-      </p>
-      {needsConfirmation && !!attemptId && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={busy || !!blockedReason} onChange={(event) => setConfirmed(event.target.checked)} className="mt-1 accent-primary-600" />I have completed the reading material.</label>}
+      {completionHint && <p id={completionHintId} className={`text-sm ${blockedReason ? 'text-amber-800' : 'text-foreground-500'}`}>{completionHint}</p>}
+      {needsConfirmation && !!attemptId && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={actionsDisabled} onChange={(event) => setConfirmed(event.target.checked)} className="mt-1 accent-primary-600" />I have completed the reading material.</label>}
       {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
       {result && <p role="status" className={`rounded-xl p-3 text-sm font-semibold ${savedResult?.completed ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{result}</p>}
     </section>

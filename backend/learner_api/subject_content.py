@@ -179,8 +179,8 @@ def grade_quiz(definition, answers):
         is_correct = set(selected) == set(question['solution_ids'])
         correct += is_correct
         review.append({'question_id': question['id'], 'is_correct': is_correct})
-    score = round(correct / len(quiz['questions']) * 100, 4)
-    return {'score_percent': score, 'passed': score >= quiz['passing_percent'], 'review': review}
+    score = correct / len(quiz['questions']) * 100
+    return {'score_percent': round(score, 4), 'passed': score >= quiz['passing_percent'], 'review': review}
 
 
 def _attachment_id(url):
@@ -195,13 +195,24 @@ def _attachment_id(url):
     return ''
 
 
+def _audio_media_kind(url):
+    """A provider's HTML player cannot be used as an HTML5 audio source."""
+    parsed = urlsplit(url)
+    if (re.search(r'\.(?:mp3|m4a|aac|wav|ogg|oga|opus|flac|mp4|webm)$', parsed.path, re.I)
+            or parsed.hostname == 'drive.google.com'
+            or parsed.path.startswith('/learner_api/media/')):
+        return 'audio'
+    return 'embed'
+
+
 def build_material(stored, schema=None, attachment_resolver=None):
     row = stored['_source']
     media = []
     for key, kind in (('video_url', 'video'), ('audio_url', 'audio'), ('reading_url', 'document')):
         url = safe_url(stored.get(key))
         if url:
-            media.append({'kind': kind, 'url': url, 'title': stored['title']})
+            media.append({'kind': _audio_media_kind(url) if kind == 'audio' else kind,
+                          'url': url, 'title': stored['title']})
     reading = str(stored.get('reading_html') or '')
     remote_quiz = schema.get('quiz') if schema is not None else {
         'quiz_id': row.get('quiz_id'), 'quiz_body': row.get('quiz_body'),
@@ -215,7 +226,7 @@ def build_material(stored, schema=None, attachment_resolver=None):
         component_type = str(schema.get('component_type') or '').lower()
         source = schema.get('source') if isinstance(schema.get('source'), dict) else {}
         if component_type != 'quiz' and url:
-            media = [{'kind': 'video' if kind == 'video' else 'embed' if kind in ('audio', 'podcast') else 'document',
+            media = [{'kind': 'video' if kind == 'video' else _audio_media_kind(url) if kind in ('audio', 'podcast') else 'document',
                       'url': url, 'title': stored['title'], 'can_embed': source.get('can_embed') is not False}]
         for field in ('reading_text_body', 'text_body', 'html_body'):
             if isinstance(schema.get(field), str) and schema[field]:

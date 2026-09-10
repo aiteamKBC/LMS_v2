@@ -24,14 +24,27 @@ from .subject_content import (ContentUnavailable, material_schema, build_materia
 from .subject_dates import activity_schedule
 
 CURRENT_SUBJECTS_SQL = '''
+    WITH source AS (
+        SELECT id, CASE WHEN jsonb_typeof("Training_plan"::jsonb)='array'
+            THEN "Training_plan"::jsonb ELSE "Learning_plan"::jsonb END AS plan
+        FROM enrolment."Created_users" WHERE id=%s
+    ), assigned AS (
+        SELECT entry->>'moduleId' AS module_id FROM source
+        CROSS JOIN LATERAL jsonb_array_elements(
+            CASE WHEN jsonb_typeof(plan)='array' THEN plan ELSE '[]'::jsonb END
+        ) entry
+        UNION
+        SELECT coalesce(m.curriculum_module_id,nullif(m.module_ref,'')) FROM source
+        JOIN "Learner".learners l ON l.enrolment_id=source.id
+        JOIN "Learner".learner_training_plan_modules m ON m.learner_id=l.id
+        WHERE jsonb_typeof(source.plan) IS DISTINCT FROM 'array'
+    )
     SELECT DISTINCT cm.module_catalogue_id,cm.title
-    FROM "Learner".learners l
-    JOIN "Learner".learner_training_plan_modules m ON m.learner_id=l.id
-    JOIN curriculum.modules cm ON cm.module_catalogue_id=coalesce(m.curriculum_module_id,nullif(m.module_ref,''))
+    FROM assigned JOIN curriculum.modules cm ON cm.module_catalogue_id=assigned.module_id
     LEFT JOIN curriculum.groups g ON g.group_id=cm.group_id
     LEFT JOIN curriculum.cohorts ch ON ch.cohort_id=cm.cohort_id
     LEFT JOIN curriculum.programmes p ON p.programme_id=cm.programme_id
-    WHERE l.enrolment_id=%s AND cm.deleted_at IS NULL AND NOT coalesce(cm.is_programme_deleted,false)
+    WHERE cm.deleted_at IS NULL AND NOT coalesce(cm.is_programme_deleted,false)
       AND (g.group_id IS NULL OR (g.deleted_at IS NULL AND NOT coalesce(g.is_programme_deleted,false)))
       AND (ch.cohort_id IS NULL OR (ch.deleted_at IS NULL AND NOT coalesce(ch.is_programme_deleted,false)))
       AND (p.programme_id IS NULL OR (p.deleted_at IS NULL AND NOT coalesce(p.is_archived,false)))
@@ -44,6 +57,46 @@ CURRENT_DATES_SQL = '''
       AND c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted,false)
       AND w.deleted_at IS NULL AND NOT coalesce(w.is_programme_deleted,false)
 '''
+
+CURRENT_ACTIVITY_SOURCES_SQL = '''
+    WITH exports AS (
+        SELECT e.course_id, m.module_catalogue_id,
+               CASE WHEN jsonb_typeof(e.curriculum)='string'
+                    THEN (e.curriculum #>> '{}')::jsonb ELSE e.curriculum END AS payload
+        FROM "MBA".course_curriculum e
+        JOIN curriculum.modules m ON m.source_type='mba-legacy' AND m.source_id=e.course_id::text
+        WHERE m.module_catalogue_id=ANY(%s)
+    )
+    SELECT c.id, e.module_catalogue_id, e.course_id, material->>'source_component_id'
+    FROM exports e
+    CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(payload->'sections')='array' THEN payload->'sections' ELSE '[]'::jsonb END
+    ) section
+    CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(section->'materials')='array' THEN section->'materials' ELSE '[]'::jsonb END
+    ) material
+    JOIN curriculum.components c ON c.id=material->>'component_id'
+        AND c.module_catalogue_id=e.module_catalogue_id
+    JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
+    WHERE c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted,false)
+      AND w.deleted_at IS NULL AND NOT coalesce(w.is_programme_deleted,false)
+'''
+
+
+def _current_activity_sources(cursor, module_ids):
+    """Link imported components to exact source activities, never titles or clones."""
+    if not module_ids:
+        return {}
+    cursor.execute(CURRENT_ACTIVITY_SOURCES_SQL, [module_ids])
+    candidates = defaultdict(set)
+    for component_id, module_id, group_id, activity_id in cursor.fetchall():
+        if str(activity_id or '').isdigit():
+            candidates[str(component_id)].add((str(module_id), int(group_id), int(activity_id)))
+    return {
+        component_id: {'module_id': module_id, 'group_id': group_id, 'activity_id': activity_id}
+        for component_id, matches in candidates.items() if len(matches) == 1
+        for module_id, group_id, activity_id in matches
+    }
 
 
 def _error(message, status):
@@ -313,10 +366,11 @@ def subject_covers(request, pk):
             dates = {str(component_id): activity_schedule(title, None, created_at,
                      section_title=week_title, section_source='builder_section_title')
                      for component_id, title, created_at, week_title in cur.fetchall()}
+            activity_sources = _current_activity_sources(cur, [subject['id'] for subject in current_subjects])
         return _private({'covers': covers, 'can_manage': False,
                          'persistence_ready': available, 'csrf_token': get_token(request),
                          'activity_dates': dates, 'current_subjects': current_subjects,
-                         'builder_subjects': builder_subjects})
+                         'builder_subjects': builder_subjects, 'activity_sources': activity_sources})
     except DatabaseError:
         return _error('Could not load subject images.', 503)
 

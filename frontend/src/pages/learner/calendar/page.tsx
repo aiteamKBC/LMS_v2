@@ -6,7 +6,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 import { type CalendarEvent } from '@/pages/learner/clubs/data';
 import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from '@/utils/ics-generator';
-import { useMyLearner } from '@/hooks/useMyLearner';
+import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PageContainer } from '@/components/ui/PageContainer';
@@ -534,8 +534,15 @@ export default function LearnerCalendarPage() {
 
 /** Calendar body without the page shell — reusable as an embedded section (e.g. on the learner overview page). */
 export function LearnerCalendarContent() {
+  const learner = useLinkedLearner();
+  // A staff View link can switch learners without unmounting the route.
+  // Bookings, coach details and open dialogs must belong to the new identity.
+  return <LearnerCalendarBody key={`${learner.kind}:${learner.id}`} />;
+}
+
+function LearnerCalendarBody() {
   const location = useLocation();
-  const myLearner = useMyLearner();
+  const myLearner = useLinkedLearner();
   const loadArtifacts = useCallback((eventKey: string, signal?: AbortSignal) => fetchLearnerMeetingArtifacts(myLearner.kind, myLearner.id, eventKey, signal), [myLearner.id, myLearner.kind]);
   const artifactContentUrl = useCallback((eventKey: string, artifactType: string, artifactId: string, options: { preview?: boolean } = {}) => learnerMeetingArtifactContentUrl(myLearner.kind, myLearner.id, eventKey, artifactType, artifactId, options), [myLearner.id, myLearner.kind]);
   const [viewMode, setViewMode] = useState<ViewMode>('monthly');
@@ -865,7 +872,7 @@ export function LearnerCalendarContent() {
   useEffect(() => {
     let cancelled = false;
     setCalendarLoading(true);
-    fetchLearnerCalendarEvents(myLearner.kind, myLearner.id)
+    fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { force: true })
       .then((res) => {
         if (cancelled) return;
         const coachEvents = res.events

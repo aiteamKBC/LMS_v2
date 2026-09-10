@@ -18,7 +18,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from .identity import learner_profile_for_source
-from .mappers import get_training_plan
+from .mappers import get_training_plan, training_plan_field
 from .models import (
     EnrolmentUser,
     KsbDefinition,
@@ -829,7 +829,7 @@ def hydrate_source_training_plan(source):
         return hydrated
 
     # Apprenticeships use Learning_plan; commercial learners use Training_plan.
-    field = "training_plan" if getattr(source, "training_plan", None) else "learning_plan"
+    field = training_plan_field(source)
     setattr(source, field, hydrated)
     source.save(update_fields=[field])
     return hydrated

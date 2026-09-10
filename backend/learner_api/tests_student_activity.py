@@ -18,9 +18,38 @@ from learner_api.student_activity_data import (
 )
 from learner_api.subject_dates import activity_schedule
 from learner_api.student_activity_access import student_activity_available
+from learner_api.subject_content import build_material, grade_quiz
 
 
 class StudentActivityTests(SimpleTestCase):
+    def test_fractional_pass_mark_is_checked_before_display_rounding(self):
+        definition = {'quiz': {'ready': True, 'passing_percent': 1 / 3 * 100,
+            'questions': [{'id': str(index), 'type': 'single_choice', 'solution_ids': ['a'],
+                           'options': [{'id': 'a'}, {'id': 'b'}]} for index in range(3)]}}
+        result = grade_quiz(definition, {'0': ['a'], '1': ['b'], '2': ['b']})
+        self.assertEqual(result['score_percent'], 33.3333)
+        self.assertTrue(result['passed'])
+        self.assertFalse(grade_quiz(definition, {'0': ['b'], '1': ['b'], '2': ['b']})['passed'])
+
+    def test_audio_sources_keep_html_players_out_of_the_native_audio_element(self):
+        cases = [
+            ('https://kentbusinesscollege.org/wp-json/kbc-lms/v1/material/71833/embed?attachment_id=71832', 'embed'),
+            ('https://kentbusinesscollege.org/stm-lessons/podcast/', 'embed'),
+            ('https://open.spotify.com/embed/episode/example', 'embed'),
+            ('https://example.org/recording.mp3?download=1', 'audio'),
+            ('https://drive.google.com/file/d/abcdefghijklm/view', 'audio'),
+            ('/learner_api/media/legacy-attachment/71832/', 'audio'),
+        ]
+        for url, expected in cases:
+            with self.subTest(url=url):
+                stored = {'title': 'Podcast', 'audio_url': url, '_source': {}}
+                for schema in (None, {'component_type': 'lesson', 'content_type': 'podcast', 'iframe_url': url}):
+                    material = build_material(stored, schema)
+                    self.assertEqual(material['media'][0]['kind'], expected)
+                    self.assertEqual(material['media'][0]['url'], url)
+                    self.assertTrue(material['available'])
+                    self.assertFalse(material['has_reading'])
+
     def test_material_is_membership_scoped_and_omits_grading_keys(self):
         cursor = MagicMock()
         row = dict(learner_name='Anna', title='Quiz', video_iframe_url=None,
@@ -271,6 +300,28 @@ class SubjectScheduleTests(SimpleTestCase):
 
 
 class SubjectBuilderCoverTests(SimpleTestCase):
+    def test_component_lineage_requires_an_unambiguous_original_id(self):
+        from .student_activity import _current_activity_sources
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            ('COMP-1', 'MOD-1', 42, '10'),
+            ('COMP-1', 'MOD-1', 42, '10'),
+            ('COMP-2', 'MOD-1', 42, '11'),
+            ('COMP-2', 'MOD-1', 42, '12'),
+            ('COMP-3', 'MOD-1', 42, None),
+        ]
+        self.assertEqual(_current_activity_sources(cursor, ['MOD-1']), {
+            'COMP-1': {'module_id': 'MOD-1', 'group_id': 42, 'activity_id': 10},
+        })
+        sql, params = cursor.execute.call_args.args
+        self.assertEqual(params, [['MOD-1']])
+        self.assertIn("c.id=material->>'component_id'", sql)
+        self.assertIn('c.module_catalogue_id=e.module_catalogue_id', sql)
+        self.assertIn('c.deleted_at IS NULL', sql)
+        cursor.reset_mock()
+        self.assertEqual(_current_activity_sources(cursor, []), {})
+        cursor.execute.assert_not_called()
+
     @patch('login.permissions.authenticate_request')
     def test_builder_image_save_only_updates_artwork(self, authenticate):
         from curriculum_api.views import curriculum_module_detail
@@ -354,6 +405,7 @@ class SubjectBuilderCoverTests(SimpleTestCase):
             [('MOD-1', 'Renamed subject')],
             [('MOD-1', 'Renamed subject', 'mba-legacy', '42', '')],
             [('COMP-1', 'Lesson', '2026-08-22', 'Lecture 06/03/26')],
+            [('COMP-1', 'MOD-1', 42, '10')],
         ]
         with patch('learner_api.student_activity.connections') as connections, \
              patch('learner_api.student_activity.subject_store.ready', return_value=True), \
@@ -368,6 +420,7 @@ class SubjectBuilderCoverTests(SimpleTestCase):
         self.assertEqual(payload['activity_dates']['COMP-1']['date'], '2026-03-06')
         self.assertEqual(payload['activity_dates']['COMP-1']['date_source'], 'builder_section_title')
         self.assertFalse(payload['activity_dates']['COMP-1']['date_needs_review'])
+        self.assertEqual(payload['activity_sources']['COMP-1'], {'module_id': 'MOD-1', 'group_id': 42, 'activity_id': 10})
 
     @patch('login.permissions.authenticate_request')
     def test_old_upload_route_cannot_write_a_separate_cover(self, authenticate):

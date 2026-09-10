@@ -557,14 +557,26 @@ def _legacy_plan_from_csv(source):
     return plan
 
 
+def training_plan_field(source):
+    """Use the same source column for assignment reads and writes, including []."""
+    return "training_plan" if isinstance(_maybe_json(getattr(source, "training_plan", None)), list) else "learning_plan"
+
+
+def stored_training_plan(source):
+    """None means unsaved; an empty array is an explicitly cleared assignment."""
+    for field in ("training_plan", "learning_plan"):
+        plan = _maybe_json(getattr(source, field, None))
+        if isinstance(plan, list):
+            return [entry for entry in plan if isinstance(entry, dict)]
+    return None
+
+
 def get_training_plan(source):
     """The structured plan for a CommercialUser or EnrolmentUser instance.
     Falls back to reconstructing one from the legacy CSV columns if the
     learner hasn't been re-saved since the structured format was introduced."""
-    plan = getattr(source, "training_plan", None)
-    if plan is None:
-        plan = getattr(source, "learning_plan", None)
-    if plan:
+    plan = stored_training_plan(source)
+    if plan is not None:
         return plan
     return _legacy_plan_from_csv(source)
 

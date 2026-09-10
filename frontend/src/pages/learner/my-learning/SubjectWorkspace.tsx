@@ -1,15 +1,38 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
-import { BookOpen, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { ArrowUpRight, BookOpen, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import { fetchStudentActivity, subjectRequest, type StudentActivityItem, type StudentActivityResponse, type SubjectAttemptResult } from '@/api/studentActivity';
 import { completedComponentIds, isComponentComplete, hasComponentContent, formatHoursMinutes, type JourneyComponent } from '@/utils/learnerJourney';
 import { StudentMaterial } from './StudentMaterial';
 
 type Schedule = Pick<StudentActivityItem, 'date' | 'month' | 'week_start' | 'week_end' | 'date_needs_review' | 'date_source'>;
-export type SubjectEntry = { id: string; title: string; category: string; completed: boolean; position: number; schedule: Schedule; week?: string; legacy?: StudentActivityItem; native?: JourneyComponent };
-type Subject = { id: string; title: string; source: 'legacy' | 'current'; activities: SubjectEntry[] };
+export type SubjectEntry = { id: string; title: string; category: string; completed: boolean; position: number; schedule: Schedule; week?: string; legacy?: StudentActivityItem; native?: JourneyComponent; bestScorePercent?: number | null };
+export type Subject = { id: string; title: string; source: 'legacy' | 'current'; activities: SubjectEntry[] };
 type BuilderSubject = { id: string; title: string };
-type CoverMetadata = { covers: Record<string, string>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject> };
+type ActivitySource = { module_id: string; group_id: number; activity_id: number };
+type CoverMetadata = { covers: Record<string, string>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject>; activity_sources?: Record<string, ActivitySource> };
+
+export function useSubjectMetadata(data: StudentActivityResponse | null, real: LearnerDetail | null, kind?: string, learnerId?: string, enabled = true) {
+  // Raw, sorted IDs are independent of Builder renames and the merged cards.
+  const refs = [...new Set([
+    ...(data?.subjects || []).map((subject) => `legacy:${subject.id}`),
+    ...(data?.activities || []).map((activity) => `legacy:${activity.group_id}`),
+    ...(real?.components || []).flatMap((component) => component.moduleId ? [`current:${component.moduleId}`] : []),
+  ])].sort().join(',');
+  const key = `${kind}:${learnerId}:${refs}`;
+  const [state, setState] = useState<{ key: string; real: LearnerDetail | null; data: CoverMetadata | null; error: string } | null>(null);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    if (!enabled || !learnerId) return;
+    const controller = new AbortController();
+    void subjectRequest<CoverMetadata>(`/learner_api/subject-covers/${encodeURIComponent(learnerId)}/?refs=${encodeURIComponent(refs)}`, { signal: controller.signal })
+      .then((result) => { if (!controller.signal.aborted) setState({ key, real, data: result, error: '' }); })
+      .catch(() => { if (!controller.signal.aborted) setState({ key, real, data: null, error: 'Could not load your subject details. Please try again.' }); });
+    return () => controller.abort();
+  }, [enabled, learnerId, refs, key, retry, real]);
+  const current = state?.key === key && state.real === real ? state : null;
+  return { metadata: current?.data, error: current?.error || '', retry: () => { setState(null); setRetry((value) => value + 1); } };
+}
 
 function scheduleForDate(value?: string | null): Schedule {
   const date = value?.slice(0, 10);
@@ -39,7 +62,8 @@ export function groupSubjectActivities(activities: SubjectEntry[]) {
   }));
 }
 
-function subjectsFrom(data: StudentActivityResponse | null, real: LearnerDetail | null, dates: Record<string, Schedule>, currentSubjects: BuilderSubject[] = [], builderSubjects: Record<string, BuilderSubject> = {}): Subject[] {
+export function subjectsFrom(data: StudentActivityResponse | null, real: LearnerDetail | null, metadata?: CoverMetadata | null): Subject[] {
+  const { activity_dates: dates = {}, current_subjects: currentSubjects = [], builder_subjects: builderSubjects = {}, activity_sources: activitySources = {} } = metadata || {};
   const subjects = new Map<string, Subject>();
   for (const subject of data?.subjects || []) subjects.set(`legacy:${subject.id}`, { id: `legacy:${subject.id}`, title: subject.name, source: 'legacy', activities: [] });
   for (const item of data?.activities || []) {
@@ -48,33 +72,62 @@ function subjectsFrom(data: StudentActivityResponse | null, real: LearnerDetail 
     if (!subject.activities.some((entry) => entry.id === item.activity_id)) subject.activities.push({ id: item.activity_id, title: item.activity, category: item.category, completed: item.completed, position: item.position || 0, schedule: item.month ? item : scheduleForDate(item.date), legacy: item });
     subjects.set(key, subject);
   }
+  const legacyByBuilder = new Map<string, string[]>();
+  for (const subject of subjects.values()) {
+    const builder = builderSubjects[subject.id];
+    if (builder) legacyByBuilder.set(builder.id, [...(legacyByBuilder.get(builder.id) || []), subject.id]);
+  }
+  const currentKey = (moduleId: string) => {
+    const matches = legacyByBuilder.get(moduleId);
+    return matches?.length === 1 ? matches[0] : `current:${moduleId}`;
+  };
   const completed = completedComponentIds(real);
-  for (const subject of currentSubjects) subjects.set(`current:${subject.id}`, { id: `current:${subject.id}`, title: subject.title, source: 'current', activities: [] });
+  for (const subject of currentSubjects) {
+    const key = currentKey(subject.id);
+    if (!subjects.has(key)) subjects.set(key, { id: key, title: subject.title, source: 'current', activities: [] });
+  }
   for (const [index, item] of (real?.components || []).entries()) {
-    const key = item.moduleId ? `current:${item.moduleId}` : `unlinked:${item.module}`;
+    const key = item.moduleId ? currentKey(item.moduleId) : `unlinked:${item.module}`;
     const subject = subjects.get(key) || { id: key, title: item.module || 'Unnamed subject', source: 'current' as const, activities: [] };
     const component: JourneyComponent = { ...item, title: item.component,
       quizAttempts: item.isQuiz && item.quizMeta ? (real?.quizAttempts || []).filter((attempt) => String(attempt.quizId) === String(item.quizMeta!.quizId)) : undefined };
     const id = item.componentId || `quiz:${item.quizMeta?.quizId ?? `${item.week}:${index}`}`;
+    const isComplete = isComponentComplete(component, completed);
+    const scores = (component.quizAttempts || []).map((attempt) => attempt.grade * 100).filter(Number.isFinite);
+    const bestScorePercent = scores.length ? Math.max(...scores) : null;
+    const source = activitySources[id];
+    const previous = source && source.module_id === item.moduleId && key === `legacy:${source.group_id}`
+      ? subject.activities.find((entry) => entry.legacy?.source_activity_id === source.activity_id) : undefined;
+    if (previous) {
+      // One original activity can have results in both systems. Preserve its
+      // original player/history and any later achievement without counting twice.
+      previous.completed ||= isComplete;
+      const legacy = previous.legacy!;
+      const historicalScore = legacy.best_score_percent ?? (legacy.quiz_score != null && legacy.quiz_maximum_score ? legacy.quiz_score / legacy.quiz_maximum_score * 100 : null);
+      const knownScores = [previous.bestScorePercent, historicalScore, bestScorePercent].filter((score): score is number => score != null);
+      previous.bestScorePercent = knownScores.length ? Math.max(...knownScores) : null;
+      continue;
+    }
     if (!subject.activities.some((entry) => entry.id === id)) subject.activities.push({
-      id, title: component.title, category: component.type || 'activity', completed: isComponentComplete(component, completed), position: index,
+      id, title: component.title, category: component.type || 'activity', completed: isComplete, bestScorePercent, position: index,
       schedule: dates[id] || scheduleForDate(component.sessionDate), week: item.week || undefined, native: component,
     });
     subjects.set(key, subject);
   }
+  const nativeTitles = new Set([...currentSubjects.map((subject) => subject.title), ...(real?.components || []).map((item) => item.module)]);
   for (const title of real?.modules || []) {
-    if (![...subjects.values()].some((subject) => subject.source === 'current' && subject.title === title)) subjects.set(`unlinked:${title}`, { id: `unlinked:${title}`, title, source: 'current', activities: [] });
+    if (!nativeTitles.has(title)) subjects.set(`unlinked:${title}`, { id: `unlinked:${title}`, title, source: 'current', activities: [] });
   }
   return [...subjects.values()].map((subject) => ({ ...subject, title: builderSubjects[subject.id]?.title || subject.title }))
     .sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
 }
 
-function Progress({ done, total, label = 'Subject progress', showFormula = false }: {
-  done: number; total: number; label?: string; showFormula?: boolean;
+function Progress({ done, total, label = 'Subject progress', showFormula = false, compact = false }: {
+  done: number; total: number; label?: string; showFormula?: boolean; compact?: boolean;
 }) {
   const percent = total ? Math.round(done / total * 10000) / 100 : 0;
-  return <div className="space-y-2"><div className="flex items-center justify-between gap-2 text-xs"><span className="text-foreground-500">{done} of {total} completed</span><strong className="text-primary-700">{percent}%</strong></div>
-    <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} className="h-1.5 overflow-hidden rounded-full bg-foreground-100"><div className="h-full rounded-full bg-primary-500 transition-[width]" style={{ width: `${percent}%` }} /></div>
+  return <div className="space-y-2"><div className="flex items-center justify-between gap-2 text-xs"><span className={compact ? 'text-slate-500' : 'text-foreground-500'}>{done} of {total} completed</span><strong className={`shrink-0 tabular-nums ${compact && percent === 100 ? 'text-emerald-700' : 'text-primary-700'}`}>{percent}%</strong></div>
+    <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} className={`h-1.5 overflow-hidden rounded-full ${compact ? 'bg-slate-100' : 'bg-foreground-100'}`}><div className={`h-full rounded-full motion-safe:transition-[width] ${compact ? percent === 100 ? 'bg-emerald-500' : 'bg-gradient-to-r from-primary-500 to-violet-400' : 'bg-primary-500'}`} style={{ width: `${percent}%` }} /></div>
     {showFormula && <p className="text-xs text-foreground-500">Progress = completed activities ÷ total activities × 100{total > 0 ? ` = ${done} ÷ ${total} × 100 = ${percent}%` : '. No activities yet'}. Quizzes count as complete after passing.</p>}
   </div>;
 }
@@ -88,14 +141,12 @@ function ActivityGroup({ title, label = title, activities, level, children }: {
   const Heading = level === 3 ? 'h3' : 'h4';
   const done = activities.filter((entry) => entry.completed).length;
   const percent = activities.length ? Math.round(done / activities.length * 10000) / 100 : 0;
-  const reviewCount = activities.filter((entry) => entry.schedule.date_needs_review).length;
   return <section aria-label={label} className={`overflow-hidden border border-foreground-200 bg-white ${level === 3 ? 'rounded-2xl' : 'rounded-xl'}`}>
     <Heading><button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded} aria-controls={contentId}
-      aria-label={`${expanded ? 'Collapse' : 'Expand'} ${label}`} aria-describedby={`${progressId}${reviewCount ? ` ${contentId}-review` : ''}`}
+      aria-label={`${expanded ? 'Collapse' : 'Expand'} ${label}`} aria-describedby={progressId}
       className="flex w-full flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 text-left transition-colors hover:bg-background-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500">
       <span className="min-w-0 flex-1 basis-40">
         <span className={`flex items-center gap-2 font-bold ${level === 3 ? 'text-base' : 'text-sm'}`}>{level === 3 && <CalendarDays size={20} className="shrink-0 text-primary-500" />}{title}</span>
-        {reviewCount > 0 && <span id={`${contentId}-review`} className="mt-1 block text-xs font-normal text-amber-700">{reviewCount} {reviewCount === 1 ? 'activity date needs' : 'activity dates need'} confirmation.</span>}
       </span>
       <span className="ml-auto flex shrink-0 items-center gap-3">
         <span id={progressId} role="progressbar" aria-label={`${label} progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}
@@ -122,13 +173,15 @@ export function SubjectOverview({ real, kind, learnerId, onOpen }: { real: Learn
       .catch((failure) => { if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'Could not load progress.'); });
     return () => controller.abort();
   }, [kind, learnerId, real?.studentActivityAvailable, retry]);
-  const subjects = subjectsFrom(data, real, {});
+  const { metadata, error: metadataError, retry: retryMetadata } = useSubjectMetadata(data, real, kind, learnerId, !real?.studentActivityAvailable || !!data);
+  const subjects = subjectsFrom(data, real, metadata);
+  const waitingForLinks = !!learnerId && !!data?.activities.length && !!real?.components?.length && !metadata;
   const total = subjects.reduce((sum, subject) => sum + subject.activities.length, 0);
   const done = subjects.reduce((sum, subject) => sum + subject.activities.filter((entry) => entry.completed).length, 0);
   return <section aria-label="Subject learning progress" className="space-y-4 rounded-2xl border border-foreground-200 bg-white p-5">
     <h2 className="text-sm font-bold text-foreground-900">Overall subject progress</h2>
-    {error ? <p role="alert" className="text-sm">{error} <button onClick={() => setRetry((value) => value + 1)} className="font-semibold text-primary-700 underline">Try again</button></p>
-      : real?.studentActivityAvailable && !data ? <p role="status" className="text-sm text-foreground-500">Loading progress…</p>
+    {error || metadataError ? <p role="alert" className="text-sm">{error || metadataError} <button onClick={() => { setRetry((value) => value + 1); retryMetadata(); }} className="font-semibold text-primary-700 underline">Try again</button></p>
+      : (real?.studentActivityAvailable && !data) || waitingForLinks ? <p role="status" className="text-sm text-foreground-500">Loading progress…</p>
         : <><Progress done={done} total={total} /><p className="text-xs text-foreground-500">Across {subjects.length} subjects</p></>}
     <button onClick={onOpen} className="flex items-center gap-2 text-sm font-semibold text-primary-700">Open your subjects<ChevronRight size={16} /></button>
   </section>;
@@ -137,12 +190,37 @@ export function SubjectOverview({ real, kind, learnerId, onOpen }: { real: Learn
 function Cover({ title, url, large = false }: { title: string; url?: string; large?: boolean }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [url]);
-  const hue = [...title].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 90 + 210;
-  return <div className={`relative overflow-hidden ${large ? 'h-40 sm:h-48' : 'aspect-[16/9]'} bg-primary-50`}>
-    {url && !failed ? <img src={url} alt={`${title} cover`} loading="lazy" onError={() => setFailed(true)} className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center" style={{ background: `linear-gradient(130deg, hsl(${hue} 45% 94%), hsl(${hue + 25} 55% 84%))` }}>
-      <div className="absolute -right-8 -top-8 h-40 w-40 rounded-full border-[22px] border-white/25" /><BookOpen className="relative h-12 w-12 text-primary-700/60" strokeWidth={1.3} />
+  const hue = [...title].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 55 + 220;
+  return <div className={`relative overflow-hidden ${large ? 'h-40 sm:h-48' : 'h-28'} bg-primary-50`}>
+    {url && !failed ? <img src={url} alt={`${title} cover`} loading="lazy" onError={() => setFailed(true)} className="h-full w-full object-cover motion-safe:transition-transform motion-safe:duration-500 motion-safe:group-hover:scale-105" /> : <div className={`flex h-full ${large ? 'items-center justify-center' : 'items-end p-4'}`} style={{ background: `linear-gradient(120deg, hsl(${hue} 60% 97%), hsl(${hue + 15} 55% 90%))` }}>
+      <div aria-hidden="true" className="absolute -right-7 -top-16 h-48 w-48 rotate-12 rounded-[3rem] border border-white/70 bg-white/20" />
+      <div aria-hidden="true" className="absolute -bottom-20 right-8 h-40 w-40 -rotate-12 rounded-[2.5rem] border border-white/60" />
+      <span className={`relative flex items-center justify-center rounded-2xl border border-white/90 bg-white/85 text-primary-600 shadow-sm ${large ? 'h-16 w-16' : 'h-11 w-11'}`}><BookOpen className={large ? 'h-8 w-8' : 'h-5 w-5'} strokeWidth={1.7} aria-hidden="true" /></span>
     </div>}
   </div>;
+}
+
+function SubjectCard({ subject, cover, onOpen }: { subject: Subject; cover?: string; onOpen: () => void }) {
+  const total = subject.activities.length;
+  const completed = subject.activities.filter((activity) => activity.completed).length;
+  const isComplete = total > 0 && completed === total;
+  const status = isComplete ? 'Completed' : completed > 0 ? 'In progress' : total ? 'Not started' : 'No activities yet';
+  const statusColor = isComplete ? 'bg-emerald-500' : completed > 0 ? 'bg-violet-500' : 'bg-slate-400';
+  return <article className="group min-w-0 overflow-hidden rounded-[20px] border border-slate-200/80 bg-white shadow-[0_2px_8px_-4px_rgba(30,20,60,0.12)] transition-[border-color,box-shadow] hover:border-primary-200 hover:shadow-[0_12px_28px_-12px_rgba(76,29,149,0.22)] focus-within:ring-2 focus-within:ring-primary-400 focus-within:ring-offset-2">
+    <button type="button" onClick={onOpen} className="flex h-full w-full flex-col text-left focus-visible:outline-none">
+      <div className="relative w-full">
+        <Cover title={subject.title} url={cover} />
+        <span className={`absolute right-3 top-3 inline-flex items-center gap-1.5 rounded-full border border-white/90 bg-white/95 px-2.5 py-1 text-[11px] font-semibold shadow-sm ${isComplete ? 'text-emerald-700' : 'text-slate-600'}`}>
+          <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${statusColor}`} />{status}
+        </span>
+      </div>
+      <div className="flex w-full flex-1 flex-col p-4">
+        <h3 className="min-h-[3.75rem] break-words text-sm font-bold leading-5 text-slate-900 transition-colors group-hover:text-primary-700">{subject.title}</h3>
+        <div className="mt-auto pt-4"><Progress done={completed} total={total} compact /></div>
+        <span className="mt-4 flex min-h-10 items-center justify-between gap-2 rounded-xl bg-primary-50 px-3 text-xs font-bold text-primary-700 transition-colors group-hover:bg-primary-500 group-hover:text-white group-focus-within:bg-primary-500 group-focus-within:text-white">Open subject<ArrowUpRight size={17} aria-hidden="true" /></span>
+      </div>
+    </button>
+  </article>;
 }
 
 function nativeHref(entry: SubjectEntry, kind?: string, learnerId?: string) {
@@ -159,7 +237,7 @@ function ActivityRow({ entry, kind, learnerId, onProgress }: { entry: SubjectEnt
   const contentId = useId();
   const href = nativeHref(entry, kind, learnerId);
   const legacy = entry.legacy;
-  const score = legacy?.best_score_percent ?? (legacy?.quiz_score != null && legacy.quiz_maximum_score ? legacy.quiz_score / legacy.quiz_maximum_score * 100 : null);
+  const score = entry.bestScorePercent ?? legacy?.best_score_percent ?? (legacy?.quiz_score != null && legacy.quiz_maximum_score ? legacy.quiz_score / legacy.quiz_maximum_score * 100 : null);
   return <div role="group" aria-label={`${entry.title} activity`} className="border-t border-foreground-100 first:border-t-0"><div className="grid grid-cols-[2rem_minmax(0,1fr)] items-start gap-3 p-4 sm:flex sm:flex-wrap sm:items-center">
     <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${entry.completed ? 'bg-emerald-50 text-emerald-600' : 'bg-background-100 text-foreground-400'}`}>{entry.completed ? <CheckCircle2 size={18} /> : <BookOpen size={16} />}</span>
     <div className="min-w-0 flex-1"><h5 className="text-sm font-semibold text-foreground-900">
@@ -167,7 +245,6 @@ function ActivityRow({ entry, kind, learnerId, onProgress }: { entry: SubjectEnt
         : href ? <a href={href} className="text-primary-700 underline-offset-4 hover:underline focus-visible:underline">{entry.title}</a> : entry.title}
     </h5><p className="mt-1 text-xs text-foreground-500">{[entry.category, entry.schedule.date, score != null ? `Best score ${Math.round(score)}%` : ''].filter(Boolean).join(' · ')}</p>
       {legacy?.section_title && <p className="mt-1 text-xs text-foreground-500">Lecture: {legacy.section_title}</p>}
-      {entry.schedule.date_needs_review && <p className="mt-1 text-xs text-amber-700">{entry.schedule.date ? 'Date awaiting confirmation (original record).' : 'Date needs review'}</p>}
     </div>
     <div className="col-start-2 flex flex-wrap items-center gap-2 sm:ml-auto"><span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${entry.completed ? 'bg-emerald-50 text-emerald-700' : 'bg-background-100 text-foreground-600'}`}>{entry.completed ? 'Complete' : 'Not complete'}</span>
     {legacy && kind && learnerId && <button onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={contentId} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs font-semibold text-primary-700">{open ? 'Close activity' : 'Open activity'}</button>}
@@ -184,9 +261,8 @@ export function StudentActivityPanel({ data, loading, error, onRetry, kind, lear
   loading: boolean; error: string | null; onRetry: () => void; onProgress?: () => void;
 }) {
   const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState<string | null>(null);
-  const [metadata, setMetadata] = useState<CoverMetadata | null>(null);
-  const [imageError, setImageError] = useState('');
+  const [selected, setSelected] = useState<string | null>(() => new URLSearchParams(window.location.search).get('subject'));
+  const { metadata, error: imageError, retry: retryMetadata } = useSubjectMetadata(data, real, kind, learnerId, !loading || !!data);
   const identity = `${kind}:${learnerId}`;
   const [savedProgress, setSavedProgress] = useState<{ identity: string; activities: Record<number, SubjectAttemptResult> }>({ identity, activities: {} });
   const updatedData = useMemo(() => {
@@ -207,16 +283,8 @@ export function StudentActivityPanel({ data, loading, error, onRetry, kind, lear
     });
     onProgress?.();
   };
-  const subjects = useMemo(() => subjectsFrom(updatedData, real, metadata?.activity_dates || {}, metadata?.current_subjects || [], metadata?.builder_subjects || {}), [updatedData, real, metadata]);
-  const refs = subjects.map((subject) => subject.id).filter((ref) => !ref.startsWith('unlinked:')).join(',');
-  useEffect(() => {
-    if (!learnerId) return;
-    const controller = new AbortController();
-    void subjectRequest<CoverMetadata>(`/learner_api/subject-covers/${encodeURIComponent(learnerId)}/?refs=${encodeURIComponent(refs)}`, { signal: controller.signal })
-      .then((result) => { if (!controller.signal.aborted) { setMetadata(result); setImageError(''); } })
-      .catch(() => { if (!controller.signal.aborted) setImageError('Subject images and dates could not be refreshed.'); });
-    return () => controller.abort();
-  }, [learnerId, refs]);
+  const subjects = useMemo(() => subjectsFrom(updatedData, real, metadata), [updatedData, real, metadata]);
+  const waitingForLinks = !!learnerId && !!data?.activities.length && !!real?.components?.length && !metadata;
   const covers = { ...data?.covers, ...metadata?.covers };
   const term = search.trim().toLocaleLowerCase();
   const active = subjects.find((subject) => subject.id === selected);
@@ -226,20 +294,18 @@ export function StudentActivityPanel({ data, loading, error, onRetry, kind, lear
   const groups = groupSubjectActivities(active?.activities || []).filter(({ weeks }) => weeks.some(({ activities }) => activities.some((entry) => visibleActivityIds.has(entry.id))));
   const total = subjects.reduce((sum, subject) => sum + subject.activities.length, 0);
   const done = subjects.reduce((sum, subject) => sum + subject.activities.filter((entry) => entry.completed).length, 0);
-  if (loading && !data && !subjects.length) return <div role="status" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">{[0, 1, 2, 3, 4].map((key) => <div key={key} className="h-72 animate-pulse rounded-2xl bg-foreground-100" />)}<span className="sr-only">Loading subjects</span></div>;
+  if (waitingForLinks && imageError) return <div role="alert"><p>{imageError}</p><button onClick={retryMetadata} className="font-semibold text-primary-700 underline">Try again</button></div>;
+  if (waitingForLinks || (loading && !data && !subjects.length)) return <div role="status" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">{[0, 1, 2, 3, 4].map((key) => <div key={key} className="h-72 animate-pulse rounded-2xl bg-foreground-100" />)}<span className="sr-only">Loading subjects</span></div>;
   if (error && !data && !subjects.length) return <div role="alert" className="rounded-2xl border bg-white p-6"><p className="font-semibold">Could not load your subjects</p><p className="mt-2 text-sm text-foreground-500">{error}</p><button onClick={onRetry} className="mt-4 rounded-lg border px-4 py-2 text-sm font-semibold">Try again</button></div>;
   return <section className="space-y-5" aria-label="Your subjects">
     <header className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-primary-600">My learning</p><h2 className="mt-1 text-2xl font-bold text-foreground-900">{active ? active.title : 'Your subjects'}</h2>{data?.learner_name && <p className="mt-1 text-sm text-foreground-500">{data.learner_name}</p>}</div>
       <label className="relative min-w-0 flex-1 sm:max-w-xs"><Search size={17} className="absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400" /><input aria-label="Search modules or activities" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search subjects or activities" className="h-11 w-full rounded-xl border border-foreground-200 bg-white pl-10 pr-3 text-sm outline-none focus:border-primary-400" /></label>
     </header>
-    {imageError && <p role="alert" className="text-sm text-amber-800">{imageError}</p>}
+    {imageError && <p role="alert" className="text-sm text-amber-800">{imageError} <button onClick={retryMetadata} className="font-semibold underline">Try again</button></p>}
     {error && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{error} <button onClick={onRetry} className="font-semibold underline">Try again</button></p>}
     {!active ? <>
       <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-foreground-500"><span><strong className="text-foreground-900">{subjects.length}</strong> subjects</span><span><strong className="text-foreground-900">{total}</strong> activities</span><span><strong className="text-foreground-900">{done}</strong> completed</span></div>
-      {visible.length ? <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">{visible.map((subject) => <article key={subject.id} className="relative overflow-hidden rounded-2xl border border-foreground-200 bg-white shadow-sm transition-shadow hover:shadow-md">
-        <button onClick={() => setSelected(subject.id)} className="block h-full w-full text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500">
-          <Cover title={subject.title} url={covers[subject.id]} /><div className="space-y-3 p-4"><h3 className="min-h-10 text-sm font-bold leading-5 text-foreground-900">{subject.title}</h3><Progress done={subject.activities.filter((entry) => entry.completed).length} total={subject.activities.length} /><span className="flex items-center justify-between border-t border-foreground-100 pt-3 text-xs font-semibold text-primary-700">Open subject<ChevronRight size={16} /></span></div>
-        </button></article>)}</div> : <div className="rounded-2xl border border-dashed p-10 text-center text-sm text-foreground-500">{subjects.length ? 'No subjects or activities match your search.' : 'Your subjects will appear here when they are assigned.'}</div>}
+      {visible.length ? <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">{visible.map((subject) => <SubjectCard key={subject.id} subject={subject} cover={covers[subject.id]} onOpen={() => setSelected(subject.id)} />)}</div> : <div className="rounded-2xl border border-dashed p-10 text-center text-sm text-foreground-500">{subjects.length ? 'No subjects or activities match your search.' : 'Your subjects will appear here when they are assigned.'}</div>}
       {data && <div className="flex flex-wrap gap-6 rounded-xl bg-background-100 px-4 py-3 text-xs"><div><span className="block text-foreground-500">Recorded OTJH</span><strong>{data.actual_total == null ? 'Unavailable' : formatHoursMinutes(data.actual_total)}</strong></div><div><span className="block text-foreground-500">Planned OTJH</span><strong>{data.planned_total == null ? 'Unavailable' : formatHoursMinutes(data.planned_total)}</strong></div></div>}
     </> : <>
       <button onClick={() => setSelected(null)} className="flex items-center gap-1.5 text-sm font-semibold text-primary-700"><ChevronLeft size={17} />All subjects</button>
