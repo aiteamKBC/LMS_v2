@@ -19,7 +19,6 @@
 .signTable th:nth-child(4) { width: 12%; }
 .signTable th:nth-child(5) { width: 16%; }
 .activityTable .activityRow:nth-child(even) { background: var(--record-surface); }
-.activityTable .activityRow:hover { background: var(--record-soft); }
 .activityTable .activityCell { min-width: 0; overflow-wrap: anywhere; }
 .activityDescription { display: grid; gap: 4px; min-width: 0; }
 .activityTrigger { display: inline-flex; align-items: flex-start; gap: 6px; text-align: left; max-width: 100%; padding-block: 2px; border-radius: 5px; }

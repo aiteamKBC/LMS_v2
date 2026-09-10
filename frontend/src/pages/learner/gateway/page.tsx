@@ -87,7 +87,7 @@ export default function GatewayReadinessPage() {
       pageTitle="Gateway Readiness" pageSubtitle="Prepare for your Gateway and End-Point Assessment"
       userName={p.fullName} userRole={`${p.programme} ${p.programmeLevel} Apprentice`}
     >
-      <div className="p-6 space-y-6">
+      <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
         {/* 1. Hero Banner + What's Blocking Me + Countdown */}
         <GatewayHeroSection />
 

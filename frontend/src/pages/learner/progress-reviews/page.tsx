@@ -243,19 +243,19 @@ function ProgressReviewsList() {
       userName={learner?.name || 'Learner'}
       userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}
     >
-      <main className="w-full space-y-5 p-3 sm:p-4 md:p-6">
+      <main className="page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}</div>}
 
-        <section className="learner-super-admin-hero relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-4 text-white shadow-xl shadow-primary-950/10 sm:rounded-3xl sm:p-6 md:p-7">
-          <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>
+        <section className="learner-super-admin-hero relative overflow-hidden rounded-2xl p-4 text-primary-800 sm:rounded-3xl sm:p-6 md:p-6 workspace-page-hero">
+          <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl hidden"></div>
           <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-secondary-100"><AppIcon className="ri-team-line text-secondary-300" />Formal review</span>
-              <h1 className="mt-3 text-[22px] font-bold leading-tight text-white sm:text-2xl md:text-3xl">Progress Review</h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">Review your learning, progress and next actions with {reviewerName} and your line manager.</p>
+              <span className="inline-flex items-center gap-2 rounded-full border border-primary-200/60 bg-primary-100/60 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600"><AppIcon className="ri-team-line text-secondary-300" />Formal review</span>
+              <h1 className="mt-3 text-[22px] font-bold leading-tight text-primary-800 sm:text-2xl md:text-3xl">Progress Review</h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-foreground-500">Review your learning, progress and next actions with {reviewerName} and your line manager.</p>
             </div>
             <div className="grid grid-cols-2 gap-2 lg:min-w-[520px] lg:grid-cols-4">
-              {summaryMetrics.map((metric) => <MetricCard key={metric.label} {...metric} className="progress-review-hero-metric" />)}
+              {summaryMetrics.map((metric) => <MetricCard key={metric.label} {...metric} className="progress-review-hero-metric" valuePosition="stacked" />)}
             </div>
           </div>
         </section>
@@ -480,25 +480,25 @@ export default function ProgressReviewsPage() {
       userName={learner?.name || 'Learner'}
       userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}
     >
-      <div className="space-y-5 p-4 md:p-6">
+      <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}</div>}
 
         <button type="button" onClick={() => navigate(-1)} className="inline-flex h-9 items-center gap-2 self-start rounded-xl border border-primary-200 bg-primary-50 px-3.5 text-xs font-bold text-primary-700 shadow-sm transition hover:-translate-x-0.5 hover:bg-primary-100">
           <AppIcon className="ri-arrow-left-line" /> Back to Progress Review
         </button>
 
-        <section className="learner-super-admin-hero relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-5 text-white shadow-xl shadow-primary-950/10 sm:p-6">
-          <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>
+        <section className="learner-super-admin-hero relative overflow-hidden rounded-3xl p-5 text-primary-800 sm:p-6 workspace-page-hero">
+          <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl hidden"></div>
           <div className="relative flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex items-start gap-4">
-              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-xl text-secondary-200 shadow-lg"><AppIcon className="ri-team-line" /></span>
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-primary-200/60 bg-primary-100/60 text-xl text-primary-600 shadow-lg"><AppIcon className="ri-team-line" /></span>
               <div>
                 <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-secondary-200">Formal progress review</span>
-                  <span className="rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-[10px] font-bold text-white/80">{loading ? 'Loading...' : learner?.programme || '-'}</span>
+                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">Formal progress review</span>
+                  <span className="rounded-full border border-primary-200/60 bg-primary-100/60 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{loading ? 'Loading...' : learner?.programme || '-'}</span>
                 </div>
-                <h1 className="font-heading text-xl font-bold text-white sm:text-2xl">Your progress review record</h1>
-                <p className="mt-1 max-w-2xl text-sm leading-6 text-white/65">Each review brings together you, your coach and line manager to discuss learning, progress and next actions.</p>
+                <h1 className="font-heading text-xl font-bold text-primary-800 sm:text-2xl">Your progress review record</h1>
+                <p className="mt-1 max-w-2xl text-sm leading-6 text-foreground-500">Each review brings together you, your coach and line manager to discuss learning, progress and next actions.</p>
               </div>
             </div>
             <div className="grid grid-cols-3 gap-2 sm:min-w-[390px]">
@@ -509,8 +509,8 @@ export default function ProgressReviewsPage() {
               ] as const).map(({ label, value, color, icon }) => (
                 <div key={label} className="rounded-2xl border border-white/[0.08] bg-white/[0.07] px-3 py-3 text-center backdrop-blur">
                   <AppIcon className={`${icon} ${color === 'text-foreground-900' ? 'text-secondary-200' : color.replace('600', '300')} text-sm`} />
-                  <p className="mt-0.5 text-xl font-bold text-white">{value}</p>
-                  <p className="text-[9px] font-semibold uppercase tracking-wider text-white/45">{label}</p>
+                  <p className="mt-0.5 text-xl font-bold text-primary-800">{value}</p>
+                  <p className="text-[9px] font-semibold uppercase tracking-wider text-foreground-500">{label}</p>
                 </div>
               ))}
             </div>
@@ -525,18 +525,18 @@ export default function ProgressReviewsPage() {
           <div>
             <main className="space-y-4">
               <section className="overflow-hidden rounded-3xl border border-background-200 bg-background-50 shadow-[0_10px_35px_rgba(25,12,50,0.07)]">
-                <div className="learner-super-admin-hero relative overflow-hidden border-b border-white/10 bg-gradient-to-r from-[#10021f] via-primary-950 to-[#35105e] p-5 text-white sm:p-6">
-                  <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-secondary-400/10 blur-3xl"></div>
+                <div className="learner-super-admin-hero relative overflow-hidden border-b border-primary-200/60 p-5 text-primary-800 sm:p-6 workspace-page-hero">
+                  <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-secondary-400/10 blur-3xl hidden"></div>
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                     <div className="relative">
                       <span className={`inline-flex rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[10px] font-bold text-white/80`}>{statusLabel(selected?.status)}</span>
-                      <h2 className="mt-2 text-xl font-bold text-white">{progressReviewTitle(selected)}</h2>
-                      <p className="mt-1 text-sm text-white/60">{formatDate(reviewDate(selected), true)} at {formatTime(selected?.scheduledTime)}</p>
+                      <h2 className="mt-2 text-xl font-bold text-primary-800">{progressReviewTitle(selected)}</h2>
+                      <p className="mt-1 text-sm text-foreground-500">{formatDate(reviewDate(selected), true)} at {formatTime(selected?.scheduledTime)}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {selected?.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action inline-flex items-center rounded-lg px-4 py-2.5 text-xs font-extrabold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}
-                      <button type="button" onClick={() => void showSlides()} disabled={slidesBusy} className="inline-flex items-center rounded-lg border border-white/25 bg-white px-3.5 py-2 text-xs font-bold text-primary-900 shadow-sm hover:bg-primary-50 disabled:opacity-60"><AppIcon className={slidesBusy ? 'ri-loader-4-line mr-1.5 animate-spin' : 'ri-slideshow-line mr-1.5'} />{slidesBusy ? 'Preparing slides…' : 'Show slides'}</button>
-                      <button type="button" onClick={addToCalendar} disabled={!selected?.scheduledDate || !selected.scheduledTime} className="rounded-lg border border-white/15 bg-white/10 px-3.5 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-calendar-check-line mr-1.5" />Add to calendar</button>
+                      <button type="button" onClick={() => void showSlides()} disabled={slidesBusy} className="inline-flex items-center rounded-lg border border-primary-200/60 bg-white px-3.5 py-2 text-xs font-bold text-primary-900 shadow-sm hover:bg-primary-50 disabled:opacity-60"><AppIcon className={slidesBusy ? 'ri-loader-4-line mr-1.5 animate-spin' : 'ri-slideshow-line mr-1.5'} />{slidesBusy ? 'Preparing slides…' : 'Show slides'}</button>
+                      <button type="button" onClick={addToCalendar} disabled={!selected?.scheduledDate || !selected.scheduledTime} className="rounded-lg border border-primary-200/60 bg-primary-100/60 px-3.5 py-2 text-xs font-bold text-primary-800 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-calendar-check-line mr-1.5" />Add to calendar</button>
                     </div>
                   </div>
                 </div>

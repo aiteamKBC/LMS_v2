@@ -79,7 +79,7 @@ export default function MySchedulePage() {
       pageTitle="My Schedule" pageSubtitle="Your personalised timeline of joined events with progress tracking"
       userName={p.fullName} userRole={`${p.programme} Apprentice`}
     >
-      <div className="p-6 space-y-6">
+      <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
         {/* Back */}
         <div className="flex items-center gap-2">
           <button

@@ -468,7 +468,7 @@ export default function ReviewFormPage() {
       userName="Learner"
       userRole="Learner"
     >
-      <main className="w-full p-4 md:p-6 space-y-3">
+      <main className="page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
             <button onClick={() => navigate('/learner/onboarding/reviews')} className="text-foreground-500 hover:text-foreground-800">

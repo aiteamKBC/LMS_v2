@@ -38,7 +38,7 @@ export const MetricCard = memo(function MetricCard({
   icon?: string;
   /** Optional visual override for contexts with a fixed semantic icon palette. */
   iconClassName?: string;
-  valuePosition?: 'inline' | 'end';
+  valuePosition?: 'inline' | 'end' | 'stacked';
   /** Given when the card filters the view below it. */
   onClick?: () => void;
   /** True when this card's filter is the one currently applied. */

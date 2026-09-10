@@ -192,19 +192,19 @@ export function MonthlyCoachingListPage() {
 
   return (
     <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel} pageTitle="Monthly Coaching Meeting" pageSubtitle="30-day coaching meetings with your coach" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
-      <main className="w-full space-y-5 p-3 sm:p-4 md:p-6">
+      <main className="page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}</div>}
-        <section className="learner-super-admin-hero relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-4 text-white shadow-xl shadow-primary-950/10 sm:rounded-3xl sm:p-6 md:p-7">
-          <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>
+        <section className="learner-super-admin-hero relative overflow-hidden rounded-2xl p-4 text-primary-800 sm:rounded-3xl sm:p-6 md:p-6 workspace-page-hero">
+          <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl hidden"></div>
           <div className="relative">
             <div>
-              <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-secondary-100"><AppIcon className="ri-user-voice-line text-secondary-300" />One-to-one support</span>
-              <h1 className="mt-3 text-[22px] font-bold leading-tight text-white sm:text-2xl md:text-3xl">Monthly Coaching Meeting</h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">Your 30-day coaching meetings with {coachName}. Review progress, learning evidence and agreed next steps.</p>
+              <span className="inline-flex items-center gap-2 rounded-full border border-primary-200/60 bg-primary-100/60 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600"><AppIcon className="ri-user-voice-line text-secondary-300" />One-to-one support</span>
+              <h1 className="mt-3 text-[22px] font-bold leading-tight text-primary-800 sm:text-2xl md:text-3xl">Monthly Coaching Meeting</h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-foreground-500">Your 30-day coaching meetings with {coachName}. Review progress, learning evidence and agreed next steps.</p>
             </div>
           </div>
-          <div className="relative z-0 mt-5 grid grid-cols-2 gap-2 border-t border-white/10 pt-4 sm:mt-6 sm:grid-cols-2 sm:pt-5 md:gap-3 lg:grid-cols-4">
-            {summaryMetrics.map((metric) => <MetricCard key={metric.label} {...metric} className="progress-review-hero-metric" />)}
+          <div className="relative z-0 mt-5 grid grid-cols-2 gap-2 border-t border-primary-200/60 pt-4 sm:mt-6 sm:grid-cols-2 sm:pt-5 md:gap-3 lg:grid-cols-4">
+            {summaryMetrics.map((metric) => <MetricCard key={metric.label} {...metric} className="progress-review-hero-metric" valuePosition="stacked" />)}
           </div>
         </section>
 
@@ -335,13 +335,13 @@ export default function MonthlyCoachingPage() {
 
   return (
     <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel} pageTitle="Monthly Coaching Meeting" pageSubtitle="Your 30-day coaching meeting with your coach" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
-      <div className="space-y-4 p-4 md:p-6">
+      <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}</div>}
         <button type="button" onClick={() => navigate(-1)} className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-600 hover:text-primary-800"><AppIcon className="ri-arrow-left-line" />Back to coaching meetings</button>
         {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : (
           <>
             <section className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm">
-              <div className="learner-super-admin-hero bg-gradient-to-r from-primary-950 to-primary-800 p-5 text-white sm:p-6"><span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[10px] font-bold text-white/80">{statusLabel(selected.status)}</span><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-accent-300">30-day coaching meeting</p><h1 className="mt-1 text-xl font-bold text-white">{monthlyCoachingTitle(selected)}</h1><p className="mt-1 text-sm text-white/60">{formatDate(dateOf(selected), true)} at {formatTime(selected.scheduledTime)}</p></div>{selected.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action rounded-lg px-4 py-2 text-xs font-bold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}</div></div>
+              <div className="learner-super-admin-hero p-5 text-primary-800 sm:p-6 workspace-page-hero"><span className="rounded-full border border-primary-200/60 bg-primary-100/60 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{statusLabel(selected.status)}</span><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">30-day coaching meeting</p><h1 className="mt-1 text-xl font-bold text-primary-800">{monthlyCoachingTitle(selected)}</h1><p className="mt-1 text-sm text-foreground-500">{formatDate(dateOf(selected), true)} at {formatTime(selected.scheduledTime)}</p></div>{selected.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action rounded-lg px-4 py-2 text-xs font-bold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}</div></div>
               <div className="space-y-5 p-5 sm:p-6">
                 {shouldShowLearnerMeetingRecording(selected) ? (
                   <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />

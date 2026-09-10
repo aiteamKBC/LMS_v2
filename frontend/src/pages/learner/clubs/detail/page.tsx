@@ -181,7 +181,7 @@ export default function ClubDetailPage() {
         pageTitle="Club Not Found" pageSubtitle="The club you are looking for does not exist"
         userName={p.fullName} userRole={`${p.programme} Apprentice`}
       >
-        <div className="p-6 flex flex-col items-center justify-center py-24">
+        <div className="flex flex-col items-center justify-center py-24 page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
           <span className="w-20 h-20 rounded-3xl bg-foreground-100 flex items-center justify-center mb-6">
             <AppIcon className="ri-emotion-sad-line text-foreground-300 text-3xl"></AppIcon>
           </span>
@@ -468,7 +468,7 @@ export default function ClubDetailPage() {
         </div>
       )}
 
-      <div className="p-6 space-y-6">
+      <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
         {/* Back + Club Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <button

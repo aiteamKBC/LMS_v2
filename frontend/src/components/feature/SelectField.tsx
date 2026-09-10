@@ -340,7 +340,7 @@ export function SelectMenu({
                 placeholder={searchPlaceholder}
                 aria-label={searchPlaceholder}
                 aria-controls={listboxId}
-                className="min-w-0 flex-1 bg-transparent text-[13px] font-semibold text-foreground-900 outline-none placeholder:font-medium placeholder:text-foreground-400"
+                className="min-w-0 flex-1 !border-0 bg-transparent text-[13px] font-semibold text-foreground-900 !shadow-none !outline-none !ring-0 placeholder:font-medium placeholder:text-foreground-400"
               />
               {query && (
                 <button

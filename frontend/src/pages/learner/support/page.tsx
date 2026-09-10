@@ -380,20 +380,20 @@ export default function SupportPage() {
       pageTitle="Support Hub" pageSubtitle="AI-assisted support, knowledge base, tickets, and contact"
       userName={p.fullName} userRole={`${p.programme} ${p.programmeLevel} Apprentice`}
     >
-      <div className="p-6 space-y-6">
+      <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
         {/* Hero Banner */}
-        <div className="learner-super-admin-hero relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <div className="learner-super-admin-hero relative rounded-2xl overflow-hidden workspace-page-hero" >
+          <div className="absolute inset-0 pointer-events-none overflow-hidden hidden">
             <div className="absolute animate-liquid-blob-1 opacity-25" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
             <div className="absolute animate-liquid-blob-2 opacity-15" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
           </div>
-          <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <AppIcon className="ri-customer-service-2-line text-white text-2xl"></AppIcon>
+          <div className="relative p-6 sm:p-6 flex flex-col sm:flex-row items-start sm:items-center gap-5">
+            <span className="w-14 h-14 rounded-2xl bg-primary-100/60 backdrop-blur-sm flex items-center justify-center shrink-0">
+              <AppIcon className="ri-customer-service-2-line text-primary-800 text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
-              <h2 className="text-lg font-heading font-bold text-white mb-1">How can we help, {p.firstName}?</h2>
-              <p className="text-sm text-white/80 leading-relaxed max-w-2xl">
+              <h2 className="text-lg font-heading font-bold text-primary-800 mb-1">How can we help, {p.firstName}?</h2>
+              <p className="text-sm text-foreground-500 leading-relaxed max-w-2xl">
                 Our support team is here to help with any questions about your apprenticeship. You have <strong>{openTickets} open ticket{openTickets !== 1 ? 's' : ''}</strong>.
                 For urgent matters, call KBC Learner Support on 01227 811 200.
               </p>
@@ -401,13 +401,13 @@ export default function SupportPage() {
             <div className="flex items-center gap-2 shrink-0">
               <button
                 onClick={() => setAiModalOpen(true)}
-                className="px-4 py-2.5 bg-white/10 border border-white/20 text-white rounded-xl text-sm font-semibold hover:bg-white/20 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 backdrop-blur-sm"
+                className="px-4 py-2.5 bg-primary-100/60 border border-primary-200/60 text-primary-800 rounded-xl text-sm font-semibold hover:bg-primary-100 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 backdrop-blur-sm"
               >
                 <AppIcon className="ri-robot-line"></AppIcon> Ask AI
               </button>
               <button
                 onClick={() => setTicketModalOpen(true)}
-                className="px-4 py-2.5 bg-white text-primary-700 rounded-xl text-sm font-semibold hover:bg-white/90 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2"
+                className="px-4 py-2.5 bg-white text-primary-700 rounded-xl text-sm font-semibold hover:bg-primary-100 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2"
               >
                 <AppIcon className="ri-add-line"></AppIcon> New Ticket
               </button>

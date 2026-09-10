@@ -28,7 +28,8 @@ import type React from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { CertificateDocument } from '@/components/feature/CertificateDocument';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
-import { PageContainer } from '@/components/ui/PageContainer';
+import { WorkspaceDashboardLayout } from '@/components/feature/WorkspaceDashboardLayout';
+import { WorkspaceMetricContent } from '@/components/ui/WorkspaceMetricContent';
 import { Panel } from '@/components/ui/Panel';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { ActionRow, RowAction } from '@/components/ui/ActionRow';
@@ -767,19 +768,71 @@ export default function LearnerOverview() {
       userName={isRealMode ? heroFullName : p.fullName}
       userRole={isRealMode ? (heroProgramme ? `${heroProgramme} Learner` : 'Learner') : `${p.programme} Apprentice`}
     >
-      <PageContainer>
+      <WorkspaceDashboardLayout className="learner-dashboard" overview={
+            <div className="learner-dashboard-overview space-y-5">
+              <section className="learner-overview-section">
+                <SectionHeader
+                  title="Upcoming"
+                  description="Sessions and reviews"
+                  actions={<Link to="/learner/calendar" className="text-[12px] font-semibold text-primary-600 hover:text-primary-700">View calendar</Link>}
+                />
+                <div className="mt-3 space-y-2">
+                  {isRealMode && calendarLoading ? (
+                    <RowsSkeleton rows={3} avatar={false} />
+                  ) : (isRealMode ? upcomingReal : upcomingMock).length === 0 ? (
+                    <EmptyState
+                      size="sm"
+                      title="No upcoming sessions"
+                      description={isRealMode ? 'Book a catch-up or support session with your coach.' : undefined}
+                      action={<RowAction label="Book a session" icon="ri-calendar-check-line" emphasis="primary" onClick={() => navigate('/learner/calendar')} />}
+                    />
+                  ) : (
+                    (isRealMode ? upcomingReal : upcomingMock).map((item) => (
+                      <UpcomingRow key={item.id} {...item} onClick={() => navigate('/learner/calendar')} />
+                    ))
+                  )}
+                </div>
+              </section>
+
+              <section className="learner-overview-section">
+                <SectionHeader title="My Coach" />
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex w-full min-w-0 items-center gap-3">
+                    <LearnerAvatar name={coachDisplayName} tone="brand" size="lg" />
+                    <div className="min-w-0">
+                      <p className="truncate text-[14px] font-semibold text-foreground-900">{coachDisplayName}</p>
+                      <p className="truncate text-[12px] text-foreground-500">{coachDisplayEmail || 'Contact your programme team'}</p>
+                    </div>
+                  </div>
+                  <div className="learner-coach-actions flex w-full min-w-0 flex-wrap items-center gap-2">
+                    <RowAction label="Message" icon="ri-chat-3-line" onClick={() => navigate('/learner/messages')} />
+                    <RowAction label="Book a session" icon="ri-check-line" emphasis="primary" onClick={() => navigate('/learner/calendar')} />
+                  </div>
+                </div>
+              </section>
+
+              <section className="learner-overview-section">
+                <SectionHeader title="Next steps" icon="ri-flashlight-line" />
+                <div className="mt-3 space-y-2">
+                  <DashboardNextStep icon="ri-book-open-line" label="Review your current module overview" href={trainingPlanHref} />
+                  <DashboardNextStep icon="ri-calendar-check-line" label="Book your next coaching session" href="/learner/calendar" />
+                  <DashboardNextStep icon="ri-time-line" label="Log an on-the-job activity" href="/learner/otjh" />
+                </div>
+              </section>
+            </div>
+      }>
 
         {/* ================================================================
             PROFILE HEADER
             ================================================================ */}
         <SectionReveal delay={0}>
             <header
-              className="learner-super-admin-hero relative overflow-hidden rounded-2xl px-5 py-5 shadow-sm md:px-7 md:py-6"
-              style={{ background: 'linear-gradient(108deg, oklch(var(--primary-800)) 0%, oklch(var(--primary-700)) 30%, oklch(var(--primary-500)) 66%, oklch(var(--primary-400)) 100%)' }}
+              className="learner-super-admin-hero relative overflow-hidden rounded-2xl px-5 py-5 md:px-6 md:py-6 workspace-page-hero"
+
             >
             <div
               aria-hidden="true"
-              className="pointer-events-none absolute inset-0 opacity-40"
+              className="pointer-events-none absolute inset-0 opacity-40 hidden"
               style={{ backgroundImage: 'radial-gradient(circle at 78% 22%, rgba(255,255,255,.34), transparent 22%), radial-gradient(circle at 60% 100%, rgba(255,255,255,.18), transparent 28%)' }}
             />
             <div className="relative z-10 flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
@@ -787,18 +840,18 @@ export default function LearnerOverview() {
                 <LearnerAvatar
                   name={displayLearnerName}
                   size="lg"
-                  className="h-16 w-16 bg-white/20 text-xl text-white ring-white/35"
+                  className="h-16 w-16 bg-primary-100/60 text-xl text-primary-700 ring-primary-200/60"
                 />
                 <div className="min-w-0">
-                  <h1 className="text-2xl font-heading font-bold tracking-tight text-white md:text-3xl">{displayLearnerName}</h1>
-                  {headerDescription ? <p className="mt-1 text-[13px] text-white/85">{headerDescription}</p> : null}
+                  <h1 className="text-2xl font-heading font-bold tracking-tight text-primary-800 md:text-3xl">{displayLearnerName}</h1>
+                  {headerDescription ? <p className="mt-1 text-[13px] text-foreground-500">{headerDescription}</p> : null}
                 </div>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => navigate('/learner/messages')}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/80 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-white/90"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200/60 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-100"
                 >
                   <AppIcon className="ri-chat-3-line" />
                   Message coach
@@ -806,7 +859,7 @@ export default function LearnerOverview() {
                 <button
                   type="button"
                   onClick={() => navigate(trainingPlanHref)}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-white/90"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-100"
                 >
                   <AppIcon className="ri-play-circle-line" />
                   Continue learning
@@ -814,7 +867,7 @@ export default function LearnerOverview() {
                 <button
                   type="button"
                   onClick={() => navigate(learningPlanHubHref)}
-                  className="learner-overview-learning-plan-button inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/70 bg-white/15 px-3 text-[12px] font-semibold text-white shadow-sm transition"
+                  className="learner-overview-learning-plan-button inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200/60 bg-primary-100/60 px-3 text-[12px] font-semibold text-primary-800 shadow-sm transition"
                 >
                   <AppIcon className="ri-book-2-line" />
                   Learner's Map
@@ -826,10 +879,10 @@ export default function LearnerOverview() {
               <ProfileFact icon="ri-flag-2-line" label="Module" value={currentModuleLabel} />
               <ProfileFact icon="ri-user-star-line" label="Coach" value={coachDisplayName} />
               <ProfileFact icon="ri-calendar-event-line" label="Start date" value={startDateDisplay} />
-              <div className="inline-flex items-center gap-1.5 rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-[12px] text-white/80">
-                <AppIcon className="ri-checkbox-circle-line text-[13px] text-emerald-300" />
-                <span className="text-white/65">Status</span>
-                <span className="font-semibold text-white">{displayValue(isRealMode ? real?.programmeStatus : p.status)}</span>
+              <div className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200/60 bg-primary-100/60 px-3 py-2 text-[12px] text-foreground-500">
+                <AppIcon className="ri-checkbox-circle-line text-[13px] text-primary-600" />
+                <span className="text-foreground-500">Status</span>
+                <span className="font-semibold text-primary-800">{displayValue(isRealMode ? real?.programmeStatus : p.status)}</span>
               </div>
               <ProfileFact icon="ri-calendar-check-line" label="Planned end" value={plannedEndDisplay} />
             </div>
@@ -840,7 +893,7 @@ export default function LearnerOverview() {
             COMPACT PROGRESS CARDS
             ================================================================ */}
         <SectionReveal delay={60}>
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-4">
               <ProgressStat href={programmeProgressHref} icon="ri-road-map-line" label="Programme Progress" value={programmeProgressValue} percent={programmeProgressPercent} caption={programmeProgressCaption} tone="brand" />
               <ProgressStat href="/learner/attendance" icon="ri-calendar-check-line" label="Attendance" value={attendanceValue} percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
               <ProgressStat href={otjhProgressHref} icon="ri-time-line" label="OTJ Hours" value={otjValue} percent={otjPercent} caption={otjCaption} tone={otjTone} />
@@ -852,8 +905,8 @@ export default function LearnerOverview() {
             CONTINUE LEARNING + UPCOMING / MY COACH
             ================================================================ */}
         <SectionReveal delay={100}>
-          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
-            <div className="space-y-4 lg:col-span-2">
+          <div className="grid grid-cols-1 items-stretch gap-4">
+            <div className="space-y-4">
               <Panel>
                 <SectionHeader
                   title="Continue Learning"
@@ -914,57 +967,7 @@ export default function LearnerOverview() {
 
             </div>
 
-            <div className="space-y-4 lg:col-span-1">
-              <Panel>
-                <SectionHeader
-                  title="Upcoming"
-                  description="Sessions and reviews"
-                  actions={<Link to="/learner/calendar" className="text-[12px] font-semibold text-primary-600 hover:text-primary-700">View calendar</Link>}
-                />
-                <div className="mt-3 space-y-2">
-                  {isRealMode && calendarLoading ? (
-                    <RowsSkeleton rows={3} avatar={false} />
-                  ) : (isRealMode ? upcomingReal : upcomingMock).length === 0 ? (
-                    <EmptyState
-                      size="sm"
-                      title="No upcoming sessions"
-                      description={isRealMode ? 'Book a catch-up or support session with your coach.' : undefined}
-                      action={<RowAction label="Book a session" icon="ri-calendar-check-line" emphasis="primary" onClick={() => navigate('/learner/calendar')} />}
-                    />
-                  ) : (
-                    (isRealMode ? upcomingReal : upcomingMock).map((item) => (
-                      <UpcomingRow key={item.id} {...item} onClick={() => navigate('/learner/calendar')} />
-                    ))
-                  )}
-                </div>
-              </Panel>
 
-              <Panel padding="sm">
-                <SectionHeader title="My Coach" />
-                <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <LearnerAvatar name={coachDisplayName} tone="brand" size="lg" />
-                    <div className="min-w-0">
-                      <p className="truncate text-[14px] font-semibold text-foreground-900">{coachDisplayName}</p>
-                      <p className="truncate text-[12px] text-foreground-500">{coachDisplayEmail || 'Contact your programme team'}</p>
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <RowAction label="Message" icon="ri-chat-3-line" onClick={() => navigate('/learner/messages')} />
-                    <RowAction label="Book a session" icon="ri-check-line" emphasis="primary" onClick={() => navigate('/learner/calendar')} />
-                  </div>
-                </div>
-              </Panel>
-
-              <Panel>
-                <SectionHeader title="Next steps" icon="ri-flashlight-line" />
-                <div className="mt-3 space-y-2">
-                  <DashboardNextStep icon="ri-book-open-line" label="Review your current module overview" href={trainingPlanHref} tone="brand" />
-                  <DashboardNextStep icon="ri-calendar-check-line" label="Book your next coaching session" href="/learner/calendar" tone="positive" />
-                  <DashboardNextStep icon="ri-time-line" label="Log an on-the-job activity" href="/learner/otjh" tone="upcoming" iconTone="otj" />
-                </div>
-              </Panel>
-            </div>
           </div>
         </SectionReveal>
 
@@ -1029,7 +1032,7 @@ export default function LearnerOverview() {
           </Panel>
         </SectionReveal>
 
-      </PageContainer>
+      </WorkspaceDashboardLayout>
     </WorkspaceShell>
   );
 }
@@ -1041,10 +1044,10 @@ export default function LearnerOverview() {
 /** One labelled fact in the profile header's meta row. */
 function ProfileFact({ icon, label, value }: { icon: string; label: string; value: string }) {
   return (
-    <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-[12px] text-white/80">
-      <AppIcon className={`${icon} shrink-0 text-[13px] text-white/75`}></AppIcon>
-      <span className="shrink-0 text-white/65">{label}</span>
-      <span className="min-w-0 truncate font-semibold text-white">{value || EMPTY_VALUE}</span>
+    <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-primary-200/60 bg-primary-100/60 px-3 py-2 text-[12px] text-foreground-500">
+      <AppIcon className={`${icon} shrink-0 text-[13px] text-foreground-500`}></AppIcon>
+      <span className="shrink-0 text-foreground-500">{label}</span>
+      <span className="min-w-0 truncate font-semibold text-primary-800">{value || EMPTY_VALUE}</span>
     </span>
   );
 }
@@ -1072,22 +1075,17 @@ function TaskEmptyIllustration() {
   );
 }
 
-function DashboardNextStep({ icon, label, href, tone = 'brand', iconTone }: { icon: string; label: string; href: string; tone?: StatusTone; iconTone?: 'otj' }) {
-  const style = toneStyle(tone);
-  const iconClasses = iconTone === 'otj'
-    ? 'bg-gradient-to-br from-[#d49a38] via-[#b27715] to-[#8f5e0e] text-white shadow-sm shadow-[#b27715]/35'
-    : tone === 'positive'
-      ? 'bg-gradient-to-br from-emerald-300 via-emerald-500 to-emerald-700 text-white shadow-sm shadow-emerald-500/30'
-      : 'bg-gradient-to-br from-primary-300 via-primary-500 to-primary-700 text-white shadow-sm shadow-primary-500/30';
+function DashboardNextStep({ icon, label, href }: { icon: string; label: string; href: string }) {
+  const iconClasses = 'bg-primary-100/60 text-primary-600 shadow-sm';
   return (
     <Link
       to={href}
-      className="group flex items-center gap-2.5 rounded-xl border border-foreground-100 bg-background-50 px-3 py-2.5 transition hover:border-primary-200 hover:bg-primary-50/40"
+      className="learner-next-step group"
     >
       <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${iconClasses}`}>
         <AppIcon className={`${icon} text-[15px]`} />
       </span>
-      <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-foreground-700">{label}</span>
+      <span className="learner-next-step-label text-[12px] font-medium leading-relaxed text-foreground-700">{label}</span>
       <AppIcon className="ri-arrow-right-s-line shrink-0 text-foreground-300 transition group-hover:translate-x-0.5 group-hover:text-primary-500" />
     </Link>
   );
@@ -1102,18 +1100,11 @@ function ProgressStat({ href, icon, label, value, percent, caption, tone = 'neut
     <Link
       to={href}
       aria-label={`Open ${label}`}
-      className="group flex min-w-0 items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-primary-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+      className="ui-metric-card group block min-w-0 rounded-xl border border-foreground-200/70 bg-background-50 p-3 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-primary-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
     >
-      <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-transform duration-200 group-hover:scale-105 ${style.bg} ${tone === 'neutral' ? 'text-foreground-400' : style.text}`}>
-        <AppIcon className={`${icon} text-xl`} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-[12px] font-semibold text-foreground-500">{label}</p>
-        <p className={`mt-1 text-[22px] font-semibold leading-none tabular-nums ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{value}</p>
-        <ProgressBar percent={percent} tone={percent == null || tone === 'neutral' ? undefined : style.dot} className="mt-2.5" />
-        {caption ? <p className="mt-1.5 truncate text-[12px] leading-snug text-foreground-500">{caption}</p> : null}
-      </div>
-      <AppIcon aria-hidden="true" className="ri-arrow-right-s-line shrink-0 text-foreground-300 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-primary-500" />
+      <WorkspaceMetricContent icon={icon} label={label} value={value} note={caption}
+        valuePosition="stacked" valueClassName={tone === 'neutral' ? 'text-primary-800' : style.text} />
+      <ProgressBar percent={percent} tone={percent == null || tone === 'neutral' ? undefined : style.dot} className="mt-3" />
     </Link>
   );
 }
@@ -1127,17 +1118,17 @@ function UpcomingRow({ day, month, timeLabel, title, subtitle, tone = 'neutral',
     <button
       type="button"
       onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-xl border border-foreground-200/60 bg-background-50 px-3 py-2.5 text-left transition hover:border-primary-300/60 hover:shadow-sm"
+      className="learner-upcoming-row text-left"
     >
       <span className={`flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-lg ${style.bg}`}>
         <span className={`text-[13px] font-bold leading-none ${style.text}`}>{day}</span>
         <span className={`mt-0.5 text-[9px] font-semibold uppercase leading-none ${style.text}`}>{month}</span>
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13px] font-semibold text-foreground-900">{title}</span>
-        {subtitle ? <span className="block truncate text-[12px] text-foreground-400">{subtitle}</span> : null}
+        <span className="block whitespace-normal break-words text-[13px] font-semibold leading-snug text-foreground-900">{title}</span>
+        {subtitle ? <span className="block whitespace-normal break-words text-[11px] leading-relaxed text-foreground-500">{subtitle}</span> : null}
+        {timeLabel ? <span className="mt-1 block text-[11px] tabular-nums text-foreground-500">{timeLabel}</span> : null}
       </span>
-      {timeLabel ? <span className="shrink-0 text-[12px] text-foreground-400">{timeLabel}</span> : null}
     </button>
   );
 }

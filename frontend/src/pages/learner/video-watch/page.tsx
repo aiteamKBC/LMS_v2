@@ -628,7 +628,7 @@ export default function ComponentViewPage() {
       userName="Learner" userRole="Learner"
       hideBreadcrumbs
     >
-      <div className="p-3 md:p-6 max-w-6xl mx-auto">
+      <div className="mx-auto page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
         <button
           onClick={() => navigate(backHref)}
           className="mb-5 inline-flex items-center gap-2 rounded-xl border border-background-300 bg-white px-4 py-2.5 text-[13px] font-semibold text-foreground-700 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary-200 hover:text-primary-700 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 cursor-pointer"

@@ -50,10 +50,6 @@
   background: var(--kbc-surface) !important;
 }
 
-:global(.dashboard-theme) .panel .matrix .permissionRow:hover {
-  background: var(--kbc-purple-wash) !important;
-}
-
 :global(.dashboard-theme) .panel .matrix .group td {
   height: 34px;
   padding: 6px 20px;

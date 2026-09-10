@@ -1,14 +1,4 @@
-// ============================================================================
-// Page header.
-//
-// This is the shared deep-purple page hero used across queue, report, and
-// detail screens. Keeping it here makes the visual treatment consistent with
-// the platform accounts page without duplicating markup in every route.
-//
-// `variant="feature"` keeps a tinted surface for the two or three screens that
-// genuinely open a session rather than continue one. It is a tint, not a hero —
-// if it starts appearing on every page again, the point has been lost.
-// ============================================================================
+// Shared compact page header, using the Super Admin surface and typography.
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -43,15 +33,14 @@ export function PageHeader({
   return (
     <header
       className={cn(
-        'page-header workspace-page-hero relative overflow-hidden rounded-2xl border-0 px-5 py-5 shadow-sm md:px-7 md:py-7',
+        'page-header workspace-page-hero relative overflow-hidden rounded-2xl border border-primary-200/60 bg-primary-50/60 px-5 py-5 md:px-6 md:py-6',
         className,
       )}
-      style={{ background: 'var(--kbc-hero-gradient)' }}
     >
       {backTo ? (
         <Link
           to={backTo.to}
-          className="relative z-10 mb-3 inline-flex items-center gap-1.5 text-[12px] font-semibold text-white/75 transition hover:text-white"
+          className="relative z-10 mb-3 inline-flex items-center gap-1.5 text-[12px] font-semibold text-primary-600 transition hover:text-primary-800"
         >
           <AppIcon className="ri-arrow-left-line text-[14px]"></AppIcon>
           {backTo.label}
@@ -68,18 +57,18 @@ export function PageHeader({
         <div className="flex min-w-0 items-start gap-4">
           {icon ? (
             <span
-              className="workspace-hero-banner__icon flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/20 text-white backdrop-blur-sm"
+              className="workspace-hero-banner__icon flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-primary-100/60 text-primary-600 shadow-sm"
             >
               <AppIcon className={cn(icon, 'text-2xl')}></AppIcon>
             </span>
           ) : null}
 
           <div className="min-w-0">
-            <h1 className="text-xl font-heading font-bold tracking-tight text-white md:text-2xl">
+            <h1 className="text-xl font-heading font-semibold tracking-tight text-primary-800 md:text-2xl">
               {title}
             </h1>
             {description ? (
-              <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-white/80">
+              <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-foreground-500">
                 {description}
               </p>
             ) : null}
@@ -94,7 +83,7 @@ export function PageHeader({
       {/* The facts sit below the title rule rather than beside it, so a long
           title never squeezes them into a column one word wide. */}
       {meta ? (
-        <div className="relative z-10 mt-4 flex flex-wrap items-start gap-x-5 gap-y-2 border-t border-white/20 pt-3 text-white/80">
+        <div className="relative z-10 mt-4 flex flex-wrap items-start gap-x-5 gap-y-2 border-t border-primary-200/60 pt-3 text-foreground-500">
           {meta}
         </div>
       ) : null}

@@ -253,7 +253,7 @@ export default function WeekDetailPage() {
       userName={p.fullName}
       userRole={`${p.programme} Apprentice`}
     >
-      <div className="p-3 md:p-6 space-y-5 md:space-y-6">
+      <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
 
         {/* ═══════════════════════════════════════════════════
             WEEK NAVIGATION BAR
@@ -298,8 +298,8 @@ export default function WeekDetailPage() {
         {/* ═══════════════════════════════════════════════════
             SECTION 1 — WEEK HERO
             ═══════════════════════════════════════════════════ */}
-        <section className="learner-super-admin-hero relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <section className="learner-super-admin-hero relative rounded-2xl overflow-hidden workspace-page-hero" >
+          <div className="absolute inset-0 pointer-events-none overflow-hidden hidden">
             <div className="absolute animate-liquid-blob-1 opacity-25" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
             <div className="absolute animate-liquid-blob-2 opacity-15" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
           </div>
@@ -308,13 +308,13 @@ export default function WeekDetailPage() {
             <div className="flex-1 px-5 md:px-7 py-5 md:py-6 flex flex-col justify-center min-w-0">
               <div className="flex items-center gap-3 mb-3 flex-wrap">
                 <span className="text-xs font-semibold text-accent-300/80 uppercase tracking-wider bg-accent-400/10 px-2.5 py-1 rounded-md border border-accent-400/15">Week {weekNum}</span>
-                <span className="text-sm text-white/40">{weekData.dateRange.start} – {weekData.dateRange.end}</span>
+                <span className="text-sm text-foreground-500">{weekData.dateRange.start} – {weekData.dateRange.end}</span>
                 <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${stats.pct >= 75 ? 'bg-emerald-400/20 text-emerald-300 border border-emerald-400/25' : stats.pct >= 40 ? 'bg-accent-400/20 text-accent-300 border border-accent-400/25' : 'bg-amber-400/20 text-amber-300 border border-amber-400/25'}`}>
                   {stats.pct}% Complete
                 </span>
               </div>
-              <h1 className="text-lg md:text-xl font-heading font-bold text-white tracking-tight mb-1.5">{weekData.modulePeriod.liveTitle}</h1>
-              <p className="text-sm text-white/40">Module: {weekData.modulePeriod.label}</p>
+              <h1 className="text-lg md:text-xl font-heading font-bold text-primary-800 tracking-tight mb-1.5">{weekData.modulePeriod.liveTitle}</h1>
+              <p className="text-sm text-foreground-500">Module: {weekData.modulePeriod.label}</p>
             </div>
 
             <div className="lg:w-[320px] shrink-0 px-5 md:px-7 py-5 md:py-6 border-t lg:border-t-0 lg:border-l border-accent-400/10 flex flex-col justify-center">
@@ -322,8 +322,8 @@ export default function WeekDetailPage() {
                 <div className="flex items-center gap-2.5 shrink-0">
                   <DonutRing progress={stats.pct} color="primary" size={54} stroke={4.5} />
                   <div>
-                    <p className="text-lg font-heading font-bold text-white leading-none">{stats.pct}%</p>
-                    <p className="text-xs text-white/40 mt-0.5">{stats.completed} of {stats.total} done</p>
+                    <p className="text-lg font-heading font-bold text-primary-800 leading-none">{stats.pct}%</p>
+                    <p className="text-xs text-foreground-500 mt-0.5">{stats.completed} of {stats.total} done</p>
                   </div>
                 </div>
                 <div className="w-px h-12 bg-accent-400/10 shrink-0" />
@@ -332,19 +332,19 @@ export default function WeekDetailPage() {
                     <span className="w-5 h-5 rounded-full bg-primary-400/30 flex items-center justify-center shrink-0">
                       <span className="text-[9px] font-semibold text-primary-200">{p.tutor.avatar}</span>
                     </span>
-                    <span className="text-xs text-white/50 truncate">{p.tutor.name}</span>
-                    <span className="text-[9px] text-white/25">Tutor</span>
+                    <span className="text-xs text-foreground-500 truncate">{p.tutor.name}</span>
+                    <span className="text-[9px] text-foreground-500">Tutor</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <span className="w-5 h-5 rounded-full bg-accent-400/30 flex items-center justify-center shrink-0">
-                      <span className="text-[9px] font-semibold text-accent-200">{p.coach.avatar}</span>
+                      <span className="text-[9px] font-semibold text-primary-600">{p.coach.avatar}</span>
                     </span>
-                    <span className="text-xs text-white/50 truncate">{p.coach.name}</span>
-                    <span className="text-[9px] text-white/25">Coach</span>
+                    <span className="text-xs text-foreground-500 truncate">{p.coach.name}</span>
+                    <span className="text-[9px] text-foreground-500">Coach</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <AppIcon className="ri-presentation-line text-white/30 text-xs w-5 h-5 flex items-center justify-center shrink-0"></AppIcon>
-                    <span className="text-xs text-white/50 truncate">Live: {p.nextLiveSession.day} {p.nextLiveSession.time}</span>
+                    <AppIcon className="ri-presentation-line text-foreground-500 text-xs w-5 h-5 flex items-center justify-center shrink-0"></AppIcon>
+                    <span className="text-xs text-foreground-500 truncate">Live: {p.nextLiveSession.day} {p.nextLiveSession.time}</span>
                   </div>
                 </div>
               </div>

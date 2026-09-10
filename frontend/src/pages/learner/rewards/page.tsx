@@ -1,3 +1,4 @@
+import { WorkspaceMetricContent } from '@/components/ui/WorkspaceMetricContent';
 import { useEffect, useMemo, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -116,13 +117,13 @@ export default function LearnerRewardsPage() {
       pageTitle="Rewards" pageSubtitle="Your points, recognition and reward claims"
       userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Apprentice` : 'Apprentice'}
     >
-      <main className="w-full space-y-4 p-3 sm:p-4 md:space-y-5 md:p-6">
-        <section className="learner-super-admin-hero relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#17032d] via-[#33105e] to-[#6a2ca0] p-4 text-white shadow-[0_18px_50px_rgba(39,12,73,0.18)] sm:rounded-3xl sm:p-6 md:p-7">
-          <div className="pointer-events-none absolute -right-20 -top-32 h-80 w-80 rounded-full bg-amber-300/15 blur-3xl"></div>
-          <div className="relative flex flex-col gap-4 sm:gap-5 lg:flex-row lg:items-end lg:justify-between"><div><span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-secondary-100"><AppIcon className="ri-award-line text-amber-300"></AppIcon>Recognition & rewards</span><h1 className="mt-3 text-[22px] font-bold leading-tight text-white sm:text-2xl md:text-3xl">Turn your progress into rewards</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-white/75">See every point earned, celebrate recognition and claim available rewards.</p></div><div className="learner-hero-balance rounded-xl border border-white/10 bg-white/10 px-4 py-3 backdrop-blur sm:rounded-2xl sm:px-5"><p className="text-[10px] uppercase tracking-wider text-white/60">Available balance</p><p className="mt-1 text-2xl font-bold text-white sm:text-3xl">{loading ? '–' : available.toLocaleString()} <span className="text-xs font-medium text-amber-300">pts</span></p></div></div>
-          <div className="relative mt-4 grid grid-cols-2 gap-2 border-t border-white/10 pt-4 sm:mt-5 sm:grid-cols-3">{[
+      <main className="page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
+        <section className="learner-super-admin-hero relative overflow-hidden rounded-2xl p-4 text-primary-800 sm:rounded-3xl sm:p-6 md:p-6 workspace-page-hero">
+          <div className="pointer-events-none absolute -right-20 -top-32 h-80 w-80 rounded-full bg-amber-300/15 blur-3xl hidden"></div>
+          <div className="relative flex flex-col gap-4 sm:gap-5 lg:flex-row lg:items-end lg:justify-between"><div><span className="inline-flex items-center gap-2 rounded-full border border-primary-200/60 bg-primary-100/60 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600"><AppIcon className="ri-award-line text-amber-300"></AppIcon>Recognition & rewards</span><h1 className="mt-3 text-[22px] font-bold leading-tight text-primary-800 sm:text-2xl md:text-3xl">Turn your progress into rewards</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-foreground-500">See every point earned, celebrate recognition and claim available rewards.</p></div><div className="learner-hero-balance rounded-xl border border-primary-200/60 bg-primary-100/60 px-4 py-3 backdrop-blur sm:rounded-2xl sm:px-5"><p className="text-[10px] uppercase tracking-wider text-foreground-500">Available balance</p><p className="mt-1 text-2xl font-bold text-primary-800 sm:text-3xl">{loading ? '–' : available.toLocaleString()} <span className="text-xs font-medium text-amber-300">pts</span></p></div></div>
+          <div className="relative mt-4 grid grid-cols-2 gap-2 border-t border-primary-200/60 pt-4 sm:mt-5 sm:grid-cols-3">{[
             ['Lifetime earned', earned, 'ri-sparkling-line', 'text-amber-300'], ['Recognition', recognitions.length, 'ri-medal-line', 'text-emerald-300'], ['Claims', claims.length, 'ri-gift-line', 'text-pink-300'],
-          ].map(([label, value, icon, colour]) => <div key={String(label)} className="learner-hero-kpi min-w-0 rounded-xl border border-white/[0.08] bg-white/[0.07] p-2.5 sm:rounded-2xl sm:p-3"><AppIcon className={`${icon} ${colour}`}></AppIcon><p className="mt-1 text-lg font-bold text-white sm:text-xl">{loading ? '–' : Number(value).toLocaleString()}</p><p className="truncate text-[9px] text-white/60 sm:text-[10px]">{label}</p></div>)}</div>
+          ].map(([label, value, icon]) => <div key={String(label)} className="ui-metric-card coach-metric-card"><WorkspaceMetricContent label={String(label)} value={loading ? '?' : Number(value).toLocaleString()} icon={String(icon)} valuePosition="stacked" /></div>)}</div>
         </section>
 
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2"></AppIcon>{error}</div>}

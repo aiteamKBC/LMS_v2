@@ -171,7 +171,7 @@ export default function LearnerCompliancePage() {
         userName="Learner"
         userRole="Learner"
       >
-        <main className="p-4 md:p-6">
+        <main className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
           <div className="mx-auto max-w-2xl rounded-2xl border border-primary-200 bg-primary-50/40 p-8 text-center">
             <i className="ri-information-line text-3xl text-primary-600" />
             <h2 className="mt-3 text-lg font-heading font-semibold text-foreground-900">No compliance documents are required</h2>
@@ -216,7 +216,7 @@ export default function LearnerCompliancePage() {
       pageTitle="Compliance documents"
       pageSubtitle="Your statutory apprenticeship paperwork"
     >
-      <div className="p-6 space-y-6">
+      <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
         {loading ? (
           <RowsSkeleton rows={5} className="py-2" />
         ) : error ? (

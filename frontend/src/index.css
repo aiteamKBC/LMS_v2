@@ -2385,10 +2385,6 @@ table tbody td:last-child {
 }
 
 .dashboard-theme table tbody tr:last-child td { border-bottom: 0; }
-.dashboard-theme table tbody tr:hover {
-  background: linear-gradient(90deg, rgb(245 243 255 / 0.95), rgb(239 246 255 / 0.9)) !important;
-  box-shadow: inset 3px 0 0 rgb(99 102 241 / 0.72);
-}
 
 .dashboard-theme .workspace-drawer {
   top: 0.75rem;
@@ -2779,10 +2775,6 @@ table tbody td:last-child {
   height: 3.35rem;
   color: oklch(var(--foreground-700));
   font-size: 0.76rem;
-}
-
-.dashboard-theme .workspace-main table tbody tr:hover {
-  background: oklch(var(--primary-50) / 0.3);
 }
 
 .dashboard-theme .workspace-main :is(.bg-red-50, .bg-amber-50, .bg-emerald-50, .bg-primary-50, .bg-secondary-50) {
@@ -3752,12 +3744,6 @@ table tbody td:last-child {
   background: linear-gradient(180deg, oklch(var(--primary-50) / 0.58), oklch(var(--background-100) / 0.8));
 }
 
-.dashboard-theme[data-workspace-role="curriculum"] .workspace-main tbody tr:hover,
-.dashboard-theme[data-workspace-role="tutor"] .workspace-main tbody tr:hover,
-.dashboard-theme[data-workspace-role="engagement"] .workspace-main tbody tr:hover {
-  background-color: oklch(var(--primary-50) / 0.38);
-}
-
 /* Give compact action/icon wells a clear but restrained visual anchor. */
 .dashboard-theme[data-workspace-role="curriculum"] .workspace-main :is(span, div):has(> svg)[class*="rounded"],
 .dashboard-theme[data-workspace-role="tutor"] .workspace-main :is(span, div):has(> svg)[class*="rounded"],
@@ -4211,11 +4197,6 @@ table tbody td:last-child {
 
 .admin-cool-table tbody tr:nth-child(even) {
   background: rgb(241 245 249 / 0.58);
-}
-
-.admin-cool-table tbody tr:hover {
-  background: linear-gradient(90deg, rgb(245 243 255 / 0.95), rgb(239 246 255 / 0.9)) !important;
-  box-shadow: inset 3px 0 0 rgb(99 102 241 / 0.72);
 }
 
 .admin-cool-table tbody .text-foreground-300 {
@@ -5858,12 +5839,6 @@ html[data-theme="light"][data-accessibility="monochrome"] {
   background: var(--kbc-surface) !important;
 }
 
-.dashboard-theme .workspace-main table tbody tr:hover,
-.dashboard-theme .workspace-main .admin-cool-table tbody tr:hover {
-  background: var(--kbc-purple-wash) !important;
-  box-shadow: inset 3px 0 0 rgb(139 92 246 / 0.55);
-}
-
 .dashboard-theme .workspace-main table tbody tr:nth-child(odd) {
   background: var(--kbc-surface) !important;
 }
@@ -5874,10 +5849,6 @@ html[data-theme="light"][data-accessibility="monochrome"] {
 
 .dashboard-theme .workspace-main table tbody tr > td {
   background: inherit !important;
-}
-
-.dashboard-theme .workspace-main table tbody tr:hover > td {
-  background: var(--kbc-purple-wash) !important;
 }
 
 .dashboard-theme .workspace-main table tbody td {
@@ -7247,7 +7218,6 @@ html[data-theme="light"][data-accessibility="monochrome"] {
   .ui-panel:hover,
   .ui-metric-card:hover,
   .ui-filter-toolbar:hover,
-  .ui-data-table:hover,
   .ui-action-row:hover,
   .card-premium:hover,
   .coach-metric-card:hover
@@ -7953,7 +7923,6 @@ html[data-theme="light"][data-accessibility="monochrome"] {
   .ui-panel:hover,
   .ui-metric-card:hover,
   .ui-filter-toolbar:hover,
-  .ui-data-table:hover,
   .ui-action-row:hover,
   .card-premium:hover,
   .coach-metric-card:hover
@@ -8032,11 +8001,6 @@ html[data-theme="light"][data-accessibility="monochrome"] {
 [data-theme="dark"] .dashboard-theme .workspace-main table tbody tr,
 [data-theme="dark"] .dashboard-theme .workspace-main table tbody tr:nth-child(even) {
   background: var(--theme-surface) !important;
-}
-
-[data-theme="dark"] .dashboard-theme .workspace-main table tbody tr:hover {
-  background: var(--theme-surface-elevated) !important;
-  box-shadow: none !important;
 }
 
 [data-theme="dark"] .dashboard-theme .workspace-main table tbody td {
@@ -8121,15 +8085,6 @@ body table tbody tr > td {
   color: var(--kbc-table-text);
 }
 
-body table tbody tr:hover {
-  background: var(--kbc-purple-wash) !important;
-  box-shadow: inset 3px 0 0 rgb(139 92 246 / 0.55);
-}
-
-body table tbody tr:hover > td {
-  background: inherit !important;
-}
-
 [data-theme="dark"] body table thead th {
   background: linear-gradient(180deg, #2c287f 0%, #32268e 48%, #2c2382 100%) !important;
 }
@@ -8146,9 +8101,4 @@ body .dashboard-theme .workspace-main table.recent-access-events-table tbody tr:
 
 body .dashboard-theme .workspace-main table.recent-access-events-table tbody tr > td {
   background: inherit !important;
-}
-
-body .dashboard-theme .workspace-main table.recent-access-events-table tbody tr:hover,
-body .dashboard-theme .workspace-main table.recent-access-events-table tbody tr:hover > td {
-  background: var(--kbc-purple-wash) !important;
 }

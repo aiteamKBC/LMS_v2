@@ -30,11 +30,11 @@ function CurrentRoute() {
   return <output data-testid="route">{location.pathname}{location.search}</output>;
 }
 
-function showWorkspace(role: string, initialPath?: string) {
+function showWorkspace(role: string, initialPath?: string, navItems = roleNavMap[role].items) {
   const config = roleNavMap[role];
   const { container } = render(
     <MemoryRouter initialEntries={[initialPath || config.items.find(item => item.href)?.href || '/']}>
-      <WorkspaceShell role={role} roleLabel={config.label} navItems={config.items} pageTitle="Workspace">
+      <WorkspaceShell role={role} roleLabel={config.label} navItems={navItems} pageTitle="Workspace">
         <CurrentRoute />
       </WorkspaceShell>
     </MemoryRouter>,
@@ -168,6 +168,43 @@ it('filters restricted groups and children in non-admin workspaces', () => {
   expect(within(rail).queryByRole('button', { name: groups[0].label })).toBeNull();
   fireEvent.click(within(rail).getByRole('button', { name: groups[1].label }));
   expect(within(panel).getAllByRole('link').some(link => link.getAttribute('href') === groups[1].children![0].href)).toBe(false);
+});
+
+it.each([false, true])('navigates directly to a standalone page without opening a subsidebar (already open: %s)', open => {
+  const { sidebar, rail, panel, shell } = showWorkspace('admin', '/workspace/admin');
+  if (open) {
+    const group = roleNavMap.admin.items.find(item => item.children?.length)!;
+    fireEvent.click(within(rail).getByRole('button', { name: group.label }));
+    expect(panel).not.toHaveAttribute('inert');
+  }
+  const report = within(rail).getByRole('link', { name: 'Platform Report' });
+  fireEvent.mouseEnter(report);
+  fireEvent.focus(report);
+  if (open) expect(within(panel).queryByRole('link', { name: 'Platform Report' })).toBeNull();
+  fireEvent.click(report);
+  expect(screen.getByTestId('route')).toHaveTextContent('/admin/platform-report');
+  expect(panel).toHaveAttribute('inert');
+  expect(sidebar.style.width).toBe('88px');
+  expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('112px');
+});
+
+it('closes the subsidebar when clicking the standalone page that is already active', () => {
+  const { sidebar, rail, panel } = showWorkspace('admin', '/admin/platform-report');
+  fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));
+  fireEvent.click(within(rail).getByRole('link', { name: 'Platform Report' }));
+  expect(panel).toHaveAttribute('inert');
+  expect(screen.getByTestId('route')).toHaveTextContent('/admin/platform-report');
+});
+
+it('navigates directly when permission filtering leaves a group with no visible children', () => {
+  const group: SidebarNavItem = { id: 'reports', label: 'Reports', href: '/reports', children: [
+    { id: 'restricted-report', label: 'Restricted report', href: '/reports/restricted' },
+  ] };
+  group.children!.forEach(child => denied.add(child.id));
+  const { rail, panel } = showWorkspace('admin', '/admin/platform-report', [group]);
+  fireEvent.click(within(rail).getByRole('link', { name: group.label }));
+  expect(screen.getByTestId('route')).toHaveTextContent(group.href!);
+  expect(panel).toHaveAttribute('inert');
 });
 
 it.each(['/workspace/audit', '/workspace/auditor-copy', '/workspace/auditor-manual', '/workspace/auditor-hours-test'])(
