@@ -6999,7 +6999,11 @@ function moduleBelongsToVisibleProgramme(module: ModuleBuilderListItem, programm
     module.sourceModule?.programme,
     module.sourceModule?.programmeId,
     ...(module.deliveryUsages || []).flatMap(usage => [usage.programme, usage.programmeId]),
-  ].map(normaliseDeepLinkValue).filter(Boolean);
+  ].map(normaliseDeepLinkValue).filter(key => Boolean(key) && !UNASSIGNED_PROGRAMME_KEYS.has(key));
+  // No programme is a state a module is allowed to be in ("assign later"), and
+  // it reaches here as the placeholder name rather than as a blank. Counting
+  // that placeholder as a programme key hid every unassigned module from the
+  // catalogue, including the one just created.
   if (!moduleKeys.length) return true;
   return moduleKeys.some(key => visibleKeys.has(key));
 }
@@ -7117,6 +7121,9 @@ function moduleIdentityText(module: ModuleCatalogueItem) {
 function normaliseDeepLinkValue(value: unknown) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
+
+/** Normalised placeholders a module with no programme carries in place of one. */
+const UNASSIGNED_PROGRAMME_KEYS = new Set(['unassignedprogramme', 'unassigned']);
 
 function isCanonicalModuleCatalogueId(value: unknown) {
   return /^MOD-[A-Z0-9][A-Z0-9_-]*$/i.test(String(value || '').trim());
