@@ -41,6 +41,7 @@ from learner_api.models import LearnerTrainingPlanModule
 
 from . import pptx_slides
 from . import schema_gate
+from . import versioning
 from . import upload_storage
 from . import tutor_notifications
 from .schema_gate import SchemaNotProvisioned
@@ -3623,7 +3624,9 @@ def update_rows(table, where_sql, where_params, payload, allow_null_columns=None
         raise ValueError(f'No writable columns found for {table}.')
     assignments = ', '.join(f'{quote_ident(column)} = %s' for column in values)
     query = f'update {table_name(table)} set {assignments} where {where_sql} returning *'
-    return execute_returning(query, [*values.values(), *where_params])
+    rows = execute_returning(query, [*values.values(), *where_params])
+    versioning.record_rows(table, rows)
+    return rows
 
 
 def delete_rows(table, where_sql, where_params):
@@ -3690,6 +3693,10 @@ def soft_delete_rows(table, where_sql, where_params=None, *, via_parent='', dele
         entity_id=' '.join(clean_str(value) for value in (where_params or [])),
         parent_id=via_parent, reason=deleted_by,
     )
+    # No record_rows here: this writes through update_rows, which already
+    # recorded the revision. An archive is a revision like any other, and the
+    # snapshot holds what the record contained at the moment it was withdrawn --
+    # the whole reason to keep history of content that no longer appears.
     return rows
 
 
@@ -11875,10 +11882,15 @@ def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
         if connection.vendor == 'postgresql':
             row = rows_as_dicts(cursor)[0]
             log_curriculum_storage('upsert', table, rows=1, entity_id=key_value)
+            # The row the write returned is the snapshot, so history costs no
+            # extra read of the record.
+            versioning.record_rows(table, [row])
             return row
     where = ' and '.join(f'{quote_ident(column)} = %s' for column in key_columns)
     log_curriculum_storage('upsert', table, rows=1, entity_id=key_value)
-    return authoring_fetch_all(table, where, [values[column] for column in key_columns])[0]
+    saved = authoring_fetch_all(table, where, [values[column] for column in key_columns])[0]
+    versioning.record_rows(table, [saved])
+    return saved
 
 
 def authoring_bulk_upsert(table, key_columns, payloads, batch_size=100):
@@ -11937,6 +11949,11 @@ def authoring_bulk_upsert(table, key_columns, payloads, batch_size=100):
     # bulk-writes thousands of components and a per-row trace would bury
     # everything else in the request.
     log_curriculum_storage('bulk_upsert', table, rows=len(payloads))
+    # The payloads are what was written, so they serve as the snapshots without
+    # reading the rows back. record_rows drops the ones whose content is
+    # unchanged, which on this path is nearly all of them: a tree save rewrites
+    # every component in the module whether or not the author touched it.
+    versioning.record_rows(table, payloads)
 
 
 def free_programme_upsert(table, key_columns, payload):
@@ -12096,6 +12113,7 @@ def update_authoring_rows(table, where_sql, where_params, payload):
             )
             rows = rows_as_dicts(cursor)
             log_curriculum_storage('update', table, rows=rows, entity_id=key_value)
+            versioning.record_rows(table, rows)
             return rows
         cursor.execute(
             f'update {authoring_table_name(table)} set {assignments} where {where_sql}',
@@ -12103,6 +12121,7 @@ def update_authoring_rows(table, where_sql, where_params, payload):
         )
     rows = authoring_fetch_all(table, where_sql, where_params)
     log_curriculum_storage('update', table, rows=rows, entity_id=key_value)
+    versioning.record_rows(table, rows)
     return rows
 
 
