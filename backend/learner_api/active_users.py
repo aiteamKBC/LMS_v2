@@ -146,17 +146,8 @@ def _manual_claimed_seconds(record):
     )
     source = _progress_text(record, "timeTrackingSource", "time_tracking_source").lower()
     explicitly_manual = source.endswith(":input") or "manual_input" in source
-    # MBA imports retain the raw source duration in ``claimedSeconds`` for
-    # auditability and put the OTJH value that may actually be credited in
-    # ``verifiedSeconds``.  A large difference therefore means the import was
-    # bounded, not that the learner manually entered the larger duration.
-    imported_source_duration = source.startswith("mba_import_")
-    inferred_legacy_manual = (
-        not imported_source_duration
-        and verified is not None
-        and claimed > verified + 2
-    )
-    return claimed if explicitly_manual or inferred_legacy_manual else None
+    inferred_manual = "import" not in source and verified is not None and claimed > verified + 2
+    return claimed if explicitly_manual or inferred_manual else None
 
 
 def _progress_record_minutes(record):

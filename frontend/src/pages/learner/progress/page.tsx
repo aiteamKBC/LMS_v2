@@ -78,7 +78,13 @@ export default function ProgressPage() {
 
         {activeTab === 'otjh' && (
           isRealMode
-            ? <OtjhBody real={real} loading={combinedLoading} showHero={false} activityData={combinedLearning.data} />
+            ? <OtjhBody
+                real={real}
+                loading={combinedLoading}
+                showHero={false}
+                activityData={combinedLearning.data}
+                subjectCount={combinedLearning.summary?.subjectCount ?? combinedLearning.data?.module_count}
+              />
             : <MockOtjhBody showHero={false} />
         )}
 

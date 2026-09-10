@@ -1055,16 +1055,16 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
 
         self.assertEqual(completed_hours_from_progress(progress), "1.5")
 
-    def test_completed_hours_uses_bounded_mba_import_time(self):
+    def test_completed_hours_uses_verified_historical_import_time(self):
         progress = [{
             "kind": "component", "componentId": "component-1",
             "reportedTime": "", "claimedSeconds": 26418634,
             "verifiedSeconds": 7200,
-            "timeTrackingSource": "mba_import_bounded_by_authored_otjh",
+            "timeTrackingSource": "historical_import",
         }]
 
-        # The import keeps the raw MBA duration in claimedSeconds for audit,
-        # but only verifiedSeconds is eligible for OTJH credit.
+        # An automatic import's raw duration is not a learner-entered value;
+        # only the verified duration is eligible for OTJH credit.
         self.assertEqual(completed_hours_from_progress(progress), "2")
 
     def test_new_platform_activity_appends_without_double_counting_imported_otjh(self):
@@ -1072,7 +1072,7 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
             {
                 "kind": "component", "componentId": "component-1",
                 "attempt": 1, "reportedTime": "", "verifiedSeconds": 7200,
-                "timeTrackingSource": "mba_import_bounded_by_authored_otjh",
+                "timeTrackingSource": "historical_import",
                 "submittedAt": "2025-01-01T09:00:00Z",
             },
             {
