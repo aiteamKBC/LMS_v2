@@ -39,7 +39,6 @@ class StudentActivityTests(SimpleTestCase):
             ('https://open.spotify.com/embed/episode/example', 'embed'),
             ('https://example.org/recording.mp3?download=1', 'audio'),
             ('https://drive.google.com/file/d/abcdefghijklm/view', 'audio'),
-            ('/learner_api/media/legacy-attachment/71832/', 'audio'),
         ]
         for url, expected in cases:
             with self.subTest(url=url):

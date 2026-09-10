@@ -35,21 +35,21 @@ class ProgrammeAuditUiMaterialSplitTests(SimpleTestCase):
         self.assertEqual(response.status_code, 404)
 
     @patch('curriculum_api.programme_audit.fetch_ui_material')
-    def test_learner_summary_is_forced_to_their_own_programme(self, fetch_material):
+    def test_learner_cannot_read_material_summaries(self, fetch_material):
         fetch_material.side_effect = lambda key, include_results=False: {
             'key': key, 'ready': True, 'count': 3, 'results': [],
         }
         request = self.requests.get('/?programme=ME')
-        request.login_account = SimpleNamespace(role='learner', email='learner-pcp@learner.local')
+        request.login_account = SimpleNamespace(role='learner', email='learner@example.com')
 
         response = programme_audit_materials(request)
 
-        self.assertContains(response, 'project-management-professional')
-        self.assertNotContains(response, 'impact-planning')
+        self.assertEqual(response.status_code, 403)
+        fetch_material.assert_not_called()
 
     def test_learner_cannot_read_another_programmes_material(self):
         request = self.requests.get('/')
-        request.login_account = SimpleNamespace(role='learner', email='learner-pcp@learner.local')
+        request.login_account = SimpleNamespace(role='learner', email='learner@example.com')
 
         response = programme_audit_material(request, 'ai-in-marketing')
 

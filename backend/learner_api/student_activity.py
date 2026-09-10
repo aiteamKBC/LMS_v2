@@ -261,15 +261,11 @@ def _cover_url(path):
 
 
 def _definition_for(stored):
-    from .media_proxy import _legacy_attachment_upload_path
     try:
         schema = material_schema(stored['_source']['activity_id'])
     except ContentUnavailable:
         schema = None
-    def archive_url(reference):
-        path = _legacy_attachment_upload_path(reference)
-        return '/curriculum_api/curriculum/uploads/' + path if path else ''
-    return build_material(stored, schema, attachment_resolver=archive_url)
+    return build_material(stored, schema)
 
 
 def _material_response(request, pk, aptem_id, stored):
