@@ -254,7 +254,7 @@ export function WorkspaceShell({
           preview is deliberately not reserved: it floats above the page. */}
       <div
         className={`workspace-content flex-1 flex flex-col min-w-0 transition-[margin] duration-300 ease-out ${role === 'admin' ? sidebarPinned ? 'lg:!ml-[362px]' : 'lg:!ml-[112px]' : ''}`}
-        style={{ marginLeft: hideFocusedLearnerSidebar ? 0 : `var(--kbc-sidebar-offset, 0px)` }}
+        style={{ marginLeft: 'var(--kbc-sidebar-offset, 0px)' }}
       >
         {!hidePageChrome && (
           <Header
