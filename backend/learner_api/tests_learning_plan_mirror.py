@@ -75,29 +75,30 @@ class SyncMirrorTests(SimpleTestCase):
         source = type("Source", (), {"pk": pk})()
         with patch("learner_api.mappers.get_training_plan", return_value=plan), \
                 patch("learner_api.learning_plan.EnrolmentUser") as enrolment, \
+                patch("learner_api.active_users.replace_training_plan") as child_rows, \
                 patch("learner_api.models.LearnerProfile") as profile:
             count = sync_learning_plan_mirror(source)
-        return count, enrolment, profile
+        return count, enrolment, profile, child_rows
 
     def test_the_mirror_gets_the_structured_plan(self):
-        _count, _enrolment, profile = self._sync(PLAN)
+        _count, _enrolment, profile, _child = self._sync(PLAN)
 
-        profile.objects.filter.assert_called_once_with(enrolment_id=19)
+        profile.objects.filter.assert_called_with(enrolment_id=19)
         profile.objects.filter.return_value.update.assert_called_once_with(learning_plan=PLAN)
 
     def test_a_cleared_plan_nulls_the_mirror(self):
         # Not skipped: a learner whose plan was removed must not keep a copy of
         # it in the table every coach surface reads.
-        _count, _enrolment, profile = self._sync([])
+        _count, _enrolment, profile, _child = self._sync([])
 
         profile.objects.filter.return_value.update.assert_called_once_with(learning_plan=None)
 
     def test_the_mirror_is_matched_on_enrolment_id(self):
         # Never on a LearnerProfile pk: that reference goes stale after
         # sync_active_user, which silently missed 367 rows once already.
-        _count, _enrolment, profile = self._sync(PLAN, pk=101)
+        _count, _enrolment, profile, _child = self._sync(PLAN, pk=101)
 
-        profile.objects.filter.assert_called_once_with(enrolment_id=101)
+        profile.objects.filter.assert_called_with(enrolment_id=101)
 
     def test_a_learner_with_no_pk_is_left_alone(self):
         self.assertEqual(sync_learning_plan_mirror(None), 0)
@@ -107,6 +108,16 @@ class SyncMirrorTests(SimpleTestCase):
         # mirror must not turn a successful staff edit into an error.
         source = type("Source", (), {"pk": 19})()
         with patch("learner_api.mappers.get_training_plan", return_value=PLAN), \
+                patch("learner_api.active_users.replace_training_plan"), \
                 patch("learner_api.models.LearnerProfile") as profile:
             profile.objects.filter.side_effect = DatabaseError("pooler said no")
             self.assertEqual(sync_learning_plan_mirror(source), 0)
+
+    def test_the_child_rows_the_learner_page_reads_are_written(self):
+        # LearnerProfile.training_plan is assembled from plan_modules/weeks/
+        # components, not from the jsonb. Writing only the jsonb stored the
+        # plan and still showed the learner an empty "My learning" page.
+        _count, _enrolment, _profile, child_rows = self._sync(PLAN)
+
+        self.assertEqual(child_rows.call_count, 1)
+        self.assertEqual(child_rows.call_args.args[1], PLAN)

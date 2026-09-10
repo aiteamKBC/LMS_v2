@@ -45,29 +45,37 @@ class Command(BaseCommand):
         apply_changes = bool(options.get("apply"))
         only = options.get("learner")
 
-        sources = EnrolmentUser.all_learners.all()
-        if only:
-            sources = sources.filter(pk=only)
-        sources = list(sources)
-        self.stdout.write(f"Learners to mirror: {len(sources)}")
-
-        # Which mirrors exist at all: a learner with no profile row cannot be
-        # mirrored, and that is worth naming rather than counting as done.
-        have_profile = set(
-            LearnerProfile.objects.filter(
-                enrolment_id__in=[s.pk for s in sources]
-            ).values_list("enrolment_id", flat=True)
+        # Ids first, rows in chunks. A plan is a large jsonb column and loading
+        # all 369 learners at once exceeded the statement timeout, so the run
+        # never started. Ids are cheap; the rows are fetched a page at a time.
+        ids = list(
+            EnrolmentUser.all_learners.filter(pk=only).values_list("pk", flat=True)
+            if only else
+            EnrolmentUser.all_learners.values_list("pk", flat=True)
         )
+        self.stdout.write(f"Learners to mirror: {len(ids)}")
+
+        def in_chunks(values, size=25):
+            for start in range(0, len(values), size):
+                yield values[start:start + size]
+
+        have_profile = set()
+        for chunk in in_chunks(ids):
+            have_profile.update(
+                LearnerProfile.objects.filter(enrolment_id__in=chunk)
+                .values_list("enrolment_id", flat=True)
+            )
 
         with_plan, without_plan, no_profile = [], [], []
-        for source in sources:
-            plan = get_training_plan(source) or []
-            if source.pk not in have_profile:
-                no_profile.append(source)
-            if plan:
-                with_plan.append((source, plan))
-            else:
-                without_plan.append(source)
+        for chunk in in_chunks(ids):
+            for source in EnrolmentUser.all_learners.filter(pk__in=chunk):
+                plan = get_training_plan(source) or []
+                if source.pk not in have_profile:
+                    no_profile.append(source)
+                if plan:
+                    with_plan.append((source, plan))
+                else:
+                    without_plan.append(source)
 
         self.stdout.write(f"  with a plan assigned : {len(with_plan)}")
         self.stdout.write(f"  with no plan         : {len(without_plan)}")
@@ -91,18 +99,27 @@ class Command(BaseCommand):
             return
 
         mirrored = failed = 0
-        try:
-            with transaction.atomic(using="enrolment"):
-                with connections["enrolment"].cursor() as cur:
-                    # The pooler leaks default_transaction_read_only between
-                    # clients, so the transaction says plainly that it writes.
-                    cur.execute("SET TRANSACTION READ WRITE")
-                for source in sources:
+        # One transaction per learner, not one for the whole run. A plan can
+        # carry over a thousand components, and rebuilding every learner's child
+        # rows in a single transaction exceeded the statement timeout -- which
+        # rolled back the lot, including the learners that had already
+        # succeeded. Per-learner means a slow or failing row costs only itself.
+        for source in [s for s, _p in with_plan] + without_plan:
+            try:
+                with transaction.atomic(using="enrolment"):
+                    with connections["enrolment"].cursor() as cur:
+                        # The pooler leaks default_transaction_read_only between
+                        # clients, so each transaction states that it writes.
+                        cur.execute("SET TRANSACTION READ WRITE")
                     sync_learning_plan_mirror(source)
-                    mirrored += 1
-        except DatabaseError as exc:
-            self.stderr.write(self.style.ERROR(f"Mirror failed and was rolled back: {exc}"))
-            return
+                mirrored += 1
+            except DatabaseError as exc:
+                failed += 1
+                self.stderr.write(self.style.WARNING(
+                    f"  learner {source.pk}: {exc}"
+                ))
+            if mirrored and mirrored % 50 == 0:
+                self.stdout.write(f"  ... {mirrored} mirrored")
 
         self.stdout.write(self.style.SUCCESS(f"\nMirrored {mirrored} learner(s)."))
         if failed:

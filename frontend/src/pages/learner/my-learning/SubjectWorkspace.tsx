@@ -373,6 +373,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const metadata = displayed?.metadata;
   const recordedOtjh = data?.audit_lms_actual ?? data?.recorded_otjh_total ?? data?.actual_total ?? null;
   const plannedOtjh = data?.audit_tp_planned ?? data?.planned_total ?? null;
+  const hasProgrammeOtjh = data?.audit_lms_actual != null || data?.audit_tp_planned != null;
   const [savedProgress, setSavedProgress] = useState<{ identity: string; activities: Record<number, SubjectAttemptResult> }>({ identity, activities: {} });
   const updatedData = useMemo(() => {
     if (!data || savedProgress.identity !== identity) return data;
@@ -414,7 +415,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     {!active ? <>
       <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-foreground-500"><span><strong className="text-foreground-900">{subjects.length}</strong> subjects</span><span><strong className="text-foreground-900">{total}</strong> activities</span><span><strong className="text-foreground-900">{done}</strong> completed</span></div>
       {visible.length ? <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">{visible.map((subject) => <SubjectCard key={subject.id} subject={subject} cover={covers[subject.id]} onOpen={() => setSelected(subject.id)} />)}</div> : <div className="rounded-2xl border border-dashed p-10 text-center text-sm text-foreground-500">{subjects.length ? 'No subjects or activities match your search.' : 'Your subjects will appear here when they are assigned.'}</div>}
-      {data && <div className="flex flex-wrap gap-6 rounded-xl bg-background-100 px-4 py-3 text-xs"><div><span className="block text-foreground-500">Recorded OTJH</span><strong>{recordedOtjh == null ? 'Unavailable' : formatHoursMinutes(recordedOtjh)}</strong></div><div><span className="block text-foreground-500">Planned OTJH</span><strong>{plannedOtjh == null ? 'Unavailable' : formatHoursMinutes(plannedOtjh)}</strong></div></div>}
+      {data && <><div className="flex flex-wrap gap-6 rounded-xl bg-background-100 px-4 py-3 text-xs"><div><span className="block text-foreground-500">Recorded OTJH</span><strong>{recordedOtjh == null ? 'Unavailable' : formatHoursMinutes(recordedOtjh)}</strong></div><div><span className="block text-foreground-500">Planned OTJH</span><strong>{plannedOtjh == null ? 'Unavailable' : formatHoursMinutes(plannedOtjh)}</strong></div></div>{hasProgrammeOtjh && <p className="text-[12px] text-foreground-500">Programme totals use TP Planned and accepted LMS Actual. Activity-level hours below only cover mapped historical activities.</p>}</>}
     </> : <>
       <button onClick={() => setSelected(null)} className="flex items-center gap-1.5 text-sm font-semibold text-primary-700"><ChevronLeft size={17} />All subjects</button>
       <div className="relative overflow-hidden rounded-2xl border bg-white"><Cover title={active.title} url={covers[active.id]} large /><div className="p-5"><Progress done={active.activities.filter((entry) => entry.completed).length} total={active.activities.length} showFormula /></div></div>

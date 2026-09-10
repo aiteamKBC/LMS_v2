@@ -269,6 +269,7 @@ def sync_learning_plan_mirror(source):
     not turn a successful staff edit into an error. A lagging mirror is
     recoverable -- ``manage.py sync_learning_plans`` rebuilds it from the plan.
     """
+    from .active_users import replace_training_plan
     from .mappers import get_training_plan
     from .models import LearnerProfile
 
@@ -282,9 +283,15 @@ def sync_learning_plan_mirror(source):
         # Matched on enrolment_id, never on a LearnerProfile pk held from before
         # a sync_active_user call: that reference goes stale, and updating by it
         # silently missed 367 rows when the coach assignment did the same thing.
-        LearnerProfile.objects.filter(enrolment_id=source.pk).update(
-            learning_plan=plan or None,
-        )
+        mirrors = LearnerProfile.objects.filter(enrolment_id=source.pk)
+        mirrors.update(learning_plan=plan or None)
+        # The jsonb above is what reports read; the learner's own "My learning"
+        # page reads LearnerProfile.training_plan, which is assembled from the
+        # plan_modules/weeks/components child rows. Both have to be written, or
+        # the plan is stored and the learner is still shown an empty page.
+        profile = mirrors.first()
+        if profile is not None:
+            replace_training_plan(profile, plan)
         EnrolmentUser.all_learners.filter(pk=source.pk).update(
             modules=modules_csv,
             weeks=weeks_csv,
