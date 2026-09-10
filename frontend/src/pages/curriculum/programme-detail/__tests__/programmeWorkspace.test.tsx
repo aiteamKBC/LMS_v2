@@ -163,6 +163,7 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   fetchCurriculumProgrammeKsbCoverage: vi.fn(async () => null),
   fetchCurriculumProgrammeLearnerRoster: vi.fn(async () => ({ assignedLearners: [] })),
   fetchCurriculumProgrammeLearnerKsbImpact: vi.fn(async () => null),
+  fetchProgrammeReviews: vi.fn(async () => []),
 }));
 
 async function renderWorkspace() {
@@ -220,10 +221,21 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     expect(strip.getByRole('button', { name: /KSB Coverage/ })).toBeInTheDocument();
     expect(strip.getByRole('button', { name: /Achievement KSBs/ })).toBeInTheDocument();
     expect(strip.getByRole('button', { name: /Quality/ })).toBeInTheDocument();
+    // Reviews ID sits beside Quality: Programme Review Templates, not the old
+    // removed "Review" tab that used to redraw cohorts/groups/modules/weeks.
+    expect(strip.getByRole('button', { name: /Reviews ID/ })).toBeInTheDocument();
 
     // Weeks and components still belong to an individual module workspace.
     expect(strip.queryByRole('button', { name: /^Weeks/ })).not.toBeInTheDocument();
-    expect(strip.queryByRole('button', { name: /^Review/ })).not.toBeInTheDocument();
+  });
+
+  it('opens the Reviews ID tab to an explanatory empty state when no reviews exist', async () => {
+    await renderWorkspace();
+    await openTab(/Reviews ID/);
+
+    expect(await screen.findByText('No reviews have been configured yet')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Add New Review/ }).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: /Clone Review From Another Programme/ })).toBeInTheDocument();
   });
 
   it('puts Modules after the delivery hierarchy and reports completed design without a second way into KSB Coverage', async () => {
