@@ -4,38 +4,127 @@ Separate from the mixed attendance/audit feed so pagination cannot silently
 drop modules and attendance/assignment hours cannot inflate activity totals.
 """
 
+from html import unescape
+
 from audit_api.last_audit_ledger_views import _activity_payload, _dict_rows
 from audit_api.last_audit_ledger_views import _json_list
+from .subject_dates import activity_schedule
+
+
+CURRICULUM_SCHEDULE_SQL = '''
+    WITH exports AS (
+        SELECT course_id,
+               CASE WHEN jsonb_typeof(curriculum)='string'
+                    THEN (curriculum #>> '{}')::jsonb ELSE curriculum END AS payload
+        FROM "MBA".course_curriculum WHERE course_id=ANY(%s)
+    )
+    SELECT e.course_id, material->>'source_component_id' AS activity_id,
+           section->>'source_section_id' AS section_id,
+           section->>'section_title' AS section_title,
+           material->>'created_at_utc' AS original_created_at,
+           w.id AS builder_week_id, w.title AS builder_week_title
+    FROM exports e
+    CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(payload->'sections')='array' THEN payload->'sections' ELSE '[]'::jsonb END
+    ) section
+    CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(section->'materials')='array' THEN section->'materials' ELSE '[]'::jsonb END
+    ) material
+    LEFT JOIN curriculum.modules m ON m.source_type='mba-legacy' AND m.source_id=e.course_id::text
+        AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
+    LEFT JOIN curriculum.components c ON c.id=material->>'component_id'
+        AND c.module_catalogue_id=m.module_catalogue_id
+        AND c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted,false)
+    LEFT JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=m.module_catalogue_id
+        AND w.deleted_at IS NULL AND NOT coalesce(w.is_programme_deleted,false)
+'''
+
+
+def read_curriculum_schedules(cursor, group_ids):
+    """Read scheduling context by exact course/activity ids, never by title.
+
+    The retained export also covers courses not yet in Module Builder. A linked
+    Builder component's current week takes precedence over its exported week.
+    Only date metadata leaves this query; no content or download tokens do.
+    """
+    if not group_ids:
+        return {}
+    cursor.execute(CURRICULUM_SCHEDULE_SQL, [sorted(set(group_ids))])
+    candidates = {}
+    for row in _dict_rows(cursor):
+        try:
+            key = (int(row['course_id']), int(row['activity_id']))
+        except (TypeError, ValueError):
+            continue
+        section = {
+            'section_id': row.get('builder_week_id') or row.get('section_id'),
+            'section_title': unescape(str((row.get('builder_week_title') if row.get('builder_week_id') else row.get('section_title')) or '')),
+            'section_source': 'builder_section_title' if row.get('builder_week_id') else 'section_title',
+            'original_created_at': row.get('original_created_at'),
+        }
+        matches = candidates.setdefault(key, [])
+        if section not in matches:
+            matches.append(section)
+    # Reused activities in different dated sections are ambiguous, not an
+    # invitation to select the first section (or silently use an upload date).
+    return {key: matches[0] if len(matches) == 1 else {'ambiguous': True}
+            for key, matches in candidates.items()}
+
+
+def apply_curriculum_schedules(items, schedules):
+    for item in items:
+        context = schedules.get((item['group_id'], item['source_activity_id']))
+        if not context:
+            continue
+        stored_date = item.get('source_date')
+        if context.get('ambiguous'):
+            schedule = activity_schedule(item['activity'])
+            if schedule['date_source'] == 'undated':
+                schedule.update(date_source='section_needs_review', date_needs_review=True)
+            item.update(schedule, source_date=stored_date)
+            continue
+        item.update(activity_schedule(
+            item['activity'], stored_date, context.get('original_created_at') or (item.get('date') if item.get('date_source') == 'original_created_at' else None),
+            section_title=context.get('section_title'), section_source=context['section_source'],
+        ))
+        item['section_title'] = context.get('section_title') or ''
+    return items
 
 
 ACTIVITY_SQL = '''
-    SELECT r.group_id, r.learner_id, l.aptem_id, l.learner_name,
-           g.group_name, r.activity_id,
+    SELECT gl.group_id, l.learner_id, l.aptem_id, l.learner_name,
+           g.group_name, ga.activity_id, ga.position,
            COALESCE(a.activity_type, r.activity_type) AS activity_type,
            a.title, a.activity_date, a.reading_type, a.reading_iframe_url,
-           a.quiz_id, a.quiz_questions, r.status,
+           a.quiz_id, a.quiz_questions, r.status, r.activity_id IS NOT NULL AS has_result,
+           COALESCE(a.raw #>> '{live_lms_component,created_at}',
+                    a.raw #>> '{live_lms_quiz,created_at}') AS original_created_at,
            r.video_started, r.video_completed, r.reading_viewed,
-           r.quiz_attempted, r.quiz_passed, r.quiz_score, r.quiz_maximum_score,
+           r.quiz_attempted, r.quiz_passed, r.quiz_score,
+           COALESCE(r.quiz_maximum_score,a.quiz_maximum_score) AS quiz_maximum_score,
            r.mapped_seconds, r.mapped_hours,
            ph.planned_hours AS otjh_planned, ah.actual_hours AS otjh_actual
     FROM "Last_audit".learners l
-    JOIN "Last_audit".activity_results r ON r.learner_id = l.learner_id
-    JOIN "Last_audit".activities a ON a.activity_id = r.activity_id
-    LEFT JOIN "Last_audit".groups g ON g.group_id = r.group_id
+    JOIN "Last_audit".group_learners gl ON gl.learner_id = l.learner_id
+    JOIN "Last_audit".group_activities ga ON ga.group_id = gl.group_id
+    JOIN "Last_audit".activities a ON a.activity_id = ga.activity_id
+    LEFT JOIN "Last_audit".activity_results r ON r.learner_id = l.learner_id
+      AND r.group_id = gl.group_id AND r.activity_id = ga.activity_id
+    LEFT JOIN "Last_audit".groups g ON g.group_id = gl.group_id
     LEFT JOIN "Last_audit".activity_planned_hours ph
-      ON ph.learner_id = r.learner_id AND ph.aptem_id = l.aptem_id
-     AND ph.ref = r.activity_id::text
+      ON ph.learner_id = l.learner_id AND ph.aptem_id = l.aptem_id
+     AND ph.ref = ga.activity_id::text
      AND ph.kind = CASE lower(COALESCE(a.activity_type, r.activity_type))
          WHEN 'video' THEN 'video' WHEN 'audio' THEN 'audio'
          WHEN 'reading+quiz' THEN 'reading_quiz' END
     LEFT JOIN "Last_audit".activity_actual_hours ah
-      ON ah.learner_id = r.learner_id AND ah.aptem_id = l.aptem_id
-     AND ah.ref = r.activity_id::text
+      ON ah.learner_id = l.learner_id AND ah.aptem_id = l.aptem_id
+     AND ah.ref = ga.activity_id::text
      AND ah.kind = CASE lower(COALESCE(a.activity_type, r.activity_type))
          WHEN 'video' THEN 'video' WHEN 'audio' THEN 'audio'
          WHEN 'reading+quiz' THEN 'reading_quiz' END
     WHERE l.aptem_id = %s
-    ORDER BY a.activity_date NULLS LAST, g.group_name, a.title, r.group_id, r.activity_id
+    ORDER BY a.activity_date NULLS LAST, g.group_name, ga.position, ga.activity_id
 '''
 
 ITEM_FIELDS = (
@@ -45,17 +134,24 @@ ITEM_FIELDS = (
 )
 
 
-def read_student_material(cursor, aptem_id, group_id, activity_id):
+def read_student_material(cursor, aptem_id, group_id, activity_id, *, include_source=False):
     # Membership must match BOTH activity and group for this learner.
     cursor.execute('''
-        SELECT l.learner_name, a.title, a.video_iframe_url,
+        SELECT l.learner_name, l.learner_email, a.title, a.video_iframe_url,
                a.reading_iframe_url, a.reading_text_body,
                a.raw #>> '{audio,iframe_url}' AS audio_url,
-               a.quiz_body, a.quiz_questions
+               a.quiz_body, a.quiz_questions, a.activity_id, a.activity_type,
+               a.quiz_id, a.quiz_passing_score, a.quiz_maximum_score,
+               r.quiz_answers, r.quiz_score, COALESCE(r.quiz_maximum_score,a.quiz_maximum_score) AS result_maximum_score,
+               r.quiz_attempt_number, r.quiz_passed, r.reading_viewed, r.status,
+               r.video_completed, a.reading_type, a.raw
         FROM "Last_audit".learners l
-        JOIN "Last_audit".activity_results r ON r.learner_id = l.learner_id
-        JOIN "Last_audit".activities a ON a.activity_id = r.activity_id
-        WHERE l.aptem_id = %s AND r.group_id = %s AND r.activity_id = %s
+        JOIN "Last_audit".group_learners gl ON gl.learner_id = l.learner_id
+        JOIN "Last_audit".group_activities ga ON ga.group_id = gl.group_id
+        JOIN "Last_audit".activities a ON a.activity_id = ga.activity_id
+        LEFT JOIN "Last_audit".activity_results r ON r.learner_id = l.learner_id
+          AND r.group_id = gl.group_id AND r.activity_id = ga.activity_id
+        WHERE l.aptem_id = %s AND gl.group_id = %s AND ga.activity_id = %s
         LIMIT 1
     ''', [aptem_id, group_id, activity_id])
     rows = _dict_rows(cursor)
@@ -72,10 +168,13 @@ def read_student_material(cursor, aptem_id, group_id, activity_id):
             "options": [str(option.get("option_body") or option.get("option_text") or "")
                         for option in _json_list(question.get("options")) if isinstance(option, dict)],
         })
-    return {"learner_name": row["learner_name"], "title": row["title"],
+    result = {"learner_name": row["learner_name"], "title": row["title"],
             "video_url": row["video_iframe_url"], "audio_url": row["audio_url"],
             "reading_url": row["reading_iframe_url"], "reading_html": row["reading_text_body"],
             "quiz_description": row["quiz_body"], "questions": questions}
+    if include_source:
+        result['_source'] = row
+    return result
 
 
 def summarize_activities(items):
@@ -106,21 +205,31 @@ def summarize_activities(items):
 
 def read_student_activity(cursor, aptem_id):
     cursor.execute('''
-        SELECT learner_id, learner_name FROM "Last_audit".learners WHERE aptem_id = %s
+        SELECT learner_id, learner_name, learner_email FROM "Last_audit".learners WHERE aptem_id = %s
     ''', [aptem_id])
     learner = cursor.fetchone()
     if learner is None:
         return None
+    cursor.execute('''SELECT g.group_id, g.group_name FROM "Last_audit".group_learners gl
+                      JOIN "Last_audit".groups g ON g.group_id=gl.group_id
+                      JOIN "Last_audit".learners l ON l.learner_id=gl.learner_id
+                      WHERE l.aptem_id=%s ORDER BY g.group_name,g.group_id''', [aptem_id])
+    subjects = [{'id': row['group_id'], 'name': row.get('group_name') or 'Unnamed subject'} for row in _dict_rows(cursor)]
     cursor.execute(ACTIVITY_SQL, [aptem_id])
     items = []
     for row in _dict_rows(cursor):
         normalized = _activity_payload(row)
         item = {key: normalized[key] for key in ITEM_FIELDS}
         item["planned_hours_mapped"] = row["otjh_planned"] is not None
+        item.update(activity_schedule(row.get('title'), row.get('activity_date'), row.get('original_created_at')))
+        item['position'] = row.get('position') or 0
+        item['has_result'] = row.get('has_result', True)
         items.append(item)
     return {
         "source": "Last_audit",
         "aptem_id": aptem_id,
         "learner_name": learner[1],
+        "_identity_email": learner[2] if len(learner) > 2 else '',
+        "subjects": subjects,
         **summarize_activities(items),
     }

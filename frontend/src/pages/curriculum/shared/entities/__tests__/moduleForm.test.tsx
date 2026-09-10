@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   CurriculumCohort,
@@ -112,18 +113,23 @@ const createNewModuleMock = vi.mocked(createNewModule);
 function renderDrawer(props: Partial<Parameters<typeof ModuleFormDrawer>[0]> = {}) {
   const onSaved = vi.fn(async () => undefined);
   const onClose = vi.fn();
+  // The drawer offers to take the reader to the Teams Meetings page when a save
+  // leaves a calendar on the old dates, so it holds the router the way it does
+  // in the app.
   render(
-    <ModuleFormDrawer
-      open
-      programmes={programmes}
-      cohorts={cohorts}
-      groups={groups}
-      holidays={holidays}
-      tutorNames={['Tutor One']}
-      onClose={onClose}
-      onSaved={onSaved}
-      {...props}
-    />,
+    <MemoryRouter>
+      <ModuleFormDrawer
+        open
+        programmes={programmes}
+        cohorts={cohorts}
+        groups={groups}
+        holidays={holidays}
+        tutorNames={['Tutor One']}
+        onClose={onClose}
+        onSaved={onSaved}
+        {...props}
+      />
+    </MemoryRouter>,
   );
   return { onSaved, onClose };
 }

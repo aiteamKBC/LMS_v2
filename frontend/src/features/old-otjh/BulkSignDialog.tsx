@@ -29,7 +29,7 @@ export function BulkSignDialog({ summary, aptemId, onClose, onSaved }: {
         </li>)}</ul>
       </details>
       <p className={styles.metricNote}>{student
-        ? 'Your signature completes all months and locks your previous learning record. LMS access will open automatically.'
+        ? 'Your signature completes all months. Your saved signature will be read-only, and LMS access will open automatically.'
         : 'Your coach signature will be saved on all months. The learner completes the record with their own signature.'}</p>
       {!!months.length && <SignatureCapture name={auth.account?.displayName || auth.user?.fullName || ''}
         busy={mutation.isPending} confirmationText={student

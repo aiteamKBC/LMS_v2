@@ -1,16 +1,18 @@
 """Learner-facing absence report API backed by Coach.coach_absence_report."""
+import hashlib
 import logging
 from datetime import date, time
 from uuid import uuid4
 
 from django.conf import settings
-from django.db import DatabaseError, connection, transaction
+from django.db import DatabaseError, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from coach_api.models import CoachAbsenceReport
 from login.permissions import learner_self_only
 
+from .attendance import fetch_kbc_attendance_rows
 from .evidence_storage import (
     azure_configured,
     blob_url,
@@ -42,13 +44,8 @@ UPLOAD_EXTENSIONS = {
 }
 DEFAULT_COACH_NAME = "Med Maher"
 DEFAULT_COACH_EMAIL = "med.maher@kbc.ac.uk"
-ATTENDANCE_TABLE = '"Learner"."learner_attendance_details"'
-CURRENT_ATTENDANCE_PREDICATE = """
-    (COALESCE(source, 'legacy') <> 'microsoft_teams' OR COALESCE(is_expected, true))
-"""
-# Read through the `default` alias, not `enrolment`: this table is in the
-# "Learner" schema, not the enrolment one, so it is outside what EnrolmentRouter
-# governs. Deliberate — see the note in apprenticeship_agreement._group_dates.
+KBC_ATTENDANCE_ID_BASE = 8_000_000_000_000_000_000
+KBC_ATTENDANCE_ID_RANGE = 1_000_000_000_000_000_000
 
 
 def _error(message, status=400):
@@ -62,94 +59,69 @@ def _source_learner(kind, learner_id):
     return model.objects.filter(pk=learner_id).first()
 
 
-def _fetch_missed_sessions(learner, learner_id):
-    """Return this learner's sessions that are marked absent in attendance."""
+def _kbc_rows_for_learner(learner, learner_id):
     learner_email = str(getattr(learner, "email", "") or "").strip()
-    select_sql = f"""
-        SELECT session_id, session_title, session_type, session_date,
-               session_start_time, session_end_time, coach_name, module_title
-        FROM {ATTENDANCE_TABLE}
-        WHERE {{learner_filter}}
-          AND {CURRENT_ATTENDANCE_PREDICATE}
-          AND lower(trim(attendance_status::text)) IN
-              ('0', 'false', 'no', 'n', 'absent', 'missed',
-               'did not attend', 'non-attendance')
-        ORDER BY session_date DESC, session_start_time DESC, id DESC
-    """
+    learner_name = str(getattr(learner, "username", "") or "").strip() or learner_email
+    return fetch_kbc_attendance_rows(
+        aptem_id=getattr(learner, "aptem_id", None),
+        learner_id=learner_id,
+        learner_name=learner_name,
+        learner_email=learner_email,
+    )
 
-    with connection.cursor() as cursor:
-        rows = []
-        if learner_email:
-            cursor.execute(
-                select_sql.format(
-                    learner_filter="lower(trim(learner_email)) = lower(trim(%s))"
-                ),
-                [learner_email],
-            )
-            rows = cursor.fetchall()
-        if not rows:
-            cursor.execute(
-                select_sql.format(learner_filter="learner_id = %s"),
-                [learner_id],
-            )
-            rows = cursor.fetchall()
+
+def _fetch_missed_sessions(learner, learner_id):
+    """Return this learner's absent sessions from the live KBC register."""
+    rows = [
+        row for row in _kbc_rows_for_learner(learner, learner_id)
+        if str(row.get("attendance_status") or "").strip().lower() == "absent"
+    ]
 
     return [
         {
-            "id": f"{row[0]}-{row[3].isoformat()}",
-            "sessionId": row[0],
-            "title": row[1],
-            "sessionType": row[2] or "",
-            "dateIso": row[3].isoformat(),
-            "startTime": row[4].strftime("%H:%M") if row[4] else "",
-            "endTime": row[5].strftime("%H:%M") if row[5] else "",
-            "coach": row[6] or "",
-            "module": row[7] or "",
+            "id": f"{row['session_id']}-{row['session_date'].isoformat()}",
+            "sessionId": str(row["session_id"]),
+            "title": row.get("session_title", "") or "",
+            "sessionType": row.get("session_type", "") or "",
+            "dateIso": row["session_date"].isoformat(),
+            "startTime": row["session_start_time"].strftime("%H:%M") if row.get("session_start_time") else "",
+            "endTime": row["session_end_time"].strftime("%H:%M") if row.get("session_end_time") else "",
+            "coach": row.get("coach_name", "") or "",
+            "module": row.get("module_title", "") or "",
         }
         for row in rows
     ]
 
 
+def _kbc_attendance_report_id(session_id):
+    """Map KBC's text key into CoachAbsenceReport's signed bigint column."""
+    digest = hashlib.sha256(str(session_id).encode("utf-8")).digest()
+    return KBC_ATTENDANCE_ID_BASE + (
+        int.from_bytes(digest[:8], "big") % KBC_ATTENDANCE_ID_RANGE
+    )
+
+
 def _resolve_absent_attendance(
     learner,
     learner_id,
+    session_id,
     session_title,
     session_date,
     session_time,
 ):
-    learner_email = str(getattr(learner, "email", "") or "").strip()
-    learner_filter = (
-        "lower(trim(learner_email)) = lower(trim(%s))"
-        if learner_email
-        else "learner_id = %s"
-    )
-    learner_value = learner_email or learner_id
-    time_filter = "AND session_start_time = %s" if session_time is not None else ""
-    params = [learner_value, session_date, session_title]
-    if session_time is not None:
-        params.append(session_time)
-
-    with connection.cursor() as cursor:
-        cursor.execute(
-            f"""
-                SELECT id
-                FROM {ATTENDANCE_TABLE}
-                WHERE {learner_filter}
-                  AND {CURRENT_ATTENDANCE_PREDICATE}
-                  AND session_date = %s
-                  AND lower(trim(session_title)) = lower(trim(%s))
-                  {time_filter}
-                  AND lower(trim(attendance_status::text)) IN
-                      ('0', 'false', 'no', 'n', 'absent', 'missed',
-                       'did not attend', 'non-attendance')
-                ORDER BY id
-                LIMIT 2
-            """,
-            params,
-        )
-        rows = cursor.fetchall()
-
-    return rows[0][0] if len(rows) == 1 else None
+    del session_time  # KBC currently records dates, but not lesson start times.
+    expected_id = str(session_id or "").strip()
+    expected_title = str(session_title or "").strip().casefold()
+    matches = [
+        row for row in _kbc_rows_for_learner(learner, learner_id)
+        if str(row.get("attendance_status") or "").strip().lower() == "absent"
+        and row.get("session_date") == session_date
+        and str(row.get("session_title") or "").strip().casefold() == expected_title
+        and (not expected_id or str(row.get("session_id") or "") == expected_id)
+    ]
+    if len(matches) != 1:
+        return None
+    return _kbc_attendance_report_id(matches[0]["session_id"])
 
 
 def _serialize(report):
@@ -203,8 +175,13 @@ def learner_absence_reports(request, kind, learner_id):
             reports = CoachAbsenceReport.objects.filter(learner_id=learner_id).order_by("-created_at")
             results = [_serialize(report) for report in reports]
             missed_sessions = _fetch_missed_sessions(learner, learner_id)
-        except DatabaseError as exc:
-            return _error(f"Could not load absence reports: {exc}", 502)
+        except Exception:
+            logger.exception(
+                "Could not load KBC absence sessions for %s learner %s",
+                kind,
+                learner_id,
+            )
+            return _error("Could not load absence reports from KBC.", 502)
         return JsonResponse({
             "count": len(results),
             "results": results,
@@ -214,6 +191,7 @@ def learner_absence_reports(request, kind, learner_id):
     if request.method != "POST":
         return _error("Method not allowed.", 405)
 
+    session_id = request.POST.get("sessionId", "").strip()
     session_title = request.POST.get("sessionTitle", "").strip()
     session_date_text = request.POST.get("sessionDate", "").strip()
     session_time_text = request.POST.get("sessionTime", "").strip()
@@ -237,13 +215,22 @@ def learner_absence_reports(request, kind, learner_id):
     except ValueError:
         return _error("Invalid session date or time.")
 
-    attendance_id = _resolve_absent_attendance(
-        learner,
-        learner_id,
-        session_title,
-        parsed_date,
-        parsed_time,
-    )
+    try:
+        attendance_id = _resolve_absent_attendance(
+            learner,
+            learner_id,
+            session_id,
+            session_title,
+            parsed_date,
+            parsed_time,
+        )
+    except Exception:
+        logger.exception(
+            "Could not validate KBC absence session for %s learner %s",
+            kind,
+            learner_id,
+        )
+        return _error("Could not validate the missed session with KBC.", 502)
     if attendance_id is None:
         return _error("Choose a valid missed attendance session.")
     if CoachAbsenceReport.objects.filter(attendance_id=attendance_id).exists():

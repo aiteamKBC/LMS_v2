@@ -21,6 +21,7 @@
 // ============================================================================
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
 import { DatePickerField } from '@/components/feature/DatePickerField';
@@ -55,6 +56,7 @@ import {
   visibleNotes,
   weekendDateNotice,
 } from './model';
+import { confirmTeamsCalendarUpdate } from './teamsCalendarNotice';
 import {
   ColorControl,
   CoverImageControl,
@@ -253,6 +255,9 @@ export function ModuleFormDrawer({
   const [coverImage, setCoverImage] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Held for the Teams notice on save, which offers to take the reader to the
+  // calendar these dates have just left behind.
+  const navigate = useNavigate();
   // A group whose attach was refused for a tutor double-booking, offered a
   // one-click override rather than a dead end: two deliveries of the same
   // module really can share a tutor (a co-taught slot), and the backend
@@ -753,7 +758,15 @@ export function ModuleFormDrawer({
   const submit = async () => {
     const trimmed = name.trim();
     if (!trimmed) { setError('Give the module a name.'); return; }
-    if (!module && !programmeId && !groupIds.length) { setError('Choose the programme this module belongs to.'); return; }
+    if (!lockGroup) {
+      if (!programmeId) { setError('Choose the programme this module belongs to.'); return; }
+      if (!cohortId) { setError('Choose the cohort this module runs for.'); return; }
+      if (!groupIds.length) { setError('Tick at least one group to run this module.'); return; }
+    }
+    if (!(Number(sessionsNumber) >= 1)) { setError('Set how many weeks the module runs for.'); return; }
+    if (!startDate) { setError('Set the module start date.'); return; }
+    if (!endDate) { setError('Set the module end date - or set the start date and weeks so it can be calculated.'); return; }
+    if (!tutor) { setError('Choose the tutor who delivers this module.'); return; }
     if (dateWindowError) {
       console.log('[TEMP-DEBUG moduleForm] blocked by dateWindowError', dateWindowError, { startDate, endDate, selectedCohort });
       setError(dateWindowError); return;
@@ -862,6 +875,10 @@ export function ModuleFormDrawer({
         // owns is sent: the weeks, components and KSB mappings authored in the
         // Module Builder are left exactly as they are.
         const patchResult = await updateCurriculumModule(module.id, patchPayload);
+        // Named by the save when the edit moved the dates the module's Teams
+        // series was built from. Empty for a module with no calendar, which is
+        // most of them.
+        const staleTeamsCalendars = patchResult?.teamsCalendarsToUpdate || [];
         console.log('[TEMP-DEBUG moduleForm] PATCH response =', patchResult);
         // Groups ticked on top of the module's own: each gets a delivery of its
         // own rather than sharing this one, so its dates come from its own
@@ -889,13 +906,26 @@ export function ModuleFormDrawer({
         // four steps says what it created once rather than four times.
         if (chained) return;
         onClose();
-        await showCurriculumAlert({
-          title: 'Module updated',
-          text: newGroups.length
-            ? `${trimmed} is saved, and now also runs for ${newGroups.map(group => group.name).join(', ')}.`
-            : `${trimmed} is saved.`,
-          timer: newGroups.length ? 2600 : 1800,
+        // See the group drawer: the warning stands in for the confirmation, so a
+        // save that has left the calendar behind does not read as finished.
+        const warned = await confirmTeamsCalendarUpdate({
+          calendars: staleTeamsCalendars,
+          savedText: `${trimmed} is saved.`,
+          navigate,
+          // The group's hour and the weeks just saved, so a push from the dialog
+          // sends this form's own plan rather than re-deriving one.
+          sessionTimes: { startTime: cleanText(selectedGroup?.startTime), endTime: cleanText(selectedGroup?.endTime) },
+          weeks: weeksEntered,
         });
+        if (!warned) {
+          await showCurriculumAlert({
+            title: 'Module updated',
+            text: newGroups.length
+              ? `${trimmed} is saved, and now also runs for ${newGroups.map(group => group.name).join(', ')}.`
+              : `${trimmed} is saved.`,
+            timer: newGroups.length ? 2600 : 1800,
+          });
+        }
         return;
       }
 
@@ -976,7 +1006,7 @@ export function ModuleFormDrawer({
       ? 'Saved against this group, with its delivery days and holidays. Tick another group to run the same module for it too.'
       : cohortId
         ? 'Saved against this cohort. Tick one or more groups to give it delivery dates and a tutor.'
-        : 'Groups appear once a cohort is chosen. Without one the module is created as a catalogue draft.';
+        : 'Groups appear once a cohort is chosen. Tick the ones that run this module.';
 
   return (
     <EntityDrawer
@@ -1000,7 +1030,7 @@ export function ModuleFormDrawer({
     >
       {!lockGroup && (
         <>
-          <FormField label="Programme" required={!module} hint="Filters the cohorts and groups below.">
+          <FormField label="Programme" required hint="Filters the cohorts and groups below.">
             <SelectControl
               value={programmeId}
               onChange={changeProgramme}
@@ -1008,17 +1038,18 @@ export function ModuleFormDrawer({
               placeholder="Select a programme"
             />
           </FormField>
-          <FormField label="Cohort" hint="Narrows the groups and seeds the start date.">
+          <FormField label="Cohort" required hint="Narrows the groups and seeds the start date.">
             <SelectControl
               value={cohortId}
               onChange={changeCohort}
               options={availableCohorts.map(cohort => ({ value: cohort.id, label: cohort.name }))}
-              placeholder={availableCohorts.length ? 'No cohort yet' : 'No cohorts for this programme'}
+              placeholder={availableCohorts.length ? 'Select a cohort' : 'No cohorts for this programme'}
             />
           </FormField>
           <FormField
             as="group"
             label={selectedGroups.length > 1 ? `Groups (${selectedGroups.length})` : 'Groups'}
+            required
             hint={placementHint}
           >
             <MultiSelectControl
@@ -1051,6 +1082,7 @@ export function ModuleFormDrawer({
       </FormField>
       <FormField
         label="Weeks"
+        required
         hint={
           deliveryDaysPerWeek > 1
             ? `= ${totalSessions} sessions (${deliveryDaysPerWeek} delivery days x ${sessionsNumber || 1} weeks). Counted from the dates below when you set them; each week is authored in the Module Builder.`
@@ -1062,6 +1094,7 @@ export function ModuleFormDrawer({
       <div className="grid gap-4 sm:grid-cols-2">
         <DatePickerField
           label="Start date"
+          required
           value={startDate}
           onChange={changeStartDate}
           min={selectedCohort?.startDate || undefined}
@@ -1076,6 +1109,7 @@ export function ModuleFormDrawer({
         />
         <DatePickerField
           label="End date"
+          required
           value={endDate}
           onChange={changeEndDate}
           min={startDate || selectedCohort?.startDate || undefined}
@@ -1106,12 +1140,12 @@ export function ModuleFormDrawer({
           </button>
         </div>
       </div>
-      <FormField label="Tutor" hint={tutorHint}>
+      <FormField label="Tutor" required hint={tutorHint}>
         <SelectControl
           value={tutor}
           onChange={setTutor}
           options={tutorOptions}
-          placeholder="Unassigned"
+          placeholder="Select a tutor"
         />
       </FormField>
       {tutorClash && (
@@ -1147,7 +1181,7 @@ export function ModuleFormDrawer({
       </FormField>
       <FormField
         label="Cover image"
-        hint="Optional. The Module Builder card shows it in place of the module icon; leave it empty to keep the icon."
+        hint="Shown in Module Builder and on learners' subject cards. Upload or change it here, then save the module."
       >
         <CoverImageControl
           value={coverImage}

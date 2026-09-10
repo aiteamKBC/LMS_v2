@@ -47,7 +47,7 @@ export const learnerNavItems: SidebarNavItem[] = [
     children: [
       { id: 'learner-monthly-cycle', label: 'Monthly Cycle', icon: 'ri-loop-left-line', href: '/learner/monthly-cycle' },
       { id: 'learner-monthly-submission', label: 'Monthly submission', icon: 'ri-file-text-line', href: '/learner/monthly-submission' },
-      { id: 'learner-monthly-coaching', label: 'Monthly Coaching', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
+      { id: 'learner-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
       { id: 'learner-progress-reviews', label: 'Progress Review', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
     ],
   },
@@ -132,7 +132,7 @@ export const coachNavItems: SidebarNavItem[] = [
     href: '',
     children: [
       { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable' },
-      { id: 'coach-meetings', label: 'Monthly Coache Meeting', icon: 'ri-calendar-check-line', href: '/coach/meetings' },
+      { id: 'coach-meetings', label: 'Monthly Coaching Meeting', icon: 'ri-calendar-check-line', href: '/coach/meetings' },
       { id: 'coach-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/coach/progress-reviews' },
       { id: 'coach-monthly-cycle', label: 'Monthly Cycle', icon: 'ri-loop-left-line', href: '/coach/monthly-cycle' },
     ],
@@ -288,15 +288,20 @@ export const curriculumNavItems: SidebarNavItem[] = [
   {
     id: 'curriculum-quality',
     label: 'Quality',
-    icon: 'ri-book-open-line',
+    icon: 'ri-shield-check-line',
     href: '/curriculum/quality',
-    comingSoon: true,
+    // Published Content, Reports and the Audit Trail are live; Quality
+    // Assurance and Version Control have no record store yet, and the hub says
+    // which is which. The tag flags that the destination is usable but part
+    // built, where `comingSoon` would wrongly read as "do not bother opening".
+    tag: 'Under review',
     matchPaths: [
+      '/curriculum/published',
+      '/curriculum/reports',
+      '/curriculum/audit-trail',
       '/curriculum/ksb-mapping',
       '/curriculum/qa',
-      '/curriculum/reports',
       '/curriculum/version-control',
-      '/curriculum/published',
     ],
   },
 ];

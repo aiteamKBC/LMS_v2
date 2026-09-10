@@ -554,12 +554,12 @@ function formatDateInputValue(year: number, month: number, day: number) {
 
 /* â”€â”€â”€ Donut Ring â”€â”€â”€ */
 type ViewMode = 'month' | 'week' | 'day';
-type StatusFilter = 'all' | 'overdue' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'in-progress' | 'completed' | 'cancelled';
+type StatusFilter = 'all' | 'overdue' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'in-progress' | 'awaiting-signature' | 'completed' | 'cancelled';
 type SourceFilter = 'all' | 'live-session' | 'mcr' | 'progress-review' | 'catch-up' | 'student-support';
 type SchedulableSource = 'mcr' | 'progress-review' | 'catch-up' | 'student-support';
 
 const SOURCE_FILTER_ORDER: SourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'catch-up', 'student-support'];
-const STATUS_FILTER_ORDER: StatusFilter[] = ['all', 'overdue', 'due-soon', 'needs-schedule', 'scheduled', 'in-progress', 'completed', 'cancelled'];
+const STATUS_FILTER_ORDER: StatusFilter[] = ['all', 'overdue', 'due-soon', 'needs-schedule', 'scheduled', 'in-progress', 'awaiting-signature', 'completed'];
 
 const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
   all: 'All',
@@ -568,6 +568,7 @@ const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
   'needs-schedule': 'Needs Schedule',
   scheduled: 'Scheduled',
   'in-progress': 'In Progress',
+  'awaiting-signature': 'Awaiting Signature',
   completed: 'Completed',
   cancelled: 'Cancelled',
 };
@@ -579,6 +580,7 @@ const STATUS_FILTER_DOTS: Record<StatusFilter, string> = {
   'needs-schedule': 'bg-rose-500',
   scheduled: 'bg-primary-500',
   'in-progress': 'bg-secondary-500',
+  'awaiting-signature': 'bg-violet-500',
   completed: 'bg-emerald-500',
   cancelled: 'bg-red-500',
 };
@@ -1272,6 +1274,7 @@ export default function CoachTimetablePage() {
     if (filterStatus === 'needs-schedule' && !needsSchedulingMetricEvent(e)) return false;
     if (filterStatus === 'scheduled' && !isScheduledMetricEvent(e)) return false;
     if (filterStatus === 'in-progress' && e.status !== 'in-progress') return false;
+    if (filterStatus === 'awaiting-signature' && e.status !== 'awaiting-signature') return false;
     if (filterStatus === 'completed' && !isCompletedMetricEvent(e)) return false;
     if (filterStatus === 'cancelled' && e.status !== 'cancelled') return false;
     return true;
@@ -1309,6 +1312,7 @@ export default function CoachTimetablePage() {
     'needs-schedule': sourceFilteredVisibleRangeEvents.filter(needsSchedulingMetricEvent).length,
     scheduled: sourceFilteredVisibleRangeEvents.filter(isScheduledMetricEvent).length,
     'in-progress': sourceFilteredVisibleRangeEvents.filter(event => event.status === 'in-progress').length,
+    'awaiting-signature': sourceFilteredVisibleRangeEvents.filter(event => event.status === 'awaiting-signature').length,
     completed: sourceFilteredVisibleRangeEvents.filter(isCompletedMetricEvent).length,
     cancelled: sourceFilteredVisibleRangeEvents.filter(event => event.status === 'cancelled').length,
   };
@@ -1961,13 +1965,13 @@ export default function CoachTimetablePage() {
             </div>
           </div>
 
-          <div className="mt-2 flex flex-wrap items-start gap-x-6 gap-y-2 border-t border-background-100 pt-3">
-            <div className="min-w-[360px] flex-1 rounded-lg bg-background-50/60 px-3 py-2">
+          <div className="mt-2 grid grid-cols-1 items-center gap-3 border-t border-background-100 pt-3 xl:grid-cols-[minmax(0,0.78fr)_minmax(0,1.42fr)]">
+            <div className="min-w-0 rounded-lg bg-background-50/60 px-3 py-2">
               <div className="mb-2 flex items-center gap-2">
                 <p className="text-[12px] font-bold uppercase tracking-wide text-foreground-400">Source</p>
                 <span className="text-[12px] font-bold text-foreground-400">{sourceFilteredVisibleRangeEvents.length} events</span>
               </div>
-              <div className="flex flex-wrap gap-x-2 gap-y-1.5">
+              <div className="flex flex-nowrap gap-2 overflow-x-auto pb-1">
                 {sourceFilterOptions.map(option => {
                   const isActive = filterSource === option.value;
                   return (
@@ -1990,12 +1994,12 @@ export default function CoachTimetablePage() {
                 })}
               </div>
             </div>
-            <div className="min-w-[480px] flex-[1.4] rounded-lg bg-background-50/60 px-3 py-2">
+            <div className="min-w-0 rounded-lg bg-background-50/60 px-3 py-2">
               <div className="mb-2 flex items-center gap-2">
                 <p className="text-[12px] font-bold uppercase tracking-wide text-foreground-400">Status</p>
                 <span className="truncate text-[12px] font-bold text-foreground-400">{activeFilterLabel}</span>
               </div>
-              <div className="flex flex-wrap gap-x-2 gap-y-1.5">
+              <div className="flex flex-nowrap gap-2 overflow-x-auto pb-1">
                 {STATUS_FILTER_ORDER.map(status => {
                   const isActive = filterStatus === status;
                   return (

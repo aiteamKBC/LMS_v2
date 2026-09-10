@@ -52,6 +52,7 @@ function component(id: string, extra: Partial<ModuleComponent> = {}): ModuleComp
     reflectionQuestion: '',
     workplaceEvidenceRequired: false,
     tutorValidationRequired: false,
+    coachValidationRequired: true,
     ksbMappings: [],
     settings: {} as ModuleComponent['settings'],
     ...extra,

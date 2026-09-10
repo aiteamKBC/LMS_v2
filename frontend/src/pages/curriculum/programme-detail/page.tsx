@@ -1147,7 +1147,10 @@ function buildModuleWeeks(
       title: clean(authoredWeek?.title) || weekTitle || `Week ${weekNumber}`,
       startDate: formatDateLabel(first?.date || ''),
       endDate: formatDateLabel(last?.date || first?.date || ''),
-      otjh: Math.round(componentOtjh * 10) / 10,
+      // Kept exact: rounding each week to one decimal turned a 15-minute
+      // component into 18 minutes (0.25 -> 0.3) and the module total inherited
+      // every one of those errors. The sum is rounded once, at module level.
+      otjh: componentOtjh,
       components: weekComponents,
       sessions: sorted.map(session => ({
         id: session.id,
@@ -1296,7 +1299,10 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     const componentRollup = collectComponentKsbRollup(moduleComponents, liveModule.name);
     const ksbRollup = componentRollup.length ? componentRollup : fallbackKsbRollup(fallbackKsbCodes, liveModule.name);
     const ksbTags = ksbRollup.map(item => item.ksb);
-    const moduleOtjh = Math.round(weeksData.reduce((sum, week) => sum + Number(week.otjh || 0), 0) * 10) / 10;
+    // The module's OTJH is the sum of every component's Expected OTJH across
+    // every week -- the same rule the Module Builder header uses. Rounded to the
+    // nearest hundredth only to shed floating-point dust.
+    const moduleOtjh = Math.round(weeksData.reduce((sum, week) => sum + Number(week.otjh || 0), 0) * 100) / 100;
     const archived = Boolean(liveModule.isProgrammeDeleted)
       || normalise(liveModule.status) === 'archived'
       || normalise(liveModule.deliveryStatus) === 'archived';
@@ -1728,20 +1734,67 @@ function RecordHomeLink({ icon, label, count, hint, to }: {
   );
 }
 
-// Read-only view of the learners the enrolment team placed into a group.
+/** Two letters for the roster avatar; a person with one name keeps one letter. */
+function learnerInitials(value: string) {
+  const parts = clean(value).split(/\s+/).filter(Boolean);
+  if (!parts.length) return '--';
+  return ((parts[0]?.[0] || '') + (parts.length > 1 ? parts[parts.length - 1]?.[0] || '' : '')).toUpperCase();
+}
+
+// Avatar tints, drawn from the brand scales rather than a rainbow: the roster is
+// a list of people, and the colour is only there to make one row findable again
+// after scrolling. Assigned by hashing the learner's id so it is stable across
+// reloads and re-sorts -- a colour that moved would be worse than no colour.
+const LEARNER_TINTS = [
+  'bg-primary-100 text-primary-800',
+  'bg-secondary-100 text-secondary-800',
+  'bg-accent-100 text-accent-800',
+  'bg-emerald-100 text-emerald-800',
+  'bg-sky-100 text-sky-800',
+  'bg-rose-100 text-rose-800',
+];
+
+function learnerTint(key: string) {
+  let hash = 0;
+  for (let index = 0; index < key.length; index += 1) hash = (hash * 31 + key.charCodeAt(index)) >>> 0;
+  return LEARNER_TINTS[hash % LEARNER_TINTS.length];
+}
+
+type RosterStatusFilter = 'all' | 'active' | 'inactive';
+type RosterSort = 'name' | 'group' | 'progress';
+
+/** Fraction of the learner's off-the-job target that is done, or null when no target is recorded. */
+function learnerOtjhProgress(learner: CurriculumProgrammeAssignedLearner) {
+  const target = Number(learner.targetHours ?? 0);
+  if (!Number.isFinite(target) || target <= 0) return null;
+  const raw = Number(learner.completedHours ?? 0);
+  const done = Number.isFinite(raw) ? raw : 0;
+  return { done, target, percent: Math.max(0, Math.min(100, Math.round((done / target) * 100))) };
+}
+
+// Read-only view of the learners the enrolment team placed into a scope.
 // Curriculum owns the delivery structure, not the placements, so this panel
 // deliberately offers no allocation controls.
 //
-// The roster it is handed is already the group's own — asked for at
-// `/curriculum/groups/<id>/learner-roster/` — so it lists what it is given and
-// filters nothing. It used to be handed the whole programme's roster and match
-// rows on cohort and group *names*, which quietly dropped learners whose stored
-// labels had drifted from the records they were placed in.
+// The roster it is handed is already the scope's own -- asked for at
+// `/curriculum/groups/<id>/learner-roster/` -- so it lists what it is given and
+// filters nothing by placement. It used to be handed the whole programme's
+// roster and match rows on cohort and group *names*, which quietly dropped
+// learners whose stored labels had drifted from the records they were placed in.
+//
+// The controls here are the other kind of filtering. A cohort is 30+ people and
+// a programme is several cohorts, so the list is searched, filtered by lifecycle
+// and sorted, then sectioned by the cohort and group each person sits in. The
+// sections are what make a long roster readable: a flat list of 90 names says
+// nothing about the structure they were placed into, and the placement is the
+// thing the reader is holding in their head while they scan it.
 //
 // Each row is a button, because the roster is the way into the one thing a
 // designer actually comes here to ask: what has this person achieved in this
-// group. The figures themselves belong to the achievement read, not to this
-// panel, so the row opens them rather than restating them.
+// scope. The figures themselves belong to the achievement read, not to this
+// panel, so the row opens them rather than restating them -- with the single
+// exception of off-the-job progress, which is what decides who needs chasing and
+// is already on the roster row.
 function EnrolledLearnersPanel({
   roster,
   loading,
@@ -1760,17 +1813,167 @@ function EnrolledLearnersPanel({
   /** What to call this scope in the summary line, e.g. "this group" or "this programme". */
   scopeLabel?: string;
 }) {
-  const learners = roster?.assignedLearners || [];
+  const learners = useMemo(() => roster?.assignedLearners || [], [roster]);
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<RosterStatusFilter>('all');
+  const [sort, setSort] = useState<RosterSort>('name');
+
   // The Learners column in the table above counts active placements; this list
   // is asked for with learnerStatus=all, because someone paused or withdrawn is
-  // still a person this group holds and still keeps whatever they earned here.
+  // still a person this scope holds and still keeps whatever they earned here.
   // Where the two disagree, say why rather than leaving the reader to wonder
   // which number is wrong.
-  const inactive = learners.filter(learner => normalise(learner.lifecycleStatus) !== 'active').length;
+  const inactive = useMemo(
+    () => learners.filter(learner => normalise(learner.lifecycleStatus) !== 'active').length,
+    [learners],
+  );
+
+  const visible = useMemo(() => {
+    const needle = normalise(query);
+    const matched = learners.filter(learner => {
+      if (statusFilter !== 'all') {
+        const isActive = normalise(learner.lifecycleStatus) === 'active';
+        if (statusFilter === 'active' && !isActive) return false;
+        if (statusFilter === 'inactive' && isActive) return false;
+      }
+      if (!needle) return true;
+      // Coach, cohort and group are searched too: "who does coach 2 have here"
+      // is asked as often as a person's own name.
+      return [learner.name, learner.email, learner.group, learner.cohort, learner.coachName]
+        .some(field => normalise(field).includes(needle));
+    });
+
+    const byName = (a: CurriculumProgrammeAssignedLearner, b: CurriculumProgrammeAssignedLearner) =>
+      clean(a.name || a.email).localeCompare(clean(b.name || b.email), undefined, { sensitivity: 'base' });
+
+    return [...matched].sort((a, b) => {
+      if (sort === 'group') {
+        const placement = clean(`${a.cohort} ${a.group}`)
+          .localeCompare(clean(`${b.cohort} ${b.group}`), undefined, { sensitivity: 'base' });
+        return placement || byName(a, b);
+      }
+      if (sort === 'progress') {
+        // Furthest behind first: this sort exists to find who needs chasing, so
+        // a learner with no target recorded sorts last rather than as 0%, which
+        // would bury the people who are genuinely behind.
+        const left = learnerOtjhProgress(a);
+        const right = learnerOtjhProgress(b);
+        if (left && right) return left.percent - right.percent || byName(a, b);
+        if (left) return -1;
+        if (right) return 1;
+        return byName(a, b);
+      }
+      return byName(a, b);
+    });
+  }, [learners, query, sort, statusFilter]);
+
+  // Sectioned by placement, but only when there is more than one placement in
+  // view: a group's own roster is already one section, and a single header above
+  // every row would be noise.
+  const sections = useMemo(() => {
+    const buckets = new Map<string, { cohort: string; group: string; rows: CurriculumProgrammeAssignedLearner[] }>();
+    for (const learner of visible) {
+      const cohort = clean(learner.cohort);
+      const group = clean(learner.group);
+      const key = `${cohort}|${group}`;
+      const bucket = buckets.get(key) || { cohort, group, rows: [] };
+      bucket.rows.push(learner);
+      buckets.set(key, bucket);
+    }
+    return [...buckets.values()];
+  }, [visible]);
+  const sectioned = sections.length > 1;
+
+  const filtering = Boolean(clean(query)) || statusFilter !== 'all';
+  const controlClass = 'h-8 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-semibold text-foreground-700 outline-none transition-smooth focus:border-primary-300';
+
+  const renderRow = (learner: CurriculumProgrammeAssignedLearner) => {
+    const key = String(learner.id);
+    const selected = key === selectedLearnerId;
+    const name = clean(learner.name) || clean(learner.email) || `Learner ${learner.id}`;
+    const active = normalise(learner.lifecycleStatus) === 'active';
+    const otjh = learnerOtjhProgress(learner);
+    return (
+      <button
+        key={key}
+        type="button"
+        onClick={() => onSelectLearner(selected ? null : learner)}
+        aria-pressed={selected}
+        className={`flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-smooth ${
+          selected
+            ? 'border-primary-300 bg-primary-50 shadow-sm'
+            : 'border-background-200 bg-background-50 hover:border-primary-200 hover:bg-background-100'
+        }`}
+      >
+        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-extrabold ${learnerTint(key)}`}>
+          {learnerInitials(name)}
+        </span>
+
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1.5">
+            <span className="truncate text-[12.5px] font-bold text-foreground-900">{name}</span>
+            {!active && learner.lifecycleStatus && (
+              <span className="shrink-0 rounded-full bg-foreground-100 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-foreground-500">
+                {learner.lifecycleStatus}
+              </span>
+            )}
+          </span>
+          <span className="mt-0.5 block truncate text-[11px] text-foreground-500">
+            {clean(learner.email) || 'No email on record'}
+          </span>
+          <span className="mt-1 flex flex-wrap items-center gap-1.5">
+            {learner.group ? (
+              <span className="inline-flex items-center gap-1 rounded-md bg-background-100 px-1.5 py-0.5 text-[10px] font-semibold text-foreground-600">
+                <AppIcon className="ri-group-line text-[10px]"></AppIcon>
+                {learner.group}
+              </span>
+            ) : (
+              <span className="inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                No group recorded
+              </span>
+            )}
+            {/* Coach only. The tutor belongs to the module, not to the group a
+                learner sits in, so naming one here would name the wrong person. */}
+            {learner.coachName ? (
+              <span className="inline-flex items-center gap-1 rounded-md bg-background-100 px-1.5 py-0.5 text-[10px] font-semibold text-foreground-600">
+                <AppIcon className="ri-user-star-line text-[10px]"></AppIcon>
+                {learner.coachName}
+              </span>
+            ) : (
+              <span className="inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                No coach assigned
+              </span>
+            )}
+          </span>
+        </span>
+
+        <span className="hidden w-28 shrink-0 sm:block">
+          {otjh ? (
+            <>
+              <span className="flex items-baseline justify-between text-[10px] font-bold text-foreground-600">
+                <span>{otjh.percent}%</span>
+                <span className="font-semibold text-foreground-400">{formatHours(otjh.done)}/{formatHours(otjh.target)}h</span>
+              </span>
+              <span className="mt-1 block h-1.5 w-full overflow-hidden rounded-full bg-background-200">
+                <span
+                  className={`block h-full rounded-full ${otjh.percent >= 100 ? 'bg-emerald-500' : otjh.percent >= 50 ? 'bg-primary-400' : 'bg-accent-400'}`}
+                  style={{ width: `${Math.max(otjh.percent, 2)}%` }}
+                />
+              </span>
+            </>
+          ) : (
+            <span className="block text-right text-[10px] font-semibold text-foreground-400">No OTJH target set</span>
+          )}
+        </span>
+
+        <AppIcon className={`shrink-0 text-sm ${selected ? 'ri-arrow-up-s-line text-primary-600' : 'ri-arrow-right-s-line text-foreground-300'}`}></AppIcon>
+      </button>
+    );
+  };
 
   return (
     <>
-      {loading && <p className="text-[12px] text-foreground-500">Loading assigned learners…</p>}
+      {loading && <p className="text-[12px] text-foreground-500">Loading assigned learners...</p>}
 
       {!loading && error && (
         <p className="rounded-lg border border-amber-200/60 bg-amber-50 px-3 py-2 text-[12px] text-amber-700">{error}</p>
@@ -1784,47 +1987,92 @@ function EnrolledLearnersPanel({
 
       {!loading && !error && learners.length > 0 && (
         <>
-          <p className="mb-2 text-[11px] text-foreground-500">
-            {learners.length} learner{learners.length === 1 ? '' : 's'} placed in {scopeLabel}
-            {inactive ? `, ${inactive} of them no longer active — the count above is active placements only` : ''}.
-            {' '}Open one to see the off-the-job hours and KSBs they have achieved here.
-          </p>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {learners.map(learner => {
-              const key = String(learner.id);
-              const selected = key === selectedLearnerId;
-              return (
+          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-background-200 bg-background-100/60 p-2">
+            <label className="relative min-w-[180px] flex-1">
+              <AppIcon className="ri-search-line pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[13px] text-foreground-400"></AppIcon>
+              <input
+                type="search"
+                value={query}
+                onChange={event => setQuery(event.target.value)}
+                placeholder="Search name, email, group or coach"
+                aria-label="Search this roster"
+                className={`${controlClass} w-full pl-8`}
+              />
+            </label>
+
+            <div className="flex items-center gap-1 rounded-lg border border-background-200 bg-background-50 p-0.5">
+              {([
+                { id: 'all', label: 'All', count: learners.length },
+                { id: 'active', label: 'Active', count: learners.length - inactive },
+                { id: 'inactive', label: 'Not active', count: inactive },
+              ] as const).map(option => (
                 <button
-                  key={key}
+                  key={option.id}
                   type="button"
-                  onClick={() => onSelectLearner(selected ? null : learner)}
-                  aria-pressed={selected}
-                  className={`flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left transition-smooth ${
-                    selected
-                      ? 'border-primary-300 bg-primary-50'
-                      : 'border-background-200 bg-background-100 hover:border-primary-200 hover:bg-background-50'
+                  onClick={() => setStatusFilter(option.id)}
+                  aria-pressed={statusFilter === option.id}
+                  className={`inline-flex h-7 items-center gap-1 rounded-md px-2 text-[11px] font-bold transition-smooth ${
+                    statusFilter === option.id
+                      ? 'bg-primary-100 text-primary-800'
+                      : 'text-foreground-500 hover:bg-background-100'
                   }`}
                 >
-                  <div className="min-w-0">
-                    <p className="flex items-center gap-1.5 truncate text-[12px] font-semibold text-foreground-900">
-                      <AppIcon className={`${selected ? 'ri-subtract-line' : 'ri-add-line'} text-[12px] text-foreground-400`}></AppIcon>
-                      {learner.name || learner.email || `Learner ${learner.id}`}
-                    </p>
-                    <p className="truncate pl-4 text-[11px] text-foreground-500">
-                      {learner.email || 'No email on record'}
-                      {learner.group ? ` · ${learner.group}` : ''}
-                      {learner.coachName ? ` · Coach: ${learner.coachName}` : ''}
-                    </p>
-                  </div>
-                  {learner.lifecycleStatus && (
-                    <span className={`rounded-full px-2 py-0.5 text-[9px] font-semibold ${normalise(learner.lifecycleStatus) === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-foreground-100 text-foreground-500'}`}>
-                      {learner.lifecycleStatus}
-                    </span>
-                  )}
+                  {option.label}
+                  <span className={statusFilter === option.id ? 'text-primary-600' : 'text-foreground-400'}>{option.count}</span>
                 </button>
-              );
-            })}
+              ))}
+            </div>
+
+            <label className="flex items-center gap-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Sort</span>
+              <select
+                value={sort}
+                onChange={event => setSort(event.target.value as RosterSort)}
+                aria-label="Sort this roster"
+                className={controlClass}
+              >
+                <option value="name">Name (A-Z)</option>
+                <option value="group">Cohort and group</option>
+                <option value="progress">OTJH - furthest behind</option>
+              </select>
+            </label>
           </div>
+
+          <p className="mb-2 text-[11px] text-foreground-500">
+            {filtering
+              ? `${visible.length} of ${learners.length} learner${learners.length === 1 ? '' : 's'} shown in ${scopeLabel}`
+              : `${learners.length} learner${learners.length === 1 ? '' : 's'} placed in ${scopeLabel}`}
+            {inactive && statusFilter === 'all' ? `, ${inactive} of them no longer active - the count above is active placements only` : ''}.
+            {' '}Open one to see the off-the-job hours and KSBs they have achieved here.
+          </p>
+
+          {visible.length === 0 ? (
+            <p className="rounded-lg border border-background-200 bg-background-100 px-3 py-2 text-[12px] text-foreground-500">
+              No learner in {scopeLabel} matches {clean(query) ? `"${clean(query)}"` : 'this filter'}
+              {statusFilter !== 'all' ? ` with status "${statusFilter === 'active' ? 'Active' : 'Not active'}"` : ''}.
+            </p>
+          ) : (
+            // Capped and scrolled: a cohort of 30+ would otherwise push the
+            // achievement detail this list opens off the bottom of the page.
+            <div className="max-h-[26rem] space-y-3 overflow-y-auto pr-1">
+              {sectioned
+                ? sections.map(section => (
+                  <section key={`${section.cohort}|${section.group}`}>
+                    <h4 className="sticky top-0 z-10 -mx-1 mb-1.5 flex items-center gap-1.5 bg-background-50/95 px-1 py-1 text-[10px] font-extrabold uppercase tracking-wider text-foreground-500 backdrop-blur">
+                      <AppIcon className="ri-folder-user-line text-[11px] text-primary-500"></AppIcon>
+                      {section.cohort || 'No cohort recorded'}
+                      <AppIcon className="ri-arrow-right-s-line text-[11px] text-foreground-300"></AppIcon>
+                      {section.group || 'No group recorded'}
+                      <span className="ml-auto rounded-full bg-background-200 px-1.5 py-0.5 text-[9px] font-bold text-foreground-600">
+                        {section.rows.length}
+                      </span>
+                    </h4>
+                    <div className="grid gap-2 lg:grid-cols-2">{section.rows.map(renderRow)}</div>
+                  </section>
+                ))
+                : <div className="grid gap-2 lg:grid-cols-2">{visible.map(renderRow)}</div>}
+            </div>
+          )}
         </>
       )}
     </>
@@ -1915,10 +2163,10 @@ function groupDatesLabel(cohort: { startDate: string; endDate: string; apprentic
   return <span title={text}>{text}</span>;
 }
 
-// Actions need room for "Add first module", "Learners", Edit and Archive on one
-// line. Below this width EntityTable scrolls horizontally instead of squeezing
-// the buttons or turning a single row into an uneven two-line layout.
-const GROUP_GRID = 'grid grid-cols-[minmax(200px,1.35fr)_minmax(160px,1fr)_minmax(180px,1fr)_90px_minmax(290px,auto)]';
+// Actions need room for "Add first module", Edit and Archive on one line. Below
+// this width EntityTable scrolls horizontally instead of squeezing the buttons
+// or turning a single row into an uneven two-line layout.
+const GROUP_GRID = 'grid grid-cols-[minmax(200px,1.35fr)_minmax(160px,1fr)_minmax(180px,1fr)_90px_minmax(210px,auto)]';
 const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_70px_100px_80px_70px_minmax(210px,auto)]';
 
 const TAB_LABELS: Record<Tab, string> = {
@@ -3739,21 +3987,6 @@ export default function ProgrammeDetailPage() {
                               disabled: group.archived || Boolean(activeCohort?.archived),
                               onClick: () => navigate(moduleBuilderGroupUrl(activeCohort?.id || '', group.id)),
                             },
-                            {
-                              icon: 'ri-graduation-cap-line',
-                              label: 'Learners',
-                              title: `Show the learners enrolment has assigned to ${group.name}, in the Overview tab`,
-                              onClick: () => {
-                                setProgrammeLearnerScope({
-                                  scope: 'group',
-                                  identifier: group.id,
-                                  label: group.name,
-                                  description: `The timetabled class ${group.name}: its modules, and the learners enrolment placed in it.`,
-                                });
-                                setProgrammeLearnersOpen(true);
-                                goToTab('overview');
-                              },
-                            },
                           ]}
                         />
                         <RowActions
@@ -4531,132 +4764,192 @@ function ScopePicker({
     || cohort?.groups.find(item => item.modules.some(module => moduleWorkspaceIdentity(module) === value.identifier));
   const moduleOptions = group?.modules || cohort?.groups.flatMap(item => item.modules) || [];
 
-  const selectClass = 'h-9 min-w-[160px] rounded-lg border border-background-200 bg-background-50 px-2 text-[12px] font-semibold text-foreground-800 outline-none transition-smooth focus:border-primary-300';
+  const programmeScope: AchievementScope = {
+    scope: 'programme',
+    identifier: programmeId,
+    label: programme.name || 'Programme',
+    description: '',
+  };
+  const cohortScope = (item: Cohort): AchievementScope => ({
+    scope: 'cohort',
+    identifier: item.id,
+    label: item.name,
+    description: `Every group and module running in ${item.name}, and the learners enrolment placed in it.`,
+  });
+  const groupScope = (item: Group): AchievementScope => ({
+    scope: 'group',
+    identifier: item.id,
+    label: item.name,
+    description: `The timetabled class ${item.name}: its modules, and the learners enrolment placed in it.`,
+  });
 
-  return (
-    <div className="flex flex-wrap items-end gap-3">
-      <button
-        type="button"
-        onClick={() => onChange({
-          scope: 'programme',
-          identifier: programmeId,
-          label: programme.name || 'Programme',
-          description: '',
-        })}
-        className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold transition-smooth ${
-          value.scope === 'programme'
-            ? 'border-primary-300 bg-primary-50 text-primary-700'
-            : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'
-        }`}
-      >
-        <AppIcon className="ri-book-2-line"></AppIcon>
-        Whole programme
-      </button>
+  // Each step is enabled only once the one above it has been chosen, so the
+  // control says what it is waiting for rather than sitting greyed out with a
+  // label that reads as an available option.
+  const selectClass = 'h-9 w-full rounded-lg border border-background-200 bg-background-50 px-2 text-[12px] font-semibold text-foreground-800 outline-none transition-smooth focus:border-primary-300 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-400';
+  const stepLabelClass = 'text-[10px] font-bold uppercase tracking-wider text-foreground-400';
 
-      <label className="flex flex-col gap-1">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Cohort</span>
+  // The counts come from the records themselves, not from the roster below: the
+  // roster only ever holds the scope currently chosen, so reading it would make
+  // every option except the selected one say zero.
+  const cohortLearners = programme.cohorts.reduce((total, item) => total + (item.learners || 0), 0);
+
+  const steps: {
+    key: string;
+    label: string;
+    icon: string;
+    /** The record chosen at this level, or '' while the level is still "all". */
+    chosen: string;
+    control: ReactNode;
+  }[] = [
+    {
+      key: 'cohort',
+      label: 'Cohort',
+      icon: 'ri-calendar-2-line',
+      chosen: cohort?.name || '',
+      control: (
         <select
           className={selectClass}
+          aria-label="Cohort"
           value={cohort?.id || ''}
           onChange={event => {
             const next = programme.cohorts.find(item => item.id === event.target.value);
-            if (!next) {
-              onChange({ scope: 'programme', identifier: programmeId, label: programme.name || 'Programme', description: '' });
-              return;
-            }
-            onChange({
-              scope: 'cohort',
-              identifier: next.id,
-              label: next.name,
-              description: `Every group and module running in ${next.name}, and the learners enrolment placed in it.`,
-            });
+            onChange(next ? cohortScope(next) : programmeScope);
           }}
         >
-          <option value="">All cohorts</option>
+          <option value="">All cohorts ({programme.cohorts.length})</option>
           {programme.cohorts.map(item => (
-            <option key={item.id} value={item.id}>{item.name}</option>
+            <option key={item.id} value={item.id}>
+              {item.name} - {item.learners || 0} learner{item.learners === 1 ? '' : 's'}
+            </option>
           ))}
         </select>
-      </label>
-
-      <label className="flex flex-col gap-1">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Group</span>
+      ),
+    },
+    {
+      key: 'group',
+      label: 'Group',
+      icon: 'ri-group-line',
+      chosen: group?.name || '',
+      control: (
         <select
           className={selectClass}
+          aria-label="Group"
           disabled={!cohort}
           value={group?.id || ''}
           onChange={event => {
             const next = cohort?.groups.find(item => item.id === event.target.value);
-            if (!next) {
-              if (cohort) {
-                onChange({
-                  scope: 'cohort',
-                  identifier: cohort.id,
-                  label: cohort.name,
-                  description: `Every group and module running in ${cohort.name}, and the learners enrolment placed in it.`,
-                });
-              }
-              return;
-            }
-            onChange({
-              scope: 'group',
-              identifier: next.id,
-              label: next.name,
-              description: `The timetabled class ${next.name}: its modules, and the learners enrolment placed in it.`,
-            });
+            if (next) return onChange(groupScope(next));
+            if (cohort) onChange(cohortScope(cohort));
           }}
         >
-          <option value="">All groups in this cohort</option>
+          {cohort
+            ? <option value="">All groups in {cohort.name} ({cohort.groups.length})</option>
+            : <option value="">Pick a cohort first</option>}
           {(cohort?.groups || []).map(item => (
-            <option key={item.id} value={item.id}>{item.name}</option>
+            <option key={item.id} value={item.id}>
+              {item.name} - {item.learners || 0} learner{item.learners === 1 ? '' : 's'}
+            </option>
           ))}
         </select>
-      </label>
-
-      <label className="flex flex-col gap-1">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Module</span>
+      ),
+    },
+    {
+      key: 'module',
+      label: 'Module',
+      icon: 'ri-stack-line',
+      chosen: value.scope === 'module' ? value.label : '',
+      control: (
         <select
           className={selectClass}
+          aria-label="Module"
           disabled={!moduleOptions.length}
           value={value.scope === 'module' ? value.identifier : ''}
           onChange={event => {
             const next = moduleOptions.find(item => moduleWorkspaceIdentity(item) === event.target.value);
-            if (!next) {
-              if (group) {
-                onChange({
-                  scope: 'group',
-                  identifier: group.id,
-                  label: group.name,
-                  description: `The timetabled class ${group.name}: its modules, and the learners enrolment placed in it.`,
-                });
-              } else if (cohort) {
-                onChange({ scope: 'cohort', identifier: cohort.id, label: cohort.name, description: '' });
-              }
-              return;
+            if (next) {
+              return onChange({
+                scope: 'module',
+                identifier: moduleWorkspaceIdentity(next),
+                label: next.name,
+                // Said plainly, because a module has no roster of its own and a
+                // reader would otherwise assume it does.
+                description: `${next.name}: its own components, and the learners in the group that delivers it.`,
+              });
             }
-            onChange({
-              scope: 'module',
-              identifier: moduleWorkspaceIdentity(next),
-              label: next.name,
-              // Said plainly, because a module has no roster of its own and a
-              // reader would otherwise assume it does.
-              description: `${next.name}: its own components, and the learners in the group that delivers it.`,
-            });
+            if (group) return onChange(groupScope(group));
+            if (cohort) onChange(cohortScope(cohort));
           }}
         >
-          <option value="">All modules in this scope</option>
+          {moduleOptions.length
+            ? <option value="">All modules in this scope ({moduleOptions.length})</option>
+            : <option value="">Pick a cohort first</option>}
           {moduleOptions.map(item => (
             <option key={item.id} value={moduleWorkspaceIdentity(item)}>{item.name}</option>
           ))}
         </select>
-      </label>
+      ),
+    },
+  ];
 
-      {/* Said back in words. Three selects reading "Sept 2026 / Group B / -"
-          is a setting; "Showing Group B" is what the numbers below are of. */}
-      <span className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700">
-        <AppIcon className="ri-filter-3-line"></AppIcon>
-        Showing {value.label || 'the whole programme'}
-      </span>
+  // Programme > Cohort > Group > Module is the hierarchy the records actually
+  // form, so the picker is drawn as that path rather than as three unrelated
+  // dropdowns. Reading left to right tells you where you are; the summary line
+  // underneath says it back in words, because three selects reading
+  // "Sept 2026 / Group B / -" is a setting, and "Showing Group B" is what the
+  // numbers below are of.
+  return (
+    <div className="rounded-xl border border-background-200 bg-background-50 p-3">
+      <div className="flex flex-wrap items-end gap-2">
+        <button
+          type="button"
+          onClick={() => onChange(programmeScope)}
+          aria-pressed={value.scope === 'programme'}
+          className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold transition-smooth ${
+            value.scope === 'programme'
+              ? 'border-primary-300 bg-primary-100 text-primary-800'
+              : 'border-background-200 bg-background-50 text-foreground-600 hover:border-primary-200 hover:bg-background-100'
+          }`}
+        >
+          <AppIcon className="ri-book-2-line"></AppIcon>
+          Whole programme
+        </button>
+
+        {steps.map(step => (
+          <div key={step.key} className="flex items-end gap-2">
+            <AppIcon className="ri-arrow-right-s-line pb-2 text-sm text-foreground-300"></AppIcon>
+            <label className="flex min-w-[170px] flex-1 flex-col gap-1">
+              <span className={`flex items-center gap-1 ${stepLabelClass}`}>
+                <AppIcon className={`${step.icon} text-[11px] ${step.chosen ? 'text-primary-500' : 'text-foreground-300'}`}></AppIcon>
+                {step.label}
+              </span>
+              {step.control}
+            </label>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-background-200 pt-2.5">
+        <span className="inline-flex items-center gap-1.5 rounded-lg bg-primary-50 px-2.5 py-1 text-[11px] font-bold text-primary-800">
+          <AppIcon className="ri-filter-3-line text-[12px]"></AppIcon>
+          Showing {value.label || 'the whole programme'}
+        </span>
+        <span className="text-[11px] text-foreground-500">
+          {value.scope === 'programme'
+            ? `${programme.cohorts.length} cohort${programme.cohorts.length === 1 ? '' : 's'}, ${programme.cohorts.reduce((total, item) => total + item.groups.length, 0)} group${programme.cohorts.reduce((total, item) => total + item.groups.length, 0) === 1 ? '' : 's'}, ${cohortLearners} placed learner${cohortLearners === 1 ? '' : 's'}`
+            : value.description || 'Narrowed to one record.'}
+        </span>
+        {value.scope !== 'programme' && (
+          <button
+            type="button"
+            onClick={() => onChange(programmeScope)}
+            className="ml-auto inline-flex h-7 items-center gap-1 rounded-lg border border-background-200 bg-background-50 px-2.5 text-[11px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
+          >
+            <AppIcon className="ri-refresh-line text-[12px]"></AppIcon>
+            Clear filters
+          </button>
+        )}
+      </div>
     </div>
   );
 }

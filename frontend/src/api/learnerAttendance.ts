@@ -28,7 +28,7 @@ export interface LearnerAttendance {
   consecutiveMissed: number;
   updatedAt: string | null;
   attendanceRate: number;
-  source?: 'microsoft-teams';
+  source?: 'kbc-attendance';
   sessionHistory: AttendanceSessionRow[];
 }
 

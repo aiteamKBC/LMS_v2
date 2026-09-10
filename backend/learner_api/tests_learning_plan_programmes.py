@@ -62,7 +62,8 @@ class LearningPlanProgrammeTests(SimpleTestCase):
         )
         # Saving a plan now re-runs progression, which reads compliance and
         # cohort rows; neither is what these assert.
-        with patch("learner_api.learning_plan.advance_learner"), \
+        with patch("login.permissions.authenticate_request", return_value=SimpleNamespace(role="admin")), \
+                patch("learner_api.learning_plan.advance_learner"), \
                 patch("learner_api.learning_plan.EnrolmentUser") as model, \
                 patch("learner_api.learning_plan._programme_modules", return_value=OWN_ONLY), \
                 patch("learner_api.learning_plan._all_modules", return_value=CATALOGUE), \
