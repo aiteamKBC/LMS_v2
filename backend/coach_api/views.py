@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+from html import escape
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 # `time` below is datetime.time, so the sleep function is imported under its own
@@ -4492,24 +4493,61 @@ def build_graph_event_payload(record: CoachCalendarEvent, base_event: dict) -> d
     source = clean_text(base_event.get("source")).lower()
     employer_email = clean_email(base_event.get("employerEmail") or base_event.get("managerEmail"))
     employer_name = clean_text(base_event.get("employerName") or base_event.get("employer")) or "Employer"
-    subject = f"{base_event['title']} - {learner_name}"
-    body_lines = [
-        f"<p><strong>{base_event['title']}</strong></p>",
-        f"<p>Learner: {learner_name}</p>",
+    title = clean_text(base_event.get("title")) or "Coaching Session"
+    coach_name = clean_text(record.owner_name) or "Coach"
+    scheduled_date_label = format_date(record.scheduled_date)
+    scheduled_time_label = record.scheduled_time.strftime("%H:%M")
+    duration_label = f"{record.duration_minutes or TIMETABLE_DEFAULT_DURATION_MINUTES} minutes"
+    subject = f"{title} - {learner_name}"
+
+    details = [
+        ("Session", title),
+        ("Learner", learner_name),
+        ("Coach", coach_name),
+        ("Date", scheduled_date_label),
+        ("Time", scheduled_time_label),
+        ("Duration", duration_label),
     ]
     if source in LEARNER_BOOKED_EVENT_TYPES:
         # Learner-booked copy: lead with who picked the slot and when, while the
         # Graph event itself still belongs to the coach/owner mailbox.
-        body_lines.append(f"<p>Booked by the learner for {format_date(record.scheduled_date)} "
-                          f"at {record.scheduled_time.strftime('%H:%M')}.</p>")
+        intro = f"{learner_name} has booked this session for {scheduled_date_label} at {scheduled_time_label}."
         if learner_email:
-            body_lines.append(f"<p>Learner email: {learner_email}</p>")
+            details.append(("Learner email", learner_email))
         if clean_text(record.notes):
-            body_lines.append(f"<p>Notes: {clean_text(record.notes)}</p>")
+            details.append(("Notes", clean_text(record.notes)))
     else:
-        body_lines.append(f"<p>Target date: {format_date(record.target_date)}</p>")
+        intro = f"You have been invited to a scheduled {title.lower()}."
+        details.append(("Target date", format_date(record.target_date)))
     if source == "progress-review" and employer_email:
-        body_lines.append(f"<p>Employer attendee: {employer_name} ({employer_email})</p>")
+        details.append(("Employer attendee", f"{employer_name} ({employer_email})"))
+
+    detail_rows = "".join(
+        "<tr>"
+        f"<td style=\"padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#6b7280;font-size:13px;\">{escape(label)}</td>"
+        f"<td style=\"padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#111827;font-size:13px;font-weight:600;\">{escape(value)}</td>"
+        "</tr>"
+        for label, value in details
+        if clean_text(value)
+    )
+    body_content = (
+        "<div style=\"font-family:Arial,Helvetica,sans-serif;color:#111827;line-height:1.5;\">"
+        "<div style=\"border:1px solid #e5e7eb;border-radius:12px;padding:20px;max-width:640px;\">"
+        "<p style=\"margin:0 0 6px;color:#6d28d9;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;\">"
+        "KBC LearningOS</p>"
+        f"<h2 style=\"margin:0 0 10px;font-size:20px;line-height:1.25;color:#111827;\">{escape(title)}</h2>"
+        f"<p style=\"margin:0 0 18px;color:#374151;font-size:14px;\">{escape(intro)}</p>"
+        "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" "
+        "style=\"width:100%;border-collapse:collapse;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;\">"
+        f"{detail_rows}"
+        "</table>"
+        "<p style=\"margin:18px 0 0;color:#374151;font-size:14px;\">"
+        "Please use the Microsoft Teams link included in this invitation to join the meeting.</p>"
+        "<p style=\"margin:10px 0 0;color:#6b7280;font-size:12px;\">"
+        "If this time no longer works, please contact your coach before the scheduled start time.</p>"
+        "</div>"
+        "</div>"
+    )
 
     payload = {
         "subject": subject,
@@ -4523,7 +4561,7 @@ def build_graph_event_payload(record: CoachCalendarEvent, base_event: dict) -> d
         },
         "body": {
             "contentType": "HTML",
-            "content": "".join(body_lines),
+            "content": body_content,
         },
         "isOnlineMeeting": True,
         "onlineMeetingProvider": "teamsForBusiness",
@@ -5851,6 +5889,64 @@ def live_session_matches_assigned_group(
     return False
 
 
+def live_session_matches_curriculum_scope(
+    *,
+    programme: str,
+    cohort: str,
+    group: str,
+    programme_id: str = "",
+    cohort_id: str = "",
+    group_id: str = "",
+    learner_programme: str = "",
+    learner_cohort: str = "",
+    learner_group: str = "",
+    learner_programme_id: str = "",
+    learner_cohort_id: str = "",
+    learner_group_id: str = "",
+) -> bool:
+    """Whether a curriculum live session belongs to one learner's placement.
+
+    Learner-facing live sessions are curriculum-owned: the gate is the
+    learner's programme/cohort/group allocation, not the coach assigned to them.
+    Prefer stable ids, falling back to names for older rows.
+    """
+    learner_group_id_key = staff_assignment_match_key(learner_group_id)
+    learner_group_key = staff_assignment_match_key(learner_group)
+    if not (learner_group_id_key or learner_group_key):
+        return False
+
+    group_id_key = staff_assignment_match_key(group_id)
+    group_key = staff_assignment_match_key(group)
+    if learner_group_id_key and group_id_key:
+        group_matches = learner_group_id_key == group_id_key
+    else:
+        group_matches = bool(learner_group_key and group_key and learner_group_key == group_key)
+    if not group_matches:
+        return False
+
+    learner_cohort_id_key = staff_assignment_match_key(learner_cohort_id)
+    learner_cohort_key = staff_assignment_match_key(learner_cohort)
+    cohort_id_key = staff_assignment_match_key(cohort_id)
+    cohort_key = staff_assignment_match_key(cohort)
+    cohort_matches = (
+        bool(learner_cohort_id_key and cohort_id_key and learner_cohort_id_key == cohort_id_key)
+        or bool(learner_cohort_key and cohort_key and learner_cohort_key == cohort_key)
+        or not (learner_cohort_id_key or learner_cohort_key or cohort_id_key or cohort_key)
+    )
+    if not cohort_matches:
+        return False
+
+    learner_programme_id_key = staff_assignment_match_key(learner_programme_id)
+    learner_programme_key = staff_assignment_match_key(learner_programme)
+    programme_id_key = staff_assignment_match_key(programme_id)
+    programme_key = staff_assignment_match_key(programme)
+    return (
+        bool(learner_programme_id_key and programme_id_key and learner_programme_id_key == programme_id_key)
+        or bool(learner_programme_key and programme_key and learner_programme_key == programme_key)
+        or not (learner_programme_id_key or learner_programme_key or programme_id_key or programme_key)
+    )
+
+
 def fetch_cohort_selected_holidays(cohort_id: str) -> list[dict]:
     """The holidays actually ticked on a cohort, not every one in its period.
 
@@ -5874,12 +5970,15 @@ def collect_live_session_events(
     *,
     start_date: date | None = None,
     end_date: date | None = None,
+    require_coach_access: bool = True,
+    learner_scope: dict | None = None,
+    include_past: bool = False,
 ) -> list[dict]:
-    if not coach_has_live_session_access(owner_email):
+    if require_coach_access and not coach_has_live_session_access(owner_email):
         return []
 
-    assigned_groups = fetch_official_assigned_groups(owner_email, owner_name)
-    if not assigned_groups:
+    assigned_groups = fetch_official_assigned_groups(owner_email, owner_name) if require_coach_access else []
+    if require_coach_access and not assigned_groups:
         return []
 
     program_configs_by_id = program_config_by_id(get_program_config_rows())
@@ -5951,16 +6050,33 @@ def collect_live_session_events(
         group = actual_group_identity(row, cohort["id"])
         if not group:
             continue
-        if not live_session_matches_assigned_group(
-            programme=programme,
-            cohort=cohort["name"],
-            group=group["name"],
-            assigned_groups=assigned_groups,
-            programme_id=clean_text(identity.get("sourceId")),
-            cohort_id=cohort["id"],
-            group_id=group["id"],
-        ):
-            continue
+        if learner_scope is not None:
+            if not live_session_matches_curriculum_scope(
+                programme=programme,
+                cohort=cohort["name"],
+                group=group["name"],
+                programme_id=clean_text(identity.get("sourceId")),
+                cohort_id=cohort["id"],
+                group_id=group["id"],
+                learner_programme=clean_text(learner_scope.get("programme")),
+                learner_cohort=clean_text(learner_scope.get("cohort")),
+                learner_group=clean_text(learner_scope.get("group")),
+                learner_programme_id=clean_text(learner_scope.get("programme_id")),
+                learner_cohort_id=clean_text(learner_scope.get("cohort_id")),
+                learner_group_id=clean_text(learner_scope.get("group_id")),
+            ):
+                continue
+        else:
+            if not live_session_matches_assigned_group(
+                programme=programme,
+                cohort=cohort["name"],
+                group=group["name"],
+                assigned_groups=assigned_groups,
+                programme_id=clean_text(identity.get("sourceId")),
+                cohort_id=cohort["id"],
+                group_id=group["id"],
+            ):
+                continue
 
         module_start = row.get("start_date")
         if not module_start:
@@ -5995,7 +6111,7 @@ def collect_live_session_events(
             )
             tracked_start = (tracked_occurrence or {}).get("scheduled_start")
             effective_date = tracked_start.date() if isinstance(tracked_start, datetime) else date.fromisoformat(session["date"])
-            if effective_date < today:
+            if not include_past and effective_date < today:
                 continue
             # Sessions fold into weeks by the delivery days: for a Mon+Thu module
             # sessions 1 and 2 are both taught inside week 1.
@@ -6008,7 +6124,7 @@ def collect_live_session_events(
                     programme=programme,
                     cohort=cohort["name"],
                     group=group["name"],
-                    owner_email=owner_email,
+                    owner_email=owner_email or clean_text(tracked_series.get("organizer_email")),
                     owner_name=owner_name,
                     week_title=clean_text(week.get("title")) if week else None,
                     tracked_series=tracked_series,

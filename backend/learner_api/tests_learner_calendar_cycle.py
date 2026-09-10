@@ -11,6 +11,7 @@ own generator (same intervals, same window, same keys), and stored rows win
 where they exist.
 """
 from datetime import date
+import inspect
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -191,7 +192,7 @@ class StoredRowOwnershipTests(SimpleTestCase):
 class CalendarResponseTests(SimpleTestCase):
     """The endpoint hands the page one calendar in date order."""
 
-    def _call(self, records, mirror):
+    def _call(self, records, mirror, live_events=None):
         from django.test import RequestFactory
 
         from . import calendar as module
@@ -200,16 +201,17 @@ class CalendarResponseTests(SimpleTestCase):
         queryset.order_by.return_value = records
         with patch.object(module, 'SOURCE_MODELS', {'commercial': Mock()}) as models, \
                 patch.object(module.CoachCalendarEvent.objects, 'filter', return_value=queryset), \
+                patch('coach_api.views.collect_live_session_events', return_value=live_events or []) as collect_live, \
                 patch.object(module, 'learner_profile_for_source', return_value=mirror):
             models['commercial'].all_learners.filter.return_value.first.return_value = _learner()
-            response = module.learner_calendar(RequestFactory().get('/x'), 'commercial', 101)
+            response = inspect.unwrap(module.learner_calendar)(RequestFactory().get('/x'), 'commercial', 101)
         import json
-        return json.loads(response.content)
+        return json.loads(response.content), collect_live
 
     def test_generated_slots_are_returned_in_date_order(self):
         # No coach email: live curriculum sessions are folded in through the
         # coach module and read the database, which is not what these assert.
-        body = self._call([], _mirror(coach_email=''))
+        body, _collect_live = self._call([], _mirror(coach_email=''))
         dates = [event['date'] for event in body['events']]
 
         self.assertTrue(dates)
@@ -218,8 +220,50 @@ class CalendarResponseTests(SimpleTestCase):
     def test_the_cycle_appears_even_with_nothing_booked(self):
         # The reported bug: an empty learner calendar beside a coach calendar
         # full of "Not Scheduled" slots.
-        body = self._call([], _mirror(coach_email=''))
+        body, _collect_live = self._call([], _mirror(coach_email=''))
 
         cycle = [e for e in body['events'] if e['source'] in ('mcr', 'progress-review')]
         self.assertTrue(cycle)
         self.assertTrue(all(e['status'] == 'not-scheduled' for e in cycle))
+
+    def test_live_sessions_are_scoped_by_placement_not_coach_email(self):
+        body, collect_live = self._call(
+            [],
+            _mirror(
+                coach_email='',
+                programme='Digital Marketing',
+                programme_id='PROG-1',
+                cohort='September',
+                cohort_id='COHORT-1',
+                group_name='Group A',
+                group_id='GROUP-1',
+            ),
+            live_events=[{
+                'id': 'live-session-MOD-1-1',
+                'eventKey': 'live-session-MOD-1-1',
+                'title': 'Marketing Foundations - Week 1',
+                'source': 'live-session',
+                'type': 'live-session',
+                'sequence': 1,
+                'status': 'scheduled',
+                'date': '2026-09-14',
+                'targetDate': '2026-09-14',
+                'startHour': 10,
+                'durationMinutes': 60,
+                'tutor': 'Tutor One',
+                'meetingLink': 'https://teams.example/join',
+                'programme': 'Digital Marketing',
+                'cohort': 'September',
+                'group': 'Group A',
+                'module': 'Marketing Foundations',
+            }],
+        )
+
+        self.assertTrue(collect_live.called)
+        _, _, kwargs = collect_live.mock_calls[0]
+        self.assertFalse(kwargs['require_coach_access'])
+        self.assertTrue(kwargs['include_past'])
+        self.assertEqual(kwargs['learner_scope']['group_id'], 'GROUP-1')
+        live = [event for event in body['events'] if event['source'] == 'live-session']
+        self.assertEqual(len(live), 1)
+        self.assertEqual(live[0]['meetingLink'], 'https://teams.example/join')
