@@ -42,6 +42,7 @@ from learner_api.models import LearnerTrainingPlanModule
 
 from . import pptx_slides
 from . import schema_gate
+from . import versioning
 from . import upload_storage
 from . import tutor_notifications
 from .schema_gate import SchemaNotProvisioned
@@ -3624,7 +3625,9 @@ def update_rows(table, where_sql, where_params, payload, allow_null_columns=None
         raise ValueError(f'No writable columns found for {table}.')
     assignments = ', '.join(f'{quote_ident(column)} = %s' for column in values)
     query = f'update {table_name(table)} set {assignments} where {where_sql} returning *'
-    return execute_returning(query, [*values.values(), *where_params])
+    rows = execute_returning(query, [*values.values(), *where_params])
+    versioning.record_rows(table, rows)
+    return rows
 
 
 def delete_rows(table, where_sql, where_params):
@@ -3691,6 +3694,10 @@ def soft_delete_rows(table, where_sql, where_params=None, *, via_parent='', dele
         entity_id=' '.join(clean_str(value) for value in (where_params or [])),
         parent_id=via_parent, reason=deleted_by,
     )
+    # No record_rows here: this writes through update_rows, which already
+    # recorded the revision. An archive is a revision like any other, and the
+    # snapshot holds what the record contained at the moment it was withdrawn --
+    # the whole reason to keep history of content that no longer appears.
     return rows
 
 
@@ -6456,12 +6463,36 @@ def is_placeholder_programme_id(value):
         return True
     if candidate in PLACEHOLDER_PROGRAMME_IDS:
         return True
+    # The display placeholder arrives spaced and capitalised ("Unassigned
+    # programme"); compare on the normalised form so it is recognised too.
+    if normalise(candidate) in PLACEHOLDER_PROGRAMME_IDS:
+        return True
     return candidate.startswith('local-')
 
 
 def sanitised_programme_id(value):
     """Return a persistable programme id, or '' when the value is a placeholder."""
     return '' if is_placeholder_programme_id(value) else clean_str(value)
+
+
+def persistable_programme_id(value):
+    """A programme id that exists in programmes, or '' when it does not.
+
+    programme_id is a foreign key (modules_programme_id_fkey and its siblings),
+    so a programme *name*, a placeholder or an id whose row has since gone must
+    be stored as NULL. Writing it verbatim made the database reject the insert.
+    """
+    identifier = sanitised_programme_id(value)
+    if not identifier:
+        return ''
+    try:
+        configs = get_program_config_rows()
+    except Exception:
+        logger.debug('Unable to verify programme %s against programmes.', identifier, exc_info=True)
+        return identifier
+    return identifier if any(
+        programme_config_identity(config) == identifier for config in configs
+    ) else ''
 
 
 def merge_duplicate_program_configs_by_name(*, allow_writes=False):
@@ -11876,10 +11907,15 @@ def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
         if connection.vendor == 'postgresql':
             row = rows_as_dicts(cursor)[0]
             log_curriculum_storage('upsert', table, rows=1, entity_id=key_value)
+            # The row the write returned is the snapshot, so history costs no
+            # extra read of the record.
+            versioning.record_rows(table, [row])
             return row
     where = ' and '.join(f'{quote_ident(column)} = %s' for column in key_columns)
     log_curriculum_storage('upsert', table, rows=1, entity_id=key_value)
-    return authoring_fetch_all(table, where, [values[column] for column in key_columns])[0]
+    saved = authoring_fetch_all(table, where, [values[column] for column in key_columns])[0]
+    versioning.record_rows(table, [saved])
+    return saved
 
 
 def authoring_bulk_upsert(table, key_columns, payloads, batch_size=100):
@@ -11938,6 +11974,11 @@ def authoring_bulk_upsert(table, key_columns, payloads, batch_size=100):
     # bulk-writes thousands of components and a per-row trace would bury
     # everything else in the request.
     log_curriculum_storage('bulk_upsert', table, rows=len(payloads))
+    # The payloads are what was written, so they serve as the snapshots without
+    # reading the rows back. record_rows drops the ones whose content is
+    # unchanged, which on this path is nearly all of them: a tree save rewrites
+    # every component in the module whether or not the author touched it.
+    versioning.record_rows(table, payloads)
 
 
 def free_programme_upsert(table, key_columns, payload):
@@ -12097,6 +12138,7 @@ def update_authoring_rows(table, where_sql, where_params, payload):
             )
             rows = rows_as_dicts(cursor)
             log_curriculum_storage('update', table, rows=rows, entity_id=key_value)
+            versioning.record_rows(table, rows)
             return rows
         cursor.execute(
             f'update {authoring_table_name(table)} set {assignments} where {where_sql}',
@@ -12104,6 +12146,7 @@ def update_authoring_rows(table, where_sql, where_params, payload):
         )
     rows = authoring_fetch_all(table, where_sql, where_params)
     log_curriculum_storage('update', table, rows=rows, entity_id=key_value)
+    versioning.record_rows(table, rows)
     return rows
 
 
@@ -16339,7 +16382,13 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
         payload.get('programmeId') or payload.get('programme_id') or existing_module_row.get('programme_id'),
         payload.get('programmeStatus') or payload.get('programme_status'),
     )
-    programme_id = (programme or {}).get('sourceId') or payload.get('programmeId') or payload.get('programme_id') or existing_module_row.get('programme_id') or programme_name
+    # A module saved with no programme ("assign later") carries NULL, never the
+    # placeholder name: programme_id is a foreign key into programmes, so
+    # falling back to programme_name made the insert fail on
+    # modules_programme_id_fkey with key (programme_id)=(Unassigned programme).
+    programme_id = (programme or {}).get('sourceId') or persistable_programme_id(
+        payload.get('programmeId') or payload.get('programme_id') or existing_module_row.get('programme_id')
+    ) or None
     delivery_metadata = payload.get('deliveryMetadata') if isinstance(payload.get('deliveryMetadata'), dict) else {}
     cohort_id = clean_str(payload.get('cohortId') or payload.get('cohort_id') or delivery_metadata.get('cohortId') or delivery_metadata.get('cohort_id') or existing_module_row.get('cohort_id'))
     cohort_name = clean_str(payload.get('cohortName') or payload.get('cohort_name') or payload.get('cohort') or delivery_metadata.get('cohort') or existing_module_row.get('cohort_name'))
@@ -16558,7 +16607,11 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
             'modules': [payload.get('title') or payload.get('name') or f'Module {module_catalogue_id}'],
         }, [], [saved_module_row] if saved_module_row else [])
 
-    if repair_links:
+    if repair_links and programme_id:
+        # Scoped to the programme just saved. A module with none would pass ''
+        # here, which is the unscoped whole-estate sweep -- that blanks
+        # programme_id on groups whose cohort is missing and the foreign key
+        # then rejects the write.
         repair_curriculum_parent_links(programme_id)
     result = get_authoring_structure_payload(module_catalogue_id)
     result['qualityChecklist'] = checklist

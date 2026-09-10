@@ -672,7 +672,7 @@ export default function ModuleWorkspacePage() {
                   <Link to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(context.programme))}?tab=modules`} className="text-primary-700 hover:underline">
                     {context.programmeName}
                   </Link>
-                ) : cleanText(context?.programmeName, '—')}
+                ) : cleanText(context?.programmeName, 'Unassigned')}
               />
               <DetailRow
                 label="Cohort"
@@ -680,7 +680,7 @@ export default function ModuleWorkspacePage() {
                   <Link to={`/curriculum/cohorts/${encodeURIComponent(context.cohortId)}`} className="text-primary-700 hover:underline">
                     {context.cohortName}
                   </Link>
-                ) : cleanText(context?.cohortName, '—')}
+                ) : cleanText(context?.cohortName, 'Unassigned')}
               />
               <DetailRow
                 label="Group"
@@ -688,7 +688,7 @@ export default function ModuleWorkspacePage() {
                   <Link to={namedCurriculumWorkspacePath('groups', context.groupId, context.groupName)} className="text-primary-700 hover:underline">
                     {context.groupName}
                   </Link>
-                ) : cleanText(context?.groupName, '—')}
+                ) : cleanText(context?.groupName, 'Unassigned')}
               />
               <DetailRow label="Coach" value={cleanText(module?.coach) || cleanText(context?.group?.coach, 'Unassigned')} />
               <DetailRow label="Tutor" value={cleanText(module?.tutor, 'Unassigned')} />
