@@ -1,3 +1,4 @@
+import { WorkspaceMetricContent } from '@/components/ui/WorkspaceMetricContent';
 // ============================================================================
 // Super Admin dashboard
 //
@@ -19,6 +20,8 @@ import { Link } from 'react-router-dom';
 // unplugin-auto-import, so without this the page cannot be rendered in a test.
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
+import { WorkspaceDashboardLayout } from '@/components/feature/WorkspaceDashboardLayout';
 import { roleNavMap } from '@/mocks/navigation';
 import { ResendInvitationButton, canResendInvitation } from '@/pages/admin/_shared/ResendInvitation';
 import { useAuth } from '@/hooks/useAuth';
@@ -200,8 +203,155 @@ export default function AdminDashboard() {
       userName={auth.account?.displayName || auth.user?.fullName || 'Platform Admin'}
       userRole="Super Administrator"
     >
-      <div className="super-admin-dashboard grid grid-cols-1 items-start gap-5 p-3 md:p-6 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(0,1fr)_18rem] xl:grid-rows-[minmax(0,1fr)] xl:overflow-hidden 2xl:grid-cols-[minmax(0,1fr)_20rem]">
-        <div className="min-w-0 space-y-3 md:space-y-4 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:overscroll-y-contain xl:px-1 xl:pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" tabIndex={0} role="region" aria-label="Dashboard content">
+      <WorkspaceDashboardLayout className="super-admin-dashboard" overview={<>
+
+          <div className="flex items-center gap-3 border-b border-[var(--kbc-border)] pb-5">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary-100 text-primary-600">
+              <AppIcon className="ri-shield-user-line text-xl" aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <p className="break-words text-sm font-semibold text-foreground-900">{auth.account?.displayName || auth.user?.fullName || 'Platform Admin'}</p>
+              <p className="mt-0.5 text-xs text-foreground-500">Super Administrator</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 py-4 text-[11px] text-foreground-500">
+            <AppIcon className="ri-time-line text-sm text-primary-500" aria-hidden="true" />
+            <span>{overview ? <>Updated {timeAgo(overview.generatedAt)}</> : 'Platform overview'}</span>
+          </div>
+          <div className="space-y-6 divide-y divide-[var(--kbc-border)] [&>section:not(:first-child)]:pt-5">
+            {/* Invitations */}
+            <section className="min-w-0 space-y-3">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-heading font-semibold text-foreground-900">Invitations</h3>
+                <Link to="/admin/notifications" className="inline-flex items-center gap-1 rounded-md bg-primary-50 px-2 py-1 text-[10px] font-medium whitespace-nowrap text-primary-600 transition-colors hover:bg-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">Email log <AppIcon className="ri-arrow-right-line text-[10px]"></AppIcon></Link>
+              </div>
+              {overview ? (
+                <div className="grid grid-cols-3 gap-2">
+                  <RailFigure value={overview.invitations.pending} label="Pending" tone="neutral" />
+                  <RailFigure value={overview.invitations.expired} label="Expired" tone={overview.invitations.expired > 0 ? 'warn' : 'neutral'} />
+                  <RailFigure value={overview.invitations.failed} label="Failed" tone={overview.invitations.failed > 0 ? 'bad' : 'neutral'} />
+                </div>
+              ) : loading ? (
+                <div className="grid grid-cols-3 gap-2">
+                  {Array.from({ length: 3 }).map((_, index) => (
+                    <div key={index} className="space-y-2">
+                      <SkeletonBlock className="h-5 w-10" />
+                      <SkeletonBlock className="h-2.5 w-20" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[12px] text-foreground-400 py-2">Unavailable.</p>
+              )}
+            </section>
+
+            {/* Audit trail */}
+            <section className="min-w-0 space-y-3">
+              <div className={`flex flex-wrap items-center justify-between gap-2 ${recentEventsOpen ? 'mb-4' : ''}`}>
+                <h3 className="text-sm font-heading font-semibold text-foreground-900">
+                  <button
+                    type="button"
+                    onClick={() => setRecentEventsOpen(open => !open)}
+                    aria-expanded={recentEventsOpen}
+                    aria-controls="super-admin-recent-events-content"
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md text-left transition-colors hover:text-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+                  >
+                    <span>Recent access events</span>
+                    <AppIcon className={recentEventsOpen ? 'ri-arrow-down-s-line text-xs text-foreground-400' : 'ri-arrow-right-s-line text-xs text-foreground-400'} aria-hidden="true"></AppIcon>
+                  </button>
+                </h3>
+                <Link to="/admin/access-logs" className="inline-flex items-center gap-1 rounded-md bg-primary-50 px-2 py-1 text-[10px] font-medium whitespace-nowrap text-primary-600 transition-colors hover:bg-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">Full log <AppIcon className="ri-arrow-right-line text-[10px]"></AppIcon></Link>
+              </div>
+              {recentEventsOpen && (
+                <div id="super-admin-recent-events-content">
+                  {audit.length === 0 ? (
+                    <p className="text-[12px] text-foreground-400 py-6 text-center">
+                      {loading ? 'Loading audit trail…' : 'No access events recorded yet.'}
+                    </p>
+                  ) : (
+                    <div className="max-h-96 space-y-1 overflow-y-auto rounded-xl bg-primary-50/60 p-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" tabIndex={0} role="region" aria-label="Recent access events">
+                      {audit.map(entry => (
+                        <div key={entry.id} className="grid grid-cols-[2rem_minmax(0,1fr)] items-start gap-x-2.5 gap-y-1 rounded-lg p-2 transition-colors hover:bg-[var(--kbc-surface)]">
+                          <span className={`flex h-8 w-8 items-center justify-center rounded-full shrink-0 ${
+                            entry.severity === 'critical' ? 'bg-red-100 text-red-600' : entry.severity === 'warning' ? 'bg-amber-100 text-amber-600' : 'bg-primary-100 text-primary-600'
+                          }`}><AppIcon className="ri-user-line text-sm" aria-hidden="true" /></span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[12px] font-medium text-foreground-800">
+                              {eventLabel(entry.event)}
+                              {!entry.succeeded && <span className="mt-0.5 block text-[10px] font-medium text-red-600">failed{entry.reason ? ` · ${entry.reason}` : ''}</span>}
+                            </p>
+                            <p className="mt-0.5 break-all text-[11px] text-foreground-500">{entry.email || 'unknown address'}</p>
+                          </div>
+                          <div className="col-start-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <p className="text-[10px] text-foreground-400 whitespace-nowrap">{timeAgo(entry.createdAt)}</p>
+                            {entry.ipAddress && <p className="text-[10px] text-foreground-400 whitespace-nowrap">{entry.ipAddress}</p>}
+                            {/* A failed invitation is the one access-log row an
+                                administrator can actually act on from here. */}
+                            {canResendInvitation(entry) && (
+                              <ResendInvitationButton entry={entry} onResent={reloadAudit} />
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+            {/* System status */}
+            <section className="min-w-0 space-y-3">
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-sm font-heading font-semibold text-foreground-900">System status</h3>
+                <Link to="/admin/system" className="inline-flex items-center gap-1 rounded-md bg-primary-50 px-2 py-1 text-[10px] font-medium whitespace-nowrap text-primary-600 transition-colors hover:bg-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">Details <AppIcon className="ri-arrow-right-line text-[10px]"></AppIcon></Link>
+              </div>
+              <p className="text-[11px] leading-relaxed text-foreground-500">Whether each subsystem is configured in this deployment.</p>
+              <div className="divide-y divide-[var(--kbc-border)]">
+                {system ? system.checks.map(check => (
+                  <div key={check.id} className="flex items-start gap-2.5 py-3 first:pt-0 last:pb-0">
+                    <span className={`mt-0.5 w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
+                      check.configured ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
+                    }`}>
+                      <AppIcon className={`${check.configured ? 'ri-check-line' : 'ri-alert-line'} text-xs`}></AppIcon>
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-foreground-800">{check.name}</p>
+                      <p className="mt-0.5 break-words text-[11px] leading-relaxed text-foreground-500">{check.detail}</p>
+                    </div>
+                  </div>
+                )) : (
+                  <p className="text-[12px] text-foreground-400 py-2">{loading ? 'Checking…' : 'Unavailable.'}</p>
+                )}
+              </div>
+            </section>
+
+            {/* Documents */}
+            {overview?.documents.available && (
+              <section className="min-w-0 space-y-3">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-heading font-semibold text-foreground-900">Compliance documents</h3>
+                  <Link to="/admin/documents" className="inline-flex items-center gap-1 rounded-md bg-primary-50 px-2 py-1 text-[10px] font-medium whitespace-nowrap text-primary-600 transition-colors hover:bg-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">Browse <AppIcon className="ri-arrow-right-line text-[10px]"></AppIcon></Link>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <RailFigure value={overview.documents.total} label="Stored" tone="neutral" />
+                  <RailFigure value={overview.documents.signed} label="Signed" tone="ok" />
+                  <RailFigure value={overview.documents.last30d} label="Last 30d" tone="neutral" />
+                </div>
+              </section>
+            )}
+
+            {/* Delivery — only when the Learner schema is provisioned */}
+            {overview?.delivery.available && (
+              <section className="min-w-0 space-y-3">
+                <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-4">Learner delivery</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  <RailFigure value={overview.delivery.activeLearners} label="Active" tone="ok" />
+                  <RailFigure value={overview.delivery.inactiveLearners} label="Archived" tone="neutral" />
+                </div>
+              </section>
+            )}
+          </div>
+
+      </>}>
         <div className="flex flex-col justify-between gap-3 min-[1800px]:flex-row min-[1800px]:items-end">
           <div>
             <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground-950 md:text-3xl">Welcome back, Super Admin</h1>
@@ -293,17 +443,16 @@ export default function AdminDashboard() {
         </div>
 
         <div className="super-admin-hero-row grid grid-cols-1 items-stretch gap-3 min-[1800px]:grid-cols-[minmax(0,3fr)_minmax(20rem,2fr)]">
-        <section className="flex h-full min-h-[180px] min-w-0 items-center justify-between gap-5 rounded-2xl border border-primary-200/60 bg-primary-50/60 p-5 md:p-6">
-          <div className="min-w-0 flex-1">
-            <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-primary-600">Administration</p>
-            <h2 className="font-heading text-xl font-semibold tracking-tight text-primary-800 md:text-2xl">Platform Control</h2>
-            <p className="mt-2 text-[13px] leading-relaxed text-foreground-500">Accounts, access and platform records</p>
-            <span className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-primary-200/60 bg-primary-100/60 px-3 py-1.5 text-[11px] font-medium text-primary-700">
+        <WorkspaceHeroBanner
+          title="Platform Control"
+          description="Accounts, access and platform records"
+          eyebrow="Administration"
+          icon=""
+          footer={<span className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-primary-200/60 bg-primary-100/60 px-3 py-1.5 text-[11px] font-medium text-primary-700">
               <AppIcon className="ri-time-line shrink-0 text-sm" aria-hidden="true" />
               <span>{overview ? <>Updated {timeAgo(overview.generatedAt)}</> : 'Reading platform records…'}</span>
-            </span>
-          </div>
-          <div aria-hidden="true" className="pointer-events-none relative hidden h-32 w-44 shrink-0 sm:block">
+            </span>}
+          visual={<div aria-hidden="true" className="pointer-events-none relative hidden h-32 w-44 shrink-0 sm:block">
             <div className="absolute left-8 top-12 h-16 w-24 rotate-[28deg] rounded-xl border border-primary-100 bg-[var(--kbc-surface)] shadow-[0_18px_28px_rgba(54,18,130,0.10)]" />
             <div className="absolute left-5 top-7 h-16 w-24 rotate-[28deg] rounded-xl border border-primary-100 bg-[var(--kbc-surface)]" />
             <div className="absolute left-[4.25rem] top-7 flex h-10 w-10 items-center justify-center rounded-xl border border-primary-100 bg-[var(--kbc-surface)] text-primary-600 shadow-sm">
@@ -312,8 +461,8 @@ export default function AdminDashboard() {
             <span className="absolute left-1 top-5 h-2 w-2 rounded-full bg-primary-200/60" />
             <span className="absolute right-2 top-9 h-2 w-2 rounded-full bg-primary-200/60" />
             <span className="absolute right-8 bottom-2 h-2 w-2 rounded-full bg-primary-200/60" />
-          </div>
-        </section>
+          </div>}
+        />
 
         <section className="super-admin-quick-actions flex h-full flex-col rounded-xl border border-foreground-200/70 bg-background-50 p-3 shadow-sm md:p-3.5">
           <div className="mb-1.5 flex items-center gap-2"><AppIcon className="ri-flashlight-line text-sm text-primary-600"></AppIcon><h2 className="font-heading text-sm font-semibold text-foreground-900">Quick actions</h2></div>
@@ -469,155 +618,7 @@ export default function AdminDashboard() {
         <footer className="super-admin-footer text-center text-[10px] text-foreground-400">
           © 2024 Super Admin Workspace. All rights reserved.
         </footer>
-        </div>
-        <aside aria-label="Workspace overview" tabIndex={0} className="min-w-0 rounded-2xl border border-[var(--kbc-border)] bg-[var(--kbc-surface)] p-5 xl:max-h-full xl:min-h-0 xl:overflow-y-auto xl:overscroll-y-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <div className="flex items-center gap-3 border-b border-[var(--kbc-border)] pb-5">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary-100 text-primary-600">
-              <AppIcon className="ri-shield-user-line text-xl" aria-hidden="true" />
-            </span>
-            <div className="min-w-0">
-              <p className="break-words text-sm font-semibold text-foreground-900">{auth.account?.displayName || auth.user?.fullName || 'Platform Admin'}</p>
-              <p className="mt-0.5 text-xs text-foreground-500">Super Administrator</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 py-4 text-[11px] text-foreground-500">
-            <AppIcon className="ri-time-line text-sm text-primary-500" aria-hidden="true" />
-            <span>{overview ? <>Updated {timeAgo(overview.generatedAt)}</> : 'Platform overview'}</span>
-          </div>
-          <div className="space-y-6 divide-y divide-[var(--kbc-border)] [&>section:not(:first-child)]:pt-5">
-            {/* Invitations */}
-            <section className="min-w-0 space-y-3">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <h3 className="text-sm font-heading font-semibold text-foreground-900">Invitations</h3>
-                <Link to="/admin/notifications" className="inline-flex items-center gap-1 rounded-md bg-primary-50 px-2 py-1 text-[10px] font-medium whitespace-nowrap text-primary-600 transition-colors hover:bg-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">Email log <AppIcon className="ri-arrow-right-line text-[10px]"></AppIcon></Link>
-              </div>
-              {overview ? (
-                <div className="grid grid-cols-3 gap-2">
-                  <RailFigure value={overview.invitations.pending} label="Pending" tone="neutral" />
-                  <RailFigure value={overview.invitations.expired} label="Expired" tone={overview.invitations.expired > 0 ? 'warn' : 'neutral'} />
-                  <RailFigure value={overview.invitations.failed} label="Failed" tone={overview.invitations.failed > 0 ? 'bad' : 'neutral'} />
-                </div>
-              ) : loading ? (
-                <div className="grid grid-cols-3 gap-2">
-                  {Array.from({ length: 3 }).map((_, index) => (
-                    <div key={index} className="space-y-2">
-                      <SkeletonBlock className="h-5 w-10" />
-                      <SkeletonBlock className="h-2.5 w-20" />
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-[12px] text-foreground-400 py-2">Unavailable.</p>
-              )}
-            </section>
-
-            {/* Audit trail */}
-            <section className="min-w-0 space-y-3">
-              <div className={`flex flex-wrap items-center justify-between gap-2 ${recentEventsOpen ? 'mb-4' : ''}`}>
-                <h3 className="text-sm font-heading font-semibold text-foreground-900">
-                  <button
-                    type="button"
-                    onClick={() => setRecentEventsOpen(open => !open)}
-                    aria-expanded={recentEventsOpen}
-                    aria-controls="super-admin-recent-events-content"
-                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md text-left transition-colors hover:text-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
-                  >
-                    <span>Recent access events</span>
-                    <AppIcon className={recentEventsOpen ? 'ri-arrow-down-s-line text-xs text-foreground-400' : 'ri-arrow-right-s-line text-xs text-foreground-400'} aria-hidden="true"></AppIcon>
-                  </button>
-                </h3>
-                <Link to="/admin/access-logs" className="inline-flex items-center gap-1 rounded-md bg-primary-50 px-2 py-1 text-[10px] font-medium whitespace-nowrap text-primary-600 transition-colors hover:bg-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">Full log <AppIcon className="ri-arrow-right-line text-[10px]"></AppIcon></Link>
-              </div>
-              {recentEventsOpen && (
-                <div id="super-admin-recent-events-content">
-                  {audit.length === 0 ? (
-                    <p className="text-[12px] text-foreground-400 py-6 text-center">
-                      {loading ? 'Loading audit trail…' : 'No access events recorded yet.'}
-                    </p>
-                  ) : (
-                    <div className="max-h-96 space-y-1 overflow-y-auto rounded-xl bg-primary-50/60 p-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" tabIndex={0} role="region" aria-label="Recent access events">
-                      {audit.map(entry => (
-                        <div key={entry.id} className="grid grid-cols-[2rem_minmax(0,1fr)] items-start gap-x-2.5 gap-y-1 rounded-lg p-2 transition-colors hover:bg-[var(--kbc-surface)]">
-                          <span className={`flex h-8 w-8 items-center justify-center rounded-full shrink-0 ${
-                            entry.severity === 'critical' ? 'bg-red-100 text-red-600' : entry.severity === 'warning' ? 'bg-amber-100 text-amber-600' : 'bg-primary-100 text-primary-600'
-                          }`}><AppIcon className="ri-user-line text-sm" aria-hidden="true" /></span>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-[12px] font-medium text-foreground-800">
-                              {eventLabel(entry.event)}
-                              {!entry.succeeded && <span className="mt-0.5 block text-[10px] font-medium text-red-600">failed{entry.reason ? ` · ${entry.reason}` : ''}</span>}
-                            </p>
-                            <p className="mt-0.5 break-all text-[11px] text-foreground-500">{entry.email || 'unknown address'}</p>
-                          </div>
-                          <div className="col-start-2 flex flex-wrap items-center gap-x-2 gap-y-1">
-                            <p className="text-[10px] text-foreground-400 whitespace-nowrap">{timeAgo(entry.createdAt)}</p>
-                            {entry.ipAddress && <p className="text-[10px] text-foreground-400 whitespace-nowrap">{entry.ipAddress}</p>}
-                            {/* A failed invitation is the one access-log row an
-                                administrator can actually act on from here. */}
-                            {canResendInvitation(entry) && (
-                              <ResendInvitationButton entry={entry} onResent={reloadAudit} />
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </section>
-            {/* System status */}
-            <section className="min-w-0 space-y-3">
-              <div className="flex items-center justify-between mb-1">
-                <h3 className="text-sm font-heading font-semibold text-foreground-900">System status</h3>
-                <Link to="/admin/system" className="inline-flex items-center gap-1 rounded-md bg-primary-50 px-2 py-1 text-[10px] font-medium whitespace-nowrap text-primary-600 transition-colors hover:bg-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">Details <AppIcon className="ri-arrow-right-line text-[10px]"></AppIcon></Link>
-              </div>
-              <p className="text-[11px] leading-relaxed text-foreground-500">Whether each subsystem is configured in this deployment.</p>
-              <div className="divide-y divide-[var(--kbc-border)]">
-                {system ? system.checks.map(check => (
-                  <div key={check.id} className="flex items-start gap-2.5 py-3 first:pt-0 last:pb-0">
-                    <span className={`mt-0.5 w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
-                      check.configured ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
-                    }`}>
-                      <AppIcon className={`${check.configured ? 'ri-check-line' : 'ri-alert-line'} text-xs`}></AppIcon>
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-foreground-800">{check.name}</p>
-                      <p className="mt-0.5 break-words text-[11px] leading-relaxed text-foreground-500">{check.detail}</p>
-                    </div>
-                  </div>
-                )) : (
-                  <p className="text-[12px] text-foreground-400 py-2">{loading ? 'Checking…' : 'Unavailable.'}</p>
-                )}
-              </div>
-            </section>
-
-            {/* Documents */}
-            {overview?.documents.available && (
-              <section className="min-w-0 space-y-3">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-sm font-heading font-semibold text-foreground-900">Compliance documents</h3>
-                  <Link to="/admin/documents" className="inline-flex items-center gap-1 rounded-md bg-primary-50 px-2 py-1 text-[10px] font-medium whitespace-nowrap text-primary-600 transition-colors hover:bg-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">Browse <AppIcon className="ri-arrow-right-line text-[10px]"></AppIcon></Link>
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <RailFigure value={overview.documents.total} label="Stored" tone="neutral" />
-                  <RailFigure value={overview.documents.signed} label="Signed" tone="ok" />
-                  <RailFigure value={overview.documents.last30d} label="Last 30d" tone="neutral" />
-                </div>
-              </section>
-            )}
-
-            {/* Delivery — only when the Learner schema is provisioned */}
-            {overview?.delivery.available && (
-              <section className="min-w-0 space-y-3">
-                <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-4">Learner delivery</h3>
-                <div className="grid grid-cols-2 gap-2">
-                  <RailFigure value={overview.delivery.activeLearners} label="Active" tone="ok" />
-                  <RailFigure value={overview.delivery.inactiveLearners} label="Archived" tone="neutral" />
-                </div>
-              </section>
-            )}
-          </div>
-        </aside>
-      </div>
+      </WorkspaceDashboardLayout>
     </WorkspaceShell>
   );
 }
@@ -645,16 +646,10 @@ function MiniStat({ label, value, sub, icon, color, href, loading }: {
   };
   return (
     <Link to={href} className="flex min-w-0 items-center gap-3 rounded-xl border border-foreground-200/60 bg-background-50 px-3.5 py-3 card-premium cursor-pointer md:px-4">
-      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl !bg-none !shadow-md shadow-primary-900/10 ring-1 ring-inset ${bgMap[color] || bgMap.primary}`}>
-        <AppIcon className={`${icon} h-5 w-5`} aria-hidden="true"></AppIcon>
-      </span>
-      <span className="min-w-0">
-        <p className="font-heading text-xl font-semibold leading-none tabular-nums text-primary-800">
-          {loading && value === undefined ? <span className="inline-block h-5 w-8 animate-pulse rounded bg-background-200" /> : value ?? 0}
-        </p>
-        <p className="mt-1.5 truncate text-[10px] font-medium leading-tight text-foreground-500">{label}</p>
-        <p className="truncate text-[9px] leading-tight text-foreground-300">{sub}</p>
-      </span>
+      <WorkspaceMetricContent
+        label={label} note={sub} icon={icon} iconClassName={bgMap[color] || bgMap.primary}
+        value={loading && value === undefined ? <span className="inline-block h-5 w-8 animate-pulse rounded bg-background-200" /> : value ?? 0}
+      />
     </Link>
   );
 }

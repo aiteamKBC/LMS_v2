@@ -72,10 +72,9 @@ import { useAuth } from '@/hooks/useAuth';
 // ============================================================================
 // Workspace navigation.
 //
-// Two widths, one renderer. The rail (RAIL_WIDTH) shows an icon above its
-// label, so nothing is ever icon-only guesswork; the expanded panel
-// (EXPANDED_WIDTH) shows full rows and is used for hover-preview, the pinned
-// state and the mobile drawer alike.
+// Every workspace uses the same desktop icon rail and secondary panel. The
+// current role supplies its own permission-filtered destinations. On mobile,
+// those destinations appear as full rows in an off-canvas drawer.
 //
 // Presentation lives here in Tailwind classes keyed to the theme tokens —
 // there is deliberately no accompanying stylesheet. The `kbc-sb-*` class names
@@ -85,8 +84,10 @@ import { useAuth } from '@/hooks/useAuth';
 
 /** Rail and expanded widths. WorkspaceShell reserves the same numbers, so they
  *  are exported rather than duplicated as magic numbers in two files. */
-export const SIDEBAR_RAIL_WIDTH = 92;
-export const SIDEBAR_EXPANDED_WIDTH = 268;
+export const SIDEBAR_RAIL_WIDTH = 88;
+export const SIDEBAR_EXPANDED_WIDTH = 338;
+/** Outer inset plus the gap between navigation and page content. */
+export const SIDEBAR_CONTENT_GAP = 24;
 
 export interface SidebarNavItem {
   id: string;
@@ -119,7 +120,7 @@ interface SidebarProps {
   navItems: SidebarNavItem[];
   userName?: string;
   userRole?: string;
-  /** Pinned open: the panel stays expanded and the shell makes room for it. */
+  /** Secondary panel visibility; the shell reserves its expanded width. */
   pinned?: boolean;
   onPinChange?: (pinned: boolean) => void;
   mobileOpen: boolean;
@@ -254,9 +255,10 @@ export function Sidebar({
   onHoverChange,
 }: SidebarProps) {
   const location = useLocation();
+  const secondaryNavigationId = `${role}-secondary-navigation`;
   const { canSeeNavItem } = useAuth();
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
-  const [adminPreviewId, setAdminPreviewId] = useState<string | null>(null);
+  const [previewId, setPreviewId] = useState<string | null>(null);
   const [isHovering, setIsHovering] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
     try {
@@ -275,8 +277,8 @@ export function Sidebar({
   // Close dropdown on route change
   useEffect(() => {
     setActiveDropdown(null);
-    setAdminPreviewId(null);
-  }, [location.pathname]);
+    setPreviewId(null);
+  }, [role, location.pathname, location.search]);
 
   // Click outside to close dropdown
   useEffect(() => {
@@ -400,14 +402,14 @@ export function Sidebar({
   // the pointer leaves a sidebar the user deliberately kept open.
   const desktopExpanded = pinned || isHovering;
 
-  // The admin preview follows hover/focus without changing the current route.
-  const adminPreviewItem = filteredNavItems.find(item => item.id === adminPreviewId)
+  // The workspace preview follows hover/focus without changing the current route.
+  const previewItem = filteredNavItems.find(item => item.id === previewId)
     ?? filteredNavItems.find(item => isActive(item.href, item.matchPaths)
       || item.children?.some(child => isActive(child.href, child.matchPaths)))
     ?? filteredNavItems[0];
 
-  const openAdminPreview = (id: string) => {
-    setAdminPreviewId(id);
+  const openPreview = (id: string) => {
+    setPreviewId(id);
     onPinChange?.(true);
   };
 
@@ -496,10 +498,11 @@ export function Sidebar({
 
   return (
     <>
-      {role === 'admin' ? (
-        <aside
+      <aside
           aria-label={`${roleLabel} sidebar`}
-          className={`fixed bottom-3 left-3 top-3 z-40 hidden overflow-hidden rounded-[24px] shadow-sm transition-[width] duration-300 ease-in-out motion-reduce:transition-none lg:flex ${pinned ? 'w-[338px]' : 'w-[88px]'}`}
+          className="fixed bottom-3 left-3 top-3 z-40 hidden overflow-hidden rounded-[24px] shadow-sm transition-[width] duration-300 ease-in-out motion-reduce:transition-none lg:flex"
+          data-workspace-role={role}
+          style={{ width: pinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH }}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={() => {
             handleMouseLeave();
@@ -516,12 +519,12 @@ export function Sidebar({
               <button
                 type="button"
                 onClick={() => {
-                  if (!pinned) setAdminPreviewId(null);
+                  if (!pinned) setPreviewId(null);
                   onPinChange(!pinned);
                 }}
                 aria-label={pinned ? 'Collapse navigation' : 'Expand navigation'}
                 aria-expanded={pinned}
-                aria-controls="admin-secondary-navigation"
+                aria-controls={secondaryNavigationId}
                 title={pinned ? 'Collapse navigation' : 'Expand navigation'}
                 className="mt-5 flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-white/90 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/80"
               >
@@ -530,25 +533,25 @@ export function Sidebar({
             )}
             <nav aria-label={`${roleLabel} primary navigation`} className="mt-7 min-h-0 w-full flex-1 space-y-4 overflow-y-auto px-5 [scrollbar-width:none]">
               {filteredNavItems.map(item => (
-                <div key={item.id} onMouseEnter={() => setAdminPreviewId(item.id)} onFocus={() => setAdminPreviewId(item.id)}>
+                <div key={item.id} onMouseEnter={() => setPreviewId(item.id)} onFocus={() => setPreviewId(item.id)}>
                 {hasChildren(item) ? (
                   <ExpandedGroup
                     item={item}
                     isActive={isActive}
-                    isExpanded={pinned && adminPreviewItem?.id === item.id}
-                    onToggle={() => openAdminPreview(item.id)}
+                    isExpanded={pinned && previewItem?.id === item.id}
+                    onToggle={() => openPreview(item.id)}
                     onNavigate={onCloseMobile}
                     presentation="rail"
                   />
                 ) : (
-                  <ExpandedLink item={item} isActive={isActive} onNavigate={() => { openAdminPreview(item.id); onCloseMobile(); }} presentation="rail" />
+                  <ExpandedLink item={item} isActive={isActive} onNavigate={() => { openPreview(item.id); onCloseMobile(); }} presentation="rail" />
                 )}
                 </div>
               ))}
             </nav>
           </div>
           <div
-            id="admin-secondary-navigation"
+            id={secondaryNavigationId}
             aria-hidden={!pinned}
             inert={!pinned}
             className={`flex h-full shrink-0 flex-col overflow-hidden bg-[color-mix(in_srgb,var(--kbc-primary)_90%,transparent)] text-white backdrop-blur-md transition-[width,opacity,visibility] duration-300 ease-in-out motion-reduce:transition-none ${pinned ? 'visible w-[250px] opacity-100' : 'invisible w-0 opacity-0'}`}
@@ -558,35 +561,24 @@ export function Sidebar({
               <p className="mt-1 text-[11px] text-white/65">Kent Business College</p>
             </div>
             <nav aria-label={`${roleLabel} secondary navigation`} className="min-h-0 w-[250px] flex-1 space-y-7 overflow-y-auto px-5 pb-8 [scrollbar-width:thin]">
-              {adminPreviewItem && (
-                hasChildren(adminPreviewItem) ? (
+              {previewItem && (
+                hasChildren(previewItem) ? (
                   <ExpandedGroup
-                    key={adminPreviewItem.id}
-                    item={adminPreviewItem}
+                    key={previewItem.id}
+                    item={previewItem}
                     isActive={isActive}
                     isExpanded
-                    onToggle={() => setAdminPreviewId(adminPreviewItem.id)}
+                    onToggle={() => setPreviewId(previewItem.id)}
                     onNavigate={onCloseMobile}
                     presentation="tiles"
                   />
                 ) : (
-                  <ExpandedLink item={adminPreviewItem} isActive={isActive} onNavigate={onCloseMobile} presentation="tile" />
+                  <ExpandedLink item={previewItem} isActive={isActive} onNavigate={onCloseMobile} presentation="tile" />
                 )
               )}
             </nav>
           </div>
         </aside>
-      ) : (
-      <div
-        className="fixed left-0 top-0 z-40 hidden h-screen overflow-hidden shadow-sm transition-[width] duration-300 ease-out lg:block"
-        data-workspace-role={role}
-        style={{ width: desktopExpanded ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH }}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-      >
-        {desktopExpanded ? panel('expanded', { showPin: true }) : panel('rail')}
-      </div>
-      )}
 
       {/* Mobile overlay */}
       {mobileOpen && (
@@ -598,6 +590,9 @@ export function Sidebar({
 
       {/* Mobile drawer — the same expanded panel */}
       <div
+        aria-label={`${roleLabel} mobile navigation`}
+        aria-hidden={!mobileOpen}
+        inert={!mobileOpen}
         className={`fixed left-0 top-0 z-50 h-screen w-[268px] shadow-xl transition-transform duration-300 ease-out lg:hidden ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
         {panel('expanded')}
@@ -719,7 +714,7 @@ function ExpandedLink({ item, isActive, onNavigate, compact, presentation }: {
       <span className={presentation === 'rail' ? 'flex h-5 w-5 items-center justify-center' : presentation === 'tile' ? `flex h-12 w-12 items-center justify-center rounded-xl ${active ? 'bg-white text-brand' : 'bg-white/15 text-white group-hover:bg-white/25'}` : 'kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center'}>
         <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={compact ? 16 : 18} className={presentation ? 'h-5 w-5' : undefined} />
       </span>
-      <span className={presentation === 'rail' ? 'sr-only' : 'min-w-0 flex-1 truncate'}>{item.label}</span>
+      <span className={presentation === 'rail' ? 'sr-only' : presentation === 'tile' ? 'w-full break-words' : 'min-w-0 flex-1 truncate'}>{item.label}</span>
       <span className={presentation === 'rail' ? 'absolute -right-1 -top-1 flex items-center gap-1' : 'flex shrink-0 items-center gap-1.5'}>
         {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
         {item.statusDot && <StatusDot color={item.statusDot} />}

@@ -1,7 +1,9 @@
+import { WorkspaceMetricContent } from '@/components/ui/WorkspaceMetricContent';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
+import { PageContainer } from '@/components/ui/PageContainer';
 import { useToast } from '@/hooks/useToast';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
@@ -177,9 +179,10 @@ export default function EngagementDashboard() {
       pageTitle="Engagement Command Centre" pageSubtitle="Points economy overview — grants, leaderboard, and voucher claims"
       userName={operator.name} userRole={operator.role}
     >
-      <div className="engagement-command-page p-6 space-y-6">
+      <PageContainer className="engagement-command-page">
         {/* Hero Banner */}
         <WorkspaceHeroBanner
+          eyebrow="Engagement"
           title="Engagement Command Centre"
           description={`${stats ? stats.activeLearners.toLocaleString() : '…'} learners earned points this month. ${pendingClaims.length} voucher claim${pendingClaims.length === 1 ? '' : 's'} awaiting review.`}
           icon="ri-heart-pulse-line"
@@ -479,7 +482,7 @@ export default function EngagementDashboard() {
           cohort={championMeta?.cohort ?? undefined}
           onClose={() => setSelectedChampionId(null)}
         />
-      </div>
+      </PageContainer>
     </WorkspaceShell>
   );
 }
@@ -855,13 +858,7 @@ function EngagementStatCard({ label, value, sub, trend, trendUp, icon, color }: 
 
   return (
     <div className="bg-background-50 rounded-2xl border border-foreground-200/60 shadow-sm p-4 card-premium hover:-translate-y-0.5">
-      <div className="flex items-start justify-between mb-3">
-        <span className={`w-11 h-11 rounded-lg flex items-center justify-center ${iconBg}`}>
-          <AppIcon className={`${icon} text-base`}></AppIcon>
-        </span>
-      </div>
-      <p className="text-[10px] font-semibold text-foreground-400 uppercase tracking-widest mb-1">{label}</p>
-      <p className="text-2xl font-heading font-semibold text-foreground-900">{value}</p>
+      <WorkspaceMetricContent label={label} value={value} icon={icon} iconClassName={iconBg} />
       {trend ? (
         <p className={`mt-2 flex items-center gap-1 text-[11px] font-medium ${trendUp ? 'text-emerald-600' : 'text-red-600'}`}>
           <AppIcon className={trendUp ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}></AppIcon>

@@ -2,6 +2,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
+import type { SidebarNavItem } from '@/components/feature/Sidebar';
+import { coachNavItems } from '@/mocks/navigation';
 import OldOtjhPage from './page';
 import { OldOtjhProvider } from './hooks';
 import { getMonitoring, type MonitoringData, type MonitoredLearner } from './monitoringApi';
@@ -9,8 +11,12 @@ import { getContentReview, getMonth, getSummary, startReview, type MonthDetail, 
 import { homeRouteFor, mayAccessRoute } from '@/lib/routeAccess';
 
 const viewer = { id: 100, subjectId: 70, role: 'staff' as const, access: 'record-monitor', displayName: 'Record monitor' };
+const shellNavigation = vi.hoisted(() => vi.fn());
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: viewer }, isInitialized: true }) }));
-vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
+vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children, navItems }: { children: ReactNode; navItems: SidebarNavItem[] }) => {
+  shellNavigation(navItems);
+  return <div>{children}</div>;
+} }));
 vi.mock('./monitoringApi', () => ({ getMonitoring: vi.fn() }));
 vi.mock('./api', async original => ({ ...await original<typeof import('./api')>(),
   getContentReview: vi.fn(), getSummary: vi.fn(), getMonth: vi.fn(), startReview: vi.fn() }));
@@ -46,6 +52,7 @@ function page(path = '/old-otjh/monitor') {
   </Routes></MemoryRouter></OldOtjhProvider>);
 }
 beforeEach(() => {
+  viewer.access = 'record-monitor';
   vi.mocked(getMonitoring).mockResolvedValue(structuredClone(fixture));
   vi.mocked(getSummary).mockResolvedValue(structuredClone(summary));
   vi.mocked(getMonth).mockResolvedValue(structuredClone(detail));
@@ -54,6 +61,35 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe('record monitoring', () => {
+  it('places admin monitoring inside the previous learning records submenu', async () => {
+    viewer.access = 'super-admin';
+    page();
+    await screen.findByRole('table', { name: 'Active learner records' });
+    const items = shellNavigation.mock.lastCall![0] as SidebarNavItem[];
+    expect(items.some(item => item.id === 'record-monitor')).toBe(false);
+    expect(items.map(item => item.id)).toEqual(coachNavItems.map(item => item.id));
+    expect(items.filter(item => item.id !== 'coach-previous-records')).toEqual(coachNavItems.filter(item => item.id !== 'coach-previous-records'));
+    expect(items.find(item => item.id === 'coach-previous-records')?.children).toEqual(expect.arrayContaining([
+      expect.objectContaining({ href: '/old-otjh/coach' }),
+      expect.objectContaining({ id: 'record-monitor', href: '/old-otjh/monitor' }),
+    ]));
+  });
+  it('keeps the full coach menu on monthly records without offering admin monitoring', async () => {
+    viewer.access = 'coach';
+    page('/old-otjh/coach/42/months/2026-07');
+    await waitFor(() => expect(getSummary).toHaveBeenCalled());
+    const items = shellNavigation.mock.lastCall![0] as SidebarNavItem[];
+    expect(items.map(item => item.id)).toEqual(coachNavItems.map(item => item.id));
+    expect(items.find(item => item.id === 'coach-previous-records')?.children).toEqual([
+      expect.objectContaining({ id: 'previous-records-list', href: '/old-otjh/coach' }),
+    ]);
+  });
+  it('keeps record-monitor accounts on their restricted navigation', async () => {
+    page();
+    await screen.findByRole('table', { name: 'Active learner records' });
+    const items = shellNavigation.mock.lastCall![0] as SidebarNavItem[];
+    expect(items.map(item => item.id)).toEqual(['record-monitor']);
+  });
   it('lands monitoring accounts on the dashboard and rejects other workspaces', () => {
     expect(homeRouteFor(viewer)).toBe('/old-otjh/monitor');
     expect(mayAccessRoute('/workspace/admin', viewer)).toBe(false);

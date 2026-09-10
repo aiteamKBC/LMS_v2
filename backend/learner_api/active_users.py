@@ -1856,6 +1856,12 @@ def sync_active_user(source):
         "programme_status": status,
         "cohort": _s(getattr(source, "cohort", "")),
         "group_name": _s(getattr(source, "group", "")),
+        # The assigned plan, mirrored on every upsert so a profile created here
+        # arrives with it rather than staying blank until the plan is next
+        # edited. Same resolver the learner's own "My learning" page uses; None
+        # when nothing is assigned, which is the honest state for a learner
+        # whose programme has no live modules.
+        "learning_plan": get_training_plan(source) or None,
         "start_date": start_date,
         "end_date": end_date,
         "gateway_review_date": end_date - timedelta(days=90) if end_date else None,

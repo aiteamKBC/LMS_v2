@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import { StudentActivityPanel as SubjectCardsPanel } from './SubjectWorkspace';
+export { StudentActivityPanel } from './SubjectWorkspace';
 import { StudentMaterial } from './StudentMaterial';
 import { AssignmentsTab } from './AssignmentsTab';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
@@ -8,7 +10,6 @@ import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
-import { LearnerPlanBody } from '@/components/feature/RealLearnerPlanView';
 import { buildStations } from '@/components/feature/RealLearningJourneyView';
 import { buildLinkedQuizzes, splitLinkedQuizWeek, type LinkedQuiz } from '@/utils/linkedQuizzes';
 import {
@@ -26,7 +27,7 @@ import { ProgressBar } from '@/components/ui/ProgressMetric';
 import { toneStyle, statusTone, type StatusTone } from '@/lib/statusTone';
 import { EMPTY_VALUE } from '@/lib/format';
 import { fetchStudentActivity, type StudentActivityItem, type StudentActivityResponse } from '@/api/studentActivity';
-import type { LearnerKind } from '@/api/learnerDetail';
+import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 
 const learnerNav = roleNavMap.learner;
 
@@ -433,38 +434,40 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
   loadError: string | null;
   kind?: LearnerKind;
   id?: string;
-  showReadOnlyNotice: boolean;
+  showReadOnlyNotice?: boolean;
 }) {
-  const [activityData, setActivityData] = useState<StudentActivityResponse | null>(null);
-  const [activityLoading, setActivityLoading] = useState(true);
-  const [activityError, setActivityError] = useState<string | null>(null);
+  const identity = `${kind}:${id}`;
+  const [activityState, setActivityState] = useState<{
+    identity: string; real: LearnerDetail | null; retry: number;
+    data: StudentActivityResponse | null; error: string | null;
+  } | null>(null);
   const [activityRetry, setActivityRetry] = useState(0);
-  const activityAvailable = !loading && !loadError && !!real?.studentActivityAvailable;
+  const activityAvailable = !!real?.studentActivityAvailable;
+  const current = activityState?.identity === identity && activityState.real === real && activityState.retry === activityRetry ? activityState : null;
+  const activityData = activityState?.identity === identity && activityAvailable ? activityState.data : null;
+  const activityLoading = activityAvailable && !current && !loadError;
 
   useEffect(() => {
-    if (!activityAvailable || !kind || !id) return;
+    if (loading || loadError || !activityAvailable || !kind || !id) return;
     const controller = new AbortController();
-    setActivityLoading(true);
-    setActivityError(null);
-    setActivityData(null);
     void fetchStudentActivity(kind, id, controller.signal).then((data) => {
-      if (!controller.signal.aborted) setActivityData(data);
+      if (!controller.signal.aborted) setActivityState({ identity, real, retry: activityRetry, data, error: null });
     }).catch((error: unknown) => {
-      if (!controller.signal.aborted) setActivityError(error instanceof Error ? error.message : 'Could not load student activity.');
-    }).finally(() => {
-      if (!controller.signal.aborted) setActivityLoading(false);
+      if (!controller.signal.aborted) setActivityState(previous => ({ identity, real, retry: activityRetry,
+        data: previous?.identity === identity ? previous.data : null,
+        error: error instanceof Error ? error.message : 'Could not load student activity.' }));
     });
     return () => controller.abort();
-  }, [activityAvailable, kind, id, activityRetry]);
+  }, [activityAvailable, loading, loadError, real, kind, id, identity, activityRetry]);
 
   return (
     <div className="space-y-3">
       <SectionHeader
         title="Modules"
-        description={activityAvailable ? 'Your recorded modules, activities and OTJ hours' : 'Your training plan, week by week'}
+        description="Your subjects, activities and progress"
         icon="ri-book-2-line"
       />
-      {showReadOnlyNotice && !activityAvailable && (
+      {showReadOnlyNotice && (
         <div className="flex items-start gap-2.5 rounded-xl border border-primary-200/70 bg-primary-50/60 px-3.5 py-2.5">
           <AppIcon className="ri-eye-line mt-0.5 shrink-0 text-[15px] text-primary-600" />
           <p className="text-[12px] leading-snug text-foreground-600">
@@ -473,35 +476,19 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
           </p>
         </div>
       )}
-      {activityAvailable && kind && id ? (
-        <StudentActivityPanel
-          kind={kind} learnerId={id}
-          data={activityData}
-          loading={activityLoading}
-          error={activityError}
-          onRetry={() => setActivityRetry((value) => value + 1)}
-        />
-      ) : <LearnerPlanBody
-        real={real}
-        loading={loading}
-        loadError={loadError}
-        pageLabel="Modules"
-        kind={kind}
-        learnerId={id}
-        showHero={false}
-        compact
-      />}
-      {activityAvailable && ((real?.modules?.length || 0) > 0 || (real?.components?.length || 0) > 0) && (
-        <div className="space-y-3 pt-4">
-          <SectionHeader title="Current training plan" description="Your current learning activities" icon="ri-book-2-line" />
-          <LearnerPlanBody real={real} loading={loading} loadError={loadError} pageLabel="Modules" kind={kind} learnerId={id} showHero={false} compact />
-        </div>
-      )}
+      <SubjectCardsPanel
+        kind={kind} learnerId={id} real={real}
+        data={activityData}
+        loading={loading || (activityAvailable && activityLoading)}
+        error={loadError || current?.error || null}
+        onRetry={() => setActivityRetry((value) => value + 1)}
+        onProgress={() => setActivityRetry((value) => value + 1)}
+      />
     </div>
   );
 }
 
-export function StudentActivityPanel({ data, loading, error, onRetry, kind, learnerId }: {
+function LegacyStudentActivityPanel({ data, loading, error, onRetry, kind, learnerId }: {
   kind?: string;
   learnerId?: string;
   data: StudentActivityResponse | null;

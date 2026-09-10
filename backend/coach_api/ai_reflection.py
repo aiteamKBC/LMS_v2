@@ -68,7 +68,7 @@ def load_activity_context(activity_id):
     return "\n".join(parts)
 
 
-def build_reflection_messages(submission, ksb_text, activity_context=""):
+def build_reflection_messages(submission, ksb_text, activity_context="", document=None):
     """The system and user messages for validating one reflection.
 
     The operating notes appended to the policy state the two things the model
@@ -76,7 +76,11 @@ def build_reflection_messages(submission, ksb_text, activity_context=""):
     enough about the activity to judge relevance. Saying so explicitly is what
     stops it inventing a code or describing a video it was never shown.
     """
-    document = load_prompt_document(REFLECTION_PROMPT_PATH)
+    # ``document`` overrides the authored file for this one call -- the coach's
+    # own edit from the marking page. Never written back to disk.
+    document = (
+        load_prompt_document(REFLECTION_PROMPT_PATH) if document is None else document
+    )
     if not document.strip():
         return "", ""
 
@@ -145,8 +149,12 @@ def build_reflection_messages(submission, ksb_text, activity_context=""):
     return system, user
 
 
-def generate_reflection_feedback(submission):
+def generate_reflection_feedback(submission, prompt=None):
     """Draft feedback on one reflection. Returns ``(text, meta)``.
+
+    ``prompt`` replaces the authored reflection policy for this call only; the
+    reflection itself and the activity context still travel in the user
+    message.
 
     Raises RuntimeError with a coach-readable message rather than letting a
     stack trace reach the UI.
@@ -161,7 +169,9 @@ def generate_reflection_feedback(submission):
     activity_id = submission.get("activityId")
     ksb_text, ksb_count = load_component_ksbs(activity_id)
     activity_context = load_activity_context(activity_id)
-    system, user = build_reflection_messages(submission, ksb_text, activity_context)
+    system, user = build_reflection_messages(
+        submission, ksb_text, activity_context, document=prompt
+    )
     if not system.strip():
         raise RuntimeError("The reflection prompt could not be loaded on the server.")
 
@@ -189,6 +199,7 @@ def generate_reflection_feedback(submission):
     return text, {
         "model": settings.OPENAI_MODEL,
         "kind": "reflection",
+        "promptSource": "custom" if prompt is not None else "default",
         "ksbCount": ksb_count,
         # So the coach can tell whether relevance was judged against a real
         # description or only a title.

@@ -3,20 +3,24 @@
 /* eslint-disable react-refresh/only-export-components */
 import { useEffect, useRef, type ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
+import design from './WorkspaceDesign.module.css';
 
 interface WorkspaceHeroBannerProps {
   title: string;
-  description: string;
+  description: ReactNode;
   icon: string;
   imageUrl?: string;
   imageAlt?: string;
-  stats?: { label: string; value: string; icon?: string; variant?: 'default' | 'danger' | 'success' | 'warning' }[];
+  stats?: { label: string; value: ReactNode; icon?: string; variant?: 'default' | 'danger' | 'success' | 'warning' }[];
   statIconPosition?: 'inline' | 'leading';
   accentColor?: string;
   actions?: ReactNode;
   eyebrow?: string;
   className?: string;
   decorative?: boolean;
+  footer?: ReactNode;
+  visual?: ReactNode;
+  heading?: 'h1' | 'h2';
 }
 
 export function WorkspaceHeroBanner({
@@ -29,26 +33,13 @@ export function WorkspaceHeroBanner({
   eyebrow,
   className = '',
   decorative = false,
+  footer,
+  visual,
+  heading: Heading = 'h2',
 }: WorkspaceHeroBannerProps) {
-  const bannerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = bannerRef.current;
-    if (!el) return;
-    el.style.opacity = '0';
-    el.style.transform = 'translateY(8px)';
-    requestAnimationFrame(() => {
-      el.style.transition = 'opacity 0.4s ease-out, transform 0.4s ease-out';
-      el.style.opacity = '1';
-      el.style.transform = 'translateY(0)';
-    });
-  }, []);
-
   return (
     <div
-      ref={bannerRef}
-      className={`ui-hero-banner workspace-hero-banner relative overflow-hidden rounded-2xl shadow-sm ${className}`}
-      style={{ background: 'var(--kbc-hero-gradient)' }}
+      className={`ui-hero-banner workspace-hero-banner relative overflow-hidden rounded-2xl border border-primary-200/60 bg-primary-50/60 ${design.hero} ${className}`}
     >
       {decorative && (
         <>
@@ -57,21 +48,23 @@ export function WorkspaceHeroBanner({
         </>
       )}
 
-      <div className="workspace-hero-banner__content relative z-10 flex flex-col items-start gap-5 p-5 sm:flex-row sm:items-center sm:p-7">
-        <div className="workspace-hero-banner__identity flex min-w-0 flex-1 items-center gap-4">
-          <span className="workspace-hero-banner__icon flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/20 backdrop-blur-sm">
-            <AppIcon className={`${icon || 'ri-dashboard-line'} text-2xl text-white`}></AppIcon>
-          </span>
+      <div className="workspace-hero-banner__content relative z-10 flex flex-wrap items-center gap-5 p-5 md:p-6">
+        <div className="workspace-hero-banner__identity flex min-w-0 flex-[1_1_20rem] items-center gap-4">
+          {icon && <span className="workspace-hero-banner__icon flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary-100/60 text-primary-600" aria-hidden="true">
+            <AppIcon className={`${icon} h-6 w-6`}></AppIcon>
+          </span>}
 
           <div className="min-w-0 flex-1">
-            {eyebrow && <p className="workspace-hero-eyebrow mb-1 text-[10px] font-bold uppercase tracking-[0.16em] text-white/70">{eyebrow}</p>}
-            <h2 className="workspace-hero-title mb-1 font-heading text-lg font-bold text-white">{title}</h2>
-            <p className="workspace-hero-description text-[13px] leading-relaxed text-white/80">{description}</p>
+            {eyebrow && <p className="workspace-hero-eyebrow mb-2 text-[10px] font-semibold uppercase tracking-widest text-primary-600">{eyebrow}</p>}
+            <Heading className="workspace-hero-title font-heading text-xl font-semibold tracking-tight text-primary-800 md:text-2xl">{title}</Heading>
+            <p className="workspace-hero-description mt-2 text-[13px] leading-relaxed text-foreground-500">{description}</p>
+            {footer}
           </div>
         </div>
 
+        {visual}
         {stats && stats.length > 0 && (
-          <div className="workspace-hero-banner__stats flex shrink-0 flex-wrap items-center gap-3">
+          <div className="workspace-hero-banner__stats flex max-w-full flex-wrap items-center gap-3">
             {stats.map((stat, i) => (
               <div key={i} className={`coach-metric-card workspace-hero-metric workspace-hero-metric--${stat.variant || 'default'} min-w-[80px] ${statIconPosition === 'leading' ? 'workspace-hero-metric--leading-icon' : ''}`}>
                 {statIconPosition === 'leading' ? (
@@ -100,7 +93,7 @@ export function WorkspaceHeroBanner({
           </div>
         )}
 
-        {actions ? <div className="workspace-hero-banner__actions flex shrink-0 items-center gap-2">{actions}</div> : null}
+        {actions ? <div className="workspace-hero-banner__actions flex max-w-full flex-wrap items-center gap-2">{actions}</div> : null}
       </div>
     </div>
   );

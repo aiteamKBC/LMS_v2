@@ -64,7 +64,9 @@ class ModuleWindowTests(SimpleTestCase):
         catalogue = [_module_payload(row) for row in MODULE_ROWS]
         # Saving a plan now re-runs progression, which reads compliance and
         # cohort rows; those are not what these assert.
-        with patch("learner_api.learning_plan.advance_learner"),                 patch("learner_api.learning_plan.EnrolmentUser") as model, \
+        with patch("learner_api.learning_plan.advance_learner"), \
+                patch("learner_api.learning_plan.sync_learning_plan_mirror"), \
+                patch("learner_api.learning_plan.EnrolmentUser") as model, \
                 patch("learner_api.learning_plan._programme_modules", return_value=catalogue), \
                 patch("learner_api.learning_plan._all_modules", return_value=catalogue), \
                 patch("learner_api.learning_plan._group_module_ids", return_value=["MOD-1", "MOD-2"]):
