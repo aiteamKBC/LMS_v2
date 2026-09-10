@@ -608,14 +608,8 @@ def _append_week_quizzes(weeks, components, assigned_modules=None):
                     """
                     SELECT m.module_catalogue_id, m.title, COALESCE(m.programme_id, ''), COALESCE(m.programme_name, '')
                     FROM curriculum.modules m
-                    LEFT JOIN curriculum.groups g ON g.group_id=m.group_id
-                    LEFT JOIN curriculum.cohorts ch ON ch.cohort_id=m.cohort_id
-                    LEFT JOIN curriculum.programmes p ON p.programme_id=m.programme_id
                     WHERE m.module_catalogue_id = ANY(%s)
-                      AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
-                      AND (g.group_id IS NULL OR (g.deleted_at IS NULL AND NOT coalesce(g.is_programme_deleted,false)))
-                      AND (ch.cohort_id IS NULL OR (ch.deleted_at IS NULL AND NOT coalesce(ch.is_programme_deleted,false)))
-                      AND (p.programme_id IS NULL OR (p.deleted_at IS NULL AND NOT coalesce(p.is_archived,false)))
+                      AND (m.deleted_at IS NULL OR m.deleted_via_parent IS NOT NULL)
                     """,
                     [module_order],
                 )
@@ -1314,14 +1308,12 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None):
         with connections["enrolment"].cursor() as cur:
             cur.execute(
                 "SELECT m.module_catalogue_id, m.title FROM curriculum.modules m "
-                "LEFT JOIN curriculum.groups g ON g.group_id = m.group_id "
-                "LEFT JOIN curriculum.cohorts ch ON ch.cohort_id = m.cohort_id "
-                "LEFT JOIN curriculum.programmes p ON p.programme_id = m.programme_id "
                 "WHERE m.module_catalogue_id = ANY(%s) "
-                "AND m.deleted_at IS NULL AND COALESCE(m.is_programme_deleted, false) = false "
-                "AND (g.group_id IS NULL OR (g.deleted_at IS NULL AND COALESCE(g.is_programme_deleted, false) = false)) "
-                "AND (ch.cohort_id IS NULL OR (ch.deleted_at IS NULL AND COALESCE(ch.is_programme_deleted, false) = false)) "
-                "AND (p.programme_id IS NULL OR (p.deleted_at IS NULL AND COALESCE(p.is_archived, false) = false))",
+                # An assignment is a learner-owned snapshot. Keep content that
+                # was cascade-hidden with its parent programme available to an
+                # already-assigned learner; a row deleted on its own remains
+                # excluded. ``deleted_via_parent`` distinguishes the two cases.
+                "AND (m.deleted_at IS NULL OR m.deleted_via_parent IS NOT NULL)",
                 [module_ids],
             )
             master_module_title = {mid: title for mid, title in cur.fetchall()}
@@ -1329,7 +1321,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None):
             cur.execute(
                 "SELECT id, module_catalogue_id, title, week_number, display_order "
                 "FROM curriculum.weeks WHERE module_catalogue_id = ANY(%s) "
-                "AND deleted_at IS NULL AND COALESCE(is_programme_deleted, false) = false "
+                "AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL) "
                 "ORDER BY module_catalogue_id, display_order, week_number, id",
                 [module_ids],
             )
@@ -1340,7 +1332,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None):
                 "live_sessions_link, display_order, ksb_mappings, reflection_required, \"Reflection_Question\", "
                 "tutor_validation_required "
                 "FROM curriculum.components WHERE module_catalogue_id = ANY(%s) "
-                "AND deleted_at IS NULL AND COALESCE(is_programme_deleted, false) = false "
+                "AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL) "
                 "ORDER BY week_id, display_order, id",
                 [module_ids],
             )
@@ -1413,7 +1405,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None):
                     "SELECT component_id, ksb_code, ksb_description, classification, weight, weight_class "
                     "FROM curriculum.ksb_mappings "
                     "WHERE component_id = ANY(%s) "
-                    "AND deleted_at IS NULL AND COALESCE(is_programme_deleted, false) = false "
+                    "AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL) "
                     "ORDER BY component_id, ksb_code",
                     [missing_ksb_component_ids],
                 )
@@ -1576,7 +1568,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None):
 
     for mid in module_ids:
         if mid not in master_module_title:
-            continue  # module deleted from master; drop it (full sync)
+            continue  # independently deleted/missing modules stay unavailable
         live_module = _s(master_module_title[mid])
         # The label list is unique for older consumers. Keep every module's
         # weeks/components: the subject workspace groups by moduleId, and two

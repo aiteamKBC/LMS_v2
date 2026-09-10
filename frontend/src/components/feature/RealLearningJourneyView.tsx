@@ -102,7 +102,9 @@ export function buildStations(journey: JourneyModule[], real: LearnerDetail | nu
 
   const stations: ModuleStation[] = raw.map((m) => ({
     ...m,
-    status: currentIndex === -1 ? 'completed' : m.index < currentIndex ? 'completed' : m.index === currentIndex ? 'current' : 'upcoming',
+    status: m.trackableTotal > 0 && m.trackableDone >= m.trackableTotal
+      ? 'completed'
+      : m.index === currentIndex ? 'current' : 'upcoming',
   }));
 
   const totalTrackable = raw.reduce((n, m) => n + m.trackableTotal, 0);

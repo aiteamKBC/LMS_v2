@@ -846,7 +846,7 @@ class LearnerReflectionQuestionTests(SimpleTestCase):
 
 
 class LearnerSoftDeletedCurriculumVisibilityTests(SimpleTestCase):
-    def test_live_resolution_excludes_soft_deleted_curriculum_at_every_level(self):
+    def test_live_resolution_keeps_parent_deleted_rows_eligible_but_excludes_missing_rows(self):
         cursor = ScriptedCursor([[], [], []])
         weeks = [{
             "module": "Deleted module", "week": "Deleted week",
@@ -862,12 +862,9 @@ class LearnerSoftDeletedCurriculumVisibilityTests(SimpleTestCase):
 
         self.assertEqual(resolved, ([], [], []))
         module_query, week_query, component_query = [" ".join(query.lower().split()) for query in cursor.queries[:3]]
-        self.assertIn("m.deleted_at is null", module_query)
-        self.assertIn("g.deleted_at is null", module_query)
-        self.assertIn("ch.deleted_at is null", module_query)
-        self.assertIn("p.deleted_at is null", module_query)
-        self.assertIn("deleted_at is null", week_query)
-        self.assertIn("deleted_at is null", component_query)
+        self.assertIn("m.deleted_at is null or m.deleted_via_parent is not null", module_query)
+        self.assertIn("deleted_at is null or deleted_via_parent is not null", week_query)
+        self.assertIn("deleted_at is null or deleted_via_parent is not null", component_query)
 
 
 class LearnerWeekQuizVisibilityTests(SimpleTestCase):

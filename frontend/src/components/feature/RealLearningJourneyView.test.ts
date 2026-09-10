@@ -18,6 +18,13 @@ function journey(components: JourneyComponent[]): JourneyModule[] {
   return [{ module: 'Module 1', weeks: [{ week: 'Week 1', otjh: 1, components }] }];
 }
 
+function multiModuleJourney(modules: JourneyComponent[][]): JourneyModule[] {
+  return modules.map((components, index) => ({
+    module: `Module ${index + 1}`,
+    weeks: [{ week: 'Week 1', otjh: 1, components }],
+  }));
+}
+
 function detail(overrides: Partial<LearnerDetail> = {}): LearnerDetail {
   return {
     quizAttempts: [],
@@ -80,5 +87,20 @@ describe('buildStations progress continuity', () => {
     expect(result.stations[0].quizPassed).toBe(0);
     expect(result.stations[0].trackableDone).toBe(0);
     expect(result.overallPct).toBe(0);
+  });
+
+  it('marks a completed later module as completed instead of locking it by position', () => {
+    const result = buildStations(multiModuleJourney([
+      [component({ componentId: 'INCOMPLETE' })],
+      [component({ componentId: 'COMPLETE' })],
+    ]), detail({
+      componentProgress: [{
+        componentId: 'COMPLETE', kind: 'component', componentType: 'reading',
+        startedAt: null, submittedAt: '2026-09-10T09:00:00Z', timeTaken: null,
+      }],
+    }));
+
+    expect(result.currentIndex).toBe(0);
+    expect(result.stations.map((station) => station.status)).toEqual(['current', 'completed']);
   });
 });
