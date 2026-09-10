@@ -1393,6 +1393,127 @@ export interface CurriculumStaffProfile {
   [key: string]: unknown;
 }
 
+export type CurriculumAuditAction = 'created' | 'updated' | 'archived';
+
+export interface CurriculumAuditEvent {
+  id: string;
+  /** ISO stamp of the write itself, not a display date. */
+  at: string;
+  action: CurriculumAuditAction;
+  entity: 'programme' | 'module' | 'week' | 'component' | 'cohort' | 'group' | string;
+  entityLabel: string;
+  entityId: string;
+  title: string;
+  /** The record's parent - a programme name, or a module catalogue id. */
+  context: string;
+  /**
+   * The write handler's reason code on an archive (`component-delete`,
+   * `programme-archive`). It is NOT a person: no authoring table records an
+   * author, which is what `authorRecorded: false` states.
+   */
+  reason: string;
+  viaParent: string;
+  href: string;
+}
+
+export interface CurriculumAuditTrail {
+  generatedAt: string;
+  windowDays: number;
+  since: string;
+  limit: number;
+  total: number;
+  truncated: boolean;
+  actionCounts: Record<CurriculumAuditAction, number>;
+  entityCounts: Record<string, number>;
+  /** Entities whose table could not be read, so the page can name the gap. */
+  unreadable: string[];
+  /** Always false today: the authoring tables carry no author column. */
+  authorRecorded: boolean;
+  events: CurriculumAuditEvent[];
+}
+
+export type CurriculumVersionEntityType = 'module' | 'week' | 'component';
+export type CurriculumRevisionAction = 'created' | 'updated' | 'archived' | 'restored';
+
+/** One field that moved between two revisions. Long values are cut server-side. */
+export interface CurriculumFieldChange {
+  field: string;
+  from: string;
+  to: string;
+  truncated?: boolean;
+}
+
+export interface CurriculumRevision {
+  id: number;
+  entityType: CurriculumVersionEntityType | string;
+  entityId: string;
+  revisionNo: number;
+  action: CurriculumRevisionAction | string;
+  moduleCatalogueId: string;
+  parentId: string;
+  title: string;
+  versionLabel: string;
+  contentStatus: string;
+  changedFields: CurriculumFieldChange[];
+  /** The signed-in account that saved. Empty for a write with no session. */
+  actorName: string;
+  actorEmail: string;
+  /** Only set on an archive: the write handler's reason code. */
+  reason: string;
+  at: string;
+}
+
+/** A revision an author named — a component moving to 0.2, a module published. */
+export interface CurriculumNamedVersion {
+  id: number;
+  versionLabel: string;
+  revisionNo: number;
+  contentStatus: string;
+  note: string;
+  actorName: string;
+  at: string;
+}
+
+export interface CurriculumVersionEntity {
+  entityType: CurriculumVersionEntityType | string;
+  entityId: string;
+  title: string;
+  moduleCatalogueId: string;
+  parentId: string;
+  versionLabel: string;
+  contentStatus: string;
+  action: string;
+  revisions: number;
+  namedVersions: number;
+  lastChangeAt: string;
+  firstChangeAt: string;
+  lastActorName: string;
+}
+
+export interface CurriculumVersionIndex {
+  /** False when the history tables have not been created; `reason` says so. */
+  available: boolean;
+  reason?: string;
+  generatedAt?: string;
+  totalRevisions: number;
+  totalNamedVersions: number;
+  count: number;
+  entities: CurriculumVersionEntity[];
+}
+
+export interface CurriculumRecordHistory {
+  available: boolean;
+  reason?: string;
+  entityType: string;
+  entityId: string;
+  title: string;
+  moduleCatalogueId?: string;
+  versions: CurriculumNamedVersion[];
+  revisions: CurriculumRevision[];
+  /** Populated only when a revision number was asked for: its stored content. */
+  snapshot: { revisionNo: number; at: string; content: Record<string, unknown> } | null;
+}
+
 export interface CurriculumOverview {
   schema: string;
   stats: {
@@ -2459,6 +2580,76 @@ export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal,
 }
 
 export { fetchCurriculumOverview as fetchCurriculumOverviewBundle };
+
+/**
+ * Versioned curriculum records, most recently changed first. Answers
+ * `available: false` — not an error — when the history tables do not exist.
+ */
+export function fetchCurriculumVersions(
+  options: { module?: string; entityType?: string; search?: string; limit?: number; signal?: AbortSignal; skipCache?: boolean } = {},
+): Promise<CurriculumVersionIndex> {
+  const query = new URLSearchParams();
+  if (options.module) query.set('module', options.module);
+  if (options.entityType && options.entityType !== 'all') query.set('entity_type', options.entityType);
+  if (options.search) query.set('search', options.search);
+  if (options.limit) query.set('limit', String(options.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumVersionIndex>(`/curriculum/quality/versions/${suffix}`, {
+    signal: options.signal,
+    skipCache: options.skipCache,
+    timeoutMs: 30000,
+  });
+}
+
+/**
+ * One record's timeline. Pass `snapshot` to also get the stored content of that
+ * revision — what the record actually held, which is what a version number is
+ * looked up in order to see.
+ */
+export function fetchCurriculumRecordHistory(
+  entityType: string,
+  entityId: string,
+  options: { snapshot?: number; limit?: number; signal?: AbortSignal; skipCache?: boolean } = {},
+): Promise<CurriculumRecordHistory> {
+  const query = new URLSearchParams();
+  if (options.snapshot) query.set('snapshot', String(options.snapshot));
+  if (options.limit) query.set('limit', String(options.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumRecordHistory>(
+    `/curriculum/quality/versions/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}/${suffix}`,
+    { signal: options.signal, skipCache: options.skipCache, timeoutMs: 30000 },
+  );
+}
+
+/**
+ * Record activity across the curriculum authoring tables: what was created,
+ * edited or archived, newest first. Derived from created_at/updated_at/
+ * deleted_at on the records themselves - Quality owns no log of its own.
+ */
+export function fetchCurriculumAuditTrail(
+  options: {
+    days?: number;
+    limit?: number;
+    entity?: string;
+    action?: string;
+    search?: string;
+    signal?: AbortSignal;
+    skipCache?: boolean;
+  } = {},
+): Promise<CurriculumAuditTrail> {
+  const query = new URLSearchParams();
+  if (options.days) query.set('days', String(options.days));
+  if (options.limit) query.set('limit', String(options.limit));
+  if (options.entity && options.entity !== 'all') query.set('entity', options.entity);
+  if (options.action && options.action !== 'all') query.set('action', options.action);
+  if (options.search) query.set('search', options.search);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumAuditTrail>(`/curriculum/quality/audit-trail/${suffix}`, {
+    signal: options.signal,
+    skipCache: options.skipCache,
+    timeoutMs: 30000,
+  });
+}
 
 function postJson<T>(path: string, body: unknown): Promise<T> {
   return fetchJson<T>(path, { method: 'POST', body: JSON.stringify(body) });
