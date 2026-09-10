@@ -381,30 +381,43 @@ export default function LearnerOverview() {
   /* ── Real learner's training-plan journey, grouped module -> week -> components ── */
   const journey = useMemo(() => (isRealMode ? buildLearnerJourney(real) : []), [isRealMode, real]);
   const { stations, overallPct, currentIndex, currentWeek: currentWeekLabel } = useMemo(() => buildStations(journey, real), [journey, real]);
+  const learnerSelectionKey = `${kind ?? ''}:${id ?? ''}`;
+  const [moduleSelection, setModuleSelection] = useState<{ learnerKey: string; index: number } | null>(null);
+  const selectedModuleIndex = moduleSelection?.learnerKey === learnerSelectionKey ? moduleSelection.index : null;
   const currentStation = currentIndex >= 0 ? stations[currentIndex] : null;
+  const selectedStation = selectedModuleIndex == null
+    ? null
+    : stations.find((station) => station.index === selectedModuleIndex) ?? null;
+  const displayedStation = selectedStation ?? currentStation;
   const journeyAllDone = currentIndex === -1 && stations.length > 0;
   const currentModuleLabel = isRealMode
-    ? (currentStation ? currentStation.module.module : journeyAllDone ? 'Gateway ready' : EMPTY_VALUE)
+    ? (displayedStation ? displayedStation.module.module : journeyAllDone ? 'Gateway ready' : EMPTY_VALUE)
     : p.currentModule;
 
-  // Use the first incomplete week in the current module so Continue Learning
-  // follows the learner's actual progress instead of remaining on week one.
+  // The learner's live module opens on its current week. Selecting another
+  // module from the journey swaps this page to that module's first unfinished
+  // week (or its first week when the module is complete).
   const currentWeek = useMemo(() => {
-    if (currentStation) {
-      const weekIndex = Math.max(0, currentStation.module.weeks.findIndex((week) => week.week === currentWeekLabel));
-      const week = currentStation.module.weeks[weekIndex];
+    if (displayedStation) {
+      const liveWeekIndex = displayedStation.index === currentIndex
+        ? displayedStation.module.weeks.findIndex((week) => week.week === currentWeekLabel)
+        : -1;
+      const unfinishedWeekIndex = displayedStation.weekDots.findIndex((week) => week.total > 0 && week.done < week.total);
+      const weekIndex = liveWeekIndex >= 0 ? liveWeekIndex : unfinishedWeekIndex >= 0 ? unfinishedWeekIndex : 0;
+      const week = displayedStation.module.weeks[weekIndex];
       if (week) return {
-        module: currentStation.module.module,
+        module: displayedStation.module.module,
         week,
         weekIndex,
-        totalWeeks: currentStation.module.weeks.length,
+        totalWeeks: displayedStation.module.weeks.length,
       };
+      return null;
     }
     for (const mod of journey) {
       if (mod.weeks.length > 0) return { module: mod.module, week: mod.weeks[0], weekIndex: 0, totalWeeks: mod.weeks.length };
     }
     return null;
-  }, [currentStation, currentWeekLabel, journey]);
+  }, [currentIndex, currentWeekLabel, displayedStation, journey]);
   const evidencedKsbCodes = useMemo(() => evidencedTargetKsbCodes(real), [real]);
 
   const unifiedLearning = useUnifiedLearningSummary(
@@ -911,9 +924,10 @@ export default function LearnerOverview() {
                   real={real}
                   loading={loading}
                   loadError={loadError}
-                  journeyHref={journeyHref}
                   progressPercent={programmeProgressPercent}
                   progressCaption={programmeProgressCaption}
+                  selectedModuleIndex={displayedStation?.index ?? null}
+                  onSelectModule={(index) => setModuleSelection({ learnerKey: learnerSelectionKey, index })}
                 />
               ) : (
                 <div>
@@ -1305,7 +1319,15 @@ function LearningWeekStrip({ completedDates = [] }: { completedDates?: string[] 
 type StationTone = 'done' | 'current' | 'upcoming';
 
 /** A node with an SVG progress ring — the fill shows how far through the module the learner is. */
-function JourneyNode({ icon, label, sub, tone, pct, href }: { icon: string; label: string; sub?: string; tone: StationTone; pct?: number; href?: string }) {
+function JourneyNode({ icon, label, sub, tone, pct, selected = false, onClick }: {
+  icon: string;
+  label: string;
+  sub?: string;
+  tone: StationTone;
+  pct?: number;
+  selected?: boolean;
+  onClick?: () => void;
+}) {
   const t = tone === 'done'
     ? { fill: '#10b981', bg: 'bg-emerald-500 text-white', label: 'text-foreground-700', shadow: 'shadow-emerald-500/25' }
     : tone === 'current'
@@ -1330,14 +1352,16 @@ function JourneyNode({ icon, label, sub, tone, pct, href }: { icon: string; labe
     </>
   );
 
-  return href ? (
-    <Link
-      to={href}
-      aria-label={`Open ${label}`}
-      className="group flex w-[76px] shrink-0 cursor-pointer flex-col items-center gap-1.5 rounded-xl py-1 text-center transition-all duration-200 hover:-translate-y-1 hover:bg-primary-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+  return onClick ? (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`Select ${label}`}
+      aria-pressed={selected}
+      className={`group flex w-[76px] shrink-0 cursor-pointer flex-col items-center gap-1.5 rounded-xl py-1 text-center transition-all duration-200 hover:-translate-y-1 hover:bg-primary-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 ${selected ? 'bg-primary-50 ring-2 ring-primary-300 ring-offset-2' : ''}`}
     >
       {content}
-    </Link>
+    </button>
   ) : (
     <div className="flex w-[76px] shrink-0 flex-col items-center gap-1.5 py-1 text-center">
       {content}
@@ -1410,16 +1434,18 @@ function MiniJourney({
   real,
   loading,
   loadError,
-  journeyHref,
   progressPercent,
   progressCaption,
+  selectedModuleIndex,
+  onSelectModule,
 }: {
   real: LearnerDetail | null;
   loading: boolean;
   loadError: string | null;
-  journeyHref: string;
   progressPercent: number | null;
   progressCaption: string;
+  selectedModuleIndex: number | null;
+  onSelectModule: (index: number) => void;
 }) {
   const journey = useMemo(() => buildLearnerJourney(real), [real]);
   const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
@@ -1451,6 +1477,9 @@ function MiniJourney({
   if (journey.length === 0) return <EmptyState size="sm" title="No training plan built for this learner yet." />;
 
   const current = currentIndex >= 0 ? stations[currentIndex] : null;
+  const selected = selectedModuleIndex == null
+    ? current
+    : stations.find((station) => station.index === selectedModuleIndex) ?? current;
   const allDone = currentIndex === -1 && stations.length > 0;
   return (
     <div>
@@ -1522,7 +1551,8 @@ function MiniJourney({
                 sub={s.pct == null ? '—' : `${s.pct}%`}
                 tone={stationTone(s)}
                 pct={s.pct ?? 0}
-                href={s.status === 'completed' || s.status === 'current' ? `${journeyHref}?module=${s.index + 1}` : undefined}
+                selected={selected?.index === s.index}
+                onClick={() => onSelectModule(s.index)}
               />
             </Fragment>
           ))}
@@ -1531,28 +1561,28 @@ function MiniJourney({
         </div>
       </div>
 
-      {/* Current-module card */}
-      {current ? (
-        <Link
-          to={`${journeyHref}?module=${current.index + 1}`}
-          aria-label={`Open Module ${current.index + 1}: ${current.module.module}`}
-          className="group mt-4 block cursor-pointer rounded-xl border border-primary-200/60 bg-primary-50/30 p-3.5 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary-300 hover:bg-primary-50/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+      {/* Selected-module card */}
+      {selected ? (
+        <div
+          aria-live="polite"
+          className="mt-4 rounded-xl border border-primary-200/60 bg-primary-50/30 p-3.5"
         >
           <div className="flex items-center gap-2 mb-2.5">
             <span className="w-7 h-7 rounded-lg bg-primary-500 text-white flex items-center justify-center shrink-0"><AppIcon className="ri-flag-2-fill text-sm" /></span>
             <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-primary-600 leading-none">You are here</p>
-              <p className="text-[13px] font-semibold text-foreground-900 truncate leading-tight mt-0.5">{current.module.module}</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-primary-600 leading-none">
+                {selected.index === current?.index ? 'You are here' : `Selected Module ${selected.index + 1}`}
+              </p>
+              <p className="text-[13px] font-semibold text-foreground-900 truncate leading-tight mt-0.5">{selected.module.module}</p>
             </div>
-            <span className="ml-auto text-[13px] font-heading font-bold text-primary-700 tabular-nums shrink-0">{current.pct ?? 0}%</span>
-            <AppIcon className="ri-arrow-right-line text-primary-500 transition-transform duration-200 group-hover:translate-x-1" />
+            <span className="ml-auto text-[13px] font-heading font-bold text-primary-700 tabular-nums shrink-0">{selected.pct == null ? EMPTY_VALUE : `${selected.pct}%`}</span>
           </div>
           <div className="grid grid-cols-3 gap-2">
-            <JourneyStat icon="ri-stack-line" label="Components" value={`${current.componentCount}`} />
-            <JourneyStat icon="ri-questionnaire-line" label="Quizzes" value={current.quizTotal > 0 ? `${current.quizTaken}/${current.quizTotal}` : '—'} />
-            <JourneyStat icon="ri-play-circle-line" label="Videos" value={current.videoTotal > 0 ? `${current.videoDone}/${current.videoTotal}` : '—'} />
+            <JourneyStat icon="ri-stack-line" label="Components" value={`${selected.componentCount}`} />
+            <JourneyStat icon="ri-questionnaire-line" label="Quizzes" value={selected.quizTotal > 0 ? `${selected.quizTaken}/${selected.quizTotal}` : '—'} />
+            <JourneyStat icon="ri-play-circle-line" label="Videos" value={selected.videoTotal > 0 ? `${selected.videoDone}/${selected.videoTotal}` : '—'} />
           </div>
-        </Link>
+        </div>
       ) : allDone ? (
         <div className="mt-4 rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-3.5 flex items-center gap-2.5">
           <span className="w-8 h-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0"><AppIcon className="ri-trophy-fill" /></span>
