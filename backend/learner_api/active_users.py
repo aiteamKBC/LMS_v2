@@ -538,8 +538,8 @@ def _normalise_component_ksb_mappings(value):
     return mappings
 
 
-def completed_hours_from_progress(progress, components=None):
-    """Hours the learner has declared, for the OTJ total.
+def completed_hours_value_from_progress(progress, components=None):
+    """Unrounded hours the learner has declared, for exact OTJ roll-ups.
 
     A learner-entered Time spent value (`claimedSeconds` with input provenance)
     is authoritative when present, followed by the reflection's `reportedTime`.
@@ -550,7 +550,7 @@ def completed_hours_from_progress(progress, components=None):
     historical activity rather than measure it.
     """
     if not isinstance(progress, list):
-        return "0"
+        return 0.0
     expected_hours_by_component = _component_expected_hours_lookup(components)
     hours = 0.0
     for record in dedupe_otjh_progress_records(progress):
@@ -577,7 +577,12 @@ def completed_hours_from_progress(progress, components=None):
         expected_hours = expected_hours_by_component.get(component_id)
         if expected_hours is not None:
             hours += expected_hours
-    return fmt_hours(hours)
+    return hours
+
+
+def completed_hours_from_progress(progress, components=None):
+    """Display-formatted OTJ hours retained for existing API consumers."""
+    return fmt_hours(completed_hours_value_from_progress(progress, components))
 
 
 def replace_training_plan(learner, plan):

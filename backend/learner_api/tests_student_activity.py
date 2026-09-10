@@ -11,6 +11,7 @@ from django.test import RequestFactory, SimpleTestCase
 from learner_api.student_activity import (
     student_activity, subject_covers, upload_subject_cover,
     _builder_cover_url, _builder_subject_metadata, _material_response,
+    combined_recorded_otjh, _direct_progress_otjh,
 )
 from learner_api.student_activity_data import (
     read_student_activity, summarize_activities, read_student_material,
@@ -153,6 +154,21 @@ class StudentActivityTests(SimpleTestCase):
         })
         state_patch.start()
         self.addCleanup(state_patch.stop)
+        direct_progress_patch = patch('learner_api.student_activity._direct_progress_records', return_value=[])
+        direct_progress_patch.start()
+        self.addCleanup(direct_progress_patch.stop)
+
+    def test_recorded_otjh_adds_new_platform_time_to_all_historical_subjects(self):
+        self.assertEqual(combined_recorded_otjh(285.4038, 1.5), 286.9038)
+        self.assertEqual(combined_recorded_otjh(0, 0), 0)
+        self.assertIsNone(combined_recorded_otjh(None, 0))
+
+    def test_new_platform_time_keeps_minute_precision(self):
+        progress = [{
+            'kind': 'component', 'componentId': 'new-reading',
+            'reportedTime': '32m', 'submittedAt': '2026-09-10T09:00:00Z',
+        }]
+        self.assertAlmostEqual(_direct_progress_otjh(progress), 32 / 60)
 
     @patch("login.permissions._auth_gate_enabled", return_value=True)
     @patch("login.permissions.authenticate_request")
@@ -208,6 +224,8 @@ class StudentActivityTests(SimpleTestCase):
         self.assertEqual(result['activities'][0]['best_score_percent'], 90)
         self.assertEqual(result['count'], 1)
         self.assertEqual(result['completed_count'], 1)
+        self.assertIsNone(result['recorded_otjh_total'])
+        self.assertEqual(result['direct_otjh_activities'], [])
 
     @patch("login.permissions._auth_gate_enabled", return_value=True)
     @patch("login.permissions.authenticate_request")
@@ -315,7 +333,8 @@ class SubjectBuilderCoverTests(SimpleTestCase):
         })
         sql, params = cursor.execute.call_args.args
         self.assertEqual(params, [['MOD-1']])
-        self.assertIn("c.id=material->>'component_id'", sql)
+        self.assertIn("material->>'component_id' AS component_id", sql)
+        self.assertIn('c.id=e.component_id', sql)
         self.assertIn('c.module_catalogue_id=e.module_catalogue_id', sql)
         self.assertIn('c.deleted_at IS NULL', sql)
         cursor.reset_mock()

@@ -11,7 +11,7 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { buildStations } from '@/components/feature/RealLearningJourneyView';
 import { buildLinkedQuizzes, splitLinkedQuizWeek, type LinkedQuiz } from '@/utils/linkedQuizzes';
 import {
-  buildLearnerJourney, componentTypeMeta, gradePercent, hasComponentContent, isOpenableComponent,
+  buildLearnerJourney, completedComponentIds, componentTypeMeta, gradePercent, hasComponentContent, isComponentComplete, isOpenableComponent,
   formatHoursMinutes, parseHours, type JourneyComponent, type JourneyModule,
 } from '@/utils/learnerJourney';
 import { PageContainer } from '@/components/ui/PageContainer';
@@ -53,17 +53,14 @@ export default function MyLearningPage() {
   const journey = useMemo(() => buildLearnerJourney(real), [real]);
   const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
 
-  const completedIds = useMemo(() => new Set<string>([
-    ...(real?.videoProgress || []).map((v) => v.componentId),
-    ...(real?.componentProgress || []).map((c) => c.componentId),
-  ]), [real]);
+  const completedIds = useMemo(() => completedComponentIds(real), [real]);
 
   // The "you are here" week — the first, in plan order, that isn't fully done.
   const currentWeek = useMemo(() => {
     for (const mod of journey) {
       for (const w of mod.weeks) {
         const openable = w.components.filter(hasComponentContent);
-        const done = openable.filter((c) => c.isQuiz ? (c.quizAttempts?.length ?? 0) > 0 : !!c.componentId && completedIds.has(c.componentId)).length;
+        const done = openable.filter((component) => isComponentComplete(component, completedIds)).length;
         if (openable.length > 0 && done < openable.length) return { module: mod.module, week: w };
       }
     }
@@ -88,8 +85,7 @@ export default function MyLearningPage() {
     if (!currentWeek) return null;
     return currentWeek.week.components.find((c) => {
       if (!hasComponentContent(c)) return false;
-      if (c.isQuiz) return true; // a quiz's own attempt history decides "done", not completedIds
-      return c.componentId ? !completedIds.has(c.componentId) : false;
+      return !isComponentComplete(c, completedIds);
     }) || null;
   }, [currentWeek, completedIds]);
 
@@ -195,7 +191,7 @@ function OverviewTab({
   const stageStatuses = journeyStageStatuses(real?.programmeStatus, allModulesDone, gatewayOpen);
 
   const nextActivities = currentWeek
-    ? currentWeek.week.components.filter((c) => !(c.componentId && completedIds.has(c.componentId))).slice(0, 4)
+    ? currentWeek.week.components.filter((component) => !isComponentComplete(component, completedIds)).slice(0, 4)
     : [];
 
   return (

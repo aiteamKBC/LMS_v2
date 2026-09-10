@@ -49,6 +49,7 @@ import { fetchDemoMaterialSummaries, type DemoMaterialTable } from '@/api/demoMa
 import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
 import { COMPONENT_ACCESS_MESSAGE } from '@/lib/componentAccessWindow';
 import { isNavigableComponent } from '@/pages/learner/video-watch/weekPreview';
+import { useUnifiedLearningSummary } from '@/pages/learner/my-learning/SubjectWorkspace';
 
 /* ─────────────────────────────────────────────
    Real-learner component progress + current-week UI
@@ -461,6 +462,12 @@ export default function LearnerOverview() {
   const isDemoAccount = isRealMode
     && isInspectionDemoAccount(auth.account?.email)
     && demoProgramme != null;
+  const unifiedLearning = useUnifiedLearningSummary(
+    real,
+    learnerKind ?? undefined,
+    id,
+    isRealMode && !skipPreStartData && !isDemoAccount && !!real?.studentActivityAvailable,
+  );
   const [demoMaterialTables, setDemoMaterialTables] = useState<DemoMaterialTable[]>([]);
   useEffect(() => {
     if (!isDemoAccount || !demoProgramme) {
@@ -581,10 +588,19 @@ export default function LearnerOverview() {
   /* ── Compact progress cards ── */
   const modulesDone = stations.filter((s) => s.status === 'completed').length;
 
-  const programmeProgressPercent = isRealMode ? (stations.length ? overallPct : null) : p.overallProgress;
+  const usesCombinedProgress = isRealMode && !!real?.studentActivityAvailable;
+  const programmeProgressPercent = isRealMode
+    ? usesCombinedProgress
+      ? unifiedLearning.summary ? Math.round(unifiedLearning.summary.percent) : null
+      : stations.length ? overallPct : null
+    : p.overallProgress;
   const programmeProgressValue = programmeProgressPercent == null ? EMPTY_VALUE : `${programmeProgressPercent}%`;
   const programmeProgressCaption = isRealMode
-    ? (stations.length ? `${modulesDone}/${stations.length} modules complete` : 'No training plan yet')
+    ? usesCombinedProgress
+      ? unifiedLearning.summary
+        ? `${unifiedLearning.summary.completedActivityCount}/${unifiedLearning.summary.activityCount} activities complete`
+        : unifiedLearning.error ? 'Combined progress unavailable' : 'Loading combined progress...'
+      : (stations.length ? `${modulesDone}/${stations.length} modules complete` : 'No training plan yet')
     : `${p.currentWeek ? `Week ${p.currentWeek} · ` : ''}${p.currentModule}`;
 
   const attendancePercent = isRealMode ? (attendance ? attendance.attendanceRate : null) : p.attendanceRate;
@@ -596,14 +612,23 @@ export default function LearnerOverview() {
     ? 'neutral'
     : attendancePercent >= ATTENDANCE_EXPECTED_RATE ? 'positive' : attendancePercent >= ATTENDANCE_MINIMUM_RATE ? 'caution' : 'critical';
 
-  const otjPercent = isRealMode ? (otj.targetHours > 0 ? otj.targetPercent : otj.percent) : Math.round((p.otjhCompleted / p.otjhTarget) * 100);
+  const combinedRecordedOtjh = unifiedLearning.data?.recorded_otjh_total;
+  const otjPercent = isRealMode
+    ? usesCombinedProgress ? null : (otj.targetHours > 0 ? otj.targetPercent : otj.percent)
+    : Math.round((p.otjhCompleted / p.otjhTarget) * 100);
   const otjValue = isRealMode
-    ? formatHoursMinutes(otj.activities > 0 ? otj.completedHours : otj.plannedHours)
+    ? usesCombinedProgress
+      ? combinedRecordedOtjh != null ? formatHoursMinutes(combinedRecordedOtjh) : EMPTY_VALUE
+      : formatHoursMinutes(otj.activities > 0 ? otj.completedHours : otj.plannedHours)
     : formatHoursMinutes(p.otjhCompleted);
   const otjCaption = isRealMode
-    ? (otj.targetHours > 0 ? `Target ${formatHoursMinutes(otj.targetHours)}${otj.status ? ` · ${otj.status}` : ''}` : `${otj.activities} ${otj.activities === 1 ? 'activity' : 'activities'} logged`)
+    ? usesCombinedProgress
+      ? unifiedLearning.summary
+        ? `Across ${unifiedLearning.summary.subjectCount} subjects`
+        : unifiedLearning.error ? 'Recorded time unavailable' : 'Loading recorded time...'
+      : (otj.targetHours > 0 ? `Target ${formatHoursMinutes(otj.targetHours)}${otj.status ? ` · ${otj.status}` : ''}` : `${otj.activities} ${otj.activities === 1 ? 'activity' : 'activities'} logged`)
     : `${formatHoursMinutes(p.otjhCompleted)} / ${formatHoursMinutes(p.otjhTarget)} planned`;
-  const otjTone: StatusTone = isRealMode ? (otj.status ? statusTone(otj.status) : 'brand') : 'brand';
+  const otjTone: StatusTone = isRealMode ? (usesCombinedProgress ? 'brand' : otj.status ? statusTone(otj.status) : 'brand') : 'brand';
 
   const ksbTotal = isRealMode ? (real?.ksbs.length || 0) : p.ksbTotal;
   const ksbPercent = isRealMode
