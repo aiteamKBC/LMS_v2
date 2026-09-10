@@ -209,6 +209,96 @@ def _totals(modules):
     }
 
 
+def _plan_titles(plan):
+    """The legacy comma-joined title columns, rebuilt from a structured plan.
+
+    ``Created_users`` carries Modules/Weeks/Components as free text alongside
+    the structured jsonb, and ``mappers._legacy_plan_from_csv`` still reads them
+    for a learner whose plan predates the structured format. They hold *titles*
+    joined with ", ", with "module · week · component" hierarchy -- so they are
+    rebuilt in that shape here rather than as ids, which would silently make the
+    legacy reader reconstruct a plan of id-shaped module names.
+    """
+    modules, weeks, components = [], [], []
+    for module in plan or []:
+        if not isinstance(module, dict):
+            continue
+        module_title = _s(module.get("moduleTitle"))
+        if module_title:
+            modules.append(module_title)
+        for week in module.get("weeks") or []:
+            if not isinstance(week, dict):
+                continue
+            week_title = _s(week.get("weekTitle"))
+            if week_title:
+                weeks.append(f"{module_title} · {week_title}" if module_title else week_title)
+            for component in week.get("components") or []:
+                if not isinstance(component, dict):
+                    continue
+                component_title = _s(component.get("componentTitle"))
+                if not component_title:
+                    continue
+                parts = [p for p in (module_title, week_title, component_title) if p]
+                components.append(" · ".join(parts))
+    return ", ".join(modules), ", ".join(weeks), ", ".join(components)
+
+
+def sync_learning_plan_mirror(source):
+    """Write the learner's assigned plan to the two places that report on it.
+
+    The plan staff edit lives on ``enrolment."Created_users"."Learning_plan"``.
+    That is still the record of truth; this copies it outwards so the surfaces
+    that already read those tables can see what a learner is assigned:
+
+    * ``"Learner".learners.learning_plan`` -- the mirror every coach, marking
+      and reporting surface reads. Previously they had no way to see a learner's
+      plan without joining back to enrolment.
+    * ``Created_users`` Modules/Weeks/Components -- the legacy title columns,
+      kept in step so they cannot describe a plan the learner no longer has.
+
+    Resolved through ``get_training_plan``, which is the same resolver the
+    learner's own "My learning" page uses, so the mirror shows what the learner
+    sees rather than a second opinion assembled here.
+
+    An unassigned plan writes an empty mirror rather than being skipped: a
+    learner whose plan was cleared must not keep a stale copy of it.
+
+    Returns the number of modules mirrored, or 0 if the mirror could not be
+    written. Never raises, for the same reason ``advance_learner`` does not: the
+    plan itself is already saved by the time this runs, and a failed mirror must
+    not turn a successful staff edit into an error. A lagging mirror is
+    recoverable -- ``manage.py sync_learning_plans`` rebuilds it from the plan.
+    """
+    from .mappers import get_training_plan
+    from .models import LearnerProfile
+
+    if source is None or not getattr(source, "pk", None):
+        return 0
+
+    try:
+        plan = get_training_plan(source) or []
+        modules_csv, weeks_csv, components_csv = _plan_titles(plan)
+
+        # Matched on enrolment_id, never on a LearnerProfile pk held from before
+        # a sync_active_user call: that reference goes stale, and updating by it
+        # silently missed 367 rows when the coach assignment did the same thing.
+        LearnerProfile.objects.filter(enrolment_id=source.pk).update(
+            learning_plan=plan or None,
+        )
+        EnrolmentUser.all_learners.filter(pk=source.pk).update(
+            modules=modules_csv,
+            weeks=weeks_csv,
+            components=components_csv,
+        )
+    except DatabaseError:
+        logger.exception(
+            "sync_learning_plan_mirror: could not mirror the plan for learner %s",
+            getattr(source, "pk", None),
+        )
+        return 0
+    return len(plan)
+
+
 def _serialize(learner):
     programme = _s(learner.programme)
     group = _s(learner.group)
@@ -327,6 +417,12 @@ def learning_plan(request, pk):
     except DatabaseError as exc:
         logger.exception("learning_plan: save failed")
         return _error(f"Database error: {exc}", 502)
+
+    # Mirror outwards to the tables that report on the plan: "Learner".learners
+    # for every coach and marking surface, and the legacy Modules/Weeks/
+    # Components title columns. Never raises -- the plan is already saved above,
+    # and refusing here would lose the staff member's edit over a stale mirror.
+    sync_learning_plan_mirror(learner)
 
     # For a commercial learner the plan is the last thing progression waits for:
     # with a start date already passed, agreeing the plan is what makes them
@@ -553,6 +649,11 @@ def module_learners(request, module_id):
         except DatabaseError as exc:
             logger.exception("module_learners: save failed for learner %s", learner.id)
             return _error(f"Database error: {exc}", 502)
+        # Same mirror as the learner's own plan save: assigning a module from
+        # this side changes the same record, so the reporting tables have to
+        # follow it here too or they would only track edits made from one of
+        # the two directions.
+        sync_learning_plan_mirror(learner)
         # Agreeing a plan is the last gate before Active for a commercial
         # learner, the same as on the learner's own plan save. Never raises.
         advance_learner(learner)

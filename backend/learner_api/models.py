@@ -578,6 +578,17 @@ class LearnerProfile(models.Model):
     rejected_assignments = models.IntegerField(default=0)
     accepted_reflections = models.IntegerField(default=0)
     rejected_reflections = models.IntegerField(default=0)
+
+    # The learner's assigned plan -- the modules, weeks and components their
+    # "My learning" page shows -- mirrored from
+    # enrolment."Created_users"."Learning_plan", which stays the record staff
+    # edit. Held here because every coach and reporting surface already reads
+    # this table and had no way to see what a learner was actually assigned
+    # without joining back to enrolment. Kept in step by
+    # learning_plan.sync_learning_plan_mirror on every save of the plan; null
+    # means no plan has been assigned, which for most learners is the honest
+    # answer rather than a missing mirror.
+    learning_plan = models.JSONField(null=True, blank=True)
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
     gateway_review_date = models.DateField(null=True, blank=True)

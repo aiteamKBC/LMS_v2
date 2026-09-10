@@ -18,6 +18,7 @@ from .ai_marking import (
     _render_prompt,
     build_evidence_text,
     build_messages,
+    generate_marking_feedback,
     extract_file_text,
     load_epa_plan,
 )
@@ -277,3 +278,106 @@ class EpaSelectionTests(SimpleTestCase):
             _text, filename = load_epa_plan("Project Control Professional")
 
         self.assertEqual(filename, "ME_EPA.pdf")
+
+
+class CustomPromptTests(SimpleTestCase):
+    """A coach may mark against their own instructions for one generation.
+
+    The prompt is visible and editable on the marking page, so the two things
+    that must hold are that the edit actually replaces the policy, and that it
+    replaces *only* the policy: the learner's evidence and this deployment's
+    rules are not the coach's to remove, because a draft produced without them
+    would look the same while being grounded in nothing.
+    """
+
+    submission = {
+        "learner": "Aya Test",
+        "activityTitle": "Assignment 2",
+        "activityId": "COMP-1",
+        "activityType": "assignment",
+    }
+
+    def test_an_edited_prompt_replaces_the_authored_policy(self):
+        system, _user = build_messages(
+            self.submission, "the evidence", "K1: something", document="MARK STRICTLY.",
+        )
+
+        self.assertTrue(system.startswith("MARK STRICTLY."))
+
+    def test_the_authored_file_is_still_used_when_nothing_is_passed(self):
+        # None, not "": an empty string is a coach who cleared the box, and the
+        # endpoint turns that back into None before it reaches here.
+        with patch("coach_api.ai_marking.load_prompt_document", return_value="AUTHORED") as loader:
+            system, _user = build_messages(self.submission, "the evidence", "K1")
+
+        loader.assert_called_once()
+        self.assertTrue(system.startswith("AUTHORED"))
+
+    def test_the_deployment_rules_survive_an_edited_prompt(self):
+        # The coach edits the marking policy, not the guardrails: a draft is
+        # still a draft, and KSBs are still not the model's to award.
+        system, _user = build_messages(
+            self.submission, "the evidence", "K1", document="MARK STRICTLY.",
+        )
+
+        self.assertIn("Additional operating notes", system)
+        self.assertIn("do not award KSBs", system)
+
+    def test_the_learners_evidence_survives_an_edited_prompt(self):
+        # The evidence travels in the user message, so removing it from the
+        # prompt cannot detach the marking from the learner's actual work.
+        _system, user = build_messages(
+            self.submission, "what the learner wrote", "K1: something", document="MARK STRICTLY.",
+        )
+
+        self.assertIn("what the learner wrote", user)
+        self.assertIn("K1: something", user)
+
+    def test_an_edited_prompt_is_not_written_back_to_disk(self):
+        # The authored file governs every coach on the platform. An override is
+        # for one generation; changing the policy for everyone is a curriculum
+        # decision, so nothing here may open that file for writing.
+        from pathlib import Path
+
+        from . import ai_marking
+
+        source = Path(ai_marking.__file__).read_text(encoding="utf-8")
+
+        self.assertNotIn("write_text", source)
+class MissingPromptFileTests(SimpleTestCase):
+    """A missing policy file must refuse, not mark against nothing.
+
+    The guard used to test the *assembled* system message, which always carries
+    this deployment's operating notes and so was never empty -- the check could
+    not fire. With AI_marking_prompt.MD absent, that produced drafts grounded in
+    no marking criteria at all, and a coach could not tell one from a real one.
+    """
+
+    submission = {
+        "learner": "Aya Test",
+        "activityTitle": "Assignment 2",
+        "activityId": "COMP-1",
+        "activityType": "assignment",
+        "learningReflection": "I did the work.",
+    }
+
+    def test_generation_refuses_when_the_authored_file_is_missing(self):
+        with patch("coach_api.ai_marking.collect_evidence_files", return_value=[]),              patch("coach_api.ai_marking.build_evidence_text", return_value="some evidence"),              patch("coach_api.ai_marking.load_component_ksbs", return_value=("K1", 1)),              patch("coach_api.ai_marking.load_epa_plan", return_value=("", "")),              patch("coach_api.ai_marking.load_prompt_document", return_value=""):
+            with self.assertRaises(RuntimeError) as caught:
+                generate_marking_feedback(self.submission)
+
+        self.assertIn("prompt could not be loaded", str(caught.exception))
+
+    def test_a_coach_supplied_prompt_works_without_the_file(self):
+        # The coach's own text is the policy, so a missing file is no obstacle:
+        # this is what keeps the marking page usable until the file is restored.
+        with patch("coach_api.ai_marking.collect_evidence_files", return_value=[]),              patch("coach_api.ai_marking.build_evidence_text", return_value="some evidence"),              patch("coach_api.ai_marking.load_component_ksbs", return_value=("K1", 1)),              patch("coach_api.ai_marking.load_epa_plan", return_value=("", "")),              patch("coach_api.ai_marking.load_prompt_document", return_value=""),              patch("coach_api.ai_marking._openai_client") as client:
+            client.return_value.chat.completions.create.return_value.choices = [
+                type("C", (), {"message": type("M", (), {"content": "DRAFT"})()})()
+            ]
+            text, meta = generate_marking_feedback(self.submission, prompt="MARK STRICTLY.")
+
+        self.assertEqual(text, "DRAFT")
+        self.assertEqual(meta["promptSource"], "custom")
+        sent = client.return_value.chat.completions.create.call_args.kwargs["messages"]
+        self.assertTrue(sent[0]["content"].startswith("MARK STRICTLY."))
