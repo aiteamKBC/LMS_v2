@@ -56,7 +56,7 @@ export default function AdminPermissionsPage() {
       ]}
     >
       <DataPanel loading={loading && !data} error={error} empty={permissions.length === 0} onRetry={reload}>
-        <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+        <div className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-[13px]">
               <thead>
@@ -83,7 +83,7 @@ export default function AdminPermissionsPage() {
                       </td>
                     </tr>
                     {group.items.map(permission => (
-                      <tr key={permission} className="border-b border-background-100/50 hover:bg-background-100/40 transition-smooth">
+                      <tr key={permission} className="border-b border-background-100/50 hover:bg-primary-50/40 transition-smooth">
                         <td className="px-4 py-2.5 sticky left-0 bg-background-50">
                           <span className="font-mono text-[11px] text-foreground-700">{permission}</span>
                         </td>

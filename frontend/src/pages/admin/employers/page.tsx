@@ -37,19 +37,19 @@ export default function AdminEmployersPage() {
         { label: 'Linked to an org', value: loading && !data ? '—' : linked },
       ]}
     >
-      <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4">
+      <div className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] p-3 md:p-4">
         <label className="relative block max-w-xl"><AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name or email" className="w-full pl-9 pr-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-200" /></label>
       </div>
 
       <DataPanel loading={loading && !data} error={error} empty={employers.length === 0}
         emptyMessage={search ? 'No employer contacts match this search.' : 'No employer contacts have been created yet.'} onRetry={reload}>
-        <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-[13px]"><thead><tr className="border-b border-foreground-400/50">
+        <div className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-[13px]"><thead><tr className="border-b border-foreground-400/50">
           <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Contact</th>
           <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Email</th>
           <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Mobile</th>
           <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Organisation memberships</th>
           <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Location</th>
-        </tr></thead><tbody>{employers.map(emp => <tr key={emp.id} className="border-b border-background-100/50 hover:bg-background-100/40 transition-smooth">
+        </tr></thead><tbody>{employers.map(emp => <tr key={emp.id} className="border-b border-background-100/50 hover:bg-primary-50/40 transition-smooth">
           <td className="px-4 py-3"><div className="flex items-center gap-2.5"><span className="w-8 h-8 rounded-lg bg-accent-100 text-accent-700 flex items-center justify-center shrink-0 font-semibold">{(emp.name || '?').charAt(0).toUpperCase()}</span><p className="font-medium text-foreground-800">{emp.name || 'Unnamed contact'}</p></div></td>
           <td className="px-4 py-3 text-foreground-600">{emp.email || '—'}</td><td className="px-4 py-3 text-foreground-600">{emp.mobile || '—'}</td>
           <td className="px-4 py-3"><div className="flex flex-wrap gap-1">{emp.employerGroupNames.length ? emp.employerGroupNames.map((name, i) => <span key={`${emp.id}-${i}`} className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-primary-50 text-primary-700 border border-primary-200/50">{name || 'Unnamed organisation'}</span>) : <span className="text-[11px] text-foreground-400">Not linked</span>}</div></td>

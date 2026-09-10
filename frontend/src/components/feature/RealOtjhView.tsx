@@ -9,6 +9,7 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 // so a test that renders this view would crash on it (same reason as Modal.tsx).
 import { AppIcon } from '@/components/feature/AppIcon';
 import { otjhContributionHours } from '@/utils/otjhContribution';
+import type { StudentActivityResponse } from '@/api/studentActivity';
 
 const learnerNav = roleNavMap.learner;
 
@@ -79,6 +80,102 @@ function fmtDate(iso: string): string {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+function decodeHtmlEntities(value: string): string {
+  const named: Record<string, string> = {
+    amp: '&', apos: "'", gt: '>', lt: '<', nbsp: ' ', quot: '"',
+    ndash: '–', mdash: '—', lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”',
+  };
+  return String(value || '').replace(/&(#x[\da-f]+|#\d+|[a-z]+);/gi, (match, entity: string) => {
+    const lower = entity.toLowerCase();
+    if (lower.startsWith('#x')) {
+      const code = Number.parseInt(lower.slice(2), 16);
+      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
+    }
+    if (lower.startsWith('#')) {
+      const code = Number.parseInt(lower.slice(1), 10);
+      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
+    }
+    return named[lower] ?? match;
+  });
+}
+
+function combinedSubjectRows(data: StudentActivityResponse): LogRow[] {
+  // Last_audit can place one source activity in more than one subject. Match
+  // its backend total exactly: keep every subject card, but count that source
+  // activity's recorded time once.
+  const historical = new Map<number, typeof data.activities[number]>();
+  for (const item of data.activities) {
+    const previous = historical.get(item.source_activity_id);
+    if (!previous || (!previous.hours_mapped && item.hours_mapped)) {
+      historical.set(item.source_activity_id, item);
+    }
+  }
+  const oldRows: LogRow[] = [...historical.values()]
+    // A mapped zero means the audit knows about the field, not that the
+    // learner recorded time. It must not appear as a logged-time entry.
+    .filter((item) => item.hours_mapped && Number(item.actual) > 0)
+    .map((item) => {
+      const type = activityTypeLabel(item.category);
+      const look = TYPE_ICONS[String(item.category || '').toLowerCase()];
+      return {
+        title: decodeHtmlEntities(item.activity),
+        type,
+        icon: look?.icon || 'ri-check-double-line',
+        tint: look?.tint || 'bg-primary-100 text-primary-600',
+        // The scheduled Builder date can change later. An activity log needs
+        // the original recorded/source date, with schedule only as fallback.
+        at: item.source_date || item.date || '',
+        ksbs: [],
+        hours: item.actual,
+        planned: item.planned_hours_mapped ? item.planned : Number.NaN,
+        reported: '',
+        dedupeKey: `legacy:${item.source_activity_id}`,
+        attemptCount: Math.max(1, item.new_attempt_count || 0),
+        passed: item.completed,
+        isQuiz: /quiz/i.test(item.category),
+      };
+    });
+
+  const directRows: LogRow[] = (data.direct_otjh_activities || []).map((item) => {
+    const type = item.kind === 'quiz' ? 'Quiz' : activityTypeLabel(item.componentType || item.kind);
+    const look = TYPE_ICONS[String(item.componentType || item.kind || '').toLowerCase()];
+    return {
+      title: decodeHtmlEntities(item.componentTitle?.trim() || type),
+      type,
+      icon: item.kind === 'quiz' ? 'ri-questionnaire-line' : look?.icon || 'ri-check-double-line',
+      tint: item.kind === 'quiz'
+        ? item.passed ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
+        : look?.tint || 'bg-primary-100 text-primary-600',
+      at: item.submittedAt || '',
+      ksbs: [],
+      hours: otjhContributionHours(item),
+      planned: Number(item.expectedOtjh ?? Number.NaN),
+      reported: item.reportedTime || '',
+      dedupeKey: item.quizId ? `quiz:${item.quizId}` : item.componentId ? `component:${item.componentId}` : `direct:${item.submittedAt}:${item.componentTitle}`,
+      attemptCount: 1,
+      passed: item.passed ?? undefined,
+      isQuiz: item.kind === 'quiz',
+    };
+  });
+
+  const directByActivity = new Map<string, LogRow>();
+  const occurrences = new Map<string, number>();
+  for (const row of directRows) {
+    const count = (occurrences.get(row.dedupeKey) || 0) + 1;
+    occurrences.set(row.dedupeKey, count);
+    const previous = directByActivity.get(row.dedupeKey);
+    if (!previous || row.hours > previous.hours || (row.hours === previous.hours && row.at > previous.at)) {
+      directByActivity.set(row.dedupeKey, { ...row, attemptCount: count });
+    } else {
+      previous.attemptCount = count;
+      previous.passed = Boolean(previous.passed || row.passed);
+    }
+  }
+  return [...oldRows, ...directByActivity.values()]
+    .filter((row) => row.hours > 0)
+    .sort((a, b) => (b.at || '').localeCompare(a.at || ''));
+}
+
 export function RealOtjhView({ real, loading }: { real: LearnerDetail | null; loading: boolean }) {
   return (
     <WorkspaceShell
@@ -108,21 +205,37 @@ export function OtjhBody({
   loading,
   showHero = true,
   audience = 'learner',
+  activityData = null,
+  subjectCount,
 }: {
   real: LearnerDetail | null;
   loading: boolean;
   showHero?: boolean;
   audience?: 'learner' | 'observer';
+  activityData?: StudentActivityResponse | null;
+  /** Historical and current subjects from the unified learning summary. */
+  subjectCount?: number | null;
 }) {
   const isObserver = audience === 'observer';
   const who = isObserver ? (real?.name?.split(' ')[0] || 'This learner') : 'You';
-  const completed = parseHours(real?.completedHours);
-  const target = parseHours(real?.targetHours);
-  const planned = parseHours(real?.plannedHours ?? real?.totalExpectedOtjh);
+  const usesCombinedSubjects = activityData?.recorded_otjh_total != null;
+  const usesAuditTotals = activityData?.audit_lms_actual != null || activityData?.audit_tp_planned != null;
+  const usesAuditSummary = usesAuditTotals || usesCombinedSubjects;
+  const recordedSubjectCount = subjectCount ?? activityData?.module_count ?? 0;
+  const completed = activityData?.audit_lms_actual
+    ?? activityData?.recorded_otjh_total
+    ?? parseHours(real?.completedHours);
+  const target = usesAuditSummary ? 0 : parseHours(real?.targetHours);
+  const planned = activityData?.audit_tp_planned
+    ?? activityData?.planned_total
+    ?? parseHours(real?.plannedHours ?? real?.totalExpectedOtjh);
   const progressHours = parseHours(real?.progressHours);
-  const status = real?.otjhStatus || 'On track';
+  const status = usesAuditSummary ? '' : real?.otjhStatus || 'On track';
   const rag = RAG(status);
   const plannedPercent = planned > 0 ? Math.round((completed / planned) * 100) : 0;
+  const plannedMappedCount = activityData?.planned_mapped_count || 0;
+  const completedDisplay = usesAuditTotals ? `${completed.toFixed(2)} h` : formatHoursMinutes(completed);
+  const plannedDisplay = usesAuditTotals ? `${planned.toFixed(2)} h` : formatHoursMinutes(planned);
   const targetPercent = target > 0 ? Math.min(100, Math.round((completed / target) * 100)) : 0;
   const planWeek = trainingPlanWeekPosition(real);
   const targetWeekLabel = planWeek?.state === 'upcoming'
@@ -135,6 +248,7 @@ export function OtjhBody({
   // One row per activity, using its highest-value attempt. Repeats remain
   // visible through attemptCount without inflating the completed-hours total.
   const rows = useMemo<LogRow[]>(() => {
+    if (activityData) return combinedSubjectRows(activityData);
     const components = new Map(
       (real?.components ?? [])
         .filter((component) => component.componentId)
@@ -232,7 +346,7 @@ export function OtjhBody({
     }
 
     return Array.from(grouped.values()).sort((a, b) => (b.at || '').localeCompare(a.at || ''));
-  }, [real]);
+  }, [real, activityData]);
 
   const loggedHours = useMemo(() => rows.reduce((total, row) => total + row.hours, 0), [rows]);
 
@@ -244,10 +358,30 @@ export function OtjhBody({
     }
     const withHours = Array.from(map.entries()).filter(([, hrs]) => hrs > 0);
     const max = Math.max(1, ...withHours.map(([, hrs]) => hrs));
-    return withHours
+    const groups = withHours
       .sort((a, b) => b[1] - a[1])
-      .map(([type, hrs]) => ({ type, hrs, pct: Math.round((hrs / max) * 100) }));
-  }, [rows]);
+      .map(([type, hrs]) => {
+        const rawMinutes = hrs * 60;
+        return {
+          type,
+          hrs,
+          pct: Math.round((hrs / max) * 100),
+          displayMinutes: Math.floor(rawMinutes),
+          remainder: rawMinutes - Math.floor(rawMinutes),
+        };
+      });
+
+    // Rounding every category independently can make the visible breakdown a
+    // minute higher or lower than the visible total. Allocate the remaining
+    // rounded minutes by largest remainder so both displays always reconcile.
+    let remaining = Math.round(loggedHours * 60)
+      - groups.reduce((total, group) => total + group.displayMinutes, 0);
+    const allocationOrder = [...groups].sort((a, b) => b.remainder - a.remainder || a.type.localeCompare(b.type));
+    for (let index = 0; remaining > 0 && allocationOrder.length > 0; index += 1, remaining -= 1) {
+      allocationOrder[index % allocationOrder.length].displayMinutes += 1;
+    }
+    return groups;
+  }, [rows, loggedHours]);
 
   return (
     <div className={showHero ? 'p-3 md:p-6 space-y-5 md:space-y-6' : 'space-y-4 md:space-y-5'}>
@@ -259,7 +393,7 @@ export function OtjhBody({
           <div className="relative flex min-h-[110px] flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div className="min-w-0">
               <span className={`inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full ${rag.bg} ${rag.text}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${rag.dot}`} />{status}
+                <span className={`w-1.5 h-1.5 rounded-full ${rag.dot}`} />{usesAuditSummary ? `${recordedSubjectCount} subjects` : status}
               </span>
               <h1 className="mt-3 text-2xl font-heading font-bold tracking-tight !text-white md:text-3xl">Off-the-Job Training Hours</h1>
               <p className="mt-1 max-w-xl text-sm !text-white/65">
@@ -273,15 +407,21 @@ export function OtjhBody({
               <div className="min-w-0 flex-1">
                 <div className="flex items-end justify-between gap-3">
                   <div>
-                    <p className="text-[9px] font-semibold uppercase tracking-wider !text-white/55">Hours completed</p>
-                    <p className="mt-1 text-2xl font-heading font-bold tabular-nums leading-none !text-white">{formatHoursMinutes(completed)}</p>
+                    <p className="text-[9px] font-semibold uppercase tracking-wider !text-white/55">{usesAuditTotals ? 'Actual' : 'Hours completed'}</p>
+                    <p className="mt-1 text-2xl font-heading font-bold tabular-nums leading-none !text-white">{completedDisplay}</p>
                   </div>
-                  <span className="text-xs font-bold text-emerald-300">{plannedPercent}%</span>
+                  {!usesAuditSummary && <span className="text-xs font-bold text-emerald-300">{plannedPercent}%</span>}
                 </div>
-                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/15">
+                {!usesAuditSummary && <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/15">
                   <div className="h-full rounded-full bg-emerald-300 transition-all duration-700" style={{ width: `${Math.min(100, plannedPercent)}%` }} />
-                </div>
-                <p className="mt-1.5 text-[10px] !text-white/55">of {formatHoursMinutes(planned)} programme hours</p>
+                </div>}
+                <p className="mt-1.5 text-[10px] !text-white/55">
+                  {usesAuditTotals
+                    ? `TP Planned: ${plannedDisplay}`
+                    : usesCombinedSubjects
+                      ? `Partial mapped plan: ${formatHoursMinutes(planned)}`
+                      : `of ${formatHoursMinutes(planned)} programme hours`}
+                </p>
               </div>
             </div>
           </div>
@@ -290,13 +430,15 @@ export function OtjhBody({
 
         {/* Stat strip */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 md:gap-4">
-          <StatCard icon="ri-flag-line" iconTint="bg-gradient-to-br from-[#d8c9ff] via-[#8b5cf6] to-[#5420a8] text-white shadow-sm shadow-primary-500/25" label="Completed" value={formatHoursMinutes(completed)} sub={`${plannedPercent}% of plan`} />
-          <StatCard icon="ri-focus-3-line" iconTint="bg-gradient-to-br from-[#ddd6fe] via-[#a78bfa] to-[#6d28d9] text-white shadow-sm shadow-violet-500/25" label="Current target" value={formatHoursMinutes(target)} sub={targetWeekLabel} />
-          <StatCard icon="ri-calendar-todo-line" iconTint="bg-gradient-to-br from-[#e5e7eb] via-[#9ca3af] to-[#4b5563] text-white shadow-sm shadow-foreground-400/25" label="Programme plan" value={formatHoursMinutes(planned)} sub="total planned hours" />
+          <StatCard icon="ri-flag-line" iconTint="bg-gradient-to-br from-[#d8c9ff] via-[#8b5cf6] to-[#5420a8] text-white shadow-sm shadow-primary-500/25" label={usesAuditTotals ? 'Actual' : 'Completed'} value={completedDisplay} sub={usesAuditTotals ? 'same total shown in Audit' : usesCombinedSubjects ? 'recorded across all subjects' : `${plannedPercent}% of plan`} />
+          {usesAuditSummary
+            ? <StatCard icon="ri-stack-line" iconTint="bg-gradient-to-br from-[#ddd6fe] via-[#a78bfa] to-[#6d28d9] text-white shadow-sm shadow-violet-500/25" label="Recorded scope" value={`${recordedSubjectCount} subjects`} sub="historical and current learning" />
+            : <StatCard icon="ri-focus-3-line" iconTint="bg-gradient-to-br from-[#ddd6fe] via-[#a78bfa] to-[#6d28d9] text-white shadow-sm shadow-violet-500/25" label="Current target" value={formatHoursMinutes(target)} sub={targetWeekLabel} />}
+          <StatCard icon="ri-calendar-todo-line" iconTint="bg-gradient-to-br from-[#e5e7eb] via-[#9ca3af] to-[#4b5563] text-white shadow-sm shadow-foreground-400/25" label={usesAuditTotals ? 'TP Planned' : usesCombinedSubjects ? 'Partial mapped plan' : 'Programme plan'} value={plannedDisplay} sub={usesAuditTotals ? 'same programme plan shown in Audit' : usesCombinedSubjects ? `${plannedMappedCount.toLocaleString()} ${plannedMappedCount === 1 ? 'activity carries' : 'activities carry'} planned time` : 'total planned hours'} />
         </div>
 
         {/* Progress vs target */}
-        <section className="rounded-2xl border border-foreground-100 bg-background-50 p-4 shadow-sm md:p-5">
+        {!usesAuditSummary && <section className="rounded-2xl border border-foreground-100 bg-background-50 p-4 shadow-sm md:p-5">
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-sm font-heading font-semibold text-foreground-900">Progress against current target</h2>
             <span className="text-xs text-foreground-400">{formatHoursMinutes(completed)} / {formatHoursMinutes(target)}</span>
@@ -311,7 +453,7 @@ export function OtjhBody({
                 ? `On or ahead of the ${formatHoursMinutes(target)} target for this point in the programme.`
                 : `You're on or ahead of your ${formatHoursMinutes(target)} target — keep it up.`}
           </p>
-        </section>
+        </section>}
 
         {/* Two-column: activity log + type breakdown */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-5 items-start">
@@ -414,7 +556,7 @@ export function OtjhBody({
                   <div key={b.type}>
                     <div className="flex items-center justify-between text-[12px] mb-1">
                       <span className="text-foreground-700">{b.type}</span>
-                      <span className="text-foreground-500 font-semibold tabular-nums">{formatHoursMinutes(b.hrs)}</span>
+                      <span className="text-foreground-500 font-semibold tabular-nums">{formatHoursMinutes(b.displayMinutes / 60)}</span>
                     </div>
                     <div className="h-1.5 w-full rounded-full bg-background-200 overflow-hidden">
                       <div className="h-full rounded-full bg-primary-500" style={{ width: `${b.pct}%` }} />

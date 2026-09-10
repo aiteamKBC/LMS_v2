@@ -34,6 +34,24 @@ afterEach(async () => {
 });
 
 describe('monthly assignment drafts', () => {
+  it('opens historical originals through their resolver and never saves the imported record', async () => {
+    vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({
+      status: 'accepted', submissionOrigin: 'imported_legacy',
+      monthlyAssignment: emptyMonthlyAssignment([], '2025-06'),
+    } as Awaited<ReturnType<typeof loadLearningReflectionSubmission>>);
+    const file = { id: 'legacy:20128:file', filename: 'Original.pdf', status: 'approved', contentType: 'application/pdf',
+      sizeBytes: 0, scanResult: null, sectionRef: 'COMP-1', uploadedAt: null, trainingPlanDetails: null };
+    const resolveEvidenceUrl = vi.fn().mockResolvedValue('https://example.test/original');
+    render(<AssignmentSubmissionWizard {...props} historicalReadOnly evidenceFiles={[file]} resolveEvidenceUrl={resolveEvidenceUrl}
+      renderEvidencePreview={(record, url) => <a href={url}>{record.filename} preview</a>} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Preview' }));
+    expect(screen.getAllByText(/Not captured as a separate field/).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Preview' }).at(-1)!);
+    expect(await screen.findByText('Original.pdf preview')).toHaveAttribute('href', 'https://example.test/original');
+    expect(resolveEvidenceUrl).toHaveBeenCalledWith(file);
+    cleanup();
+    expect(saveLearningReflectionSubmission).not.toHaveBeenCalled();
+  });
   it('renders eight steps and lets an incomplete answer move forward as a draft', async () => {
     render(<AssignmentSubmissionWizard {...props} />);
     await screen.findByText('Step 1 of 8 — Assignment answer');

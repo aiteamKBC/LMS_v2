@@ -421,6 +421,14 @@ def _learner_calendar_record(kind, pk, event_key):
     return record if (str(record.learner_id or "") in learner_ids or _s(record.learner_email).strip().casefold() in emails) else None
 
 
+def _learner_booking_record(kind, pk, event_key):
+    """Resolve a learner-owned booking row that the learner is allowed to move."""
+    record = _learner_calendar_record(kind, pk, event_key)
+    if not record or _s(record.event_type) not in CANCELLABLE_TYPES:
+        return None
+    return record
+
+
 @learner_self_or_staff(kwarg="pk")
 def learner_calendar_event_artifacts(request, kind, pk, event_key):
     if request.method != "GET":
@@ -527,10 +535,6 @@ def _serialize_live_session_event(event):
     }
 
 
-def _same_calendar_identity(left, right):
-    return _s(left).strip().casefold() == _s(right).strip().casefold()
-
-
 @learner_self_or_staff(kwarg="pk")
 def learner_calendar(request, kind, pk):
     if request.method != "GET":
@@ -578,23 +582,27 @@ def learner_calendar(request, kind, pk):
     try:
         events = coaching_events_for_learner(learner, mirror)
 
-        # Live curriculum sessions are generated from the same module/week
-        # schedule used by the coach calendar. Restrict them to this learner's
-        # assigned programme/cohort/group.
-        if mirror is not None and _s(mirror.coach_email):
+        # Live curriculum sessions belong to the learner's placement, not to
+        # their assigned coach. Use the same module/week/holiday planner as the
+        # coach calendar, but scope it directly to programme/cohort/group.
+        if mirror is not None and (_s(getattr(mirror, "group_id", "")) or _s(mirror.group_name)):
             from coach_api.views import collect_live_session_events
 
             live_events = collect_live_session_events(
-                _s(mirror.coach_email),
-                _s(mirror.coach_name) or "Coach",
+                "",
+                "",
+                require_coach_access=False,
+                include_past=True,
+                learner_scope={
+                    "programme": _s(mirror.programme),
+                    "programme_id": _s(getattr(mirror, "programme_id", "")),
+                    "cohort": _s(mirror.cohort),
+                    "cohort_id": _s(getattr(mirror, "cohort_id", "")),
+                    "group": _s(mirror.group_name),
+                    "group_id": _s(getattr(mirror, "group_id", "")),
+                },
             )
             for event in live_events:
-                if not _same_calendar_identity(event.get("group"), mirror.group_name):
-                    continue
-                if _s(mirror.cohort) and not _same_calendar_identity(event.get("cohort"), mirror.cohort):
-                    continue
-                if _s(mirror.programme) and not _same_calendar_identity(event.get("programme"), mirror.programme):
-                    continue
                 events.append(_serialize_live_session_event(event))
 
         # A curriculum event can be reachable through more than one legacy
@@ -1011,11 +1019,7 @@ def learner_calendar_reschedule(request, kind, pk):
         return _error(date_restriction.message, 400)
 
     try:
-        record = CoachCalendarEvent.objects.filter(
-            event_key=event_key,
-            learner_id=pk,
-            event_type__in=CANCELLABLE_TYPES,
-        ).first()
+        record = _learner_booking_record(kind, pk, event_key)
         if record is None:
             return _error("Booking not found.", 404)
         if record.status != CoachCalendarEvent.STATUS_SCHEDULED:
@@ -1102,9 +1106,7 @@ def learner_calendar_cancel(request, kind, pk):
     try:
         # Scoped to this learner's own bookings so one learner cannot cancel
         # another's session by guessing an event key.
-        record = CoachCalendarEvent.objects.filter(
-            event_key=event_key, learner_id=pk, event_type__in=CANCELLABLE_TYPES
-        ).first()
+        record = _learner_booking_record(kind, pk, event_key)
         if record is None:
             return _error("Booking not found.", 404)
         if record.status == CoachCalendarEvent.STATUS_CANCELLED:

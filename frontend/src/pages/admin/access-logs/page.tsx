@@ -112,7 +112,7 @@ export default function AdminAccessLogsPage() {
       ]}
     >
       {/* Filters */}
-      <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4 flex flex-col md:flex-row gap-3 md:items-center">
+      <div className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] p-3 md:p-4 flex flex-col xl:flex-row gap-3 xl:items-center">
         <div className="relative flex-1 min-w-0">
           <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
           <input
@@ -127,7 +127,7 @@ export default function AdminAccessLogsPage() {
         <select
           value={event}
           onChange={e => setFilter('event', e.target.value)}
-          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200"
+          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0 max-w-full"
         >
           <option value="">All events</option>
           {(data?.eventTypes ?? []).map(e => <option key={e} value={e}>{label(e)}</option>)}
@@ -135,7 +135,7 @@ export default function AdminAccessLogsPage() {
         <select
           value={outcome}
           onChange={e => setFilter('outcome', e.target.value)}
-          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200"
+          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0 max-w-full"
         >
           <option value="">Any outcome</option>
           <option value="success">Succeeded</option>
@@ -144,7 +144,7 @@ export default function AdminAccessLogsPage() {
         <select
           value={String(days)}
           onChange={e => { setDays(Number(e.target.value)); setPage(1); }}
-          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200"
+          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0 max-w-full"
         >
           <option value="0">All time</option>
           <option value="1">Last 24 hours</option>
@@ -161,7 +161,7 @@ export default function AdminAccessLogsPage() {
         emptyMessage={term || event || outcome || days ? 'No events match these filters.' : 'No access events recorded yet.'}
         onRetry={reload}
       >
-        <div className="admin-cool-table bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+        <div className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-[13px]">
               <thead>
@@ -179,7 +179,7 @@ export default function AdminAccessLogsPage() {
                   <tr
                     key={entry.id}
                     onClick={() => setExpanded(expanded === entry.id ? null : entry.id)}
-                    className="border-b border-background-100/50 hover:bg-background-100/40 transition-smooth cursor-pointer"
+                    className="border-b border-background-100/50 hover:bg-primary-50/40 transition-smooth cursor-pointer"
                   >
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-2">

@@ -147,11 +147,11 @@ export default function AdminEmailDeliveryPage() {
       )}
 
       {/* Filters */}
-      <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4 flex flex-col md:flex-row gap-3 md:items-center">
+      <div className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] p-3 md:p-4 flex flex-col xl:flex-row gap-3 xl:items-center">
         <select
           value={kind}
           onChange={e => { setKind(e.target.value); setPage(1); }}
-          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200"
+          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0 max-w-full"
         >
           <option value="">Both kinds</option>
           <option value="invitation">Invitations</option>
@@ -165,7 +165,7 @@ export default function AdminEmailDeliveryPage() {
             setParams(next, { replace: true });
             setPage(1);
           }}
-          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200"
+          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0 max-w-full"
         >
           <option value="">Any status</option>
           <option value="delivered">Sent</option>
@@ -182,7 +182,7 @@ export default function AdminEmailDeliveryPage() {
         emptyMessage={status || kind ? 'No emails match these filters.' : 'No invitations or resets have been issued yet.'}
         onRetry={reload}
       >
-        <div className="admin-cool-table bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+        <div className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-[13px]">
               <thead>
@@ -198,7 +198,7 @@ export default function AdminEmailDeliveryPage() {
               </thead>
               <tbody>
                 {rows.map(row => (
-                  <tr key={row.id} className="border-b border-background-100/50 hover:bg-background-100/40 transition-smooth">
+                  <tr key={row.id} className="border-b border-background-100/50 hover:bg-primary-50/40 transition-smooth">
                     <td className="px-4 py-2.5">
                       <p className="font-medium text-foreground-800 truncate max-w-[240px]">{row.email}</p>
                       {row.error && <p className="text-[10px] text-red-600 mt-0.5 truncate max-w-[240px]">{row.error}</p>}
@@ -262,13 +262,13 @@ export default function AdminEmailDeliveryPage() {
 }
 
 function Tile({ label, value, icon, tone, sub }: { label: string; value: number; icon: string; tone: 'ok' | 'bad' | 'neutral'; sub?: string }) {
-  const map = { ok: 'bg-emerald-100 text-emerald-600', bad: 'bg-red-100 text-red-600', neutral: 'bg-primary-100 text-primary-600' };
+  const map = { ok: 'bg-emerald-50/50 text-emerald-700', bad: '!bg-red-50/50 !text-red-700', neutral: 'bg-primary-100/60 text-primary-600' };
   return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4 card-premium">
-      <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${map[tone]} mb-3`}>
+    <div className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] p-3 md:p-4">
+      <span className={`w-10 h-10 rounded-xl flex items-center justify-center !bg-none !shadow-md shadow-primary-900/10 ${map[tone]} mb-3`}>
         <AppIcon className={`${icon} text-sm`}></AppIcon>
       </span>
-      <p className="text-2xl font-heading font-semibold text-foreground-900">{value}</p>
+      <p className="text-2xl font-heading font-semibold tabular-nums text-primary-800">{value}</p>
       <p className="text-[11px] text-foreground-400 mt-1">{label}</p>
       {sub && <p className="text-[10px] text-foreground-300 mt-0.5">{sub}</p>}
     </div>
