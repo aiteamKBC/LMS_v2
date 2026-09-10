@@ -787,10 +787,45 @@ export default function LearnerOverview() {
             </div>
         </SectionReveal>
 
+        <SectionReveal delay={100}>
+          <Panel>
+            <SectionHeader
+              title="My Apprenticeship Journey"
+              icon="ri-road-map-line"
+              actions={
+                <Link to={journeyHref} className="compact-action text-[12px] font-semibold text-primary-600 hover:text-primary-700">
+                  View full journey <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
+                </Link>
+              }
+            />
+            <div className="mt-4">
+              {isRealMode ? (
+                <MiniJourney
+                  real={real}
+                  loading={loading}
+                  loadError={loadError}
+                  progressPercent={programmeProgressPercent}
+                  progressCaption={programmeProgressCaption}
+                  selectedModuleIndex={displayedStation?.index ?? null}
+                  onSelectModule={(index) => setModuleSelection({ learnerKey: learnerSelectionKey, index })}
+                />
+              ) : (
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-[13px] font-semibold text-foreground-900">{p.overallProgress}% complete</span>
+                    <span className="text-[12px] text-foreground-400">Currently on: <span className="font-semibold text-foreground-700">{p.currentModule}</span></span>
+                  </div>
+                  <ProgressBar percent={p.overallProgress} />
+                </div>
+              )}
+            </div>
+          </Panel>
+        </SectionReveal>
+
         {/* ================================================================
             CONTINUE LEARNING + UPCOMING / MY COACH
             ================================================================ */}
-        <SectionReveal delay={100}>
+        <SectionReveal delay={180}>
           <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
             <div className="space-y-4 lg:col-span-2">
               <Panel>
@@ -905,41 +940,6 @@ export default function LearnerOverview() {
               </Panel>
             </div>
           </div>
-        </SectionReveal>
-
-        <SectionReveal delay={180}>
-          <Panel>
-            <SectionHeader
-              title="My Apprenticeship Journey"
-              icon="ri-road-map-line"
-              actions={
-                <Link to={journeyHref} className="compact-action text-[12px] font-semibold text-primary-600 hover:text-primary-700">
-                  View full journey <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
-                </Link>
-              }
-            />
-            <div className="mt-4">
-              {isRealMode ? (
-                <MiniJourney
-                  real={real}
-                  loading={loading}
-                  loadError={loadError}
-                  progressPercent={programmeProgressPercent}
-                  progressCaption={programmeProgressCaption}
-                  selectedModuleIndex={displayedStation?.index ?? null}
-                  onSelectModule={(index) => setModuleSelection({ learnerKey: learnerSelectionKey, index })}
-                />
-              ) : (
-                <div>
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-[13px] font-semibold text-foreground-900">{p.overallProgress}% complete</span>
-                    <span className="text-[12px] text-foreground-400">Currently on: <span className="font-semibold text-foreground-700">{p.currentModule}</span></span>
-                  </div>
-                  <ProgressBar percent={p.overallProgress} />
-                </div>
-              )}
-            </div>
-          </Panel>
         </SectionReveal>
 
       </PageContainer>
