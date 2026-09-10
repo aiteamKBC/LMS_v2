@@ -13,6 +13,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 
 const adminNav = roleNavMap.admin;
 
@@ -58,48 +59,28 @@ export function AdminPage({
 }
 
 /** Presentation shared by the console and the certificate editor. */
-export function AdminPageHeader({ title, description, icon, stats, actions }: {
+export function AdminPageHeader({ title, description, icon, stats, actions, eyebrow = 'Administration' }: {
   title: string;
   description: ReactNode;
   icon: string;
   stats?: HeroStat[];
   actions?: ReactNode;
+  eyebrow?: string;
 }) {
   return (
-    <header className="flex flex-wrap items-center gap-5 rounded-2xl border border-primary-200/60 bg-primary-50/60 p-5 md:p-6">
-      <div className="flex min-w-0 flex-[1_1_20rem] items-start gap-4">
-        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary-100/60 text-primary-600 shadow-md shadow-primary-900/10 ring-1 ring-inset ring-primary-200/60">
-          <AppIcon className={`${icon} h-6 w-6`} aria-hidden="true" />
-        </span>
-        <div className="min-w-0">
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-primary-600">Administration</p>
-          <h1 className="font-heading text-xl font-semibold tracking-tight text-primary-800 md:text-2xl">{title}</h1>
-          <p className="mt-2 max-w-3xl text-[13px] leading-relaxed text-foreground-500">{description}</p>
-        </div>
-      </div>
-      {stats && stats.length > 0 && (
-        <div className="flex max-w-full flex-wrap items-stretch gap-2">
-          {stats.map(s => (
-            <div key={s.label} className="min-w-24 rounded-xl border border-primary-200/40 bg-primary-100/40 px-4 py-3 text-center">
-              <p className="text-2xl font-semibold leading-none tabular-nums text-primary-800">{s.value}</p>
-              <p className="mt-2 text-[11px] font-medium text-foreground-500">{s.label}</p>
-            </div>
-          ))}
-        </div>
-      )}
-      {actions}
-    </header>
+    <WorkspaceHeroBanner heading="h1" title={title} description={description} icon={icon} eyebrow={eyebrow} stats={stats} actions={actions} />
   );
 }
 
 /** Panel that resolves loading / error / empty before rendering its children. */
 export function DataPanel({
-  loading, error, empty, emptyMessage, onRetry, children, className = '', skeleton,
+  loading, error, empty, emptyMessage, emptyIcon = 'ri-inbox-line', onRetry, children, className = '', skeleton,
 }: {
   loading: boolean;
   error: string | null;
   empty?: boolean;
   emptyMessage?: string;
+  emptyIcon?: string;
   onRetry?: () => void;
   children: ReactNode;
   className?: string;
@@ -136,7 +117,7 @@ export function DataPanel({
     return (
       <div className={`rounded-2xl border border-[var(--kbc-border)] bg-[var(--kbc-surface)] p-10 text-center ${className}`}>
         <span className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-primary-100/60 text-primary-600 shadow-md shadow-primary-900/10">
-          <AppIcon className="ri-inbox-line text-lg" aria-hidden="true"></AppIcon>
+          <AppIcon name={emptyIcon} className="text-lg" aria-hidden="true" />
         </span>
         <p className="text-[13px] text-foreground-500">{emptyMessage || 'Nothing to show yet.'}</p>
       </div>

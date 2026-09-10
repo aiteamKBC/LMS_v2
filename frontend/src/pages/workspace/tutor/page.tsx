@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
+import { PageContainer } from '@/components/ui/PageContainer';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
@@ -552,11 +554,11 @@ export default function TutorDashboard() {
         userName={auth.account?.displayName || auth.user?.fullName || 'Administrator'}
         userRole="Administrator"
       >
-        <div className="tutor-workspace-page mx-auto max-w-5xl space-y-5 p-3 md:p-6">
+        <PageContainer className="tutor-workspace-page">
           <TutorDirectoryPicker
             onSelect={selected => setTutorViewAs({ email: selected.email, name: selected.name }, adminEmail)}
           />
-        </div>
+        </PageContainer>
       </WorkspaceShell>
     );
   }
@@ -576,7 +578,13 @@ export default function TutorDashboard() {
       userName={data?.tutor?.name || auth.account?.displayName || 'Tutor'}
       userRole="Tutor"
     >
-      <div className="tutor-workspace-page mx-auto max-w-5xl space-y-5 p-3 md:p-6">
+      <PageContainer className="tutor-workspace-page">
+        <WorkspaceHeroBanner
+          eyebrow="Teaching"
+          title="Tutor workspace"
+          description="Your assigned modules, next teaching session and delivery resources."
+          icon="ri-presentation-line"
+        />
         {/* Whose workspace this is, and the way back to the other cards. The
             modules below are that tutor's own — the admin is reading their
             workspace, not a copy of it. */}
@@ -661,7 +669,7 @@ export default function TutorDashboard() {
             </section>
           </>
         )}
-      </div>
+      </PageContainer>
     </WorkspaceShell>
   );
 }

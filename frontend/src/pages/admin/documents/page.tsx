@@ -117,6 +117,7 @@ export default function AdminDocumentsPage() {
         loading={loading && !data}
         error={error}
         empty={rows.length === 0}
+        emptyIcon="ri-file-text-line"
         emptyMessage={data && !data.available
           ? 'The document index is not provisioned on this deployment.'
           : term || docType || signed ? 'No documents match these filters.' : 'No documents have been generated yet.'}

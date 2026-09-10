@@ -21,6 +21,7 @@ interface HeaderProps {
   onToggleMobileSidebar?: () => void;
   mobileSidebarOpen?: boolean;
   role?: string;
+  workspaceLabel?: string;
 }
 
 /** "Demo Admin" -> "DA". A single word falls back to its first two letters. */
@@ -163,7 +164,7 @@ export function SignOutConfirmModal({
 }
 
 // Notification sound
-export function Header({ pageTitle, pageIcon, pageSubtitle, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, role }: HeaderProps) {
+export function Header({ pageTitle, pageIcon, pageSubtitle, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, role, workspaceLabel }: HeaderProps) {
   const { auth, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   // Profile is the only dropdown left in the header, so the state that used to
@@ -252,8 +253,8 @@ export function Header({ pageTitle, pageIcon, pageSubtitle, onOpenSearch, userNa
 
   return (
     <>
-    {/* Super Admin uses the same inset, rounded frame as its icon rail. */}
-    <header className={`kbc-workspace-topbar workspace-topbar flex shrink-0 items-center gap-2 border-b border-foreground-100 bg-background-50 px-2 sm:px-3 md:gap-3 md:px-4 ${role === 'admin' ? 'mx-2 mb-2 mt-2 h-16 rounded-[20px] lg:ml-0 lg:mr-3 lg:mt-3 lg:gap-4 lg:px-5 [&_.kbc-workspace-switcher-button]:h-10 [&_.kbc-workspace-switcher-button]:gap-2.5 [&_.kbc-workspace-switcher-button]:px-3 [&_.kbc-workspace-switcher-button]:focus-visible:outline-none [&_.kbc-workspace-switcher-button]:focus-visible:ring-2 [&_.kbc-workspace-switcher-button]:focus-visible:ring-white/80' : role === 'curriculum' ? 'h-[70px]' : 'h-14'}`}>
+    {/* Every workspace shares the same frame as its icon rail. */}
+    <header className="kbc-workspace-topbar workspace-topbar mx-2 mb-2 mt-2 flex h-16 shrink-0 items-center gap-2 rounded-[20px] border-b border-foreground-100 bg-background-50 px-2 sm:px-3 md:gap-3 md:px-4 lg:ml-0 lg:mr-3 lg:mt-3 lg:gap-4 lg:px-5 [&_.kbc-workspace-switcher-button]:h-10 [&_.kbc-workspace-switcher-button]:gap-2.5 [&_.kbc-workspace-switcher-button]:px-3 [&_.kbc-workspace-switcher-button]:focus-visible:outline-none [&_.kbc-workspace-switcher-button]:focus-visible:ring-2 [&_.kbc-workspace-switcher-button]:focus-visible:ring-white/80">
       {/* Labelled navigation controls, with the action matching the screen size. */}
       {onToggleMobileSidebar && (
         <div className="shrink-0 lg:hidden">
@@ -272,23 +273,23 @@ export function Header({ pageTitle, pageIcon, pageSubtitle, onOpenSearch, userNa
       {/* Provider logo — below lg only. From lg up the sidebar carries the
           brand, and showing it twice was the duplication that read as clutter. */}
       <Link to="/" className="flex shrink-0 lg:hidden" aria-label="Kent Business College home">
-        <BrandLockup size="compact" />
+        <BrandLockup size="compact" className="max-w-16 sm:max-w-none" />
       </Link>
 
       {/* Where the page says what it is. These props were being passed by every
           page and thrown away, which is what left the bar looking empty. */}
       <div className="hidden min-w-0 flex-1 lg:block">
         <div className="flex min-w-0 items-center gap-3">
-          {role === 'admin' && (
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 text-white ring-1 ring-inset ring-white/10" aria-hidden="true">
-              {pageIcon ?? <AppIcon className="ri-dashboard-line h-5 w-5" />}
-            </span>
-          )}
-          <p className={`kbc-topbar-title truncate font-heading font-bold leading-tight text-foreground-900 ${role === 'admin' ? 'text-[15px] tracking-tight' : 'text-[14px]'}`}>{pageTitle}</p>
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 text-white ring-1 ring-inset ring-white/10" aria-hidden="true">
+            {pageIcon ?? <AppIcon className="ri-dashboard-line h-5 w-5" />}
+          </span>
+          <div className="min-w-0">
+            <p className="kbc-topbar-title truncate font-heading text-[15px] font-bold leading-tight tracking-tight text-foreground-900">{pageTitle}</p>
+            {pageSubtitle && (
+              <p className="kbc-topbar-subtitle mt-1 truncate text-[11.5px] leading-tight text-foreground-400">{pageSubtitle}</p>
+            )}
+          </div>
         </div>
-        {role !== 'admin' && pageSubtitle && (
-          <p className="kbc-topbar-subtitle truncate text-[11.5px] leading-tight text-foreground-400">{pageSubtitle}</p>
-        )}
       </div>
 
       {/* Below lg the title has no room, so the actions simply push right. */}
@@ -302,21 +303,21 @@ export function Header({ pageTitle, pageIcon, pageSubtitle, onOpenSearch, userNa
       <WorkspaceSwitcher />
 
       {/* Profile and its existing account actions. */}
-      <div className={`flex shrink-0 items-center gap-0.5 ${role === 'admin' ? 'lg:border-l lg:border-white/15 lg:pl-4' : ''}`}>
+      <div className="flex shrink-0 items-center gap-0.5 lg:border-l lg:border-white/15 lg:pl-4">
         <div className="relative" ref={profileRef}>
           <button
             onClick={() => { closeOthers('profile'); setProfileOpen(!profileOpen); }}
             aria-haspopup="menu"
             aria-expanded={profileOpen}
             aria-label="Account menu"
-            className={`kbc-topbar-profile flex cursor-pointer items-center p-1 ring-1 transition-smooth sm:pr-2 ${role === 'admin' ? 'min-h-10 gap-2.5 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80' : 'gap-1.5 rounded-full'} ${
+            className={`kbc-topbar-profile flex min-h-10 cursor-pointer items-center gap-2.5 rounded-xl p-1 ring-1 transition-smooth focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 sm:pr-2 ${
               profileOpen
                 ? 'bg-primary-50 ring-primary-200'
                 : 'ring-transparent hover:bg-primary-50/60 hover:ring-primary-100'
             }`}
           >
-            <AccountAvatar initials={initials} className={`${role === 'admin' ? 'h-8 w-8' : 'h-7 w-7'} shadow-sm shadow-primary-900/25`} />
-            {role === 'admin' && <span className="kbc-topbar-user-name hidden max-w-[6rem] truncate text-xs font-semibold text-white xl:inline">Super Admin</span>}
+            <AccountAvatar initials={initials} className="h-8 w-8 shadow-sm shadow-primary-900/25" />
+            <span className="kbc-topbar-user-name hidden max-w-[8rem] truncate text-xs font-semibold text-white xl:inline">{workspaceLabel || roleLabel || displayName}</span>
             <AppIcon
               className={`ri-arrow-down-s-line hidden text-xs text-foreground-400 transition-transform duration-200 sm:inline ${profileOpen ? 'rotate-180' : ''}`}
             ></AppIcon>
@@ -469,7 +470,7 @@ export function Header({ pageTitle, pageIcon, pageSubtitle, onOpenSearch, userNa
       </div>
     </header>
 
-    {role === 'admin' && createPortal(
+    {role && createPortal(
       <button
         type="button"
         onClick={() => { setProfileOpen(false); setSignOutOpen(true); }}

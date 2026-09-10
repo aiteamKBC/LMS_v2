@@ -56,13 +56,15 @@ function overview(failed = 1) {
   };
 }
 
-function renderDashboard() {
-  return render(
+async function renderDashboard() {
+  const view = render(
     <MemoryRouter initialEntries={['/workspace/admin']}>
       <AdminDashboard />
       <CurrentPath />
     </MemoryRouter>,
   );
+  await userEvent.click(screen.getByRole('button', { name: /Platform issues/i }));
+  return view;
 }
 
 function CurrentPath() {
@@ -81,14 +83,14 @@ beforeEach(() => {
 
 describe('attention alerts', () => {
   it('shows the alert, with a way to dismiss it', async () => {
-    renderDashboard();
+    await renderDashboard();
     expect(await screen.findByText(alertText)).toBeTruthy();
     expect(screen.getByLabelText(/^Dismiss: 1 invitation email/)).toBeTruthy();
   });
 
   it('hides the alert when dismissed, and offers it back', async () => {
     const user = userEvent.setup();
-    renderDashboard();
+    await renderDashboard();
     await screen.findByText(alertText);
 
     await user.click(screen.getByLabelText(/^Dismiss: 1 invitation email/));
@@ -99,7 +101,7 @@ describe('attention alerts', () => {
 
   it('does not navigate when dismissing', async () => {
     const user = userEvent.setup();
-    renderDashboard();
+    await renderDashboard();
     await screen.findByText(alertText);
 
     await user.click(screen.getByLabelText(/^Dismiss: 1 invitation email/));
@@ -109,7 +111,7 @@ describe('attention alerts', () => {
 
   it('brings it back on "show them again"', async () => {
     const user = userEvent.setup();
-    renderDashboard();
+    await renderDashboard();
     await screen.findByText(alertText);
     await user.click(screen.getByLabelText(/^Dismiss: 1 invitation email/));
 
@@ -120,44 +122,44 @@ describe('attention alerts', () => {
 
   it('stays dismissed across a reload, for that account', async () => {
     const user = userEvent.setup();
-    const first = renderDashboard();
+    const first = await renderDashboard();
     await screen.findByText(alertText);
     await user.click(screen.getByLabelText(/^Dismiss: 1 invitation email/));
     first.unmount();
 
-    renderDashboard();
+    await renderDashboard();
     await waitFor(() => expect(screen.getByText(/1 alert dismissed/)).toBeTruthy());
     expect(screen.queryByText(alertText)).toBeNull();
   });
 
   it('does not stay dismissed for a different administrator', async () => {
     const user = userEvent.setup();
-    const first = renderDashboard();
+    const first = await renderDashboard();
     await screen.findByText(alertText);
     await user.click(screen.getByLabelText(/^Dismiss: 1 invitation email/));
     first.unmount();
 
     authValue.mockReturnValue({ auth: { isAuthenticated: true, account: { id: 2, displayName: 'Other' }, user: null } });
-    renderDashboard();
+    await renderDashboard();
     expect(await screen.findByText(alertText)).toBeTruthy();
   });
 
   it('comes back when another invitation fails', async () => {
     const user = userEvent.setup();
-    const first = renderDashboard();
+    const first = await renderDashboard();
     await screen.findByText(alertText);
     await user.click(screen.getByLabelText(/^Dismiss: 1 invitation email/));
     first.unmount();
 
     // Same alert, worse: dismissing "1 failed" said nothing about "2 failed".
     fetchPlatformOverview.mockResolvedValue(overview(2));
-    renderDashboard();
+    await renderDashboard();
     expect(await screen.findByText(/2 invitation emails failed to send/)).toBeTruthy();
   });
 
   it('never calls the platform all-clear while a dismissed alert is live', async () => {
     const user = userEvent.setup();
-    renderDashboard();
+    await renderDashboard();
     await screen.findByText(alertText);
     await user.click(screen.getByLabelText(/^Dismiss: 1 invitation email/));
 

@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { RouterProvider } from "@tanstack/react-router";
+import { AuditWorkspaceShell } from './AuditWorkspaceShell';
 import { getRouter } from "./learner-log-pro-hours-test/router";
 import "./learner-log-pro-hours-test/embedded.css";
 
@@ -10,8 +11,10 @@ export default function AuditWorkspaceHoursTest() {
   const router = useMemo(() => getRouter(), []);
 
   return (
-    <div className="learner-log-pro-hours-test">
-      <RouterProvider router={router} />
-    </div>
+    <AuditWorkspaceShell homePath="/workspace/auditor-hours-test" title="Hours test audit">
+      <div className="learner-log-pro-hours-test !min-h-full [&>.min-h-screen]:min-h-full">
+        <RouterProvider router={router} />
+      </div>
+    </AuditWorkspaceShell>
   );
 }
