@@ -63,6 +63,7 @@ describe('learner subject cards', () => {
   });
 
   it('loads on opening Modules and ignores an old learner response after navigation', async () => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
     let resolveAnna!: (value: StudentActivityResponse) => void;
     const fetch = vi.spyOn(api, 'fetchStudentActivity')
       .mockImplementationOnce(() => new Promise((resolve) => { resolveAnna = resolve; }))
@@ -131,6 +132,84 @@ const linkedReal = {
 
 describe('subjects shared with Module Builder', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it('waits for historical data and links before showing any native cards or totals', async () => {
+    let finishActivity!: (value: StudentActivityResponse) => void;
+    let finishMetadata!: (value: typeof linkedMetadata) => void;
+    vi.spyOn(api, 'fetchStudentActivity').mockImplementation(() => new Promise(resolve => { finishActivity = resolve; }));
+    const metadata = vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise(resolve => { finishMetadata = resolve; }));
+    render(<ModulesTab real={linkedReal} loading={false} loadError={null} kind="commercial" id="132" />);
+    expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
+    expect(screen.queryByRole('button', { name: /Leadership/ })).not.toBeInTheDocument();
+    expect(metadata).not.toHaveBeenCalled();
+    await act(async () => finishActivity(data));
+    expect(metadata).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('region', { name: 'Your subjects' })).not.toBeInTheDocument();
+    await act(async () => finishMetadata(linkedMetadata));
+    expect(screen.getAllByRole('button', { name: /Leadership/ })).toHaveLength(1);
+    expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it.each(['legacy', 'native'])('waits for metadata even when only %s data has arrived', async source => {
+    let finish!: (value: typeof linkedMetadata) => void;
+    vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    render(<StudentActivityPanel data={source === 'legacy' ? data : null} real={source === 'native' ? linkedReal : null}
+      kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
+    expect(screen.queryByRole('button', { name: /Leadership/ })).not.toBeInTheDocument();
+    await act(async () => finish(linkedMetadata));
+    expect(screen.getByRole('region', { name: 'Your subjects' })).toBeInTheDocument();
+  });
+
+  it('keeps the complete cards and search while refreshed learner, activities and links arrive', async () => {
+    let finishActivity!: (value: StudentActivityResponse) => void;
+    let finishMetadata!: (value: typeof linkedMetadata) => void;
+    const activity = vi.spyOn(api, 'fetchStudentActivity').mockResolvedValueOnce(data)
+      .mockImplementationOnce(() => new Promise(resolve => { finishActivity = resolve; }));
+    const metadata = vi.spyOn(api, 'subjectRequest').mockResolvedValueOnce(linkedMetadata)
+      .mockImplementationOnce(() => new Promise(resolve => { finishMetadata = resolve; }));
+    const props = { kind: 'commercial' as const, id: '132', loadError: null };
+    const { rerender } = render(<ModulesTab {...props} real={linkedReal} loading={false} />);
+    const card = await screen.findByRole('button', { name: /Leadership/ });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: 'Leadership' } });
+    rerender(<ModulesTab {...props} real={linkedReal} loading />);
+    expect(screen.getByRole('button', { name: /Leadership/ })).toBe(card);
+    const refreshed = { ...linkedReal, components: linkedReal.components.slice(0, 2) };
+    rerender(<ModulesTab {...props} real={refreshed} loading={false} />);
+    expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Leadership/ })).toBe(card);
+    expect(metadata).toHaveBeenCalledOnce();
+    await act(async () => finishActivity(data));
+    expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
+    expect(metadata).toHaveBeenCalledTimes(2);
+    await act(async () => finishMetadata(linkedMetadata));
+    expect(screen.getByText('2 of 2 completed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Leadership/ })).toBe(card);
+    expect(screen.getByRole('textbox', { name: 'Search modules or activities' })).toHaveValue('Leadership');
+    expect(activity).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText('Loading subjects')).not.toBeInTheDocument();
+  });
+
+  it('shows a metadata retry instead of misleading partial cards', async () => {
+    vi.spyOn(api, 'subjectRequest').mockRejectedValueOnce(new Error('Unavailable')).mockResolvedValueOnce(linkedMetadata);
+    render(<StudentActivityPanel data={data} real={null} learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    await screen.findByRole('alert');
+    expect(screen.queryByRole('button', { name: /Leadership/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await screen.findByRole('button', { name: /Leadership/ });
+  });
+
+  it('never keeps a complete previous learner snapshot after switching learner', async () => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValueOnce(linkedMetadata).mockReturnValueOnce(new Promise(() => {}));
+    const props = { data, real: linkedReal, kind: 'commercial', error: null, onRetry: vi.fn() };
+    const { rerender } = render(<StudentActivityPanel {...props} learnerId="132" loading={false} />);
+    await screen.findByRole('button', { name: /Leadership/ });
+    rerender(<StudentActivityPanel {...props} learnerId="133" loading />);
+    expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
+    expect(screen.queryByText('Anna Rundell')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Leadership/ })).not.toBeInTheDocument();
+  });
 
   it('refreshes assignment metadata even when a new module has no component ids yet', async () => {
     const initial = { modules: [], components: [] } as unknown as LearnerDetail;
@@ -251,7 +330,7 @@ describe('subject months, weeks and completion', () => {
   it('starts with months and weeks closed and reveals activities only after both are opened', async () => {
     mockMaterialRequests();
     render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
     expect(screen.getByRole('button', { name: 'Expand February 2026' })).toHaveAttribute('aria-expanded', 'false');
     expect(screen.getByRole('button', { name: 'Expand March 2026' })).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByRole('button', { name: /Week 1/ })).not.toBeInTheDocument();
@@ -351,7 +430,7 @@ describe('subject months, weeks and completion', () => {
     const save = vi.fn().mockRejectedValueOnce(new Error('Could not save')).mockResolvedValueOnce(completeResult);
     const requests = mockMaterialRequests(activityMaterial, save);
     render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
     expandMonthAndWeek();
     fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Submit & complete' }));
@@ -399,7 +478,7 @@ describe('subject months, weeks and completion', () => {
     } };
     const requests = mockMaterialRequests(quiz, async () => ({ score_percent: 80, passed: true, completed: true }));
     render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
     expandMonthAndWeek();
     fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Start quiz' }));
@@ -424,7 +503,7 @@ describe('subject months, weeks and completion', () => {
     } };
     mockMaterialRequests(quiz, async () => ({ score_percent: 0, passed: false, completed: false }));
     render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
-    fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
     expandMonthAndWeek();
     fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Start quiz' }));

@@ -264,14 +264,29 @@ function ActivityRow({ entry, kind, learnerId, onProgress }: { entry: SubjectEnt
   </div>;
 }
 
-export function StudentActivityPanel({ data, loading, error, onRetry, kind, learnerId, real = null, onProgress }: {
+export function StudentActivityPanel({ data: incomingData, loading, error, onRetry, kind, learnerId, real: incomingReal = null, onProgress }: {
   kind?: string; learnerId?: string; real?: LearnerDetail | null; data: StudentActivityResponse | null;
   loading: boolean; error: string | null; onRetry: () => void; onProgress?: () => void;
 }) {
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<string | null>(() => new URLSearchParams(window.location.search).get('subject'));
-  const { metadata, error: imageError, retry: retryMetadata } = useSubjectMetadata(data, real, kind, learnerId, !loading || !!data);
   const identity = `${kind}:${learnerId}`;
+  const { metadata: incomingMetadata, error: imageError, retry: retryMetadata } = useSubjectMetadata(incomingData, incomingReal, kind, learnerId, !loading && !error);
+  const ready = !loading && !error && (!learnerId || !!incomingMetadata);
+  const [snapshot, setSnapshot] = useState<{
+    identity: string; data: StudentActivityResponse | null; real: LearnerDetail | null; metadata?: CoverMetadata | null;
+  } | null>(null);
+  useEffect(() => {
+    if (ready) setSnapshot({ identity, data: incomingData, real: incomingReal, metadata: incomingMetadata });
+  }, [ready, identity, incomingData, incomingReal, incomingMetadata]);
+  // Publish a complete set of cards and totals together. During a refresh keep
+  // the last complete set, including an open activity and its saved progress.
+  // A previous learner's snapshot is never eligible for reuse.
+  const displayed = ready ? { data: incomingData, real: incomingReal, metadata: incomingMetadata }
+    : snapshot?.identity === identity ? snapshot : null;
+  const data = displayed?.data || null;
+  const real = displayed?.real || null;
+  const metadata = displayed?.metadata;
   const [savedProgress, setSavedProgress] = useState<{ identity: string; activities: Record<number, SubjectAttemptResult> }>({ identity, activities: {} });
   const updatedData = useMemo(() => {
     if (!data || savedProgress.identity !== identity) return data;
@@ -292,7 +307,6 @@ export function StudentActivityPanel({ data, loading, error, onRetry, kind, lear
     onProgress?.();
   };
   const subjects = useMemo(() => subjectsFrom(updatedData, real, metadata), [updatedData, real, metadata]);
-  const waitingForLinks = !!learnerId && !!data?.activities.length && !!real?.components?.length && !metadata;
   const covers = { ...data?.covers, ...metadata?.covers };
   const term = search.trim().toLocaleLowerCase();
   const active = subjects.find((subject) => subject.id === selected);
@@ -302,10 +316,9 @@ export function StudentActivityPanel({ data, loading, error, onRetry, kind, lear
   const groups = groupSubjectActivities(active?.activities || []).filter(({ weeks }) => weeks.some(({ activities }) => activities.some((entry) => visibleActivityIds.has(entry.id))));
   const total = subjects.reduce((sum, subject) => sum + subject.activities.length, 0);
   const done = subjects.reduce((sum, subject) => sum + subject.activities.filter((entry) => entry.completed).length, 0);
-  if (waitingForLinks && imageError) return <div role="alert"><p>{imageError}</p><button onClick={retryMetadata} className="font-semibold text-primary-700 underline">Try again</button></div>;
-  if (waitingForLinks || (loading && !data && !subjects.length)) return <div role="status" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">{[0, 1, 2, 3, 4].map((key) => <div key={key} className="h-72 animate-pulse rounded-2xl bg-foreground-100" />)}<span className="sr-only">Loading subjects</span></div>;
-  if (error && !data && !subjects.length) return <div role="alert" className="rounded-2xl border bg-white p-6"><p className="font-semibold">Could not load your subjects</p><p className="mt-2 text-sm text-foreground-500">{error}</p><button onClick={onRetry} className="mt-4 rounded-lg border px-4 py-2 text-sm font-semibold">Try again</button></div>;
-  return <section className="space-y-5" aria-label="Your subjects">
+  if (!displayed && (error || imageError)) return <div role="alert" className="rounded-2xl border bg-white p-6"><p className="font-semibold">Could not load your subjects</p><p className="mt-2 text-sm text-foreground-500">{error || imageError}</p><button onClick={error ? onRetry : retryMetadata} className="mt-4 rounded-lg border px-4 py-2 text-sm font-semibold">Try again</button></div>;
+  if (!displayed) return <div role="status" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">{[0, 1, 2, 3, 4].map((key) => <div key={key} className="h-72 motion-safe:animate-pulse rounded-2xl bg-foreground-100" />)}<span className="sr-only">Loading subjects</span></div>;
+  return <section className="space-y-5" aria-label="Your subjects" aria-busy={!ready && !error && !imageError}>
     <header className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-widest text-primary-600">My learning</p><h2 className="mt-1 text-2xl font-bold text-foreground-900">{active ? active.title : 'Your subjects'}</h2>{data?.learner_name && <p className="mt-1 text-sm text-foreground-500">{data.learner_name}</p>}</div>
       <label className="relative min-w-0 flex-1 sm:max-w-xs"><Search size={17} className="absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400" /><input aria-label="Search modules or activities" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search subjects or activities" className="h-11 w-full rounded-xl border border-foreground-200 bg-white pl-10 pr-3 text-sm outline-none focus:border-primary-400" /></label>
     </header>

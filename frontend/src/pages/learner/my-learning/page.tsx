@@ -25,7 +25,7 @@ import { ProgressBar } from '@/components/ui/ProgressMetric';
 import { toneStyle, statusTone, type StatusTone } from '@/lib/statusTone';
 import { EMPTY_VALUE } from '@/lib/format';
 import { fetchStudentActivity, type StudentActivityResponse } from '@/api/studentActivity';
-import type { LearnerKind } from '@/api/learnerDetail';
+import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 
 const learnerNav = roleNavMap.learner;
 
@@ -444,26 +444,29 @@ export function ModulesTab({ real, loading, loadError, kind, id }: {
   kind?: LearnerKind;
   id?: string;
 }) {
-  const [activityData, setActivityData] = useState<StudentActivityResponse | null>(null);
-  const [activityLoading, setActivityLoading] = useState(true);
-  const [activityError, setActivityError] = useState<string | null>(null);
+  const identity = `${kind}:${id}`;
+  const [activityState, setActivityState] = useState<{
+    identity: string; real: LearnerDetail | null; retry: number;
+    data: StudentActivityResponse | null; error: string | null;
+  } | null>(null);
   const [activityRetry, setActivityRetry] = useState(0);
-  const activityAvailable = !loading && !loadError && !!real?.studentActivityAvailable;
+  const activityAvailable = !!real?.studentActivityAvailable;
+  const current = activityState?.identity === identity && activityState.real === real && activityState.retry === activityRetry ? activityState : null;
+  const activityData = activityState?.identity === identity && activityAvailable ? activityState.data : null;
+  const activityLoading = activityAvailable && !current && !loadError;
 
   useEffect(() => {
-    if (!activityAvailable || !kind || !id) return;
+    if (loading || loadError || !activityAvailable || !kind || !id) return;
     const controller = new AbortController();
-    setActivityLoading(true);
-    setActivityError(null);
     void fetchStudentActivity(kind, id, controller.signal).then((data) => {
-      if (!controller.signal.aborted) setActivityData(data);
+      if (!controller.signal.aborted) setActivityState({ identity, real, retry: activityRetry, data, error: null });
     }).catch((error: unknown) => {
-      if (!controller.signal.aborted) setActivityError(error instanceof Error ? error.message : 'Could not load student activity.');
-    }).finally(() => {
-      if (!controller.signal.aborted) setActivityLoading(false);
+      if (!controller.signal.aborted) setActivityState(previous => ({ identity, real, retry: activityRetry,
+        data: previous?.identity === identity ? previous.data : null,
+        error: error instanceof Error ? error.message : 'Could not load student activity.' }));
     });
     return () => controller.abort();
-  }, [activityAvailable, kind, id, activityRetry]);
+  }, [activityAvailable, loading, loadError, real, kind, id, identity, activityRetry]);
 
   return (
     <div className="space-y-3">
@@ -476,7 +479,7 @@ export function ModulesTab({ real, loading, loadError, kind, id }: {
         kind={kind} learnerId={id} real={real}
         data={activityData}
         loading={loading || (activityAvailable && activityLoading)}
-        error={loadError || activityError}
+        error={loadError || current?.error || null}
         onRetry={() => setActivityRetry((value) => value + 1)}
         onProgress={() => setActivityRetry((value) => value + 1)}
       />
