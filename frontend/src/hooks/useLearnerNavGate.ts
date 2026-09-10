@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react';
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import { fetchLearnerDetail } from '@/api/learnerDetail';
 import { getRememberedLearner, rememberLearner } from './useMyLearner';
-import { navItemsForStatus } from './useOnboardingRedirect';
-import { isLearnerFlowAccount } from '@/lib/learnerFlowAccess';
+import { isDeliveryStatus, navItemsForStatus } from './useOnboardingRedirect';
 
 // ============================================================================
 // Restricts the learner sidebar to match their programme status.
@@ -22,6 +21,14 @@ const statusCache = new Map<string, string>();
 
 const storageKey = (cacheKey: string) => `learner_status:${cacheKey}`;
 const learnerKindKey = (id: string) => `learner_kind:${id}`;
+const historyKey = (key: string) => `learner_previous_learning:${key}`;
+
+function cachedHistory(key: string): boolean | undefined {
+  try {
+    const value = sessionStorage.getItem(historyKey(key));
+    return value === null ? undefined : value === 'true';
+  } catch { return undefined; }
+}
 
 /**
  * Last known status for this learner, from the module cache or — after a
@@ -83,12 +90,13 @@ export function syncLearnerStatus(
   listeners.forEach((notify) => notify());
 }
 
-export function useLearnerNavGate(role: string, navItems: SidebarNavItem[], accountEmail?: string | null): SidebarNavItem[] {
+export function useLearnerNavGate(role: string, navItems: SidebarNavItem[]): SidebarNavItem[] {
   const learner = role === 'learner' ? getRememberedLearner() : null;
   const cacheKey = learner ? `${learner.kind}:${learner.id}` : '';
   const [status, setStatus] = useState<string | null>(
     cacheKey ? cachedStatus(cacheKey) : null,
   );
+  const [history, setHistory] = useState({ key: cacheKey, available: cachedHistory(cacheKey) === true });
 
   // Re-read the cache whenever syncLearnerStatus corrects it, so a learner
   // whose status changed mid-session gets their menu back without a reload.
@@ -111,7 +119,8 @@ export function useLearnerNavGate(role: string, navItems: SidebarNavItem[], acco
       // a commercial learner's restricted menu cannot be bypassed by that old
       // browser value.
       try {
-        if (sessionStorage.getItem(learnerKindKey(learner.id)) === learner.kind) return;
+        if (sessionStorage.getItem(learnerKindKey(learner.id)) === learner.kind
+          && (!isDeliveryStatus(cached) || cachedHistory(cacheKey) !== undefined)) return;
       } catch {
         // Storage is optional; verify from the API below.
       }
@@ -127,12 +136,17 @@ export function useLearnerNavGate(role: string, navItems: SidebarNavItem[], acco
         }
         try {
           sessionStorage.setItem(learnerKindKey(learner.id), detail.learnerType || learner.kind);
+          sessionStorage.setItem(historyKey(cacheKey), String(!!detail.studentActivityAvailable));
         } catch {
           /* storage unavailable */
         }
         const value = detail?.programmeStatus || '';
         rememberStatus(cacheKey, value);
-        if (!cancelled) setStatus(value);
+        if (!cancelled) {
+          setStatus(value);
+          setHistory((previous) => previous.key === cacheKey && previous.available === !!detail.studentActivityAvailable
+            ? previous : { key: cacheKey, available: !!detail.studentActivityAvailable });
+        }
       })
       .catch(() => {
         // A failed lookup must not lock the learner out of their own workspace,
@@ -147,20 +161,11 @@ export function useLearnerNavGate(role: string, navItems: SidebarNavItem[], acco
   }, [learner, cacheKey]);
 
   // Not a learner — the gate doesn't apply.
-  if (role === 'learner' && isLearnerFlowAccount(accountEmail)) {
-    return navItems
-      .filter((item) => item.id === 'learner-overview')
-      .map((item) => ({
-        ...item,
-        label: 'Materials',
-        icon: 'ri-book-open-line',
-        href: '/learner/materials',
-      }));
-  }
   if (!learner) return navItems;
   // First visit of the session, status still in flight. An empty rail for that
   // moment is honest; showing the full menu would be showing the wrong one, and
   // an onboarding learner would see it visibly collapse once the status lands.
   if (status === null) return [];
-  return navItemsForStatus(status, navItems, learner.kind);
+  const hasPreviousLearning = history.key === cacheKey ? history.available : cachedHistory(cacheKey) === true;
+  return navItemsForStatus(status, navItems, learner.kind, hasPreviousLearning);
 }

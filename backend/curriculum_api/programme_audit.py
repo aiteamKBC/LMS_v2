@@ -42,13 +42,6 @@ UI_MATERIAL_TABLES = {
     'ppc-pmo': {'table': 'project_planning_control_project_management_office', 'name': 'Project Planning Control / Project Management Office', 'programme': 'PCP'},
 }
 
-DEMO_PROGRAMME_BY_EMAIL = {
-    'learner-me@learner.local': 'ME',
-    'learner-mm@learner.local': 'MM',
-    'learner-pcp@learner.local': 'PCP',
-}
-
-
 class ProgrammeAuditNotFound(ValueError):
     pass
 
@@ -1136,9 +1129,7 @@ def programme_audit_materials(request):
     programme = clean(request.GET.get('programme')).upper()
     account = getattr(request, 'login_account', None)
     if account is not None and clean(getattr(account, 'role', '')).lower() == 'learner':
-        programme = DEMO_PROGRAMME_BY_EMAIL.get(clean(getattr(account, 'email', '')).lower(), '')
-        if not programme:
-            return JsonResponse({'error': 'Material access is not configured for this learner.'}, status=403)
+        return JsonResponse({'error': 'Programme audit materials are not available to learners.'}, status=403)
     keys = [
         key for key, definition in UI_MATERIAL_TABLES.items()
         if not programme or definition['programme'] == programme
@@ -1152,10 +1143,7 @@ def programme_audit_materials(request):
 def programme_audit_material(request, material_key):
     account = getattr(request, 'login_account', None)
     if account is not None and clean(getattr(account, 'role', '')).lower() == 'learner':
-        programme = DEMO_PROGRAMME_BY_EMAIL.get(clean(getattr(account, 'email', '')).lower(), '')
-        definition = UI_MATERIAL_TABLES.get(clean(material_key))
-        if not programme or not definition or definition['programme'] != programme:
-            return JsonResponse({'error': 'You do not have access to this material.'}, status=403)
+        return JsonResponse({'error': 'Programme audit materials are not available to learners.'}, status=403)
     try:
         material = fetch_ui_material(material_key, include_results=True)
     except ProgrammeAuditNotFound as exc:

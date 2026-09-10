@@ -137,6 +137,9 @@ function freeModuleComponentToCourseComponent(component: FreeProgrammeModule['co
     reflectionQuestion: String(component.settings?.reflectionPrompt ?? ''),
     workplaceEvidenceRequired: component.workplaceEvidenceRequired,
     tutorValidationRequired: component.tutorValidationRequired,
+    // Free-course components have no coach-validation column of their own, and
+    // the flag is on unless an author turned it off.
+    coachValidationRequired: true,
     ksbMappings: [],
     settings: (component.settings || {}) as ModuleComponent['settings'],
   };

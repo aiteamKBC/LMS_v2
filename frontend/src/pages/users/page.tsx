@@ -462,12 +462,12 @@ export default function UsersListPage() {
     navigate(`/users/${row.id}${q(row)}`);
   };
 
-  // The learner's own workspace view. `source` doubles as the :kind segment —
-  // staff and employers have no learner record, so their rows get no link.
+  // Open the learner's subjects directly, including restored learning for
+  // enrolments whose new programme is still at Delivery.
   const openLearnerPage = (row: UserListRow) => {
     if (isNonLearner(row)) return;
     const kind = row.source === 'commercial' ? 'commercial' : 'apprenticeship';
-    navigate(`/workspace/learner/${kind}/${row.id}`);
+    navigate(`/learner/modules/${kind}/${row.id}`);
   };
 
   // Staff/admin rows have no profile page — editing their details in place is

@@ -165,6 +165,7 @@ export default function AbsenceReportForm({
     setSubmitting(true);
     setRequestError('');
     const payload = new FormData();
+    payload.append('sessionId', selectedSession.sessionId);
     payload.append('sessionTitle', selectedSession.title);
     payload.append('sessionDate', selectedSession.dateIso);
     payload.append('sessionTime', selectedSession.startTime);

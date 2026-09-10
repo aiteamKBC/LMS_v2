@@ -1,153 +1,460 @@
-import { useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { roleNavMap } from '@/mocks/navigation';
+import { curriculumNavItems } from '@/mocks/navigation';
+import {
+  fetchCurriculumRecordHistory,
+  fetchCurriculumVersions,
+  type CurriculumFieldChange,
+  type CurriculumRecordHistory,
+  type CurriculumRevision,
+  type CurriculumVersionEntity,
+  type CurriculumVersionIndex,
+} from '@/lib/curriculumApi';
+import { EntityEmptyState, EntityFilterBar, EntityHero, InlineError } from '../shared/entities/ui';
 
-const curriculumNav = roleNavMap.curriculum;
+/**
+ * Curriculum version history.
+ *
+ * Two things are shown, and keeping them apart is the point of the page. A
+ * **named version** is one an author declared — a component whose
+ * `settings.version` moved to 0.2, a module that reached published. A
+ * **revision** is every save that actually changed something underneath. A
+ * version number on its own says nothing about what was in it; the revisions
+ * beneath it are what answer that.
+ *
+ * Nothing here is editable. History is a record of what happened, and a page
+ * that let you alter it would not be one.
+ */
 
-interface VersionRecord {
-  id: string;
-  framework: string;
-  version: string;
-  changeType: 'major' | 'minor' | 'patch';
-  changeSummary: string;
-  author: string;
-  date: string;
-  status: 'current' | 'previous' | 'archived';
-  ksbChanges: { added: number; removed: number; modified: number };
-  reviewStatus: 'approved' | 'pending' | 'rejected';
-  approvedBy: string;
-}
+const ENTITY_LABEL: Record<string, string> = { module: 'Module', week: 'Week', component: 'Component' };
 
-const VERSIONS: VersionRecord[] = [
-  { id: 'ver-01', framework: 'Marketing Executive L4', version: 'v2.1', changeType: 'minor', changeSummary: 'Updated K4 - Digital Marketing Analytics to include AI-driven campaign analysis. Added B7 - Ethical Marketing Practice as new behaviour statement.', author: 'Emma Walsh', date: '5 Jun 2026', status: 'current', ksbChanges: { added: 1, removed: 0, modified: 1 }, reviewStatus: 'approved', approvedBy: 'James Carter' },
-  { id: 'ver-02', framework: 'Marketing Executive L4', version: 'v2.0', changeType: 'major', changeSummary: 'Major restructure following IfATE standard revision ST0738 v1.2. Restructured Knowledge section. Added 3 new skill statements for digital campaign management. Removed deprecated K12.', author: 'Emma Walsh', date: '15 May 2026', status: 'previous', ksbChanges: { added: 3, removed: 1, modified: 4 }, reviewStatus: 'approved', approvedBy: 'James Carter' },
-  { id: 'ver-03', framework: 'Marketing Executive L4', version: 'v1.5', changeType: 'patch', changeSummary: 'Corrected typo in S7 - Campaign Planning. Updated IfATE reference link.', author: 'James Carter', date: '2 Apr 2026', status: 'archived', ksbChanges: { added: 0, removed: 0, modified: 1 }, reviewStatus: 'approved', approvedBy: 'Emma Walsh' },
-  { id: 'ver-04', framework: 'Business Administrator L3', version: 'v3.0', changeType: 'major', changeSummary: 'Full curriculum redesign aligning with new EPA assessment plan for ST0070. Restructured all three KSB domains. Now 37 total KSBs (previously 32).', author: 'James Carter', date: '3 Jun 2026', status: 'current', ksbChanges: { added: 5, removed: 0, modified: 8 }, reviewStatus: 'approved', approvedBy: 'Emma Walsh' },
-  { id: 'ver-05', framework: 'Business Administrator L3', version: 'v2.4', changeType: 'minor', changeSummary: 'Incorporated employer feedback on B3 - Professionalism. Updated evidence requirements for S5 - Document Production.', author: 'Emma Walsh', date: '20 Apr 2026', status: 'previous', ksbChanges: { added: 0, removed: 0, modified: 2 }, reviewStatus: 'approved', approvedBy: 'James Carter' },
-  { id: 'ver-06', framework: 'Data Analyst L4', version: 'v1.5', changeType: 'minor', changeSummary: 'Added K11 - Data Ethics and Governance following Data Protection Act updates. Modified S8 to include Python-based analysis methods.', author: 'Emma Walsh', date: '1 Jun 2026', status: 'current', ksbChanges: { added: 1, removed: 0, modified: 1 }, reviewStatus: 'approved', approvedBy: 'James Carter' },
-  { id: 'ver-07', framework: 'Software Developer L4', version: 'v2.0-draft', changeType: 'major', changeSummary: 'Draft major revision incorporating modern development practices. Added cloud deployment, CI/CD pipeline, and cybersecurity KSBs. Under QA review.', author: 'James Carter', date: '8 Jun 2026', status: 'current', ksbChanges: { added: 4, removed: 1, modified: 6 }, reviewStatus: 'pending', approvedBy: '—' },
-  { id: 'ver-08', framework: 'Accountancy L3', version: 'v2.3', changeType: 'patch', changeSummary: 'Updated regulatory references to 2026 Finance Act. Minor corrections to K3 - Taxation Principles.', author: 'Emma Walsh', date: '28 May 2026', status: 'current', ksbChanges: { added: 0, removed: 0, modified: 1 }, reviewStatus: 'approved', approvedBy: 'James Carter' },
-  { id: 'ver-09', framework: 'Accountancy L3', version: 'v2.2', changeType: 'minor', changeSummary: 'Added software competency statements for cloud accounting platforms. Updated B4 - Ethical Standards.', author: 'James Carter', date: '10 Apr 2026', status: 'previous', ksbChanges: { added: 2, removed: 0, modified: 1 }, reviewStatus: 'approved', approvedBy: 'Emma Walsh' },
-  { id: 'ver-10', framework: 'HR Consultant L5', version: 'v1.0-draft', changeType: 'major', changeSummary: 'Initial draft of HR Consultant L5 framework. All KSBs mapped to ST0477. Awaiting internal QA review before employer consultation.', author: 'Emma Walsh', date: '9 Jun 2026', status: 'current', ksbChanges: { added: 36, removed: 0, modified: 0 }, reviewStatus: 'pending', approvedBy: '—' },
-  { id: 'ver-11', framework: 'Digital Marketer L3', version: 'v2.0', changeType: 'major', changeSummary: 'Major update reflecting social media platform changes and new digital advertising regulations (ASA 2026). Restructured S3 and S4.', author: 'James Carter', date: '20 May 2026', status: 'current', ksbChanges: { added: 2, removed: 1, modified: 5 }, reviewStatus: 'approved', approvedBy: 'Emma Walsh' },
-  { id: 'ver-12', framework: 'Project Manager L4', version: 'v1.8', changeType: 'minor', changeSummary: 'Added agile project management methodologies to K5. Updated risk management KSBs to include digital project risks.', author: 'Emma Walsh', date: '25 May 2026', status: 'current', ksbChanges: { added: 1, removed: 0, modified: 2 }, reviewStatus: 'approved', approvedBy: 'James Carter' },
+const ENTITY_OPTIONS = [
+  { value: 'component', label: 'Components' },
+  { value: 'week', label: 'Weeks' },
+  { value: 'module', label: 'Modules' },
 ];
 
-function versionMarker(version: VersionRecord) {
-  if (version.status === 'archived') return { icon: 'ri-folder-archive-line', title: 'Archived version', tone: 'border-foreground-300 bg-foreground-100 text-foreground-500' };
-  if (version.status === 'previous') return { icon: 'ri-history-line', title: 'Previous version', tone: 'border-background-300 bg-background-50 text-foreground-500' };
-  if (version.reviewStatus === 'pending') return { icon: 'ri-time-line', title: 'Current version pending review', tone: 'border-amber-300 bg-amber-100 text-amber-700' };
-  if (version.reviewStatus === 'rejected') return { icon: 'ri-close-circle-line', title: 'Current version rejected', tone: 'border-red-300 bg-red-100 text-red-700' };
-  return { icon: 'ri-checkbox-circle-line', title: 'Current approved version', tone: 'border-emerald-200 bg-emerald-100 text-emerald-700' };
-}
+const ACTION_STYLE: Record<string, { label: string; icon: string; chip: string; dot: string }> = {
+  created: { label: 'Created', icon: 'ri-add-circle-line', chip: 'border-emerald-200 bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
+  updated: { label: 'Edited', icon: 'ri-edit-2-line', chip: 'border-sky-200 bg-sky-50 text-sky-700', dot: 'bg-sky-500' },
+  archived: { label: 'Archived', icon: 'ri-archive-line', chip: 'border-amber-200 bg-amber-50 text-amber-700', dot: 'bg-amber-500' },
+  restored: { label: 'Restored', icon: 'ri-arrow-go-back-line', chip: 'border-violet-200 bg-violet-50 text-violet-700', dot: 'bg-violet-500' },
+};
 
 export default function CurriculumVersionControl() {
+  const [entityType, setEntityType] = useState('component');
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [frameworkFilter, setFrameworkFilter] = useState<string>('all');
+  const [index, setIndex] = useState<CurriculumVersionIndex | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+  const [selected, setSelected] = useState<CurriculumVersionEntity | null>(null);
 
-  const filtered = VERSIONS.filter(v => {
-    if (search && !v.framework.toLowerCase().includes(search.toLowerCase()) && !v.changeSummary.toLowerCase().includes(search.toLowerCase())) return false;
-    if (statusFilter !== 'all' && v.status !== statusFilter) return false;
-    if (frameworkFilter !== 'all' && v.framework !== frameworkFilter) return false;
-    return true;
-  });
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    fetchCurriculumVersions({ entityType, signal: controller.signal, skipCache: reloadToken > 0 })
+      .then(result => {
+        if (controller.signal.aborted) return;
+        setIndex(result);
+        setError(null);
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        setError(err instanceof Error ? err.message : 'Unable to read curriculum version history');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [entityType, reloadToken]);
 
-  const frameworks = [...new Set(VERSIONS.map(v => v.framework))];
-  const pendingReview = VERSIONS.filter(v => v.reviewStatus === 'pending').length;
-  const currentVersions = VERSIONS.filter(v => v.status === 'current').length;
+  const entities = useMemo(() => {
+    const rows = index?.entities ?? [];
+    const query = search.trim().toLowerCase();
+    if (!query) return rows;
+    return rows.filter(row => row.title.toLowerCase().includes(query) || row.entityId.toLowerCase().includes(query));
+  }, [index?.entities, search]);
 
-  const changeConfig: Record<string, { bg: string; text: string; label: string }> = {
-    major: { bg: 'bg-accent-50', text: 'text-accent-700', label: 'Major' },
-    minor: { bg: 'bg-primary-50', text: 'text-primary-700', label: 'Minor' },
-    patch: { bg: 'bg-foreground-100', text: 'text-foreground-500', label: 'Patch' },
-  };
-
-  const reviewConfig: Record<string, { bg: string; text: string }> = {
-    approved: { bg: 'bg-emerald-100', text: 'text-emerald-700' },
-    pending: { bg: 'bg-amber-100', text: 'text-amber-700' },
-    rejected: { bg: 'bg-red-100', text: 'text-red-700' },
-  };
+  const available = index?.available !== false;
 
   return (
-    <WorkspaceShell role="curriculum" roleLabel={curriculumNav.label} navItems={curriculumNav.items} workspaceLabel={curriculumNav.workspaceLabel} pageTitle="Version Control" pageSubtitle="Track curriculum changes with full version history and rollback capability" userName="Emma Walsh" userRole="Curriculum Lead">
-      <div className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6 space-y-4">
-        <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
-          <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
-          <div className="relative p-5 sm:p-6 flex flex-col sm:flex-row items-start sm:items-center gap-4">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-git-branch-line text-white text-2xl"></AppIcon></span>
-            <div className="flex-1">
-              <h2 className="text-lg font-heading font-bold text-white mb-1">Version Control</h2>
-              <p className="text-[13px] text-white/80 leading-relaxed"><strong>{VERSIONS.length} versions</strong> across {frameworks.length} frameworks · {currentVersions} current · {pendingReview} pending review</p>
-            </div>
-          </div>
-        </div>
+    <WorkspaceShell
+      role="curriculum"
+      roleLabel="Curriculum Designer"
+      navItems={curriculumNavItems}
+      workspaceLabel="Curriculum Studio"
+      pageTitle="Version Control"
+      pageSubtitle="Every version of every record, what was in it, and what changed"
+    >
+      <div className="min-h-full space-y-4 bg-background-100 p-4 sm:p-5 lg:p-6">
+        <EntityHero
+          eyebrow="Curriculum history"
+          title="Version Control"
+          description="A revision is written whenever a save actually changes a record, holding the content as it was saved and a field-by-field diff. Where an author declares a version — a component moving to 0.2, a module published — that revision is named."
+          stats={[
+            { icon: 'ri-git-commit-line', label: 'Revisions', value: index?.totalRevisions ?? 0, detail: 'Changes recorded' },
+            { icon: 'ri-price-tag-3-line', label: 'Named versions', value: index?.totalNamedVersions ?? 0, detail: 'Declared by an author' },
+            { icon: 'ri-file-list-3-line', label: 'Records tracked', value: entities.length, detail: ENTITY_LABEL[entityType] || 'All' },
+            { icon: 'ri-history-line', label: 'Newest change', value: shortDate(entities[0]?.lastChangeAt), detail: entities[0]?.lastActorName || 'No author recorded' },
+          ]}
+          loading={loading}
+          secondaryActions={(
+            <button
+              type="button"
+              onClick={() => setReloadToken(token => token + 1)}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-white/25 bg-white/10 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-white/20"
+            >
+              <AppIcon className="ri-refresh-line text-base"></AppIcon>
+              Refresh
+            </button>
+          )}
+        />
 
-        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 flex-wrap">
-          <div className="relative sm:max-w-xs">
-            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
-            <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search versions..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-300" />
-          </div>
-          <div className="relative">
-            <select value={frameworkFilter} onChange={e => setFrameworkFilter(e.target.value)} className="px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-900 focus:outline-none focus:border-primary-300 cursor-pointer">
-              <option value="all">All Frameworks</option>
-              {frameworks.map(f => <option key={f} value={f}>{f}</option>)}
-            </select>
-          </div>
-          <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
-            {[{ key: 'all', label: 'All' }, { key: 'current', label: 'Current' }, { key: 'previous', label: 'Previous' }, { key: 'archived', label: 'Archived' }].map(f => (
-              <button key={f.key} onClick={() => setStatusFilter(f.key)} className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${statusFilter === f.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>{f.label}</button>
-            ))}
-          </div>
-        </div>
+        {error && <InlineError message={error} onRetry={() => setReloadToken(token => token + 1)} />}
 
-        <div className="relative pl-8 space-y-0 before:absolute before:left-[15px] before:top-0 before:bottom-0 before:w-0.5 before:bg-background-200">
-          {filtered.map((ver, idx) => {
-            const cc = changeConfig[ver.changeType];
-            const rc = reviewConfig[ver.reviewStatus];
-            const marker = versionMarker(ver);
-            const isCurrent = ver.status === 'current';
-            return (
-              <div key={ver.id} className="relative pb-6 last:pb-0">
-                <div title={marker.title} aria-label={marker.title} className={`absolute -left-[30px] top-0 z-10 flex h-8 w-8 items-center justify-center rounded-lg border-2 shadow-sm ${marker.tone}`}>
-                  <AppIcon name={marker.icon} size={16}></AppIcon>
-                </div>
-                <div className={`bg-background-50 rounded-xl border p-4 ml-6 ${isCurrent ? 'border-primary-200/50 bg-primary-50/20' : 'border-foreground-200/60'}`}>
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                    <div className="flex-1">
-                      <div className="flex flex-wrap items-center gap-2 mb-1">
-                        <p className="text-sm font-semibold text-foreground-900">{ver.framework}</p>
-                        <span className="text-[11px] font-mono font-semibold text-foreground-700 bg-background-100 px-2 py-0.5 rounded">{ver.version}</span>
-                        <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${cc.bg} ${cc.text}`}>{cc.label}</span>
-                        {isCurrent && <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">Current</span>}
-                        <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${rc.bg} ${rc.text}`}>{ver.reviewStatus === 'approved' ? 'Approved' : ver.reviewStatus === 'pending' ? 'Pending' : 'Rejected'}</span>
-                      </div>
-                      <p className="text-[12px] text-foreground-500 mb-2">{ver.changeSummary}</p>
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-foreground-400">
-                        <span className="inline-flex items-center gap-1"><AppIcon name="ri-user-line" size={13}></AppIcon> {ver.author}</span>
-                        <span className="inline-flex items-center gap-1"><AppIcon name="ri-calendar-line" size={13}></AppIcon> {ver.date}</span>
-                        {ver.reviewStatus === 'approved' && <span className="inline-flex items-center gap-1"><AppIcon name="ri-check-double-line" size={13} className="text-emerald-500"></AppIcon> Approved by {ver.approvedBy}</span>}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {(ver.ksbChanges.added > 0 || ver.ksbChanges.removed > 0 || ver.ksbChanges.modified > 0) && (
-                        <div className="flex items-center gap-1.5 text-[10px]">
-                          {ver.ksbChanges.added > 0 && <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-semibold">+{ver.ksbChanges.added}</span>}
-                          {ver.ksbChanges.removed > 0 && <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-semibold">-{ver.ksbChanges.removed}</span>}
-                          {ver.ksbChanges.modified > 0 && <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-semibold">~{ver.ksbChanges.modified}</span>}
-                        </div>
-                      )}
-                      <button className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-medium text-foreground-600 transition-smooth hover:bg-background-100 cursor-pointer whitespace-nowrap"><AppIcon name="ri-file-search-line" size={14}></AppIcon> View Diff</button>
-                      {ver.status === 'previous' && <button className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-semibold text-white transition-smooth hover:bg-primary-600 cursor-pointer whitespace-nowrap"><AppIcon name="ri-history-line" size={14}></AppIcon> Rollback</button>}
-                    </div>
-                  </div>
-                </div>
+        {!loading && !available && <HistoryOffPanel reason={index?.reason} />}
+
+        {available && (
+          <>
+            <EntityFilterBar
+              search={search}
+              onSearch={setSearch}
+              placeholder="Search by record name or id..."
+              selects={[{ label: 'Record type', value: entityType, onChange: setEntityType, options: ENTITY_OPTIONS }]}
+              onReset={() => { setSearch(''); setEntityType('component'); }}
+              isDirty={Boolean(search) || entityType !== 'component'}
+              summary={
+                loading
+                  ? 'Reading version history...'
+                  : `${entities.length} ${entities.length === 1 ? 'record' : 'records'} with recorded history`
+              }
+            />
+
+            {loading ? (
+              <div className="space-y-2 rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
+                {Array.from({ length: 8 }).map((_, i) => <div key={i} className="h-12 animate-pulse rounded-xl bg-background-200/70" />)}
               </div>
-            );
-          })}
-        </div>
+            ) : !entities.length ? (
+              <div className="rounded-2xl border border-foreground-200/60 bg-background-50">
+                <EntityEmptyState
+                  icon="ri-git-branch-line"
+                  title="No history yet for these records"
+                  message={
+                    search
+                      ? 'Nothing matches that search. Clear it to see every tracked record.'
+                      : 'History starts at the next save. Records saved before version history was switched on have no earlier revision to compare against, so their first recorded revision is whatever is saved next.'
+                  }
+                />
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50">
+                <div className="grid grid-cols-[minmax(0,2.4fr)_110px_110px_minmax(0,1.2fr)_minmax(0,1fr)_92px] gap-3 border-b border-background-200 px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-foreground-400">
+                  <span>Record</span>
+                  <span className="text-right">Versions</span>
+                  <span className="text-right">Revisions</span>
+                  <span>Last change</span>
+                  <span>By</span>
+                  <span className="text-right">History</span>
+                </div>
+                {entities.map(entity => (
+                  <EntityRow key={`${entity.entityType}:${entity.entityId}`} entity={entity} onOpen={() => setSelected(entity)} />
+                ))}
+              </div>
+            )}
+          </>
+        )}
       </div>
+
+      {selected && <HistoryDrawer entity={selected} onClose={() => setSelected(null)} />}
     </WorkspaceShell>
   );
+}
+
+function HistoryOffPanel({ reason }: { reason?: string }) {
+  return (
+    <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-amber-700">
+          <AppIcon className="ri-database-2-line text-lg"></AppIcon>
+        </span>
+        <div className="min-w-0">
+          <h2 className="font-heading text-base font-bold text-amber-900">Version history is not switched on</h2>
+          <p className="mt-1 max-w-2xl text-[12px] leading-5 text-amber-800">
+            {reason || 'The history tables have not been created, so nothing is being recorded yet.'}
+          </p>
+          <p className="mt-2 max-w-2xl text-[12px] leading-5 text-amber-800">
+            Curriculum saves are unaffected either way — recording is skipped when the tables are absent, never blocked.
+            Once the SQL has run, history begins at the next save.
+          </p>
+          <code className="mt-3 block overflow-x-auto rounded-lg bg-white/70 px-3 py-2 font-mono text-[11px] text-amber-900">
+            backend/sql/2026-09-09_curriculum_record_versions.sql
+          </code>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function EntityRow({ entity, onOpen }: { entity: CurriculumVersionEntity; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="grid w-full grid-cols-[minmax(0,2.4fr)_110px_110px_minmax(0,1.2fr)_minmax(0,1fr)_92px] items-center gap-3 border-b border-background-200/60 px-4 py-2.5 text-left last:border-0 hover:bg-background-100/50"
+    >
+      <span className="min-w-0">
+        <span className="flex items-center gap-2">
+          <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">
+            {ENTITY_LABEL[entity.entityType] || entity.entityType}
+          </span>
+          <span className="min-w-0 truncate text-[12.5px] font-bold text-foreground-900">{entity.title || entity.entityId}</span>
+        </span>
+        <span className="mt-0.5 block truncate font-mono text-[10px] text-foreground-400">{entity.entityId}</span>
+      </span>
+      <span className="text-right">
+        {entity.versionLabel ? (
+          <span className="inline-flex items-center rounded-full border border-primary-200 bg-primary-50 px-2 py-0.5 text-[11px] font-extrabold text-primary-700">
+            v{entity.versionLabel}
+          </span>
+        ) : (
+          <span className="text-[11px] text-foreground-400" title="This record declares no version of its own">
+            {entity.namedVersions || 'None'}
+          </span>
+        )}
+      </span>
+      <span className="text-right text-[12px] font-semibold tabular-nums text-foreground-700">{entity.revisions}</span>
+      <span className="truncate text-[12px] text-foreground-600">{longDate(entity.lastChangeAt)}</span>
+      <span className="truncate text-[12px] text-foreground-500">
+        {entity.lastActorName || <span className="text-foreground-400">Not recorded</span>}
+      </span>
+      <span className="text-right text-[11px] font-bold text-primary-700">
+        View <AppIcon className="ri-arrow-right-s-line"></AppIcon>
+      </span>
+    </button>
+  );
+}
+
+function HistoryDrawer({ entity, onClose }: { entity: CurriculumVersionEntity; onClose: () => void }) {
+  const [history, setHistory] = useState<CurriculumRecordHistory | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [openSnapshot, setOpenSnapshot] = useState<number | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    fetchCurriculumRecordHistory(entity.entityType, entity.entityId, {
+      snapshot: openSnapshot ?? undefined,
+      signal: controller.signal,
+    })
+      .then(result => {
+        if (controller.signal.aborted) return;
+        setHistory(result);
+        setError(null);
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        setError(err instanceof Error ? err.message : 'Unable to read this record’s history');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [entity.entityType, entity.entityId, openSnapshot]);
+
+  // The named version each revision belongs to, so revisions can be shown
+  // grouped under the version they ended up in rather than as a flat list.
+  const versionAtRevision = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const version of history?.versions ?? []) map.set(version.revisionNo, version.versionLabel);
+    return map;
+  }, [history?.versions]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <button type="button" aria-label="Close history" onClick={onClose} className="absolute inset-0 bg-foreground-950/40" />
+      <aside className="relative flex h-full w-full max-w-2xl flex-col bg-background-50 shadow-2xl">
+        <header className="flex items-start justify-between gap-3 border-b border-background-200 p-4 sm:p-5">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-foreground-400">
+              {ENTITY_LABEL[entity.entityType] || entity.entityType} history
+            </p>
+            <h2 className="mt-1 truncate font-heading text-lg font-bold text-foreground-950">
+              {entity.title || entity.entityId}
+            </h2>
+            <p className="mt-1 truncate font-mono text-[10px] text-foreground-400">{entity.entityId}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-background-200 text-foreground-500 hover:bg-background-100"
+          >
+            <AppIcon className="ri-close-line"></AppIcon>
+          </button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto p-4 sm:p-5">
+          {error && <InlineError message={error} />}
+
+          {loading && !history ? (
+            <div className="space-y-2">
+              {Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-16 animate-pulse rounded-xl bg-background-200/70" />)}
+            </div>
+          ) : !history?.revisions.length ? (
+            <EntityEmptyState icon="ri-git-commit-line" title="No revisions" message="Nothing has been recorded for this record yet." />
+          ) : (
+            <>
+              {history.versions.length > 0 && (
+                <section className="mb-5">
+                  <h3 className="mb-2 text-[11px] font-bold uppercase tracking-wider text-foreground-400">Named versions</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {history.versions.map(version => (
+                      <span
+                        key={version.id}
+                        className="inline-flex items-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 py-1.5"
+                        title={`Revision ${version.revisionNo}`}
+                      >
+                        <span className="text-[12px] font-extrabold text-primary-800">v{version.versionLabel}</span>
+                        {version.contentStatus && (
+                          <span className="rounded-full bg-white px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-primary-700">
+                            {version.contentStatus}
+                          </span>
+                        )}
+                        <span className="text-[10px] text-primary-700">{shortDate(version.at)}</span>
+                      </span>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              <h3 className="mb-2 text-[11px] font-bold uppercase tracking-wider text-foreground-400">
+                Revisions ({history.revisions.length})
+              </h3>
+              <ol className="space-y-2">
+                {history.revisions.map(revision => (
+                  <RevisionCard
+                    key={revision.id}
+                    revision={revision}
+                    versionLabel={versionAtRevision.get(revision.revisionNo)}
+                    snapshotOpen={openSnapshot === revision.revisionNo}
+                    snapshot={openSnapshot === revision.revisionNo ? history.snapshot : null}
+                    onToggleSnapshot={() =>
+                      setOpenSnapshot(current => (current === revision.revisionNo ? null : revision.revisionNo))}
+                  />
+                ))}
+              </ol>
+            </>
+          )}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function RevisionCard({ revision, versionLabel, snapshotOpen, snapshot, onToggleSnapshot }: {
+  revision: CurriculumRevision;
+  versionLabel?: string;
+  snapshotOpen: boolean;
+  snapshot: CurriculumRecordHistory['snapshot'];
+  onToggleSnapshot: () => void;
+}) {
+  const style = ACTION_STYLE[revision.action] || ACTION_STYLE.updated;
+  return (
+    <li className="rounded-xl border border-background-200 bg-background-100/40 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[11px] font-bold tabular-nums text-foreground-400">#{revision.revisionNo}</span>
+        <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${style.chip}`}>
+          <AppIcon className={`${style.icon} text-[11px]`}></AppIcon>
+          {style.label}
+        </span>
+        {versionLabel && (
+          <span className="rounded-full border border-primary-200 bg-primary-50 px-2 py-0.5 text-[10px] font-extrabold text-primary-700">
+            v{versionLabel}
+          </span>
+        )}
+        <span className="ml-auto text-[11px] text-foreground-400">{longDate(revision.at)}</span>
+      </div>
+
+      <p className="mt-1.5 flex flex-wrap items-center gap-x-2 text-[11px] text-foreground-500">
+        <span className="font-semibold text-foreground-700">
+          {revision.actorName || <span className="font-normal text-foreground-400">No author recorded</span>}
+        </span>
+        {revision.reason && (
+          <>
+            <span aria-hidden="true">·</span>
+            {/* The handler that ran, not a person. */}
+            <span className="rounded bg-background-100 px-1.5 py-0.5 font-mono text-[10px]">reason: {revision.reason}</span>
+          </>
+        )}
+      </p>
+
+      {revision.changedFields.length > 0 ? (
+        <ul className="mt-2 space-y-1">
+          {revision.changedFields.map(change => <FieldChangeRow key={change.field} change={change} />)}
+        </ul>
+      ) : (
+        <p className="mt-2 text-[11px] text-foreground-400">
+          {revision.revisionNo === 1
+            ? 'First recorded revision — there is no earlier version to compare against.'
+            : 'No field-level detail recorded for this revision.'}
+        </p>
+      )}
+
+      <button
+        type="button"
+        onClick={onToggleSnapshot}
+        className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-bold text-primary-700 hover:underline"
+      >
+        <AppIcon className={snapshotOpen ? 'ri-eye-off-line' : 'ri-eye-line'}></AppIcon>
+        {snapshotOpen ? 'Hide what was in it' : 'See what was in it'}
+      </button>
+
+      {snapshotOpen && (
+        <div className="mt-2 max-h-80 overflow-auto rounded-lg border border-background-200 bg-background-50 p-3">
+          {snapshot ? (
+            <pre className="whitespace-pre-wrap break-words font-mono text-[10.5px] leading-5 text-foreground-600">
+              {JSON.stringify(snapshot.content, null, 2)}
+            </pre>
+          ) : (
+            <p className="text-[11px] text-foreground-400">Loading the stored content…</p>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
+function FieldChangeRow({ change }: { change: CurriculumFieldChange }) {
+  return (
+    <li className="rounded-lg bg-background-50 px-2.5 py-1.5">
+      <p className="font-mono text-[10px] font-bold text-foreground-600">{change.field}</p>
+      <p className="mt-0.5 flex flex-wrap items-start gap-1.5 text-[11px] leading-5">
+        <span className="min-w-0 break-words text-red-700 line-through decoration-red-300">{change.from || '(empty)'}</span>
+        <AppIcon className="ri-arrow-right-line mt-0.5 shrink-0 text-foreground-300"></AppIcon>
+        <span className="min-w-0 break-words text-emerald-700">{change.to || '(empty)'}</span>
+        {change.truncated && <span className="shrink-0 text-[10px] text-foreground-400">(shortened)</span>}
+      </p>
+    </li>
+  );
+}
+
+/** The backend writes UTC; only append the marker when none is present. */
+function parseStamp(value: string | undefined): Date | null {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const zoned = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(text);
+  const parsed = new Date(zoned ? text : `${text}Z`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function shortDate(value: string | undefined): string {
+  const parsed = parseStamp(value);
+  return parsed ? parsed.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '—';
+}
+
+function longDate(value: string | undefined): string {
+  const parsed = parseStamp(value);
+  return parsed
+    ? parsed.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : '—';
 }

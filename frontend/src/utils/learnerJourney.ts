@@ -595,13 +595,18 @@ export function quizAggregateStats(real: LearnerDetail | null): QuizAggregateSta
 /** Group a learner's flat week/components arrays into module -> week -> components. */
 export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[] {
   if (!real) return [];
-  return real.modules.map((moduleTitle) => {
-    const weeksForModule = real.week.filter((w) => w.module === moduleTitle);
+  const groups = [...new Set(real.modules)].flatMap((moduleTitle) => {
+    const weeks = real.week.filter((week) => week.module === moduleTitle);
+    const ids = [...new Set(weeks.map((week) => week.moduleId || ''))];
+    return (ids.length ? ids : ['']).map((moduleId) => ({ moduleTitle, weeks: weeks.filter((week) => (week.moduleId || '') === moduleId) }));
+  });
+  return groups.map(({ moduleTitle, weeks: weeksForModule }) => {
     return {
       module: moduleTitle,
       weeks: weeksForModule.map((w) => {
         const components = real.components
-          .filter((c) => c.module === moduleTitle && c.week === w.week)
+          .filter((c) => c.module === moduleTitle && (w.moduleId ? c.moduleId === w.moduleId : true)
+            && (w.weekId ? c.weekId === w.weekId : c.week === w.week))
           .map((c) => ({
             title: c.component, expectedOtjh: c.expectedOtjh, isQuiz: c.isQuiz, quizMeta: c.quizMeta,
             moduleId: c.moduleId, weekId: c.weekId,

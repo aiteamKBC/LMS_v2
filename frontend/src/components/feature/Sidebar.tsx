@@ -101,6 +101,13 @@ export interface SidebarNavItem {
   matchPaths?: string[];
   badge?: number;
   comingSoon?: boolean;
+  /**
+   * A short status label shown beside the item, such as "Under review".
+   * Distinct from `comingSoon`, which means the destination does not work yet:
+   * a tagged item is one a person can open and use, with a caveat. `comingSoon`
+   * wins when both are set, because "not built" is the stronger claim.
+   */
+  tag?: string;
   statusDot?: 'red' | 'amber' | 'blue' | 'green';
   children?: SidebarNavItem[];
 }
@@ -544,7 +551,7 @@ function RailLink({ item, isActive, compact }: {
         <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={compact ? 16 : 18} />
         {item.badge ? <RailDot className="bg-primary-500" /> : null}
         {item.statusDot && !item.badge ? <RailDot className="bg-red-500" /> : null}
-        {item.comingSoon && !item.badge && !item.statusDot ? <RailDot className="bg-amber-400" /> : null}
+        {(item.comingSoon || item.tag) && !item.badge && !item.statusDot ? <RailDot className="bg-amber-400" /> : null}
       </span>
       <RailLabel compact={compact}>{item.label}</RailLabel>
     </Link>
@@ -585,7 +592,7 @@ function RailGroup({ item, isActive, isDropdownOpen, onOpen, onClose }: {
         <span className="kbc-sidebar-icon-well relative flex h-5 w-5 items-center justify-center">
           <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} />
           {item.badge ? <RailDot className="bg-primary-500" /> : null}
-          {item.comingSoon && !item.badge ? <RailDot className="bg-amber-400" /> : null}
+          {(item.comingSoon || item.tag) && !item.badge ? <RailDot className="bg-amber-400" /> : null}
         </span>
         <RailLabel>{item.label}</RailLabel>
       </button>
@@ -619,7 +626,7 @@ function ExpandedLink({ item, isActive, onNavigate, compact }: {
       </span>
       <span className="min-w-0 flex-1 truncate">{item.label}</span>
       <span className="flex shrink-0 items-center gap-1.5">
-        {item.comingSoon && <SoonBadge />}
+        {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
         {item.statusDot && <StatusDot color={item.statusDot} />}
         {item.badge ? <NavBadge count={item.badge} /> : null}
       </span>
@@ -655,7 +662,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate }: {
         </span>
         <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
         <span className="flex shrink-0 items-center gap-1.5">
-          {item.comingSoon && <SoonBadge />}
+          {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
           {item.badge ? <NavBadge count={item.badge} /> : null}
           {isExpanded
             ? <ChevronUp size={14} strokeWidth={1.8} className="text-foreground-300" aria-hidden="true" />
@@ -680,7 +687,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate }: {
                 </span>
                 <span className="min-w-0 flex-1 truncate">{child.label}</span>
                 <span className="flex shrink-0 items-center gap-1.5">
-                  {child.comingSoon && <SoonBadge />}
+                  {child.comingSoon ? <SoonBadge /> : child.tag ? <NavTag label={child.tag} /> : null}
                   {child.statusDot && <StatusDot color={child.statusDot} />}
                   {child.badge ? <NavBadge count={child.badge} /> : null}
                 </span>
@@ -761,7 +768,7 @@ function useFlyout({ item, isActive, isOpen, onOpen, onClose, anchorRef }: {
     >
       <div className="flex items-center justify-between px-2 pb-1.5 pt-1">
         <span className="truncate font-heading text-[12px] font-bold text-foreground-800">{item.label}</span>
-        {item.comingSoon && <SoonBadge />}
+        {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
       </div>
 
       {needsSearch && (
@@ -794,7 +801,7 @@ function useFlyout({ item, isActive, isOpen, onOpen, onClose, anchorRef }: {
                 <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={15} />
               </span>
               <span className="min-w-0 flex-1 truncate">{child.label}</span>
-              {child.comingSoon && <SoonBadge />}
+              {child.comingSoon ? <SoonBadge /> : child.tag ? <NavTag label={child.tag} /> : null}
               {child.statusDot && <StatusDot color={child.statusDot} />}
               {child.badge ? <NavBadge count={child.badge} /> : null}
               <ChevronRight size={13} strokeWidth={1.8} className="shrink-0 text-foreground-200" aria-hidden="true" />
@@ -819,12 +826,16 @@ function useFlyout({ item, isActive, isOpen, onOpen, onClose, anchorRef }: {
    BADGES
    ═══════════════════════════════════════════════════════ */
 
-function SoonBadge() {
+function NavTag({ label }: { label: string }) {
   return (
-    <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-700">
-      Soon
+    <span className="shrink-0 whitespace-nowrap rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-700">
+      {label}
     </span>
   );
+}
+
+function SoonBadge() {
+  return <NavTag label="Soon" />;
 }
 
 function NavBadge({ count }: { count: number }) {

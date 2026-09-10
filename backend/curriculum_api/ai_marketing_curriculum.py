@@ -56,9 +56,7 @@ def _legacy_attachment_id(*values):
 
 
 def _learner_source_url(*values):
-    source = _first(*values)
-    attachment_id = _legacy_attachment_id(*values)
-    return f"/learner_api/media/legacy-attachment/{attachment_id}/" if attachment_id else source
+    return _first(*values)
 
 
 def _audit_rows():

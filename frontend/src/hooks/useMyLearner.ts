@@ -1,4 +1,5 @@
 import type { LearnerKind } from '@/api/learnerDetail';
+import { useLocation } from 'react-router-dom';
 
 /**
  * Bridges the (mock) logged-in auth user to a REAL DB learner (Active_users /
@@ -84,6 +85,19 @@ export function rememberLearner(kind: string | undefined, id: string | undefined
 
 /** Resolve which real learner the bare /learner/* self-view pages should load. */
 export function useMyLearner(): { kind: LearnerKind; id: string } {
+  return readOverride() || MY_LEARNER;
+}
+
+/** Preserve an explicit learner when following a Training Plan booking link. */
+export function useLinkedLearner(): { kind: LearnerKind; id: string } {
+  const { search } = useLocation();
+  const params = new URLSearchParams(search);
+  const kind = params.get('kind');
+  const id = params.get('learner');
+  if (isKind(kind) && id && /^[1-9]\d*$/.test(id)) {
+    rememberLearner(kind, id);
+    return { kind, id };
+  }
   return readOverride() || MY_LEARNER;
 }
 
