@@ -148,6 +148,9 @@ class StudentActivityTests(SimpleTestCase):
 
     def setUp(self):
         self.factory = RequestFactory()
+        live_patch = patch('learner_api.student_activity._live_subjects', return_value=None)
+        live_patch.start()
+        self.addCleanup(live_patch.stop)
         state_patch = patch('learner_api.student_activity.subject_store.state', return_value={
             'ready': False, 'progress': [], 'history': [], 'covers': {},
         })
@@ -236,6 +239,37 @@ class StudentActivityTests(SimpleTestCase):
 
 
 class SubjectScheduleTests(SimpleTestCase):
+    def test_intro_sections_ignore_upload_dates_in_all_sources(self):
+        for heading in ('Introduction', ' introduction ', 'INTRODUCTION', 'Intro',
+                        'Introduction&nbsp;', '\u200bIntroduction\u200b', 'Module Introduction',
+                        'Course Introduction', 'Introduction Session', 'First Day: Introduction'):
+            for source in ('section_title', 'builder_section_title'):
+                with self.subTest(heading=heading, source=source):
+                    schedule = activity_schedule('Safeguarding', '2025-05-27', '2025-05-27T10:58:57Z',
+                                                 section_title=heading, section_source=source)
+                    self.assertEqual(schedule['date_source'], 'introduction')
+                    self.assertIsNone(schedule['date'])
+                    self.assertIsNone(schedule['week_start'])
+                    self.assertIsNone(schedule['week_end'])
+                    self.assertEqual(schedule['source_date'], '2025-05-27')
+
+    def test_intro_word_does_not_move_dated_lectures_or_named_lessons(self):
+        for heading, expected in (('Introduction 15/10/2025', '2025-10-15'),
+                                  ('L1: Introduction to Strategic Marketing 21/10/2025', '2025-10-21'),
+                                  ('L1: Introduction 2/5/2025', '2025-05-02'),
+                                  ('Introduction to Marketing', '2025-05-27'),
+                                  ('Lecture 1 - Intro', '2025-05-27')):
+            with self.subTest(heading=heading):
+                schedule = activity_schedule('Reading', '2025-05-27', section_title=heading)
+                self.assertEqual(schedule['date'], expected)
+                self.assertNotEqual(schedule['date_source'], 'introduction')
+        # An activity explicitly scheduled inside Introduction still keeps its date.
+        self.assertEqual(activity_schedule('Workshop 22/10/2025', '2025-05-27',
+                                          section_title='Introduction')['date'], '2025-10-22')
+        # A lesson called Introduction is not enough to classify its parent section.
+        self.assertEqual(activity_schedule('Introduction', '2025-05-27',
+                                          section_title='Week 3')['month'], '2025-05')
+
     def test_activity_title_precedes_lecture_date_and_creation_date(self):
         schedule = activity_schedule('Workshop 20/02/26', '2026-03-06', '2026-03-03', section_title='Lecture 06/03/26')
         self.assertEqual(schedule['date'], '2026-02-20')
@@ -315,7 +349,8 @@ class SubjectBuilderCoverTests(SimpleTestCase):
         })
         sql, params = cursor.execute.call_args.args
         self.assertEqual(params, [['MOD-1']])
-        self.assertIn("c.id=material->>'component_id'", sql)
+        self.assertIn("material->>'component_id' AS component_id", sql)
+        self.assertIn('c.id=e.component_id', sql)
         self.assertIn('c.module_catalogue_id=e.module_catalogue_id', sql)
         self.assertIn('c.deleted_at IS NULL', sql)
         cursor.reset_mock()

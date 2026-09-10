@@ -65,7 +65,7 @@ export interface SubjectAttemptResult {
 export interface SubjectMaterial {
   title: string;
   reading_html: string;
-  media: { kind: string; url: string; title: string; can_embed?: boolean }[];
+  media: { kind: string; url: string; title: string; can_embed?: boolean; file_name?: string }[];
   quiz: SubjectQuiz | null;
   has_reading: boolean;
   available: boolean;

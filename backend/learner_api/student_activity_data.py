@@ -8,7 +8,7 @@ from html import unescape
 
 from audit_api.last_audit_ledger_views import _activity_payload, _dict_rows
 from audit_api.last_audit_ledger_views import _json_list
-from .subject_dates import activity_schedule
+from .subject_dates import activity_schedule, apply_section_placement
 
 
 CURRICULUM_SCHEDULE_SQL = '''
@@ -58,8 +58,10 @@ def read_curriculum_schedules(cursor, group_ids):
             continue
         section = {
             'section_id': row.get('builder_week_id') or row.get('section_id'),
+            'source_section_id': row.get('section_id'),
             'section_title': unescape(str((row.get('builder_week_title') if row.get('builder_week_id') else row.get('section_title')) or '')),
             'section_source': 'builder_section_title' if row.get('builder_week_id') else 'section_title',
+            'exported_section_title': unescape(str(row.get('section_title') or '')),
             'original_created_at': row.get('original_created_at'),
         }
         matches = candidates.setdefault(key, [])
@@ -88,6 +90,7 @@ def apply_curriculum_schedules(items, schedules):
             section_title=context.get('section_title'), section_source=context['section_source'],
         ))
         item['section_title'] = context.get('section_title') or ''
+        apply_section_placement(item, item['group_id'], context.get('source_section_id'))
     return items
 
 
