@@ -14,8 +14,7 @@ from learner_api.student_activity import (
     combined_recorded_otjh, _direct_progress_otjh,
 )
 from learner_api.student_activity_data import (
-    read_student_activity, summarize_activities, read_student_material,
-    read_curriculum_schedules, apply_curriculum_schedules,
+    read_audit_hour_totals, read_student_activity, summarize_activities, read_student_material,
 )
 from learner_api.subject_dates import activity_schedule
 from learner_api.student_activity_access import student_activity_available
@@ -115,6 +114,18 @@ class StudentActivityTests(SimpleTestCase):
         self.assertEqual(payload["planned_total"], 0)
         self.assertEqual(payload["mapped_count"], 1)
 
+    def test_audit_hours_match_the_learner_search_sources(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (867, 1171.3406)
+
+        totals = read_audit_hour_totals(cursor, 92)
+
+        self.assertEqual(totals, {
+            'audit_tp_planned': 867.0,
+            'audit_lms_actual': 1171.34,
+        })
+        self.assertEqual(cursor.execute.call_args.args[1], [92])
+
     def test_shared_activity_uses_available_hours_even_if_first_placement_is_unmapped(self):
         missing = {"source_activity_id": 10, "group_id": 1, "completed": False,
                    "hours_mapped": False, "actual": 0,
@@ -156,6 +167,12 @@ class StudentActivityTests(SimpleTestCase):
         direct_progress_patch = patch('learner_api.student_activity._direct_progress_records', return_value=[])
         direct_progress_patch.start()
         self.addCleanup(direct_progress_patch.stop)
+        audit_hours_patch = patch('learner_api.student_activity.read_audit_hour_totals', return_value={
+            'audit_tp_planned': 867.0,
+            'audit_lms_actual': 1171.34,
+        })
+        audit_hours_patch.start()
+        self.addCleanup(audit_hours_patch.stop)
 
     def test_recorded_otjh_adds_new_platform_time_to_all_historical_subjects(self):
         self.assertEqual(combined_recorded_otjh(285.4038, 1.5), 286.9038)
@@ -198,7 +215,7 @@ class StudentActivityTests(SimpleTestCase):
 
     @patch("login.permissions._auth_gate_enabled", return_value=True)
     @patch("login.permissions.authenticate_request")
-    def test_activity_response_uses_lecture_dates_and_preserves_saved_progress(self, authenticate, _gate):
+    def test_activity_response_preserves_saved_progress(self, authenticate, _gate):
         authenticate.return_value = SimpleNamespace(role='learner', subject_id=132)
         model = MagicMock()
         model.all_learners.only.return_value.get.return_value = SimpleNamespace(aptem_id='4176', email='')
@@ -206,23 +223,20 @@ class StudentActivityTests(SimpleTestCase):
                     completed=False, hours_mapped=False, planned_hours_mapped=False, actual=0, planned=0,
                     quiz_score=None, quiz_maximum_score=None, **activity_schedule('Workshop', '2026-05-14'))
         payload = {'learner_name': 'Anna', **summarize_activities([item])}
-        schedules = {(1, 10): {'section_title': 'Workshop 1/06/2026', 'section_source': 'section_title'}}
         saved = {'ready': True, 'covers': {}, 'history': [], 'progress': [{'activity_id': 10, 'completed': True, 'best_percent': 90, 'attempt_count': 1}]}
         with patch('learner_api.student_activity.SOURCE_MODELS', {'commercial': model}), \
              patch('learner_api.student_activity._connection'), \
-             patch('learner_api.student_activity.connections') as connections, \
              patch('learner_api.student_activity.read_student_activity', return_value=payload), \
-             patch('learner_api.student_activity.subject_store.state', return_value=saved), \
-             patch('learner_api.student_activity.read_curriculum_schedules', return_value=schedules) as reader:
+             patch('learner_api.student_activity.subject_store.state', return_value=saved):
             response = student_activity(self.factory.get('/'), kind='commercial', pk=132)
         self.assertEqual(response.status_code, 200)
-        reader.assert_called_once_with(connections.__getitem__.return_value.cursor.return_value.__enter__.return_value, [1])
         result = json.loads(response.content)
-        self.assertEqual(result['activities'][0]['date'], '2026-06-01')
-        self.assertEqual(result['activities'][0]['section_title'], 'Workshop 1/06/2026')
+        self.assertEqual(result['activities'][0]['date'], '2026-05-14')
         self.assertEqual(result['activities'][0]['best_score_percent'], 90)
         self.assertEqual(result['count'], 1)
         self.assertEqual(result['completed_count'], 1)
+        self.assertEqual(result['audit_tp_planned'], 867.0)
+        self.assertEqual(result['audit_lms_actual'], 1171.34)
         self.assertIsNone(result['recorded_otjh_total'])
         self.assertEqual(result['direct_otjh_activities'], [])
 
@@ -283,63 +297,7 @@ class SubjectScheduleTests(SimpleTestCase):
             self.assertEqual(schedule['date_source'], source)
             self.assertTrue(schedule['date_needs_review'])
 
-    def test_curriculum_lookup_uses_ids_and_current_builder_week(self):
-        row = dict(course_id=1, activity_id='10', section_id='s1', section_title='Old lecture 01/02/26',
-                   original_created_at='2026-04-10', builder_week_id='w1', builder_week_title='Moved lecture 06/03/26')
-        cursor = MagicMock()
-        with patch('learner_api.student_activity_data._dict_rows', return_value=[row, row, {**row, 'course_id': 2, 'builder_week_id': None}]):
-            schedules = read_curriculum_schedules(cursor, [2, 1, 2])
-        self.assertEqual(cursor.execute.call_args.args[1], [[1, 2]])
-        self.assertEqual(schedules[(1, 10)]['section_source'], 'builder_section_title')
-        self.assertEqual(schedules[(1, 10)]['section_title'], 'Moved lecture 06/03/26')
-        self.assertEqual(schedules[(2, 10)]['section_title'], 'Old lecture 01/02/26')
-
-    def test_conflicting_section_placements_are_not_resolved_by_first_match(self):
-        row = dict(course_id=1, activity_id='10', section_id='s1', section_title='Lecture 06/03/26')
-        with patch('learner_api.student_activity_data._dict_rows', return_value=[row, {**row, 'section_id': 's2', 'section_title': 'Lecture 13/03/26'}]):
-            schedules = read_curriculum_schedules(MagicMock(), [1])
-        self.assertEqual(schedules[(1, 10)], {'ambiguous': True})
-        item = dict(group_id=1, source_activity_id=10, activity='Lesson', source_date='2026-04-10')
-        apply_curriculum_schedules([item], schedules)
-        self.assertIsNone(item['date'])
-        self.assertTrue(item['date_needs_review'])
-
-    def test_scheduling_never_changes_completion_or_matches_a_different_course(self):
-        base = dict(source_activity_id=10, activity='Workshop', source_date='2026-05-14', completed=True, best_score_percent=90)
-        items = [{**base, 'group_id': 1}, {**base, 'group_id': 2}]
-        apply_curriculum_schedules(items, {(1, 10): {
-            'section_title': 'Workshop 1/06/2026', 'section_source': 'section_title', 'original_created_at': '2026-05-24',
-        }})
-        self.assertEqual(items[0]['month'], '2026-06')
-        self.assertEqual(items[1], {**base, 'group_id': 2})
-        self.assertEqual(len(items), 2)
-        self.assertTrue(all(item['completed'] and item['best_score_percent'] == 90 for item in items))
-
-
 class SubjectBuilderCoverTests(SimpleTestCase):
-    def test_component_lineage_requires_an_unambiguous_original_id(self):
-        from .student_activity import _current_activity_sources
-        cursor = MagicMock()
-        cursor.fetchall.return_value = [
-            ('COMP-1', 'MOD-1', 42, '10'),
-            ('COMP-1', 'MOD-1', 42, '10'),
-            ('COMP-2', 'MOD-1', 42, '11'),
-            ('COMP-2', 'MOD-1', 42, '12'),
-            ('COMP-3', 'MOD-1', 42, None),
-        ]
-        self.assertEqual(_current_activity_sources(cursor, ['MOD-1']), {
-            'COMP-1': {'module_id': 'MOD-1', 'group_id': 42, 'activity_id': 10},
-        })
-        sql, params = cursor.execute.call_args.args
-        self.assertEqual(params, [['MOD-1']])
-        self.assertIn("material->>'component_id' AS component_id", sql)
-        self.assertIn('c.id=e.component_id', sql)
-        self.assertIn('c.module_catalogue_id=e.module_catalogue_id', sql)
-        self.assertIn('c.deleted_at IS NULL', sql)
-        cursor.reset_mock()
-        self.assertEqual(_current_activity_sources(cursor, []), {})
-        cursor.execute.assert_not_called()
-
     @patch('login.permissions.authenticate_request')
     def test_builder_image_save_only_updates_artwork(self, authenticate):
         from curriculum_api.views import curriculum_module_detail
@@ -392,38 +350,26 @@ class SubjectBuilderCoverTests(SimpleTestCase):
         self.assertEqual(_builder_cover_url('/curriculum_api/curriculum/uploads/image.webp'),
                          '/curriculum_api/curriculum/uploads/image.webp')
 
-    def test_legacy_and_current_cards_use_the_same_builder_cover_by_id(self):
+    def test_current_card_uses_its_builder_cover_by_id(self):
         cursor = MagicMock()
         image = 'data:image/webp;base64,aGVsbG8='
-        cursor.fetchall.return_value = [('MOD-1', 'Impact &amp; Planning', 'mba-legacy', '42', image)]
+        cursor.fetchall.return_value = [('MOD-1', 'Impact &amp; Planning', image)]
         covers, links = _builder_subject_metadata(cursor, ['legacy:42', 'current:MOD-1', 'legacy:99'])
-        self.assertEqual(covers, {'legacy:42': image, 'current:MOD-1': image})
-        self.assertEqual(links['legacy:42'], {'id': 'MOD-1', 'title': 'Impact & Planning'})
-        self.assertEqual(cursor.execute.call_args.args[1], [['MOD-1'], ['42', '99']])
+        self.assertEqual(covers, {'current:MOD-1': image})
+        self.assertEqual(links['current:MOD-1'], {'id': 'MOD-1', 'title': 'Impact & Planning'})
+        self.assertEqual(cursor.execute.call_args.args[1], [['MOD-1']])
         self.assertNotIn('legacy:99', links)
-
-    def test_ambiguous_legacy_source_is_not_guessed_by_title(self):
-        cursor = MagicMock()
-        cursor.fetchall.return_value = [
-            ('MOD-1', 'Same title', 'mba-legacy', '42', 'https://example.com/one.png'),
-            ('MOD-2', 'Same title', 'mba-legacy', '42', 'https://example.com/two.png'),
-        ]
-        covers, links = _builder_subject_metadata(cursor, ['legacy:42', 'current:MOD-1'])
-        self.assertNotIn('legacy:42', covers)
-        self.assertNotIn('legacy:42', links)
-        self.assertEqual(covers['current:MOD-1'], 'https://example.com/one.png')
 
     @patch('login.permissions._auth_gate_enabled', return_value=True)
     @patch('login.permissions.authenticate_request')
-    def test_builder_clearing_cover_overrides_old_subject_image(self, authenticate, _gate):
+    def test_current_builder_cover_does_not_override_historical_subject_image(self, authenticate, _gate):
         authenticate.return_value = SimpleNamespace(role='staff')
         cursor = MagicMock()
         cursor.fetchall.side_effect = [
             [('legacy:42', '/media/curriculum_components/old.webp')],
             [('MOD-1', 'Renamed subject')],
-            [('MOD-1', 'Renamed subject', 'mba-legacy', '42', '')],
+            [('MOD-1', 'Renamed subject', '')],
             [('COMP-1', 'Lesson', '2026-08-22', 'Lecture 06/03/26')],
-            [('COMP-1', 'MOD-1', 42, '10')],
         ]
         with patch('learner_api.student_activity.connections') as connections, \
              patch('learner_api.student_activity.subject_store.ready', return_value=True), \
@@ -432,13 +378,14 @@ class SubjectBuilderCoverTests(SimpleTestCase):
             response = subject_covers(RequestFactory().get('/?refs=legacy:42'), pk=132)
         self.assertEqual(response.status_code, 200)
         payload = json.loads(response.content)
-        self.assertEqual(payload['covers'], {'legacy:42': '', 'current:MOD-1': ''})
+        self.assertEqual(payload['covers'], {'legacy:42': 'https://example.com/old.webp', 'current:MOD-1': ''})
         self.assertFalse(payload['can_manage'])
-        self.assertEqual(payload['builder_subjects']['legacy:42']['id'], 'MOD-1')
+        self.assertNotIn('legacy:42', payload['builder_subjects'])
+        self.assertEqual(payload['builder_subjects']['current:MOD-1']['id'], 'MOD-1')
         self.assertEqual(payload['activity_dates']['COMP-1']['date'], '2026-03-06')
         self.assertEqual(payload['activity_dates']['COMP-1']['date_source'], 'builder_section_title')
         self.assertFalse(payload['activity_dates']['COMP-1']['date_needs_review'])
-        self.assertEqual(payload['activity_sources']['COMP-1'], {'module_id': 'MOD-1', 'group_id': 42, 'activity_id': 10})
+        self.assertNotIn('activity_sources', payload)
 
     @patch('login.permissions.authenticate_request')
     def test_old_upload_route_cannot_write_a_separate_cover(self, authenticate):

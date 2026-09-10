@@ -206,26 +206,36 @@ export function OtjhBody({
   showHero = true,
   audience = 'learner',
   activityData = null,
+  subjectCount,
 }: {
   real: LearnerDetail | null;
   loading: boolean;
   showHero?: boolean;
   audience?: 'learner' | 'observer';
   activityData?: StudentActivityResponse | null;
+  /** Historical and current subjects from the unified learning summary. */
+  subjectCount?: number | null;
 }) {
   const isObserver = audience === 'observer';
   const who = isObserver ? (real?.name?.split(' ')[0] || 'This learner') : 'You';
   const usesCombinedSubjects = activityData?.recorded_otjh_total != null;
-  const completed = usesCombinedSubjects ? activityData.recorded_otjh_total! : parseHours(real?.completedHours);
-  const target = usesCombinedSubjects ? 0 : parseHours(real?.targetHours);
-  const planned = usesCombinedSubjects && activityData.planned_total != null
-    ? activityData.planned_total
-    : parseHours(real?.plannedHours ?? real?.totalExpectedOtjh);
+  const usesAuditTotals = activityData?.audit_lms_actual != null || activityData?.audit_tp_planned != null;
+  const usesAuditSummary = usesAuditTotals || usesCombinedSubjects;
+  const recordedSubjectCount = subjectCount ?? activityData?.module_count ?? 0;
+  const completed = activityData?.audit_lms_actual
+    ?? activityData?.recorded_otjh_total
+    ?? parseHours(real?.completedHours);
+  const target = usesAuditSummary ? 0 : parseHours(real?.targetHours);
+  const planned = activityData?.audit_tp_planned
+    ?? activityData?.planned_total
+    ?? parseHours(real?.plannedHours ?? real?.totalExpectedOtjh);
   const progressHours = parseHours(real?.progressHours);
-  const status = usesCombinedSubjects ? '' : real?.otjhStatus || 'On track';
+  const status = usesAuditSummary ? '' : real?.otjhStatus || 'On track';
   const rag = RAG(status);
   const plannedPercent = planned > 0 ? Math.round((completed / planned) * 100) : 0;
   const plannedMappedCount = activityData?.planned_mapped_count || 0;
+  const completedDisplay = usesAuditTotals ? `${completed.toFixed(2)} h` : formatHoursMinutes(completed);
+  const plannedDisplay = usesAuditTotals ? `${planned.toFixed(2)} h` : formatHoursMinutes(planned);
   const targetPercent = target > 0 ? Math.min(100, Math.round((completed / target) * 100)) : 0;
   const planWeek = trainingPlanWeekPosition(real);
   const targetWeekLabel = planWeek?.state === 'upcoming'
@@ -383,7 +393,7 @@ export function OtjhBody({
           <div className="relative flex min-h-[110px] flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div className="min-w-0">
               <span className={`inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full ${rag.bg} ${rag.text}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${rag.dot}`} />{usesCombinedSubjects ? `${activityData?.module_count || 0} subjects` : status}
+                <span className={`w-1.5 h-1.5 rounded-full ${rag.dot}`} />{usesAuditSummary ? `${recordedSubjectCount} subjects` : status}
               </span>
               <h1 className="mt-3 text-2xl font-heading font-bold tracking-tight !text-white md:text-3xl">Off-the-Job Training Hours</h1>
               <p className="mt-1 max-w-xl text-sm !text-white/65">
@@ -397,16 +407,20 @@ export function OtjhBody({
               <div className="min-w-0 flex-1">
                 <div className="flex items-end justify-between gap-3">
                   <div>
-                    <p className="text-[9px] font-semibold uppercase tracking-wider !text-white/55">Hours completed</p>
-                    <p className="mt-1 text-2xl font-heading font-bold tabular-nums leading-none !text-white">{formatHoursMinutes(completed)}</p>
+                    <p className="text-[9px] font-semibold uppercase tracking-wider !text-white/55">{usesAuditTotals ? 'Actual' : 'Hours completed'}</p>
+                    <p className="mt-1 text-2xl font-heading font-bold tabular-nums leading-none !text-white">{completedDisplay}</p>
                   </div>
-                  {!usesCombinedSubjects && <span className="text-xs font-bold text-emerald-300">{plannedPercent}%</span>}
+                  {!usesAuditSummary && <span className="text-xs font-bold text-emerald-300">{plannedPercent}%</span>}
                 </div>
-                {!usesCombinedSubjects && <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/15">
+                {!usesAuditSummary && <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/15">
                   <div className="h-full rounded-full bg-emerald-300 transition-all duration-700" style={{ width: `${Math.min(100, plannedPercent)}%` }} />
                 </div>}
                 <p className="mt-1.5 text-[10px] !text-white/55">
-                  {usesCombinedSubjects ? `Partial mapped plan: ${formatHoursMinutes(planned)}` : `of ${formatHoursMinutes(planned)} programme hours`}
+                  {usesAuditTotals
+                    ? `TP Planned: ${plannedDisplay}`
+                    : usesCombinedSubjects
+                      ? `Partial mapped plan: ${formatHoursMinutes(planned)}`
+                      : `of ${formatHoursMinutes(planned)} programme hours`}
                 </p>
               </div>
             </div>
@@ -416,15 +430,15 @@ export function OtjhBody({
 
         {/* Stat strip */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 md:gap-4">
-          <StatCard icon="ri-flag-line" iconTint="bg-gradient-to-br from-[#d8c9ff] via-[#8b5cf6] to-[#5420a8] text-white shadow-sm shadow-primary-500/25" label="Completed" value={formatHoursMinutes(completed)} sub={usesCombinedSubjects ? 'recorded across all subjects' : `${plannedPercent}% of plan`} />
-          {usesCombinedSubjects
-            ? <StatCard icon="ri-stack-line" iconTint="bg-gradient-to-br from-[#ddd6fe] via-[#a78bfa] to-[#6d28d9] text-white shadow-sm shadow-violet-500/25" label="Recorded scope" value={`${activityData?.module_count || 0} subjects`} sub="historical and current learning" />
+          <StatCard icon="ri-flag-line" iconTint="bg-gradient-to-br from-[#d8c9ff] via-[#8b5cf6] to-[#5420a8] text-white shadow-sm shadow-primary-500/25" label={usesAuditTotals ? 'Actual' : 'Completed'} value={completedDisplay} sub={usesAuditTotals ? 'same total shown in Audit' : usesCombinedSubjects ? 'recorded across all subjects' : `${plannedPercent}% of plan`} />
+          {usesAuditSummary
+            ? <StatCard icon="ri-stack-line" iconTint="bg-gradient-to-br from-[#ddd6fe] via-[#a78bfa] to-[#6d28d9] text-white shadow-sm shadow-violet-500/25" label="Recorded scope" value={`${recordedSubjectCount} subjects`} sub="historical and current learning" />
             : <StatCard icon="ri-focus-3-line" iconTint="bg-gradient-to-br from-[#ddd6fe] via-[#a78bfa] to-[#6d28d9] text-white shadow-sm shadow-violet-500/25" label="Current target" value={formatHoursMinutes(target)} sub={targetWeekLabel} />}
-          <StatCard icon="ri-calendar-todo-line" iconTint="bg-gradient-to-br from-[#e5e7eb] via-[#9ca3af] to-[#4b5563] text-white shadow-sm shadow-foreground-400/25" label={usesCombinedSubjects ? 'Partial mapped plan' : 'Programme plan'} value={formatHoursMinutes(planned)} sub={usesCombinedSubjects ? `${plannedMappedCount.toLocaleString()} ${plannedMappedCount === 1 ? 'activity carries' : 'activities carry'} planned time` : 'total planned hours'} />
+          <StatCard icon="ri-calendar-todo-line" iconTint="bg-gradient-to-br from-[#e5e7eb] via-[#9ca3af] to-[#4b5563] text-white shadow-sm shadow-foreground-400/25" label={usesAuditTotals ? 'TP Planned' : usesCombinedSubjects ? 'Partial mapped plan' : 'Programme plan'} value={plannedDisplay} sub={usesAuditTotals ? 'same programme plan shown in Audit' : usesCombinedSubjects ? `${plannedMappedCount.toLocaleString()} ${plannedMappedCount === 1 ? 'activity carries' : 'activities carry'} planned time` : 'total planned hours'} />
         </div>
 
         {/* Progress vs target */}
-        {!usesCombinedSubjects && <section className="rounded-2xl border border-foreground-100 bg-background-50 p-4 shadow-sm md:p-5">
+        {!usesAuditSummary && <section className="rounded-2xl border border-foreground-100 bg-background-50 p-4 shadow-sm md:p-5">
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-sm font-heading font-semibold text-foreground-900">Progress against current target</h2>
             <span className="text-xs text-foreground-400">{formatHoursMinutes(completed)} / {formatHoursMinutes(target)}</span>

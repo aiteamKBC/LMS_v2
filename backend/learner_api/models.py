@@ -674,9 +674,8 @@ class LearnerProfile(models.Model):
         records = []
         # Prefetched, not lazily walked: the body below touches ksb_links twice,
         # quiz_answers once, and two relations under each answer, so plain
-        # `.all()` issues a query per entry per relation. A learner with 1,392
-        # entries — an MBA import, but any long-running learner gets there —
-        # spent over four minutes here on several thousand round trips, on the
+        # `.all()` issues a query per entry per relation. Large learner histories
+        # can otherwise spend minutes on thousands of round trips in the
         # property every progress and OTJH screen reads.
         entries = self.progress_entries.prefetch_related(
             "ksb_links",

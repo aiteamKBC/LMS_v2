@@ -57,6 +57,9 @@ export interface StudentActivityResponse {
   /** Historical subject time plus later direct-platform OTJH, across every
    * subject represented in the learner's combined workspace. */
   recorded_otjh_total?: number | null;
+  /** Whole-programme figures from the same sources as Audit learner search. */
+  audit_tp_planned?: number | null;
+  audit_lms_actual?: number | null;
   direct_otjh_activities?: DirectOtjhActivity[];
   planned_total: number | null;
   mapped_count: number;

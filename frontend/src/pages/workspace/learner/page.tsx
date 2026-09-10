@@ -495,15 +495,19 @@ export default function LearnerOverview() {
     ? 'neutral'
     : attendancePercent >= ATTENDANCE_EXPECTED_RATE ? 'positive' : attendancePercent >= ATTENDANCE_MINIMUM_RATE ? 'caution' : 'critical';
 
-  const combinedRecordedOtjh = unifiedLearning.data?.recorded_otjh_total;
-  const otjPercent = isRealMode
-    ? usesCombinedProgress ? null : (otj.targetHours > 0 ? otj.targetPercent : otj.percent)
-    : Math.round((p.otjhCompleted / p.otjhTarget) * 100);
-  const otjValue = isRealMode
-    ? usesCombinedProgress
-      ? combinedRecordedOtjh != null ? formatHoursMinutes(combinedRecordedOtjh) : EMPTY_VALUE
-      : formatHoursMinutes(otj.activities > 0 ? otj.completedHours : otj.plannedHours)
-    : formatHoursMinutes(p.otjhCompleted);
+  const auditTpPlanned = unifiedLearning.data?.audit_tp_planned;
+  const auditLmsActual = unifiedLearning.data?.audit_lms_actual;
+  const otjPlannedHours = isRealMode
+    ? usesCombinedProgress ? auditTpPlanned : otj.plannedHours
+    : p.otjhTarget;
+  const otjActualHours = isRealMode
+    ? usesCombinedProgress ? auditLmsActual : otj.completedHours
+    : p.otjhCompleted;
+  const otjPercent = otjActualHours != null && otjPlannedHours != null && otjPlannedHours > 0
+    ? Math.round((otjActualHours / otjPlannedHours) * 100)
+    : null;
+  const otjPlannedValue = otjPlannedHours != null ? `${otjPlannedHours.toFixed(2)} h` : EMPTY_VALUE;
+  const otjActualValue = otjActualHours != null ? `${otjActualHours.toFixed(2)} h` : EMPTY_VALUE;
   const otjCaption = isRealMode
     ? usesCombinedProgress
       ? unifiedLearning.summary
@@ -843,7 +847,19 @@ export default function LearnerOverview() {
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               <ProgressStat href={programmeProgressHref} icon="ri-road-map-line" label="Programme Progress" value={programmeProgressValue} percent={programmeProgressPercent} caption={programmeProgressCaption} tone="brand" />
               <ProgressStat href="/learner/attendance" icon="ri-calendar-check-line" label="Attendance" value={attendanceValue} percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
-              <ProgressStat href={otjhProgressHref} icon="ri-time-line" label="OTJ Hours" value={otjValue} percent={otjPercent} caption={otjCaption} tone={otjTone} />
+              <ProgressStat
+                href={otjhProgressHref}
+                icon="ri-time-line"
+                label="OTJ Hours"
+                value={otjActualValue}
+                values={[
+                  { label: 'TP Planned', value: otjPlannedValue },
+                  { label: 'Actual', value: otjActualValue },
+                ]}
+                percent={otjPercent}
+                caption={otjCaption}
+                tone={otjTone}
+              />
               <ProgressStat href={ksbProgressHref} icon="ri-bar-chart-2-line" label="KSB Progress" value={ksbValue} percent={ksbPercent} caption={ksbCaption} tone={ksbTone} />
             </div>
         </SectionReveal>
@@ -1094,8 +1110,15 @@ function DashboardNextStep({ icon, label, href, tone = 'brand', iconTone }: { ic
 }
 
 /** A compact linked stat card: label, value, progress bar, caption. The four "quick health check" cards. */
-function ProgressStat({ href, icon, label, value, percent, caption, tone = 'neutral' }: {
-  href: string; icon: string; label: string; value: string; percent: number | null; caption?: string; tone?: StatusTone;
+function ProgressStat({ href, icon, label, value, values, percent, caption, tone = 'neutral' }: {
+  href: string;
+  icon: string;
+  label: string;
+  value: string;
+  values?: readonly { label: string; value: string }[];
+  percent: number | null;
+  caption?: string;
+  tone?: StatusTone;
 }) {
   const style = toneStyle(tone);
   return (
@@ -1109,7 +1132,18 @@ function ProgressStat({ href, icon, label, value, percent, caption, tone = 'neut
       </span>
       <div className="min-w-0 flex-1">
         <p className="truncate text-[12px] font-semibold text-foreground-500">{label}</p>
-        <p className={`mt-1 text-[22px] font-semibold leading-none tabular-nums ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{value}</p>
+        {values ? (
+          <div className="mt-1 grid grid-cols-2 gap-x-3">
+            {values.map((item, index) => (
+              <div key={item.label} className={index > 0 ? 'border-l border-foreground-200 pl-3' : ''}>
+                <p className="truncate text-[9px] font-semibold uppercase tracking-[0.05em] text-foreground-400">{item.label}</p>
+                <p className={`mt-1 truncate text-[17px] font-semibold leading-none tabular-nums ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{item.value}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className={`mt-1 text-[22px] font-semibold leading-none tabular-nums ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{value}</p>
+        )}
         <ProgressBar percent={percent} tone={percent == null || tone === 'neutral' ? undefined : style.dot} className="mt-2.5" />
         {caption ? <p className="mt-1.5 truncate text-[12px] leading-snug text-foreground-500">{caption}</p> : null}
       </div>

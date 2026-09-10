@@ -21,12 +21,12 @@ describe('OTJ attempt contribution', () => {
     })).toBe(1.5);
   });
 
-  it('uses the bounded duration for imported MBA progress', () => {
+  it('uses the verified duration when automatic tracking has no reported time', () => {
     expect(otjhContributionHours({
       reportedTime: '',
       claimedSeconds: 26418634,
       verifiedSeconds: 7200,
-      timeTrackingSource: 'mba_import_bounded_by_authored_otjh',
+      timeTrackingSource: 'historical_import',
     })).toBe(2);
   });
 

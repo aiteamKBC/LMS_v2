@@ -71,7 +71,7 @@ function renderBody(overrides: Partial<LearnerDetail>) {
 }
 
 describe('OTJ hours activity log', () => {
-  it('uses the same all-subject total and contributing rows as the learner workspace', () => {
+  it('uses Audit totals in the summary while keeping the activity log traceable', () => {
     const activityData = {
       learner_name: 'Test Learner',
       count: 3,
@@ -81,6 +81,8 @@ describe('OTJ hours activity log', () => {
       actual_total: 1,
       recorded_otjh_total: 1.5,
       planned_total: 2,
+      audit_tp_planned: 867,
+      audit_lms_actual: 1171.34,
       mapped_count: 2,
       planned_mapped_count: 1,
       activities: [
@@ -109,18 +111,21 @@ describe('OTJ hours activity log', () => {
       }],
     } as StudentActivityResponse;
 
-    render(<OtjhBody real={detail()} loading={false} showHero={false} activityData={activityData} />);
+    render(<OtjhBody real={detail()} loading={false} showHero={false} activityData={activityData} subjectCount={49} />);
 
+    expect(screen.getAllByText('Actual').length).toBeGreaterThan(0);
+    expect(screen.getByText('1171.34 h')).toBeTruthy();
+    expect(screen.getByText('TP Planned')).toBeTruthy();
+    expect(screen.getByText('867.00 h')).toBeTruthy();
     expect(screen.getAllByText('1h 30m').length).toBeGreaterThan(0);
     expect(screen.getByText(/2 entries · 1h 30m/)).toBeTruthy();
-    expect(screen.getByText('38 subjects')).toBeTruthy();
+    expect(screen.getByText('49 subjects')).toBeTruthy();
     expect(screen.getByText('Historical & reading')).toBeTruthy();
     expect(screen.queryByText('Historical &amp; reading')).toBeNull();
     expect(screen.queryByText('Mapped but zero time')).toBeNull();
     expect(screen.getByText(/May 21, 2026/)).toBeTruthy();
     expect(screen.queryByText(/Sep 30, 2026/)).toBeNull();
-    expect(screen.getByText('Partial mapped plan')).toBeTruthy();
-    expect(screen.getByText('1 activity carries planned time')).toBeTruthy();
+    expect(screen.queryByText('Partial mapped plan')).toBeNull();
     expect(screen.queryByText('Current target')).toBeNull();
     expect(screen.queryByText('Progress against current target')).toBeNull();
   });
