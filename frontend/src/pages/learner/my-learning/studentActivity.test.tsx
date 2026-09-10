@@ -133,6 +133,26 @@ const linkedReal = {
 describe('subjects shared with Module Builder', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it.each(['132', '245'])('places a newly built Introduction before months for learner %s', async learnerId => {
+    const real = { modules: ['New module'], components: [
+      { componentId: 'NEW-INTRO', moduleId: 'NEW-MODULE', module: 'New module', component: 'Welcome', type: 'reading', week: 'Introduction' },
+      { componentId: 'NEW-LESSON', moduleId: 'NEW-MODULE', module: 'New module', component: 'First lecture', type: 'reading', week: 'Week 1' },
+    ], componentProgress: [{ componentId: 'NEW-INTRO', kind: 'component' }] } as LearnerDetail;
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {}, current_subjects: [{ id: 'NEW-MODULE', title: 'New module' }],
+      activity_dates: { 'NEW-INTRO': { date: null, month: 'undated', date_source: 'introduction' },
+        'NEW-LESSON': { date: '2026-10-21', month: '2026-10', week_start: '2026-10-19', week_end: '2026-10-25' } } });
+    render(<StudentActivityPanel data={null} real={real} kind="commercial" learnerId={learnerId} loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /New module/ }));
+    const headings = screen.getAllByRole('heading', { level: 3 });
+    expect(headings[0]).toHaveTextContent('Introduction');
+    expect(headings[1]).toHaveTextContent('October 2026');
+    expect(screen.getByRole('progressbar', { name: 'Introduction progress' })).toHaveAttribute('aria-valuenow', '100');
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '50');
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Introduction' }));
+    expect(screen.getByText('Welcome')).toBeVisible();
+    expect(screen.getByText('First lecture')).not.toBeVisible();
+  });
+
   it('waits for historical data and links before showing any native cards or totals', async () => {
     let finishActivity!: (value: StudentActivityResponse) => void;
     let finishMetadata!: (value: typeof linkedMetadata) => void;
@@ -402,6 +422,81 @@ describe('subject months, weeks and completion', () => {
     expect(screen.getByRole('progressbar', { name: 'February 2026 progress' })).toHaveAttribute('aria-valuenow', '50');
     expect(screen.getByRole('progressbar', { name: /^February 2026, Week 1/ })).toHaveAttribute('aria-valuenow', '50');
     expect(screen.getByText(/1 ÷ 3 × 100 = 33.33%/)).toBeInTheDocument();
+  });
+
+  it('puts extras last, excludes them from August and updates their progress after Submit', async () => {
+    const requests = mockMaterialRequests();
+    const courseData: StudentActivityResponse = { ...data, activities: [
+      ...Array.from({ length: 52 }, (_, index) => ({ ...data.activities[0],
+        activity_id: `la:1:${100 + index}`, source_activity_id: 100 + index,
+        date: '2026-08-25', month: '2026-08', week_start: '2026-08-24', week_end: '2026-08-30' })),
+      { ...data.activities[1], activity_id: 'la:1:200', source_activity_id: 200,
+        activity: 'September lesson', date: '2026-09-01', month: '2026-09' },
+      { ...data.activities[1], activity_id: 'la:1:201', source_activity_id: 201, activity: 'Undated lesson' },
+      ...Array.from({ length: 10 }, (_, index) => ({ ...data.activities[1],
+        activity_id: `la:1:${300 + index}`, source_activity_id: 300 + index,
+        activity: index === 0 ? 'Extra reading' : `Extra activity ${index + 1}`,
+        month: 'undated', date_source: 'extra_activity', source_date: '2026-08-24',
+        section_title: 'Lec13: Financial Accounts' })),
+    ] };
+    render(<StudentActivityPanel data={courseData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
+    const headings = screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent);
+    expect(headings.at(-1)).toContain('Extra activities');
+    expect(screen.getByRole('button', { name: 'Expand Extra activities' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('progressbar', { name: 'August 2026 progress' })).toHaveAttribute('aria-valuenow', '100');
+    expect(screen.getByRole('progressbar', { name: 'Extra activities progress' })).toHaveAttribute('aria-valuenow', '0');
+    expect(screen.getByText('52 of 64 completed')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Extra activities' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Extra activities, Lec13: Financial Accounts' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: 'Extra reading' } });
+    expect(screen.getByRole('progressbar', { name: 'Extra activities progress' })).toHaveAttribute('aria-valuenow', '0');
+    fireEvent.click(screen.getByRole('button', { name: 'Extra reading' }));
+    expect(await screen.findByTitle('Reflection frame')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Submit & complete' }));
+    await screen.findByText('Activity completed.');
+    expect(screen.getByRole('progressbar', { name: 'Extra activities progress' })).toHaveAttribute('aria-valuenow', '10');
+    expect(screen.getByRole('progressbar', { name: 'Extra activities, Lec13: Financial Accounts progress' })).toHaveAttribute('aria-valuenow', '10');
+    expect(screen.getByText('53 of 64 completed')).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: '' } });
+    expect(screen.getByRole('progressbar', { name: 'August 2026 progress' })).toHaveAttribute('aria-valuenow', '100');
+    expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(2);
+  });
+
+  it('shows Introduction before months without an upload date and preserves scores and completion', async () => {
+    mockMaterialRequests();
+    const introData: StudentActivityResponse = { ...data, activities: [
+      { ...data.activities[0], activity: 'Safeguarding', category: 'reading+quiz', month: 'undated',
+        date_source: 'introduction', source_date: '2025-05-27', section_title: 'Introduction', quiz_score: 80, quiz_maximum_score: 100 },
+      { ...data.activities[1], month: 'undated', date_source: 'introduction', section_title: 'Introduction' },
+      { ...data.activities[1], activity_id: 'la:1:12', source_activity_id: 12, activity: 'October lecture',
+        date: '2025-10-21', month: '2025-10', week_start: '2025-10-20', week_end: '2025-10-26' },
+      { ...data.activities[1], activity_id: 'la:1:13', source_activity_id: 13, activity: 'Extra task',
+        month: 'undated', date_source: 'extra_activity', section_title: 'Additional resources' },
+    ] };
+    render(<StudentActivityPanel data={introData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
+    const headings = screen.getAllByRole('heading', { level: 3 });
+    expect(headings[0]).toHaveTextContent('Introduction');
+    expect(headings[1]).toHaveTextContent('October 2025');
+    expect(headings.at(-1)).toHaveTextContent('Extra activities');
+    expect(screen.queryByText('May 2025')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Expand Introduction' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('progressbar', { name: 'Introduction progress' })).toHaveAttribute('aria-valuenow', '50');
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Introduction' }));
+    expect(screen.getByRole('button', { name: 'Safeguarding' })).toBeVisible();
+    expect(within(screen.getByRole('group', { name: 'Safeguarding activity' })).getByText('Complete')).toBeVisible();
+    expect(screen.getByText(/Best score 80%/)).toBeVisible();
+    expect(screen.queryByText(/2025-05-27|Activities awaiting a date/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'October lecture' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    await screen.findByTitle('Reflection frame');
+    fireEvent.click(screen.getByRole('button', { name: 'Submit & complete' }));
+    await screen.findByText('Activity completed.');
+    expect(screen.getByRole('progressbar', { name: 'Introduction progress' })).toHaveAttribute('aria-valuenow', '100');
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '50');
+    expect(screen.getByRole('progressbar', { name: 'October 2025 progress' })).toHaveAttribute('aria-valuenow', '0');
+    expect(screen.getByRole('progressbar', { name: 'Extra activities progress' })).toHaveAttribute('aria-valuenow', '0');
   });
 
   it('shows lecture details without exposing date-review messages to the learner', () => {

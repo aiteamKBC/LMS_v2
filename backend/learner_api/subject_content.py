@@ -265,7 +265,27 @@ def build_material(stored, schema=None, attachment_resolver=None):
                 missing_attachments.append(title)
     # Keep a lesson's reading companion alongside its quiz, even when WP's
     # navigation target points to the standalone quiz page.
+    attachment_source = (schema or {}).get('source')
+    attachments = as_list(attachment_source.get('attachments')) if isinstance(attachment_source, dict) else []
+    by_id = {str(a.get('attachment_id')): a for a in attachments if isinstance(a, dict)}
+    source_origin = urlsplit(getattr(settings, 'KBC_LMS_SCHEMA_URL', ''))
+    for item in media:
+        viewer = urlsplit(item['url'])
+        if viewer.hostname != 'view.officeapps.live.com':
+            continue
+        original = safe_url((parse_qs(viewer.query).get('src') or [''])[0])
+        reference = _attachment_id(original)
+        attachment = by_id.get(reference, {})
+        mime_type = str(attachment.get('mime_type') or '').lower()
+        is_pdf = mime_type == 'application/pdf' if mime_type else str((schema or {}).get('content_type') or '').lower() == 'pdf'
+        target = urlsplit(original)
+        if is_pdf and reference and (target.scheme, target.netloc) == (source_origin.scheme, source_origin.netloc):
+            # Office Online cannot render these PDFs. The learner API serves
+            # their verified original bytes to the existing local PDF renderer.
+            item.update(kind='pdf', url=original, attachment_id=reference,
+                        file_name=attachment.get('filename') or 'document.pdf', can_embed=True)
     has_reading = bool(reading or any(item['kind'] == 'document' for item in media))
+    has_reading = has_reading or any(item['kind'] == 'pdf' for item in media)
     return {'title': stored['title'], 'reading_html': reading, 'media': media,
             'quiz': quiz, 'has_reading': has_reading,
             'available': bool(reading or media or quiz), 'source_live': schema is not None,
