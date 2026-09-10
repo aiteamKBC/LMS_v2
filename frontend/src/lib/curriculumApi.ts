@@ -3051,3 +3051,326 @@ export function updateCurriculumHoliday(id: string | number, input: CurriculumHo
 export function archiveCurriculumHoliday(id: string | number) {
   return deleteJson(`/curriculum/holidays/${encodeURIComponent(String(id))}/`);
 }
+
+// ---------------------------------------------------------------------------
+// Programme Reviews ("Reviews ID" tab)
+//
+// A Review here is a reusable *template* belonging to one Programme -- its
+// recurrence, eligibility and Form Builder questions. It is not a learner's
+// completed review; that is a future, separate domain. Review ids are opaque
+// strings minted by the backend (REV-...), the same id style as every other
+// curriculum entity (MOD-..., PROG-...) -- never parsed here, never generated
+// here.
+
+/**
+ * The canonical Programme status values (learner_api/constants.py
+ * PROGRAMME_STATUS_CHOICES). No frontend copy of this existed before Reviews;
+ * kept in sync by hand since curriculum_api has no read endpoint for it yet.
+ */
+export const CURRICULUM_PROGRAMME_STATUSES = [
+  'Fresh user', 'Onboarding', 'Delivery', 'Ready to enrol', 'Active', 'Withdrawn', 'On break', 'Completed',
+] as const;
+
+export type ReviewRecurrenceUnit = 'days' | 'weeks' | 'months';
+
+export type ReviewFieldType =
+  | 'text'
+  | 'boolean'
+  | 'numeric'
+  | 'date'
+  | 'list_item'
+  | 'boolean_case_block'
+  | 'email'
+  | 'phone'
+  | 'postcode_address'
+  | 'title_description'
+  | 'text_multiline';
+
+export const REVIEW_FIELD_TYPE_LABELS: Record<ReviewFieldType, string> = {
+  text: 'Text',
+  boolean: 'Boolean',
+  numeric: 'Numeric',
+  date: 'Date',
+  list_item: 'List item',
+  boolean_case_block: 'Boolean with case block',
+  email: 'Email',
+  phone: 'Phone number',
+  postcode_address: 'Post code and address',
+  title_description: 'Title & description',
+  text_multiline: 'Text (multiline)',
+};
+
+export const REVIEW_FIELD_TYPES: ReviewFieldType[] = Object.keys(REVIEW_FIELD_TYPE_LABELS) as ReviewFieldType[];
+
+/** Field types that carry a Boolean with case block's IF YES / IF NO children. */
+export const CONDITIONAL_FIELD_TYPE: ReviewFieldType = 'boolean_case_block';
+
+/** Field types with no learner-entered answer -- Required/Optional is not shown for these. */
+export const DISPLAY_ONLY_FIELD_TYPES: ReviewFieldType[] = ['title_description'];
+
+export type ReviewParticipantRole = 'advisor' | 'employer' | 'participant' | 'referrer';
+
+export type ReviewConditionValue = 'yes' | 'no';
+
+export interface ListItemConfiguration {
+  options: string[];
+}
+
+export interface TitleDescriptionConfiguration {
+  description: string;
+}
+
+/** Discriminated by fieldType at the call site; falls back to a generic bag for
+ * types (text, boolean, numeric, date, email, phone, postcode_address, ...)
+ * that carry no field-specific configuration today. */
+export type ReviewFieldConfiguration = ListItemConfiguration | TitleDescriptionConfiguration | Record<string, unknown>;
+
+export interface ReviewField {
+  id: string;
+  reviewId: string;
+  sectionId: string;
+  /** Set only on a conditional child -- the id of its Boolean-with-case-block parent. */
+  parentFieldId: string | null;
+  /** Set only on a conditional child -- which branch of its parent it belongs to. */
+  conditionValue: ReviewConditionValue | null;
+  title: string;
+  fieldType: ReviewFieldType;
+  required: boolean;
+  displayOrder: number;
+  configuration: ReviewFieldConfiguration;
+  createdAt: string;
+  updatedAt: string;
+  /** Present (possibly empty) only when fieldType is 'boolean_case_block'. */
+  yesFields?: ReviewField[];
+  /** Present (possibly empty) only when fieldType is 'boolean_case_block'. */
+  noFields?: ReviewField[];
+}
+
+export interface ReviewFieldInput {
+  id?: string;
+  title: string;
+  fieldType: ReviewFieldType;
+  required: boolean;
+  configuration?: ReviewFieldConfiguration;
+  /** boolean_case_block only. */
+  yesFields?: ReviewFieldInput[];
+  /** boolean_case_block only. */
+  noFields?: ReviewFieldInput[];
+}
+
+export interface ReviewSection {
+  id: string;
+  reviewId: string;
+  title: string;
+  estimatedMinutes: number;
+  displayOrder: number;
+  enabled: boolean;
+  fields: ReviewField[];
+}
+
+export interface ReviewSectionInput {
+  id?: string;
+  title: string;
+  estimatedMinutes: number;
+  enabled: boolean;
+  fields: ReviewFieldInput[];
+}
+
+export interface ReviewRoleFlags {
+  advisor: boolean;
+  employer: boolean;
+  participant: boolean;
+  referrer: boolean;
+}
+
+export interface ReviewNotificationFlags {
+  employer: boolean;
+  participant: boolean;
+}
+
+export interface ReviewSummary {
+  id: string;
+  programmeId: string;
+  name: string;
+  enabled: boolean;
+  recurrence: { interval: number; unit: ReviewRecurrenceUnit };
+  /** The date the first occurrence is calculated from -- see the Review Schedule below. */
+  scheduleAnchorDate: string;
+  applicableStatuses: string[];
+  fieldCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReviewDetail extends ReviewSummary {
+  signatures: ReviewRoleFlags;
+  visibleTo: ReviewRoleFlags;
+  recordTimeSpent: boolean;
+  allowEditingPriorDays: number;
+  notifications: ReviewNotificationFlags;
+  incompleteMarker: string;
+  createdBy: string;
+  updatedBy: string;
+  /** Canonical Form Builder structure: Section -> Field -> optional conditional children. */
+  sections: ReviewSection[];
+  /** Flattened convenience view (every top-level field, across every section) -- see reviews.py. */
+  fields: ReviewField[];
+}
+
+export interface CreateReviewInput {
+  name: string;
+  enabled: boolean;
+  recurrence: { interval: number; unit: ReviewRecurrenceUnit };
+  /** Optional -- defaults to today on the backend when omitted. */
+  scheduleAnchorDate?: string;
+  applicableStatuses: string[];
+  signatures: ReviewRoleFlags;
+  visibleTo: ReviewRoleFlags;
+  recordTimeSpent: boolean;
+  allowEditingPriorDays: number;
+  notifications: ReviewNotificationFlags;
+  incompleteMarker: string;
+  sections: ReviewSectionInput[];
+}
+
+export type UpdateReviewInput = Partial<CreateReviewInput>;
+
+export interface CloneReviewRequest {
+  sourceProgrammeId: string;
+  reviewIds: string[];
+}
+
+export interface CloneReviewResponse {
+  cloned: boolean;
+  sourceProgrammeId: string;
+  programmeId: string;
+  reviewIds: string[];
+  reviews: ReviewSummary[];
+}
+
+export interface FetchReviewsOptions {
+  signal?: AbortSignal;
+  skipCache?: boolean;
+  revalidate?: boolean;
+}
+
+export function fetchProgrammeReviews(programmeId: string, options: FetchReviewsOptions = {}) {
+  return fetchCollection<ReviewSummary>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/reviews/`, {
+    signal: options.signal,
+    skipCache: options.skipCache,
+    revalidate: options.revalidate,
+  });
+}
+
+export async function fetchReviewDetail(reviewId: string, options: FetchReviewsOptions = {}) {
+  const payload = await fetchJson<{ review: ReviewDetail }>(`/curriculum/reviews/${encodeURIComponent(reviewId)}/`, {
+    signal: options.signal,
+    skipCache: options.skipCache,
+    revalidate: options.revalidate,
+  });
+  return payload.review;
+}
+
+export async function createReviewTemplate(programmeId: string, input: CreateReviewInput) {
+  const payload = await postJson<{ created: boolean; review: ReviewDetail }>(
+    `/curriculum/programmes/${encodeURIComponent(programmeId)}/reviews/`, input,
+  );
+  return payload.review;
+}
+
+export async function updateReviewTemplate(reviewId: string, input: UpdateReviewInput) {
+  const payload = await patchJson<{ updated: boolean; review: ReviewDetail }>(
+    `/curriculum/reviews/${encodeURIComponent(reviewId)}/`, input,
+  );
+  return payload.review;
+}
+
+export function archiveReviewTemplate(reviewId: string) {
+  return deleteJson<{ deleted: boolean; permanent: boolean; archived: boolean; id: string }>(
+    `/curriculum/reviews/${encodeURIComponent(reviewId)}/`,
+  );
+}
+
+export function cloneReviewTemplates(programmeId: string, input: CloneReviewRequest) {
+  return postJson<CloneReviewResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/reviews/clone/`, input);
+}
+
+// ---------------------------------------------------------------------------
+// Review Schedule / clash resolution
+//
+// A Programme can have several recurring Review templates whose occurrences
+// land in the same calendar month (e.g. a Progress Review every 12 weeks and
+// a Monthly Coaching Meeting every month). This previews each template's
+// projected occurrences, groups them by month, and lets staff decide -- per
+// month -- which occurrences stay scheduled. "Skip" removes one occurrence
+// from the effective schedule; it never disables or deletes the recurring
+// template, so future months are unaffected.
+
+export type ReviewScheduleOccurrenceStatus = 'scheduled' | 'skipped';
+export type ReviewScheduleResolutionStatus = 'none' | 'unresolved' | 'resolved' | 'kept_all';
+export type ReviewClashDecisionAction = 'skip' | 'keep';
+
+export interface ReviewScheduleOccurrence {
+  reviewId: string;
+  reviewName: string;
+  occurrenceDate: string;
+  recurrenceLabel: string;
+  status: ReviewScheduleOccurrenceStatus;
+  skippedBy: string | null;
+  skippedAt: string | null;
+  reason: string | null;
+}
+
+export interface ReviewScheduleMonth {
+  /** 'YYYY-MM' */
+  month: string;
+  hasClash: boolean;
+  resolutionStatus: ReviewScheduleResolutionStatus;
+  clashSignature: string | null;
+  occurrences: ReviewScheduleOccurrence[];
+}
+
+export interface ReviewScheduleResponse {
+  programmeId: string;
+  windowStart: string;
+  windowEnd: string;
+  monthsPreviewed: number;
+  months: ReviewScheduleMonth[];
+}
+
+export interface ReviewClashDecisionItem {
+  reviewId: string;
+  occurrenceDate: string;
+  action: ReviewClashDecisionAction;
+  reason?: string;
+}
+
+export interface ReviewClashResolutionInput {
+  month: string;
+  occurrences: ReviewClashDecisionItem[];
+}
+
+export interface ReviewClashResolutionResponse {
+  resolved: boolean;
+  programmeId: string;
+  month: ReviewScheduleMonth;
+}
+
+export interface FetchReviewScheduleOptions extends FetchReviewsOptions {
+  months?: number;
+}
+
+export function fetchReviewSchedule(programmeId: string, options: FetchReviewScheduleOptions = {}) {
+  const query = options.months ? `?months=${encodeURIComponent(String(options.months))}` : '';
+  return fetchJson<ReviewScheduleResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/reviews/schedule/${query}`, {
+    signal: options.signal,
+    skipCache: options.skipCache,
+    revalidate: options.revalidate,
+  });
+}
+
+export function resolveReviewClash(programmeId: string, input: ReviewClashResolutionInput) {
+  return postJson<ReviewClashResolutionResponse>(
+    `/curriculum/programmes/${encodeURIComponent(programmeId)}/reviews/clashes/resolve/`, input,
+  );
+}

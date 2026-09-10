@@ -38,6 +38,7 @@ from learner_api.progress_rules import (
     progress_counts_as_achieved,
 )
 from learner_api.models import LearnerTrainingPlanModule
+from learner_api.constants import PROGRAMME_STATUS_CHOICES
 
 from . import pptx_slides
 from . import schema_gate
@@ -24653,6 +24654,13 @@ def reset_schema_ready_flags():
     # The notification ledger keeps its own latch, in its own module, for the
     # same reason as the ones above.
     tutor_notifications._TABLE_READY = False
+    # Review templates likewise -- reviews.py is a sibling module with its own
+    # latch, deferred-imported here to avoid a module-load-time circular import
+    # (reviews.py imports this module).
+    from . import reviews as _reviews
+    _reviews._REVIEW_TABLES_READY = False
+    from . import review_schedule as _review_schedule
+    _review_schedule._REVIEW_SCHEDULE_TABLES_READY = False
     _TABLE_COLUMNS_CACHE.clear()
     _TABLE_EXISTS_CACHE.clear()
     schema_gate.reset_verification_cache()

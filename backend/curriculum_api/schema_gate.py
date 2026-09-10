@@ -72,6 +72,15 @@ TABLE_OWNER_MIGRATION = {
     'quiz_component_links': 'quiz_api.0002_rename_quiz_course_links_module_catalogue_id',
     # week_templates / week_template_components are provisioned outside the
     # Django migration graph by sql/001_week_templates.sql on Neon.
+    # review_templates / review_fields are provisioned the same way, by
+    # sql/2026-09-10_curriculum_review_templates.sql on Neon, extended (new
+    # review_sections table, section_id/parent_field_id/condition_value
+    # columns on review_fields) by
+    # sql/2026-09-10_curriculum_review_sections_and_advanced_fields.sql, and
+    # again (schedule_anchor_date on review_templates, plus the two new
+    # review_occurrence_overrides / review_clash_resolutions tables -- see
+    # review_schedule.py) by
+    # sql/2026-09-10_curriculum_review_schedule_clash_resolution.sql.
 }
 
 
