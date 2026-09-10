@@ -67,6 +67,12 @@ class ClassificationDisplayTests(SimpleTestCase):
         self.assertEqual(admin_evidence._json_list(text), [text])
         self.assertEqual(admin_evidence._json_list(None), [])
 
+    def test_admin_ksb_codes_override_pipeline_codes(self):
+        result = admin_evidence._assignment_payload(assignment_row(evaluation={
+            'admin_verified_ksb_codes': ['K3', 'S4'],
+        }), 42)
+        self.assertEqual(result['verifiedKsbCodes'], ['K3', 'S4'])
+
 
 class ClassifiedLearnerListTests(SimpleTestCase):
     def setUp(self):
@@ -316,6 +322,175 @@ class ManualSelectionTests(SimpleTestCase):
         self.start_patch('_manual_available', return_value=False)
         self.assertEqual(self.call().status_code, 503)
         self.rows.assert_not_called()
+
+
+class KsbCodeEditingTests(SimpleTestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    def request(self, **overrides):
+        payload = {
+            'runId': 9,
+            'componentId': 200,
+            'verifiedKsbCodes': [' k1 ', 'S2', 'K1'],
+            **overrides,
+        }
+        request = self.factory.post('/', json.dumps(payload), content_type='application/json', HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        request.login_account = SimpleNamespace(pk=7)
+        return request
+
+    @patch('login.admin_evidence._rows', return_value=[{'evidence_id': 100}])
+    @patch('login.admin_evidence._learner_and_run', return_value=learner_row())
+    def test_saves_normalized_ksb_codes_in_evaluation_overrides(self, _learner, rows):
+        response = inspect.unwrap(admin_evidence.update_ksb_codes)(self.request(), 42, 100)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(body(response), {'verifiedKsbCodes': ['K1', 'S2']})
+        sql, params = rows.call_args.args
+        self.assertIn("evaluation = coalesce(evaluation, '{}'::jsonb) || %s::jsonb", sql)
+        self.assertEqual(params[1:], [9, 42, 200, 100])
+        self.assertEqual(json.loads(params[0]), {'admin_verified_ksb_codes': ['K1', 'S2']})
+
+    @patch('login.admin_evidence._rows')
+    @patch('login.admin_evidence._learner_and_run', return_value=learner_row(run_id=10))
+    def test_rejects_stale_classification_without_writing(self, _learner, rows):
+        response = inspect.unwrap(admin_evidence.update_ksb_codes)(self.request(), 42, 100)
+        self.assertEqual(response.status_code, 409)
+        rows.assert_not_called()
+
+    @patch('login.admin_evidence._rows')
+    @patch('login.admin_evidence._learner_and_run')
+    def test_rejects_invalid_code_before_database_lookup(self, learner, rows):
+        response = inspect.unwrap(admin_evidence.update_ksb_codes)(
+            self.request(verifiedKsbCodes=['not-a-code']), 42, 100,
+        )
+        self.assertEqual(response.status_code, 400)
+        learner.assert_not_called()
+        rows.assert_not_called()
+
+
+class AssessmentReportFormTests(SimpleTestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.report_row = {
+            'run_id': 9, 'evidence_id': 100, 'learner_id': 42,
+            'full_name': 'Alex Learner', 'program_name': 'Marketing L4',
+            'evidence_name': 'Assignment.pdf', 'evidence_status': 'CustomStatus',
+            'spent_time': 95, 'completed_date': date(2025, 7, 1),
+            'report_blob': 'old-report.pdf', 'activity_name': 'Marketing activity',
+        }
+
+    def save_request(self, **overrides):
+        payload = {
+            'learner_name': 'Alex Learner', 'activity_name': 'Marketing activity',
+            'evidence_name': 'Assignment.pdf', 'time_spent': 95,
+            'result': 'CustomStatus', 'assessor': 'Tutor Name',
+            'date': '08/09/2026', 'criteria': 'Knowledge: K1',
+            'comments': '<b>Strong</b> workplace evidence.', 'reanalyze': True,
+            **overrides,
+        }
+        request = self.factory.post('/', json.dumps(payload), content_type='application/json', HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        request.login_account = SimpleNamespace(pk=7)
+        return request
+
+    @patch('login.admin_evidence.timezone.localdate', return_value=date(2026, 9, 8))
+    @patch('login.admin_evidence._report_form_row')
+    def test_prefills_report_form_and_keeps_custom_result(self, report_row, _today):
+        report_row.return_value = self.report_row
+        response = raw(admin_evidence.report_form)(self.factory.get('/'), 42, 100)
+        payload = body(response)
+        self.assertEqual(payload['activity_name'], 'Marketing activity')
+        self.assertEqual(payload['time_spent'], 95)
+        self.assertEqual(payload['date'], '08/09/2026')
+        self.assertEqual(payload['result_options'][0], 'CustomStatus')
+        self.assertTrue(payload['has_report'])
+
+    @patch('login.admin_evidence._start_evidence_reanalysis', return_value={'queued': True, 'job_id': 'job-12'})
+    @patch('login.admin_evidence._persist_report_source')
+    @patch('login.admin_evidence._rows', return_value=[{'evidence_id': 100}])
+    @patch('login.admin_evidence.transaction.atomic', side_effect=lambda **kwargs: nullcontext())
+    @patch('login.admin_evidence.evidence_storage.upload_blob')
+    @patch('login.admin_evidence.evidence_storage.azure_configured', return_value=True)
+    @patch('login.report_pdf.build_assessment_report_pdf', return_value=b'%PDF-1.4 generated')
+    @patch('login.admin_evidence._report_form_row')
+    def test_builds_uploads_links_and_starts_fresh_audit(
+        self, report_row, build_pdf, _configured, upload, _atomic, rows,
+        persist_source, start_reanalysis,
+    ):
+        report_row.return_value = self.report_row
+        response = inspect.unwrap(admin_evidence.save_report_form)(self.save_request(), 42, 100)
+        self.assertEqual(response.status_code, 200)
+        payload = body(response)
+        self.assertFalse(payload['analysis_required'])
+        self.assertFalse(payload['analysis_preserved'])
+        self.assertTrue(payload['reanalyze_queued'])
+        self.assertEqual(payload['job_id'], 'job-12')
+        self.assertTrue(payload['report_blob'].endswith('/100-AssessmentReport-form.pdf'))
+        build_pdf.assert_called_once()
+        self.assertEqual(build_pdf.call_args.args[0]['evidence_date'], date(2025, 7, 1))
+        self.assertEqual(upload.call_args.args[1], 'fetch-aptem-evidences')
+        self.assertEqual(upload.call_args.args[3], 'application/pdf')
+        self.assertTrue(upload.call_args.kwargs['overwrite'])
+        self.assertIn('SET report_blob=%s', rows.call_args.args[0])
+        persist_source.assert_called_once_with(42, 100, payload['report_blob'])
+        start_reanalysis.assert_called_once_with(100)
+
+    @patch('login.admin_evidence._start_evidence_reanalysis')
+    @patch('login.admin_evidence._persist_report_source')
+    @patch('login.admin_evidence._rows', return_value=[{'evidence_id': 100}])
+    @patch('login.admin_evidence.transaction.atomic', side_effect=lambda **kwargs: nullcontext())
+    @patch('login.admin_evidence.evidence_storage.upload_blob')
+    @patch('login.admin_evidence.evidence_storage.azure_configured', return_value=True)
+    @patch('login.report_pdf.build_assessment_report_pdf', return_value=b'%PDF-1.4 generated')
+    @patch('login.admin_evidence._report_form_row')
+    def test_can_save_report_while_preserving_existing_analysis(
+        self, report_row, _build_pdf, _configured, _upload, _atomic, _rows,
+        persist_source, start_reanalysis,
+    ):
+        report_row.return_value = self.report_row
+        response = inspect.unwrap(admin_evidence.save_report_form)(
+            self.save_request(reanalyze=False), 42, 100,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(body(response)['analysis_required'], False)
+        self.assertEqual(body(response)['analysis_preserved'], True)
+        self.assertEqual(body(response)['reanalyze_queued'], False)
+        persist_source.assert_called_once()
+        start_reanalysis.assert_not_called()
+
+    @patch('login.admin_evidence._report_form_row')
+    def test_rejects_invalid_date_before_building(self, report_row):
+        report_row.return_value = self.report_row
+        response = inspect.unwrap(admin_evidence.save_report_form)(self.save_request(date='2026-09-08'), 42, 100)
+        self.assertEqual(response.status_code, 400)
+
+    @patch('login.admin_evidence.evidence_storage.upload_blob', side_effect=RuntimeError('secret storage URL'))
+    @patch('login.admin_evidence.evidence_storage.azure_configured', return_value=True)
+    @patch('login.report_pdf.build_assessment_report_pdf', return_value=b'%PDF-1.4 generated')
+    @patch('login.admin_evidence._report_form_row')
+    def test_storage_failure_does_not_expose_secret_details(self, report_row, _build, _configured, _upload):
+        report_row.return_value = self.report_row
+        response = inspect.unwrap(admin_evidence.save_report_form)(self.save_request(), 42, 100)
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn('secret', body(response)['error'])
+
+    def test_manifest_link_is_replaced_without_losing_submission(self):
+        manifest = {
+            'counts': {'reports_missing': 1, 'reports_present': 0},
+            'missing_ids': [100],
+            'items': [{
+                'evidence_id': 100,
+                'submission': {'status': 'present', 'blob': 'submission.pdf'},
+                'feedback': {'message': 'Good'},
+                'report': {'status': 'missing', 'blob': None},
+            }],
+        }
+        updated = admin_evidence._updated_manifest(manifest, 100, 'folder/report.pdf')
+        item = updated['items'][0]
+        self.assertEqual(item['submission']['blob'], 'submission.pdf')
+        self.assertEqual(item['report']['blob'], 'folder/report.pdf')
+        self.assertEqual(item['feedback']['report_blob'], 'folder/report.pdf')
+        self.assertEqual(updated['counts'], {'reports_missing': 0, 'reports_present': 1})
+        self.assertEqual(updated['missing_ids'], [])
 
 
 class EvidenceDocumentSecurityTests(SimpleTestCase):

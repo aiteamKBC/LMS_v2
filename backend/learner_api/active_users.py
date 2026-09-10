@@ -18,7 +18,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from .identity import learner_profile_for_source
-from .mappers import get_training_plan
+from .mappers import get_training_plan, training_plan_field
 from .models import (
     EnrolmentUser,
     KsbDefinition,
@@ -146,17 +146,8 @@ def _manual_claimed_seconds(record):
     )
     source = _progress_text(record, "timeTrackingSource", "time_tracking_source").lower()
     explicitly_manual = source.endswith(":input") or "manual_input" in source
-    # MBA imports retain the raw source duration in ``claimedSeconds`` for
-    # auditability and put the OTJH value that may actually be credited in
-    # ``verifiedSeconds``.  A large difference therefore means the import was
-    # bounded, not that the learner manually entered the larger duration.
-    imported_source_duration = source.startswith("mba_import_")
-    inferred_legacy_manual = (
-        not imported_source_duration
-        and verified is not None
-        and claimed > verified + 2
-    )
-    return claimed if explicitly_manual or inferred_legacy_manual else None
+    inferred_manual = "import" not in source and verified is not None and claimed > verified + 2
+    return claimed if explicitly_manual or inferred_manual else None
 
 
 def _progress_record_minutes(record):
@@ -538,8 +529,8 @@ def _normalise_component_ksb_mappings(value):
     return mappings
 
 
-def completed_hours_from_progress(progress, components=None):
-    """Hours the learner has declared, for the OTJ total.
+def completed_hours_value_from_progress(progress, components=None):
+    """Unrounded hours the learner has declared, for exact OTJ roll-ups.
 
     A learner-entered Time spent value (`claimedSeconds` with input provenance)
     is authoritative when present, followed by the reflection's `reportedTime`.
@@ -550,7 +541,7 @@ def completed_hours_from_progress(progress, components=None):
     historical activity rather than measure it.
     """
     if not isinstance(progress, list):
-        return "0"
+        return 0.0
     expected_hours_by_component = _component_expected_hours_lookup(components)
     hours = 0.0
     for record in dedupe_otjh_progress_records(progress):
@@ -577,7 +568,12 @@ def completed_hours_from_progress(progress, components=None):
         expected_hours = expected_hours_by_component.get(component_id)
         if expected_hours is not None:
             hours += expected_hours
-    return fmt_hours(hours)
+    return hours
+
+
+def completed_hours_from_progress(progress, components=None):
+    """Display-formatted OTJ hours retained for existing API consumers."""
+    return fmt_hours(completed_hours_value_from_progress(progress, components))
 
 
 def replace_training_plan(learner, plan):
@@ -829,7 +825,7 @@ def hydrate_source_training_plan(source):
         return hydrated
 
     # Apprenticeships use Learning_plan; commercial learners use Training_plan.
-    field = "training_plan" if getattr(source, "training_plan", None) else "learning_plan"
+    field = training_plan_field(source)
     setattr(source, field, hydrated)
     source.save(update_fields=[field])
     return hydrated
@@ -1624,6 +1620,28 @@ def _fetch_ksb_items(programme, training_plan=None):
     if items:
         return items
     return []
+
+
+def current_curriculum_ksb_items_for_learner(learner=None, source=None, training_plan=None):
+    """Read the learner's current authored KSB profile from curriculum.
+
+    LearnerProfile.ksbs is an immutable assignment snapshot captured when the
+    learner was activated. For live dashboard totals, staff expect the current
+    Curriculum KSB profile, so this helper resolves it read-only and lets callers
+    fall back to the snapshot only when curriculum has no matching profile.
+    """
+    plan = training_plan
+    if plan is None and source is not None:
+        plan = get_training_plan(source)
+    if plan is None and learner is not None:
+        plan = getattr(learner, "training_plan", None)
+
+    programme = (
+        getattr(source, "programme", None)
+        if source is not None
+        else getattr(learner, "programme", None)
+    )
+    return _fetch_ksb_items(programme, training_plan=plan)
 
 
 def refresh_learner_ksb_snapshot(learner, source, training_plan=None):

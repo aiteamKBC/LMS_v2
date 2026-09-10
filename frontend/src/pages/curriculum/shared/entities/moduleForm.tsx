@@ -21,6 +21,7 @@
 // ============================================================================
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
 import { DatePickerField } from '@/components/feature/DatePickerField';
@@ -55,6 +56,7 @@ import {
   visibleNotes,
   weekendDateNotice,
 } from './model';
+import { confirmTeamsCalendarUpdate } from './teamsCalendarNotice';
 import {
   ColorControl,
   CoverImageControl,
@@ -253,6 +255,26 @@ export function ModuleFormDrawer({
   const [coverImage, setCoverImage] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 'later' lets a brand-new module save with no programme, cohort or group at
+  // all -- the same catalogue-draft save `createNewModule` already supports,
+  // just no longer blocked by the placement checks below. Only offered on a
+  // fresh create: once a module carries a stored placement, editing it goes
+  // through the normal required fields (see `initiallyAssigned`).
+  const [assignMode, setAssignMode] = useState<'now' | 'later'>('now');
+  // Whether the record this drawer opened with already had a placement. Read
+  // once at seed time so a person clearing the fields mid-edit cannot make an
+  // already-assigned module's save silently skip the requirement.
+  const initiallyAssigned = useRef(false);
+  // Whether the Programme/Cohort/Group picker (and the Weeks/dates/Tutor that
+  // only mean something once one is chosen) are shown at all. "Assign later"
+  // does not just relax their validation -- it hides them, so the drawer reads
+  // as the small, title-only form it actually is. Defaults to shown for a
+  // fresh create (matching "Assign now") and hidden for a module that is
+  // already saved unassigned, with a link to bring them back either way.
+  const [revealPlacement, setRevealPlacement] = useState(true);
+  // Held for the Teams notice on save, which offers to take the reader to the
+  // calendar these dates have just left behind.
+  const navigate = useNavigate();
   // A group whose attach was refused for a tutor double-booking, offered a
   // one-click override rather than a dead end: two deliveries of the same
   // module really can share a tutor (a co-taught slot), and the backend
@@ -388,6 +410,27 @@ export function ModuleFormDrawer({
       coverImage: cleanText(module?.coverImage),
     };
     baseline.current = initial;
+    // A module counts as already assigned the moment any parent resolved above
+    // -- from its own stored fields or from the delivery it was found through --
+    // not from `defaults`, which only seeds a fresh create's pickers and is not
+    // yet a saved placement.
+    initiallyAssigned.current = Boolean(
+      parentGroup || parentCohort
+      || cleanText(module?.programmeId) || cleanText(module?.programme)
+      || cleanText(module?.cohortId) || cleanText(module?.groupId)
+      || cleanText(storedDelivery?.programmeId) || cleanText(storedDelivery?.cohortId) || cleanText(storedDelivery?.groupId),
+    );
+    // Always resets to 'now': the toggle is only offered on a fresh create (see
+    // the render below), where 'now' is the pre-existing, regression-safe
+    // default. Editing an unassigned module does not read this flag at all --
+    // it relaxes the same required fields directly, from `initiallyAssigned`.
+    setAssignMode('now');
+    // Shown by default on a fresh create (nothing to hide yet); collapsed by
+    // default when opening a module that was already saved unassigned, so the
+    // edit drawer reads as short as the create one did. A module that already
+    // has a placement always shows the fields regardless of this flag -- see
+    // where it is read below.
+    setRevealPlacement(!module);
     console.log('[TEMP-DEBUG moduleForm] drawer (re)initialised. module prop =', module, 'initial state =', initial);
     setName(initial.name);
     setProgrammeId(initial.programmeId);
@@ -721,6 +764,13 @@ export function ModuleFormDrawer({
     setGroupIds(next);
     const group = groups.find(item => sameIdentifier(item.id, next[0]));
     if (group?.cohortId && !cohortId) setCohortId(group.cohortId);
+    // A module saved unassigned carries a planned end date typed by hand -- there
+    // were no delivery days to count it from. The moment it gets a group, that
+    // group's days and its cohort's ticked holidays decide where the sessions
+    // land, so the held date is released and the generated plan takes over.
+    // Only for a module that had no delivery days: an end date set by hand
+    // against a group that already exists is still the user's to keep.
+    if (!weekDays && cleanText(group?.weekDays)) setTargetEndDate('');
   };
 
   // Attached-but-out-of-scope groups are appended rather than dropped: a module
@@ -750,23 +800,58 @@ export function ModuleFormDrawer({
   // Named so the reader knows the previews below are one group's, not all of them.
   const otherGroupCount = selectedGroups.filter(group => !sameIdentifier(group.id, primaryGroupId)).length;
 
+  // A save is allowed to leave the module unplaced -- no programme, cohort or
+  // group -- either because the person just chose "Assign later" on a fresh
+  // create, or because they are editing a module that was already saved that
+  // way and have not assigned it in this visit either. Once a module carries a
+  // stored placement, editing it always requires the full set again: this only
+  // relaxes the *first* placement, never removes one that already exists.
+  const placementOptional = !lockGroup && (
+    (!module && assignMode === 'later')
+    || (Boolean(module) && !initiallyAssigned.current)
+  );
+  // Whether the Programme/Cohort/Group picker is actually on screen. Not
+  // rendering it is the point of "Assign later" -- an optional-but-visible
+  // field still reads as something to fill in. `revealPlacement` is the one
+  // escape hatch: the toggle flips it for a fresh create, and a plain link
+  // flips it when editing an already-unassigned module (see the render below).
+  const showPlacement = !lockGroup && (!placementOptional || revealPlacement);
+  // The Weeks/dates/tutor block is a delivery's fields, not the module's -- it
+  // stays hidden for exactly as long as the placement picker above does, since
+  // there is nothing to schedule until a group can even be ticked.
+  const showSchedule = lockGroup || showPlacement;
+
   const submit = async () => {
     const trimmed = name.trim();
     if (!trimmed) { setError('Give the module a name.'); return; }
-    if (!module && !programmeId && !groupIds.length) { setError('Choose the programme this module belongs to.'); return; }
-    if (dateWindowError) {
-      console.log('[TEMP-DEBUG moduleForm] blocked by dateWindowError', dateWindowError, { startDate, endDate, selectedCohort });
-      setError(dateWindowError); return;
+    if (!lockGroup && !placementOptional) {
+      if (!programmeId) { setError('Choose the programme this module belongs to.'); return; }
+      if (!cohortId) { setError('Choose the cohort this module runs for.'); return; }
+      if (!groupIds.length) { setError('Tick at least one group to run this module.'); return; }
     }
-    // Pre-empted rather than sent: the save enforces this and would refuse, so
-    // firing it only trades an instant answer for a round-trip and the same
-    // refusal. The clash itself is spelled out under the Tutor field, so this is
-    // the pointer to it rather than a second copy of it.
-    if (tutorClash) {
-      setError(
-        `${tutorClash.tutor} is already teaching in this slot. Change the tutor, the delivery day or the time - the clashing sessions are listed under Tutor.`,
-      );
-      return;
+    // Weeks, dates and a tutor are a delivery's fields, not the module's -- they
+    // only mean something once at least one group is actually being attached.
+    // An unplaced module (no group ticked, whichever way it got there) saves
+    // with none of them.
+    if (selectedGroups.length) {
+      if (!(Number(sessionsNumber) >= 1)) { setError('Set how many weeks the module runs for.'); return; }
+      if (!startDate) { setError('Set the module start date.'); return; }
+      if (!endDate) { setError('Set the module end date - or set the start date and weeks so it can be calculated.'); return; }
+      if (!tutor) { setError('Choose the tutor who delivers this module.'); return; }
+      if (dateWindowError) {
+        console.log('[TEMP-DEBUG moduleForm] blocked by dateWindowError', dateWindowError, { startDate, endDate, selectedCohort });
+        setError(dateWindowError); return;
+      }
+      // Pre-empted rather than sent: the save enforces this and would refuse, so
+      // firing it only trades an instant answer for a round-trip and the same
+      // refusal. The clash itself is spelled out under the Tutor field, so this is
+      // the pointer to it rather than a second copy of it.
+      if (tutorClash) {
+        setError(
+          `${tutorClash.tutor} is already teaching in this slot. Change the tutor, the delivery day or the time - the clashing sessions are listed under Tutor.`,
+        );
+        return;
+      }
     }
     const weeks = Math.max(1, Math.round(Number(sessionsNumber) || 1));
     const sessions = totalSessions;
@@ -862,6 +947,10 @@ export function ModuleFormDrawer({
         // owns is sent: the weeks, components and KSB mappings authored in the
         // Module Builder are left exactly as they are.
         const patchResult = await updateCurriculumModule(module.id, patchPayload);
+        // Named by the save when the edit moved the dates the module's Teams
+        // series was built from. Empty for a module with no calendar, which is
+        // most of them.
+        const staleTeamsCalendars = patchResult?.teamsCalendarsToUpdate || [];
         console.log('[TEMP-DEBUG moduleForm] PATCH response =', patchResult);
         // Groups ticked on top of the module's own: each gets a delivery of its
         // own rather than sharing this one, so its dates come from its own
@@ -889,13 +978,26 @@ export function ModuleFormDrawer({
         // four steps says what it created once rather than four times.
         if (chained) return;
         onClose();
-        await showCurriculumAlert({
-          title: 'Module updated',
-          text: newGroups.length
-            ? `${trimmed} is saved, and now also runs for ${newGroups.map(group => group.name).join(', ')}.`
-            : `${trimmed} is saved.`,
-          timer: newGroups.length ? 2600 : 1800,
+        // See the group drawer: the warning stands in for the confirmation, so a
+        // save that has left the calendar behind does not read as finished.
+        const warned = await confirmTeamsCalendarUpdate({
+          calendars: staleTeamsCalendars,
+          savedText: `${trimmed} is saved.`,
+          navigate,
+          // The group's hour and the weeks just saved, so a push from the dialog
+          // sends this form's own plan rather than re-deriving one.
+          sessionTimes: { startTime: cleanText(selectedGroup?.startTime), endTime: cleanText(selectedGroup?.endTime) },
+          weeks: weeksEntered,
         });
+        if (!warned) {
+          await showCurriculumAlert({
+            title: 'Module updated',
+            text: newGroups.length
+              ? `${trimmed} is saved, and now also runs for ${newGroups.map(group => group.name).join(', ')}.`
+              : `${trimmed} is saved.`,
+            timer: newGroups.length ? 2600 : 1800,
+          });
+        }
         return;
       }
 
@@ -976,7 +1078,7 @@ export function ModuleFormDrawer({
       ? 'Saved against this group, with its delivery days and holidays. Tick another group to run the same module for it too.'
       : cohortId
         ? 'Saved against this cohort. Tick one or more groups to give it delivery dates and a tutor.'
-        : 'Groups appear once a cohort is chosen. Without one the module is created as a catalogue draft.';
+        : 'Groups appear once a cohort is chosen. Tick the ones that run this module.';
 
   return (
     <EntityDrawer
@@ -998,9 +1100,59 @@ export function ModuleFormDrawer({
       error={error}
       dirty={dirty}
     >
-      {!lockGroup && (
+      {!module && !lockGroup && !chained && (
+        <FormField as="group" label="When to assign" hint={
+          assignMode === 'later'
+            ? 'Creates the module on its own, with its weeks and dates but no programme, cohort or group. Assign it later, from Edit.'
+            : 'Choose the programme, cohort and group below now.'
+        }>
+          <div className="inline-flex rounded-lg border border-background-200 bg-background-50 p-1">
+            {(['now', 'later'] as const).map(mode => (
+              <button
+                key={mode}
+                type="button"
+                aria-pressed={assignMode === mode}
+                onClick={() => { setAssignMode(mode); setRevealPlacement(mode === 'now'); }}
+                className={`h-8 rounded-md px-3 text-[12px] font-bold transition-smooth ${
+                  assignMode === mode
+                    ? 'bg-primary-600 text-white shadow-sm'
+                    : 'text-foreground-500 hover:bg-background-100'
+                }`}
+              >
+                {mode === 'now' ? 'Assign now' : 'Assign later'}
+              </button>
+            ))}
+          </div>
+        </FormField>
+      )}
+      {!lockGroup && placementOptional && !showPlacement && (
+        <p className="-mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] leading-5 text-foreground-500">
+          <span>
+            <AppIcon className="ri-information-line mr-1 text-sm"></AppIcon>
+            {module
+              ? 'Not assigned yet. Saves on its own until you give it a programme, cohort and group.'
+              : 'Saves on its own. Assign it to a programme, cohort and group later, from Edit.'}
+          </span>
+          {Boolean(module) && (
+            <button
+              type="button"
+              onClick={() => setRevealPlacement(true)}
+              className="shrink-0 text-[11px] font-bold text-primary-700 hover:underline"
+            >
+              Assign it now
+            </button>
+          )}
+        </p>
+      )}
+      {!lockGroup && showPlacement && (
         <>
-          <FormField label="Programme" required={!module} hint="Filters the cohorts and groups below.">
+          {placementOptional && (
+            <p className="-mt-2 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] leading-5 text-foreground-500">
+              <AppIcon className="ri-information-line mr-1 text-sm"></AppIcon>
+              Optional. Pick a programme, cohort and group now, or clear them and save this module unassigned.
+            </p>
+          )}
+          <FormField label="Programme" required={!placementOptional} hint="Filters the cohorts and groups below.">
             <SelectControl
               value={programmeId}
               onChange={changeProgramme}
@@ -1008,17 +1160,18 @@ export function ModuleFormDrawer({
               placeholder="Select a programme"
             />
           </FormField>
-          <FormField label="Cohort" hint="Narrows the groups and seeds the start date.">
+          <FormField label="Cohort" required={!placementOptional} hint="Narrows the groups and seeds the start date.">
             <SelectControl
               value={cohortId}
               onChange={changeCohort}
               options={availableCohorts.map(cohort => ({ value: cohort.id, label: cohort.name }))}
-              placeholder={availableCohorts.length ? 'No cohort yet' : 'No cohorts for this programme'}
+              placeholder={availableCohorts.length ? 'Select a cohort' : 'No cohorts for this programme'}
             />
           </FormField>
           <FormField
             as="group"
             label={selectedGroups.length > 1 ? `Groups (${selectedGroups.length})` : 'Groups'}
+            required={!placementOptional}
             hint={placementHint}
           >
             <MultiSelectControl
@@ -1049,12 +1202,21 @@ export function ModuleFormDrawer({
       <FormField label="Module name" required>
         <TextControl value={name} onChange={setName} placeholder="e.g. Data Modelling" />
       </FormField>
+      {/* Weeks and the two dates are the module's own shape, so they are asked
+          for even with no placement ("Assign later"): a catalogue draft that
+          already knows it runs 8 weeks from March is worth recording, and the
+          Module Builder authors that many weeks straight away. What stays
+          behind the placement is the group's part -- the session plan and the
+          tutor -- which cannot be worked out without delivery days. */}
       <FormField
         label="Weeks"
+        required={Boolean(selectedGroups.length)}
         hint={
           deliveryDaysPerWeek > 1
             ? `= ${totalSessions} sessions (${deliveryDaysPerWeek} delivery days x ${sessionsNumber || 1} weeks). Counted from the dates below when you set them; each week is authored in the Module Builder.`
-            : 'How long the module runs, counted from the dates below when you set them. Each week is authored in the Module Builder.'
+            : selectedGroups.length
+              ? 'How long the module runs, counted from the dates below when you set them. Each week is authored in the Module Builder.'
+              : 'How long the module runs. Each week is authored in the Module Builder; the delivery dates follow when you assign it to a group.'
         }
       >
         <TextControl type="number" min={1} max={104} value={sessionsNumber} onChange={changeWeeks} />
@@ -1062,6 +1224,7 @@ export function ModuleFormDrawer({
       <div className="grid gap-4 sm:grid-cols-2">
         <DatePickerField
           label="Start date"
+          required={Boolean(selectedGroups.length)}
           value={startDate}
           onChange={changeStartDate}
           min={selectedCohort?.startDate || undefined}
@@ -1071,18 +1234,25 @@ export function ModuleFormDrawer({
           helper={
             selectedCohort
               ? `Within ${formatDateLabel(selectedCohort.startDate)} - ${formatDateLabel(selectedCohort.practicalEndDate || selectedCohort.endDate)}.`
-              : undefined
+              : "The module's own planned start. Checked against the cohort's window when you assign it."
           }
         />
         <DatePickerField
           label="End date"
+          required={Boolean(selectedGroups.length)}
           value={endDate}
           onChange={changeEndDate}
           min={startDate || selectedCohort?.startDate || undefined}
           max={selectedCohort?.practicalEndDate || selectedCohort?.endDate || undefined}
-          placeholder="Calculated or target"
+          placeholder={showSchedule ? 'Calculated or target' : 'Planned finish'}
           error={endDateError || undefined}
-          helper={endDateHelper}
+          helper={
+            showSchedule
+              ? endDateHelper
+              : manualEndDate
+                ? 'Set by hand. The weeks above were counted from it; change the weeks to recalculate the date instead.'
+                : `${weeksEntered} week${weeksEntered === 1 ? '' : 's'} from the start date, one session a week. Recalculated from the group's delivery days and holidays when you assign it.`
+          }
         />
       </div>
       <div className="rounded-lg border border-background-200 bg-background-50 p-3">
@@ -1092,52 +1262,62 @@ export function ModuleFormDrawer({
             <p className="mt-1 text-[12px] leading-5 text-foreground-500">
               {canOpenSessionPreview
                 ? `${plan?.sessions.length || 0} planned session${(plan?.sessions.length || 0) === 1 ? '' : 's'}${shiftedSessionCount ? `, ${shiftedSessionCount} shifted by holidays` : ', no holiday shifts'}.`
-                : plan?.warnings?.[0] || 'Choose a group delivery day and start date to preview the sessions.'}
+                : showSchedule
+                  ? plan?.warnings?.[0] || 'Choose a group delivery day and start date to preview the sessions.'
+                  : `Counted as ${weeksEntered} weekly session${weeksEntered === 1 ? '' : 's'} for now. The real dates - on the group's delivery days, shifted around the cohort holidays - are set when you assign the module.`}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setSessionPreviewOpen(true)}
-            disabled={!canOpenSessionPreview}
-            className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:border-background-200 disabled:bg-background-100 disabled:text-foreground-300"
-          >
-            <AppIcon className="ri-calendar-schedule-line text-sm"></AppIcon>
-            View sessions
-          </button>
+          {/* Nothing to open without a group: the plan needs delivery days, so
+              the line above is the whole answer until the module is assigned. */}
+          {showSchedule && (
+            <button
+              type="button"
+              onClick={() => setSessionPreviewOpen(true)}
+              disabled={!canOpenSessionPreview}
+              className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:border-background-200 disabled:bg-background-100 disabled:text-foreground-300"
+            >
+              <AppIcon className="ri-calendar-schedule-line text-sm"></AppIcon>
+              View sessions
+            </button>
+          )}
         </div>
       </div>
-      <FormField label="Tutor" hint={tutorHint}>
-        <SelectControl
-          value={tutor}
-          onChange={setTutor}
-          options={tutorOptions}
-          placeholder="Unassigned"
-        />
-      </FormField>
-      {tutorClash && (
-        <TutorClashNotice
-          verdict={tutorClash}
-          sessionDates={sessionDates}
-          freeTutors={freeTutorNames}
-          onPickTutor={setTutor}
-        />
-      )}
-      {tutorConflictGroup && (
-        <div className="flex items-start justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3">
-          <p className="text-[12px] leading-5 text-red-700">
-            The save was refused because of that clash. If this is a deliberate
-            co-taught slot for {tutorConflictGroup.groupName}, you can book the tutor
-            anyway and save regardless.
-          </p>
-          <button
-            type="button"
-            onClick={bookConflictAnyway}
-            disabled={saving}
-            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 text-[12px] font-bold text-red-700 transition-smooth hover:bg-red-100 disabled:opacity-50"
-          >
-            Book anyway
-          </button>
-        </div>
+      {showSchedule && (
+        <>
+          <FormField label="Tutor" required={Boolean(selectedGroups.length)} hint={tutorHint}>
+            <SelectControl
+              value={tutor}
+              onChange={setTutor}
+              options={tutorOptions}
+              placeholder="Select a tutor"
+            />
+          </FormField>
+          {tutorClash && (
+            <TutorClashNotice
+              verdict={tutorClash}
+              sessionDates={sessionDates}
+              freeTutors={freeTutorNames}
+              onPickTutor={setTutor}
+            />
+          )}
+          {tutorConflictGroup && (
+            <div className="flex items-start justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3">
+              <p className="text-[12px] leading-5 text-red-700">
+                The save was refused because of that clash. If this is a deliberate
+                co-taught slot for {tutorConflictGroup.groupName}, you can book the tutor
+                anyway and save regardless.
+              </p>
+              <button
+                type="button"
+                onClick={bookConflictAnyway}
+                disabled={saving}
+                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 text-[12px] font-bold text-red-700 transition-smooth hover:bg-red-100 disabled:opacity-50"
+              >
+                Book anyway
+              </button>
+            </div>
+          )}
+        </>
       )}
       <FormField label="Notes">
         <TextAreaControl value={description} onChange={setDescription} placeholder="Optional delivery notes" />
@@ -1147,7 +1327,7 @@ export function ModuleFormDrawer({
       </FormField>
       <FormField
         label="Cover image"
-        hint="Optional. The Module Builder card shows it in place of the module icon; leave it empty to keep the icon."
+        hint="Shown in Module Builder and on learners' subject cards. Upload or change it here, then save the module."
       >
         <CoverImageControl
           value={coverImage}
@@ -1239,8 +1419,9 @@ function ymdOf(date: Date): string {
  * that changed the weeks or the start date rather than the debounced preview
  * that follows it. Deliberately identical in shape to the backend loop: step a
  * day at a time from the start, count the delivery days, skip the ones a ticked
- * holiday covers. Returns '' whenever the backend would also refuse to
- * calculate -- no start date, no sessions, or a group with no delivery day.
+ * holiday covers. With no delivery day at all it falls back to one session a
+ * week from the start, the same way the server's plan does. Returns '' only
+ * when there is nothing to count from -- no start date, or no sessions.
  */
 function projectModuleEndDate(
   startDate: string,
@@ -1251,7 +1432,16 @@ function projectModuleEndDate(
   const start = dateFromYmd(startDate);
   const days = deliveryDayIndexes(weekDays);
   const sessionCount = Math.max(0, Math.round(Number(numberOfSessions) || 0));
-  if (!start || !days.length || sessionCount <= 0) return '';
+  if (!start || sessionCount <= 0) return '';
+  if (!days.length) {
+    // No group, so no delivery day to land on: one session a week from the
+    // start, which is exactly the fallback `module_delivery_session_plan` runs
+    // for a module with no delivery day. Holidays skip nothing here -- they
+    // belong to a cohort this module has not been given yet.
+    const weekly = new Date(start);
+    weekly.setDate(weekly.getDate() + (sessionCount - 1) * 7);
+    return ymdOf(weekly);
+  }
 
   const blocked = holidayDateKeys(holidays);
   const cursor = new Date(start);

@@ -86,24 +86,33 @@ def is_authenticated(request):
     return bool(account and account.is_active)
 
 
-def _access_of(account):
-    """The staff access grant for this account, or "" for anyone else.
+def _accesses_of(account):
+    """Every staff access grant for this account, or an empty set for anyone else.
 
     Read live from the staff row rather than from the session, so an access
     changed in the console takes effect on the next request instead of the next
     sign-in. Fails closed — an unreadable grant is not a grant.
+
+    A set, not a single value: an account may hold several grants, and asking
+    ``== "enrolment"`` of somebody who holds enrolment AND coach would refuse
+    them the enrolment workspace they were deliberately given.
     """
     if account.subject_type != "staff":
-        return ""
+        return frozenset()
     from django.db import DatabaseError
 
     from learner_api.models import StaffUser
+    from login.identity import accesses_for_staff
 
     try:
-        row = StaffUser.objects.filter(pk=account.subject_id).only("access").first()
+        row = (
+            StaffUser.objects.filter(pk=account.subject_id)
+            .only("access", "access_extra")
+            .first()
+        )
     except DatabaseError:
-        return ""
-    return (getattr(row, "access", "") or "").strip().lower() if row else ""
+        return frozenset()
+    return accesses_for_staff(row) if row else frozenset()
 
 
 def _requested_learner_id(kwargs):
@@ -139,7 +148,7 @@ def _may_access(request, view_name, kwargs):
         # grants anything, so "unset" means undecided, not trusted.
         from learner_api.constants import ACCESS_ENROLMENT, ACCESS_SUPER_ADMIN
 
-        return _access_of(account) in (ACCESS_ENROLMENT, ACCESS_SUPER_ADMIN)
+        return bool(_accesses_of(account) & {ACCESS_ENROLMENT, ACCESS_SUPER_ADMIN})
 
     if account.role == "learner":
         learner_id = _requested_learner_id(kwargs)

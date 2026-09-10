@@ -3,6 +3,15 @@ import type { LearnerDetail } from '@/api/learnerDetail';
 import { buildLearnerJourney } from './learnerJourney';
 
 describe('buildLearnerJourney quiz progress', () => {
+  it('keeps subjects and weeks with the same title separate by their source IDs', () => {
+    const learner = { modules: ['Same title'], quizAttempts: [],
+      week: [{ module: 'Same title', moduleId: 'm1', week: 'Week 1', weekId: 'w1' }, { module: 'Same title', moduleId: 'm2', week: 'Week 1', weekId: 'w2' }],
+      components: [{ module: 'Same title', moduleId: 'm1', week: 'Week 1', weekId: 'w1', component: 'First', componentId: 'c1' }, { module: 'Same title', moduleId: 'm2', week: 'Week 1', weekId: 'w2', component: 'Second', componentId: 'c2' }],
+    } as LearnerDetail;
+    const journey = buildLearnerJourney(learner);
+    expect(journey).toHaveLength(2);
+    expect(journey.map((module) => module.weeks[0].components.map((component) => component.componentId))).toEqual([['c1'], ['c2']]);
+  });
   it('links a normalised text quiz id to the numeric curriculum quiz id', () => {
     const learner = {
       modules: ['Module 1'],

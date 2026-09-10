@@ -1,12 +1,12 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 import { type CalendarEvent } from '@/pages/learner/clubs/data';
 import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from '@/utils/ics-generator';
-import { useMyLearner } from '@/hooks/useMyLearner';
+import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PageContainer } from '@/components/ui/PageContainer';
@@ -90,6 +90,10 @@ function CalendarMoreMenu({
 }
 
 function LearnerCalendarHeroArt() {
+  const today = new Date();
+  const todayMonthLabel = MONTH_NAMES[today.getMonth()].slice(0, 3).toUpperCase();
+  const todayDay = String(today.getDate()).padStart(2, '0');
+
   return (
     <div className="calendar-hero-art">
       <span className="calendar-hero-art__dots" />
@@ -103,6 +107,8 @@ function LearnerCalendarHeroArt() {
         <span className="calendar-hero-art__ring calendar-hero-art__ring--five" />
         <span className="calendar-hero-art__calendar-top" />
         <span className="calendar-hero-art__calendar-grid" />
+        <span className="calendar-hero-art__today-month">{todayMonthLabel}</span>
+        <span className="calendar-hero-art__today-day">{todayDay}</span>
       </div>
     </div>
   );
@@ -116,6 +122,7 @@ const DAYS_SHORT = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTH_SHORT_INDEX: Record<string, number> = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
 const BOOKABLE_COACH_SESSION_TYPES = new Set<BookableSessionType>(['catch-up', 'student-support', 'mcr', 'progress-review']);
+const PROGRAMME_CYCLE_SESSION_TYPES = new Set<BookableSessionType>(['mcr', 'progress-review']);
 
 const CALENDAR_PROVIDERS: Array<{ provider: PersonalCalendarProvider; title: string; subtitle: string; icon: string }> = [
   { provider: 'google', title: 'Continue with Google', subtitle: 'OAuth access to free/busy availability', icon: 'ri-google-fill' },
@@ -137,6 +144,15 @@ function parseEventDate(ev: CalendarEvent): { day: number; month: number; year: 
   return { day, month, year: null };
 }
 
+function eventMonthLabel(isoDate?: string | null): string {
+  if (!isoDate) return '';
+  const [year, month, day] = isoDate.split('-').map(Number);
+  if (!year || !month || !day) return '';
+  const date = new Date(year, month - 1, day);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+}
+
 /** Map a Coach.coach_calendar_event row (backend JSON) to the page's display shape. */
 function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
   if (ev.status === 'cancelled') return null;
@@ -155,18 +171,25 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
     time = `${ev.scheduledTime}–${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`;
   }
   const isLiveSession = ev.source === 'live-session';
+  const eventSourceType = BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
+    ? sessionTypeLabel(ev.source as BookableSessionType)
+    : ev.type === 'review' ? 'Progress Review' : ev.type === 'welfare' ? 'Student Support' : 'Coaching';
   const confirmed = (
     ev.status === 'scheduled' || ev.status === 'in-progress' || ev.status === 'completed'
   ) && (isLiveSession || ev.invited !== false);
   return {
     id: ev.id,
-    title: !isLiveSession && ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title,
+    title: ev.source === 'mcr' && ev.sequence
+      ? `Monthly Coaching Meeting — ${eventMonthLabel(iso)} #${ev.sequence}`
+      : ev.source === 'progress-review' && ev.sequence
+        ? `Progress Review — ${eventMonthLabel(iso)} #${ev.sequence}`
+        : !isLiveSession && ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title,
     date: `${d} ${MONTH_NAMES[m - 1].substring(0, 3)}`,
     dayName,
     time,
     club: isLiveSession ? (ev.module || 'Live Session') : 'Coaching',
     clubId: '',
-    type: isLiveSession ? 'Workshop' : ev.type === 'review' ? 'Assessment' : ev.type === 'welfare' ? 'Study Group' : 'Coaching',
+    type: isLiveSession ? 'Live Session' : eventSourceType,
     format: isLiveSession ? 'Live Teams session' : '1:1 Teams',
     location: ev.meetingLink ? 'Microsoft Teams' : ev.scheduledTime ? 'Online' : 'To be confirmed',
     host: ev.coachName || (isLiveSession ? 'Your tutor' : 'Your coach'),
@@ -262,6 +285,11 @@ function getEventColorClass(type: string, customColor?: string) {
     if (color) return `${color.bg} ${color.text} ${color.border}`;
   }
   const map: Record<string, string> = {
+    'Live Session': 'bg-violet-50 text-violet-800 border-l-violet-500',
+    'Monthly Coaching Meeting': 'bg-orange-50 text-orange-800 border-l-orange-500',
+    'Progress Review': 'bg-teal-50 text-teal-800 border-l-teal-500',
+    'Catch-up': 'bg-rose-50 text-rose-800 border-l-rose-500',
+    'Student Support': 'bg-blue-50 text-blue-800 border-l-blue-500',
     Workshop: 'bg-primary-100 text-primary-700 border-l-primary-500',
     'Hands-on Lab': 'bg-secondary-100 text-secondary-700 border-l-secondary-500',
     Masterclass: 'bg-accent-100 text-accent-700 border-l-accent-500',
@@ -284,6 +312,8 @@ function getEventDotColor(type: string, customColor?: string) {
     if (color) return color.dot;
   }
   const map: Record<string, string> = {
+    'Live Session': 'bg-violet-500', 'Monthly Coaching Meeting': 'bg-orange-500', 'Progress Review': 'bg-teal-500',
+    'Catch-up': 'bg-rose-500', 'Student Support': 'bg-blue-500',
     Workshop: 'bg-primary-500', 'Hands-on Lab': 'bg-secondary-500', Masterclass: 'bg-accent-500',
     'Panel Discussion': 'bg-amber-500', 'Case Study': 'bg-emerald-500', Showcase: 'bg-rose-500',
     'Study Group': 'bg-indigo-500', Coaching: 'bg-teal-500', Assessment: 'bg-red-500',
@@ -371,6 +401,32 @@ function restoreNotifications() {
 }
 
 type ViewMode = 'monthly' | 'weekly' | 'daily';
+type LearnerSourceFilter = 'all' | 'live-session' | 'mcr' | 'progress-review' | 'catch-up' | 'student-support' | 'personal' | 'busy';
+type LearnerStatusFilter = 'all' | 'needs-schedule' | 'scheduled' | 'pending' | 'in-progress' | 'completed';
+
+const LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'catch-up', 'student-support', 'personal', 'busy'];
+const VISIBLE_LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'catch-up', 'student-support'];
+const LEARNER_STATUS_FILTERS: LearnerStatusFilter[] = ['all', 'needs-schedule', 'scheduled', 'pending', 'in-progress', 'completed'];
+
+const LEARNER_SOURCE_META: Record<LearnerSourceFilter, { label: string; short: string; dot: string }> = {
+  all: { label: 'All Sources', short: 'All', dot: 'bg-foreground-400' },
+  'live-session': { label: 'Live Sessions', short: 'Live Session', dot: 'bg-violet-500' },
+  mcr: { label: 'Monthly Coaching Meeting', short: 'Monthly Coaching Meeting', dot: 'bg-orange-500' },
+  'progress-review': { label: 'Progress Review', short: 'Progress Review', dot: 'bg-teal-500' },
+  'catch-up': { label: 'Catch-up', short: 'Catch-up', dot: 'bg-rose-500' },
+  'student-support': { label: 'Student Support', short: 'Support', dot: 'bg-blue-500' },
+  personal: { label: 'Personal Events', short: 'Personal', dot: 'bg-sky-500' },
+  busy: { label: 'Busy Time', short: 'Busy', dot: 'bg-slate-500' },
+};
+
+const LEARNER_STATUS_META: Record<LearnerStatusFilter, { label: string; dot: string }> = {
+  all: { label: 'All', dot: 'bg-foreground-400' },
+  'needs-schedule': { label: 'Needs Booking', dot: 'bg-rose-500' },
+  scheduled: { label: 'Scheduled', dot: 'bg-primary-500' },
+  pending: { label: 'Pending', dot: 'bg-amber-500' },
+  'in-progress': { label: 'In Progress', dot: 'bg-secondary-500' },
+  completed: { label: 'Completed', dot: 'bg-emerald-500' },
+};
 
 function todayISO(): string {
   const d = new Date();
@@ -403,6 +459,54 @@ function describeCalendarEventSlot(event: CalendarEvent): string {
   return `${dateLabel} at ${event.time}`;
 }
 
+function isProgrammeCycleSessionType(value?: CalendarEvent['bookingSessionType']): boolean {
+  return value ? PROGRAMME_CYCLE_SESSION_TYPES.has(value) : false;
+}
+
+function sessionTypeLabel(value?: CalendarEvent['bookingSessionType'] | BookableSessionType): string {
+  switch (value) {
+    case 'mcr':
+      return 'Monthly Coaching Meeting';
+    case 'progress-review':
+      return 'Progress Review';
+    case 'student-support':
+      return 'Student Support';
+    case 'catch-up':
+      return 'Catch-up';
+    default:
+      return 'Coach Session';
+  }
+}
+
+function learnerEventSource(event: CalendarEvent): LearnerSourceFilter {
+  if (event.type === 'Busy') return 'busy';
+  if (event.club === 'Personal' || event.type === 'Personal') return 'personal';
+  if (event.source === 'live-session') return 'live-session';
+  if (event.source === 'mcr') return 'mcr';
+  if (event.source === 'progress-review') return 'progress-review';
+  if (event.source === 'catch-up') return 'catch-up';
+  if (event.source === 'student-support') return 'student-support';
+  return 'personal';
+}
+
+function learnerEventStatus(event: CalendarEvent): LearnerStatusFilter {
+  if (event.timeToBeConfirmed || event.bookingStatus === 'not-scheduled') return 'needs-schedule';
+  if (event.status === 'pending') return 'pending';
+  if (event.bookingStatus === 'in-progress') return 'in-progress';
+  if (event.bookingStatus === 'completed') return 'completed';
+  if (event.bookingStatus === 'scheduled') return 'scheduled';
+  return 'scheduled';
+}
+
+function shouldShowMeetingArtifacts(event: CalendarEvent): boolean {
+  return Boolean(
+    event.eventKey
+    && event.meetingLink
+    && ['mcr', 'catch-up', 'progress-review', 'student-support'].includes(event.source || '')
+    && ['completed', 'awaiting-signature'].includes(event.bookingStatus || '')
+  );
+}
+
 function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-background-200' }: { pct: number; size?: number; stroke?: number; color: string; trackClass?: string }) {
   const r = (size - stroke) / 2;
   const circ = 2 * Math.PI * r;
@@ -430,17 +534,29 @@ export default function LearnerCalendarPage() {
 
 /** Calendar body without the page shell — reusable as an embedded section (e.g. on the learner overview page). */
 export function LearnerCalendarContent() {
-  const myLearner = useMyLearner();
+  const learner = useLinkedLearner();
+  // A staff View link can switch learners without unmounting the route.
+  // Bookings, coach details and open dialogs must belong to the new identity.
+  return <LearnerCalendarBody key={`${learner.kind}:${learner.id}`} />;
+}
+
+function LearnerCalendarBody() {
+  const location = useLocation();
+  const myLearner = useLinkedLearner();
   const loadArtifacts = useCallback((eventKey: string, signal?: AbortSignal) => fetchLearnerMeetingArtifacts(myLearner.kind, myLearner.id, eventKey, signal), [myLearner.id, myLearner.kind]);
   const artifactContentUrl = useCallback((eventKey: string, artifactType: string, artifactId: string, options: { preview?: boolean } = {}) => learnerMeetingArtifactContentUrl(myLearner.kind, myLearner.id, eventKey, artifactType, artifactId, options), [myLearner.id, myLearner.kind]);
   const [viewMode, setViewMode] = useState<ViewMode>('monthly');
   const [viewYear, setViewYear] = useState(() => new Date().getFullYear());
   const [viewMonth, setViewMonth] = useState(() => new Date().getMonth());
   const [selectedDay, setSelectedDay] = useState(() => new Date().getDate());
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterSource, setFilterSource] = useState<LearnerSourceFilter>('all');
+  const [filterStatus, setFilterStatus] = useState<LearnerStatusFilter>('all');
   const [myEvents, setMyEvents] = useState<CalendarEvent[]>([]);
   const [calendarLoading, setCalendarLoading] = useState(true);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [addToCalendarToast, setAddToCalendarToast] = useState<string | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [showEventDetails, setShowEventDetails] = useState<CalendarEvent | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showDayDrawer, setShowDayDrawer] = useState(false);
@@ -461,6 +577,7 @@ export function LearnerCalendarContent() {
   const [conflictEvent, setConflictEvent] = useState<CalendarEvent | null>(null);
   const [showBookModal, setShowBookModal] = useState(false);
   const [rescheduleEvent, setRescheduleEvent] = useState<CalendarEvent | null>(null);
+  const [bookingSourceEvent, setBookingSourceEvent] = useState<CalendarEvent | null>(null);
   const [bookType, setBookType] = useState<BookableSessionType>('catch-up');
   const [bookDate, setBookDate] = useState(() => todayISO());
   const [bookTime, setBookTime] = useState('10:00');
@@ -482,6 +599,7 @@ export function LearnerCalendarContent() {
   const [visibleBusySlots, setVisibleBusySlots] = useState<CalendarBusySlot[]>([]);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const handledFocusEventRef = useRef<string | null>(null);
 
   const today = new Date();
   const todayDay = today.getDate();
@@ -502,14 +620,119 @@ export function LearnerCalendarContent() {
     return Array.from(unique.values()).map(mapBusySlot).filter((event): event is CalendarEvent => event !== null);
   }, [visibleBusySlots]);
   const displayedEvents = useMemo(() => [...myEvents, ...personalBusyEvents], [myEvents, personalBusyEvents]);
+  const focusedEventKey = useMemo(() => new URLSearchParams(location.search).get('event') || '', [location.search]);
+  useEffect(() => {
+    if (!focusedEventKey || handledFocusEventRef.current === focusedEventKey) return;
+    const focusEvent = displayedEvents.find((event) => event.eventKey === focusedEventKey || event.id === focusedEventKey);
+    const focusDate = focusEvent ? parseEventDate(focusEvent) : null;
+    if (!focusEvent || !focusDate) return;
+    handledFocusEventRef.current = focusedEventKey;
+    setViewMode('monthly');
+    setViewYear(focusDate.year ?? viewYear);
+    setViewMonth(focusDate.month);
+    setSelectedDay(focusDate.day);
+    setSelectedEvent(focusEvent);
+  }, [displayedEvents, focusedEventKey, viewYear]);
+  const visibleRangeEvents = useMemo(() => (
+    displayedEvents.filter((event) => {
+      const eventDate = parseEventDate(event);
+      if (!eventDate) return false;
+      const eventYear = eventDate.year ?? viewYear;
+      if (viewMode === 'daily') {
+        return eventDate.day === selectedDay && eventDate.month === viewMonth && eventYear === viewYear;
+      }
+      if (viewMode === 'weekly') {
+        const selected = new Date(viewYear, viewMonth, selectedDay, 12, 0, 0);
+        const selectedDayOfWeek = selected.getDay();
+        const mondayOffset = selectedDayOfWeek === 0 ? -6 : 1 - selectedDayOfWeek;
+        const weekStart = new Date(selected);
+        weekStart.setDate(selected.getDate() + mondayOffset);
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekStart.getDate() + 7);
+        const eventValue = new Date(eventYear, eventDate.month, eventDate.day, 12, 0, 0);
+        return eventValue >= weekStart && eventValue < weekEnd;
+      }
+      return eventDate.month === viewMonth && eventYear === viewYear;
+    })
+  ), [displayedEvents, selectedDay, viewMode, viewMonth, viewYear]);
+  const searchedVisibleRangeEvents = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return visibleRangeEvents;
+    return visibleRangeEvents.filter((event) => [
+      event.title,
+      event.description,
+      event.club,
+      event.host,
+      event.location,
+      event.format,
+      sessionTypeLabel(event.bookingSessionType),
+    ].some((value) => value.toLowerCase().includes(term)));
+  }, [searchTerm, visibleRangeEvents]);
+  const sourceFilterCounts = useMemo(() => {
+    const counts = Object.fromEntries(LEARNER_SOURCE_FILTERS.map((source) => [source, 0])) as Record<LearnerSourceFilter, number>;
+    searchedVisibleRangeEvents.forEach((event) => {
+      counts.all += 1;
+      counts[learnerEventSource(event)] += 1;
+    });
+    return counts;
+  }, [searchedVisibleRangeEvents]);
+  const sourceFilteredVisibleRangeEvents = useMemo(() => (
+    filterSource === 'all'
+      ? searchedVisibleRangeEvents
+      : searchedVisibleRangeEvents.filter((event) => learnerEventSource(event) === filterSource)
+  ), [filterSource, searchedVisibleRangeEvents]);
+  const statusFilterCounts = useMemo(() => {
+    const counts = Object.fromEntries(LEARNER_STATUS_FILTERS.map((status) => [status, 0])) as Record<LearnerStatusFilter, number>;
+    sourceFilteredVisibleRangeEvents.forEach((event) => {
+      counts.all += 1;
+      counts[learnerEventStatus(event)] += 1;
+    });
+    return counts;
+  }, [sourceFilteredVisibleRangeEvents]);
+  const filteredEvents = useMemo(() => (
+    sourceFilteredVisibleRangeEvents.filter((event) => (
+      filterStatus === 'all' || learnerEventStatus(event) === filterStatus
+    ))
+  ), [filterStatus, sourceFilteredVisibleRangeEvents]);
+  const upcomingEvents = useMemo(() => {
+    const todayDate = new Date(todayYear, todayMonth, todayDay);
+    const sevenDaysFromToday = new Date(todayYear, todayMonth, todayDay + 7);
+    const term = searchTerm.trim().toLowerCase();
+    return displayedEvents
+      .filter((event) => {
+        const eventDate = parseEventDate(event);
+        if (!eventDate) return false;
+        const eventDay = new Date(eventDate.year ?? viewYear, eventDate.month, eventDate.day);
+        if (eventDay < todayDate || eventDay > sevenDaysFromToday) return false;
+        if (filterSource !== 'all' && learnerEventSource(event) !== filterSource) return false;
+        if (filterStatus !== 'all' && learnerEventStatus(event) !== filterStatus) return false;
+        if (!term) return true;
+        return [
+          event.title,
+          event.description,
+          event.club,
+          event.host,
+          event.location,
+          event.format,
+          sessionTypeLabel(event.bookingSessionType),
+        ].some((value) => value.toLowerCase().includes(term));
+      })
+      .sort((a, b) => {
+        const dateA = parseEventDate(a);
+        const dateB = parseEventDate(b);
+        const timeA = dateA ? new Date(dateA.year ?? viewYear, dateA.month, dateA.day).getTime() + getEventTimeRange(a.time).start * 60_000 : 0;
+        const timeB = dateB ? new Date(dateB.year ?? viewYear, dateB.month, dateB.day).getTime() + getEventTimeRange(b.time).start * 60_000 : 0;
+        return timeA - timeB;
+      });
+  }, [displayedEvents, filterSource, filterStatus, searchTerm, todayDay, todayMonth, todayYear, viewYear]);
 
   const getEventsForDay = useCallback((day: number, month: number): CalendarEvent[] => {
-    return displayedEvents.filter((ev) => {
+    return filteredEvents.filter((ev) => {
       const evDate = parseEventDate(ev);
       if (!evDate) return false;
       return evDate.day === day && evDate.month === month && (evDate.year === null || evDate.year === viewYear);
     });
-  }, [displayedEvents, viewYear]);
+  }, [filteredEvents, viewYear]);
 
   const monthCells = useMemo(() => getMonthData(viewYear, viewMonth), [viewYear, viewMonth]);
   const weekDates = useMemo(() => getWeekDates(viewYear, viewMonth, selectedDay), [viewYear, viewMonth, selectedDay]);
@@ -518,6 +741,16 @@ export function LearnerCalendarContent() {
     () => [...selectedDayEvents].sort((a, b) => getEventTimeRange(a.time).start - getEventTimeRange(b.time).start),
     [selectedDayEvents],
   );
+  const selectedDayLabel = useMemo(() => {
+    const dayDate = new Date(viewYear, viewMonth, selectedDay);
+    const dayName = DAYS_OF_WEEK[dayDate.getDay() === 0 ? 6 : dayDate.getDay() - 1];
+    return `${dayName}, ${selectedDay} ${MONTH_NAMES[viewMonth]}`;
+  }, [selectedDay, viewMonth, viewYear]);
+  useEffect(() => {
+    if (selectedEvent && !filteredEvents.some((event) => event.id === selectedEvent.id)) {
+      setSelectedEvent(null);
+    }
+  }, [filteredEvents, selectedEvent]);
   const selectedIso = useMemo(
     () => `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(selectedDay).padStart(2, '0')}`,
     [viewYear, viewMonth, selectedDay],
@@ -552,8 +785,10 @@ export function LearnerCalendarContent() {
   }, [bankHolidayByDate, bookingCalendar, bookingToday]);
   const selectedDateRestriction = bookingDateRestriction(selectedIso);
   const bookDateRestriction = bookingDateRestriction(bookDate);
-  const openBookSession = useCallback((date?: string) => {
+  const openBookSession = useCallback((date?: string, sourceEvent?: CalendarEvent | null) => {
     setRescheduleEvent(null);
+    setBookingSourceEvent(sourceEvent || null);
+    setBookType(sourceEvent?.bookingSessionType || 'catch-up');
     setBookDate(date || bookingToday);
     setBookError(null);
     setShowDayDrawer(false);
@@ -566,6 +801,7 @@ export function LearnerCalendarContent() {
       ? range.end + 1440 - range.start
       : range.end - range.start;
     setRescheduleEvent(event);
+    setBookingSourceEvent(null);
     setBookType(event.bookingSessionType);
     setBookDate(event.isoDate);
     setBookTime(event.time.split('\u2013')[0].trim());
@@ -636,7 +872,7 @@ export function LearnerCalendarContent() {
   useEffect(() => {
     let cancelled = false;
     setCalendarLoading(true);
-    fetchLearnerCalendarEvents(myLearner.kind, myLearner.id)
+    fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { force: true })
       .then((res) => {
         if (cancelled) return;
         const coachEvents = res.events
@@ -679,31 +915,34 @@ export function LearnerCalendarContent() {
     const requestedStart = new Date(`${bookDate}T${bookTime}:00`).getTime();
     const requestedEnd = requestedStart + parseInt(bookDuration || '60') * 60_000;
     return myEvents.find((event) => {
-      if (!event.isoDate || event.timeToBeConfirmed || event.id === rescheduleEvent?.id) return false;
+      if (!event.isoDate || event.timeToBeConfirmed || event.id === rescheduleEvent?.id || event.id === bookingSourceEvent?.id) return false;
       const range = getEventTimeRange(event.time);
       const dayStart = new Date(`${event.isoDate}T00:00:00`).getTime();
       const existingStart = dayStart + range.start * 60_000;
       const existingEnd = dayStart + (range.end <= range.start ? range.end + 1440 : range.end) * 60_000;
       return requestedStart < existingEnd && requestedEnd > existingStart;
     }) || null;
-  }, [bookDate, bookTime, bookDuration, myEvents, rescheduleEvent?.id]);
+  }, [bookDate, bookTime, bookDuration, bookingSourceEvent?.id, myEvents, rescheduleEvent?.id]);
 
   const sameWeekSession = useMemo(() => {
     const requestedWeek = calendarWeekKey(bookDate);
     if (!requestedWeek) return null;
     return myEvents.find((event) => (
       event.id !== rescheduleEvent?.id
-      && event.bookingStatus === 'scheduled'
+      && event.id !== bookingSourceEvent?.id
+      && (event.bookingStatus === 'scheduled' || event.bookingStatus === 'not-scheduled')
       && event.bookingSessionType === bookType
       && Boolean(event.isoDate)
       && calendarWeekKey(event.isoDate!) === requestedWeek
     )) || null;
-  }, [bookDate, bookType, myEvents, rescheduleEvent?.id]);
+  }, [bookDate, bookType, bookingSourceEvent?.id, myEvents, rescheduleEvent?.id]);
 
   const canRescheduleTimeConflict = Boolean(
     !rescheduleEvent
+    && !bookingSourceEvent
     && selectedLmsConflict?.bookingStatus === 'scheduled'
-    && selectedLmsConflict.bookingSessionType,
+    && selectedLmsConflict.bookingSessionType
+    && !isProgrammeCycleSessionType(selectedLmsConflict.bookingSessionType)
   );
 
   const handleCredentialConnect = async () => {
@@ -742,14 +981,17 @@ export function LearnerCalendarContent() {
     }
     if (sameWeekSession) {
       setBookError(rescheduleEvent
-        ? `Another “${sameWeekSession.title}” is already booked for ${describeCalendarEventSlot(sameWeekSession)}. The same session type can only be booked once per week.`
-        : `You already have “${sameWeekSession.title}” booked for ${describeCalendarEventSlot(sameWeekSession)}. Would you like to reschedule it instead?`);
+        ? `Another ${sessionTypeLabel(bookType)} is already booked in this week. The same session type can only be booked once per week.`
+        : `You already have a ${sessionTypeLabel(bookType)} booked in this week. Would you like to reschedule it instead?`);
       return;
     }
     if (selectedLmsConflict) {
+      const cycleConflictHint = isProgrammeCycleSessionType(selectedLmsConflict.bookingSessionType)
+        ? ' Official Monthly Coaching Meeting and Progress Review sessions are scheduled from their own calendar cards.'
+        : '';
       setBookError(canRescheduleTimeConflict
-        ? `That time is occupied by “${selectedLmsConflict.title}”, booked for ${describeCalendarEventSlot(selectedLmsConflict)}. Would you like to reschedule it instead?`
-        : `That time overlaps “${selectedLmsConflict.title}”, scheduled for ${describeCalendarEventSlot(selectedLmsConflict)}. Please choose another time.`);
+        ? 'That time is already occupied by one of your coach-session bookings. Would you like to reschedule it instead?'
+        : `That time is unavailable because it overlaps another calendar event. Please choose another time.${cycleConflictHint}`);
       return;
     }
     if (selectedSlotConflicts) {
@@ -761,7 +1003,7 @@ export function LearnerCalendarContent() {
     try {
       const res = rescheduleEvent
         ? await rescheduleLearnerCalendarSession(myLearner.kind, myLearner.id, {
-            eventKey: rescheduleEvent.id,
+            eventKey: rescheduleEvent.eventKey || rescheduleEvent.id,
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
@@ -769,6 +1011,7 @@ export function LearnerCalendarContent() {
           })
         : await bookLearnerCalendarSession(myLearner.kind, myLearner.id, {
             sessionType: bookType,
+            eventKey: bookingSourceEvent?.eventKey,
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
@@ -780,8 +1023,11 @@ export function LearnerCalendarContent() {
       setShowBookModal(false);
       setBookNotes('');
       setRescheduleEvent(null);
+      setBookingSourceEvent(null);
       setAddToCalendarToast(res.warning
         ? `Session ${rescheduleEvent ? 'rescheduled' : 'booked'}! (${res.warning})`
+        : res.approvalRequired
+          ? `"${mapped?.title || 'Session'}" request sent to ${coach?.name || 'your coach'} for approval.`
         : rescheduleEvent
           ? `"${mapped?.title || 'Session'}" rescheduled successfully!`
           : `"${mapped?.title || 'Session'}" booked with ${coach?.name || 'your coach'}!`);
@@ -956,27 +1202,37 @@ export function LearnerCalendarContent() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowBookModal(false)}>
           <div className="bg-background-50 rounded-2xl p-6 max-w-lg w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-lg font-heading font-bold text-foreground-900 flex items-center gap-2"><AppIcon className={`${rescheduleEvent ? 'ri-calendar-schedule-line' : 'ri-user-star-line'} text-primary-500`}></AppIcon>{rescheduleEvent ? 'Reschedule Session' : 'Book a Coach Session'}</h3>
+              <h3 className="text-lg font-heading font-bold text-foreground-900 flex items-center gap-2"><AppIcon className={`${rescheduleEvent || bookingSourceEvent ? 'ri-calendar-schedule-line' : 'ri-user-star-line'} text-primary-500`}></AppIcon>{rescheduleEvent ? 'Reschedule Session' : bookingSourceEvent ? `Schedule ${sessionTypeLabel(bookingSourceEvent.bookingSessionType)}` : 'Book a Coach Session'}</h3>
               <button onClick={() => setShowBookModal(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
             </div>
             <p className="text-sm text-foreground-500 mb-5">
               {rescheduleEvent
                 ? <>Choose a new date and time for <strong className="text-foreground-700">{rescheduleEvent.title}</strong>. The existing Teams meeting will be updated.</>
+                : bookingSourceEvent
+                  ? <>Choose a date and time for <strong className="text-foreground-700">{bookingSourceEvent.title}</strong>. This will book the official {sessionTypeLabel(bookingSourceEvent.bookingSessionType)} session for you and your coach.</>
                 : coach
-                  ? <>A Teams meeting will be booked with <strong className="text-foreground-700">{coach.name}</strong> and added to both your calendars.</>
+                  ? <>Choose the support you need. Catch-up and Student Support requests go to <strong className="text-foreground-700">{coach.name}</strong> for approval. Monthly Coaching Meeting and Progress Review sessions are scheduled from their calendar cards.</>
                   : 'No coach has been assigned to you yet — please contact your programme team.'}
             </p>
             <div className="space-y-4">
-              {!rescheduleEvent && <div>
+              {bookingSourceEvent && (
+                <div className="rounded-xl border border-primary-200 bg-primary-50 px-3 py-2.5 text-primary-800">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-primary-500">Selected programme slot</p>
+                  <p className="mt-1 text-sm font-bold text-primary-900">{bookingSourceEvent.title}</p>
+                  <p className="mt-0.5 text-xs text-primary-700">Target date: {bookingSourceEvent.date}</p>
+                </div>
+              )}
+              {!rescheduleEvent && !bookingSourceEvent && <div>
                 <label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Session Type <span className="text-red-400">*</span></label>
                 <div className="grid grid-cols-2 gap-3">
                   {([
                     { value: 'catch-up' as BookableSessionType, label: 'Catch-up', icon: 'ri-chat-3-line', desc: 'Quick check-in on your progress' },
                     { value: 'student-support' as BookableSessionType, label: 'Student Support', icon: 'ri-heart-2-line', desc: 'Help with challenges or wellbeing' },
-                    { value: 'progress-review' as BookableSessionType, label: 'Progress Review', icon: 'ri-line-chart-line', desc: 'Review your progress and targets' },
-                    { value: 'mcr' as BookableSessionType, label: 'Monthly Coaching', icon: 'ri-calendar-check-line', desc: 'Your monthly coaching meeting' },
                   ]).map((t) => (
-                    <button key={t.value} onClick={() => setBookType(t.value)}
+                    <button key={t.value} type="button" onClick={() => {
+                      setBookType(t.value);
+                      setBookError(null);
+                    }}
                       className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${bookType === t.value ? 'border-primary-400 bg-primary-50/40' : 'border-background-300 hover:border-background-400'}`}>
                       <span className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${bookType === t.value ? 'bg-primary-100 text-primary-600' : 'bg-background-100 text-foreground-500'}`}><AppIcon className={t.icon}></AppIcon></span>
                       <p className="text-sm font-semibold text-foreground-900">{t.label}</p>
@@ -1002,8 +1258,8 @@ export function LearnerCalendarContent() {
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-semibold">
                         {rescheduleEvent
-                          ? <>Another “{sameWeekSession.title}” is booked for {describeCalendarEventSlot(sameWeekSession)}. The same session type can only be booked once per week, so choose a different week.</>
-                          : <>You already have “{sameWeekSession.title}” booked for {describeCalendarEventSlot(sameWeekSession)}. The same session type can only be booked once per week. Would you like to reschedule it?</>}
+                          ? <>Another {sessionTypeLabel(bookType)} is already booked in this week. The same session type can only be booked once per week, so choose a different week.</>
+                          : <>You already have a {sessionTypeLabel(bookType)} booked in this week. Would you like to reschedule it?</>}
                       </p>
                       {!rescheduleEvent && (
                         <div className="mt-2 flex flex-wrap gap-2">
@@ -1025,8 +1281,11 @@ export function LearnerCalendarContent() {
                   <div className="flex items-start gap-2">
                     <AppIcon className={`${canRescheduleTimeConflict ? 'ri-calendar-schedule-line' : 'ri-calendar-close-line'} mt-0.5 shrink-0`} />
                     <div className="min-w-0 flex-1">
-                      <p className="text-xs font-semibold">
-                        That time {canRescheduleTimeConflict ? 'is occupied by' : 'overlaps'} “{selectedLmsConflict.title}”, booked for {describeCalendarEventSlot(selectedLmsConflict)}. {canRescheduleTimeConflict ? 'Would you like to reschedule it?' : 'Choose another time.'}
+                      <p className="text-xs font-semibold leading-relaxed">
+                        {canRescheduleTimeConflict
+                          ? 'That time is already occupied by one of your coach-session bookings. Would you like to reschedule it?'
+                          : 'That time is unavailable because it overlaps another calendar event. Choose another time.'}
+                        {!canRescheduleTimeConflict && isProgrammeCycleSessionType(selectedLmsConflict.bookingSessionType) ? ' Official Monthly Coaching Meeting and Progress Review sessions are scheduled from their own calendar cards.' : ''}
                       </p>
                       {canRescheduleTimeConflict && (
                         <div className="mt-2 flex flex-wrap gap-2">
@@ -1075,7 +1334,7 @@ export function LearnerCalendarContent() {
             <div className="flex gap-2 mt-5">
               <button onClick={() => setShowBookModal(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
               <button onClick={handleBookSession} disabled={bookSubmitting || availabilityLoading || selectedSlotConflicts || Boolean(sameWeekSession) || Boolean(selectedLmsConflict) || Boolean(bookDateRestriction) || !bookDate || !bookTime} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
-                {bookSubmitting ? <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon>{rescheduleEvent ? 'Rescheduling...' : 'Booking...'}</> : <><AppIcon className="ri-calendar-check-line mr-1"></AppIcon>{rescheduleEvent ? 'Save New Time' : 'Book Session'}</>}
+                {bookSubmitting ? <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon>{rescheduleEvent ? 'Rescheduling...' : bookingSourceEvent ? 'Booking...' : 'Sending...'}</> : <><AppIcon className="ri-calendar-check-line mr-1"></AppIcon>{rescheduleEvent ? 'Save New Time' : bookingSourceEvent ? 'Book Session' : 'Send Request'}</>}
               </button>
             </div>
           </div>
@@ -1121,19 +1380,19 @@ export function LearnerCalendarContent() {
               <div className="flex items-center gap-2 text-sm text-foreground-600"><AppIcon className="ri-team-line text-foreground-400"></AppIcon><span>{showEventDetails.club}</span></div>
             </div>
             <p className="text-sm text-foreground-500 leading-relaxed mb-5">{showEventDetails.description}</p>
-            {showEventDetails.eventKey && ['mcr', 'catch-up'].includes(showEventDetails.source || '') ? (
+            {shouldShowMeetingArtifacts(showEventDetails) ? (
               <CoachMeetingArtifactsPanel event={{ id: showEventDetails.id, eventKey: showEventDetails.eventKey, source: showEventDetails.source, meetingLink: showEventDetails.meetingLink }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="mb-5 border-primary-100 bg-primary-50/30" />
             ) : null}
             {showEventDetails.timeToBeConfirmed && showEventDetails.bookingSessionType && (
               <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
                 <AppIcon className="ri-information-line mt-0.5 shrink-0" />
-                <p className="text-xs font-semibold">Choose a date and time first. Your Microsoft Teams meeting link will be created when the booking is confirmed.</p>
+                <p className="text-xs font-semibold">This is your official {sessionTypeLabel(showEventDetails.bookingSessionType)} session. Choose a date and time here, and the Microsoft Teams meeting link will be created when it is confirmed.</p>
               </div>
             )}
             {!showEventDetails.timeToBeConfirmed && !showEventDetails.meetingLink && showEventDetails.club !== 'Personal' && (
               <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
                 <AppIcon className="ri-error-warning-line mt-0.5 shrink-0" />
-                <p className="text-xs font-semibold">The meeting time is scheduled, but the Teams link is not available yet. Please contact your coach.</p>
+                <p className="text-xs font-semibold">{showEventDetails.bookingStatus === 'not-scheduled' ? 'Your preferred time has been sent to your coach. A Teams link will be created after coach approval.' : 'The meeting time is scheduled, but the Teams link is not available yet. Please contact your coach.'}</p>
               </div>
             )}
             <div className="flex flex-wrap gap-2">
@@ -1142,14 +1401,13 @@ export function LearnerCalendarContent() {
                   type="button"
                   onClick={() => {
                     const event = showEventDetails;
-                    setBookType(event.bookingSessionType!);
                     setShowEventDetails(null);
-                    openBookSession(event.isoDate && event.isoDate >= bookingToday ? event.isoDate : bookingToday);
+                    openBookSession(event.isoDate && event.isoDate >= bookingToday ? event.isoDate : bookingToday, event);
                   }}
                   className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary-500 px-4 py-2.5 text-center text-sm font-semibold text-white transition-smooth hover:bg-primary-600 cursor-pointer whitespace-nowrap"
                 >
                   <AppIcon className="ri-calendar-check-line h-4 w-4 shrink-0" />
-                  <span>Schedule Session</span>
+                  <span>Schedule {sessionTypeLabel(showEventDetails.bookingSessionType)}</span>
                 </button>
               )}
               {showEventDetails.meetingLink && (
@@ -1230,7 +1488,7 @@ export function LearnerCalendarContent() {
                       <button
                         key={ev.id}
                         type="button"
-                        onClick={() => setShowEventDetails(ev)}
+                        onClick={() => { setSelectedEvent(ev); setShowDayDrawer(false); }}
                         className="group flex w-full items-start gap-3 rounded-xl border border-background-200 bg-background-50 p-3 text-left transition-smooth hover:border-primary-200 hover:bg-primary-50/20 cursor-pointer"
                       >
                         <div className="w-12 shrink-0 pt-0.5">
@@ -1328,6 +1586,78 @@ export function LearnerCalendarContent() {
           </div>
         </Panel>
 
+        <Panel padding="sm" className="border border-foreground-200/70 shadow-sm">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="relative w-full xl:max-w-md">
+                <AppIcon className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
+                <input
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  placeholder="Search events, session types or coach..."
+                  className="h-10 w-full rounded-xl border border-foreground-200 bg-white pl-9 pr-3 text-sm font-medium text-foreground-800 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+                />
+              </div>
+              {(searchTerm || filterSource !== 'all' || filterStatus !== 'all') && (
+                <button
+                  type="button"
+                  onClick={() => { setSearchTerm(''); setFilterSource('all'); setFilterStatus('all'); }}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-foreground-200 bg-white px-3 text-xs font-bold text-foreground-600 transition-smooth hover:bg-background-100 cursor-pointer"
+                >
+                  <AppIcon className="ri-filter-off-line"></AppIcon>
+                  Clear filters
+                </button>
+              )}
+            </div>
+            <div className="grid gap-3 xl:grid-cols-2">
+              <div className="rounded-xl bg-background-50/70 p-2">
+                <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-foreground-500">Source</p>
+                <div className="flex flex-wrap gap-2">
+                  {VISIBLE_LEARNER_SOURCE_FILTERS.map((source) => {
+                    const meta = LEARNER_SOURCE_META[source];
+                    const isActive = filterSource === source;
+                    return (
+                      <button
+                        key={source}
+                        type="button"
+                        onClick={() => setFilterSource(source)}
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition-smooth cursor-pointer ${isActive ? 'border-primary-500 bg-primary-600 text-white shadow-sm' : 'border-foreground-200 bg-white text-foreground-700 hover:border-primary-200 hover:bg-primary-50'}`}
+                        title={`${meta.label} (${sourceFilterCounts[source]})`}
+                      >
+                        <span className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-white' : meta.dot}`}></span>
+                        {meta.short}
+                        <span className={isActive ? 'text-white/80' : 'text-foreground-400'}>{sourceFilterCounts[source]}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="rounded-xl bg-background-50/70 p-2">
+                <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-foreground-500">Status</p>
+                <div className="flex flex-wrap gap-2">
+                  {LEARNER_STATUS_FILTERS.map((status) => {
+                    const meta = LEARNER_STATUS_META[status];
+                    const isActive = filterStatus === status;
+                    return (
+                      <button
+                        key={status}
+                        type="button"
+                        onClick={() => setFilterStatus(status)}
+                        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition-smooth cursor-pointer ${isActive ? 'border-primary-500 bg-primary-600 text-white shadow-sm' : 'border-foreground-200 bg-white text-foreground-700 hover:border-primary-200 hover:bg-primary-50'}`}
+                        title={`${meta.label} (${statusFilterCounts[status]})`}
+                      >
+                        <span className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-white' : meta.dot}`}></span>
+                        {meta.label}
+                        <span className={isActive ? 'text-white/80' : 'text-foreground-400'}>{statusFilterCounts[status]}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        </Panel>
+
         {/* ═══════════ MAIN CONTENT ═══════════ */}
         <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
 
@@ -1348,31 +1678,36 @@ export function LearnerCalendarContent() {
                 {/* Day cells */}
                 <div className="grid grid-cols-7">
                   {monthCells.map((day, idx) => {
-                    if (day === null) return <div key={`empty-${idx}`} className="aspect-square border-b border-r border-foreground-100 bg-background-50/40 sm:aspect-[4/3]" />;
+                    if (day === null) return <div key={`empty-${idx}`} className="min-h-[11.5rem] border-b border-r border-foreground-100 bg-background-50/40" />;
                     const eventsForDay = getEventsForDay(day, viewMonth);
                     const isSel = day === selectedDay && viewMode === 'monthly';
                     const isTdy = isToday(day, viewMonth, viewYear);
                     const isoDate = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                     const dateRestriction = bookingDateRestriction(isoDate);
-                    const visibleEvents = eventsForDay.slice(0, 2);
+                    const isPastDate = isoDate < bookingToday;
+                    const isClosedDate = Boolean(dateRestriction && !isPastDate);
+                    const cellDate = new Date(viewYear, viewMonth, day, 12, 0, 0);
+                    const isWeekend = cellDate.getDay() === 0 || cellDate.getDay() === 6;
+                    const isBankHoliday = bankHolidayByDate.has(isoDate);
+                    const missingHolidayCoverage = Boolean(bookingCalendar && !bookingCalendar.coveredYears.includes(viewYear));
+                    const showClosedBadge = Boolean(dateRestriction && (!isPastDate || isWeekend || isBankHoliday || missingHolidayCoverage));
+                    const visibleEvents = eventsForDay.slice(0, 3);
                     const extraCount = eventsForDay.length - visibleEvents.length;
                     return (
                       <button
                         key={`d-${day}`}
-                        onClick={() => { setSelectedDay(day); setShowDayDrawer(true); }}
+                        onClick={() => { setSelectedDay(day); setShowDayDrawer(false); }}
                         title={dateRestriction || undefined}
-                        aria-disabled={Boolean(dateRestriction)}
-                        className={`relative flex aspect-square cursor-pointer flex-col border-b border-r border-foreground-100 p-1 text-left transition-all duration-150 hover:z-10 sm:aspect-[4/3] sm:p-1.5 ${dateRestriction ? 'bg-background-100/80' : 'hover:bg-primary-50/20'} ${isSel ? 'z-10 bg-[#fff8eb] shadow-[inset_0_0_0_1px_rgba(178,119,21,0.18)] ring-2 ring-[#b27715]/70 ring-inset' : isTdy ? 'bg-primary-50/15' : dateRestriction ? '' : 'bg-background-50'}`}
+                        className={`relative flex min-h-[11.5rem] cursor-pointer flex-col border-b border-r border-foreground-100 p-1 text-left transition-all duration-150 hover:z-10 sm:p-1.5 ${isClosedDate ? 'bg-background-100/80' : 'bg-background-50 hover:bg-primary-50/20'} ${isSel ? 'z-10 border-primary-300 bg-primary-50/60 ring-1 ring-primary-300 ring-inset' : isTdy ? 'bg-primary-50/15' : ''}`}
                       >
-                        <span className={`mb-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold sm:mb-1 sm:h-6 sm:w-6 sm:text-xs ${isSel ? 'bg-[#fff8eb] text-[#b27715] shadow-[0_2px_6px_rgba(178,119,21,0.3)] ring-1 ring-[#b27715]/50' : isTdy ? 'bg-primary-500 text-white' : 'text-foreground-500'}`}>{day}</span>
-                        {dateRestriction && (
-                          <span className="absolute right-1 top-1 inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[8px] font-bold uppercase text-amber-700 sm:text-[9px]">
+                        <span className={`mb-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold sm:mb-1 sm:h-6 sm:w-6 sm:text-xs ${isSel ? 'bg-primary-100 text-primary-800' : isTdy ? 'bg-primary-500 text-white' : 'text-foreground-500'}`}>{day}</span>
+                        {showClosedBadge && (
+                          <span className="absolute right-1 top-1 inline-flex items-center gap-0.5 rounded-full bg-primary-50 px-1.5 py-0.5 text-[8px] font-bold uppercase text-primary-700 ring-1 ring-primary-100 sm:text-[9px]">
                             <AppIcon className="ri-lock-line" />Closed
                           </span>
                         )}
-                        <div className="flex-1 w-full overflow-hidden space-y-0.5 min-w-0">
+                        <div className="flex-1 w-full overflow-hidden space-y-1 min-w-0">
                           {visibleEvents.map((ev) => {
-                            const dotColor = getEventDotColor(ev.type, ev.color);
                             if (ev.type === 'Busy') {
                               return (
                                 <div key={ev.id} className="flex w-full items-center gap-1 rounded bg-slate-200 px-1.5 py-0.5 text-slate-700" title={`Busy · ${ev.time}`}>
@@ -1381,20 +1716,94 @@ export function LearnerCalendarContent() {
                                 </div>
                               );
                             }
+                            const eventSource = learnerEventSource(ev);
+                            const sourceMeta = LEARNER_SOURCE_META[eventSource];
                             return (
-                              <div key={ev.id} className="flex items-center gap-1 min-w-0" title={ev.title}>
-                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}`}></span>
-                                <span className="text-[10px] text-foreground-600 truncate leading-tight font-medium">{ev.title}</span>
+                              <div
+                                key={ev.id}
+                                onClick={(event) => { event.stopPropagation(); setSelectedEvent(ev); }}
+                                className={`rounded-lg border px-2 py-1 text-left shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:brightness-95 ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
+                                title={`${LEARNER_SOURCE_META[eventSource].label} · ${ev.title}`}
+                              >
+                                <div className="flex min-w-0 items-center gap-1.5">
+                                  <span className={`h-2 w-2 shrink-0 rounded-full ${sourceMeta.dot}`}></span>
+                                  <span className="shrink-0 text-[11px] font-bold leading-tight tabular-nums">{ev.timeToBeConfirmed ? 'TBC' : ev.time.split('–')[0]}</span>
+                                  <span className="truncate text-[11px] font-bold leading-tight">{ev.title}</span>
+                                  <span className={`ml-auto h-2 w-2 shrink-0 rounded-full border border-white/80 ${LEARNER_STATUS_META[learnerEventStatus(ev)].dot}`} title={LEARNER_STATUS_META[learnerEventStatus(ev)].label}></span>
+                                </div>
+                                {(ev.host || ev.club) && <p className="mt-0.5 truncate text-[10px] font-medium opacity-75">{ev.host || ev.club}</p>}
                               </div>
                             );
                           })}
-                          {extraCount > 0 && <span className="text-[10px] text-foreground-400 font-semibold pl-2.5">+{extraCount} more</span>}
+                          {extraCount > 0 && <span className="block rounded-md bg-white/80 px-2 py-0.5 text-[10px] font-bold text-primary-700 ring-1 ring-primary-100">+{extraCount} more</span>}
                         </div>
                       </button>
                     );
                   })}
                 </div>
               </div>
+            )}
+
+            {viewMode === 'monthly' && (
+              <Panel className="border border-foreground-200/70 shadow-sm">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-heading font-bold text-foreground-950">{selectedDayLabel}</h3>
+                    <p className="text-xs text-foreground-400">
+                      {selectedDayEvents.length} event{selectedDayEvents.length === 1 ? '' : 's'} match your current filters
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('daily')}
+                    className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold text-primary-700 transition-smooth hover:bg-primary-50 cursor-pointer"
+                  >
+                    Day view
+                    <AppIcon className="ri-arrow-right-line"></AppIcon>
+                  </button>
+                </div>
+                {selectedDaySorted.length > 0 ? (
+                  <div className="space-y-2">
+                    {selectedDaySorted.map((ev) => {
+                      const eventSource = learnerEventSource(ev);
+                      const sourceMeta = LEARNER_SOURCE_META[eventSource];
+                      const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)];
+                      return (
+                        <button
+                          key={ev.id}
+                          type="button"
+                          onClick={() => setSelectedEvent(ev)}
+                          className={`group flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition-all duration-150 hover:-translate-y-0.5 hover:shadow-sm cursor-pointer ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
+                        >
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/75 shadow-sm">
+                            <AppIcon className={`${eventSource === 'live-session' ? 'ri-video-chat-line' : eventSource === 'mcr' ? 'ri-calendar-check-line' : eventSource === 'progress-review' ? 'ri-line-chart-line' : eventSource === 'student-support' ? 'ri-heart-2-line' : eventSource === 'busy' ? 'ri-lock-line' : 'ri-chat-3-line'} text-primary-600`}></AppIcon>
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="mb-1 flex min-w-0 items-center gap-1.5">
+                              <span className={`h-2 w-2 shrink-0 rounded-full ${sourceMeta.dot}`}></span>
+                              <p className="truncate text-sm font-heading font-bold text-foreground-950">{ev.title}</p>
+                            </div>
+                            <p className="truncate text-xs font-medium text-foreground-500">
+                              {ev.timeToBeConfirmed ? 'Time to be confirmed' : ev.time} · {ev.club}
+                            </p>
+                          </div>
+                          <span className="rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-bold text-foreground-700">{statusMeta.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3 rounded-xl border border-dashed border-background-300 bg-background-50 px-4 py-5">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-background-100 text-foreground-400">
+                      <AppIcon className="ri-calendar-event-line"></AppIcon>
+                    </span>
+                    <div>
+                      <p className="text-sm font-bold text-foreground-900">No events on this day</p>
+                      <p className="text-xs text-foreground-500">Try another date or clear your filters.</p>
+                    </div>
+                  </div>
+                )}
+              </Panel>
             )}
 
             {/* WEEKLY VIEW */}
@@ -1408,9 +1817,9 @@ export function LearnerCalendarContent() {
                     const isSel = wd.day === selectedDay && wd.month === viewMonth;
                     return (
                       <button key={`wh-${wd.day}-${wd.month}`} onClick={() => { setSelectedDay(wd.day); setViewMonth(wd.month); }}
-                        className={`px-2 py-3 text-center cursor-pointer transition-smooth ${isSel ? 'bg-[#fff8eb]' : 'hover:bg-background-100/50'} ${idx >= 5 ? 'bg-background-100/20' : ''}`}>
+                        className={`px-2 py-3 text-center cursor-pointer transition-smooth ${isSel ? 'bg-primary-50/60' : 'hover:bg-background-100/50'} ${idx >= 5 ? 'bg-background-100/20' : ''}`}>
                         <span className="text-[10px] font-semibold text-foreground-400 uppercase block">{DAYS_SHORT[idx]}</span>
-                        <span className={`text-sm font-bold inline-flex items-center justify-center w-7 h-7 rounded-full mt-1 ${isSel ? 'bg-[#fff8eb] text-[#b27715] shadow-[0_2px_6px_rgba(178,119,21,0.3)] ring-1 ring-[#b27715]/50' : isTdy ? 'bg-primary-500 text-white' : 'text-foreground-700'}`}>{wd.day}</span>
+                        <span className={`text-sm font-bold inline-flex items-center justify-center w-7 h-7 rounded-full mt-1 ${isSel ? 'bg-primary-100 text-primary-800 ring-1 ring-primary-300' : isTdy ? 'bg-primary-500 text-white' : 'text-foreground-700'}`}>{wd.day}</span>
                       </button>
                     );
                   })}
@@ -1432,14 +1841,13 @@ export function LearnerCalendarContent() {
                           const isSel = wd.day === selectedDay && wd.month === viewMonth;
                           return (
                             <div key={`ws-${wd.day}-${wd.month}-${hour}`}
-                              className={`min-h-[48px] p-0.5 relative cursor-pointer transition-smooth hover:bg-primary-50/15 ${isSel ? 'bg-[#fff8eb]/70' : ''} ${wdi >= 5 ? 'bg-background-100/10' : ''}`}
+                              className={`min-h-[48px] p-0.5 relative cursor-pointer transition-smooth hover:bg-primary-50/15 ${isSel ? 'bg-primary-50/60' : ''} ${wdi >= 5 ? 'bg-background-100/10' : ''}`}
                               onClick={() => { setSelectedDay(wd.day); setViewMonth(wd.month); }}>
                               {eventsInSlot.map((ev) => {
                                 const typeColor = getEventColorClass(ev.type, ev.color);
-                                const [bg, text, border] = typeColor.split(' ');
                                 return (
                                   <div key={ev.id} className={`text-[10px] font-semibold px-1.5 py-1 rounded-md mb-0.5 truncate cursor-pointer border-l-2 hover:brightness-95 transition-all ${typeColor}`}
-                                    onClick={(e) => { e.stopPropagation(); setShowEventDetails(ev); }} title={`${ev.title} (${ev.time})`}>
+                                    onClick={(e) => { e.stopPropagation(); setSelectedEvent(ev); }} title={`${ev.title} (${ev.time})`}>
                                     <span className="text-[9px] text-foreground-400 block truncate">{ev.time.split('\u2013')[0]}</span>
                                     {ev.title}
                                   </div>
@@ -1489,7 +1897,7 @@ export function LearnerCalendarContent() {
                               const typeColor = getEventColorClass(ev.type, ev.color);
                               return (
                                 <div key={ev.id} className={`p-3 rounded-xl cursor-pointer hover:shadow-sm hover:brightness-95 transition-all duration-200 border-l-[3px] ${typeColor}`}
-                                  onClick={() => setShowEventDetails(ev)}>
+                                  onClick={() => setSelectedEvent(ev)}>
                                   <div className="flex items-center justify-between mb-1">
                                     <span className="text-sm font-semibold text-foreground-900">{ev.title}</span>
                                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${statusConfig[ev.status].cls}`}>{statusConfig[ev.status].label}</span>
@@ -1516,41 +1924,136 @@ export function LearnerCalendarContent() {
           {/* ── SIDEBAR (1/3) ── */}
           <div className="space-y-4">
 
+            {/* Event Details */}
+            <Panel>
+              <div className="flex items-center justify-between gap-3">
+                <SectionHeader title="Event Details" icon="ri-information-line" />
+                <span className="rounded-full bg-background-100 px-2.5 py-1 text-[12px] font-semibold text-foreground-500">
+                  {selectedDayEvents.length} selected
+                </span>
+              </div>
+              {selectedEvent ? (() => {
+                const sourceMeta = LEARNER_SOURCE_META[learnerEventSource(selectedEvent)];
+                const statusMeta = LEARNER_STATUS_META[learnerEventStatus(selectedEvent)];
+                return (
+                  <div className="mt-4 space-y-3">
+                    <div className={`rounded-2xl border border-background-200 p-4 ${getEventColorClass(selectedEvent.type, selectedEvent.color).replace('border-l-', 'border-')}`}>
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <span className={`h-2 w-2 rounded-full ${sourceMeta.dot}`}></span>
+                        <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-bold text-foreground-700">{sourceMeta.label}</span>
+                        <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-bold text-foreground-700">{statusMeta.label}</span>
+                      </div>
+                      <h3 className="text-base font-heading font-bold text-foreground-950">{selectedEvent.title}</h3>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="rounded-xl border border-background-200 bg-white px-3 py-2">
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-400">Date</p>
+                        <p className="mt-1 text-sm font-bold text-foreground-900">{selectedEvent.dayName}, {selectedEvent.date}</p>
+                      </div>
+                      <div className="rounded-xl border border-background-200 bg-white px-3 py-2">
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-400">Time</p>
+                        <p className="mt-1 text-sm font-bold text-foreground-900">{selectedEvent.timeToBeConfirmed ? 'To be confirmed' : selectedEvent.time}</p>
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-background-200 bg-white px-3 py-3">
+                      <p className="text-sm font-bold text-foreground-900">{selectedEvent.host}</p>
+                      <p className="mt-0.5 text-xs text-foreground-500">{selectedEvent.club} · {selectedEvent.location}</p>
+                    </div>
+                    {selectedEvent.description && (
+                      <div className="rounded-xl border border-background-200 bg-white px-3 py-3">
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-400">Notes</p>
+                        <p className="mt-1 text-xs leading-relaxed text-foreground-600">{selectedEvent.description}</p>
+                      </div>
+                    )}
+                    <div className="flex flex-wrap gap-2">
+                      {selectedEvent.timeToBeConfirmed && selectedEvent.bookingSessionType && (
+                        <button
+                          type="button"
+                          onClick={() => openBookSession(selectedEvent.isoDate && selectedEvent.isoDate >= bookingToday ? selectedEvent.isoDate : bookingToday, selectedEvent)}
+                          className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary-500 px-3 py-2 text-xs font-bold text-white transition-smooth hover:bg-primary-600 cursor-pointer"
+                        >
+                          <AppIcon className="ri-calendar-check-line"></AppIcon>
+                          Schedule {sessionTypeLabel(selectedEvent.bookingSessionType)}
+                        </button>
+                      )}
+                      {selectedEvent.meetingLink && (
+                        <a href={selectedEvent.meetingLink} target="_blank" rel="noreferrer" className="meeting-join-action inline-flex flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition-smooth cursor-pointer">
+                          <AppIcon className="ri-video-chat-line"></AppIcon>
+                          Join
+                        </a>
+                      )}
+                      {selectedEvent.bookingStatus === 'scheduled' && selectedEvent.bookingSessionType && (
+                        <button type="button" onClick={() => openRescheduleSession(selectedEvent)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 py-2 text-xs font-bold text-primary-700 transition-smooth hover:bg-primary-100 cursor-pointer">
+                          <AppIcon className="ri-calendar-schedule-line"></AppIcon>
+                          Reschedule
+                        </button>
+                      )}
+                      {!selectedEvent.timeToBeConfirmed && (
+                        <button type="button" onClick={() => handleExportICS(selectedEvent)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-background-300 bg-white px-3 py-2 text-xs font-bold text-foreground-600 transition-smooth hover:bg-background-100 cursor-pointer">
+                          <AppIcon className="ri-download-line"></AppIcon>
+                          Export
+                        </button>
+                      )}
+                      <button type="button" onClick={() => setSelectedEvent(null)} className="inline-flex items-center justify-center rounded-xl border border-background-300 bg-white px-3 py-2 text-xs font-bold text-foreground-500 transition-smooth hover:bg-background-100 cursor-pointer">
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                );
+              })() : (
+                <div className="mt-4">
+                  <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-background-200 bg-background-50 px-4 py-8 text-center">
+                    <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary-50 text-primary-500">
+                      <AppIcon className="ri-calendar-event-line text-lg"></AppIcon>
+                    </span>
+                    <p className="text-sm font-bold text-foreground-900">No event selected</p>
+                    <p className="text-xs text-foreground-500">{selectedDayEvents.length} event{selectedDayEvents.length === 1 ? '' : 's'} on the selected day.</p>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <div className="rounded-xl border border-background-200 bg-white px-3 py-2">
+                      <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-400">Selected Day</p>
+                      <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{selectedDayEvents.length}</p>
+                    </div>
+                    <div className="rounded-xl border border-background-200 bg-white px-3 py-2">
+                      <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-400">Next 7 Days</p>
+                      <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{upcomingEvents.length}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </Panel>
+
             {/* Upcoming Events */}
             <Panel>
-              <SectionHeader title="Upcoming" icon="ri-calendar-todo-line" />
+              <SectionHeader title="Next 7 days" icon="ri-calendar-todo-line" />
               <div className="mt-3 space-y-2">
-                {myEvents.filter((ev) => {
-                  const evDate = parseEventDate(ev);
-                  if (!evDate) return false;
-                  const evDate2 = new Date(evDate.year ?? viewYear, evDate.month, evDate.day);
-                  const todayDate = new Date(viewYear, viewMonth, selectedDay);
-                  return evDate2 >= todayDate;
-                }).slice(0, 5).map((ev) => (
-                  <div key={ev.id} className="flex items-start gap-3 p-2.5 rounded-xl hover:bg-background-100 transition-smooth cursor-pointer group" onClick={() => setShowEventDetails(ev)}>
-                    <div className="w-11 shrink-0 rounded-lg px-2 py-2 text-center bg-background-100">
+                {upcomingEvents.slice(0, 8).map((ev) => {
+                  const sourceMeta = LEARNER_SOURCE_META[learnerEventSource(ev)];
+                  const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)];
+                  return (
+                  <div key={ev.id} className="flex items-start gap-3 rounded-xl border border-background-200 bg-background-50 p-2.5 transition-smooth hover:border-primary-200 hover:bg-primary-50/20 cursor-pointer group" onClick={() => setSelectedEvent(ev)}>
+                    <div className="w-11 shrink-0 rounded-lg bg-background-100 px-2 py-2 text-center">
                       <p className="text-[10px] font-bold text-foreground-500 leading-tight">{ev.date.split(' ')[0]}</p>
                       <p className="text-[9px] font-semibold text-foreground-400 leading-tight">{ev.date.split(' ')[1]}</p>
                     </div>
                     <div className="flex-1 min-w-0">
+                      <div className="mb-1 flex flex-wrap items-center gap-1">
+                        <span className={`h-1.5 w-1.5 rounded-full ${sourceMeta.dot}`}></span>
+                        <span className="rounded-full bg-primary-50 px-1.5 py-0.5 text-[9px] font-bold text-primary-700">{sourceMeta.short}</span>
+                        <span className="rounded-full bg-background-100 px-1.5 py-0.5 text-[9px] font-bold text-foreground-500">{statusMeta.label}</span>
+                      </div>
                       <p className="text-sm font-semibold text-foreground-900 group-hover:text-primary-700 transition-colors leading-tight truncate">{ev.title}</p>
                       <div className="flex items-center gap-2 mt-0.5">
                         <span className="text-xs text-foreground-400">{ev.time}</span>
-                        <span className={`w-1.5 h-1.5 rounded-full ${getEventDotColor(ev.type, ev.color)}`}></span>
                       </div>
                     </div>
                   </div>
-                ))}
-                {myEvents.filter((ev) => {
-                  const evDate = parseEventDate(ev);
-                  if (!evDate) return false;
-                  const evDate2 = new Date(evDate.year ?? viewYear, evDate.month, evDate.day);
-                  const todayDate = new Date(viewYear, viewMonth, selectedDay);
-                  return evDate2 >= todayDate;
-                }).length === 0 && (
+                  );
+                })}
+                {upcomingEvents.length === 0 && (
                   <div className="flex items-center gap-2 rounded-xl bg-background-100/60 px-3 py-2.5">
                     <AppIcon className="ri-calendar-2-line text-sm text-foreground-300"></AppIcon>
-                    <p className="text-xs text-foreground-400">No upcoming events</p>
+                    <p className="text-xs text-foreground-400">No events in the next 7 days match these filters</p>
                   </div>
                 )}
               </div>

@@ -11,6 +11,7 @@ import {
   fetchCurriculumScopeLearnerRoster,
   fetchCurriculumSessions,
   fetchCurriculumTeamsMeetingSummaries,
+  onCalendarOccurrences,
   type CurriculumModule,
   type CurriculumSession,
   type CurriculumTeamsMeetingSummary,
@@ -111,13 +112,17 @@ const COLUMNS = [
 const AUTO_SYNC_RETRY_MS = 5 * 60 * 1000;
 const AUTO_SYNC_RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-type CalendarState = 'in-sync' | 'out-of-sync' | 'not-created' | 'no-sessions';
+type CalendarState = 'in-sync' | 'out-of-sync' | 'not-created' | 'no-sessions' | 'unverified';
 
 const STATE_LABELS: Record<CalendarState, string> = {
   'in-sync': 'In sync',
   'out-of-sync': 'Dates differ',
   'not-created': 'Not created',
   'no-sessions': 'No sessions',
+  // Never shown as agreement: the backend could not compare the calendar
+  // against the module's plan (a read failed, or nothing is tracked to
+  // compare against yet), so the state says that plainly rather than guess.
+  unverified: 'Unable to verify',
 };
 
 const STATE_TONES: Record<CalendarState, string> = {
@@ -125,6 +130,7 @@ const STATE_TONES: Record<CalendarState, string> = {
   'out-of-sync': 'border-amber-200 bg-amber-50 text-amber-800',
   'not-created': 'border-background-200 bg-background-100 text-foreground-500',
   'no-sessions': 'border-background-200 bg-background-100 text-foreground-500',
+  unverified: 'border-background-200 bg-background-100 text-foreground-500',
 };
 
 /**
@@ -715,16 +721,16 @@ export default function CurriculumTeamsMeetingsPage() {
           || DEFAULT_DURATION_MINUTES,
       );
 
+      // The verdict itself is the backend's: it re-derives the module's plan
+      // from the authoring rows (holidays, delivery days, dates) rather than
+      // comparing against this page's own — possibly cached — session list, so
+      // a plan changed a moment ago is never read as "in sync" against the old
+      // one. `syncState` only travels when `occurrenceDates` was asked for,
+      // which this page always does, so its absence means the read failed.
       let state: CalendarState = 'not-created';
-      let differingSessions = 0;
-      if (summary && !moduleSessions.length) {
-        state = 'no-sessions';
-      } else if (summary) {
-        const teamsKeys = teamsStarts.map(minuteKey);
-        differingSessions = plannedStarts.reduce((count, planned, index) => (
-          minuteKey(planned) === teamsKeys[index] ? count : count + 1
-        ), 0) + Math.max(0, teamsKeys.length - plannedStarts.length);
-        state = differingSessions ? 'out-of-sync' : 'in-sync';
+      let differingSessions = summary?.differingOccurrenceCount || 0;
+      if (summary) {
+        state = summary.syncState || 'unverified';
       } else if (!moduleSessions.length) {
         state = 'no-sessions';
       }
@@ -834,6 +840,20 @@ export default function CurriculumTeamsMeetingsPage() {
   }, [rows]);
 
   // ---------------------------------------------------------- detail loader
+
+  /**
+   * The tracked occurrence for one session of the plan.
+   *
+   * By session number, with position only as the fallback -- the same pairing
+   * the module workspace's own schedule uses. Read by position alone, a series
+   * carrying a cancelled leftover row handed every session after it its
+   * neighbour's meeting: the wrong join link, and another session's attendance
+   * and recordings.
+   */
+  const detailOccurrenceFor = useCallback((index: number) => {
+    const occurrences = onCalendarOccurrences(detail?.occurrences);
+    return occurrences.find(item => Number(item.session_number) === index + 1) || occurrences[index];
+  }, [detail]);
 
   const loadDetail = useCallback(async (liveSessionId: string) => {
     if (!liveSessionId) { setDetail(null); return; }
@@ -961,6 +981,10 @@ export default function CurriculumTeamsMeetingsPage() {
         scheduledOccurrences: occurrences,
       });
       await loadTeamsState();
+      // The occurrence rows this drawer reads its join links and attendance
+      // from have just been rewritten, so the drawer's own read is stale until
+      // it is taken again.
+      if (summary.liveSessionId) await loadDetail(summary.liveSessionId);
       const warnings = result.warnings || [];
       if (warnings.length) {
         setNotice({
@@ -1426,6 +1450,7 @@ export default function CurriculumTeamsMeetingsPage() {
                 { value: 'in-sync', label: 'In sync' },
                 { value: 'not-created', label: 'Not created' },
                 { value: 'no-sessions', label: 'No sessions' },
+                { value: 'unverified', label: 'Unable to verify' },
               ],
             },
           ]}
@@ -1706,7 +1731,7 @@ export default function CurriculumTeamsMeetingsPage() {
                     // A session Teams would only accept as an event of its own
                     // has a link of its own, so the row's own link comes first
                     // and the series' link is the fallback the rest share.
-                    const joinUrl = detail?.occurrences?.[index]?.join_url || selected.summary?.joinUrl || '';
+                    const joinUrl = detailOccurrenceFor(index)?.join_url || selected.summary?.joinUrl || '';
                     if (!joinUrl) {
                       return <span className="text-[11px] font-semibold text-foreground-400">Not on Teams yet</span>;
                     }
@@ -1727,7 +1752,7 @@ export default function CurriculumTeamsMeetingsPage() {
                     );
                   }}
                   renderFacts={index => {
-                    const occurrence = detail?.occurrences?.[index];
+                    const occurrence = detailOccurrenceFor(index);
                     // Nothing is written down for a meeting that has not run:
                     // "0 attended, nothing yet" on every future session is a
                     // column of absences, and the note under the list already

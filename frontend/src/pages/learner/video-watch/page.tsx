@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import DOMPurify from 'dompurify';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
@@ -7,6 +7,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerKsbItem } from '@/api/learnerDetail';
+import { markingVerdict } from '@/lib/markingVerdict';
 import { submitVideoProgress } from '@/api/videos';
 import { submitComponentProgress } from '@/api/components';
 import { startTimeTracking, type TimeTrackingSession, type TrackingCountingMode } from '@/api/timeTracking';
@@ -17,14 +18,11 @@ import {
   type JourneyComponent,
 } from '@/utils/learnerJourney';
 import { fetchEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
-import { ReflectionWindow, formatClock, formatRecordedClock, parseClockSeconds } from '@/components/feature/ReflectionWindow';
+import { ReflectionWindow, formatClock, formatRecordedClock } from '@/components/feature/ReflectionWindow';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
-import { useAuth } from '@/hooks/useAuth';
-import { isInspectionDemoAccount } from '@/lib/learnerFlowAccess';
 import { formatSystemTimestamp, systemTimeZoneName } from '@/lib/format';
-import { demoTimeKey, expectedMinutesFor, setDemoTimeOverride, useDemoTimeOverrides } from '@/lib/demoTime';
 import {
   activityTimerStorageKey,
   canResumeActivityTimer,
@@ -33,7 +31,6 @@ import {
   saveActivityTimerElapsed,
   saveActivityTimerSession,
 } from '@/lib/activityTimer';
-import { DemoTimeChip } from '@/components/feature/DemoTimePanel';
 import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
 import { ComponentAccessNotice } from '@/components/feature/ComponentAccessNotice';
 import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
@@ -43,6 +40,7 @@ import { isNavigableComponent } from './weekPreview';
 import { componentRoute } from './componentRoute';
 import { AssignmentSubmissionWizard, type AssignmentAnswers } from './AssignmentSubmissionWizard';
 import { resolveDocEmbed } from '@/lib/docEmbed';
+import { normalizeReadingHtml } from '@/lib/readingHtml';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 import {
   loadTeamsMeetingArtifacts,
@@ -92,84 +90,6 @@ function completionTimeFor(component: JourneyComponent, detail: LearnerDetail | 
     return String(record.submittedAt || '') >= String(current.submittedAt || '') ? record : current;
   }, null);
   return formatRecordedClock(latest?.timeTaken);
-}
-
-function CompletionTimeInput({
-  value,
-  label = 'Time taken',
-  rightAddon,
-  onSave,
-}: {
-  value: string;
-  label?: string;
-  rightAddon?: ReactNode;
-  onSave: (seconds: number | null) => void;
-}) {
-  const [draft, setDraft] = useState(value);
-  const [invalid, setInvalid] = useState(false);
-
-  useEffect(() => {
-    setDraft(value);
-    setInvalid(false);
-  }, [value]);
-
-  const save = () => {
-    if (!draft.trim()) {
-      onSave(null);
-      return;
-    }
-    const seconds = parseClockSeconds(draft);
-    if (seconds == null) {
-      setInvalid(true);
-      return;
-    }
-    setInvalid(false);
-    const formatted = formatClock(seconds);
-    setDraft(formatted);
-    onSave(seconds);
-  };
-
-  const updateDraft = (nextValue: string) => {
-    setDraft(nextValue);
-    setInvalid(false);
-
-    // Persist as soon as the learner has entered a complete valid clock. This
-    // means a refresh or route change cannot lose the latest value just because
-    // the input did not get a chance to blur first.
-    if (!nextValue.trim()) {
-      onSave(null);
-      return;
-    }
-    const seconds = parseClockSeconds(nextValue);
-    if (seconds != null) onSave(seconds);
-  };
-
-  return (
-    <div className="flex items-center gap-2 border-t border-emerald-100 bg-emerald-50/70 px-4 py-2 text-[10px] font-semibold text-emerald-800">
-      <AppIcon className="ri-timer-line shrink-0 text-[11px]" />
-      <span className="shrink-0">{label}</span>
-      <input
-        type="text"
-        inputMode="numeric"
-        value={draft}
-        onChange={(event) => updateDraft(event.target.value)}
-        onBlur={save}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') event.currentTarget.blur();
-          if (event.key === 'Escape') { event.preventDefault(); setDraft(value); setInvalid(false); }
-        }}
-        placeholder="00:00:00"
-        aria-label="Completion time in hours, minutes and seconds"
-        aria-invalid={invalid}
-        className={`ml-auto w-24 rounded-md border bg-white px-2 py-1 text-center font-mono text-[11px] font-bold tabular-nums outline-none focus:ring-2 ${
-          invalid
-            ? 'border-red-400 text-red-700 focus:ring-red-200'
-            : 'border-emerald-200 text-emerald-800 focus:border-emerald-400 focus:ring-emerald-100'
-        }`}
-      />
-      {rightAddon}
-    </div>
-  );
 }
 
 function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange: (seconds: number | null) => void; initialSeconds?: number | null }) {
@@ -385,6 +305,16 @@ export default function ComponentViewPage() {
     [detail, componentId, completedIds],
   );
   const component = ctx?.component ?? null;
+  // Where this activity stands with the coach. Only meaningful for an activity
+  // the author sent for validation: everything else is finished when the
+  // learner completes it. Without this the page said "Ready to complete" on
+  // work that had already been submitted and rejected.
+  const marking = componentId ? detail?.componentMarkingStatus?.[componentId] : undefined;
+  // Driven by whether the work was actually submitted, not by the component's
+  // validation flag. A coach can review anything a learner hands in, and most
+  // reflection components carry no flag — gating on it hid a rejection with
+  // 692 characters of feedback behind a "Ready to complete" banner.
+  const verdict = markingVerdict(marking?.status);
   const meta = component ? componentTypeMeta(component.title) : null;
   const learnerKsbs: LearnerKsbItem[] = detail?.ksbs ?? [];
 
@@ -431,16 +361,6 @@ export default function ComponentViewPage() {
   const weekTitle = ctx?.weekTitle ?? searchParams.get('week') ?? '';
   const backHref = kind && id ? `/workspace/learner/${kind}/${id}` : '/workspace/learner';
 
-
-  // Inspection-demo accounts only — see isInspectionDemoAccount. The results
-  // screen shows an editable "demo time" beside the expected time; everyone
-  // else sees the page exactly as before.
-  const { auth } = useAuth();
-  const isDemoAccount = isInspectionDemoAccount(auth.account?.email);
-  const demoScopeKey = kind && id ? `${kind}:${id}` : '';
-  const demoTimeOverrides = useDemoTimeOverrides(demoScopeKey);
-  const demoKey = componentId ? demoTimeKey({ isQuiz: false, componentId }) : '';
-  const demoExpectedMinutes = component ? expectedMinutesFor(component) : null;
 
   // A quiz component has nowhere to show its questions — the quiz page owns
   // that. Reaching this page for one (a direct link, a bookmark, the sidebar
@@ -602,6 +522,7 @@ export default function ComponentViewPage() {
   // one second apart.
   useEffect(() => {
     if (phase !== 'consume' || !canUseComponent || (!unsupported && !playerPlaying)) return;
+    let lastAudioTickAt = Date.now();
     timerRef.current = setInterval(() => {
       if (isAudio || document.visibilityState === 'visible') {
         const now = Date.now();
@@ -676,13 +597,6 @@ export default function ComponentViewPage() {
         setRecord({ timeTaken: res.record.timeTaken, ksbs: res.record.ksbs, reportedTime: res.record.reportedTime, feedback: res.record.feedback });
       }
       clearActivityTimer(timerStorageKey);
-      if (isDemoAccount && demoKey) {
-        setDemoTimeOverride(
-          demoScopeKey,
-          demoKey,
-          timeSource === 'input' && manualTimeSeconds != null ? manualTimeSeconds / 60 : null,
-        );
-      }
       setWallElapsed(0);
       setManualTimeSeconds(null);
       setTimeSource(usesManualTimeOnly ? 'input' : 'timer');
@@ -866,8 +780,13 @@ export default function ComponentViewPage() {
                         {/* Wrong file uploaded? Remove it here and the control
                             reverts to "Upload evidence" for the right one.
                             Only for a real stored row — an optimistic label
-                            from a still-uploading file has no id to delete. */}
-                        {visibleEvidenceFile && (
+                            from a still-uploading file has no id to delete.
+
+                            Hidden once the activity has been handed in:
+                            `canDelete` is the server's own answer, and offering
+                            Remove without it produced a 409 Conflict on a button
+                            the page had just invited the learner to press. */}
+                        {visibleEvidenceFile && visibleEvidenceFile.canDelete !== false && (
                           removingEvidence ? (
                             <span className="text-[11px] font-semibold text-foreground-400">Removing…</span>
                           ) : confirmingEvidenceRemoval ? (
@@ -940,6 +859,38 @@ export default function ComponentViewPage() {
                 </div>
               )}
 
+              {/* Where this stands with the coach. Shown above the completion
+                  criteria and instead of them: once the work is with a coach,
+                  "Ready to complete" is not the useful thing to say — and on a
+                  rejected submission it was actively wrong. */}
+              {verdict && (
+                <div className={`mt-4 rounded-xl border p-4 ${verdict.panel}`}>
+                  <h2 className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-foreground-500">
+                    <AppIcon className={`${verdict.icon} ${verdict.panelIcon}`} />
+                    {verdict.label}
+                  </h2>
+                  <p className="text-sm leading-relaxed text-foreground-700">{verdict.detail}</p>
+                  {marking?.feedback && (
+                    <div className="mt-3 rounded-lg border border-foreground-200/70 bg-white/70 p-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-foreground-400">
+                        Coach feedback
+                      </p>
+                      <p className="mt-1.5 whitespace-pre-wrap text-sm leading-6 text-foreground-700">
+                        {marking.feedback}
+                      </p>
+                      {marking.reviewedBy && (
+                        <p className="mt-2 text-[11px] text-foreground-400">
+                          {marking.reviewedBy}
+                          {marking.reviewedAt
+                            ? ` · ${new Date(marking.reviewedAt).toLocaleDateString('en-GB')}`
+                            : ''}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {isAssignment && activityEvidenceContext && kind && id && componentId && (
                 <div className="mt-4">
                   <AssignmentSubmissionWizard
@@ -992,7 +943,7 @@ export default function ComponentViewPage() {
                 </div>
               )}
 
-              {criteria?.gated && !isAssignment && (
+              {!verdict && criteria?.gated && !isAssignment && (
                 <div className={`mt-4 rounded-xl border p-4 ${
                   criteria.met ? 'border-emerald-200 bg-emerald-50/60' : 'border-amber-200 bg-amber-50/60'
                 }`}>
@@ -1028,43 +979,7 @@ export default function ComponentViewPage() {
               kind={kind}
               id={id}
               currentComponentId={componentId}
-              // The demo accounts edit their own completion times, so the plain
-              // read-only time is shown to everyone else.
-              completionTimeFor={(c) => {
-                const key = c.componentId
-                  ? demoTimeKey({ isQuiz: c.isQuiz, quizId: c.quizMeta?.quizId, componentId: c.componentId })
-                  : '';
-                const override = key ? demoTimeOverrides[key] : null;
-                if (override != null) return isDemoAccount ? null : formatClock(Math.round(override * 60));
-                return isDemoAccount ? null : completionTimeFor(c, detail);
-              }}
-              rowExtras={(c, completed) => {
-                const key = c.componentId
-                  ? demoTimeKey({ isQuiz: c.isQuiz, quizId: c.quizMeta?.quizId, componentId: c.componentId })
-                  : '';
-                if (!completed || !isDemoAccount || !key) return null;
-                const override = demoTimeOverrides[key];
-                return (
-                  <CompletionTimeInput
-                    value={
-                      (override != null
-                        ? formatClock(Math.round(override * 60))
-                        : completionTimeFor(c, detail)) || '00:00:00'
-                    }
-                    label={override != null ? 'Input' : 'Time taken'}
-                    rightAddon={
-                      !c.isQuiz && c.componentId && kind && id ? (
-                        <EvidenceFilesButton kind={kind as LearnerKind} learnerId={id} componentId={c.componentId} />
-                      ) : null
-                    }
-                    onSave={(seconds) => setDemoTimeOverride(
-                      demoScopeKey,
-                      key,
-                      seconds == null ? null : seconds / 60,
-                    )}
-                  />
-                );
-              }}
+              completionTimeFor={(c) => completionTimeFor(c, detail)}
               routeFor={(c, week) => componentRoute(kind, id, c, moduleTitle, week)}
               accessOpen={componentAccess.open}
             />
@@ -1229,19 +1144,9 @@ function googleDriveFileId(url: string): string | null {
   return match?.[1] ?? null;
 }
 
-function legacyAttachmentId(url: string): string | null {
-  const match = url.match(/\/_legacy_files\/([0-9]{1,20})\//);
-  return match?.[1] ?? null;
-}
-
-function legacyAttachmentProxyUrl(url: string): string | null {
-  const id = legacyAttachmentId(url);
-  return id ? `/learner_api/media/legacy-attachment/${id}/` : null;
-}
-
 function proxiedMaterialUrl(url: string): string {
   const driveId = googleDriveFileId(url);
-  return driveId ? `/learner_api/media/google-drive/${driveId}/` : (legacyAttachmentProxyUrl(url) || url);
+  return driveId ? `/learner_api/media/google-drive/${driveId}/` : url;
 }
 
 function displayableMediaSource(url: string, fileName?: string | null): { kind: 'image' | 'video'; src: string } | null {
@@ -1644,7 +1549,7 @@ function AttachedFileCard({ url, fileName, previewed = false }: {
   );
 }
 
-function InlineAttachmentPreview({ url, title, fileName, readingPreferences, annotationKey, allowAnnotatedDownload = false }: {
+export function InlineAttachmentPreview({ url, title, fileName, readingPreferences, annotationKey, allowAnnotatedDownload = false }: {
   url: string;
   title: string;
   fileName?: string | null;
@@ -1654,7 +1559,6 @@ function InlineAttachmentPreview({ url, title, fileName, readingPreferences, ann
 }) {
   const media = displayableMediaSource(url, fileName);
   const previewUrl = proxiedMaterialUrl(url);
-  const legacyId = legacyAttachmentId(url);
   const probe = fileProbe(url, fileName);
   const isPdf = PDF_FILE_RE.test(probe);
   const isWord = WORD_FILE_RE.test(probe);
@@ -1722,7 +1626,6 @@ function InlineAttachmentPreview({ url, title, fileName, readingPreferences, ann
   if (media) return <InlineMediaPreview url={url} title={title} fileName={fileName} />;
 
   if (isPdf) {
-    if (legacyId) return <LegacyPdfImagePreview attachmentId={legacyId} title={title} fileName={fileName} readingPreferences={readingPreferences} />;
     const hostedPdfEmbed = resolveDocEmbed(previewUrl);
     if (hostedPdfEmbed.mode === 'deck') return <DocumentEmbed url={previewUrl} title={title} />;
     return <PdfCanvasPreview url={previewUrl} title={title} fileName={fileName} readingPreferences={readingPreferences} annotationKey={annotationKey} allowAnnotatedDownload={allowAnnotatedDownload} />;
@@ -1775,135 +1678,6 @@ function InlineAttachmentPreview({ url, title, fileName, readingPreferences, ann
       </div>
     </>
   );
-}
-
-function LegacyPdfImagePreview({ attachmentId, title, fileName, readingPreferences }: {
-  attachmentId: string;
-  title: string;
-  fileName?: string | null;
-  readingPreferences?: ReadingPreferences;
-}) {
-  const [pageNumber, setPageNumber] = useState(1);
-  const [pageCount, setPageCount] = useState(1);
-  const [scale, setScale] = useState(1);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [error, setError] = useState<string | null>(null);
-  const infoUrl = `/learner_api/media/legacy-attachment/${attachmentId}/pdf-info/`;
-  const pageUrl = `/learner_api/media/legacy-attachment/${attachmentId}/pdf-page/${pageNumber}/`;
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadInfo() {
-      try {
-        setStatus('loading');
-        setError(null);
-        const response = await fetch(infoUrl, { credentials: 'same-origin' });
-        if (!response.ok) throw new Error(`File request failed (${response.status})`);
-        const data = await response.json() as { pages?: number };
-        if (!cancelled) {
-          setPageCount(Math.max(1, Number(data.pages) || 1));
-          setStatus('ready');
-        }
-      } catch (loadError) {
-        if (!cancelled) {
-          setStatus('error');
-          setError(loadError instanceof Error ? loadError.message : 'Could not load PDF preview.');
-        }
-      }
-    }
-    void loadInfo();
-    return () => {
-      cancelled = true;
-    };
-  }, [infoUrl]);
-
-  if (status === 'loading') {
-    return (
-      <div className="grid min-h-[420px] place-items-center rounded-xl border border-background-300 bg-white text-sm font-semibold text-foreground-500 shadow-sm">
-        <span className="inline-flex items-center gap-2"><AppIcon className="ri-loader-4-line animate-spin" />Loading PDF preview...</span>
-      </div>
-    );
-  }
-
-  if (status === 'error') {
-    return (
-      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-        <p className="font-bold">Could not show this PDF inline.</p>
-        <p className="mt-1 text-xs">{error || 'Could not load PDF pages.'}</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="overflow-hidden rounded-xl border border-background-300 bg-background-100 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-background-300 bg-white px-4 py-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-bold text-foreground-900">{fileLabelFrom('', fileName) || title}</p>
-          <p className="text-xs text-foreground-500">Page {pageNumber} of {pageCount}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setScale((value) => Math.max(0.75, Number((value - 0.25).toFixed(2))))}
-            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50"
-            aria-label="Zoom out"
-          >
-            <AppIcon className="ri-subtract-line" />
-          </button>
-          <span className="min-w-12 text-center text-xs font-bold text-foreground-600">{Math.round(scale * 100)}%</span>
-          <button
-            type="button"
-            onClick={() => setScale((value) => Math.min(2.5, Number((value + 0.25).toFixed(2))))}
-            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50"
-            aria-label="Zoom in"
-          >
-            <AppIcon className="ri-add-line" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setPageNumber((value) => Math.max(1, value - 1))}
-            disabled={pageNumber <= 1}
-            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50 disabled:cursor-not-allowed disabled:opacity-40"
-            aria-label="Previous page"
-          >
-            <AppIcon className="ri-arrow-left-s-line" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setPageNumber((value) => Math.min(pageCount, value + 1))}
-            disabled={pageNumber >= pageCount}
-            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50 disabled:cursor-not-allowed disabled:opacity-40"
-            aria-label="Next page"
-          >
-            <AppIcon className="ri-arrow-right-s-line" />
-          </button>
-        </div>
-      </div>
-      <div
-        className="max-h-[72vh] overflow-auto p-4"
-        style={{ backgroundColor: readingPreferences?.colourMode === 'cream' ? '#fff7dc' : readingPreferences?.colourMode === 'dark' ? '#111827' : undefined }}
-      >
-        <img
-          key={pageUrl}
-          src={pageUrl}
-          alt={`${title} page ${pageNumber}`}
-          className="mx-auto block rounded-lg bg-white shadow-sm"
-          style={{
-            width: `${scale * 100}%`,
-            maxWidth: scale <= 1 ? '100%' : 'none',
-            filter: readingPreferences?.colourMode === 'monochrome' ? 'grayscale(1) contrast(1.15)' : readingPreferences?.colourMode === 'dark' ? 'grayscale(1) invert(1)' : undefined,
-          }}
-        />
-      </div>
-    </div>
-  );
-}
-
-interface PdfHighlight {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
 }
 
 function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotationKey, allowAnnotatedDownload }: {
@@ -2261,25 +2035,6 @@ function DocumentEmbed({ url, title }: { url: string; title: string }) {
       <iframe title={title} src={embed.src} className="w-full h-full" />
     </div>
   );
-}
-
-/** Reading content authored through a plain textarea sometimes lands
- * double-escaped: each authored line is a real `<div>…</div>` (the browser's
- * contentEditable-style line wrapper), but its CONTENTS are HTML-escaped text
- * ("&lt;h2&gt;Overview&lt;/h2&gt;") instead of real tags. Detect that shape,
- * turn the real `<div>`/`<br>` line breaks into newlines, then decode the
- * escaped entities — turning it into genuine HTML that renders formatted
- * instead of showing literal "&lt;h2&gt;" tag text. */
-function normalizeReadingHtml(html: string): string {
-  const looksEscaped = /&lt;\/?[a-z][a-z0-9]*(&gt;|\s)/i.test(html);
-  if (!looksEscaped) return html;
-  const withBreaks = html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/div>\s*<div>/gi, '\n')
-    .replace(/<\/?div>/gi, '');
-  const textarea = document.createElement('textarea');
-  textarea.innerHTML = withBreaks;
-  return textarea.value;
 }
 
 /* ═══════════════════════════════════════════════════════

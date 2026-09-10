@@ -44,82 +44,61 @@ export function CurriculumDeliveryHub() {
 }
 
 /**
- * Quality is not built yet. The hub body below still knows how to render the
- * quality checks, so re-enabling it is a one-line change back to
- * `<CurriculumHub kind="quality" />` once the real checks land.
+ * Quality reads the curriculum records rather than a workflow of its own, so
+ * every destination below answers a question the records can already answer.
+ * The two that cannot be answered yet are listed by {@link QUALITY_NOT_BUILT}
+ * and say what is missing, rather than being drawn as if they worked.
  */
 export function CurriculumQualityHub() {
-  const copy = HUB_COPY.quality;
-  return (
-    <WorkspaceShell
-      role="curriculum"
-      roleLabel="Curriculum Designer"
-      navItems={curriculumNavItems}
-      workspaceLabel="Curriculum Studio"
-      pageTitle={copy.title}
-      pageSubtitle="Coming soon"
-      userName="Rachel Myers"
-      userRole="Curriculum Designer"
-    >
-      <main className="min-h-full bg-background-100 p-4 sm:p-5 lg:p-6">
-        <div className="mx-auto max-w-[1560px] space-y-4">
-          <section className="overflow-hidden rounded-2xl border border-primary-100 bg-background-50 shadow-sm">
-            <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:p-6">
-              <div className="min-w-0">
-                <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-primary-600">{copy.eyebrow}</p>
-                <h1 className="mt-2 font-heading text-3xl font-bold tracking-tight text-foreground-950">{copy.title}</h1>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-foreground-500">{copy.description}</p>
-              </div>
-              <span className="curriculum-quality-coming-soon inline-flex h-9 shrink-0 items-center gap-2 rounded-full bg-amber-50 px-4 text-[11px] font-extrabold uppercase tracking-wide text-amber-700">
-                <AppIcon className="ri-time-line" />
-                Coming soon
-              </span>
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-foreground-200 bg-background-50 px-5 py-6 shadow-sm sm:px-6">
-            <div className="flex flex-col items-center gap-3 text-center">
-              <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-50 text-primary-500">
-                <AppIcon className="ri-time-line text-2xl" />
-              </span>
-              <p className="font-heading text-base font-bold text-foreground-800">Coming Soon</p>
-              <p className="max-w-xl text-[12px] leading-5 text-foreground-500">
-                Everything Quality will own is listed below. None of it is available yet — until it is, curriculum gaps
-                are fixed in the records that own them.
-              </p>
-            </div>
-
-            <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {QUALITY_ROADMAP.map(item => <ComingSoonCard key={item.title} {...item} />)}
-            </div>
-          </section>
-        </div>
-      </main>
-    </WorkspaceShell>
-  );
+  return <CurriculumHub kind="quality" />;
 }
 
-/** What the Quality destination will contain. Nothing here is live yet. */
-const QUALITY_ROADMAP: Array<{ title: string; description: string; icon: string }> = [
-  { title: 'Quality Assurance', description: 'Sampling, IQA checks and sign-off against live curriculum records.', icon: 'ri-shield-check-line' },
-  { title: 'Version Control', description: 'Track curriculum revisions and see exactly what changed between versions.', icon: 'ri-git-branch-line' },
-  { title: 'Reporting', description: 'Curriculum coverage and readiness reports you can export or share.', icon: 'ri-bar-chart-box-line' },
-  { title: 'Published Content', description: 'Review what is live, what is draft and what is awaiting approval.', icon: 'ri-checkbox-multiple-line' },
-  { title: 'Audit Trail', description: 'Who changed what, when, across programmes, modules and assessments.', icon: 'ri-history-line' },
+/**
+ * Quality destinations with no record store behind them. Each one names the
+ * table it needs: a card that says "coming soon" tells a curriculum lead
+ * nothing, while a card that says the findings have nowhere to be saved tells
+ * them exactly why the page is not there.
+ */
+const QUALITY_NOT_BUILT: Array<{ title: string; description: string; missing: string; icon: string }> = [
+  {
+    title: 'Quality Assurance',
+    description: 'Sampling, IQA checks and sign-off against live curriculum records.',
+    missing: 'Needs a QA store: review cycles, checklist results, findings and sign-off have nowhere to be saved.',
+    icon: 'ri-shield-check-line',
+  },
 ];
 
-function ComingSoonCard({ title, description, icon }: { title: string; description: string; icon: string }) {
+function NotBuiltPanel() {
   return (
-    <div className="flex min-h-32 flex-col rounded-2xl border border-dashed border-foreground-200 bg-background-100/50 p-4">
-      <div className="flex items-start justify-between gap-3">
-        <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-background-50 text-foreground-400">
-          <AppIcon className={`${icon} text-lg`} />
-        </span>
-        <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide text-amber-700">Soon</span>
+    <section className="rounded-2xl border border-dashed border-foreground-200 bg-background-50 p-5 shadow-sm">
+      <div>
+        <h2 className="font-heading text-base font-bold text-foreground-950">Not built yet</h2>
+        <p className="mt-1 text-[12px] text-foreground-500">
+          This needs a record store that does not exist. Until it does, the work it would track is done in the records
+          themselves.
+        </p>
       </div>
-      <h3 className="mt-3 font-heading text-[13px] font-bold text-foreground-700">{title}</h3>
-      <p className="mt-1 flex-1 text-[12px] leading-5 text-foreground-400">{description}</p>
-    </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        {QUALITY_NOT_BUILT.map(item => (
+          <div key={item.title} className="flex min-h-32 flex-col rounded-2xl border border-background-200 bg-background-100/50 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-background-50 text-foreground-400">
+                <AppIcon className={`${item.icon} text-lg`} />
+              </span>
+              <span className="rounded-full bg-background-200 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide text-foreground-500">
+                Not built
+              </span>
+            </div>
+            <h3 className="mt-3 font-heading text-[13px] font-bold text-foreground-700">{item.title}</h3>
+            <p className="mt-1 text-[12px] leading-5 text-foreground-400">{item.description}</p>
+            <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-5 text-amber-700">
+              <AppIcon className="ri-information-line mt-0.5 shrink-0" />
+              <span>{item.missing}</span>
+            </p>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -182,7 +161,7 @@ function CurriculumHub({ kind }: { kind: HubKind }) {
             eyebrow={kind === 'library' ? 'Learning resources' : undefined}
             title={copy.title}
             description={copy.description}
-            icon={kind === 'library' ? 'ri-folder-open-line' : 'ri-calendar-schedule-line'}
+            icon={kind === 'library' ? 'ri-folder-open-line' : kind === 'quality' ? 'ri-shield-check-line' : 'ri-calendar-schedule-line'}
             statIconPosition={kind === 'library' ? 'leading' : 'inline'}
             stats={summaryStats.map(stat => ({ label: stat.label, value: String(stat.value), icon: kind === 'library' ? stat.icon : undefined }))}
             actions={(
@@ -240,10 +219,12 @@ function CurriculumHub({ kind }: { kind: HubKind }) {
               items={[
                 { label: 'Programmes without a KSB source', value: programmesWithoutKsb.length, href: '/curriculum/programmes', icon: 'ri-node-tree' },
                 { label: 'Modules without KSB mappings', value: modulesWithoutKsb.length, href: '/curriculum/ksb-mapping', icon: 'ri-link-unlink' },
-                { label: 'Modules not yet published', value: draftModules.length, href: '/curriculum/module-builder', icon: 'ri-draft-line' },
+                { label: 'Modules not yet published', value: draftModules.length, href: '/curriculum/published', icon: 'ri-draft-line' },
               ]}
             />
           )}
+
+          {kind === 'quality' && <NotBuiltPanel />}
         </div>
       </main>
     </WorkspaceShell>
@@ -280,9 +261,11 @@ function hubCards(kind: HubKind, counts: {
     ];
   }
   return [
-    { title: 'KSB Coverage', description: 'Trace missing mappings back to their modules and components.', href: '/curriculum/ksb-mapping', icon: 'ri-node-tree', meta: `${counts.mappingGaps} module gaps`, tone: 'primary' },
-    { title: 'Programme Checks', description: 'Open a programme to review its exact readiness blockers.', href: '/curriculum/programmes', icon: 'ri-shield-check-line', tone: 'emerald' },
-    { title: 'Draft Content', description: 'Finish modules that are still being authored or reviewed.', href: '/curriculum/module-builder', icon: 'ri-draft-line', meta: `${counts.draftModules} drafts`, tone: 'amber' },
+    { title: 'Published Content', description: 'What is live, what is ready to run, and what an active cohort is already delivering before it was published.', href: '/curriculum/published', icon: 'ri-book-open-line', meta: `${counts.draftModules} not published`, tone: 'emerald' },
+    { title: 'Curriculum Reports', description: 'Coverage, delivery and staffing read from live records, previewed on screen and exportable as CSV.', href: '/curriculum/reports', icon: 'ri-bar-chart-box-line', tone: 'sky' },
+    { title: 'Audit Trail', description: 'Every create, edit and archive across programmes, modules, weeks, components, cohorts and groups.', href: '/curriculum/audit-trail', icon: 'ri-history-line', tone: 'primary' },
+    { title: 'Version Control', description: 'Every version of a module, week or component: what it held, what changed between one version and the next, and who saved it.', href: '/curriculum/version-control', icon: 'ri-git-branch-line', tone: 'sky' },
+    { title: 'KSB Coverage', description: 'Trace missing mappings back to the modules and components that own them.', href: '/curriculum/ksb-mapping', icon: 'ri-node-tree', meta: `${counts.mappingGaps} module gaps`, tone: 'amber' },
   ];
 }
 

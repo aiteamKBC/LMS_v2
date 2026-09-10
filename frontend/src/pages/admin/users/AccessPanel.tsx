@@ -2,8 +2,14 @@
 // Access editor — opened from the Accounts page by clicking an account's name
 // or its Access badge.
 //
-// One access per account, because 'super-admin' already means "everything" and
-// that is the only case combining them would serve.
+// An account may hold SEVERAL accesses, so somebody who both coaches a caseload
+// and teaches a group reaches both workspaces from one sign-in. Two things are
+// saved: the set they hold, and which one is PRIMARY — the workspace they land
+// in at sign-in.
+//
+// 'super-admin' is the exception. It already means "everything", so ticking it
+// clears and disables the rest rather than sitting alongside grants it makes
+// redundant.
 //
 // The write goes to the *staff record* (`updateStaffUser`), not the login
 // account: the grant lives on enrolment."Staff_users"."Access", and the login
@@ -15,8 +21,14 @@
 // so the reason is visible before the click, but it does not enforce them.
 // ============================================================================
 import { useState } from 'react';
+// Imported explicitly rather than relying on unplugin-auto-import: that plugin
+// does not run under vitest, so an auto-imported AppIcon makes this component
+// untestable.
+import { AppIcon } from '@/components/feature/AppIcon';
 import { ACCESS_OPTIONS, updateStaffUser, type StaffAccess } from '@/api/staffUsers';
 import type { PlatformAccount } from '@/api/platformAdmin';
+
+const SUPER_ADMIN: StaffAccess = 'super-admin';
 
 export function AccessPanel({
   account,
@@ -30,27 +42,62 @@ export function AccessPanel({
   onClose: () => void;
   onSaved: (access: string) => void;
 }) {
-  const [selected, setSelected] = useState<StaffAccess | ''>(
-    (account.access as StaffAccess) || '',
-  );
+  // The grants held, and which of them is the landing page. Seeded from the
+  // account's own set, falling back to its primary for a row saved before
+  // multi-access existed.
+  const initialGranted = (
+    account.accesses?.length ? account.accesses : [account.access].filter(Boolean)
+  ) as StaffAccess[];
+  const initialPrimary = (account.access as StaffAccess) || initialGranted[0] || '';
+
+  const [granted, setGranted] = useState<StaffAccess[]>(initialGranted);
+  const [primary, setPrimary] = useState<StaffAccess | ''>(initialPrimary);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Access only exists for staff. A learner or employer account has no grant to
   // edit — their permissions come from being a learner or an employer.
   const isStaff = account.subjectType === 'staff';
-  const dirty = selected !== ((account.access as StaffAccess) || '');
+  const isSuperAdmin = granted.includes(SUPER_ADMIN);
+  // Compared as sets: the order the boxes were ticked in is not a change.
+  const sameSet = granted.length === initialGranted.length
+    && granted.every(value => initialGranted.includes(value));
+  const dirty = !sameSet || primary !== initialPrimary;
   // Mirrors the server rule: an admin may confirm themselves as super-admin but
   // not reduce their own access, or they could lock themselves out.
-  const selfDemotion = isSelf && selected !== 'super-admin';
+  const selfDemotion = isSelf && !isSuperAdmin;
+
+  /** Tick or untick one grant.
+   *
+   * super-admin is exclusive — selecting it clears the rest, and selecting any
+   * other clears it — because it already permits everything the others do. */
+  function toggle(id: StaffAccess) {
+    setGranted(current => {
+      let next: StaffAccess[];
+      if (id === SUPER_ADMIN) {
+        next = current.includes(SUPER_ADMIN) ? [] : [SUPER_ADMIN];
+      } else {
+        next = current.includes(id)
+          ? current.filter(value => value !== id)
+          : [...current.filter(value => value !== SUPER_ADMIN), id];
+      }
+      // The landing page has to be a grant they actually hold, or they arrive
+      // at a workspace that refuses them.
+      setPrimary(prev => (prev && next.includes(prev) ? prev : next[0] || ''));
+      return next;
+    });
+  }
 
   async function save() {
-    if (!selected || !dirty) return;
+    if (!granted.length || !primary || !dirty) return;
     setSaving(true);
     setError(null);
     try {
-      await updateStaffUser(String(account.subjectId), { access: selected });
-      onSaved(selected);
+      await updateStaffUser(String(account.subjectId), {
+        access: primary,
+        accesses: granted,
+      });
+      onSaved(primary);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not change the access.');
@@ -65,12 +112,12 @@ export function AccessPanel({
       onClick={onClose}
     >
       <div
-        className="bg-background-50 rounded-2xl border border-background-200 max-w-xl w-full shadow-2xl max-h-[90vh] overflow-y-auto"
+        className="bg-[var(--kbc-surface)] rounded-2xl border border-background-200 max-w-xl w-full shadow-2xl max-h-[90vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
         <div className="px-6 pt-6 pb-4 border-b border-foreground-200/60 flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary-100 flex items-center justify-center shrink-0">
+          <div className="w-10 h-10 rounded-xl bg-primary-100/60 flex items-center justify-center shrink-0 !bg-none shadow-md shadow-primary-900/10 ring-1 ring-inset ring-primary-200/60">
             <span className="text-primary-700 text-[13px] font-semibold">
               {(account.displayName || account.email).charAt(0).toUpperCase()}
             </span>
@@ -102,30 +149,37 @@ export function AccessPanel({
             <div className="p-6 space-y-3">
               <div>
                 <p className="text-[11px] font-semibold text-foreground-400 uppercase tracking-wider mb-1">
-                  Access level
+                  Access levels
                 </p>
                 <p className="text-[12px] text-foreground-500 leading-relaxed">
-                  Decides where this person lands after signing in, and what they can reach. One per account.
+                  What this person can reach. Tick more than one for somebody who works across two
+                  areas — a coach who also tutors, say.
                 </p>
               </div>
 
               <div className="space-y-2">
                 {ACCESS_OPTIONS.map(option => {
-                  const active = selected === option.id;
+                  const active = granted.includes(option.id);
+                  // Everything else is redundant once super-admin is held, so
+                  // it is shown greyed rather than silently ignored on save.
+                  const blocked = isSuperAdmin && option.id !== SUPER_ADMIN;
                   return (
                     <label
                       key={option.id}
-                      className={`flex items-start gap-3 p-3.5 rounded-xl border cursor-pointer transition-smooth ${
+                      className={`flex items-start gap-3 p-3.5 rounded-xl border transition-smooth ${
+                        blocked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
+                      } ${
                         active
                           ? 'border-primary-400 bg-primary-50/60 ring-1 ring-primary-200/50'
                           : 'border-foreground-200/60 hover:bg-background-100/60'
                       }`}
                     >
                       <input
-                        type="radio"
+                        type="checkbox"
                         name="access-level"
                         checked={active}
-                        onChange={() => setSelected(option.id)}
+                        disabled={blocked}
+                        onChange={() => toggle(option.id)}
                         className="accent-primary-500 mt-0.5 shrink-0"
                       />
                       <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
@@ -142,11 +196,57 @@ export function AccessPanel({
                           <AppIcon className="ri-login-box-line mr-1"></AppIcon>
                           Signs in to <span className="font-mono">{option.home}</span>
                         </span>
+                        {/* Only meaningful once more than one is held — with a
+                            single grant there is nothing to choose between. */}
+                        {active && granted.length > 1 && (
+                          <span
+                            className="mt-2 inline-flex items-center gap-1.5 text-[10px] font-semibold text-primary-700"
+                            // Stopped, not prevented. This radio sits inside the
+                            // label whose control is the access checkbox above,
+                            // so a click here would otherwise also toggle the
+                            // grant off. preventDefault stopped that but also
+                            // cancelled the radio's own selection, so choosing a
+                            // landing page appeared to do nothing.
+                            onClick={event => event.stopPropagation()}
+                          >
+                            <input
+                              type="radio"
+                              name="primary-access"
+                              checked={primary === option.id}
+                              onChange={() => setPrimary(option.id)}
+                              className="accent-primary-500 cursor-pointer"
+                            />
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => setPrimary(option.id)}
+                              onKeyDown={event => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault();
+                                  setPrimary(option.id);
+                                }
+                              }}
+                              className="cursor-pointer"
+                            >
+                              {primary === option.id ? 'Lands here at sign-in' : 'Land here instead'}
+                            </span>
+                          </span>
+                        )}
                       </span>
                     </label>
                   );
                 })}
               </div>
+
+              {granted.length > 1 && (
+                <div className="bg-primary-50/60 border border-primary-200/60 rounded-xl p-3 flex items-start gap-2.5">
+                  <AppIcon className="ri-information-line text-primary-600 text-sm mt-0.5 shrink-0"></AppIcon>
+                  <p className="text-[11px] text-primary-800 leading-relaxed">
+                    Holds {granted.length} accesses. They sign in to the one marked
+                    <strong> lands here</strong> and can switch to the others from the workspace menu.
+                  </p>
+                </div>
+              )}
 
               {!account.access && (
                 <div className="bg-amber-50 border border-amber-200/60 rounded-xl p-3 flex items-start gap-2.5">
@@ -179,7 +279,7 @@ export function AccessPanel({
             <div className="px-6 py-4 border-t border-foreground-200/60 flex items-center gap-3 bg-background-100/40">
               <button
                 onClick={save}
-                disabled={!selected || !dirty || saving || selfDemotion}
+                disabled={!granted.length || !primary || !dirty || saving || selfDemotion}
                 className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-[13px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
               >
                 <AppIcon className={`${saving ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} mr-1.5`}></AppIcon>

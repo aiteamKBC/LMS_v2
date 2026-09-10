@@ -968,11 +968,20 @@ function LearnerKsbBreakdown({
         <button
           type="button"
           onClick={() => setShowOutstanding(value => !value)}
-          className="mt-1.5 text-[10px] font-semibold text-primary decoration-dotted underline-offset-4 hover:underline"
+          aria-expanded={showOutstanding}
+          className={`mt-2 inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold transition-colors ${
+            showOutstanding
+              ? 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/15'
+              : 'border-amber-300 bg-amber-50 text-amber-800 hover:border-amber-400 hover:bg-amber-100'
+          }`}
         >
+          <AppIcon className={`${showOutstanding ? 'ri-eye-off-line' : 'ri-alert-line'} text-sm`}></AppIcon>
           {showOutstanding
             ? `Hide the ${outstandingCount} expected but not earned yet`
             : `Show the ${outstandingCount} this scope expects but they have not earned yet`}
+          <span className="rounded-full bg-white/70 px-1.5 py-0.5 text-[10px] font-black tabular-nums">
+            {outstandingCount}
+          </span>
         </button>
       )}
       {/* The learner's own declared hours, next to the credited
@@ -1107,7 +1116,7 @@ function LearnerAchievementTable({
   );
 }
 
-const ACTIVITY_GRID = 'grid grid-cols-[minmax(170px,1.5fr)_minmax(140px,1.1fr)_minmax(110px,.9fr)_92px_92px_92px]';
+const ACTIVITY_GRID = 'grid grid-cols-[minmax(170px,1.5fr)_minmax(140px,1.1fr)_minmax(110px,.9fr)_92px_92px_92px_minmax(190px,1.4fr)]';
 
 // What each column of the Activity tab actually reports. On the header rather
 // than in prose above the table: the question ("what is Declared?") is asked
@@ -1141,128 +1150,266 @@ const ACTIVITY_COLUMNS: Array<{ label: string; hint: string; align?: 'center' }>
     hint: 'KSB weight credited by this activity, from the component progress snapshot. A reflection’s own KSB declaration is evidence about the same activity and is never added on top.',
     align: 'center',
   },
+  {
+    label: 'KSBs credited',
+    hint: 'Which KSBs the weight in the column beside this went to, and what each one asks for. The chip is the code and the weight this activity credited to it; the line underneath is the standard’s own wording. A dash means this activity credited nothing — hover it to see which KSBs the component maps and why none of them were credited here. Hover a chip for its full text, because the column is one line wide and most KSB descriptions are longer than that.',
+  },
 ];
+
+/** code -> the standard's wording, so the activity table can name a KSB rather
+ *  than print its code and leave the reader to go and look it up. Built from the
+ *  scope's own achievement rows, which is the only place the text is loaded. */
+function ksbMetaIndex(rows: CurriculumScopeKsbAchievementRow[]) {
+  const index = new Map<string, { title: string; description: string; letter: string }>();
+  for (const row of rows) {
+    const code = String(row.code || '').trim();
+    if (!code || index.has(code)) continue;
+    index.set(code, {
+      title: String(row.title || '').trim(),
+      description: String(row.description || '').trim(),
+      letter: ksbTypeCode(row),
+    });
+  }
+  return index;
+}
 
 function ActivityTable({
   activities,
   learnerNames,
+  ksbMeta,
 }: {
   activities: CurriculumLearnerActivity[];
   /** learnerId -> the person's name, so the column names a learner not an id. */
   learnerNames: Map<string, { name: string; email: string }>;
+  /** code -> the standard's wording, for the KSBs credited column. */
+  ksbMeta: Map<string, { title: string; description: string; letter: string }>;
 }) {
   return (
-    <div className="overflow-x-auto">
-      <div className="min-w-[760px]">
-        <div className={`${ACTIVITY_GRID} gap-2 border-b border-background-200 px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-foreground-400`}>
-          {ACTIVITY_COLUMNS.map(column => (
-            <span
-              key={column.label}
-              title={column.hint}
-              className={`cursor-help decoration-dotted underline-offset-4 hover:underline ${column.align === 'center' ? 'text-center' : ''}`}
-            >
-              {column.label}
-            </span>
-          ))}
-        </div>
-        <div className="divide-y divide-background-200/70">
-          {activities.map(activity => {
-            const status = activity.progressStatus || 'incomplete';
-            const outOfScope = activity.scopeStatus === 'out_of_scope';
-            const learnerKey = activity.learnerId == null ? '' : String(activity.learnerId);
-            const learner = learnerKey ? learnerNames.get(learnerKey) : undefined;
-            const moduleMark = activity.moduleStatus === 'deleted'
-              ? {
-                label: 'deleted',
-                className: 'bg-red-100 text-red-700',
-                hint: `This module has been deleted from the catalogue${activity.moduleCatalogueId ? ` (${activity.moduleCatalogueId})` : ''}, so searching for it in the Module Builder will not find it. The learner's completed work is kept.`,
-              }
-              : activity.moduleStatus === 'unknown'
-                ? {
-                  label: 'not in catalogue',
-                  className: 'bg-amber-100 text-amber-700',
-                  hint: 'This component no longer resolves to a module in the catalogue, so the module name shown is the label stored on the learner’s activity.',
-                }
-                : null;
-            // Neither of these has a column any more, but both are still true
-            // of the row: an activity from another part of the programme, or a
-            // repeat completion, is listed here and left out of the figures
-            // above. Read together on the row's own tooltip so that a row which
-            // does not count cannot read as though it does.
-            const statusNote = status === 'achieved'
-              ? 'The learner completed this activity.'
-              : status === 'failed'
-                ? 'The learner attempted this activity and did not pass it.'
-                : 'Not completed yet.';
-            const countedNote = outOfScope
-              ? 'Completed in a part of this programme that this learner’s group is not delivered — reported here, excluded from the totals above.'
-              : activity.countsTowardAchievement === false
-                ? (activity.exclusionReason === 'repeat_completion'
-                  ? 'The learner has completed this component before. The hours and KSB weight were earned once, so only the first completion counts — this one is kept as history.'
-                  : 'In this scope, but the activity itself does not count toward achievement.')
-                // A component that has since been deleted is not in the scope's
-                // live content any more, so without saying this the row reads
-                // as though it were counted by mistake.
-                : activity.scopeBasis === 'lineage'
-                  ? 'Counts toward the OTJH and KSB weight reported above. The component is no longer part of this scope’s content, so it was placed here by the programme/cohort/group the learner’s progress row was stamped with when they completed it.'
-                  : 'Counts toward the OTJH and KSB weight reported above.';
-            const moduleWeek = `${activity.module || '—'}${activity.week ? ` · ${activity.week}` : ''}`;
-            return (
-              <div
-                key={activity.progressId}
-                title={`${statusNote} ${countedNote}`}
-                className={`${ACTIVITY_GRID} gap-2 px-3 py-2`}
+    <div className="overflow-hidden rounded-xl border border-background-200">
+      <div className="max-h-[520px] overflow-auto">
+        <div className="min-w-[960px]">
+          <div className={`${ACTIVITY_GRID} sticky top-0 z-20 gap-2 border-b border-background-200 bg-background-100 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-foreground-400`}>
+            {ACTIVITY_COLUMNS.map(column => (
+              <span
+                key={column.label}
+                title={column.hint}
+                className={`cursor-help decoration-dotted underline-offset-4 hover:underline ${column.align === 'center' ? 'text-center' : ''}`}
               >
-                <span className="min-w-0">
-                  <span className="block truncate text-[12px] font-semibold text-foreground-900">
-                    {activity.componentTitle || activity.componentId || `Activity ${activity.progressId}`}
-                  </span>
-                  <span className="block truncate text-[10px] uppercase tracking-wider text-foreground-400">
-                    {activity.componentType || activity.kind || '—'}
-                    {activity.evidenceCount ? ` · ${activity.evidenceCount} evidence` : ''}
-                  </span>
-                </span>
-                <span className="flex min-w-0 items-center gap-1.5 text-[12px] text-foreground-600">
-                  {/* Truncated to fit the column; the tooltip is the only place
-                      the reader can see which module and week this actually is
-                      when either name is long. */}
-                  <span className="min-w-0 truncate" title={moduleWeek}>
-                    {moduleWeek}
-                  </span>
-                  {/* Where the module went, when it is no longer somewhere the
-                      reader can open. Without this a deleted module reads like a
-                      live one and the only way to find that out is to search the
-                      catalogue for a title that is not there any more. */}
-                  {moduleMark && (
-                    <span
-                      title={moduleMark.hint}
-                      className={`shrink-0 cursor-help rounded px-1.5 py-0.5 text-[10px] font-bold ${moduleMark.className}`}
-                    >
-                      {moduleMark.label}
-                    </span>
-                  )}
-                </span>
-                <span
-                  className="truncate text-[12px] text-foreground-600"
-                  title={learnerKey ? `Learner id ${learnerKey}${learner?.email ? ` · ${learner.email}` : ''}` : undefined}
+                {column.label}
+              </span>
+            ))}
+          </div>
+          <div className="divide-y divide-background-200/70">
+            {activities.map(activity => {
+              const status = activity.progressStatus || 'incomplete';
+              const outOfScope = activity.scopeStatus === 'out_of_scope';
+              const learnerKey = activity.learnerId == null ? '' : String(activity.learnerId);
+              const learner = learnerKey ? learnerNames.get(learnerKey) : undefined;
+              const moduleMark = activity.moduleStatus === 'deleted'
+                ? {
+                  label: 'deleted',
+                  className: 'bg-red-100 text-red-700',
+                  hint: `This module has been deleted from the catalogue${activity.moduleCatalogueId ? ` (${activity.moduleCatalogueId})` : ''}, so searching for it in the Module Builder will not find it. The learner's completed work is kept.`,
+                }
+                : activity.moduleStatus === 'unknown'
+                  ? {
+                    label: 'not in catalogue',
+                    className: 'bg-amber-100 text-amber-700',
+                    hint: 'This component no longer resolves to a module in the catalogue, so the module name shown is the label stored on the learner’s activity.',
+                  }
+                  : null;
+              // Neither of these has a column any more, but both are still true
+              // of the row: an activity from another part of the programme, or a
+              // repeat completion, is listed here and left out of the figures
+              // above. Read together on the row's own tooltip so that a row which
+              // does not count cannot read as though it does.
+              const statusNote = status === 'achieved'
+                ? 'The learner completed this activity.'
+                : status === 'failed'
+                  ? 'The learner attempted this activity and did not pass it.'
+                  : 'Not completed yet.';
+              const counted = !outOfScope && activity.countsTowardAchievement !== false;
+              const countedNote = outOfScope
+                ? 'Completed in a part of this programme that this learner’s group is not delivered — reported here, excluded from the totals above.'
+                : activity.countsTowardAchievement === false
+                  ? (activity.exclusionReason === 'repeat_completion'
+                    ? 'The learner has completed this component before. The hours and KSB weight were earned once, so only the first completion counts — this one is kept as history.'
+                    : 'In this scope, but the activity itself does not count toward achievement.')
+                  // A component that has since been deleted is not in the scope's
+                  // live content any more, so without saying this the row reads
+                  // as though it were counted by mistake.
+                  : activity.scopeBasis === 'lineage'
+                    ? 'Counts toward the OTJH and KSB weight reported above. The component is no longer part of this scope’s content, so it was placed here by the programme/cohort/group the learner’s progress row was stamped with when they completed it.'
+                    : 'Counts toward the OTJH and KSB weight reported above.';
+              const moduleWeek = `${activity.module || '—'}${activity.week ? ` · ${activity.week}` : ''}`;
+              // The dot is the row's status in the width of a character: the
+              // grid has no status column, and a failed attempt sitting between
+              // two completions was previously only findable by hovering.
+              const statusDot = status === 'achieved'
+                ? 'bg-emerald-500'
+                : status === 'failed'
+                  ? 'bg-red-500'
+                  : 'bg-background-300';
+              const ksbWeight = Number(activity.achievedKsbWeightTotal || 0);
+              // The weight column says how much; this says what it went to. The
+              // snapshot is the credited list — a reflection's own declaration
+              // is evidence about the same activity and is never added on top,
+              // so it is not merged in here either.
+              const creditedKsbs = (activity.ksbSnapshot || []).map(entry => {
+                const code = String(entry.code || '').trim();
+                const meta = ksbMeta.get(code);
+                const letter = meta?.letter || ksbTypeCode({ code, ksbType: '' });
+                const wording = meta?.description || meta?.title || '';
+                // The snapshot keeps every KSB the component maps, credited or
+                // not: a repeat completion of the same component still lists its
+                // codes at their mapped weight, and only the first completion
+                // credited them. Printing that number plainly beside a KSB weight
+                // of 0 said the opposite of what the row means.
+                const counts = entry.countsTowardAchievement !== false;
+                return {
+                  code,
+                  letter,
+                  wording,
+                  weight: Number(entry.weight || 0),
+                  counts,
+                  title: [
+                    meta?.title ? `${code} — ${meta.title}` : code,
+                    meta?.description || '',
+                    `This activity credited ${weight(entry.weight)} weight to ${code}.`,
+                  ].filter(Boolean).join('\n\n'),
+                };
+              }).filter(entry => entry.code);
+              // The column reports what was credited, so only credited codes are
+              // listed in it. A repeat completion maps the same KSBs at the same
+              // weight and credits none of them: printing those alongside a KSB
+              // weight of 0 contradicted the figure they sit next to, so they are
+              // named on the cell's tooltip instead of shown as an entry.
+              const credited = creditedKsbs.filter(entry => entry.counts);
+              const uncredited = creditedKsbs.filter(entry => !entry.counts);
+              // One line of wording under the chips, because the standard's text
+              // is the part a reader cannot reconstruct from a code.
+              const ksbWording = Array.from(new Set(credited.map(entry => entry.wording).filter(Boolean))).join(' · ');
+              const uncreditedNote = uncredited.length
+                ? [
+                  `Nothing was credited here. This component maps ${uncredited.map(entry => `${entry.code} (${weight(entry.weight)})`).join(', ')}.`,
+                  activity.exclusionReason === 'repeat_completion'
+                    ? 'The learner completed the same component before, so the weight was earned once and only the first completion carries it.'
+                    : outOfScope
+                      ? 'The activity sits outside this scope, so its weight is reported against the scope it belongs to.'
+                      : 'This completion did not credit them.',
+                ].join('\n\n')
+                : 'This activity maps no KSBs, so there is nothing for it to credit.';
+              return (
+                <div
+                  key={activity.progressId}
+                  title={`${statusNote} ${countedNote}`}
+                  // A row that is reported but not counted is tinted and given a
+                  // left rule, so a reader can see which rows the figures above
+                  // were actually built from without hovering every one of them.
+                  className={`${ACTIVITY_GRID} items-center gap-2 border-l-2 px-3 py-2 transition-colors hover:bg-background-100/70 ${
+                    counted ? 'border-l-transparent' : 'border-l-amber-300 bg-amber-50/30'
+                  }`}
                 >
-                  {/* The roster carries the name; printing the raw enrolment id
-                      made the column unreadable. The id stays on the tooltip
-                      because it is what Learner, Coach and Curriculum match on. */}
-                  {learner?.name || learner?.email || (learnerKey ? `Learner ${learnerKey}` : '—')}
-                </span>
-                <span className="text-center text-[12px] tabular-nums text-foreground-700">
-                  {activity.expectedOtjh == null ? '—' : hours(activity.expectedOtjh)}
-                </span>
-                <span className="text-center text-[12px] tabular-nums text-foreground-700">
-                  {activity.actualOtjh == null ? '—' : hours(activity.actualOtjh)}
-                </span>
-                <span className="text-center text-[12px] tabular-nums text-foreground-700">
-                  {weight(activity.achievedKsbWeightTotal)}
-                </span>
-              </div>
-            );
-          })}
+                  <span className="flex min-w-0 items-start gap-2">
+                    <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${statusDot}`} />
+                    <span className="min-w-0">
+                      <span className={`block truncate text-[12px] font-semibold ${counted ? 'text-foreground-900' : 'text-foreground-500'}`}>
+                        {activity.componentTitle || activity.componentId || `Activity ${activity.progressId}`}
+                      </span>
+                      <span className="mt-0.5 flex items-center gap-1.5">
+                        <span className="truncate rounded bg-background-200/70 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-foreground-500">
+                          {activity.componentType || activity.kind || '—'}
+                        </span>
+                        {activity.evidenceCount ? (
+                          <span className="shrink-0 text-[10px] text-foreground-400">
+                            {activity.evidenceCount} evidence
+                          </span>
+                        ) : null}
+                      </span>
+                    </span>
+                  </span>
+                  <span className="flex min-w-0 items-center gap-1.5 text-[12px] text-foreground-600">
+                    {/* Truncated to fit the column; the tooltip is the only place
+                        the reader can see which module and week this actually is
+                        when either name is long. */}
+                    <span className="min-w-0 truncate" title={moduleWeek}>
+                      {moduleWeek}
+                    </span>
+                    {/* Where the module went, when it is no longer somewhere the
+                        reader can open. Without this a deleted module reads like a
+                        live one and the only way to find that out is to search the
+                        catalogue for a title that is not there any more. */}
+                    {moduleMark && (
+                      <span
+                        title={moduleMark.hint}
+                        className={`shrink-0 cursor-help rounded px-1.5 py-0.5 text-[10px] font-bold ${moduleMark.className}`}
+                      >
+                        {moduleMark.label}
+                      </span>
+                    )}
+                  </span>
+                  <span
+                    className="truncate text-[12px] text-foreground-600"
+                    title={learnerKey ? `Learner id ${learnerKey}${learner?.email ? ` · ${learner.email}` : ''}` : undefined}
+                  >
+                    {/* The roster carries the name; printing the raw enrolment id
+                        made the column unreadable. The id stays on the tooltip
+                        because it is what Learner, Coach and Curriculum match on. */}
+                    {learner?.name || learner?.email || (learnerKey ? `Learner ${learnerKey}` : '—')}
+                  </span>
+                  {/* An unset figure and a zero are different facts, so the dash
+                      is dimmed and the number is not: a column of dark zeros read
+                      as though every row had been measured and found empty. */}
+                  <span className={`text-center text-[12px] tabular-nums ${activity.expectedOtjh == null ? 'text-foreground-300' : 'text-foreground-700'}`}>
+                    {activity.expectedOtjh == null ? '—' : hours(activity.expectedOtjh)}
+                  </span>
+                  <span className={`text-center text-[12px] tabular-nums ${activity.actualOtjh == null ? 'text-foreground-300' : 'font-semibold text-foreground-800'}`}>
+                    {activity.actualOtjh == null ? '—' : hours(activity.actualOtjh)}
+                  </span>
+                  <span className="text-center">
+                    {ksbWeight > 0 ? (
+                      <span className="inline-block rounded-md bg-emerald-50 px-1.5 py-0.5 text-[11px] font-bold tabular-nums text-emerald-700">
+                        {weight(ksbWeight)}
+                      </span>
+                    ) : (
+                      <span className="text-[12px] tabular-nums text-foreground-300">0</span>
+                    )}
+                  </span>
+                  <span className="min-w-0">
+                    {credited.length ? (
+                      <>
+                        <span className="flex flex-wrap items-center gap-1">
+                          {credited.map(entry => (
+                            <span
+                              key={entry.code}
+                              title={entry.title}
+                              className={`inline-flex cursor-help items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                                KSB_TYPE_META[entry.letter]?.chip || KSB_TYPE_META.K.chip
+                              }`}
+                            >
+                              {entry.code}
+                              {entry.weight > 0 && (
+                                <span className="font-semibold tabular-nums opacity-70">{weight(entry.weight)}</span>
+                              )}
+                            </span>
+                          ))}
+                        </span>
+                        {ksbWording && (
+                          <span className="mt-0.5 block truncate text-[10px] leading-snug text-foreground-500" title={ksbWording}>
+                            {ksbWording}
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="cursor-help text-[12px] text-foreground-300" title={uncreditedNote}>
+                        —
+                      </span>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>
@@ -1521,6 +1668,7 @@ export function ScopeAchievementPanel({
   }, [data, learnerNames]);
 
   const families = useMemo(() => ksbFamilies(ksb?.rows || []), [ksb]);
+  const ksbMeta = useMemo(() => ksbMetaIndex(ksb?.rows || []), [ksb]);
 
   // Achieved and missing counted here rather than read off the summary, so the
   // headline and the table can never disagree about what "missing" means.
@@ -2041,7 +2189,7 @@ export function ScopeAchievementPanel({
 
             {tab === 'activity' && (
               activities.length ? (
-                <ActivityTable activities={activities} learnerNames={learnerNames} />
+                <ActivityTable activities={activities} learnerNames={learnerNames} ksbMeta={ksbMeta} />
               ) : (
                 <EntityEmptyState
                   icon="ri-history-line"
@@ -2169,6 +2317,10 @@ export function ScopeLearnerAchievementDetail({
     [displayEmail, displayName, key],
   );
 
+  // The scope's KSB rows carry the standard's wording; the activity rows carry
+  // only codes. This is what lets the activity table name what it credited.
+  const ksbMeta = useMemo(() => ksbMetaIndex(data?.ksbAchievement?.rows || []), [data]);
+
   const ksbRows = useMemo(() => {
     const rows = [...(consumption?.ksbs || [])];
     // Earned first, then the rest: the reader is here to see what was achieved,
@@ -2293,7 +2445,7 @@ export function ScopeLearnerAchievementDetail({
                 The work behind those figures
               </p>
               {activities.length ? (
-                <ActivityTable activities={activities} learnerNames={learnerNames} />
+                <ActivityTable activities={activities} learnerNames={learnerNames} ksbMeta={ksbMeta} />
               ) : (
                 <EntityEmptyState
                   icon="ri-history-line"

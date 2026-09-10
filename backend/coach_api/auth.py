@@ -33,6 +33,39 @@ logger = logging.getLogger(__name__)
 #: these; see ``coach_access_required``.
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
+
+def read_only_view(view):
+    """Mark a POST view that changes nothing, for the view-as guard below.
+
+    The guard refuses unsafe methods so a super-admin browsing a coach's
+    workspace cannot leave writes recorded against that coach. A few endpoints
+    are POST for reasons other than mutation -- a long computation whose inputs
+    do not fit in a query string, for instance -- and refusing those protects
+    nothing while making the workspace less useful than it should be.
+
+    Apply this only where the view genuinely has no write path. It widens who
+    may call the endpoint; it is not a way to get a write past the guard.
+    """
+    view.coach_view_as_safe = True
+    return view
+
+
+def attributed_write_view(view):
+    """Mark a write a super-admin may make while viewing a coach's workspace.
+
+    Distinct from ``read_only_view``: this view *does* change data. It is
+    permitted because it records who actually made the change rather than
+    crediting it to the coach whose workspace happens to be open -- which is
+    the only thing the read-only rule was protecting.
+
+    Apply it only to a view that reads ``coach_view_as`` / ``coach_view_as_admin``
+    and stamps the real actor. A view that simply writes under the coach's name
+    must stay refused, or the audit trail starts recording decisions that the
+    named coach never made.
+    """
+    view.coach_view_as_attributed = True
+    return view
+
 #: The parameter a super-admin uses to name whose workspace to open.  Distinct
 #: from the legacy ``owner_email`` on purpose — that one is an assertion about
 #: the caller's own identity and stays refused for everybody else.
@@ -88,6 +121,19 @@ def _requested_view_as_email(request) -> str:
 
 
 def _staff_access(staff) -> str:
+    """The access this staff row should be treated as holding HERE.
+
+    An account may hold several grants. Coach is reported whenever it is one of
+    them, so somebody who both coaches a caseload and teaches a group reaches
+    the coach workspace regardless of which grant is their primary. Otherwise
+    the primary is reported unchanged, which is what callers comparing against
+    ACCESS_SUPER_ADMIN and the rest expect.
+    """
+    from login.identity import accesses_for_staff
+
+    accesses = accesses_for_staff(staff)
+    if ACCESS_COACH in accesses:
+        return ACCESS_COACH
     return (getattr(staff, "access", "") or "").strip().lower()
 
 
@@ -100,15 +146,23 @@ def _find_coach_staff(email: str):
     """
     if not email:
         return None
-    return (
-        StaffUser.objects.annotate(
-            staff_email_key=Lower(Trim("email")),
-            staff_access_key=Lower(Trim("access")),
-        )
-        .filter(staff_email_key=email, staff_access_key=ACCESS_COACH)
-        .only("id", "email", "access", "username")
-        .first()
+    # Coach may be held as the primary grant OR as an additional one, so the
+    # match cannot be an equality on "Access" alone: a tutor who also coaches
+    # would be invisible here and an administrator could not open their
+    # workspace. The candidates are narrowed in SQL by address, then the
+    # authoritative membership test is applied in Python, so the two columns are
+    # combined in exactly one place (login.identity.accesses_for_staff).
+    from login.identity import accesses_for_staff
+
+    candidates = (
+        StaffUser.objects.annotate(staff_email_key=Lower(Trim("email")))
+        .filter(staff_email_key=email)
+        .only("id", "email", "access", "access_extra", "username")
     )
+    for staff in candidates:
+        if ACCESS_COACH in accesses_for_staff(staff):
+            return staff
+    return None
 
 
 def _legacy_owner_mismatch(request, canonical_email: str):
@@ -169,7 +223,11 @@ def coach_access_required(view):
                     code="coach_selection_required",
                     message="Choose a coach to open their workspace.",
                 )
-            if request.method not in _SAFE_METHODS:
+            if (
+                request.method not in _SAFE_METHODS
+                and not getattr(view, "coach_view_as_safe", False)
+                and not getattr(view, "coach_view_as_attributed", False)
+            ):
                 return _forbidden(
                     code="coach_view_as_read_only",
                     message=(

@@ -18,6 +18,7 @@ import { SectionHeader } from '@/components/ui/SectionHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { RowAction } from '@/components/ui/ActionRow';
 import { LearnerIdentity } from '../shared/LearnerIdentity';
+import { type MarkingKind } from '@/lib/markingKind';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/marking-queue';
@@ -72,6 +73,10 @@ interface QueueSummary {
   acceptedItems: number;
   referredItems: number;
   overdueItems: number;
+  /** Both kinds, across every page — so a tab badge never changes when you
+   *  switch to the other tab. */
+  assignmentItems: number;
+  reflectionItems: number;
   oldestSubmission: string;
   overdueThresholdDays: number;
 }
@@ -92,6 +97,8 @@ const EMPTY_SUMMARY: QueueSummary = {
   acceptedItems: 0,
   referredItems: 0,
   overdueItems: 0,
+  assignmentItems: 0,
+  reflectionItems: 0,
   oldestSubmission: '--',
   overdueThresholdDays: 7,
 };
@@ -153,7 +160,15 @@ export default function CoachMarkingQueue() {
   const [items, setItems] = useState<MarkingSubmission[]>([]);
   const [summary, setSummary] = useState<QueueSummary>(EMPTY_SUMMARY);
   const [pagination, setPagination] = useState<QueuePagination>(EMPTY_PAGINATION);
-  const [filter, setFilter] = useState<QueueFilter>('pending');
+  // 'all' rather than 'pending': opening on Pending hid every decision the
+  // coach had already made, which read as the marking history not being saved
+  // at all. The Pending tab is still there for working through the queue.
+  const [filter, setFilter] = useState<QueueFilter>('all');
+  // Which kind of marking this coach is working through. Assignments are
+  // assessed as work products; everything else is reflection validation, and
+  // mixing the two in one list makes the queue read as a single undifferentiated
+  // pile when the two jobs are genuinely different.
+  const [kind, setKind] = useState<MarkingKind>('assignment');
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<MarkingSubmission | null>(null);
   const [feedback, setFeedback] = useState('');
@@ -173,7 +188,7 @@ export default function CoachMarkingQueue() {
       return;
     }
     try {
-      const query = new URLSearchParams({ status: filter, page: String(page), page_size: '25' });
+      const query = new URLSearchParams({ status: filter, kind, page: String(page), page_size: '25' });
       const response = await coachFetch(`${API_ENDPOINT}?${query}`);
       const text = await response.text();
       const data = text ? JSON.parse(text) : {};
@@ -186,12 +201,15 @@ export default function CoachMarkingQueue() {
     } finally {
       setLoading(false);
     }
-  }, [coach.email, coach.isInitialized, filter, page]);
+  }, [coach.email, coach.isInitialized, filter, kind, page]);
 
   useEffect(() => {
     void loadQueue();
   }, [loadQueue]);
 
+  // The server filters by kind, so these rows are already the right ones.
+  // Filtering again here would silently drop anything the two definitions
+  // disagreed about instead of surfacing the disagreement.
   const filtered = useMemo(() => items, [items]);
 
   const openReview = (item: MarkingSubmission) => {
@@ -291,6 +309,24 @@ export default function CoachMarkingQueue() {
       ),
     },
     {
+      key: 'reviewedBy',
+      label: 'Reviewed by',
+      render: (row) => (
+        row.reviewedBy ? (
+          <div className="min-w-0">
+            <p className="truncate text-[12px] font-medium text-foreground-700">{row.reviewedBy}</p>
+            {row.reviewedAt && (
+              <p className="text-[11px] text-foreground-400">
+                {new Date(row.reviewedAt).toLocaleDateString('en-GB')}
+              </p>
+            )}
+          </div>
+        ) : (
+          <span className="text-[12px] text-foreground-300">{EMPTY_VALUE}</span>
+        )
+      ),
+    },
+    {
       key: 'action',
       label: '',
       align: 'right',
@@ -300,7 +336,7 @@ export default function CoachMarkingQueue() {
           onClick={() => navigate(`/coach/marking-queue/${row.id}`)}
           className="rounded-lg bg-primary-600 px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-primary-700"
         >
-          View
+          {row.reviewedBy ? 'Review' : 'View'}
         </button>
       ),
     },
@@ -323,6 +359,21 @@ export default function CoachMarkingQueue() {
           title="Marking Queue"
           description="Review complete learning submissions, validate KSB development and confirm OTJH."
         />
+
+        {/* The two jobs, separated. Assignments are assessed as work products
+            against their KSBs and the EPA plan; everything else is reflection
+            validation, which is a shorter and different judgement. */}
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          <PageTabs
+            label="Choose which kind of marking to work through"
+            value={kind}
+            onChange={(next) => { setKind(next as MarkingKind); setPage(1); }}
+            items={[
+              { value: 'assignment', label: 'Assignments', count: summary.assignmentItems },
+              { value: 'reflection', label: 'Reflection validation', count: summary.reflectionItems },
+            ]}
+          />
+        </div>
 
         <PageTabsBar actions={<RowAction label="Refresh" icon="ri-refresh-line" onClick={() => void loadQueue()} />}>
           <div className="flex flex-wrap items-center gap-1.5">
@@ -364,8 +415,12 @@ export default function CoachMarkingQueue() {
               <EmptyState
                 variant="empty"
                 icon="ri-checkbox-circle-line"
-                title="No submissions in this view"
-                description="Nothing is waiting in this filter right now."
+                title={kind === 'assignment' ? 'No assignments in this view' : 'No reflections in this view'}
+                description={
+                  kind === 'assignment'
+                    ? 'No assignment submissions are waiting in this filter right now.'
+                    : 'No reflection submissions are waiting in this filter right now.'
+                }
               />
             )
           }

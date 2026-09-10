@@ -1,11 +1,15 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fetchEvidenceDocument = vi.fn();
 const fetchEvidenceText = vi.fn();
+const fetchAssessmentReportForm = vi.fn();
+const saveAssessmentReportForm = vi.fn();
 vi.mock('@/api/adminEvidence', () => ({
   fetchEvidenceDocument: (...args: unknown[]) => fetchEvidenceDocument(...args),
   fetchEvidenceText: (...args: unknown[]) => fetchEvidenceText(...args),
+  fetchAssessmentReportForm: (...args: unknown[]) => fetchAssessmentReportForm(...args),
+  saveAssessmentReportForm: (...args: unknown[]) => saveAssessmentReportForm(...args),
 }));
 
 const { DocumentPreviewModal } = await import('./DocumentPreviewModal');
@@ -27,6 +31,8 @@ beforeEach(() => {
   vi.stubGlobal('AppIcon', ({ className }: { className?: string }) => <i className={className} />);
   fetchEvidenceDocument.mockReset();
   fetchEvidenceText.mockReset();
+  fetchAssessmentReportForm.mockReset();
+  saveAssessmentReportForm.mockReset();
 });
 
 afterEach(() => {
@@ -53,6 +59,36 @@ describe('assignment document preview', () => {
     expect(frame.getAttribute('src')).toBe(
       `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent('https://blob.test/report.docx?sig=temporary')}`,
     );
+  });
+
+  it('builds an assessment report from the report-preview Build button', async () => {
+    const onReportBuilt = vi.fn();
+    fetchEvidenceDocument.mockResolvedValue(document({ name: 'Assessment report.pdf' }));
+    fetchAssessmentReportForm.mockResolvedValue({
+      learner_name: 'Alex Learner', activity_name: 'Marketing activity', evidence_name: 'Assignment.pdf',
+      time_spent: 90, result: 'Accepted', assessor: '', date: '08/09/2026',
+      result_options: ['Accepted', 'Referred', 'TraineeAccepted', 'TraineeReferred'], has_report: true,
+    });
+    saveAssessmentReportForm.mockResolvedValue({
+      report_blob: '100-AssessmentReport-form.pdf', analysis_required: false,
+      analysis_preserved: false, reanalyze_queued: true, job_id: 'job-12',
+    });
+    render(<DocumentPreviewModal path="/open/?part=report" title="Assessment report" learnerId={42} evidenceId={100} onClose={() => {}} onReportBuilt={onReportBuilt} />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Build/i }));
+    expect(await screen.findByRole('heading', { name: 'Rebuild assessment report' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Learner name')).toHaveValue('Alex Learner');
+    expect(screen.getByLabelText('Time spent (minutes)')).toHaveValue(null);
+    fireEvent.change(screen.getByLabelText('Criteria'), { target: { value: 'Knowledge: K1' } });
+    fireEvent.change(screen.getByLabelText('Comments'), { target: { value: 'Strong evidence' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Build report PDF' }));
+    expect(screen.getByRole('button', { name: /Save & keep analysis/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Save & reanalyse/i }));
+
+    await waitFor(() => expect(saveAssessmentReportForm).toHaveBeenCalledWith(
+      42, 100, expect.objectContaining({ criteria: 'Knowledge: K1', comments: 'Strong evidence' }), true,
+    ));
+    await waitFor(() => expect(onReportBuilt).toHaveBeenCalledTimes(1));
   });
 
   it('shows loading and missing-file errors accessibly', async () => {

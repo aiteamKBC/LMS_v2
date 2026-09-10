@@ -1,0 +1,141 @@
+"""New learner attempts and subject covers; never modifies Last_audit.
+
+Provisioning is owner-run SQL. There is deliberately no ensure/create helper.
+"""
+
+import json
+from uuid import uuid4
+
+from django.db import connections, transaction
+
+from .subject_content import grade_quiz
+
+ALIAS = 'enrolment'
+ATTEMPTS = '"Learner".subject_activity_attempts'
+COVERS = '"Learner".subject_covers'
+
+
+class StoreUnavailable(ValueError):
+    pass
+
+
+def _rows(cursor):
+    names = [column[0] for column in cursor.description]
+    return [dict(zip(names, row)) for row in cursor.fetchall()]
+
+
+def _json(value):
+    return json.loads(value) if isinstance(value, str) else value
+
+
+def ready(cursor):
+    cursor.execute('SELECT to_regclass(%s), to_regclass(%s)', [ATTEMPTS, COVERS])
+    row = cursor.fetchone()
+    return bool(row and row[0] and row[1])
+
+
+def state(enrolment_id, aptem_id, activity_id=None):
+    with connections[ALIAS].cursor() as cur:
+        if not ready(cur):
+            return {'ready': False, 'progress': [], 'history': [], 'covers': {}}
+        cur.execute(f'''SELECT activity_id, bool_or(completed) AS completed,
+                               max(score_percent) AS best_percent,
+                               count(*) AS attempt_count
+                        FROM {ATTEMPTS} WHERE enrolment_id=%s AND aptem_id=%s
+                          AND submitted_at IS NOT NULL GROUP BY activity_id''', [enrolment_id, aptem_id])
+        progress = _rows(cur)
+        history = []
+        if activity_id is not None:
+            cur.execute(f'''SELECT id, kind, answers, score_percent, passed, completed,
+                                   reading_confirmed, started_at, submitted_at, definition
+                            FROM {ATTEMPTS} WHERE enrolment_id=%s AND aptem_id=%s
+                              AND activity_id=%s AND submitted_at IS NOT NULL
+                            ORDER BY submitted_at DESC, id DESC''', [enrolment_id, aptem_id, activity_id])
+            history = _rows(cur)
+            for row in history:
+                row['answers'] = _json(row['answers'])
+                definition = _json(row.pop('definition'))
+                questions = (definition.get('quiz') or {}).get('questions', [])
+                row['answer_review'] = [{
+                    'question': question['text'],
+                    'selected': [option['text'] for option in question['options'] if option['id'] in (row['answers'] or {}).get(question['id'], [])],
+                    'correct': set((row['answers'] or {}).get(question['id'], [])) == set(question['solution_ids']),
+                } for question in questions]
+        cur.execute(f'SELECT subject_ref, storage_path FROM {COVERS}')
+        covers = dict(cur.fetchall())
+    return {'ready': True, 'progress': progress, 'history': history, 'covers': covers}
+
+
+def start(enrolment_id, aptem_id, group_id, activity_id, definition):
+    attempt_id = str(uuid4())
+    snapshot = {key: definition.get(key) for key in ('title', 'quiz', 'has_reading', 'available')}
+    with connections[ALIAS].cursor() as cur:
+        if not ready(cur):
+            raise StoreUnavailable('Saving activities is not enabled yet. Please contact your learning team.')
+        cur.execute(f'''INSERT INTO {ATTEMPTS}
+                        (id,enrolment_id,aptem_id,group_id,activity_id,kind,definition)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb)''',
+                    [attempt_id, enrolment_id, aptem_id, group_id, activity_id,
+                     'quiz' if definition.get('quiz') else 'activity', json.dumps(snapshot)])
+    return attempt_id
+
+
+def finish(enrolment_id, aptem_id, group_id, activity_id, attempt_id, answers, reading_confirmed):
+    with transaction.atomic(using=ALIAS):
+        with connections[ALIAS].cursor() as cur:
+            if not ready(cur):
+                raise StoreUnavailable('Saving activities is not enabled yet. Please contact your learning team.')
+            cur.execute(f'''SELECT definition, submitted_at, score_percent, passed, completed
+                            FROM {ATTEMPTS} WHERE id=%s AND enrolment_id=%s AND aptem_id=%s
+                              AND group_id=%s AND activity_id=%s FOR UPDATE''',
+                        [attempt_id, enrolment_id, aptem_id, group_id, activity_id])
+            row = cur.fetchone()
+            if not row:
+                raise LookupError('Attempt not found.')
+            if row[1] is not None:
+                # Retrying a successful network request cannot add another result.
+                return {'score_percent': row[2], 'passed': row[3], 'completed': row[4], 'already_submitted': True}
+            definition = _json(row[0])
+            if definition.get('has_reading') and reading_confirmed is not True:
+                raise ValueError('Confirm that you have completed the reading material.')
+            if not definition.get('quiz') and reading_confirmed is not True:
+                raise ValueError('Confirm that you have completed this activity.')
+            result = grade_quiz(definition, answers) if definition.get('quiz') else {
+                'score_percent': None, 'passed': None,
+            }
+            if not definition.get('available'):
+                raise ValueError('This activity has no available content.')
+            result['completed'] = result['passed'] is True if definition.get('quiz') else True
+            cur.execute(f'''UPDATE {ATTEMPTS} SET answers=%s::jsonb,score_percent=%s,passed=%s,
+                               completed=%s,reading_confirmed=%s,submitted_at=CURRENT_TIMESTAMP
+                            WHERE id=%s''', [json.dumps(answers), result['score_percent'], result['passed'],
+                                           result['completed'], reading_confirmed is True, attempt_id])
+    return result
+
+
+def save_cover(subject_ref, storage_path, account_id):
+    with connections[ALIAS].cursor() as cur:
+        if not ready(cur):
+            raise StoreUnavailable('Uploading subject covers is not enabled yet.')
+        cur.execute(f'''INSERT INTO {COVERS} (subject_ref,storage_path,updated_by)
+                        VALUES (%s,%s,%s) ON CONFLICT (subject_ref) DO UPDATE
+                        SET storage_path=EXCLUDED.storage_path,updated_by=EXCLUDED.updated_by,
+                            updated_at=CURRENT_TIMESTAMP''', [subject_ref, storage_path, account_id])
+
+
+def overlay_progress(items, progress):
+    by_id = {row['activity_id']: row for row in progress}
+    for item in items:
+        old_completed = bool(item['completed'])
+        maximum, score = item.get('quiz_maximum_score'), item.get('quiz_score')
+        old_percent = float(score) / float(maximum) * 100 if score is not None and maximum and float(maximum) > 0 else None
+        item['historical_completed'] = old_completed
+        item['historical_score_percent'] = old_percent
+        new = by_id.get(item['source_activity_id'], {})
+        new_percent = float(new['best_percent']) if new.get('best_percent') is not None else None
+        values = [value for value in (old_percent, new_percent) if value is not None]
+        item['best_score_percent'] = max(values) if values else None
+        item['new_attempt_count'] = new.get('attempt_count', 0)
+        item['completed'] = old_completed or bool(new.get('completed'))
+        # Hours deliberately remain the audited source hours, never attempt count.
+    return items

@@ -220,7 +220,8 @@ def employers(request):
         # the row to say so: unlike those two tables, enrolment."Employers" has no
         # "Invite_to_platform" column, and adding one would store a transient
         # action as though it were a property of the person. Whether they were
-        # invited is answered by login."Invitations".
+        # invited is answered by login."Invitations" — which stays empty until an
+        # administrator sends the invitation from the Accounts page.
         row["invitation"] = _send_platform_invitation(
             request, "employer", emp.id, subject=emp
         )

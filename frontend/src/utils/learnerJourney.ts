@@ -21,6 +21,9 @@ export interface JourneyComponent {
   downloadAllowed?: boolean;
   reflectionPrompt?: string | null;
   reflectionRequired?: boolean;
+  /** The author sent this activity for coach validation, so finishing it hands
+   *  it in rather than completing it. */
+  tutorValidationRequired?: boolean;
   reflectionQuestion?: string | null;
   resourceUrl?: string | null;
   liveSessionUrl?: string | null;
@@ -297,6 +300,31 @@ export function recordedKsbEvidenceCodes(real: LearnerDetail | null): Set<string
   return codes;
 }
 
+/** Programme KSB target codes, normalised to the same parent-code level used
+ * by the coach caseload. */
+export function targetKsbCodes(real: Pick<LearnerDetail, 'ksbs'> | null): Set<string> {
+  return new Set(
+    (real?.ksbs || [])
+      .map((ksb) => ksbParentCode(ksb.code))
+      .filter(Boolean),
+  );
+}
+
+/** Evidenced KSBs that are actually part of the learner's target profile.
+ * Completion records can contain historical/raw KSB codes from old mappings;
+ * this keeps overview counts from showing impossible values such as 6 of 2. */
+export function evidencedTargetKsbCodes(real: LearnerDetail | null): Set<string> {
+  const targetCodes = targetKsbCodes(real);
+  const evidencedCodes = recordedKsbEvidenceCodes(real);
+  if (targetCodes.size === 0) return evidencedCodes;
+
+  return new Set(
+    Array.from(evidencedCodes)
+      .map(ksbParentCode)
+      .filter((code) => targetCodes.has(code)),
+  );
+}
+
 /** Short noun used in the reflection copy ("this podcast", "this reading…"). */
 export function componentNoun(type: string | null | undefined): string {
   const t = (type || '').toLowerCase();
@@ -408,28 +436,68 @@ export interface ComponentTypeMeta {
   color: string;
 }
 
-const TYPE_META: Record<string, { icon: string; bg: string; color: string }> = {
-  video: { icon: 'ri-play-circle-line', bg: 'bg-red-50', color: 'text-red-600' },
-  quiz: { icon: 'ri-questionnaire-line', bg: 'bg-amber-50', color: 'text-amber-600' },
-  reading: { icon: 'ri-book-open-line', bg: 'bg-blue-50', color: 'text-blue-600' },
-  podcast: { icon: 'ri-headphone-line', bg: 'bg-violet-50', color: 'text-violet-600' },
-  reflection: { icon: 'ri-brain-line', bg: 'bg-purple-50', color: 'text-purple-600' },
-  powerpoint: { icon: 'ri-slideshow-line', bg: 'bg-orange-50', color: 'text-orange-600' },
-  'live session': { icon: 'ri-vidicon-line', bg: 'bg-rose-50', color: 'text-rose-600' },
-  'recording placeholder': { icon: 'ri-record-circle-line', bg: 'bg-slate-50', color: 'text-slate-600' },
-  'workplace evidence': { icon: 'ri-file-add-line', bg: 'bg-emerald-50', color: 'text-emerald-600' },
-  evidence: { icon: 'ri-file-add-line', bg: 'bg-emerald-50', color: 'text-emerald-600' },
-  activity: { icon: 'ri-tools-line', bg: 'bg-orange-50', color: 'text-orange-600' },
+export interface ResourceTypeMeta {
+  icon: string;
+  bg: string;
+  color: string;
+}
+
+const RESOURCE_TYPE_META: Record<string, ResourceTypeMeta> = {
+  reading: { icon: 'ri-book-open-line', bg: 'resource-icon-reading-bg', color: 'resource-icon-reading' },
+  video: { icon: 'ri-play-circle-line', bg: 'resource-icon-video-bg', color: 'resource-icon-video' },
+  podcast: { icon: 'ri-podcast-line', bg: 'resource-icon-podcast-bg', color: 'resource-icon-podcast' },
+  quiz: { icon: 'ri-questionnaire-line', bg: 'resource-icon-quiz-bg', color: 'resource-icon-quiz' },
+  assignment: { icon: 'ri-file-check-line', bg: 'resource-icon-assignment-bg', color: 'resource-icon-assignment' },
+  document: { icon: 'ri-file-text-line', bg: 'resource-icon-document-bg', color: 'resource-icon-document' },
+  reflection: { icon: 'ri-brain-line', bg: 'resource-icon-reading-bg', color: 'resource-icon-reading' },
+  powerpoint: { icon: 'ri-slideshow-line', bg: 'resource-icon-document-bg', color: 'resource-icon-document' },
+  'live session': { icon: 'ri-vidicon-line', bg: 'resource-icon-video-bg', color: 'resource-icon-video' },
+  recording: { icon: 'ri-record-circle-line', bg: 'resource-icon-video-bg', color: 'resource-icon-video' },
+  'recording placeholder': { icon: 'ri-record-circle-line', bg: 'resource-icon-video-bg', color: 'resource-icon-video' },
+  evidence: { icon: 'ri-file-check-line', bg: 'resource-icon-assignment-bg', color: 'resource-icon-assignment' },
+  'workplace evidence': { icon: 'ri-file-check-line', bg: 'resource-icon-assignment-bg', color: 'resource-icon-assignment' },
+  activity: { icon: 'ri-tools-line', bg: 'resource-icon-assignment-bg', color: 'resource-icon-assignment' },
 };
 
-const DEFAULT_TYPE_META = { icon: 'ri-checkbox-circle-line', bg: 'bg-background-100', color: 'text-foreground-500' };
+const RESOURCE_TYPE_ALIASES: Record<string, string> = {
+  audio: 'podcast',
+  pdf: 'document',
+  file: 'document',
+  word: 'document',
+  ppt: 'document',
+  text: 'document',
+  resource: 'document',
+};
+
+const DEFAULT_TYPE_META: ResourceTypeMeta = {
+  icon: 'ri-file-text-line',
+  bg: 'resource-icon-document-bg',
+  color: 'resource-icon-document',
+};
+
+export function resourceTypeMeta(type: string | null | undefined): ResourceTypeMeta {
+  const key = String(type || '').trim().toLowerCase().replace(/[\s_-]+/g, ' ');
+  const canonical = RESOURCE_TYPE_ALIASES[key] || key;
+  if (RESOURCE_TYPE_META[canonical]) return RESOURCE_TYPE_META[canonical];
+
+  // LMS records may provide a MIME type or a longer display value instead of
+  // the short resource label used by learner-plan components.
+  if (/podcast|audio/.test(canonical)) return RESOURCE_TYPE_META.podcast;
+  if (/video|recording|live session/.test(canonical)) return RESOURCE_TYPE_META.video;
+  if (/quiz|questionnaire/.test(canonical)) return RESOURCE_TYPE_META.quiz;
+  if (/assignment|evidence/.test(canonical)) return RESOURCE_TYPE_META.assignment;
+  if (/reading|book|article/.test(canonical)) return RESOURCE_TYPE_META.reading;
+  if (/document|file|pdf|word|powerpoint|presentation|text|plain/.test(canonical)) return RESOURCE_TYPE_META.document;
+
+  return DEFAULT_TYPE_META;
+}
 
 /** Split a "Type · Detail" component title into styled parts. */
 export function componentTypeMeta(title: string): ComponentTypeMeta {
   const [rawLabel, ...rest] = title.split('·').map((s) => s.trim());
   const label = rawLabel || title;
   const detail = rest.length ? rest.join(' · ') : null;
-  const meta = TYPE_META[label.toLowerCase()] || DEFAULT_TYPE_META;
+  const meta = resourceTypeMeta(label);
   return { label, detail, ...meta };
 }
 
@@ -527,13 +595,18 @@ export function quizAggregateStats(real: LearnerDetail | null): QuizAggregateSta
 /** Group a learner's flat week/components arrays into module -> week -> components. */
 export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[] {
   if (!real) return [];
-  return real.modules.map((moduleTitle) => {
-    const weeksForModule = real.week.filter((w) => w.module === moduleTitle);
+  const groups = [...new Set(real.modules)].flatMap((moduleTitle) => {
+    const weeks = real.week.filter((week) => week.module === moduleTitle);
+    const ids = [...new Set(weeks.map((week) => week.moduleId || ''))];
+    return (ids.length ? ids : ['']).map((moduleId) => ({ moduleTitle, weeks: weeks.filter((week) => (week.moduleId || '') === moduleId) }));
+  });
+  return groups.map(({ moduleTitle, weeks: weeksForModule }) => {
     return {
       module: moduleTitle,
       weeks: weeksForModule.map((w) => {
         const components = real.components
-          .filter((c) => c.module === moduleTitle && c.week === w.week)
+          .filter((c) => c.module === moduleTitle && (w.moduleId ? c.moduleId === w.moduleId : true)
+            && (w.weekId ? c.weekId === w.weekId : c.week === w.week))
           .map((c) => ({
             title: c.component, expectedOtjh: c.expectedOtjh, isQuiz: c.isQuiz, quizMeta: c.quizMeta,
             moduleId: c.moduleId, weekId: c.weekId,
@@ -544,7 +617,9 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt,
-            reflectionRequired: c.reflectionRequired, reflectionQuestion: c.reflectionQuestion,
+            reflectionRequired: c.reflectionRequired,
+            tutorValidationRequired: c.tutorValidationRequired,
+            reflectionQuestion: c.reflectionQuestion,
             resourceUrl: c.resourceUrl,
             liveSessionUrl: c.liveSessionUrl, sessionDate: c.sessionDate, sessionTime: c.sessionTime,
             teamsLiveSessionId: c.teamsLiveSessionId,

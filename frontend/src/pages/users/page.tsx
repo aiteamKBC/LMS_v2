@@ -10,6 +10,7 @@ import { fetchProgrammes, fetchCohorts, fetchGroups } from '@/api/curriculum';
 import { listEmployers, type EmployerRow } from '@/api/employers';
 import type { UserListRow, UsersFilter } from './types';
 import { StatusBadge, Pagination, inputClass, btnGold, btnSecondary } from './components/ui';
+import { SendInvitationButton } from './components/SendInvitationButton';
 import { CreateUserModal } from './components/CreateUserModal';
 import { CreateStaffModal } from './components/CreateStaffModal';
 import { CreateEmployerModal } from './components/CreateEmployerModal';
@@ -25,6 +26,17 @@ const PAGE_SIZE = 8;
 // signed and the learner has moved into delivery — see the backend's
 // promote_to_delivery_if_ready.
 const DELIVERY_STATUS = 'Delivery';
+
+/** Statuses whose learning plan can still be changed from the enrolment
+ *  directory. Delivery is the planning stage, but a plan is not frozen when
+ *  teaching starts: modules get added, swapped or corrected mid-programme, and
+ *  an enrolment officer had no way to do it without moving the learner
+ *  backwards. 'On break' is included for the same reason Shift module includes
+ *  it — a paused learner is still on a programme.
+ *
+ *  Anything else (Withdrawn, Completed, EnteredEpa, Onboarding) opens the plan
+ *  read-only: those plans are history or not yet started. */
+export const PLAN_EDITABLE_STATUSES: string[] = [DELIVERY_STATUS, 'Active', 'On break'];
 // Shifting a learner between modules is for learners already being taught: they
 // have a plan and have started on it. Not Delivery — nothing has begun there, so
 // the plan itself is still the thing to edit — and not Withdrawn or Completed,
@@ -450,12 +462,12 @@ export default function UsersListPage() {
     navigate(`/users/${row.id}${q(row)}`);
   };
 
-  // The learner's own workspace view. `source` doubles as the :kind segment —
-  // staff and employers have no learner record, so their rows get no link.
+  // Open the learner's subjects directly, including restored learning for
+  // enrolments whose new programme is still at Delivery.
   const openLearnerPage = (row: UserListRow) => {
     if (isNonLearner(row)) return;
     const kind = row.source === 'commercial' ? 'commercial' : 'apprenticeship';
-    navigate(`/workspace/learner/${kind}/${row.id}`);
+    navigate(`/learner/modules/${kind}/${row.id}`);
   };
 
   // Staff/admin rows have no profile page — editing their details in place is
@@ -677,9 +689,9 @@ export default function UsersListPage() {
                       <span className="text-foreground-700">{row.subscriptionStatus}</span>
                       {row.subscriptionStatus ? (row.subscriptionVerified ? <i className="ri-checkbox-circle-fill text-emerald-500 ml-1.5 align-middle" title="Verified" /> : <i className="ri-close-circle-fill text-red-500 ml-1.5 align-middle" title="Unverified" />) : null}
                     </td>
-                    <td className="py-2.5 px-3">
-                      <span className="flex flex-wrap items-center gap-2">
-                        {isLearner && row.programmeStatus === DELIVERY_STATUS ? (
+                    <td className="py-2.5 px-3 text-center">
+                      <span className="flex flex-wrap items-center justify-center gap-2">
+                        {isLearner && PLAN_EDITABLE_STATUSES.includes(row.programmeStatus || '') ? (
                           <button
                             onClick={() => setPlanFor(row)}
                             title={`${row.hasLearningPlan ? 'Edit' : 'Add'} ${row.name}'s learning plan`}
@@ -715,12 +727,26 @@ export default function UsersListPage() {
                             Shift module
                           </button>
                         )}
+                        {/* Creating somebody no longer emails them, so the
+                            invitation is sent from here (or from Accounts once
+                            they have an account row). Hidden once they have
+                            signed in — at that point a password reset is the
+                            applicable action, not an invitation. */}
+                        {!row.hasSignedIn && (
+                          <SendInvitationButton
+                            subjectType={isStaff ? 'staff' : isEmployer ? 'employer' : 'learner'}
+                            subjectId={Number(row.id)}
+                            name={row.name}
+                            email={row.email}
+                            onSent={load}
+                          />
+                        )}
                       </span>
                     </td>
                     <td className="py-2.5 px-3">{isLearner && row.programmeStatus ? <StatusBadge status={row.programmeStatus} /> : null}</td>
-                    <td className="py-2.5 px-3">
+                    <td className="py-2.5 px-3 text-center">
                       {openInPlace ? (
-                        <span className="flex items-center gap-2">
+                        <span className="flex items-center justify-center gap-2">
                           <button
                             onClick={openInPlace}
                             title={isEmployer ? `Open ${row.name}'s employer page` : `Edit ${row.name}'s details`}
@@ -744,7 +770,7 @@ export default function UsersListPage() {
                           )}
                         </span>
                       ) : isLearner ? (
-                        <span className="flex items-center gap-2">
+                        <span className="flex items-center justify-center gap-2">
                           <button
                             onClick={() => openLearnerPage(row)}
                             title={`Open ${row.name}'s learner page`}
@@ -813,8 +839,10 @@ export default function UsersListPage() {
         <LearningPlanModal
           learnerId={planFor.id}
           learnerName={planFor.name}
-          // Editing is a Delivery-stage action; every other status views.
-          readOnly={planFor.programmeStatus !== DELIVERY_STATUS}
+          readOnly={!PLAN_EDITABLE_STATUSES.includes(planFor.programmeStatus || '')}
+          // An active learner already has progress against these modules, so
+          // the modal warns before a removal orphans it.
+          hasStarted={planFor.programmeStatus !== DELIVERY_STATUS}
           onClose={() => setPlanFor(null)}
           onSaved={load}
         />

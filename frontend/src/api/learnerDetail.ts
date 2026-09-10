@@ -17,6 +17,8 @@ export type LearnerKind = 'commercial' | 'apprenticeship';
 export interface LearnerWeekEntry {
   module: string | null;
   week: string;
+  moduleId?: string | null;
+  weekId?: string | null;
 }
 /** A KSB authored against a component, with the weight it contributes. */
 export interface ComponentKsbMapping {
@@ -48,6 +50,12 @@ export interface LearnerComponentEntry {
   downloadAllowed?: boolean;            // powerpoint download flag
   reflectionPrompt?: string | null;     // authored reflection prompt / learner guidance
   reflectionRequired?: boolean;         // false completes the activity without the reflection flow
+  /** Authored on the component: this activity must be validated by a tutor or
+   *  coach. The reflection is what creates the marking record, so an activity
+   *  with this set always goes through the reflection flow even when
+   *  reflectionRequired is false — otherwise it completes without ever
+   *  reaching the marking queue. */
+  tutorValidationRequired?: boolean;
   reflectionQuestion?: string | null;   // custom Apply-tab question; null uses the default copy
   resourceUrl?: string | null;          // generic external/download URL
   liveSessionUrl?: string | null;       // Microsoft Teams join URL for live sessions
@@ -110,6 +118,18 @@ export interface LearnerQuizAttempt {
   verifiedSeconds?: number | null;  // fallback for the OTJ total when reportedTime is blank
 }
 
+/** A coach's verdict on one submitted activity. */
+export interface ComponentMarking {
+  /** '' when nothing has been handed in; 'submitted_for_tutor_review' while it
+   *  waits; 'accepted' | 'partial' once validated; 'referred' | 'rejected'
+   *  when sent back for more work. */
+  status: string;
+  /** The coach's written feedback. Empty until they have reviewed it. */
+  feedback: string;
+  reviewedBy: string;
+  reviewedAt: string | null;
+}
+
 export interface LearnerDetail {
   id: string;
   /** Pilot feature flag; Aptem identity itself remains server-side. */
@@ -141,6 +161,10 @@ export interface LearnerDetail {
   quizAttempts: LearnerQuizAttempt[];
   videoProgress?: LearnerVideoProgress[];
   componentProgress?: LearnerComponentProgress[];  // non-quiz, non-video completions
+  /** The coach's decision per component id, for activities that need
+   *  validating. An activity whose component sets tutorValidationRequired is
+   *  not finished until `status` reads 'accepted' — finishing only hands it in. */
+  componentMarkingStatus?: Record<string, ComponentMarking>;
   activityFeed?: LearnerActivityEntry[];   // newest first
   totalExpectedOtjh: number;
   plannedHours?: string;      // planned OTJ hours (also stored in Active_users.planned_hours)
@@ -224,23 +248,6 @@ export interface LearnerVideoProgress {
 }
 
 async function request<T>(url: string): Promise<T> {
-  const existingRequest = pendingRequests.get(url) as Promise<T> | undefined;
-  if (existingRequest) {
-    return existingRequest;
-  }
-
-  const pendingRequest = requestUncached<T>(url);
-  pendingRequests.set(url, pendingRequest);
-  try {
-    return await pendingRequest;
-  } finally {
-    pendingRequests.delete(url);
-  }
-}
-
-const pendingRequests = new Map<string, Promise<unknown>>();
-
-async function requestUncached<T>(url: string): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, { headers: { 'Content-Type': 'application/json' } });
@@ -272,9 +279,11 @@ async function requestUncached<T>(url: string): Promise<T> {
 export function invalidateLearnerDetailCache(kind?: LearnerKind, id?: string): void {
   if (kind && id) {
     detailCache.delete(`${kind}:${id}`);
+    detailRequests.delete(`${kind}:${id}`);
     return;
   }
   detailCache.clear();
+  detailRequests.clear();
 }
 
 /**
@@ -292,10 +301,10 @@ export function fetchLearnerDetail(kind: LearnerKind, id: string, options: { for
 
   const promise = request<LearnerDetail>(`${BASE}/${kind}/${id}/`)
     .then((data) => {
-      detailCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+      if (detailRequests.get(key) === promise) detailCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
       return data;
     })
-    .finally(() => detailRequests.delete(key));
+    .finally(() => { if (detailRequests.get(key) === promise) detailRequests.delete(key); });
   detailRequests.set(key, promise);
   return promise;
 }

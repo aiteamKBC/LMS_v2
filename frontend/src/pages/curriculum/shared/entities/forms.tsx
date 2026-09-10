@@ -9,6 +9,7 @@
 // ============================================================================
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
 import {
   createCurriculumCohort,
@@ -23,6 +24,7 @@ import {
   type CurriculumGroup,
   type CurriculumHoliday,
   type CurriculumProgramme,
+  type StaleTeamsCalendar,
 } from '@/lib/curriculumApi';
 import { cleanText, cohortWeekCapacity, cohortsForProgramme, formatDateLabel, normaliseKey, programmeIdentity, programmeSelectValue, sameFormValues, sameIdentifier, weekendDateNotice } from './model';
 import {
@@ -35,6 +37,7 @@ import {
   WeekdayControl,
   type FormChainStep,
 } from './ui';
+import { confirmTeamsCalendarUpdate } from './teamsCalendarNotice';
 import { useFormSeedGuard } from './useDrawerState';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { DatePickerField } from '@/components/feature/DatePickerField';
@@ -832,6 +835,9 @@ export function GroupFormDrawer({
   const [color, setColor] = useState('#2563eb');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Held for the Teams notice below, which offers to take the reader to the
+  // calendar the delivery days they just changed have left behind.
+  const navigate = useNavigate();
   // What the drawer opened with, for the unsaved-changes check below.
   const baseline = useRef<Record<string, unknown>>({});
 
@@ -919,8 +925,13 @@ export function GroupFormDrawer({
       // the group PATCH only writes it when the key is present, so leaving it out
       // keeps whatever is stored.
       let saved: CurriculumGroup | null = null;
+      // The delivery slot is the group's, and every module under it runs to it --
+      // so a change here moves dates the Teams calendars were built from. The
+      // save says which ones, for the notice below.
+      let staleTeamsCalendars: StaleTeamsCalendar[] = [];
       if (group) {
-        await updateCurriculumGroup(group.id, payload);
+        const result = await updateCurriculumGroup(group.id, payload);
+        staleTeamsCalendars = result?.teamsCalendarsToUpdate || [];
         saved = { ...group, ...payload };
       } else {
         saved = (await createCurriculumGroup(payload)).group || null;
@@ -934,11 +945,24 @@ export function GroupFormDrawer({
       // As with the cohort drawer: confirm now, refresh behind it.
       const refreshed = Promise.resolve(onSaved(saved ? { group: saved } : undefined))
         .catch(() => undefined);
-      await showCurriculumAlert({
-        title: group ? 'Group updated' : 'Group created',
-        text: `${payload.name} is saved against its cohort.`,
-        timer: 1800,
+      // The warning replaces the plain confirmation rather than following it: a
+      // save that has left a calendar behind should not first say it went fine.
+      const warned = await confirmTeamsCalendarUpdate({
+        calendars: staleTeamsCalendars,
+        savedText: `${payload.name} is saved.`,
+        navigate,
+        // The slot this save just wrote. The week count is left to the server:
+        // the group PATCH re-derives each module's session count from its own
+        // weeks and the new delivery days before this runs.
+        sessionTimes: { startTime, endTime },
       });
+      if (!warned) {
+        await showCurriculumAlert({
+          title: group ? 'Group updated' : 'Group created',
+          text: `${payload.name} is saved against its cohort.`,
+          timer: 1800,
+        });
+      }
       await refreshed;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The group could not be saved.');

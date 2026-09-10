@@ -147,7 +147,13 @@ def _coach_cohort(request):
         page = max(1, min(100000, int(request.GET.get('page', 1))))
     except (ValueError, TypeError):
         raise service.ServiceError('Invalid page.')
-    return JsonResponse(repo.coach_learners(actor['email'], actor['role'] == 'admin', page))
+    # Filtered in the query rather than in the page the client already has:
+    # these lists run to hundreds of records, so a client-side filter would
+    # search only the 25 rows on screen and appear to find nothing.
+    search = (request.GET.get('search') or '').strip()[:100]
+    return JsonResponse(
+        repo.coach_learners(actor['email'], actor['role'] == 'admin', page, search=search)
+    )
 
 
 @endpoint('GET')
@@ -185,8 +191,8 @@ def signoff(request, learner_id):
             'coach': safe_signature(detail['coach_signature'])}})
     if set(data) - {'aptem_id', 'month', 'confirmed', 'snapshot_digest', 'capture_method'} or set(request.FILES) != {'signature'}:
         raise service.ServiceError('Only your signature and review confirmation can be submitted.')
-    if data.get('confirmed') not in (True, 'true') or data.get('capture_method') not in {'draw', 'upload'}:
-        raise service.ServiceError('Preview and confirm your signature before saving.')
+    if data.get('confirmed') not in (True, 'true') or data.get('capture_method') not in {'draw', 'upload', 'import'}:
+        raise service.ServiceError('Confirm your signature before saving.')
     image = storage.sanitize(request.FILES.get('signature'))
     result = service.sign(learner, month, request.login_account, role, image,
                           data.get('snapshot_digest'), {'ip': client_ip(request),
@@ -202,8 +208,8 @@ def bulk_signoff(request):
         return JsonResponse(service.signing_review(learner, request.GET.get('month'), role))
     if set(data) - {'aptem_id', 'months', 'confirmed', 'capture_method'} or set(request.FILES) != {'signature'}:
         raise service.ServiceError('Only your signature and reviewed months can be submitted.')
-    if data.get('confirmed') not in (True, 'true') or data.get('capture_method') not in {'draw', 'upload'}:
-        raise service.ServiceError('Preview and confirm your signature before saving.')
+    if data.get('confirmed') not in (True, 'true') or data.get('capture_method') not in {'draw', 'upload', 'import'}:
+        raise service.ServiceError('Confirm your signature before saving.')
     try:
         months = json.loads(data['months']) if isinstance(data.get('months'), str) else data.get('months')
     except ValueError:

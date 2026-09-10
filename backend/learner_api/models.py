@@ -210,6 +210,13 @@ class EnrolmentUser(models.Model):
     # originally provisioned, while Last_audit stores the same value as bigint.
     aptem_id = models.TextField(db_column="aptem_id", null=True, blank=True)
 
+    # The coach this learner is assigned to, on the enrolment side. The coach
+    # workspace itself scopes on Learner.learners.coach_email -- these are the
+    # enrolment record, kept in step by assign_audit_coaches, so the assignment
+    # survives a mirror being rebuilt.
+    coach_name = models.TextField(db_column="Coach_name", null=True, blank=True)
+    coach_email = models.TextField(db_column="Coach_email", null=True, blank=True)
+
     # The user's permanent public identifier, added by apply_user_uuid. The
     # integer pk above stays the internal join key — ~25 columns across three
     # schemas hold it as bigint — so this is the id to expose in APIs and URLs,
@@ -303,6 +310,12 @@ class EnrolmentUser(models.Model):
     employer_address = models.TextField(db_column="Employer_address", null=True, blank=True)
     target_programme = models.TextField(db_column="Target_programme", null=True, blank=True)
     invite_to_platform = models.BooleanField(db_column="Invite_to_platform", null=True, blank=True)
+
+    # The Aptem learner id this record was imported from, when it came from
+    # the audit snapshot (see import_audit_learners). Text rather than an
+    # integer because that is how the column is defined, and null for anyone
+    # created directly on the platform.
+    aptem_id = models.TextField(db_column="aptem_id", null=True, blank=True)
     allow_access_to_checkpoint = models.BooleanField(db_column="Allow_access_to_checkpoint", null=True, blank=True)
     allow_access_to_console = models.BooleanField(db_column="Allow_access_to_console", null=True, blank=True)
     allow_access_to_classic = models.BooleanField(db_column="Allow_access_to_classic", null=True, blank=True)
@@ -435,7 +448,16 @@ class StaffUser(models.Model):
     # Null on rows created before the column existed, which resolves to the
     # least-privileged role rather than a guess (login.identity.role_for_staff).
     # Added by the apply_staff_access_column management command.
+    #
+    # This is the PRIMARY grant — where the account lands at sign-in. An account
+    # may hold others too; those live in `access_extra`.
     access = models.TextField(db_column="Access", null=True, blank=True)
+
+    # Any ADDITIONAL grants beyond `access`, comma-separated. Read through
+    # login.identity.accesses_for_staff, which unions the two — never compared
+    # directly, or a multi-access account is refused the workspace it holds.
+    # Added by the apply_staff_access_extra_column management command.
+    access_extra = models.TextField(db_column="Access_extra", null=True, blank=True)
 
     title = models.TextField(db_column="Title", null=True, blank=True)
     preferred_name = models.TextField(db_column="Preferred_name", null=True, blank=True)
@@ -547,6 +569,15 @@ class LearnerProfile(models.Model):
     coach_name = models.TextField(blank=True)
     coach_email = models.EmailField(max_length=320, blank=True)
     coach_rag = models.CharField(max_length=20, blank=True)
+
+    # What a coach has actually decided about this learner's work. Recomputed
+    # from Learner.learning_reflection_submissions after every marking decision
+    # (learner_api.marking_tally) rather than incremented, so a changed decision
+    # or a resubmission cannot leave them drifting from the submissions.
+    accepted_assignments = models.IntegerField(default=0)
+    rejected_assignments = models.IntegerField(default=0)
+    accepted_reflections = models.IntegerField(default=0)
+    rejected_reflections = models.IntegerField(default=0)
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
     gateway_review_date = models.DateField(null=True, blank=True)
@@ -643,9 +674,8 @@ class LearnerProfile(models.Model):
         records = []
         # Prefetched, not lazily walked: the body below touches ksb_links twice,
         # quiz_answers once, and two relations under each answer, so plain
-        # `.all()` issues a query per entry per relation. A learner with 1,392
-        # entries — an MBA import, but any long-running learner gets there —
-        # spent over four minutes here on several thousand round trips, on the
+        # `.all()` issues a query per entry per relation. Large learner histories
+        # can otherwise spend minutes on thousands of round trips in the
         # property every progress and OTJH screen reads.
         entries = self.progress_entries.prefetch_related(
             "ksb_links",

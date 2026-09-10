@@ -203,7 +203,7 @@ export default function RecognitionPage() {
   }
 
   async function shareRecognition(rec: Recognition) {
-    const summary = `🏅 ${rec.title} — ${rec.learner} (${rec.cohort})\n${rec.description}\nAwarded by ${rec.awardedBy} · ${rec.awardedAt} · ${rec.points} pts`;
+    const summary = `${rec.title} — ${rec.learner} (${rec.cohort})\n${rec.description}\nAwarded by ${rec.awardedBy} · ${rec.awardedAt} · ${rec.points} pts`;
     try {
       await navigator.clipboard.writeText(summary);
       success('Recognition copied', 'Paste it anywhere to share this achievement.');

@@ -12,8 +12,8 @@ import { useRecordSummary } from './useRecordSummary';
 import { ActivityLog, LearnerInformation, MonthlyHours } from './ReportSections';
 import { SignatureCapture } from './SignatureCapture';
 import { BulkSignDialog } from './BulkSignDialog';
-import { completeMonth, getContentReview, getMonth, getSignoffs, getSummary, reopenMonth, saveSignature, type Signature } from './api';
-import { displayDate, monthLabel, monthStatus, nextOutstanding } from './report';
+import { completeMonth, getMonth, getSignoffs, getSummary, reopenMonth, saveSignature, type Signature, type SignatureCaptureMethod } from './api';
+import { displayDate, monthLabel, monthStatus, nextOutstanding, previousMonthSignature } from './report';
 import styles from './report.module.css';
 import design from './design.module.css';
 import { RecordBadge } from './RecordDesign';
@@ -33,8 +33,6 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
   const key = ['old-otjh', auth.account?.id, 'month', aptemId ?? 'me', month];
   const query = useQuery({ queryKey: key, queryFn: () => getMonth(month, aptemId), refetchInterval: 7000,
     enabled: Boolean(summary.data?.is_legacy && (!summary.data.needs_start || readOnly)) });
-  const contentReview = useQuery({ queryKey: ['old-otjh', auth.account?.id, 'content-check', aptemId ?? 'me', month, query.data?.snapshot_digest],
-    queryFn: () => getContentReview(month, aptemId), enabled: Boolean(query.data && query.data.status !== 'complete' && !bulkOpen), refetchInterval: 15000, retry: 1 });
   const live = useQuery({ queryKey: ['old-otjh', auth.account?.id, 'signoffs', aptemId ?? 'me', month],
     queryFn: () => getSignoffs(summary.data!.learner!.aptem_id, month),
     enabled: Boolean(query.data && summary.data?.learner), refetchInterval: 3000, staleTime: 0 });
@@ -58,7 +56,7 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
   // version present when this draft started. A conflict requires a fresh review.
   const draftDigest = useRef<string | null>(null);
   const refresh = () => { void client.invalidateQueries({ queryKey: ['old-otjh'] }); };
-  const signing = useMutation({ mutationFn: ({ blob, capture }: { blob: Blob; capture: 'draw' | 'upload' }) =>
+  const signing = useMutation({ mutationFn: ({ blob, capture }: { blob: Blob; capture: SignatureCaptureMethod }) =>
     saveSignature(summary.data!.learner!.aptem_id, month, draftDigest.current || query.data!.snapshot_digest, blob, capture),
     onSuccess: data => { setMessage(data.status === 'complete' ? 'Your signature is saved and this month is now complete.' : 'Your signature is saved. The learner completes the record with their signature.'); draftDigest.current = null; setCaptureVersion(value => value + 1); client.setQueryData(key, data); refresh(); }, onError: refresh });
   const completion = useMutation({ mutationFn: () => completeMonth(month), onSuccess: async data => {
@@ -81,17 +79,20 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
   if (!query.data) return null;
   const data = query.data;
   const busy = signing.isPending || completion.isPending;
-  const contentReady = contentReview.data?.ready === true && contentReview.data.snapshot_digest === data.snapshot_digest && !contentReview.isError;
-  const canSign = !readOnly && data.status !== 'complete' && data.row_count > 0 && !data.pending_revisions && contentReady;
+  const canSign = !readOnly && (data.status !== 'complete' || (!student && !data.coach_signature));
   const mutationError = signing.error || completion.error || reopening.error;
   const base = aptemId === undefined ? '/old-otjh/months' : `/old-otjh/coach/${aptemId}/months`;
   const months = summary.data.months;
+  const unsigned = months.filter(item => item.is_required !== false && (student ? item.status !== 'complete' : !item.coach_signature));
   const index = months.findIndex(item => item.month === month);
   const previous = months[index - 1]; const next = months[index + 1];
+  const reusableSignature = previousMonthSignature(months, month, student ? 'learner' : 'coach');
   const signatureRows = [{ role: 'Learner', signature: data.student_signature, own: student },
     { role: 'Coach', signature: data.coach_signature, own: !student && !readOnly }];
-  let completionHint = 'The learner’s signature completes the record. Use Sign all months to sign once for every month.';
-  if (data.student_signature) completionHint = 'Your learner signature is saved. Use Sign all months to complete the remaining record.';
+  let completionHint = student
+    ? 'The learner’s signature completes the record. Use Sign all months to sign once for every month.'
+    : 'The learner’s signature completes this month. Coach signatures can be added separately.';
+  if (data.student_signature) completionHint = 'Your learner signature is saved for this month.';
   if (readOnly) completionHint = 'Viewing only. The learner completes this record from their own account.';
   return <div className={design.reportPage}>
     {message && <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-800">{message}</div>}
@@ -106,8 +107,8 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
       <Link to={aptemId === undefined ? base : `/old-otjh/coach/${aptemId}`} className={btnSecondary}><AppIcon className="ri-layout-grid-line" />All months</Link>
     </nav>
     {!readOnly && <div className={design.bulkActions}>
-      <p>{summary.data.can_access_lms ? 'Your previous learning record is complete.' : 'One signature for your entire previous learning record.'}</p>
-      <button className={btnPrimary} disabled={busy || summary.data.can_access_lms} onClick={() => setBulkOpen(true)}><AppIcon className="ri-edit-line" />Sign all months</button>
+      <p>{unsigned.length ? 'One signature for all months in this previous learning record.' : 'Your signature is saved for all months.'}</p>
+      <button className={btnPrimary} disabled={busy || !unsigned.length} onClick={() => setBulkOpen(true)}><AppIcon className="ri-edit-line" />Sign all months</button>
     </div>}
     {bulkOpen && <BulkSignDialog summary={summary.data} aptemId={aptemId} onClose={() => setBulkOpen(false)} onSaved={result => {
       client.setQueryData(['old-otjh', auth.account?.id, 'summary', aptemId ?? 'me'], result.summary);
@@ -119,16 +120,6 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
     <p className={design.syncNote} role="status"><AppIcon className={live.isError ? 'ri-wifi-off-line' : 'ri-refresh-line'} />
       {live.isError ? 'Signature updates are temporarily delayed. Retrying automatically.' : 'Signatures update automatically while you review. Each person signs from their own account.'}</p>
     <ActivityLog data={data} aptemId={aptemId} />
-    {data.status !== 'complete' && !contentReady && !bulkOpen && <section aria-label="Learning material check" className={`${design.card} p-5`}>
-      <h2 className="text-base font-semibold">{contentReview.isPending ? 'Checking your learning materials…' : 'Learning materials need attention'}</h2>
-      <p className="mt-2 text-sm text-foreground-600">{contentReview.isPending
-        ? 'You can read the report while we check its content. Signing becomes available when the required materials can be reviewed.'
-        : 'Some materials are unavailable for individual review. You can still use Sign all months to sign your entire record.'}</p>
-      {contentReview.error && <p role="alert" className="mt-3 text-sm">{contentReview.error.message}</p>}
-      {!!contentReview.data?.issues.length && <ul className="mt-4 space-y-2 text-sm">{contentReview.data.issues.map(issue =>
-        <li key={issue.id}><strong>{issue.title || 'Untitled activity'}</strong><span className="text-foreground-600"> — {issue.reason}</span></li>)}</ul>}
-      {!contentReview.isPending && <button className={`${btnSecondary} mt-4`} disabled={contentReview.isFetching} onClick={() => void contentReview.refetch()}>{contentReview.isFetching ? 'Checking…' : 'Check again'}</button>}
-    </section>}
     <section className={`${design.card} overflow-hidden`} aria-label="Monthly sign-off"><div className={design.sectionHeading}><div><h2 className="font-heading">Report sign-off</h2>
       <p>Your learner and coach signatures for this month’s record.</p></div><span className={design.iconTile}><AppIcon className="ri-edit-line" /></span></div>
       <div className={design.sectionBody}><div className={styles.reportTableWrap}>
@@ -137,8 +128,9 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
           <td data-label="Role"><span className="text-[11px] font-semibold uppercase tracking-wider">{row.role}</span>{row.own && <span className="mt-1 block text-[11px] text-primary-600">(you)</span>}</td>
           <td className={styles.signatureCell} data-label="Signature">
             {row.signature && <img src={row.signature.url} alt={`${row.role} signature`} className={design.signatureImage} />}
-            {row.own && data.status !== 'complete' ? <SignatureCapture key={captureVersion} name={auth.account?.displayName || auth.user?.fullName || ''} busy={busy || !canSign}
+            {row.own && canSign ? <SignatureCapture key={captureVersion} name={auth.account?.displayName || auth.user?.fullName || ''} busy={busy}
               dialogRole={student ? 'learner' : 'coach'} hasSavedSignature={Boolean(row.signature)} saveError={signing.error?.message}
+              importSignature={reusableSignature}
               confirmationText={student ? "I confirm this is my signature. Save it and complete this month." : "I confirm this is my coach signature for this month."}
               onDraftStart={() => { draftDigest.current ??= data.snapshot_digest; }} onDraftReset={() => { draftDigest.current = null; }}
               onSave={(blob, capture) => signing.mutate({ blob, capture })} />
@@ -147,20 +139,20 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
           </td>
           <td data-label="Print name">{row.signature?.signer_name || '—'}</td>
           <td data-label="Date"><span className="whitespace-nowrap text-[12px]">{displayDate(row.signature?.signed_at)}</span></td>
-          <td data-label="Status"><RecordBadge tone={row.signature ? 'positive' : row.role === 'Coach' ? 'neutral' : 'pending'}><AppIcon className={row.signature ? 'ri-checkbox-circle-line' : 'ri-time-line'} />{row.signature ? 'Signed' : row.role === 'Coach' ? 'Not provided' : 'Awaiting signature'}</RecordBadge></td>
+          <td data-label="Status"><RecordBadge tone={row.signature ? 'positive' : 'pending'}><AppIcon className={row.signature ? 'ri-checkbox-circle-line' : 'ri-time-line'} />{row.signature ? 'Signed' : 'Awaiting signature'}</RecordBadge></td>
         </tr>)}</tbody></table></div></div>
       <div className={`${design.signFooter} space-y-3`}>
         {data.status === 'complete' ? <div className="flex items-start gap-3 text-emerald-700"><AppIcon className="ri-checkbox-circle-line text-xl" />
-          <div><p className="text-[13px] font-semibold">This month has been reviewed, signed and completed.</p><p className="mt-1 text-[12px]">Its signatures are read-only. You can still view activities and documents.</p></div></div>
+          <div><p className="text-[13px] font-semibold">This month has been reviewed, signed and completed.</p><p className="mt-1 text-[12px]">Saved signatures are read-only. The coach can still add their signature. You can view activities and documents.</p></div></div>
           : <><p role="status" className="text-[13px] text-foreground-600">{completionHint}</p>
-            {student && data.can_complete && <button className={btnPrimary} disabled={!contentReady || busy} onClick={() => setConfirming(true)}>Complete month<AppIcon className="ri-check-line" /></button>}</>}
+            {student && data.can_complete && <button className={btnPrimary} disabled={busy} onClick={() => setConfirming(true)}>Complete month<AppIcon className="ri-check-line" /></button>}</>}
         {student && summary.data.can_access_lms && <Link className={btnPrimary} to="/workspace/learner">Open LMS<AppIcon className="ri-arrow-right-line" /></Link>}
         {mutationError && <p role="alert" className="text-[13px] text-red-600">{mutationError.message}</p>}
       </div>
     </section>
     {confirming && <Modal size="max-w-lg" className={`${design.scope} ${design.dialog}`} title={`Complete ${monthLabel(month)}?`} onClose={() => { if (!busy) setConfirming(false); }} footer={<>
       <button className={btnSecondary} disabled={busy} onClick={() => setConfirming(false)}>Keep reviewing</button>
-      <button className={btnPrimary} disabled={busy || !data.can_complete || !contentReady} onClick={() => completion.mutate()}>{busy ? 'Completing…' : 'Confirm completion'}</button>
+      <button className={btnPrimary} disabled={busy || !data.can_complete} onClick={() => completion.mutate()}>{busy ? 'Completing…' : 'Confirm completion'}</button>
     </>}><p className="text-sm text-foreground-600">Confirm completion of this signed month. Once complete, its signatures will be read-only.</p></Modal>}
     {auth.account?.access === 'super-admin' && aptemId !== undefined && data.source_finalization?.event_type === 'finalized' && <Panel className="space-y-3">
       <label className="block text-sm">Reason for reopening<input value={reason} onChange={event => setReason(event.target.value)} className={inputClass} /></label>

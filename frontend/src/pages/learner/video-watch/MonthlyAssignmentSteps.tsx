@@ -7,6 +7,7 @@ import { exportMonthlyPresentation, type MonthlyAssignment, type AssignmentQuali
 import { proofreadLearningReflection, transcribeVoiceReflection } from '@/api/reflectionVoice';
 import type { LearningReflectionSubmissionInput } from '@/api/reflectionSubmission';
 import type { AssignmentAnswers } from './AssignmentSubmissionWizard';
+import { CheckCircle2, Circle } from 'lucide-react';
 
 const inputClass = 'mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50';
 const buttonClass = 'rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-blue-50 disabled:opacity-40';
@@ -214,7 +215,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
     </>}
     {step === 4 && <>{field('careerImpact', 'Impact on your career (at least 20 words)')}{field('jobImpact', 'Impact on your job performance (at least 20 words)')}{field('employerImpact', 'Impact on employer performance (at least 20 words)')}{check('employerBenefit', 'I can explain how my employer has benefited from this learning.')}<MonthlyAnswerField title={title} label="Measurable business outcomes (at least 20 words)" value={answers.businessImpact} onChange={value => onAnswer('businessImpact', value)} disabled={disabled} /></>}
     {step === 5 && <>{field('actionPlan', 'Your action plan for next month (at least 20 words)')}{field('epaPreparedness', 'How has this prepared you for EPA? (at least 20 words)')}</>}
-    {step === 6 && <><h3 className="text-lg font-semibold">Submission quality checks</h3><p className="text-sm text-slate-600">These are server-verified completeness checks, not an AI grade or tutor approval. Incomplete items do not prevent saving a draft.</p><button type="button" className={buttonClass} disabled={checking || disabled} onClick={() => void onCheck()}>{checking ? 'Checking…' : 'Run quality checks'}</button>{checks.map(c => <div key={c.key} className={`rounded-xl border p-3 text-sm ${c.passed ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>{c.passed ? '✓' : '○'} {c.label}</div>)}</>}
+    {step === 6 && <><h3 className="text-lg font-semibold">Submission quality checks</h3><p className="text-sm text-slate-600">These are server-verified completeness checks, not an AI grade or tutor approval. Incomplete items do not prevent saving a draft.</p><button type="button" className={buttonClass} disabled={checking || disabled} onClick={() => void onCheck()}>{checking ? 'Checking…' : 'Run quality checks'}</button>{checks.map(c => <div key={c.key} className={`rounded-xl border p-3 text-sm ${c.passed ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>{c.passed ? <CheckCircle2 aria-hidden="true" className="mr-1 inline h-4 w-4 align-[-0.2em]" /> : <Circle aria-hidden="true" className="mr-1 inline h-4 w-4 align-[-0.2em]" />}{c.label}</div>)}</>}
     {step === 7 && <>
       <h3 className="text-lg font-semibold">Coaching & presentation</h3>
       <p className="text-sm text-slate-600">Book coaching between {minBooking} and {maxBooking}. You can finish both tasks here and keep the whole submission as a draft until ready.</p>

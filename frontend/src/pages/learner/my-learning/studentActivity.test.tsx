@@ -1,9 +1,11 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { StudentActivityResponse } from '@/api/studentActivity';
+import type { StudentActivityResponse, SubjectMaterial, SubjectAttemptResult } from '@/api/studentActivity';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import * as api from '@/api/studentActivity';
 import { ModulesTab, StudentActivityPanel } from './page';
+import { StudentMaterial } from './StudentMaterial';
+import { buildUnifiedLearningSummary, SubjectOverview, subjectsFrom, useSubjectMetadata } from './SubjectWorkspace';
 
 // AppIcon is normally supplied by the app build's auto-import plugin.
 vi.stubGlobal('AppIcon', () => <span />);
@@ -24,24 +26,58 @@ const data: StudentActivityResponse = {
   ],
 };
 
-describe('historical modules inline panel', () => {
+function expandMonthAndWeek(month = 'February 2026') {
+  fireEvent.click(screen.getByRole('button', { name: `Expand ${month}` }));
+  fireEvent.click(screen.getByRole('button', { name: new RegExp(`^Expand ${month}, `) }));
+}
+
+describe('learner subject cards', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it('reads the linked Builder title and image without offering uploads in the learner workspace', async () => {
+    const image = 'data:image/png;base64,aGVsbG8=';
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({
+      covers: { 'legacy:1': image }, can_manage: true, persistence_ready: true,
+      builder_subjects: { 'legacy:1': { id: 'MOD-1', title: 'Updated Leadership' } },
+    });
+    const { container } = render(<StudentActivityPanel data={{ ...data, can_manage_covers: true }} learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    expect(await screen.findByRole('img', { name: 'Updated Leadership cover' })).toHaveAttribute('src', image);
+    expect(screen.getByText('1 of 2 completed')).toBeInTheDocument();
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+    expect(screen.queryByText('Upload image')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Updated Leadership/ }));
+    expandMonthAndWeek('Undated activities');
+    expect(screen.getByText('Introduction')).toBeVisible();
+    expect(screen.getByText('Complete')).toBeInTheDocument();
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+  });
+
+  it('clears an old subject image when its Builder cover is removed', async () => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({
+      covers: { 'legacy:1': '' },
+      builder_subjects: { 'legacy:1': { id: 'MOD-1', title: 'Updated Leadership' } },
+    });
+    render(<StudentActivityPanel data={{ ...data, covers: { 'legacy:1': 'https://example.com/old.png' } }} learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    await screen.findByRole('heading', { name: 'Updated Leadership' });
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+  });
+
   it('loads on opening Modules and ignores an old learner response after navigation', async () => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
     let resolveAnna!: (value: StudentActivityResponse) => void;
     const fetch = vi.spyOn(api, 'fetchStudentActivity')
       .mockImplementationOnce(() => new Promise((resolve) => { resolveAnna = resolve; }))
       .mockResolvedValueOnce({ ...data, learner_name: 'Amy-Marie Field' });
     const real = { studentActivityAvailable: true } as LearnerDetail;
-    const { rerender } = render(<ModulesTab key="132" real={real} loading={false} loadError={null} kind="commercial" id="132" showReadOnlyNotice={false} />);
+    const { rerender } = render(<ModulesTab key="132" real={real} loading={false} loadError={null} kind="commercial" id="132" />);
     await waitFor(() => expect(fetch).toHaveBeenCalledWith('commercial', '132', expect.any(AbortSignal)));
-    rerender(<ModulesTab key="133" real={real} loading={false} loadError={null} kind="commercial" id="133" showReadOnlyNotice={false} />);
+    rerender(<ModulesTab key="133" real={real} loading={false} loadError={null} kind="commercial" id="133" />);
     expect(await screen.findByText('Amy-Marie Field')).toBeInTheDocument();
     await act(async () => { resolveAnna(data); });
     expect(screen.queryByText('Anna Rundell')).not.toBeInTheDocument();
     expect(fetch.mock.calls[0][2]?.aborted).toBe(true);
   });
-  it('renders inline, distinguishes missing OTJH from recorded zero, and expands activities', () => {
+  it('opens a subject card and distinguishes missing OTJH from recorded zero', () => {
     render(<StudentActivityPanel data={data} loading={false} error={null} onRetry={vi.fn()} />);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByText('Anna Rundell')).toBeInTheDocument();
@@ -49,15 +85,19 @@ describe('historical modules inline panel', () => {
     expect(within(screen.getByText('Recorded OTJH').parentElement!).queryByText('Unavailable')).not.toBeInTheDocument();
     const module = screen.getByRole('button', { name: /Leadership/ });
     fireEvent.click(module);
-    expect(module).toHaveAttribute('aria-expanded', 'true');
+    expandMonthAndWeek('Undated activities');
+    expect(screen.getByRole('button', { name: 'All subjects' })).toBeInTheDocument();
+    expect(screen.getByText('Complete')).toBeInTheDocument();
+    expect(screen.getByText('Not complete')).toBeInTheDocument();
     expect(screen.getByText('Reflection')).toBeInTheDocument();
-    expect(screen.getByText('OTJH: Unavailable')).toBeInTheDocument();
+    expect(screen.getByText(/OTJH: Unavailable/)).toBeInTheDocument();
   });
 
   it('filters activities without changing the full module completion or hours summary', () => {
     render(<StudentActivityPanel data={data} loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: 'Reflection' } });
     fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
+    expandMonthAndWeek('Undated activities');
     expect(screen.getByText('1 of 2 completed')).toBeInTheDocument();
     expect(screen.queryByText('Introduction')).not.toBeInTheDocument();
     expect(screen.getByText('Reflection')).toBeInTheDocument();
@@ -68,5 +108,426 @@ describe('historical modules inline panel', () => {
     render(<StudentActivityPanel data={null} loading={false} error="Database unavailable" onRetry={retry} />);
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(retry).toHaveBeenCalledOnce();
+  });
+});
+
+const linkedMetadata = {
+  covers: {},
+  current_subjects: [{ id: 'MOD-1', title: 'Leadership' }],
+  builder_subjects: { 'legacy:1': { id: 'MOD-1', title: 'Leadership' } },
+  activity_sources: {
+    'COMP-10': { module_id: 'MOD-1', group_id: 1, activity_id: 10 },
+    'COMP-11': { module_id: 'MOD-1', group_id: 1, activity_id: 11 },
+  },
+};
+const linkedReal = {
+  modules: ['Leadership'], studentActivityAvailable: true,
+  components: [
+    { componentId: 'COMP-10', moduleId: 'MOD-1', module: 'Leadership', component: 'Introduction', type: 'video' },
+    { componentId: 'COMP-11', moduleId: 'MOD-1', module: 'Leadership', component: 'Reflection', type: 'reading' },
+    { componentId: 'NEW-12', moduleId: 'MOD-1', module: 'Leadership', component: 'Reflection', type: 'reading' },
+  ],
+  componentProgress: [{ componentId: 'COMP-11', kind: 'component' }],
+} as LearnerDetail;
+
+describe('subjects shared with Module Builder', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('waits for historical data and links before showing any native cards or totals', async () => {
+    let finishActivity!: (value: StudentActivityResponse) => void;
+    let finishMetadata!: (value: typeof linkedMetadata) => void;
+    vi.spyOn(api, 'fetchStudentActivity').mockImplementation(() => new Promise(resolve => { finishActivity = resolve; }));
+    const metadata = vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise(resolve => { finishMetadata = resolve; }));
+    render(<ModulesTab real={linkedReal} loading={false} loadError={null} kind="commercial" id="132" />);
+    expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
+    expect(screen.queryByRole('button', { name: /Leadership/ })).not.toBeInTheDocument();
+    expect(metadata).not.toHaveBeenCalled();
+    await act(async () => finishActivity(data));
+    expect(metadata).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('region', { name: 'Your subjects' })).not.toBeInTheDocument();
+    await act(async () => finishMetadata(linkedMetadata));
+    expect(screen.getAllByRole('button', { name: /Leadership/ })).toHaveLength(1);
+    expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it.each(['legacy', 'native'])('waits for metadata even when only %s data has arrived', async source => {
+    let finish!: (value: typeof linkedMetadata) => void;
+    vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    render(<StudentActivityPanel data={source === 'legacy' ? data : null} real={source === 'native' ? linkedReal : null}
+      kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
+    expect(screen.queryByRole('button', { name: /Leadership/ })).not.toBeInTheDocument();
+    await act(async () => finish(linkedMetadata));
+    expect(screen.getByRole('region', { name: 'Your subjects' })).toBeInTheDocument();
+  });
+
+  it('keeps the complete cards and search while refreshed learner, activities and links arrive', async () => {
+    let finishActivity!: (value: StudentActivityResponse) => void;
+    let finishMetadata!: (value: typeof linkedMetadata) => void;
+    const activity = vi.spyOn(api, 'fetchStudentActivity').mockResolvedValueOnce(data)
+      .mockImplementationOnce(() => new Promise(resolve => { finishActivity = resolve; }));
+    const metadata = vi.spyOn(api, 'subjectRequest').mockResolvedValueOnce(linkedMetadata)
+      .mockImplementationOnce(() => new Promise(resolve => { finishMetadata = resolve; }));
+    const props = { kind: 'commercial' as const, id: '132', loadError: null };
+    const { rerender } = render(<ModulesTab {...props} real={linkedReal} loading={false} />);
+    const card = await screen.findByRole('button', { name: /Leadership/ });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: 'Leadership' } });
+    rerender(<ModulesTab {...props} real={linkedReal} loading />);
+    expect(screen.getByRole('button', { name: /Leadership/ })).toBe(card);
+    const refreshed = { ...linkedReal, components: linkedReal.components.slice(0, 2) };
+    rerender(<ModulesTab {...props} real={refreshed} loading={false} />);
+    expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Leadership/ })).toBe(card);
+    expect(metadata).toHaveBeenCalledOnce();
+    await act(async () => finishActivity(data));
+    expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
+    expect(metadata).toHaveBeenCalledTimes(2);
+    await act(async () => finishMetadata(linkedMetadata));
+    expect(screen.getByText('2 of 2 completed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Leadership/ })).toBe(card);
+    expect(screen.getByRole('textbox', { name: 'Search modules or activities' })).toHaveValue('Leadership');
+    expect(activity).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText('Loading subjects')).not.toBeInTheDocument();
+  });
+
+  it('shows a metadata retry instead of misleading partial cards', async () => {
+    vi.spyOn(api, 'subjectRequest').mockRejectedValueOnce(new Error('Unavailable')).mockResolvedValueOnce(linkedMetadata);
+    render(<StudentActivityPanel data={data} real={null} learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    await screen.findByRole('alert');
+    expect(screen.queryByRole('button', { name: /Leadership/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await screen.findByRole('button', { name: /Leadership/ });
+  });
+
+  it('never keeps a complete previous learner snapshot after switching learner', async () => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValueOnce(linkedMetadata).mockReturnValueOnce(new Promise(() => {}));
+    const props = { data, real: linkedReal, kind: 'commercial', error: null, onRetry: vi.fn() };
+    const { rerender } = render(<StudentActivityPanel {...props} learnerId="132" loading={false} />);
+    await screen.findByRole('button', { name: /Leadership/ });
+    rerender(<StudentActivityPanel {...props} learnerId="133" loading />);
+    expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
+    expect(screen.queryByText('Anna Rundell')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Leadership/ })).not.toBeInTheDocument();
+  });
+
+  it('refreshes assignment metadata even when a new module has no component ids yet', async () => {
+    const initial = { modules: [], components: [] } as unknown as LearnerDetail;
+    const updated = { ...initial, modules: ['New module'] };
+    const assigned = { covers: {}, current_subjects: [{ id: 'MOD-NEW', title: 'New module' }] };
+    const request = vi.spyOn(api, 'subjectRequest').mockResolvedValueOnce({ covers: {}, current_subjects: [] }).mockResolvedValueOnce(assigned);
+    const { result, rerender } = renderHook(({ real }) => useSubjectMetadata(null, real, 'commercial', '101'), { initialProps: { real: initial } });
+    await waitFor(() => expect(result.current.metadata?.current_subjects).toEqual([]));
+    rerender({ real: updated });
+    expect(result.current.metadata).toBeUndefined();
+    await waitFor(() => expect(result.current.metadata).toEqual(assigned));
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(subjectsFrom(null, updated, result.current.metadata)).toEqual([
+      { id: 'current:MOD-NEW', title: 'New module', source: 'current', activities: [] },
+    ]);
+  });
+
+  it('counts a linked course and original activities once, retaining new activities and both completion sources', () => {
+    const subjects = subjectsFrom(data, linkedReal, linkedMetadata);
+    expect(subjects).toHaveLength(1);
+    expect(subjects[0].id).toBe('legacy:1');
+    expect(subjects[0].activities.map((a) => [a.id, a.completed])).toEqual([
+      ['la:1:10', true], ['la:1:11', true], ['NEW-12', false],
+    ]);
+    expect(subjects[0].activities[1].legacy).toBe(data.activities[1]);
+    expect(data.activities[1].completed).toBe(false);
+  });
+
+  it('builds the combined percentage only after linked old and new activities are deduplicated', () => {
+    const summary = buildUnifiedLearningSummary(data, linkedReal, linkedMetadata);
+    expect(summary).toMatchObject({
+      subjectCount: 1,
+      activityCount: 3,
+      completedActivityCount: 2,
+      completedSubjectCount: 0,
+      percent: 66.67,
+    });
+  });
+
+  it('shows recorded time across all displayed subjects, including later direct time', () => {
+    render(<StudentActivityPanel data={{ ...data, actual_total: 1, recorded_otjh_total: 3.5, planned_total: 2 }} loading={false} error={null} onRetry={vi.fn()} />);
+    expect(within(screen.getByText('Recorded OTJH').parentElement!).getByText('3h 30m')).toBeInTheDocument();
+    expect(within(screen.getByText('Planned OTJH').parentElement!).getByText('2h')).toBeInTheDocument();
+  });
+
+  it('keeps distinct same-title courses and activities without a verified source link', () => {
+    const separate = { ...linkedReal, components: [
+      ...linkedReal.components,
+      { ...linkedReal.components[0], moduleId: 'OTHER', componentId: 'OTHER-10' },
+    ] };
+    const subjects = subjectsFrom(data, separate, linkedMetadata);
+    expect(subjects).toHaveLength(2);
+    expect(subjects.find((s) => s.id === 'current:OTHER')?.activities).toHaveLength(1);
+    const wrongScope = { ...linkedMetadata, activity_sources: { 'COMP-10': { module_id: 'OTHER', group_id: 1, activity_id: 10 } } };
+    expect(subjectsFrom(data, linkedReal, wrongScope)[0].activities).toHaveLength(5);
+    expect(subjectsFrom(data, linkedReal, { ...linkedMetadata, builder_subjects: {} })).toHaveLength(2);
+  });
+
+  it('keeps the highest quiz score and a previous pass after a failed retake', () => {
+    const history = { ...data, activities: [{ ...data.activities[0], quiz_score: 8, quiz_maximum_score: 10 }] };
+    const quizReal = { ...linkedReal, components: [{ ...linkedReal.components[0], isQuiz: true, quizMeta: { quizId: 7 } }],
+      quizAttempts: [{ quizId: 7, grade: .9, passed: true }, { quizId: 7, grade: .2, passed: false }] } as LearnerDetail;
+    const entry = subjectsFrom(history, quizReal, linkedMetadata)[0].activities[0];
+    expect(entry.completed).toBe(true);
+    expect(entry.bestScorePercent).toBe(90);
+    expect(entry.legacy).toBe(history.activities[0]);
+  });
+
+  it('fetches metadata once without flashing duplicate cards or refetching after Builder renames', async () => {
+    let resolve!: (value: typeof linkedMetadata) => void;
+    const request = vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise((done) => { resolve = done; }));
+    render(<StudentActivityPanel data={data} real={linkedReal} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
+    expect(screen.queryByRole('button', { name: /Leadership/ })).not.toBeInTheDocument();
+    await act(async () => resolve({ ...linkedMetadata, builder_subjects: { 'legacy:1': { id: 'MOD-1', title: 'Renamed Leadership' } } }));
+    expect(screen.getAllByRole('button', { name: /Renamed Leadership/ })).toHaveLength(1);
+    expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it('uses the same merged totals in Overview', async () => {
+    vi.spyOn(api, 'fetchStudentActivity').mockResolvedValue(data);
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue(linkedMetadata);
+    render(<SubjectOverview real={linkedReal} kind="commercial" learnerId="132" onOpen={vi.fn()} />);
+    expect(await screen.findByText('2 of 3 completed')).toBeInTheDocument();
+    expect(screen.getByText('Across 1 subjects')).toBeInTheDocument();
+  });
+
+  it('does not apply metadata from a previous learner when responses arrive out of order', async () => {
+    let first!: (value: typeof linkedMetadata) => void;
+    let second!: (value: typeof linkedMetadata) => void;
+    const request = vi.spyOn(api, 'subjectRequest')
+      .mockImplementationOnce(() => new Promise((resolve) => { first = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { second = resolve; }));
+    const props = { data, real: linkedReal, kind: 'commercial', loading: false, error: null, onRetry: vi.fn() };
+    const { rerender } = render(<StudentActivityPanel {...props} learnerId="132" />);
+    rerender(<StudentActivityPanel {...props} learnerId="133" />);
+    await act(async () => second(linkedMetadata));
+    await act(async () => first({ ...linkedMetadata, builder_subjects: { 'legacy:1': { id: 'MOD-1', title: 'Old learner title' } } }));
+    expect(screen.queryByText('Old learner title')).not.toBeInTheDocument();
+    expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
+    expect((request.mock.calls[0][1]?.signal as AbortSignal).aborted).toBe(true);
+  });
+});
+
+const scheduledData: StudentActivityResponse = {
+  ...data, count: 3, unique_activity_count: 3,
+  activities: [
+    { ...data.activities[0], date: '2026-02-05', month: '2026-02', week_start: '2026-02-02', week_end: '2026-02-08' },
+    { ...data.activities[1], date: '2026-02-06', month: '2026-02', week_start: '2026-02-02', week_end: '2026-02-08' },
+    { ...data.activities[1], activity_id: 'la:1:12', source_activity_id: 12, activity: 'March lesson', date: '2026-03-02', month: '2026-03', week_start: '2026-03-02', week_end: '2026-03-08' },
+  ],
+};
+
+const activityMaterial: SubjectMaterial = {
+  title: 'Reflection', reading_html: '', media: [{ kind: 'embed', url: 'https://example.org/lesson', title: 'Reflection frame' }],
+  quiz: null, has_reading: true, available: true, source_live: true, completed: false,
+  persistence_ready: true, can_attempt: true, csrf_token: 'csrf-value', history: [],
+  historical: { score: null, maximum_score: null, passed: null, attempt_number: null, status: null, answers: [] },
+};
+const completeResult: SubjectAttemptResult = { score_percent: null, passed: null, completed: true };
+
+function mockMaterialRequests(material = activityMaterial, save: () => Promise<SubjectAttemptResult> = async () => completeResult) {
+  return vi.spyOn(api, 'subjectRequest').mockImplementation(async <T,>(url: string, options?: RequestInit): Promise<T> => {
+    if (url.includes('/subject-covers/')) return { covers: {} } as T;
+    if (options?.method !== 'POST') return material as T;
+    if (url.endsWith('/attempts/')) return { attempt_id: 'attempt-1', definition: { quiz: material.quiz } } as T;
+    return await save() as T;
+  });
+}
+
+describe('subject months, weeks and completion', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('starts with months and weeks closed and reveals activities only after both are opened', async () => {
+    mockMaterialRequests();
+    render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
+    expect(screen.getByRole('button', { name: 'Expand February 2026' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('button', { name: 'Expand March 2026' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('button', { name: /Week 1/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reflection' })).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Reflection frame')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand February 2026' }));
+    const week = screen.getByRole('button', { name: /^Expand February 2026, Week 1/ });
+    expect(week).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('button', { name: 'Reflection' })).not.toBeInTheDocument();
+    fireEvent.click(week);
+    expect(screen.getByRole('button', { name: 'Reflection' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'March lesson' })).not.toBeInTheDocument();
+    fireEvent.click(week);
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse February 2026' }));
+    expect(screen.queryByRole('button', { name: /^Expand February 2026, Week 1/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand February 2026' }));
+    expect(week).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(week);
+    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    expect(await screen.findByTitle('Reflection frame')).toHaveAttribute('src', 'https://example.org/lesson');
+    expect(screen.getByRole('button', { name: 'Reflection' })).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    expect(screen.queryByTitle('Reflection frame')).not.toBeInTheDocument();
+    expandMonthAndWeek('March 2026');
+    expect(screen.getByRole('button', { name: 'March lesson' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'All subjects' }));
+    fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
+    expect(screen.getByRole('button', { name: 'Expand February 2026' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('button', { name: /Week 1/ })).not.toBeInTheDocument();
+  });
+
+  it('keeps course, month and week progress based on all activities while searching', () => {
+    render(<StudentActivityPanel data={scheduledData} loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: 'Reflection' } });
+    expandMonthAndWeek();
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '33.33');
+    expect(screen.getByRole('progressbar', { name: 'February 2026 progress' })).toHaveAttribute('aria-valuenow', '50');
+    expect(screen.getByRole('progressbar', { name: /^February 2026, Week 1/ })).toHaveAttribute('aria-valuenow', '50');
+    expect(screen.getByText(/1 ÷ 3 × 100 = 33.33%/)).toBeInTheDocument();
+  });
+
+  it('shows lecture details without exposing date-review messages to the learner', () => {
+    const activities = scheduledData.activities.map((item) => item.source_activity_id === 12
+      ? { ...item, section_title: 'Course templates', date_source: 'original_created_at', date_needs_review: true }
+      : { ...item, section_title: 'Lecture 1 - 06/02/2026', date_source: 'section_title', date_needs_review: false });
+    render(<StudentActivityPanel data={{ ...scheduledData, activities }} loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
+    expandMonthAndWeek();
+    expandMonthAndWeek('March 2026');
+    expect(screen.getAllByText('Lecture: Lecture 1 - 06/02/2026')).toHaveLength(2);
+    expect(screen.queryByText(/Date awaiting confirmation|Date needs review|activity dates? needs? confirmation/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse March 2026' }));
+    expect(screen.queryByText(/Date awaiting confirmation|Date needs review|activity dates? needs? confirmation/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '33.33');
+  });
+
+  it('updates all progress after Submit succeeds, preserves it on refresh failure and never counts reopening twice', async () => {
+    let finish!: (result: SubjectAttemptResult) => void;
+    const pending = new Promise<SubjectAttemptResult>((resolve) => { finish = resolve; });
+    const requests = mockMaterialRequests(activityMaterial, () => pending);
+    vi.spyOn(api, 'fetchStudentActivity').mockResolvedValueOnce(scheduledData).mockRejectedValueOnce(new Error('Refresh unavailable'));
+    render(<ModulesTab real={{ studentActivityAvailable: true } as LearnerDetail} loading={false} loadError={null} kind="commercial" id="132" />);
+    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
+    expandMonthAndWeek();
+    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    const submit = await screen.findByRole('button', { name: 'Submit & complete' });
+    const frame = screen.getByTitle('Reflection frame');
+    expect(submit.compareDocumentPosition(frame) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(screen.getByRole('region', { name: 'Activity completion' })).getByText('Not complete')).toBeVisible();
+    fireEvent.click(submit);
+    expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '33.33');
+    await waitFor(() => expect(requests.mock.calls.some(([url]) => url.endsWith('/attempt-1/'))).toBe(true));
+    await act(async () => { finish(completeResult); });
+    expect(await screen.findByText('Activity completed.')).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Activity completion' })).getByText('Complete')).toBeVisible();
+    expect(await screen.findByText(/Refresh unavailable/)).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '66.67');
+    expect(screen.getByRole('progressbar', { name: 'February 2026 progress' })).toHaveAttribute('aria-valuenow', '100');
+    expect(screen.getByRole('progressbar', { name: /^February 2026, Week 1/ })).toHaveAttribute('aria-valuenow', '100');
+    const submitted = requests.mock.calls.find(([url]) => url.endsWith('/attempt-1/'))![1]!;
+    expect(JSON.parse(submitted.body as string)).toEqual({ answers: {}, reading_confirmed: true });
+    expect(submitted.headers).toMatchObject({ 'X-CSRFToken': 'csrf-value' });
+    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    expect(within(screen.getByRole('group', { name: 'Reflection activity' })).getByText('Complete')).toBeVisible();
+    expect(within(screen.getByRole('group', { name: 'Reflection activity' })).queryByText('Not complete')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    await screen.findByTitle('Reflection frame');
+    expect(screen.queryByRole('button', { name: 'Submit & complete' })).not.toBeInTheDocument();
+    expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: 'All subjects' }));
+    expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
+  });
+
+  it('keeps progress unchanged on a failed submit and retries the same attempt', async () => {
+    const save = vi.fn().mockRejectedValueOnce(new Error('Could not save')).mockResolvedValueOnce(completeResult);
+    const requests = mockMaterialRequests(activityMaterial, save);
+    render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
+    expandMonthAndWeek();
+    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Submit & complete' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not save');
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '33.33');
+    fireEvent.click(screen.getByRole('button', { name: 'Submit & complete' }));
+    await screen.findByText('Activity completed.');
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '66.67');
+    expect(requests.mock.calls.filter(([url, options]) => url.endsWith('/attempts/') && options?.method === 'POST')).toHaveLength(1);
+  });
+
+  it('keeps staff submission disabled without read-only messages and removes Submit for a completed activity', async () => {
+    const requests = mockMaterialRequests({ ...activityMaterial, can_attempt: false });
+    const { unmount } = render(<StudentMaterial kind="commercial" learnerId="132" groupId={1} activityId={11} />);
+    await screen.findByTitle('Reflection frame');
+    const submit = screen.getByRole('button', { name: 'Submit & complete' });
+    expect(submit).toBeDisabled();
+    expect(screen.queryByText(/Viewing read-only|Only the learner can submit/)).not.toBeInTheDocument();
+    expect(submit).not.toHaveAttribute('aria-describedby');
+    fireEvent.click(submit);
+    expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(0);
+    unmount();
+    requests.mockRestore();
+    mockMaterialRequests({ ...activityMaterial, completed: true });
+    render(<StudentMaterial kind="commercial" learnerId="132" groupId={1} activityId={11} />);
+    await screen.findByText('This activity is complete and included in your progress.');
+    expect(screen.queryByRole('button', { name: 'Submit & complete' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the completion button visible with a reason when saving is unavailable', async () => {
+    const requests = mockMaterialRequests({ ...activityMaterial, persistence_ready: false, can_attempt: false });
+    render(<StudentMaterial kind="commercial" learnerId="132" groupId={1} activityId={11} />);
+    const submit = await screen.findByRole('button', { name: 'Submit & complete' });
+    expect(submit).toBeDisabled();
+    expect(submit).toHaveAccessibleDescription(/Saving progress is temporarily unavailable/);
+    expect(screen.queryByText(/Viewing read-only/)).not.toBeInTheDocument();
+    fireEvent.click(submit);
+    expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(0);
+  });
+
+  it('requires quiz answers and reading confirmation before saving Complete and updating progress', async () => {
+    const quiz: SubjectMaterial = { ...activityMaterial, quiz: {
+      id: 'q', body: '', ready: true, message: '', passing_percent: 70,
+      questions: [{ id: '1', type: 'single_choice', text: 'Pick an answer', options: [{ id: 'a', text: 'Choice A' }] }],
+    } };
+    const requests = mockMaterialRequests(quiz, async () => ({ score_percent: 80, passed: true, completed: true }));
+    render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
+    expandMonthAndWeek();
+    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Start quiz' }));
+    const submit = await screen.findByRole('button', { name: 'Submit answers' });
+    expect(submit).toBeDisabled();
+    fireEvent.click(screen.getByLabelText('Choice A'));
+    expect(submit).toBeDisabled();
+    fireEvent.click(screen.getByLabelText('I have completed the reading material.'));
+    expect(submit).toBeEnabled();
+    fireEvent.click(submit);
+    await screen.findByText(/Attempt saved: 80%/);
+    expect(within(screen.getByRole('region', { name: 'Activity completion' })).getByText('Complete')).toBeVisible();
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '66.67');
+    const submitted = requests.mock.calls.find(([url]) => url.endsWith('/attempt-1/'))![1]!;
+    expect(JSON.parse(submitted.body as string)).toEqual({ answers: { '1': ['a'] }, reading_confirmed: true });
+  });
+
+  it('does not increase completion when a quiz attempt fails', async () => {
+    const quiz: SubjectMaterial = { ...activityMaterial, has_reading: false, quiz: {
+      id: 'q', body: '', ready: true, message: '', passing_percent: 70,
+      questions: [{ id: '1', type: 'single_choice', text: 'Pick an answer', options: [{ id: 'a', text: 'Choice A' }] }],
+    } };
+    mockMaterialRequests(quiz, async () => ({ score_percent: 0, passed: false, completed: false }));
+    render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
+    expandMonthAndWeek();
+    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Start quiz' }));
+    await waitFor(() => expect(screen.getByLabelText('Choice A')).toBeEnabled());
+    fireEvent.click(screen.getByLabelText('Choice A'));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit answers' }));
+    await screen.findByText(/Attempt saved: 0%/);
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '33.33');
   });
 });

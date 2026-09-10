@@ -21,15 +21,19 @@ export const learnerNavItems: SidebarNavItem[] = [
 
   // Training plan — the learner's Aptem training plan, month by month. Its
   // "View components" action drops into My Learning to actually work through it.
-  { id: 'learner-training-plan-view', label: 'Training plan', icon: 'ri-calendar-todo-line', href: '/learner/training-plan-timeline' },
+  { id: 'learner-training-plan-view', label: 'Training plan', icon: 'ri-clipboard-line', href: '/learner/training-plan-timeline' },
 
   // Calendar
   { id: 'learner-calendar', label: 'Calendar', icon: 'ri-calendar-2-line', href: '/learner/calendar', statusDot: 'green' },
 
-  // Evidence & Progress — evidence, OTJ hours and KSBs live together as tabs on
-  // the "My Progress" page. Labeled distinctly from the "My Progress" group
-  // below (Monthly Cycle/Coaching/Reviews) so the two aren't confused.
-  { id: 'learner-progress', label: 'Evidence & Progress', icon: 'ri-bar-chart-2-line', href: '/learner/progress', badge: 7 },
+  // Evidence — the learner's own submissions and where each one is in review.
+  { id: 'learner-evidence', label: 'Evidence', icon: 'ri-folder-upload-line', href: '/learner/evidence', badge: 7 },
+
+  // OTJH & KSBs progress — what those submissions add up to: off-the-job hours
+  // and KSB coverage, as Overview/OTJ Hours/KSBs tabs on one page. Labeled
+  // distinctly from the "My Progress" group below (Monthly
+  // Cycle/Coaching/Reviews) so the two aren't confused.
+  { id: 'learner-progress', label: 'OTJH & KSBs progress', icon: 'ri-bar-chart-2-line', href: '/learner/progress' },
 
   // Attendance — single item; reporting an absence is an action inside the page.
   { id: 'learner-attendance', label: 'Attendance', icon: 'ri-calendar-check-line', href: '/learner/attendance' },
@@ -43,7 +47,7 @@ export const learnerNavItems: SidebarNavItem[] = [
     children: [
       { id: 'learner-monthly-cycle', label: 'Monthly Cycle', icon: 'ri-loop-left-line', href: '/learner/monthly-cycle' },
       { id: 'learner-monthly-submission', label: 'Monthly submission', icon: 'ri-file-text-line', href: '/learner/monthly-submission' },
-      { id: 'learner-monthly-coaching', label: 'Monthly Coaching', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
+      { id: 'learner-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
       { id: 'learner-progress-reviews', label: 'Progress Review', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
     ],
   },
@@ -128,7 +132,7 @@ export const coachNavItems: SidebarNavItem[] = [
     href: '',
     children: [
       { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable' },
-      { id: 'coach-meetings', label: 'Monthly Coache Meeting', icon: 'ri-calendar-check-line', href: '/coach/meetings' },
+      { id: 'coach-meetings', label: 'Monthly Coaching Meeting', icon: 'ri-calendar-check-line', href: '/coach/meetings' },
       { id: 'coach-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/coach/progress-reviews' },
       { id: 'coach-monthly-cycle', label: 'Monthly Cycle', icon: 'ri-loop-left-line', href: '/coach/monthly-cycle' },
     ],
@@ -141,6 +145,7 @@ export const coachNavItems: SidebarNavItem[] = [
     children: [
       { id: 'coach-ksb-impact', label: 'KSB Impact', icon: 'ri-bar-chart-2-line', href: '/coach/ksb-impact' },
       { id: 'coach-otjh-reports', label: 'OTJH Reports', icon: 'ri-time-line', href: '/coach/otjh-reports' },
+      { id: 'coach-monthly-reports', label: 'Monthly Reports', icon: 'ri-file-list-3-line', href: '/coach/monthly-reports' },
     ],
   },
 ];
@@ -283,15 +288,20 @@ export const curriculumNavItems: SidebarNavItem[] = [
   {
     id: 'curriculum-quality',
     label: 'Quality',
-    icon: 'ri-book-open-line',
+    icon: 'ri-shield-check-line',
     href: '/curriculum/quality',
-    comingSoon: true,
+    // Published Content, Reports and the Audit Trail are live; Quality
+    // Assurance and Version Control have no record store yet, and the hub says
+    // which is which. The tag flags that the destination is usable but part
+    // built, where `comingSoon` would wrongly read as "do not bother opening".
+    tag: 'Under review',
     matchPaths: [
+      '/curriculum/published',
+      '/curriculum/reports',
+      '/curriculum/audit-trail',
       '/curriculum/ksb-mapping',
       '/curriculum/qa',
-      '/curriculum/reports',
       '/curriculum/version-control',
-      '/curriculum/published',
     ],
   },
 ];

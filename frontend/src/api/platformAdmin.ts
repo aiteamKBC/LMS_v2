@@ -44,7 +44,11 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const payload = data && typeof data === 'object' ? data as { error?: string } : null;
-    const htmlError = text.trim().startsWith('<') ? 'The server rejected the request before the API could handle it. If you uploaded a background image, try a smaller/compressed image.' : '';
+    const htmlError = text.trim().startsWith('<')
+      ? res.status === 404
+        ? 'The backend route was not found. The deployed Django process may need a restart/reload so it can pick up the new certificate-template endpoint.'
+        : 'The server rejected the request before the API could handle it. If you uploaded a background image, try a smaller/compressed image.'
+      : '';
     throw new Error(payload?.error || htmlError || text.slice(0, 240) || `Request failed (${res.status})`);
   }
   return data as T;
@@ -242,6 +246,12 @@ export interface PlatformAccount {
    * record (`updateStaffUser`), which is where the grant lives.
    */
   access: string;
+  /**
+   * Every grant this account holds, in canonical order — the primary above is
+   * one of them. An account may hold several, so a row showing only `access`
+   * would hide the second workspace somebody can reach.
+   */
+  accesses?: string[];
   /**
    * Which of the two learner kinds sits behind a learner account — '' for
    * staff and employer accounts. The record board reads its documents by kind,

@@ -198,6 +198,7 @@ interface RawWeekTemplateComponent {
   reflectionQuestion?: string;
   workplaceEvidenceRequired?: boolean;
   tutorValidationRequired?: boolean;
+  coachValidationRequired?: boolean;
   ksbMappings?: KsbMapping[];
   settings?: Record<string, unknown>;
 }
@@ -237,6 +238,9 @@ function mapComponent(raw: RawWeekTemplateComponent, weekId: string): ModuleComp
     reflectionQuestion: String(raw.reflectionQuestion || ''),
     workplaceEvidenceRequired: Boolean(raw.workplaceEvidenceRequired),
     tutorValidationRequired: Boolean(raw.tutorValidationRequired),
+    // On unless the template says otherwise — a template written before the
+    // flag existed never exempted anything, so it comes back validated.
+    coachValidationRequired: raw.coachValidationRequired !== false,
     ksbMappings: Array.isArray(raw.ksbMappings) ? raw.ksbMappings : [],
     // Fill type defaults, then overlay stored values. Unlike the module builder
     // we do NOT quarantine unknown keys — the week builder adds its own (e.g. a

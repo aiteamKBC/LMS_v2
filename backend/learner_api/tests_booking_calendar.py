@@ -170,13 +170,12 @@ class RescheduleEndpointTests(SimpleTestCase):
         record = self.scheduled_record()
         view = inspect.unwrap(module.learner_calendar_reschedule)
         with patch.object(module, "SOURCE_MODELS", {"commercial": Mock()}), \
-                patch.object(module.CoachCalendarEvent.objects, "filter") as event_filter, \
+                patch.object(module, "_learner_booking_record", return_value=record), \
                 patch("learner_api.booking_calendar.timezone.localdate", return_value=date(2026, 9, 7)), \
                 patch("learner_api.calendar_connections.booking_conflicts", return_value=False), \
                 patch("coach_api.views.build_booked_calendar_event", return_value={}) as build_event, \
                 patch("coach_api.views.persist_calendar_sync_reservation", return_value=record) as persist, \
                 patch("coach_api.views.synchronize_reserved_calendar_event", return_value=(record, "", True)) as sync:
-            event_filter.return_value.first.return_value = record
             response = view(self.request(), "commercial", 101)
 
         self.assertEqual(response.status_code, 200)
@@ -194,14 +193,33 @@ class RescheduleEndpointTests(SimpleTestCase):
         record = self.scheduled_record()
         view = inspect.unwrap(module.learner_calendar_reschedule)
         with patch.object(module, "SOURCE_MODELS", {"commercial": Mock()}), \
-                patch.object(module.CoachCalendarEvent.objects, "filter") as event_filter, \
+                patch.object(module, "_learner_booking_record", return_value=record), \
                 patch("learner_api.booking_calendar.timezone.localdate", return_value=date(2026, 9, 7)), \
                 patch("learner_api.calendar_connections.booking_conflicts", return_value=False), \
                 patch("coach_api.views.persist_calendar_sync_reservation", side_effect=LearnerCalendarConflict("This learner already has another session at that time.")), \
                 patch("coach_api.views.synchronize_reserved_calendar_event") as sync:
-            event_filter.return_value.first.return_value = record
             response = view(self.request(), "commercial", 101)
 
         self.assertEqual(response.status_code, 409)
         self.assertIn("already has another session", json.loads(response.content)["error"])
         sync.assert_not_called()
+
+    def test_booking_lookup_accepts_current_active_users_mirror_id(self):
+        from . import calendar as module
+
+        learner = SimpleNamespace(email="learner@example.com")
+        mirror = SimpleNamespace(id=248, email="learner@example.com")
+        record = self.scheduled_record()
+        record.event_key = "progress-review:248:3:2026-09-08"
+        record.learner_id = 248
+
+        source_model = Mock()
+        source_model.all_learners.filter.return_value.first.return_value = learner
+        with patch.object(module, "SOURCE_MODELS", {"commercial": source_model}), \
+                patch.object(module, "learner_profile_for_source", return_value=mirror), \
+                patch.object(module.CoachCalendarEvent.objects, "filter") as event_filter:
+            event_filter.return_value.first.return_value = record
+
+            found = module._learner_booking_record("commercial", 101, record.event_key)
+
+        self.assertIs(found, record)

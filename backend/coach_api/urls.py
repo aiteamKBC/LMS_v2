@@ -1,6 +1,8 @@
 from django.urls import path
 
+from .ai_marking import coach_marking_ai_feedback
 from .csrf import coach_csrf_token
+from .monthly_reports import coach_monthly_report_detail, coach_monthly_reports
 from .views import (
     coach_attendance,
     coach_attendance_details,
@@ -31,8 +33,13 @@ urlpatterns = [
     path('coach/attendance/details', coach_attendance_details, name='coach-attendance-details'),
     path('coach/absence-reports', coach_absence_reports, name='coach-absence-reports'),
     path('coach/evidence-awaiting-review', coach_evidence_awaiting_review, name='coach-evidence-awaiting-review'),
+    # The learners' end-of-month reports. The detail route is declared first;
+    # the bare list route would otherwise never be reached for a report id.
+    path('coach/monthly-reports/<uuid:report_id>', coach_monthly_report_detail, name='coach-monthly-report-detail'),
+    path('coach/monthly-reports', coach_monthly_reports, name='coach-monthly-reports'),
     path('coach/marking-queue', coach_marking_queue, name='coach-marking-queue'),
     path('coach/marking-queue/<uuid:submission_id>', coach_marking_queue, name='coach-marking-submission'),
+    path('coach/marking-queue/<uuid:submission_id>/ai-feedback', coach_marking_ai_feedback, name='coach-marking-ai-feedback'),
     path('coach/monthly-activity', coach_monthly_activity, name='coach-monthly-activity'),
     path('coach/timetable', coach_timetable, name='coach-timetable'),
     path('coach/timetable/events/book', coach_timetable_book_event, name='coach-timetable-event-book'),

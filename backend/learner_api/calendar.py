@@ -62,9 +62,8 @@ EVENT_JSON_TYPES = {
 }
 
 # What a learner can book for themselves. Monthly coaching and progress reviews
-# are also generated from the programme cycle on the coach side; a learner
-# booking one here adds a meeting rather than filling a scheduled slot, so the
-# cycle's own counts are unaffected.
+# must be booked against a generated programme-cycle eventKey so the learner and
+# coach see the same official calendar row.
 BOOKABLE_TYPES = ("catch-up", "student-support", "mcr", "progress-review")
 
 # The Microsoft Graph invite subject uses the same wording as the page — see
@@ -375,6 +374,31 @@ def _serialize_event(record):
     }
 
 
+def coaching_events_for_learner(learner, mirror):
+    """One source for the calendar and Training Plan coaching dates/statuses."""
+    emails = {_s(getattr(learner, 'email', '')).strip().casefold(),
+              _s(getattr(mirror, 'email', '')).strip().casefold()} - {''}
+    match = Q()
+    for email in emails:
+        match |= Q(learner_email__iexact=email)
+    if mirror is not None:
+        match |= Q(learner_id=mirror.id) | Q(learner_id=learner.pk)
+    if not match:
+        return []
+    records = []
+    for record in CoachCalendarEvent.objects.filter(match).order_by('target_date', 'event_type', 'sequence'):
+        email = _s(getattr(record, 'learner_email', '')).strip().casefold()
+        # Created_users and learner profiles have different ID sequences.
+        # A matching number must never override another learner's email.
+        expected_id = learner.pk if _s(getattr(record, 'idempotency_key', '')).startswith('learner-book:') else getattr(mirror, 'id', None)
+        belongs = email in emails if email else expected_id is not None and str(record.learner_id) == str(expected_id)
+        if belongs and _belongs_to_current_cycle(record, mirror):
+            records.append(record)
+    events = [_serialize_event(record) for record in records]
+    events.extend(_generated_cycle_events(learner, mirror, {record.event_key for record in records}))
+    return events
+
+
 def _learner_calendar_record(kind, pk, event_key):
     """Resolve an event only when it belongs to the requested learner."""
     model = SOURCE_MODELS.get(kind)
@@ -391,7 +415,18 @@ def _learner_calendar_record(kind, pk, event_key):
     record = CoachCalendarEvent.objects.filter(event_key=event_key).first()
     if not record:
         return None
-    return record if (record.learner_id == pk or _s(record.learner_email).strip().casefold() in emails) else None
+    learner_ids = {str(pk)}
+    if mirror:
+        learner_ids.add(str(mirror.id))
+    return record if (str(record.learner_id or "") in learner_ids or _s(record.learner_email).strip().casefold() in emails) else None
+
+
+def _learner_booking_record(kind, pk, event_key):
+    """Resolve a learner-owned booking row that the learner is allowed to move."""
+    record = _learner_calendar_record(kind, pk, event_key)
+    if not record or _s(record.event_type) not in CANCELLABLE_TYPES:
+        return None
+    return record
 
 
 @learner_self_or_staff(kwarg="pk")
@@ -500,10 +535,6 @@ def _serialize_live_session_event(event):
     }
 
 
-def _same_calendar_identity(left, right):
-    return _s(left).strip().casefold() == _s(right).strip().casefold()
-
-
 @learner_self_or_staff(kwarg="pk")
 def learner_calendar(request, kind, pk):
     if request.method != "GET":
@@ -538,6 +569,7 @@ def learner_calendar(request, kind, pk):
     match = Q()
     if mirror is not None:
         match |= Q(learner_id=pk)
+        match |= Q(learner_id=mirror.id)
     for candidate in {mirror_email, source_email} - {""}:
         match |= Q(learner_email__iexact=candidate)
     if not match:
@@ -548,36 +580,29 @@ def learner_calendar(request, kind, pk):
         })
 
     try:
-        records = [
-            record for record in CoachCalendarEvent.objects.filter(match).order_by(
-                "target_date", "event_type", "sequence"
-            )
-            if _belongs_to_current_cycle(record, mirror)
-        ]
-        events = [_serialize_event(record) for record in records]
+        events = coaching_events_for_learner(learner, mirror)
 
-        # The cycle the coach timetable draws: every slot for this learner's
-        # programme, with the ones already scheduled left to their stored row.
-        stored_by_key = {_s(record.event_key) for record in records}
-        events.extend(_generated_cycle_events(learner, mirror, stored_by_key))
-
-        # Live curriculum sessions are generated from the same module/week
-        # schedule used by the coach calendar. Restrict them to this learner's
-        # assigned programme/cohort/group.
-        if mirror is not None and _s(mirror.coach_email):
+        # Live curriculum sessions belong to the learner's placement, not to
+        # their assigned coach. Use the same module/week/holiday planner as the
+        # coach calendar, but scope it directly to programme/cohort/group.
+        if mirror is not None and (_s(getattr(mirror, "group_id", "")) or _s(mirror.group_name)):
             from coach_api.views import collect_live_session_events
 
             live_events = collect_live_session_events(
-                _s(mirror.coach_email),
-                _s(mirror.coach_name) or "Coach",
+                "",
+                "",
+                require_coach_access=False,
+                include_past=True,
+                learner_scope={
+                    "programme": _s(mirror.programme),
+                    "programme_id": _s(getattr(mirror, "programme_id", "")),
+                    "cohort": _s(mirror.cohort),
+                    "cohort_id": _s(getattr(mirror, "cohort_id", "")),
+                    "group": _s(mirror.group_name),
+                    "group_id": _s(getattr(mirror, "group_id", "")),
+                },
             )
             for event in live_events:
-                if not _same_calendar_identity(event.get("group"), mirror.group_name):
-                    continue
-                if _s(mirror.cohort) and not _same_calendar_identity(event.get("cohort"), mirror.cohort):
-                    continue
-                if _s(mirror.programme) and not _same_calendar_identity(event.get("programme"), mirror.programme):
-                    continue
                 events.append(_serialize_live_session_event(event))
 
         # A curriculum event can be reachable through more than one legacy
@@ -630,10 +655,13 @@ def learner_calendar_book(request, kind, pk):
         build_booked_calendar_event,
         booking_request_matches_record,
         calendar_idempotency_key,
+        CalendarSyncInProgress,
+        find_generated_timetable_event,
         LearnerCalendarConflict,
         normalize_duration_minutes,
         parse_date_value,
         parse_time_value,
+        persist_calendar_sync_reservation,
         reserve_coach_calendar_booking,
         synchronize_reserved_calendar_event,
     )
@@ -708,6 +736,102 @@ def learner_calendar_book(request, kind, pk):
     # (LearnerProfile's name column is full_name, not username.)
     learner_name = _s(getattr(mirror, "full_name", "")) or _s(learner.username)
     learner_email = _s(getattr(mirror, "email", "")) or _s(learner.email)
+    requires_coach_approval = session_type in {"catch-up", "student-support"} and not is_onboarding_review
+    calendar_learner_id = int(mirror.id) if mirror is not None and not is_onboarding_review else pk
+
+    if session_type in {"mcr", "progress-review"}:
+        event_key = _s(payload.get("eventKey"))
+        if not event_key:
+            return _error(
+                "Open the Monthly Coaching or Progress Review slot from your calendar and schedule that session.",
+                400,
+            )
+        if len(event_key) > 255:
+            return _error("eventKey is too long.", 400)
+        if mirror is None:
+            return _error("Only Active learners can schedule programme-cycle sessions.", 400)
+
+        base_event, owner_name = find_generated_timetable_event(owner_email, event_key)
+        if (
+            not base_event
+            or _s(base_event.get("source")) != session_type
+            or str(base_event.get("learnerId") or "") != str(mirror.id)
+        ):
+            return _error("Programme-cycle calendar event not found for this learner.", 404)
+
+        if _s(base_event.get("status")) in {
+            CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+            CoachCalendarEvent.STATUS_COMPLETED,
+        }:
+            return _error("A submitted or completed review cannot be scheduled again.", 409)
+
+        target_date = parse_date_value(base_event.get("targetDate"))
+        if isinstance(target_date, datetime):
+            target_date = target_date.date()
+        if not target_date:
+            return _error("Target date is missing for this event.", 400)
+
+        try:
+            from .calendar_connections import booking_conflicts
+            if booking_conflicts(
+                kind,
+                pk,
+                scheduled_date,
+                scheduled_time,
+                duration_minutes,
+                timezone_offset_minutes,
+            ):
+                return _error(
+                    "That time overlaps an event in your connected personal calendar. Please choose another time.",
+                    409,
+                )
+
+            record, created = CoachCalendarEvent.objects.get_or_create(
+                event_key=event_key,
+                defaults={
+                    "owner_email": owner_email,
+                    "owner_name": owner_name or _s(mirror.coach_name) or "Coach",
+                    "learner_id": int(mirror.id),
+                    "learner_name": _s(base_event.get("learner")) or learner_name,
+                    "learner_email": _s(base_event.get("email")) or learner_email,
+                    "event_type": session_type,
+                    "sequence": int(base_event.get("sequence") or 1),
+                    "target_date": target_date,
+                },
+            )
+            record.owner_email = owner_email
+            record.owner_name = owner_name or _s(mirror.coach_name) or record.owner_name or "Coach"
+            record.learner_id = int(mirror.id)
+            record.learner_name = _s(base_event.get("learner")) or learner_name
+            record.learner_email = _s(base_event.get("email")) or learner_email
+            record.event_type = session_type
+            record.sequence = int(base_event.get("sequence") or 1)
+            record.target_date = target_date
+            record.scheduled_date = scheduled_date
+            record.scheduled_time = scheduled_time
+            record.duration_minutes = duration_minutes
+            record.status = CoachCalendarEvent.STATUS_SCHEDULED
+            record.notes = notes
+
+            record = persist_calendar_sync_reservation(record)
+            record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
+        except LearnerCalendarConflict as exc:
+            return _error(str(exc), 409)
+        except CalendarSyncInProgress:
+            return _error("Calendar event synchronization is already in progress.", 409)
+        except DatabaseError as exc:
+            logger.exception("learner_calendar_book: generated cycle booking failed")
+            return _error(f"Database error: {exc}", 502)
+
+        if warning:
+            logger.error(
+                "learner_calendar_book: Graph sync failed for generated %s (owner=%s): %s",
+                record.event_key, owner_email, warning,
+            )
+        return JsonResponse(
+            {"event": _serialize_event(record), "warning": _friendly_sync_warning(warning)},
+            status=201 if created else 200,
+        )
 
     try:
         if is_onboarding_review:
@@ -758,7 +882,7 @@ def learner_calendar_book(request, kind, pk):
         if replay is not None:
             if not booking_request_matches_record(
                 replay,
-                learner_id=pk,
+                learner_id=calendar_learner_id,
                 session_type=session_type,
                 scheduled_date=scheduled_date,
                 scheduled_time=scheduled_time,
@@ -766,6 +890,15 @@ def learner_calendar_book(request, kind, pk):
                 notes=notes,
             ):
                 return _error("Idempotency-Key was already used for a different booking.", 409)
+            if requires_coach_approval:
+                return JsonResponse(
+                    {
+                        "event": _serialize_event(replay),
+                        "warning": "",
+                        "approvalRequired": True,
+                    },
+                    status=200,
+                )
             replay, warning, _attempted = synchronize_reserved_calendar_event(
                 replay.pk, build_booked_calendar_event(replay)
             )
@@ -791,7 +924,7 @@ def learner_calendar_book(request, kind, pk):
         record, created = reserve_coach_calendar_booking(
             owner_email=owner_email,
             owner_name=owner_name,
-            learner_id=pk,
+            learner_id=calendar_learner_id,
             learner_name=learner_name,
             learner_email=learner_email,
             session_type=session_type,
@@ -800,7 +933,17 @@ def learner_calendar_book(request, kind, pk):
             duration_minutes=duration_minutes,
             notes=notes,
             idempotency_key=idempotency_key,
+            initial_status=CoachCalendarEvent.STATUS_NOT_SCHEDULED if requires_coach_approval else CoachCalendarEvent.STATUS_SCHEDULED,
         )
+        if requires_coach_approval:
+            return JsonResponse(
+                {
+                    "event": _serialize_event(record),
+                    "warning": "",
+                    "approvalRequired": True,
+                },
+                status=201 if created else 200,
+            )
         record, warning, _attempted = synchronize_reserved_calendar_event(
             record.pk, build_booked_calendar_event(record)
         )
@@ -876,11 +1019,7 @@ def learner_calendar_reschedule(request, kind, pk):
         return _error(date_restriction.message, 400)
 
     try:
-        record = CoachCalendarEvent.objects.filter(
-            event_key=event_key,
-            learner_id=pk,
-            event_type__in=CANCELLABLE_TYPES,
-        ).first()
+        record = _learner_booking_record(kind, pk, event_key)
         if record is None:
             return _error("Booking not found.", 404)
         if record.status != CoachCalendarEvent.STATUS_SCHEDULED:
@@ -967,9 +1106,7 @@ def learner_calendar_cancel(request, kind, pk):
     try:
         # Scoped to this learner's own bookings so one learner cannot cancel
         # another's session by guessing an event key.
-        record = CoachCalendarEvent.objects.filter(
-            event_key=event_key, learner_id=pk, event_type__in=CANCELLABLE_TYPES
-        ).first()
+        record = _learner_booking_record(kind, pk, event_key)
         if record is None:
             return _error("Booking not found.", 404)
         if record.status == CoachCalendarEvent.STATUS_CANCELLED:

@@ -254,6 +254,9 @@ CHAT_DEMO_BOOTSTRAP_ENABLED = os.environ.get(
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
+EVIDENCE_AUDIT_SERVICE_URL = os.environ.get(
+    "EVIDENCE_AUDIT_SERVICE_URL", "https://fetch-evidence.kentbusinesscollege.net"
+).rstrip("/")
 OPENAI_TRANSCRIPTION_MODEL = os.environ.get("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe")
 OPENAI_REFLECTION_MODEL = os.environ.get("OPENAI_REFLECTION_MODEL", "gpt-4o-mini")
 OPENAI_MODERATION_MODEL = os.environ.get("OPENAI_MODERATION_MODEL", "omni-moderation-latest")
@@ -333,6 +336,12 @@ MIDDLEWARE = [
     # session" — who may reach which record is still the per-view decorators'
     # job. See login/api_gate.py.
     'login.api_gate.ApiSessionGateMiddleware',
+    # Parks the signed-in account on a thread-local so the curriculum write
+    # helpers can name who saved. They are called far below the view and never
+    # see the request. Must follow LoginSessionMiddleware, which resolves the
+    # account, and it clears the thread-local on the way out -- worker threads
+    # are reused, and a leaked actor would credit one person's save to another.
+    'curriculum_api.versioning.ActorMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     # Turns a missing Curriculum table into a 503 naming the absent relations,

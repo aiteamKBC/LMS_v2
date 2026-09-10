@@ -11,6 +11,7 @@ And two inbound helpers:
 from .student_activity_access import student_activity_available
 from .constants import (
     ACCESS_CHOICES,
+    ACCESS_SUPER_ADMIN,
     STATUS_CHOICES,
     TYPE_CHOICES,
     PROGRAMME_STATUS_CHOICES,
@@ -556,14 +557,26 @@ def _legacy_plan_from_csv(source):
     return plan
 
 
+def training_plan_field(source):
+    """Use the same source column for assignment reads and writes, including []."""
+    return "training_plan" if isinstance(_maybe_json(getattr(source, "training_plan", None)), list) else "learning_plan"
+
+
+def stored_training_plan(source):
+    """None means unsaved; an empty array is an explicitly cleared assignment."""
+    for field in ("training_plan", "learning_plan"):
+        plan = _maybe_json(getattr(source, field, None))
+        if isinstance(plan, list):
+            return [entry for entry in plan if isinstance(entry, dict)]
+    return None
+
+
 def get_training_plan(source):
     """The structured plan for a CommercialUser or EnrolmentUser instance.
     Falls back to reconstructing one from the legacy CSV columns if the
     learner hasn't been re-saved since the structured format was introduced."""
-    plan = getattr(source, "training_plan", None)
-    if plan is None:
-        plan = getattr(source, "learning_plan", None)
-    if plan:
+    plan = stored_training_plan(source)
+    if plan is not None:
         return plan
     return _legacy_plan_from_csv(source)
 
@@ -797,6 +810,26 @@ def write_staff_fields(payload, *, require_create=False):
         raise ValidationError(
             f"Invalid access: {access!r}. Allowed: {', '.join(ACCESS_CHOICES)}"
         )
+    # `accesses` is the full set an account holds. Every member is validated the
+    # same way, and the primary must be one of them — a landing page the account
+    # cannot reach would strand it at sign-in.
+    if "accesses" in payload:
+        raw = payload.get("accesses")
+        if raw in (None, ""):
+            raw = []
+        if not isinstance(raw, (list, tuple, set, frozenset)):
+            raise ValidationError("accesses must be a list of access values.")
+        cleaned = [str(value).strip().lower() for value in raw if str(value).strip()]
+        for value in cleaned:
+            if value not in ACCESS_CHOICES:
+                raise ValidationError(
+                    f"Invalid access: {value!r}. Allowed: {', '.join(ACCESS_CHOICES)}"
+                )
+        primary = str(access or "").strip().lower()
+        if primary and cleaned and primary not in cleaned:
+            raise ValidationError(
+                "The primary access must be one of the accesses granted."
+            )
     fields = {}
     for key, attr in STAFF_WRITABLE_FIELDS.items():
         if key in payload:
@@ -808,6 +841,33 @@ def write_staff_fields(payload, *, require_create=False):
     # "" is neither — clearing an access must revoke it, not 500.
     if "access" in fields:
         fields["access"] = fields["access"].lower() if fields["access"] else None
+    # The additional grants are derived, never written straight through: the
+    # primary lives in "Access" and only the REST belong in "Access_extra", so
+    # storing the raw set would duplicate the primary in both columns.
+    # super-admin means everything, so it is held alone and clears the extras.
+    if "accesses" in payload:
+        granted = {
+            str(value).strip().lower()
+            for value in (payload.get("accesses") or [])
+            if str(value).strip()
+        }
+        primary = fields.get("access") or (
+            str(payload.get("access") or "").strip().lower() or None
+        )
+        if ACCESS_SUPER_ADMIN in granted:
+            fields["access"] = ACCESS_SUPER_ADMIN
+            fields["access_extra"] = None
+        else:
+            # With no primary named, the first granted access becomes the
+            # landing page rather than leaving the account with grants it holds
+            # but nowhere to land.
+            if not primary and granted:
+                primary = next(
+                    (value for value in ACCESS_CHOICES if value in granted), None
+                )
+                fields["access"] = primary
+            extras = sorted(granted - {primary})
+            fields["access_extra"] = ",".join(extras) if extras else None
     for key, attr in APTEM_BOOL_FIELDS.items():
         if key in payload:
             fields[attr] = _bool_or_none(payload[key])
@@ -817,6 +877,54 @@ def write_staff_fields(payload, *, require_create=False):
 # --------------------------------------------------------------------------- #
 # outbound: learner detail (workspace/learner page)                           #
 # --------------------------------------------------------------------------- #
+def _component_marking_statuses(source, learner_profile):
+    """Coach decision per component id, for this learner's submissions.
+
+    Read straight from ``learning_reflection_submissions`` because that is where
+    a coach's decision lands. Matched on both the enrolment id the learner page
+    uses and the profile id older rows carry, so earlier submissions are not
+    missed.
+    """
+    from django.db import DatabaseError, connections
+
+    candidates = {str(getattr(source, "id", "") or "")}
+    if learner_profile is not None:
+        candidates.add(str(getattr(learner_profile, "id", "") or ""))
+        candidates.add(str(getattr(learner_profile, "enrolment_id", "") or ""))
+    candidates.discard("")
+    if not candidates:
+        return {}
+
+    try:
+        with connections["enrolment"].cursor() as cur:
+            cur.execute(
+                """
+                select distinct on (activity_id)
+                       activity_id, status, coach_feedback, reviewed_by, reviewed_at
+                  from "Learner"."learning_reflection_submissions"
+                 where learner_id::text = any(%s)
+                 order by activity_id, submitted_at desc nulls last
+                """,
+                [sorted(candidates)],
+            )
+            return {
+                str(row[0]): {
+                    "status": str(row[1] or ""),
+                    # The coach's own words. Shown to the learner behind a
+                    # button rather than inline: it is a paragraph of feedback,
+                    # not a label, and only matters once they choose to read it.
+                    "feedback": str(row[2] or ""),
+                    "reviewedBy": str(row[3] or ""),
+                    "reviewedAt": row[4].isoformat() if row[4] else None,
+                }
+                for row in cur.fetchall()
+                if row[0]
+            }
+    except DatabaseError:
+        # Best-effort: without it an activity simply shows as it did before.
+        return {}
+
+
 def to_learner_detail(source, learner_profile):
     """Shape a CommercialUser/EnrolmentUser (+ its learner profile, if any)
     for the learner workspace page. `learner_profile` is None when the learner
@@ -824,7 +932,8 @@ def to_learner_detail(source, learner_profile):
     source record's structured plan column, so it's visible even for learners
     who aren't currently active; KSBs, progress, and activity feed are read
     from the normalized Learner.* tables exposed through LearnerProfile."""
-    modules, week, components = flatten_training_plan(get_training_plan(source))
+    training_plan = get_training_plan(source)
+    modules, week, components = flatten_training_plan(training_plan)
 
     # Unified progress log holds both quiz attempts and video completions,
     # distinguished by "kind" (a record without a "kind" is treated as a quiz
@@ -844,6 +953,19 @@ def to_learner_detail(source, learner_profile):
     })
     # Activity Feed is projected from the same normalized progress rows.
     activity_feed = learner_profile.activity_feed_entries(newest_first=True) if learner_profile else []
+    snapshot_ksbs = _as_list(learner_profile.ksbs) if learner_profile else []
+    curriculum_ksbs = []
+    if learner_profile:
+        try:
+            from .active_users import current_curriculum_ksb_items_for_learner
+
+            curriculum_ksbs = current_curriculum_ksb_items_for_learner(
+                learner_profile,
+                source=source,
+                training_plan=training_plan,
+            )
+        except Exception:
+            curriculum_ksbs = []
     programme_start = getattr(source, "start_date", None)
     if hasattr(programme_start, "isoformat"):
         programme_start = programme_start.isoformat()
@@ -878,11 +1000,21 @@ def to_learner_detail(source, learner_profile):
         "modules": modules,
         "week": week,
         "components": components,
-        "ksbs": _as_list(learner_profile.ksbs) if learner_profile else [],
+        "ksbs": curriculum_ksbs or snapshot_ksbs,
         "progressKsbCodes": progress_ksb_codes,
         "quizAttempts": quiz_attempts,
         "videoProgress": video_progress,
         "componentProgress": component_progress,
+        # What a coach has decided about each activity this learner submitted,
+        # keyed by component id: "submitted_for_tutor_review" while it waits,
+        # "accepted" once validated, "referred"/"rejected" when sent back.
+        #
+        # An activity whose component requires tutor validation is not finished
+        # until this says "accepted" -- completing it only records that the
+        # learner did the work and handed it in. Without this the learner's plan
+        # showed the activity green the moment they submitted, before any coach
+        # had looked at it.
+        "componentMarkingStatus": _component_marking_statuses(source, learner_profile),
         "activityFeed": activity_feed,
     }
 
