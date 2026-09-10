@@ -179,7 +179,7 @@ function DrillPanel({ metric, label, onClose }: {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-5xl rounded-2xl border border-foreground-200/60 bg-white shadow-2xl"
+        className="w-full max-w-5xl rounded-2xl border border-[var(--kbc-border)] bg-[var(--kbc-surface)] shadow-2xl"
         onClick={event => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 border-b border-foreground-200/60 px-5 py-4">
@@ -346,7 +346,7 @@ export default function PlatformReportPage() {
       actions={data ? (
         <button
           onClick={() => downloadCsv(sections, data.generatedAt)}
-          className="platform-report-export-button px-4 py-2.5 rounded-xl text-[13px] font-semibold transition-smooth cursor-pointer whitespace-nowrap shrink-0"
+          className="inline-flex items-center gap-2 bg-[var(--kbc-primary)] px-4 py-2.5 rounded-xl text-[13px] font-semibold text-white shadow-sm transition-colors hover:bg-[var(--kbc-primary-deep)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 cursor-pointer whitespace-nowrap shrink-0"
         >
           <AppIcon className="ri-download-2-line mr-1.5"></AppIcon>Export CSV
         </button>
@@ -364,9 +364,9 @@ export default function PlatformReportPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
           {availableSections.map(section => (
-            <div key={section.title} className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+            <div key={section.title} className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] overflow-hidden">
               <div className="px-4 py-3 border-b border-foreground-200/60 flex items-center gap-2.5">
-                <span className="w-8 h-8 rounded-lg bg-primary-100 text-primary-600 flex items-center justify-center shrink-0">
+                <span className="w-8 h-8 rounded-lg bg-primary-100/60 text-primary-600 flex items-center justify-center shrink-0 !bg-none shadow-md shadow-primary-900/10 ring-1 ring-inset ring-primary-200/60">
                   <AppIcon className={`${section.icon} text-sm`}></AppIcon>
                 </span>
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">{section.title}</h3>

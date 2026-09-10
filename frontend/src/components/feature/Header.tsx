@@ -1,8 +1,8 @@
-import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { Moon, Sun } from 'lucide-react';
-import { Menu } from 'lucide-react';
+import { LogOut, Menu } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 import { BrandLockup } from '@/components/BrandLockup';
@@ -10,6 +10,7 @@ import { WorkspaceSwitcher } from '@/components/feature/WorkspaceSwitcher';
 
 interface HeaderProps {
   pageTitle: string;
+  pageIcon?: ReactNode;
   pageSubtitle?: string;
   onOpenSearch: () => void;
   userName?: string;
@@ -158,7 +159,7 @@ export function SignOutConfirmModal({
 }
 
 // Notification sound
-export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, role }: HeaderProps) {
+export function Header({ pageTitle, pageIcon, pageSubtitle, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, role }: HeaderProps) {
   const { auth, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   // Profile is the only dropdown left in the header, so the state that used to
@@ -222,9 +223,8 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
 
   return (
     <>
-    {/* Height and border deliberately match the sidebar's brand row, so the two
-        read as one continuous bar across the top of the workspace. */}
-    <header className={`kbc-workspace-topbar workspace-topbar flex shrink-0 items-center gap-2 border-b border-foreground-100 bg-background-50 px-2 sm:px-3 md:gap-3 md:px-4 ${role === 'admin' ? 'h-[60px]' : role === 'curriculum' ? 'h-[70px]' : 'h-14'}`}>
+    {/* Super Admin uses the same inset, rounded frame as its icon rail. */}
+    <header className={`kbc-workspace-topbar workspace-topbar flex shrink-0 items-center gap-2 border-b border-foreground-100 bg-background-50 px-2 sm:px-3 md:gap-3 md:px-4 ${role === 'admin' ? 'mx-2 mb-2 mt-2 h-16 rounded-[20px] lg:ml-0 lg:mr-3 lg:mt-3 lg:gap-4 lg:px-5 [&_.kbc-workspace-switcher-button]:h-10 [&_.kbc-workspace-switcher-button]:gap-2.5 [&_.kbc-workspace-switcher-button]:px-3 [&_.kbc-workspace-switcher-button]:focus-visible:outline-none [&_.kbc-workspace-switcher-button]:focus-visible:ring-2 [&_.kbc-workspace-switcher-button]:focus-visible:ring-white/80' : role === 'curriculum' ? 'h-[70px]' : 'h-14'}`}>
       {/* Labelled navigation controls, with the action matching the screen size. */}
       {onToggleMobileSidebar && (
         <div className="shrink-0 lg:hidden">
@@ -248,9 +248,14 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
 
       {/* Where the page says what it is. These props were being passed by every
           page and thrown away, which is what left the bar looking empty. */}
-      <div className={`hidden min-w-0 lg:block ${role === 'admin' ? 'w-[22rem] shrink-0' : 'flex-1'}`}>
+      <div className="hidden min-w-0 flex-1 lg:block">
         <div className="flex min-w-0 items-center gap-3">
-          <p className="kbc-topbar-title truncate font-heading text-[14px] font-bold leading-tight text-foreground-900">{pageTitle}</p>
+          {role === 'admin' && (
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 text-white ring-1 ring-inset ring-white/10" aria-hidden="true">
+              {pageIcon ?? <AppIcon className="ri-dashboard-line h-5 w-5" />}
+            </span>
+          )}
+          <p className={`kbc-topbar-title truncate font-heading font-bold leading-tight text-foreground-900 ${role === 'admin' ? 'text-[15px] tracking-tight' : 'text-[14px]'}`}>{pageTitle}</p>
         </div>
         {role !== 'admin' && pageSubtitle && (
           <p className="kbc-topbar-subtitle truncate text-[11.5px] leading-tight text-foreground-400">{pageSubtitle}</p>
@@ -267,22 +272,22 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
           administrators can return to the workspace list from any page. */}
       <WorkspaceSwitcher />
 
-      {/* Profile — kept: it is the only route to Sign Out. */}
-      <div className="flex items-center gap-0.5">
+      {/* Profile and its existing account actions. */}
+      <div className={`flex shrink-0 items-center gap-0.5 ${role === 'admin' ? 'lg:border-l lg:border-white/15 lg:pl-4' : ''}`}>
         <div className="relative" ref={profileRef}>
           <button
             onClick={() => { closeOthers('profile'); setProfileOpen(!profileOpen); }}
             aria-haspopup="menu"
             aria-expanded={profileOpen}
             aria-label="Account menu"
-            className={`kbc-topbar-profile flex cursor-pointer items-center gap-1.5 rounded-full p-1 ring-1 transition-smooth sm:pr-2 ${
+            className={`kbc-topbar-profile flex cursor-pointer items-center p-1 ring-1 transition-smooth sm:pr-2 ${role === 'admin' ? 'min-h-10 gap-2.5 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80' : 'gap-1.5 rounded-full'} ${
               profileOpen
                 ? 'bg-primary-50 ring-primary-200'
                 : 'ring-transparent hover:bg-primary-50/60 hover:ring-primary-100'
             }`}
           >
-            <AccountAvatar initials={initials} className="h-7 w-7 shadow-sm shadow-primary-900/25" />
-            {role === 'admin' && <span className="kbc-topbar-user-name hidden max-w-[5rem] truncate text-[11px] font-semibold text-white xl:inline">Super Admin</span>}
+            <AccountAvatar initials={initials} className={`${role === 'admin' ? 'h-8 w-8' : 'h-7 w-7'} shadow-sm shadow-primary-900/25`} />
+            {role === 'admin' && <span className="kbc-topbar-user-name hidden max-w-[6rem] truncate text-xs font-semibold text-white xl:inline">Super Admin</span>}
             <AppIcon
               className={`ri-arrow-down-s-line hidden text-xs text-foreground-400 transition-transform duration-200 sm:inline ${profileOpen ? 'rotate-180' : ''}`}
             ></AppIcon>
@@ -393,6 +398,19 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
         </div>
       </div>
     </header>
+
+    {role === 'admin' && createPortal(
+      <button
+        type="button"
+        onClick={() => { setProfileOpen(false); setSignOutOpen(true); }}
+        aria-label="Sign out"
+        title="Sign out"
+        className="fixed bottom-8 left-8 z-50 hidden h-12 w-12 items-center justify-center rounded-xl bg-white/10 text-white/80 transition-colors hover:bg-white/20 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 lg:flex"
+      >
+        <LogOut className="h-5 w-5" aria-hidden="true" />
+      </button>,
+      document.body,
+    )}
 
     {/* Sign Out Confirmation Modal — portalled to the body so no ancestor of the
         header can clip it or outrank it in the stacking order. */}

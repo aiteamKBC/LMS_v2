@@ -1,6 +1,6 @@
 import { useState, type CSSProperties, type ReactNode, useEffect } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
-import { Sidebar, SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH, type SidebarNavItem } from './Sidebar';
+import { Sidebar, SidebarIcon, SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH, type SidebarNavItem } from './Sidebar';
 import { CoachViewAsBar } from './CoachViewAsBar';
 import { Header } from './Header';
 import { GlobalSearch } from './GlobalSearch';
@@ -217,6 +217,10 @@ export function WorkspaceShell({
     setMobileSidebarOpen(prev => !prev);
   };
 
+  // Reuse the breadcrumb's resolved destination for the header's visual icon.
+  const headerNavItem = navItems.flatMap(item => [item, ...(item.children ?? [])])
+    .find(item => item.href === [...breadcrumbs].reverse().find(crumb => crumb.isLink)?.href);
+
   const fallbackRoute = backFallbackHref || breadcrumbs.find(crumb => crumb.isLink && crumb.href && crumb.href !== `${location.pathname}${location.search}`)?.href || '/';
   const hasPreviousEntry = typeof window.history.state?.idx === 'number' && window.history.state.idx > 0;
   const canGoBack = hasPreviousEntry || fallbackRoute !== `${location.pathname}${location.search}${location.hash}`;
@@ -254,12 +258,13 @@ export function WorkspaceShell({
           same constants, so the content can never sit under the rail. The hover
           preview is deliberately not reserved: it floats above the page. */}
       <div
-        className="workspace-content flex-1 flex flex-col min-w-0 transition-[margin] duration-300 ease-out"
+        className={`workspace-content flex-1 flex flex-col min-w-0 transition-[margin] duration-300 ease-out ${role === 'admin' ? sidebarPinned ? 'lg:!ml-[362px]' : 'lg:!ml-[112px]' : ''}`}
         style={{ marginLeft: hideFocusedLearnerSidebar ? 0 : `var(--kbc-sidebar-offset, 0px)` }}
       >
         {!hidePageChrome && (
           <Header
             pageTitle={pageTitle}
+            pageIcon={headerNavItem ? <SidebarIcon id={headerNavItem.id} label={headerNavItem.label} sourceIcon={headerNavItem.icon} className="h-5 w-5" /> : undefined}
             pageSubtitle={pageSubtitle}
             onOpenSearch={() => setSearchOpen(true)}
             userName={displayName}
@@ -271,7 +276,7 @@ export function WorkspaceShell({
 
         {/* Breadcrumbs */}
         {!hidePageChrome && (showBackButton || (!hideBreadcrumbs && breadcrumbs.length > 0)) && (
-          <div className={`workspace-breadcrumbs flex ${showBackButton ? 'min-h-12 gap-3 py-1.5' : 'h-8'} shrink-0 items-center overflow-hidden border-b border-background-300/40 bg-background-200 px-3 md:px-5`}>
+          <div className={`workspace-breadcrumbs flex ${showBackButton ? 'min-h-12 gap-3 py-1.5' : 'h-8'} shrink-0 items-center overflow-hidden rounded-xl border-b border-background-300/40 bg-background-200 px-3 md:px-5 ${role === 'admin' ? 'mx-2 lg:ml-0 lg:mr-3' : ''}`}>
             {showBackButton && <button type="button" onClick={handleReturnToPreviousWindow} disabled={!canGoBack}
               className="kbc-workspace-back" aria-label="Back to previous page"
               title={!canGoBack ? 'You are on the first page' : previousRoute ? 'Back to the previous page' : 'Back'}>
@@ -323,7 +328,7 @@ export function WorkspaceShell({
             change (router/index.ts keys the boundary by pathname), so a
             transition owned by this component could never run. It used to hold
             an opacity-0 state behind a 120ms timer that nothing ever set. */}
-        <main className="workspace-main flex-1 overflow-y-auto">
+        <main className={`workspace-main min-h-0 flex-1 overflow-y-auto xl:has-[.super-admin-dashboard]:overflow-hidden ${role === 'admin' ? '!bg-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden' : ''}`}>
           {/* An administrator reading a coach's workspace: shown on every coach
               page, since the sidebar reaches most of them without passing the
               dashboard that chose the coach. */}

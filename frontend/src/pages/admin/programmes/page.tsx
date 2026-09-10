@@ -43,7 +43,7 @@ export default function AdminProgrammesPage() {
           : 'No programmes have been authored yet.'}
         onRetry={reload}
       >
-        <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+        <div className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-[13px]">
               <thead>
@@ -57,10 +57,10 @@ export default function AdminProgrammesPage() {
               </thead>
               <tbody>
                 {programmes.map(p => (
-                  <tr key={p.name} className="border-b border-background-100/50 hover:bg-background-100/40 transition-smooth">
+                  <tr key={p.name} className="border-b border-background-100/50 hover:bg-primary-50/40 transition-smooth">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2.5">
-                        <span className="w-8 h-8 rounded-lg bg-primary-100 text-primary-600 flex items-center justify-center shrink-0">
+                        <span className="w-8 h-8 rounded-lg bg-primary-100/60 text-primary-600 flex items-center justify-center shrink-0 !bg-none shadow-md shadow-primary-900/10 ring-1 ring-inset ring-primary-200/60">
                           <AppIcon className="ri-stack-line text-sm"></AppIcon>
                         </span>
                         <span className="font-medium text-foreground-800">{p.name}</span>

@@ -108,12 +108,12 @@ export function AccessPanel({
       onClick={onClose}
     >
       <div
-        className="bg-background-50 rounded-2xl border border-background-200 max-w-xl w-full shadow-2xl max-h-[90vh] overflow-y-auto"
+        className="bg-[var(--kbc-surface)] rounded-2xl border border-background-200 max-w-xl w-full shadow-2xl max-h-[90vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
         <div className="px-6 pt-6 pb-4 border-b border-foreground-200/60 flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary-100 flex items-center justify-center shrink-0">
+          <div className="w-10 h-10 rounded-xl bg-primary-100/60 flex items-center justify-center shrink-0 !bg-none shadow-md shadow-primary-900/10 ring-1 ring-inset ring-primary-200/60">
             <span className="text-primary-700 text-[13px] font-semibold">
               {(account.displayName || account.email).charAt(0).toUpperCase()}
             </span>

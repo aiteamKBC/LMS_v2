@@ -70,7 +70,7 @@ export default function AdminDocumentsPage() {
         { label: 'Doc types', value: loading && !data ? '—' : (data?.docTypes.length ?? 0) },
       ]}
     >
-      <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4 flex flex-col md:flex-row gap-3 md:items-center">
+      <div className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] p-3 md:p-4 flex flex-col xl:flex-row gap-3 xl:items-center">
         <div className="relative flex-1 min-w-0">
           <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
           <input
@@ -85,7 +85,7 @@ export default function AdminDocumentsPage() {
         <select
           value={docType}
           onChange={e => { setDocType(e.target.value); setPage(1); }}
-          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200"
+          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0 max-w-full"
         >
           <option value="">All types</option>
           {(data?.docTypes ?? []).map(t => <option key={t} value={t}>{docTypeLabel(t)}</option>)}
@@ -93,7 +93,7 @@ export default function AdminDocumentsPage() {
         <select
           value={signed}
           onChange={e => { setSigned(e.target.value); setPage(1); }}
-          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200"
+          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0 max-w-full"
         >
           <option value="">Any signature state</option>
           <option value="yes">Signed</option>
@@ -121,7 +121,7 @@ export default function AdminDocumentsPage() {
           : term || docType || signed ? 'No documents match these filters.' : 'No documents have been generated yet.'}
         onRetry={reload}
       >
-        <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+        <div className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-[13px]">
               <thead>
@@ -136,10 +136,10 @@ export default function AdminDocumentsPage() {
               </thead>
               <tbody>
                 {rows.map(doc => (
-                  <tr key={doc.id} className="border-b border-background-100/50 hover:bg-background-100/40 transition-smooth">
+                  <tr key={doc.id} className="border-b border-background-100/50 hover:bg-primary-50/40 transition-smooth">
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-2.5">
-                        <span className="w-8 h-8 rounded-lg bg-primary-100 text-primary-600 flex items-center justify-center shrink-0">
+                        <span className="w-8 h-8 rounded-lg bg-primary-100/60 text-primary-600 flex items-center justify-center shrink-0 !bg-none shadow-md shadow-primary-900/10 ring-1 ring-inset ring-primary-200/60">
                           <AppIcon className="ri-file-text-line text-sm"></AppIcon>
                         </span>
                         <span className="font-medium text-foreground-800 truncate max-w-[220px]">{doc.docName}</span>
