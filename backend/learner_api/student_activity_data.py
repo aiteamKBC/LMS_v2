@@ -62,7 +62,7 @@ def read_student_material(cursor, aptem_id, group_id, activity_id, *, include_so
                a.quiz_id, a.quiz_passing_score, a.quiz_maximum_score,
                r.quiz_answers, r.quiz_score, COALESCE(r.quiz_maximum_score,a.quiz_maximum_score) AS result_maximum_score,
                r.quiz_attempt_number, r.quiz_passed, r.reading_viewed, r.status,
-               r.video_completed, a.raw
+               r.video_completed, a.reading_type, a.raw
         FROM "Last_audit".learners l
         JOIN "Last_audit".group_learners gl ON gl.learner_id = l.learner_id
         JOIN "Last_audit".group_activities ga ON ga.group_id = gl.group_id

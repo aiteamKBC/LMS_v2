@@ -1,9 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { StudentActivityResponse } from '@/api/studentActivity';
+import type { StudentActivityResponse, SubjectMaterial, SubjectAttemptResult } from '@/api/studentActivity';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import * as api from '@/api/studentActivity';
 import { ModulesTab, StudentActivityPanel } from './page';
+import { StudentMaterial } from './StudentMaterial';
 
 // AppIcon is normally supplied by the app build's auto-import plugin.
 vi.stubGlobal('AppIcon', () => <span />);
@@ -26,6 +27,33 @@ const data: StudentActivityResponse = {
 
 describe('learner subject cards', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it('reads the linked Builder title and image without offering uploads in the learner workspace', async () => {
+    const image = 'data:image/png;base64,aGVsbG8=';
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({
+      covers: { 'legacy:1': image }, can_manage: true, persistence_ready: true,
+      builder_subjects: { 'legacy:1': { id: 'MOD-1', title: 'Updated Leadership' } },
+    });
+    const { container } = render(<StudentActivityPanel data={{ ...data, can_manage_covers: true }} learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    expect(await screen.findByRole('img', { name: 'Updated Leadership cover' })).toHaveAttribute('src', image);
+    expect(screen.getByText('1 of 2 completed')).toBeInTheDocument();
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+    expect(screen.queryByText('Upload image')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Updated Leadership/ }));
+    expect(screen.getByText('Introduction')).toBeInTheDocument();
+    expect(screen.getByText('Complete')).toBeInTheDocument();
+    expect(container.querySelector('input[type="file"]')).toBeNull();
+  });
+
+  it('clears an old subject image when its Builder cover is removed', async () => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({
+      covers: { 'legacy:1': '' },
+      builder_subjects: { 'legacy:1': { id: 'MOD-1', title: 'Updated Leadership' } },
+    });
+    render(<StudentActivityPanel data={{ ...data, covers: { 'legacy:1': 'https://example.com/old.png' } }} learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    await screen.findByRole('heading', { name: 'Updated Leadership' });
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+  });
 
   it('loads on opening Modules and ignores an old learner response after navigation', async () => {
     let resolveAnna!: (value: StudentActivityResponse) => void;
@@ -70,5 +98,141 @@ describe('learner subject cards', () => {
     render(<StudentActivityPanel data={null} loading={false} error="Database unavailable" onRetry={retry} />);
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(retry).toHaveBeenCalledOnce();
+  });
+});
+
+const scheduledData: StudentActivityResponse = {
+  ...data, count: 3, unique_activity_count: 3,
+  activities: [
+    { ...data.activities[0], date: '2026-02-05', month: '2026-02', week_start: '2026-02-02', week_end: '2026-02-08' },
+    { ...data.activities[1], date: '2026-02-06', month: '2026-02', week_start: '2026-02-02', week_end: '2026-02-08' },
+    { ...data.activities[1], activity_id: 'la:1:12', source_activity_id: 12, activity: 'March lesson', date: '2026-03-02', month: '2026-03', week_start: '2026-03-02', week_end: '2026-03-08' },
+  ],
+};
+
+const activityMaterial: SubjectMaterial = {
+  title: 'Reflection', reading_html: '', media: [{ kind: 'embed', url: 'https://example.org/lesson', title: 'Reflection frame' }],
+  quiz: null, has_reading: true, available: true, source_live: true, completed: false,
+  persistence_ready: true, can_attempt: true, csrf_token: 'csrf-value', history: [],
+  historical: { score: null, maximum_score: null, passed: null, attempt_number: null, status: null, answers: [] },
+};
+const completeResult: SubjectAttemptResult = { score_percent: null, passed: null, completed: true };
+
+function mockMaterialRequests(material = activityMaterial, save: () => Promise<SubjectAttemptResult> = async () => completeResult) {
+  return vi.spyOn(api, 'subjectRequest').mockImplementation(async <T,>(url: string, options?: RequestInit): Promise<T> => {
+    if (url.includes('/subject-covers/')) return { covers: {} } as T;
+    if (options?.method !== 'POST') return material as T;
+    if (url.endsWith('/attempts/')) return { attempt_id: 'attempt-1', definition: { quiz: material.quiz } } as T;
+    return await save() as T;
+  });
+}
+
+describe('subject months, weeks and completion', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('toggles months and weeks independently and opens the iframe through the activity title', async () => {
+    mockMaterialRequests();
+    render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
+    const week = screen.getByRole('button', { name: /^Collapse February 2026, Week 1/ });
+    fireEvent.click(week);
+    expect(week).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('button', { name: 'Reflection' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse February 2026' }));
+    expect(screen.queryByRole('button', { name: /^Expand February 2026, Week 1/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'March lesson' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand February 2026' }));
+    expect(week).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(week);
+    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    expect(await screen.findByTitle('Reflection frame')).toHaveAttribute('src', 'https://example.org/lesson');
+    expect(screen.getByRole('button', { name: 'Reflection' })).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    expect(screen.queryByTitle('Reflection frame')).not.toBeInTheDocument();
+  });
+
+  it('keeps course, month and week progress based on all activities while searching', () => {
+    render(<StudentActivityPanel data={scheduledData} loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: 'Reflection' } });
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '33.33');
+    expect(screen.getByRole('progressbar', { name: 'February 2026 progress' })).toHaveAttribute('aria-valuenow', '50');
+    expect(screen.getByRole('progressbar', { name: /^February 2026, Week 1/ })).toHaveAttribute('aria-valuenow', '50');
+    expect(screen.getByText(/1 ÷ 3 × 100 = 33.33%/)).toBeInTheDocument();
+  });
+
+  it('updates all progress after Submit succeeds, preserves it on refresh failure and never counts reopening twice', async () => {
+    let finish!: (result: SubjectAttemptResult) => void;
+    const pending = new Promise<SubjectAttemptResult>((resolve) => { finish = resolve; });
+    const requests = mockMaterialRequests(activityMaterial, () => pending);
+    vi.spyOn(api, 'fetchStudentActivity').mockResolvedValueOnce(scheduledData).mockRejectedValueOnce(new Error('Refresh unavailable'));
+    render(<ModulesTab real={{ studentActivityAvailable: true } as LearnerDetail} loading={false} loadError={null} kind="commercial" id="132" showReadOnlyNotice={false} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Submit' }));
+    expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '33.33');
+    await waitFor(() => expect(requests.mock.calls.some(([url]) => url.endsWith('/attempt-1/'))).toBe(true));
+    await act(async () => { finish(completeResult); });
+    expect(await screen.findByText('Activity completed.')).toBeInTheDocument();
+    expect(await screen.findByText(/Refresh unavailable/)).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '66.67');
+    expect(screen.getByRole('progressbar', { name: 'February 2026 progress' })).toHaveAttribute('aria-valuenow', '100');
+    expect(screen.getByRole('progressbar', { name: /^February 2026, Week 1/ })).toHaveAttribute('aria-valuenow', '100');
+    const submitted = requests.mock.calls.find(([url]) => url.endsWith('/attempt-1/'))![1]!;
+    expect(JSON.parse(submitted.body as string)).toEqual({ answers: {}, reading_confirmed: true });
+    expect(submitted.headers).toMatchObject({ 'X-CSRFToken': 'csrf-value' });
+    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    await screen.findByTitle('Reflection frame');
+    expect(screen.queryByRole('button', { name: 'Submit' })).not.toBeInTheDocument();
+    expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: 'All subjects' }));
+    expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
+  });
+
+  it('keeps progress unchanged on a failed submit and retries the same attempt', async () => {
+    const save = vi.fn().mockRejectedValueOnce(new Error('Could not save')).mockResolvedValueOnce(completeResult);
+    const requests = mockMaterialRequests(activityMaterial, save);
+    render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Submit' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not save');
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '33.33');
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    await screen.findByText('Activity completed.');
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '66.67');
+    expect(requests.mock.calls.filter(([url, options]) => url.endsWith('/attempts/') && options?.method === 'POST')).toHaveLength(1);
+  });
+
+  it('does not offer Submit to a staff viewer or for an already completed activity', async () => {
+    const requests = mockMaterialRequests({ ...activityMaterial, can_attempt: false });
+    const { unmount } = render(<StudentMaterial kind="commercial" learnerId="132" groupId={1} activityId={11} />);
+    await screen.findByTitle('Reflection frame');
+    expect(screen.queryByRole('button', { name: 'Submit' })).not.toBeInTheDocument();
+    unmount();
+    requests.mockRestore();
+    mockMaterialRequests({ ...activityMaterial, completed: true });
+    render(<StudentMaterial kind="commercial" learnerId="132" groupId={1} activityId={11} />);
+    await screen.findByText('This activity is complete and included in your progress.');
+    expect(screen.queryByRole('button', { name: 'Submit' })).not.toBeInTheDocument();
+  });
+
+  it('does not increase completion when a quiz attempt fails', async () => {
+    const quiz: SubjectMaterial = { ...activityMaterial, has_reading: false, quiz: {
+      id: 'q', body: '', ready: true, message: '', passing_percent: 70,
+      questions: [{ id: '1', type: 'single_choice', text: 'Pick an answer', options: [{ id: 'a', text: 'Choice A' }] }],
+    } };
+    mockMaterialRequests(quiz, async () => ({ score_percent: 0, passed: false, completed: false }));
+    render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Start quiz' }));
+    await waitFor(() => expect(screen.getByLabelText('Choice A')).toBeEnabled());
+    fireEvent.click(screen.getByLabelText('Choice A'));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit answers' }));
+    await screen.findByText(/Attempt saved: 0%/);
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '33.33');
   });
 });

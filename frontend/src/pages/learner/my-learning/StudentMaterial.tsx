@@ -4,7 +4,7 @@ import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 import { resolveDocEmbed } from '@/lib/docEmbed';
 import { normalizeReadingHtml } from '@/lib/readingHtml';
-import { subjectRequest, type SubjectMaterial } from '@/api/studentActivity';
+import { subjectRequest, type SubjectMaterial, type SubjectAttemptResult } from '@/api/studentActivity';
 
 const AttachmentPreview = lazy(() => import('../video-watch/page').then((module) => ({ default: module.InlineAttachmentPreview })));
 
@@ -46,8 +46,9 @@ export function Media({ value, kind, title, canEmbed = true, onEnded }: {
     sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads allow-presentation" allow="autoplay; fullscreen; picture-in-picture" allowFullScreen />{original}</section>;
 }
 
-export function StudentMaterial({ kind, learnerId, groupId, activityId, onProgress }: {
-  kind: string; learnerId: string; groupId: number; activityId: number; onProgress?: () => void;
+export function StudentMaterial({ kind, learnerId, groupId, activityId, completed = false, onProgress }: {
+  kind: string; learnerId: string; groupId: number; activityId: number; completed?: boolean;
+  onProgress?: (result: SubjectAttemptResult) => void;
 }) {
   const [data, setData] = useState<SubjectMaterial | null>(null);
   const [error, setError] = useState('');
@@ -57,11 +58,12 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, onProgre
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
   const [confirmed, setConfirmed] = useState(false);
   const [result, setResult] = useState('');
+  const [savedResult, setSavedResult] = useState<SubjectAttemptResult | null>(null);
   const base = `/learner_api/student-activity/${encodeURIComponent(kind)}/${encodeURIComponent(learnerId)}`;
   const attempts = `${base}/${groupId}/${activityId}/attempts/`;
   useEffect(() => {
     const controller = new AbortController();
-    setData(null); setError(''); setAttemptId(null); setAnswers({}); setConfirmed(false); setResult('');
+    setData(null); setError(''); setAttemptId(null); setAnswers({}); setConfirmed(false); setResult(''); setSavedResult(null);
     void subjectRequest<SubjectMaterial>(`${base}/?group_id=${groupId}&activity_id=${activityId}`, { signal: controller.signal })
       .then((payload) => { if (!controller.signal.aborted) setData(payload); })
       .catch((failure: unknown) => { if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'Could not load material.'); });
@@ -78,7 +80,7 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, onProgre
     finally { setBusy(false); }
   };
   const submit = async () => {
-    if (!data) return;
+    if (!data || busy || !data.can_attempt || !data.available) return;
     setBusy(true); setError('');
     try {
       let id = attemptId;
@@ -87,20 +89,26 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, onProgre
         id = response.attempt_id; setAttemptId(id);
       }
       if (!id) throw new Error('Start the quiz before submitting.');
-      const saved = await post<{ score_percent: number | null; passed: boolean | null; completed: boolean }>(`${attempts}${id}/`, { answers, reading_confirmed: confirmed });
+      const saved = await post<SubjectAttemptResult>(`${attempts}${id}/`, { answers, reading_confirmed: data.quiz ? confirmed : true });
       setResult(saved.score_percent == null ? 'Activity completed.' : `Attempt saved: ${Number(saved.score_percent).toFixed(0)}% · ${saved.passed ? 'Passed' : 'Not passed'}. Your highest score is kept.`);
+      setSavedResult(saved);
       setAttemptId(null); setAnswers({});
-      onProgress?.();
-      const latest = await subjectRequest<SubjectMaterial>(`${base}/?group_id=${groupId}&activity_id=${activityId}`);
-      setData(latest);
+      onProgress?.(saved);
+      try {
+        const latest = await subjectRequest<SubjectMaterial>(`${base}/?group_id=${groupId}&activity_id=${activityId}`);
+        setData(latest);
+      } catch {
+        setError('Your attempt was saved, but its history could not be refreshed.');
+      }
     } catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not save your attempt.'); }
     finally { setBusy(false); }
   };
   if (!data && error) return <div role="alert" className="rounded-xl border border-red-200 p-4">{error} <button onClick={() => setRetry((v) => v + 1)} className="font-semibold underline">Try again</button></div>;
   if (!data) return <p role="status" className="p-5">Loading activity…</p>;
   const quiz = data.quiz;
+  const isComplete = completed || data.completed || savedResult?.completed || data.history.some((attempt) => attempt.completed);
   const answered = quiz?.questions.every((question) => (answers[question.id]?.length || 0) > 0) ?? true;
-  const needsConfirmation = data.has_reading || !quiz;
+  const needsConfirmation = !!quiz && data.has_reading;
   return <div className="space-y-6 rounded-2xl border border-foreground-200 bg-white p-4 sm:p-6">
     {!data.available && <p>No material is available for this activity yet.</p>}
     {data.media.map((item, index) => <Media key={`${index}:${item.url}`} value={item.url} kind={item.kind} title={item.title} canEmbed={item.can_embed} onEnded={() => setConfirmed(true)} />)}
@@ -119,12 +127,14 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, onProgre
         </label>)}
       </fieldset>)}
     </section>}
-    {data.can_attempt && data.available && (!quiz || !!attemptId) && <div className="space-y-3 border-t pt-4">
-      {needsConfirmation && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} className="mt-1 accent-primary-600" />{quiz ? 'I have completed the reading material.' : 'I have completed this activity.'}</label>}
-      <button onClick={submit} disabled={busy || !answered || (needsConfirmation && !confirmed)} className="rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? 'Saving…' : quiz ? 'Submit answers' : 'Mark complete'}</button>
+    {data.can_attempt && data.available && (quiz ? !!attemptId : !isComplete) && <div className="space-y-3 border-t pt-4">
+      {needsConfirmation && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} className="mt-1 accent-primary-600" />I have completed the reading material.</label>}
+      {!quiz && <p className="text-sm text-foreground-500">When you have finished, submit this activity to record it as complete and update your progress.</p>}
+      <button onClick={submit} disabled={busy || !answered || (needsConfirmation && !confirmed)} className="rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? 'Saving…' : quiz ? 'Submit answers' : 'Submit'}</button>
     </div>}
+    {!quiz && isComplete && <p className="text-sm font-semibold text-emerald-700">This activity is complete and included in your progress.</p>}
     {!data.persistence_ready && <p className="rounded-xl bg-background-100 p-3 text-sm text-foreground-600">You can view your learning. Saving new attempts will be available once your learning team enables it.</p>}
-    {error && <p role="alert" className="text-sm text-red-700">{error}</p>}{result && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">{result}</p>}
+    {error && <p role="alert" className="text-sm text-red-700">{error}</p>}{result && <p role="status" className={`rounded-xl p-3 text-sm font-semibold ${savedResult?.completed ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{result}</p>}
     {(data.historical.answers.length > 0 || data.historical.score != null || data.history.length > 0) && <section className="space-y-3 border-t pt-4" aria-label="Attempt history">
       <h4 className="font-bold">Your attempt history</h4>
       {(data.historical.answers.length > 0 || data.historical.score != null) && <details className="rounded-xl border p-3"><summary className="cursor-pointer text-sm font-semibold">Previous learning{data.historical.score != null ? ` · ${data.historical.score}${data.historical.maximum_score ? ` / ${data.historical.maximum_score}` : ''}` : ''}</summary>

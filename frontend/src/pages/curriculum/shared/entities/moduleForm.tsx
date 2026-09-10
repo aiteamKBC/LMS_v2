@@ -1181,7 +1181,7 @@ export function ModuleFormDrawer({
       </FormField>
       <FormField
         label="Cover image"
-        hint="Optional. The Module Builder card shows it in place of the module icon; leave it empty to keep the icon."
+        hint="Shown in Module Builder and on learners' subject cards. Upload or change it here, then save the module."
       >
         <CoverImageControl
           value={coverImage}

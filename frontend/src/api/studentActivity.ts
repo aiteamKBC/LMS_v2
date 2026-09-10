@@ -55,6 +55,12 @@ export interface SubjectQuiz {
   questions: { id: string; text: string; type: string; options: { id: string; text: string }[] }[];
 }
 
+export interface SubjectAttemptResult {
+  score_percent: number | null;
+  passed: boolean | null;
+  completed: boolean;
+}
+
 export interface SubjectMaterial {
   title: string;
   reading_html: string;
@@ -66,6 +72,7 @@ export interface SubjectMaterial {
   unavailable_attachments?: string[];
   persistence_ready: boolean;
   can_attempt: boolean;
+  completed?: boolean;
   csrf_token: string;
   history: { id: string; score_percent: number | null; passed: boolean | null; completed: boolean;
     submitted_at: string; answers: Record<string, string[]>;

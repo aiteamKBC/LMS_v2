@@ -24,6 +24,7 @@ import {
   fetchCurriculumStandards,
   fetchCurriculumTeamsMeetingSummaries,
   fetchCurriculumTutors,
+  updateCurriculumModuleCover,
   type CurriculumCohort,
   type CurriculumGroup,
   type CurriculumHoliday,
@@ -50,6 +51,7 @@ import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
 // dedicated form, shared with the Group and Module workspaces. It replaced the
 // six-step structure wizard this page used to open for both jobs.
 import { ModuleFormDrawer, type ModuleFormTarget, type SavedModuleRef } from '../shared/entities/moduleForm';
+import { CoverImageControl, EntityDrawer } from '../shared/entities/ui';
 import { ComponentLibraryModal } from './ComponentLibraryModal';
 import {
   calculateQualityChecklist,
@@ -289,6 +291,7 @@ export default function ModuleBuilder() {
   const [expandedWeekIds, setExpandedWeekIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [placementModule, setPlacementModule] = useState<ModuleFormTarget | null>(null);
+  const [coverModule, setCoverModule] = useState<ModuleCatalogueItem | null>(null);
   const [createOpen, setCreateOpen] = useState(() => searchParams.get('create') === '1');
   // The create drawer can fan one module out into several group deliveries.
   // Keep the catalogue visibly busy until creation and its silent reload both
@@ -2158,6 +2161,7 @@ export default function ModuleBuilder() {
                     onAssignLearners={() => openAssignLearners(module)}
                     onBuild={() => openModule(module)}
                     onSettings={() => openPlacementForm(module)}
+                    onCover={() => setCoverModule(module)}
                     onDuplicate={() => duplicateModule(module)}
                     onDelete={() => confirmDeleteModule(module)}
                   />
@@ -2270,6 +2274,14 @@ export default function ModuleBuilder() {
             await reload({ silent: true });
           }}
         />
+        {coverModule && (
+          <ModuleCoverDrawer
+            key={coverModule.catalogueId}
+            module={coverModule}
+            onClose={() => setCoverModule(null)}
+            onSaved={async () => { await reload({ silent: true }); }}
+          />
+        )}
         {ksbMapDisplayModule && (
           <ModuleKsbMapModal
             module={ksbMapDisplayModule}
@@ -6309,6 +6321,7 @@ function ModuleCatalogueCard({
   onAssignLearners,
   onBuild,
   onSettings,
+  onCover,
   onDuplicate,
   onDelete,
 }: {
@@ -6319,6 +6332,7 @@ function ModuleCatalogueCard({
   onAssignLearners: () => void;
   onBuild: () => void;
   onSettings: () => void;
+  onCover: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
@@ -6416,12 +6430,38 @@ function ModuleCatalogueCard({
             Edit components
           </button>
           <ModuleCardActionButton label="Edit module" icon="ri-edit-line" onClick={onSettings} />
+          <ModuleCardActionButton label={coverImage ? 'Change image' : 'Upload image'} icon="ri-image-add-line" onClick={onCover} />
           <ModuleCardActionButton label="Duplicate module" icon="ri-file-copy-line" onClick={onDuplicate} />
           <ModuleCardActionButton label="Delete module" icon="ri-delete-bin-line" tone="danger" onClick={onDelete} />
         </div>
       </div>
     </article>
   );
+}
+
+function ModuleCoverDrawer({ module, onClose, onSaved }: {
+  module: ModuleCatalogueItem; onClose: () => void; onSaved: () => Promise<void>;
+}) {
+  const [cover, setCover] = useState(module.coverImage || '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = async () => {
+    setSaving(true); setError(null);
+    try {
+      await updateCurriculumModuleCover(module.catalogueId, cover);
+      await onSaved();
+      onClose();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Could not save the module image.');
+    } finally {
+      setSaving(false);
+    }
+  };
+  return <EntityDrawer open title="Module image" subtitle={module.title} onClose={onClose} onSubmit={save}
+    submitLabel="Save image" saving={saving} error={error} dirty={cover !== (module.coverImage || '')}>
+    <p className="text-sm text-foreground-500">This image appears in Module Builder and on learners' subject cards.</p>
+    <CoverImageControl value={cover} onChange={(value) => { setCover(value); setError(null); }} onError={setError} alt={`${module.title} cover`} />
+  </EntityDrawer>;
 }
 
 function ModuleCardActionButton({ label, icon, onClick, tone = 'default' }: { label: string; icon: string; onClick: () => void; tone?: 'default' | 'danger' }) {

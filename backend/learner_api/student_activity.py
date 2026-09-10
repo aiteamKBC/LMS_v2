@@ -1,16 +1,16 @@
 """Learner-scoped view over the historical Last_audit activity mirror."""
 
-import io
 import json
-from uuid import UUID, uuid4
+import re
+from collections import defaultdict
+from uuid import UUID
 
 from django.db import DatabaseError, connections
-from django.core.files.base import ContentFile
 from django.http import JsonResponse
 from django.middleware.csrf import get_token
 from django.views.decorators.http import require_GET, require_POST
 
-from audit_api.last_audit_ledger_views import _connection
+from audit_api.last_audit_ledger_views import _connection, _is_completed
 from audit_api.learner_exclusions import is_excluded_learner
 from login.permissions import learner_self_or_staff, learner_self_only, staff_only
 from login.sessions import authenticate_request
@@ -108,8 +108,7 @@ def student_activity(request, kind, pk):
     payload['persistence_ready'] = saved['ready']
     allowed = {f"legacy:{item['group_id']}" for item in payload['activities']}
     payload['covers'] = {key: _cover_url(value) for key, value in saved['covers'].items() if key in allowed}
-    account = authenticate_request(request)
-    payload['can_manage_covers'] = bool(account and account.role in {'admin', 'staff'})
+    payload['can_manage_covers'] = False
     response = JsonResponse(payload)
     response["Cache-Control"] = "private, no-store"
     return response
@@ -162,6 +161,7 @@ def _material_response(request, pk, aptem_id, stored):
         )})
     payload = {**definition, 'quiz': public_quiz(definition['quiz']),
                'learner_name': stored['learner_name'], 'history': saved['history'],
+               'completed': _is_completed(row) or any(attempt.get('completed') for attempt in saved['history']),
                'historical': {'score': row.get('quiz_score'), 'maximum_score': row.get('result_maximum_score'),
                               'passed': row.get('quiz_passed'), 'attempt_number': row.get('quiz_attempt_number'),
                               'answers': historical_answers, 'status': row.get('status')},
@@ -235,17 +235,55 @@ def submit_subject_attempt(request, kind, pk, group_id, activity_id, attempt_id)
         return _error('Could not save your attempt. Please try again.', 503)
 
 
-def _subject_exists(subject_ref):
-    source, _, reference = subject_ref.partition(':')
-    if source == 'legacy' and reference.isdigit():
-        with _connection().cursor() as cur:
-            cur.execute('SELECT 1 FROM "Last_audit".groups WHERE group_id=%s', [int(reference)])
-            return bool(cur.fetchone())
-    if source == 'current' and reference and len(reference) <= 160:
-        with connections['enrolment'].cursor() as cur:
-            cur.execute('SELECT 1 FROM curriculum.modules WHERE module_catalogue_id=%s AND NOT coalesce(is_programme_deleted,false)', [reference])
-            return bool(cur.fetchone())
-    return False
+def _builder_cover_url(value):
+    """Module Builder stores uploaded artwork as image data URLs.
+
+    These are allowed only for an image source, never for activity links/iframes.
+    """
+    from .subject_content import safe_url
+    value = str(value or '').strip()
+    if len(value) <= 4 * 1024 * 1024 + 256 and re.fullmatch(
+        r'data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+', value,
+    ):
+        return value
+    return safe_url(value)
+
+
+def _builder_subject_metadata(cursor, refs):
+    """Resolve only stored source IDs; repeated titles are not identity links."""
+    from .subject_content import clean_text
+    native = [ref[8:] for ref in refs if ref.startswith('current:')]
+    legacy = [ref[7:] for ref in refs if ref.startswith('legacy:') and ref[7:].isdigit()]
+    if not native and not legacy:
+        return {}, {}
+    cursor.execute('''
+        SELECT m.module_catalogue_id,m.title,m.source_type,m.source_id,m.cover_image_url
+        FROM curriculum.modules m
+        LEFT JOIN curriculum.groups g ON g.group_id=m.group_id
+        LEFT JOIN curriculum.cohorts ch ON ch.cohort_id=m.cohort_id
+        LEFT JOIN curriculum.programmes p ON p.programme_id=m.programme_id
+        WHERE m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
+          AND (g.group_id IS NULL OR (g.deleted_at IS NULL AND NOT coalesce(g.is_programme_deleted,false)))
+          AND (ch.cohort_id IS NULL OR (ch.deleted_at IS NULL AND NOT coalesce(ch.is_programme_deleted,false)))
+          AND (p.programme_id IS NULL OR (p.deleted_at IS NULL AND NOT coalesce(p.is_archived,false)))
+          AND (m.module_catalogue_id=ANY(%s) OR (m.source_type='mba-legacy' AND m.source_id=ANY(%s)))
+    ''', [native, legacy])
+    candidates = defaultdict(dict)
+    for module_id, title, source_type, source_id, cover in cursor.fetchall():
+        row = {'id': module_id, 'title': clean_text(title), 'cover': _builder_cover_url(cover)}
+        if module_id in native:
+            candidates[f'current:{module_id}'][module_id] = row
+        if source_type == 'mba-legacy' and str(source_id) in legacy:
+            candidates[f'legacy:{source_id}'][module_id] = row
+    covers, links = {}, {}
+    for ref, matches in candidates.items():
+        if len(matches) != 1:
+            continue
+        row = next(iter(matches.values()))
+        # An explicitly empty Builder cover must also clear an old override.
+        covers[ref] = row['cover']
+        links[ref] = {'id': row['id'], 'title': row['title']}
+    return covers, links
 
 
 @require_GET
@@ -261,21 +299,18 @@ def subject_covers(request, pk):
             if available:
                 cur.execute(f'SELECT subject_ref,storage_path FROM {subject_store.COVERS} WHERE subject_ref=ANY(%s)', [refs])
                 covers = {key: _cover_url(path) for key, path in cur.fetchall()}
-            native = [ref[8:] for ref in refs if ref.startswith('current:')]
-            if native:
-                cur.execute('SELECT module_catalogue_id,cover_image_url FROM curriculum.modules WHERE module_catalogue_id=ANY(%s)', [native])
-                from .subject_content import safe_url
-                for key, path in cur.fetchall():
-                    if path and f'current:{key}' not in covers:
-                        covers[f'current:{key}'] = safe_url(path)
             cur.execute(CURRENT_SUBJECTS_SQL, [pk])
             current_subjects = [{'id': module_id, 'title': title} for module_id, title in cur.fetchall()]
+            builder_covers, builder_subjects = _builder_subject_metadata(
+                cur, list(dict.fromkeys(refs + [f"current:{subject['id']}" for subject in current_subjects])),
+            )
+            covers.update(builder_covers)
             cur.execute(CURRENT_DATES_SQL, [[subject['id'] for subject in current_subjects]])
             dates = {str(component_id): activity_schedule(title, None, created_at) for component_id, title, created_at in cur.fetchall()}
-        account = authenticate_request(request)
-        return _private({'covers': covers, 'can_manage': bool(account and account.role in {'admin', 'staff'}),
+        return _private({'covers': covers, 'can_manage': False,
                          'persistence_ready': available, 'csrf_token': get_token(request),
-                         'activity_dates': dates, 'current_subjects': current_subjects})
+                         'activity_dates': dates, 'current_subjects': current_subjects,
+                         'builder_subjects': builder_subjects})
     except DatabaseError:
         return _error('Could not load subject images.', 503)
 
@@ -283,36 +318,6 @@ def subject_covers(request, pk):
 @require_POST
 @staff_only()
 def upload_subject_cover(request, subject_ref):
-    from PIL import Image, ImageOps, UnidentifiedImageError
-    from curriculum_api import upload_storage
-    from curriculum_api.views import COMPONENT_UPLOAD_ROOT
-    try:
-        if not _subject_exists(subject_ref):
-            return _error('Subject not found.', 404)
-        with connections['enrolment'].cursor() as cur:
-            if not subject_store.ready(cur):
-                raise subject_store.StoreUnavailable('Uploading subject covers is not enabled yet.')
-        upload = request.FILES.get('image')
-        if not upload or upload.size > 5 * 1024 * 1024:
-            return _error('Choose a JPG, PNG or WebP image smaller than 5 MB.', 400)
-        with Image.open(upload) as picture:
-            if picture.format not in {'JPEG', 'PNG', 'WEBP'} or picture.width * picture.height > 20_000_000:
-                return _error('Choose a JPG, PNG or WebP image up to 20 megapixels.', 400)
-            picture.load()
-            picture = ImageOps.exif_transpose(picture)
-            picture.thumbnail((1600, 1000))
-            buffer = io.BytesIO()
-            picture.convert('RGB').save(buffer, format='WEBP', quality=88)
-        try:
-            path = upload_storage.store(ContentFile(buffer.getvalue()), f'{COMPONENT_UPLOAD_ROOT}/_subject_covers/{uuid4().hex}.webp', 'image/webp')
-        except Exception:
-            return _error('Could not store the image. Please try again.', 503)
-        account = authenticate_request(request)
-        subject_store.save_cover(subject_ref, path, account.id)
-        return _private({'subject_ref': subject_ref, 'url': _cover_url(path)})
-    except subject_store.StoreUnavailable as error:
-        return _error(str(error), 503)
-    except (UnidentifiedImageError, Image.DecompressionBombError, ValueError, OSError):
-        return _error('The image could not be uploaded. Choose a valid image and try again.', 400)
-    except DatabaseError:
-        return _error('Could not save the subject cover. Please try again.', 503)
+    # Keep a clear response for an older browser tab instead of writing a second
+    # cover that would disagree with the module's own artwork.
+    return _error('Manage this image in Module Builder using Upload image.', 409)

@@ -1,13 +1,17 @@
 """Database-free tests for the historical modules pilot and ownership gate."""
 
 import json
+import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.db import DatabaseError
 from django.test import RequestFactory, SimpleTestCase
 
-from learner_api.student_activity import student_activity
+from learner_api.student_activity import (
+    student_activity, subject_covers, upload_subject_cover,
+    _builder_cover_url, _builder_subject_metadata, _material_response,
+)
 from learner_api.student_activity_data import read_student_activity, summarize_activities, read_student_material
 from learner_api.student_activity_access import student_activity_available
 
@@ -31,6 +35,29 @@ class StudentActivityTests(SimpleTestCase):
             self.assertTrue(student_activity_available(value))
         for value in (None, "", "Anna Rundell", 0, -1, "4176.0"):
             self.assertFalse(student_activity_available(value))
+
+    def test_material_completion_agrees_with_historical_rules_and_saved_attempts(self):
+        cases = [
+            ({'status': 'completed'}, [], True),
+            ({'video_completed': True}, [], True),
+            ({'reading_type': 'pdf', 'reading_viewed': True}, [], True),
+            ({'quiz_id': 5, 'quiz_passed': False}, [], False),
+            ({'quiz_id': 5, 'quiz_passed': True, 'reading_type': 'pdf', 'reading_viewed': False}, [], False),
+            ({'quiz_id': 5, 'quiz_passed': True, 'reading_type': 'pdf', 'reading_viewed': True}, [], True),
+            ({}, [{'completed': True}, {'completed': False}], True),
+            ({}, [{'completed': False}], False),
+        ]
+        with patch('learner_api.student_activity._definition_for', return_value={'quiz': None}), \
+             patch('learner_api.student_activity.authenticate_request', return_value=SimpleNamespace(role='learner', subject_id=132)):
+            for historical, attempts, expected in cases:
+                with self.subTest(historical=historical, attempts=attempts), \
+                     patch('learner_api.student_activity.subject_store.state', return_value={'ready': True, 'history': attempts}):
+                    response = _material_response(self.factory.get('/'), 132, 4176, {
+                        'learner_name': 'Anna', '_source': {'activity_id': 10, **historical},
+                    })
+                payload = json.loads(response.content)
+                self.assertEqual(payload['completed'], expected)
+                self.assertTrue(payload['can_attempt'])
 
     def test_missing_hours_are_not_zero_and_shared_activities_count_once(self):
         item = {"source_activity_id": 10, "group_id": 1, "completed": True,
@@ -145,3 +172,110 @@ class StudentActivityTests(SimpleTestCase):
             response = student_activity(self.factory.get("/"), kind="commercial", pk=132)
         self.assertEqual(response.status_code, 503)
         self.assertNotIn("private connection details", response.content.decode())
+
+
+class SubjectBuilderCoverTests(SimpleTestCase):
+    @patch('login.permissions.authenticate_request')
+    def test_builder_image_save_only_updates_artwork(self, authenticate):
+        from curriculum_api.views import curriculum_module_detail
+        authenticate.return_value = SimpleNamespace(role='staff')
+        image = 'data:image/png;base64,aGVsbG8='
+        with patch('curriculum_api.views.connection') as connection, \
+             patch('curriculum_api.views.invalidate_curriculum_cache') as invalidate, \
+             patch('curriculum_api.views.save_module_authoring_structure') as save_structure:
+            cursor = connection.cursor.return_value.__enter__.return_value
+            cursor.fetchone.return_value = ('MOD-1',)
+            for cover in (image, ''):
+                request = RequestFactory().patch('/', json.dumps({'coverImage': cover}), content_type='application/json')
+                response = curriculum_module_detail(request, identifier='MOD-1')
+                self.assertEqual(response.status_code, 200)
+                sql, params = cursor.execute.call_args.args
+                self.assertEqual(params, [cover, 'MOD-1'])
+                self.assertIn('cover_image_url=%s,updated_at=CURRENT_TIMESTAMP', sql)
+                self.assertNotIn('weeks', sql)
+                self.assertEqual(json.loads(response.content)['coverImage'], cover)
+            self.assertEqual(cursor.execute.call_count, 2)
+            self.assertEqual(invalidate.call_count, 2)
+            save_structure.assert_not_called()
+
+    @patch('login.permissions.authenticate_request')
+    def test_learner_cannot_save_a_builder_image(self, authenticate):
+        from curriculum_api.views import curriculum_module_detail
+        authenticate.return_value = SimpleNamespace(role='learner', subject_id=132)
+        with patch('curriculum_api.views.connection') as connection:
+            request = RequestFactory().patch('/', json.dumps({'coverImage': ''}), content_type='application/json')
+            response = curriculum_module_detail(request, identifier='MOD-1')
+        self.assertEqual(response.status_code, 403)
+        connection.cursor.assert_not_called()
+
+    @patch('login.permissions.authenticate_request')
+    def test_invalid_builder_image_does_not_reach_storage(self, authenticate):
+        from curriculum_api.views import curriculum_module_detail
+        authenticate.return_value = SimpleNamespace(role='admin')
+        with patch('curriculum_api.views.connection') as connection:
+            for image in ('javascript:alert(1)', 'data:text/html;base64,aGVsbG8=', None):
+                request = RequestFactory().patch('/', json.dumps({'coverImage': image}), content_type='application/json')
+                self.assertEqual(curriculum_module_detail(request, identifier='MOD-1').status_code, 400)
+            connection.cursor.assert_not_called()
+
+    def test_builder_upload_data_urls_are_images_only(self):
+        image = 'data:image/png;base64,aGVsbG8='
+        self.assertEqual(_builder_cover_url(image), image)
+        for value in ('data:text/html;base64,aGVsbG8=', 'javascript:alert(1)',
+                      'data:image/png;base64,not valid', '//example.com/image.png'):
+            self.assertEqual(_builder_cover_url(value), '')
+        self.assertEqual(_builder_cover_url('/curriculum_api/curriculum/uploads/image.webp'),
+                         '/curriculum_api/curriculum/uploads/image.webp')
+
+    def test_legacy_and_current_cards_use_the_same_builder_cover_by_id(self):
+        cursor = MagicMock()
+        image = 'data:image/webp;base64,aGVsbG8='
+        cursor.fetchall.return_value = [('MOD-1', 'Impact &amp; Planning', 'mba-legacy', '42', image)]
+        covers, links = _builder_subject_metadata(cursor, ['legacy:42', 'current:MOD-1', 'legacy:99'])
+        self.assertEqual(covers, {'legacy:42': image, 'current:MOD-1': image})
+        self.assertEqual(links['legacy:42'], {'id': 'MOD-1', 'title': 'Impact & Planning'})
+        self.assertEqual(cursor.execute.call_args.args[1], [['MOD-1'], ['42', '99']])
+        self.assertNotIn('legacy:99', links)
+
+    def test_ambiguous_legacy_source_is_not_guessed_by_title(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            ('MOD-1', 'Same title', 'mba-legacy', '42', 'https://example.com/one.png'),
+            ('MOD-2', 'Same title', 'mba-legacy', '42', 'https://example.com/two.png'),
+        ]
+        covers, links = _builder_subject_metadata(cursor, ['legacy:42', 'current:MOD-1'])
+        self.assertNotIn('legacy:42', covers)
+        self.assertNotIn('legacy:42', links)
+        self.assertEqual(covers['current:MOD-1'], 'https://example.com/one.png')
+
+    @patch('login.permissions._auth_gate_enabled', return_value=True)
+    @patch('login.permissions.authenticate_request')
+    def test_builder_clearing_cover_overrides_old_subject_image(self, authenticate, _gate):
+        authenticate.return_value = SimpleNamespace(role='staff')
+        cursor = MagicMock()
+        cursor.fetchall.side_effect = [
+            [('legacy:42', '/media/curriculum_components/old.webp')],
+            [('MOD-1', 'Renamed subject')],
+            [('MOD-1', 'Renamed subject', 'mba-legacy', '42', '')],
+            [],
+        ]
+        with patch('learner_api.student_activity.connections') as connections, \
+             patch('learner_api.student_activity.subject_store.ready', return_value=True), \
+             patch('learner_api.student_activity._cover_url', return_value='https://example.com/old.webp'):
+            connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
+            response = subject_covers(RequestFactory().get('/?refs=legacy:42'), pk=132)
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content)
+        self.assertEqual(payload['covers'], {'legacy:42': '', 'current:MOD-1': ''})
+        self.assertFalse(payload['can_manage'])
+        self.assertEqual(payload['builder_subjects']['legacy:42']['id'], 'MOD-1')
+
+    @patch('login.permissions.authenticate_request')
+    def test_old_upload_route_cannot_write_a_separate_cover(self, authenticate):
+        with patch.dict(os.environ, {'LEARNER_API_REQUIRE_AUTH': '1'}), \
+             patch('learner_api.student_activity.subject_store.save_cover') as save:
+            for role, expected in [('learner', 403), ('staff', 409)]:
+                authenticate.return_value = SimpleNamespace(role=role, subject_id=132)
+                response = upload_subject_cover(RequestFactory().post('/'), subject_ref='legacy:42')
+                self.assertEqual(response.status_code, expected)
+            save.assert_not_called()
