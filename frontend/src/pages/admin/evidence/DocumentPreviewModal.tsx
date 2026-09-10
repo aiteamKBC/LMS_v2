@@ -88,7 +88,7 @@ export function DocumentPreviewModal({
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-3 md:p-6" role="dialog" aria-modal="true" aria-labelledby="evidence-preview-title">
-      <div className="flex h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl">
+      <div className="flex h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-[var(--kbc-surface)] shadow-2xl">
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-foreground-200/60 px-4 py-3">
           <div className="min-w-0">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Document preview</p>

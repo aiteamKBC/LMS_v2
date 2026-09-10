@@ -9,24 +9,24 @@
 // says plainly where membership of each comes from.
 // ============================================================================
 import { useCallback } from 'react';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { Link } from 'react-router-dom';
 import { AdminPage, DataPanel, SourceNote } from '../_shared/AdminPage';
 import { useAdminData } from '../_shared/useAdminData';
 import { fetchRoles } from '@/api/platformAdmin';
-import { Building2, GraduationCap, ShieldCheck, UserRound, Users, type LucideIcon } from 'lucide-react';
 
-const ROLE_ICONS: Record<string, LucideIcon> = {
-  admin: ShieldCheck,
-  staff: Users,
-  employer: Building2,
-  learner: GraduationCap,
+const ROLE_ICONS: Record<string, string> = {
+  admin: 'ri-shield-line',
+  staff: 'ri-team-line',
+  employer: 'ri-building-2-line',
+  learner: 'ri-graduation-cap-line',
 };
 
 const ROLE_ICON_STYLES: Record<string, string> = {
-  admin: 'bg-gradient-to-br from-violet-100 to-violet-200 text-violet-700',
-  staff: 'bg-gradient-to-br from-blue-100 to-blue-200 text-blue-700',
-  employer: 'bg-gradient-to-br from-amber-100 to-amber-200 text-amber-700',
-  learner: 'bg-gradient-to-br from-emerald-100 to-emerald-200 text-emerald-700',
+  admin: 'bg-primary-100/60 text-primary-600 ring-primary-200/60',
+  staff: 'bg-primary-100/60 text-primary-600 ring-primary-200/60',
+  employer: 'bg-primary-100/60 text-primary-600 ring-primary-200/60',
+  learner: 'bg-primary-100/60 text-primary-600 ring-primary-200/60',
 };
 
 export default function AdminRolesPage() {
@@ -52,13 +52,10 @@ export default function AdminRolesPage() {
       <DataPanel loading={loading && !data} error={error} empty={roles.length === 0} onRetry={reload}>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {roles.map(role => (
-            <div key={role.id} className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
+            <div key={role.id} className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] p-5">
               <div className="flex items-start gap-3 mb-4">
-                <span className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${ROLE_ICON_STYLES[role.id] || 'bg-primary-100 text-primary-600'}`}>
-                  {(() => {
-                    const RoleIcon = ROLE_ICONS[role.id] || UserRound;
-                    return <RoleIcon aria-hidden="true" className="h-5 w-5" />;
-                  })()}
+                <span className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 shadow-md shadow-primary-900/10 ring-1 ring-inset ${ROLE_ICON_STYLES[role.id] || 'bg-primary-100 text-primary-600'}`}>
+                  <AppIcon name={ROLE_ICONS[role.id] || 'ri-user-line'} className="h-5 w-5" aria-hidden="true" />
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -116,8 +113,8 @@ export default function AdminRolesPage() {
 function Count({ label, value, tone }: { label: string; value: number; tone: 'ok' | 'bad' | 'neutral' }) {
   const map = { ok: 'text-emerald-600', bad: 'text-red-600', neutral: 'text-foreground-700' };
   return (
-    <div className="bg-background-100/70 rounded-lg p-2 text-center">
-      <p className={`text-base font-heading font-bold ${map[tone]}`}>{value}</p>
+    <div className="bg-primary-50/60 rounded-xl px-2 py-3 text-center">
+      <p className={`text-xl font-heading font-semibold tabular-nums ${map[tone]}`}>{value}</p>
       <p className="text-[10px] text-foreground-400">{label}</p>
     </div>
   );

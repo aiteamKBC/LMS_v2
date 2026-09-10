@@ -200,8 +200,9 @@ export default function AdminDashboard() {
       userName={auth.account?.displayName || auth.user?.fullName || 'Platform Admin'}
       userRole="Super Administrator"
     >
-      <div className="super-admin-dashboard space-y-3 p-3 md:space-y-4 md:p-8">
-        <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
+      <div className="super-admin-dashboard grid grid-cols-1 items-start gap-5 p-3 md:p-6 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(0,1fr)_18rem] xl:grid-rows-[minmax(0,1fr)] xl:overflow-hidden 2xl:grid-cols-[minmax(0,1fr)_20rem]">
+        <div className="min-w-0 space-y-3 md:space-y-4 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:overscroll-y-contain xl:px-1 xl:pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" tabIndex={0} role="region" aria-label="Dashboard content">
+        <div className="flex flex-col justify-between gap-3 min-[1800px]:flex-row min-[1800px]:items-end">
           <div>
             <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground-950 md:text-3xl">Welcome back, Super Admin</h1>
             <p className="mt-1 text-[11px] text-foreground-500 md:text-xs">Monitor platform health, user engagement and system performance in real time.</p>
@@ -209,7 +210,7 @@ export default function AdminDashboard() {
           <div className="flex items-center gap-2">
             <Link
               to="/workspace/admin/certificates"
-              className="inline-flex h-10 items-center gap-2 rounded-xl border border-primary-200 bg-white px-3.5 text-xs font-extrabold text-primary-700 shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-300 hover:bg-primary-50 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+              className="inline-flex h-10 items-center gap-2 rounded-xl border border-primary-600 bg-[var(--kbc-primary)] px-3.5 text-xs font-extrabold text-white shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-700 hover:bg-[var(--kbc-primary-deep)] hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
             >
               <AppIcon className="ri-award-line text-base"></AppIcon>
               Certificate Builder
@@ -220,14 +221,12 @@ export default function AdminDashboard() {
                 onClick={() => setAlertsOpen(open => !open)}
                 aria-expanded={alertsOpen}
                 aria-controls="super-admin-alerts"
-                className={`super-admin-filters-button inline-flex h-10 cursor-pointer items-center gap-2 rounded-xl px-3.5 text-xs font-extrabold shadow-sm transition-smooth focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b27715] focus-visible:ring-offset-2 ${hasVisibleWarning ? 'super-admin-filters-button--has-warning' : ''}`}
+                className={`inline-flex h-10 min-w-[10.75rem] cursor-pointer items-center gap-2 rounded-xl border bg-amber-50 px-3.5 text-xs font-extrabold text-amber-700 shadow-sm transition-smooth hover:border-red-200 hover:bg-red-50 hover:text-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2 ${hasVisibleWarning ? 'border-amber-300' : 'border-amber-200'}`}
               >
-                <span className="super-admin-filters-icon" aria-hidden="true">
-                  <AppIcon className="ri-alert-line text-base"></AppIcon>
-                </span>
+                <AppIcon className="ri-alert-line h-4 w-4 shrink-0 text-inherit" aria-hidden="true" />
                 <span>Platform issues</span>
                 {visibleAttention.length > 0 && (
-                  <span className="super-admin-filters-count" aria-label={`${visibleAttention.length} active alert${visibleAttention.length === 1 ? '' : 's'}`}>
+                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary-100 px-1 text-[11px] font-bold leading-none text-primary-700" aria-label={`${visibleAttention.length} active alert${visibleAttention.length === 1 ? '' : 's'}`}>
                     {visibleAttention.length}
                   </span>
                 )}
@@ -293,28 +292,26 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        <div className="super-admin-hero-row grid grid-cols-1 items-stretch gap-3 md:grid-cols-[minmax(0,3fr)_minmax(23rem,2fr)]">
-        <section className="super-admin-hero relative h-full min-h-[180px] overflow-hidden rounded-xl border border-primary-200/60 p-5 shadow-sm md:p-6" style={{ background: 'var(--kbc-hero-gradient)' }}>
-          <div className="absolute top-0 left-0 right-0 h-px bg-white/10"></div>
-          <div className="absolute inset-0 pointer-events-none overflow-hidden">
-            <div className="absolute opacity-20" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
-            <div className="absolute opacity-10" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
+        <div className="super-admin-hero-row grid grid-cols-1 items-stretch gap-3 min-[1800px]:grid-cols-[minmax(0,3fr)_minmax(20rem,2fr)]">
+        <section className="flex h-full min-h-[180px] min-w-0 items-center justify-between gap-5 rounded-2xl border border-primary-200/60 bg-primary-50/60 p-5 md:p-6">
+          <div className="min-w-0 flex-1">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-primary-600">Administration</p>
+            <h2 className="font-heading text-xl font-semibold tracking-tight text-primary-800 md:text-2xl">Platform Control</h2>
+            <p className="mt-2 text-[13px] leading-relaxed text-foreground-500">Accounts, access and platform records</p>
+            <span className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-primary-200/60 bg-primary-100/60 px-3 py-1.5 text-[11px] font-medium text-primary-700">
+              <AppIcon className="ri-time-line shrink-0 text-sm" aria-hidden="true" />
+              <span>{overview ? <>Updated {timeAgo(overview.generatedAt)}</> : 'Reading platform records…'}</span>
+            </span>
           </div>
-          <div className="relative z-10 flex h-full max-w-[54%] flex-col justify-center">
-            <h2 className="mb-1.5 font-heading text-xl font-bold tracking-tight text-white md:text-2xl">Platform Control</h2>
-            <p className="text-[13px] text-white/50">
-              {overview
-                ? <>Accounts, access and platform records · updated {timeAgo(overview.generatedAt)}</>
-                : 'Reading platform records…'}
-            </p>
-            <span className="mt-5 inline-flex w-fit items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-medium text-white/95 ring-1 ring-inset ring-white/15"><span className="h-1.5 w-1.5 rounded-full bg-emerald-300"></span>Updated just now</span>
-          </div>
-          <div aria-hidden="true" className="pointer-events-none absolute right-[10%] top-1/2 hidden h-32 w-44 -translate-y-1/2 md:block">
-            <div className="absolute left-8 top-12 h-16 w-24 rotate-[28deg] rounded-xl border border-white/55 bg-white/15 shadow-[0_18px_28px_rgba(54,18,130,0.18)]"></div>
-            <div className="absolute left-5 top-7 h-16 w-24 rotate-[28deg] rounded-xl border border-white/70 bg-white/30"></div>
-            <div className="absolute left-[4.25rem] top-7 h-10 w-10 rounded-xl bg-white/75 shadow-lg shadow-primary-900/20"></div>
-            <AppIcon className="absolute left-[4.8rem] top-[3.05rem] ri-stack-line text-lg text-primary-500"></AppIcon>
-            <span className="absolute left-1 top-5 h-2 w-2 rounded-full bg-white/80"></span><span className="absolute right-2 top-9 h-2 w-2 rounded-full bg-white/80"></span><span className="absolute right-8 bottom-2 h-2 w-2 rounded-full bg-white/70"></span>
+          <div aria-hidden="true" className="pointer-events-none relative hidden h-32 w-44 shrink-0 sm:block">
+            <div className="absolute left-8 top-12 h-16 w-24 rotate-[28deg] rounded-xl border border-primary-100 bg-[var(--kbc-surface)] shadow-[0_18px_28px_rgba(54,18,130,0.10)]" />
+            <div className="absolute left-5 top-7 h-16 w-24 rotate-[28deg] rounded-xl border border-primary-100 bg-[var(--kbc-surface)]" />
+            <div className="absolute left-[4.25rem] top-7 flex h-10 w-10 items-center justify-center rounded-xl border border-primary-100 bg-[var(--kbc-surface)] text-primary-600 shadow-sm">
+              <AppIcon className="ri-stack-line text-lg" aria-hidden="true" />
+            </div>
+            <span className="absolute left-1 top-5 h-2 w-2 rounded-full bg-primary-200/60" />
+            <span className="absolute right-2 top-9 h-2 w-2 rounded-full bg-primary-200/60" />
+            <span className="absolute right-8 bottom-2 h-2 w-2 rounded-full bg-primary-200/60" />
           </div>
         </section>
 
@@ -364,21 +361,21 @@ export default function AdminDashboard() {
         {/* ============================================================ */}
         {/* Stat cards                                                    */}
         {/* ============================================================ */}
-        <div className="super-admin-stat-grid grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
-          <MiniStat loading={loading} label="Sign-in accounts" value={acc?.total} sub={`${acc?.active ?? 0} able to sign in`} icon="ri-user-line" color="primary" href="/admin/users" />
-          <MiniStat loading={loading} label="Active last 30 days" value={acc?.activeLast30d} sub={`${acc?.liveSessions ?? 0} live sessions`} icon="ri-circle-line" color="blue" href="/admin/access-logs" />
+        <div className="super-admin-stat-grid grid grid-cols-2 gap-3 min-[1600px]:grid-cols-4">
+          <MiniStat loading={loading} label="Sign-in accounts" value={acc?.total} sub={`${acc?.active ?? 0} able to sign in`} icon="ri-user-star-line" color="primary" href="/admin/users" />
+          <MiniStat loading={loading} label="Active last 30 days" value={acc?.activeLast30d} sub={`${acc?.liveSessions ?? 0} live sessions`} icon="ri-activity-line" color="primary" href="/admin/access-logs" />
           <MiniStat loading={loading} label="Awaiting first sign-in" value={acc?.neverSignedIn} sub={`${overview?.invitations.pending ?? 0} invitations pending`} icon="ri-mail-line" color="amber" href="/admin/users?status=invited" />
           <MiniStat loading={loading} label="Suspended or locked" value={(acc?.suspended ?? 0) + (acc?.locked ?? 0)} sub={`${acc?.suspended ?? 0} suspended · ${acc?.locked ?? 0} locked`} icon="ri-lock-line" color="danger" href="/admin/users?status=suspended" />
-          <MiniStat loading={loading} label="Learners" value={people?.available ? people.learners : undefined} sub={people?.available ? `${people.apprenticeship} apprenticeship · ${people.commercial} commercial` : 'Schema unavailable'} icon="ri-user-line" color="green" href="/users" />
-          <MiniStat loading={loading} label="Employers" value={people?.available ? people.employers : undefined} sub={people?.available ? `${people.organisations} organisations` : 'Schema unavailable'} icon="ri-briefcase-line" color="primary" href="/admin/platform-report" />
-          <MiniStat loading={loading} label="Programmes" value={overview?.curriculum.available ? overview.curriculum.programmes : undefined} sub={overview?.curriculum.available ? `${overview.curriculum.modules} modules authored` : 'Schema unavailable'} icon="ri-stack-line" color="blue" href="/admin/platform-report" />
-          <MiniStat loading={loading} label="Cohorts" value={overview?.curriculum.available ? overview.curriculum.cohorts : undefined} sub={overview?.curriculum.available ? 'In the curriculum schema' : 'Schema unavailable'} icon="ri-group-line" color="teal" href="/admin/platform-report" />
+          <MiniStat loading={loading} label="Learners" value={people?.available ? people.learners : undefined} sub={people?.available ? `${people.apprenticeship} apprenticeship · ${people.commercial} commercial` : 'Schema unavailable'} icon="ri-graduation-cap-line" color="primary" href="/users" />
+          <MiniStat loading={loading} label="Employers" value={people?.available ? people.employers : undefined} sub={people?.available ? `${people.organisations} organisations` : 'Schema unavailable'} icon="ri-building-2-line" color="primary" href="/admin/platform-report" />
+          <MiniStat loading={loading} label="Programmes" value={overview?.curriculum.available ? overview.curriculum.programmes : undefined} sub={overview?.curriculum.available ? `${overview.curriculum.modules} modules authored` : 'Schema unavailable'} icon="ri-book-open-line" color="primary" href="/admin/platform-report" />
+          <MiniStat loading={loading} label="Cohorts" value={overview?.curriculum.available ? overview.curriculum.cohorts : undefined} sub={overview?.curriculum.available ? 'In the curriculum schema' : 'Schema unavailable'} icon="ri-group-line" color="primary" href="/admin/platform-report" />
         </div>
 
         {/* ============================================================ */}
         {/* Main grid                                                     */}
         {/* ============================================================ */}
-        <div className="super-admin-main-grid grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.8fr)_minmax(20rem,1fr)] md:gap-6">
+        <div className="super-admin-main-grid grid min-w-0 grid-cols-1 gap-4 md:gap-6">
           <div className="min-w-0 space-y-3 md:space-y-4">
             {/* Accounts by role */}
             <section className="super-admin-accounts-section rounded-xl border border-foreground-200/60 bg-background-50 p-3 md:p-4">
@@ -467,133 +464,38 @@ export default function AdminDashboard() {
                 </div>
               )}
             </section>
-
-            {/* Audit trail */}
-            <section className="super-admin-recent-events bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
-              <div className={`flex items-center justify-between ${recentEventsOpen ? 'mb-4' : ''}`}>
-                <h3 className="text-sm font-heading font-semibold text-foreground-900">
-                  <button
-                    type="button"
-                    onClick={() => setRecentEventsOpen(open => !open)}
-                    aria-expanded={recentEventsOpen}
-                    aria-controls="super-admin-recent-events-content"
-                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md text-left transition-colors hover:text-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
-                  >
-                    <span>Recent access events</span>
-                    <AppIcon className={recentEventsOpen ? 'ri-arrow-down-s-line text-xs text-foreground-400' : 'ri-arrow-right-s-line text-xs text-foreground-400'} aria-hidden="true"></AppIcon>
-                  </button>
-                </h3>
-                <Link to="/admin/access-logs" className="super-admin-arrow-link inline-flex items-center gap-1 text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Full log <AppIcon className="ri-arrow-right-line super-admin-arrow-icon text-[10px]"></AppIcon></Link>
-              </div>
-              {recentEventsOpen && (
-                <div id="super-admin-recent-events-content">
-                  <div className="admin-cool-table bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-                    <div className="overflow-x-auto">
-                      <table className="recent-access-events-table w-full min-w-[640px] text-[13px]">
-                        <thead>
-                          <tr className="border-b border-foreground-400/50">
-                            <th scope="col" className="text-center px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Event</th>
-                            <th scope="col" className="min-w-[14rem] text-center px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Account</th>
-                            <th scope="col" className="text-center px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">IP address</th>
-                            <th scope="col" className="text-center px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Time</th>
-                            <th scope="col" className="text-center px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {loading ? (
-                            <tr>
-                              <td colSpan={5} className="px-4 py-6 text-center text-[12px] text-foreground-400">Loading audit trail…</td>
-                            </tr>
-                          ) : audit.length === 0 ? (
-                            <tr>
-                              <td colSpan={5} className="px-4 py-6 text-center text-[12px] text-foreground-400">No access events recorded yet.</td>
-                            </tr>
-                          ) : audit.map(entry => (
-                            <tr key={entry.id} className="border-b border-background-100/50 hover:bg-background-100/40 transition-smooth">
-                              <td className="px-4 py-2.5 text-center">
-                                <div className="flex items-center justify-center gap-2">
-                                  <span
-                                    aria-hidden="true"
-                                    className={`h-1.5 w-1.5 rounded-full shrink-0 ${
-                                      entry.severity === 'critical' ? 'bg-red-500' : entry.severity === 'warning' ? 'bg-amber-500' : 'bg-emerald-500'
-                                    }`}
-                                  />
-                                  <div className="min-w-0">
-                                    <p className="text-sm font-medium text-foreground-800 whitespace-nowrap">{eventLabel(entry.event)}</p>
-                                    {!entry.succeeded && (
-                                      <p className="text-[10px] font-semibold text-red-600 truncate" title={entry.reason || 'Event failed'}>
-                                        failed{entry.reason ? ` · ${entry.reason}` : ''}
-                                      </p>
-                                    )}
-                                  </div>
-                                </div>
-                              </td>
-                              <td className="min-w-[14rem] px-4 py-2.5 text-center">
-                                <p className="text-sm font-medium text-foreground-800 truncate" title={entry.email || 'unknown address'}>{entry.email || 'unknown address'}</p>
-                              </td>
-                              <td className="px-4 py-2.5 text-center text-[13px] text-foreground-500 whitespace-nowrap">{entry.ipAddress || '—'}</td>
-                              <td className="px-4 py-2.5 text-center text-[13px] text-foreground-500 whitespace-nowrap">{timeAgo(entry.createdAt)}</td>
-                              <td className="px-4 py-2.5 text-center">
-                                {/* A failed invitation is the one access-log row an
-                                    administrator can actually act on from here. */}
-                                {canResendInvitation(entry) && <ResendInvitationButton entry={entry} onResent={reloadAudit} />}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </section>
           </div>
-
-          {/* Right column */}
-          <div className="space-y-3 md:space-y-4">
-            {/* System status */}
-            <section className="super-admin-system-status relative overflow-hidden bg-white rounded-xl border border-foreground-200/60 p-4 md:p-5">
-              <div className="flex items-center justify-between mb-1">
-                <h3 className="text-sm font-heading font-semibold text-foreground-900">System status</h3>
-                <Link to="/admin/system" className="super-admin-arrow-link inline-flex items-center gap-1 text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Details <AppIcon className="ri-arrow-right-line super-admin-arrow-icon text-[10px]"></AppIcon></Link>
-              </div>
-              <p className="text-[10px] text-foreground-400 mb-4">Whether each subsystem is configured in this deployment.</p>
-              <div className="super-admin-system-checks relative z-10 space-y-2.5">
-                {system ? system.checks.map(check => (
-                  <div key={check.id} className="flex items-center gap-3">
-                    <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                      check.configured ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
-                    }`}>
-                      <AppIcon className={`${check.configured ? 'ri-check-line' : 'ri-alert-line'} text-xs`}></AppIcon>
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[12px] font-medium text-foreground-800 truncate">{check.name}</p>
-                      <p className="text-[10px] text-foreground-400 truncate">{check.detail}</p>
-                    </div>
-                  </div>
-                )) : (
-                  <p className="text-[12px] text-foreground-400 py-2">{loading ? 'Checking…' : 'Unavailable.'}</p>
-                )}
-              </div>
-              <div aria-hidden="true" className="super-admin-system-art">
-                <div className="super-admin-system-art__halo"></div>
-                <div className="super-admin-system-art__shield">
-                  <AppIcon className="ri-check-line"></AppIcon>
-                </div>
-              </div>
-            </section>
-
+        </div>
+        <footer className="super-admin-footer text-center text-[10px] text-foreground-400">
+          © 2024 Super Admin Workspace. All rights reserved.
+        </footer>
+        </div>
+        <aside aria-label="Workspace overview" tabIndex={0} className="min-w-0 rounded-2xl border border-[var(--kbc-border)] bg-[var(--kbc-surface)] p-5 xl:max-h-full xl:min-h-0 xl:overflow-y-auto xl:overscroll-y-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="flex items-center gap-3 border-b border-[var(--kbc-border)] pb-5">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary-100 text-primary-600">
+              <AppIcon className="ri-shield-user-line text-xl" aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <p className="break-words text-sm font-semibold text-foreground-900">{auth.account?.displayName || auth.user?.fullName || 'Platform Admin'}</p>
+              <p className="mt-0.5 text-xs text-foreground-500">Super Administrator</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 py-4 text-[11px] text-foreground-500">
+            <AppIcon className="ri-time-line text-sm text-primary-500" aria-hidden="true" />
+            <span>{overview ? <>Updated {timeAgo(overview.generatedAt)}</> : 'Platform overview'}</span>
+          </div>
+          <div className="space-y-6 divide-y divide-[var(--kbc-border)] [&>section:not(:first-child)]:pt-5">
             {/* Invitations */}
-            <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
-              <div className="flex items-center justify-between mb-4">
+            <section className="min-w-0 space-y-3">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Invitations</h3>
-                <Link to="/admin/notifications" className="super-admin-arrow-link inline-flex items-center gap-1 text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Email log <AppIcon className="ri-arrow-right-line super-admin-arrow-icon text-[10px]"></AppIcon></Link>
+                <Link to="/admin/notifications" className="inline-flex items-center gap-1 rounded-md bg-primary-50 px-2 py-1 text-[10px] font-medium whitespace-nowrap text-primary-600 transition-colors hover:bg-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">Email log <AppIcon className="ri-arrow-right-line text-[10px]"></AppIcon></Link>
               </div>
               {overview ? (
                 <div className="grid grid-cols-3 gap-2">
-                  <Figure value={overview.invitations.pending} label="Pending" tone="neutral" />
-                  <Figure value={overview.invitations.expired} label="Expired" tone={overview.invitations.expired > 0 ? 'warn' : 'neutral'} />
-                  <Figure value={overview.invitations.failed} label="Failed" tone={overview.invitations.failed > 0 ? 'bad' : 'neutral'} />
+                  <RailFigure value={overview.invitations.pending} label="Pending" tone="neutral" />
+                  <RailFigure value={overview.invitations.expired} label="Expired" tone={overview.invitations.expired > 0 ? 'warn' : 'neutral'} />
+                  <RailFigure value={overview.invitations.failed} label="Failed" tone={overview.invitations.failed > 0 ? 'bad' : 'neutral'} />
                 </div>
               ) : loading ? (
                 <div className="grid grid-cols-3 gap-2">
@@ -609,36 +511,112 @@ export default function AdminDashboard() {
               )}
             </section>
 
+            {/* Audit trail */}
+            <section className="min-w-0 space-y-3">
+              <div className={`flex flex-wrap items-center justify-between gap-2 ${recentEventsOpen ? 'mb-4' : ''}`}>
+                <h3 className="text-sm font-heading font-semibold text-foreground-900">
+                  <button
+                    type="button"
+                    onClick={() => setRecentEventsOpen(open => !open)}
+                    aria-expanded={recentEventsOpen}
+                    aria-controls="super-admin-recent-events-content"
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md text-left transition-colors hover:text-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+                  >
+                    <span>Recent access events</span>
+                    <AppIcon className={recentEventsOpen ? 'ri-arrow-down-s-line text-xs text-foreground-400' : 'ri-arrow-right-s-line text-xs text-foreground-400'} aria-hidden="true"></AppIcon>
+                  </button>
+                </h3>
+                <Link to="/admin/access-logs" className="inline-flex items-center gap-1 rounded-md bg-primary-50 px-2 py-1 text-[10px] font-medium whitespace-nowrap text-primary-600 transition-colors hover:bg-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">Full log <AppIcon className="ri-arrow-right-line text-[10px]"></AppIcon></Link>
+              </div>
+              {recentEventsOpen && (
+                <div id="super-admin-recent-events-content">
+                  {audit.length === 0 ? (
+                    <p className="text-[12px] text-foreground-400 py-6 text-center">
+                      {loading ? 'Loading audit trail…' : 'No access events recorded yet.'}
+                    </p>
+                  ) : (
+                    <div className="max-h-96 space-y-1 overflow-y-auto rounded-xl bg-primary-50/60 p-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" tabIndex={0} role="region" aria-label="Recent access events">
+                      {audit.map(entry => (
+                        <div key={entry.id} className="grid grid-cols-[2rem_minmax(0,1fr)] items-start gap-x-2.5 gap-y-1 rounded-lg p-2 transition-colors hover:bg-[var(--kbc-surface)]">
+                          <span className={`flex h-8 w-8 items-center justify-center rounded-full shrink-0 ${
+                            entry.severity === 'critical' ? 'bg-red-100 text-red-600' : entry.severity === 'warning' ? 'bg-amber-100 text-amber-600' : 'bg-primary-100 text-primary-600'
+                          }`}><AppIcon className="ri-user-line text-sm" aria-hidden="true" /></span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[12px] font-medium text-foreground-800">
+                              {eventLabel(entry.event)}
+                              {!entry.succeeded && <span className="mt-0.5 block text-[10px] font-medium text-red-600">failed{entry.reason ? ` · ${entry.reason}` : ''}</span>}
+                            </p>
+                            <p className="mt-0.5 break-all text-[11px] text-foreground-500">{entry.email || 'unknown address'}</p>
+                          </div>
+                          <div className="col-start-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <p className="text-[10px] text-foreground-400 whitespace-nowrap">{timeAgo(entry.createdAt)}</p>
+                            {entry.ipAddress && <p className="text-[10px] text-foreground-400 whitespace-nowrap">{entry.ipAddress}</p>}
+                            {/* A failed invitation is the one access-log row an
+                                administrator can actually act on from here. */}
+                            {canResendInvitation(entry) && (
+                              <ResendInvitationButton entry={entry} onResent={reloadAudit} />
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+            {/* System status */}
+            <section className="min-w-0 space-y-3">
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="text-sm font-heading font-semibold text-foreground-900">System status</h3>
+                <Link to="/admin/system" className="inline-flex items-center gap-1 rounded-md bg-primary-50 px-2 py-1 text-[10px] font-medium whitespace-nowrap text-primary-600 transition-colors hover:bg-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">Details <AppIcon className="ri-arrow-right-line text-[10px]"></AppIcon></Link>
+              </div>
+              <p className="text-[11px] leading-relaxed text-foreground-500">Whether each subsystem is configured in this deployment.</p>
+              <div className="divide-y divide-[var(--kbc-border)]">
+                {system ? system.checks.map(check => (
+                  <div key={check.id} className="flex items-start gap-2.5 py-3 first:pt-0 last:pb-0">
+                    <span className={`mt-0.5 w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
+                      check.configured ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
+                    }`}>
+                      <AppIcon className={`${check.configured ? 'ri-check-line' : 'ri-alert-line'} text-xs`}></AppIcon>
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-foreground-800">{check.name}</p>
+                      <p className="mt-0.5 break-words text-[11px] leading-relaxed text-foreground-500">{check.detail}</p>
+                    </div>
+                  </div>
+                )) : (
+                  <p className="text-[12px] text-foreground-400 py-2">{loading ? 'Checking…' : 'Unavailable.'}</p>
+                )}
+              </div>
+            </section>
+
             {/* Documents */}
             {overview?.documents.available && (
-              <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
-                <div className="flex items-center justify-between mb-4">
+              <section className="min-w-0 space-y-3">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">Compliance documents</h3>
-                  <Link to="/admin/documents" className="super-admin-arrow-link inline-flex items-center gap-1 text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Browse <AppIcon className="ri-arrow-right-line super-admin-arrow-icon text-[10px]"></AppIcon></Link>
+                  <Link to="/admin/documents" className="inline-flex items-center gap-1 rounded-md bg-primary-50 px-2 py-1 text-[10px] font-medium whitespace-nowrap text-primary-600 transition-colors hover:bg-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">Browse <AppIcon className="ri-arrow-right-line text-[10px]"></AppIcon></Link>
                 </div>
                 <div className="grid grid-cols-3 gap-2">
-                  <Figure value={overview.documents.total} label="Stored" tone="neutral" />
-                  <Figure value={overview.documents.signed} label="Signed" tone="ok" />
-                  <Figure value={overview.documents.last30d} label="Last 30d" tone="neutral" />
+                  <RailFigure value={overview.documents.total} label="Stored" tone="neutral" />
+                  <RailFigure value={overview.documents.signed} label="Signed" tone="ok" />
+                  <RailFigure value={overview.documents.last30d} label="Last 30d" tone="neutral" />
                 </div>
               </section>
             )}
 
             {/* Delivery — only when the Learner schema is provisioned */}
             {overview?.delivery.available && (
-              <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
+              <section className="min-w-0 space-y-3">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-4">Learner delivery</h3>
                 <div className="grid grid-cols-2 gap-2">
-                  <Figure value={overview.delivery.activeLearners} label="Active" tone="ok" />
-                  <Figure value={overview.delivery.inactiveLearners} label="Archived" tone="neutral" />
+                  <RailFigure value={overview.delivery.activeLearners} label="Active" tone="ok" />
+                  <RailFigure value={overview.delivery.inactiveLearners} label="Archived" tone="neutral" />
                 </div>
               </section>
             )}
           </div>
-        </div>
-        <footer className="super-admin-footer text-center text-[10px] text-foreground-400">
-          © 2024 Super Admin Workspace. All rights reserved.
-        </footer>
+        </aside>
       </div>
     </WorkspaceShell>
   );
@@ -661,20 +639,17 @@ function MiniStat({ label, value, sub, icon, color, href, loading }: {
   label: string; value: number | undefined; sub: string; icon: string; color: string; href: string; loading: boolean;
 }) {
   const bgMap: Record<string, string> = {
-    primary: 'bg-primary-50 text-primary-600',
-    blue: 'bg-blue-50 text-blue-500',
-    amber: 'bg-amber-50 text-amber-600',
-    danger: 'bg-red-50 text-red-500',
-    green: 'bg-emerald-50 text-emerald-600',
-    teal: 'bg-teal-50 text-teal-500',
+    primary: 'bg-primary-100/60 text-primary-600 ring-primary-200/60',
+    amber: '!bg-amber-50/50 !text-amber-700 ring-amber-200/60',
+    danger: '!bg-red-50/50 !text-red-700 ring-red-200/60',
   };
   return (
     <Link to={href} className="flex min-w-0 items-center gap-3 rounded-xl border border-foreground-200/60 bg-background-50 px-3.5 py-3 card-premium cursor-pointer md:px-4">
-      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${bgMap[color] || bgMap.primary}`}>
-        <AppIcon className={`${icon} text-lg`}></AppIcon>
+      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl !bg-none !shadow-md shadow-primary-900/10 ring-1 ring-inset ${bgMap[color] || bgMap.primary}`}>
+        <AppIcon className={`${icon} h-5 w-5`} aria-hidden="true"></AppIcon>
       </span>
       <span className="min-w-0">
-        <p className="font-heading text-xl font-semibold leading-none text-foreground-900">
+        <p className="font-heading text-xl font-semibold leading-none tabular-nums text-primary-800">
           {loading && value === undefined ? <span className="inline-block h-5 w-8 animate-pulse rounded bg-background-200" /> : value ?? 0}
         </p>
         <p className="mt-1.5 truncate text-[10px] font-medium leading-tight text-foreground-500">{label}</p>
@@ -695,9 +670,25 @@ function Figure({ value, label, tone }: { value: number; label: string; tone: 'o
     neutral: 'text-foreground-800',
   };
   return (
-    <div className="super-admin-figure bg-background-100/70 rounded-lg p-3 text-center">
-      <p className={`text-2xl font-heading font-bold ${toneMap[tone]}`}>{value}</p>
-      <p className="text-[10px] text-foreground-400 mt-0.5">{label}</p>
+    <div className="min-w-0 rounded-xl bg-primary-50/60 px-2 py-3 text-center">
+      <p className={`font-heading text-xl font-semibold tabular-nums ${toneMap[tone]}`}>{value}</p>
+      <p className="mt-1 text-[10px] text-foreground-500">{label}</p>
+    </div>
+  );
+}
+
+/** Compact figures used only in the right-hand overview panel. */
+function RailFigure({ value, label, tone }: { value: number; label: string; tone: 'ok' | 'bad' | 'warn' | 'neutral' }) {
+  const toneMap = {
+    ok: 'text-emerald-600',
+    bad: 'text-red-600',
+    warn: 'text-amber-600',
+    neutral: 'text-primary-700',
+  };
+  return (
+    <div className="min-w-0 rounded-xl bg-primary-50/60 px-2 py-3 text-center">
+      <p className={`font-heading text-xl font-semibold tabular-nums ${toneMap[tone]}`}>{value}</p>
+      <p className="mt-1 text-[10px] text-foreground-500">{label}</p>
     </div>
   );
 }

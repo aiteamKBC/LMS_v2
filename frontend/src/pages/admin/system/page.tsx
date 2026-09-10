@@ -20,7 +20,7 @@ const ICONS: Record<string, string> = {
   database: 'ri-database-2-line',
   email: 'ri-mail-line',
   blob: 'ri-cloud-line',
-  graph: 'ri-microsoft-line',
+  graph: 'ri-share-line',
   openai: 'ri-robot-line',
 };
 
@@ -54,20 +54,20 @@ export default function AdminSystemPage() {
           {checks.map(check => (
             <div
               key={check.id}
-              className={`rounded-xl border p-4 md:p-5 ${
+              className={`rounded-2xl border p-4 md:p-5 ${
                 check.configured
-                  ? 'bg-background-50 border-foreground-200/60'
-                  : 'bg-amber-50/60 border-amber-200/60'
+                  ? 'bg-[var(--kbc-surface)] border-[var(--kbc-border)]'
+                  : 'bg-amber-50/50 border-amber-200/60'
               }`}
             >
               <div className="flex items-start gap-3">
-                <span className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
-                  check.configured ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
+                <span className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 !bg-none !shadow-md shadow-primary-900/10 ${
+                  check.configured ? 'bg-primary-100/60 text-primary-600' : '!bg-amber-50/50 !text-amber-700'
                 }`}>
                   <AppIcon className={`${ICONS[check.id] || 'ri-plug-2-line'} text-lg`}></AppIcon>
                 </span>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="flex flex-wrap items-center gap-2 mb-1">
                     <h3 className="text-sm font-heading font-semibold text-foreground-900">{check.name}</h3>
                     <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border whitespace-nowrap ${
                       check.configured
@@ -89,7 +89,7 @@ export default function AdminSystemPage() {
 
         {/* Record volumes — a rough sense of what the database is holding */}
         {overview && (
-          <div className="mt-4 md:mt-6 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
+          <div className="mt-4 md:mt-6 bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] p-4 md:p-5">
             <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-1">Record volumes</h3>
             <p className="text-[11px] text-foreground-400 mb-4">Row counts from the schemas this platform owns.</p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -122,8 +122,8 @@ export default function AdminSystemPage() {
 
 function Vol({ label, value }: { label: string; value: number }) {
   return (
-    <div className="bg-background-100/70 rounded-lg p-3">
-      <p className="text-xl font-heading font-semibold text-foreground-900">{value.toLocaleString()}</p>
+    <div className="bg-primary-50/60 rounded-xl p-3 text-center">
+      <p className="text-xl font-heading font-semibold tabular-nums text-primary-800">{value.toLocaleString()}</p>
       <p className="text-[10px] text-foreground-400 mt-0.5">{label}</p>
     </div>
   );
