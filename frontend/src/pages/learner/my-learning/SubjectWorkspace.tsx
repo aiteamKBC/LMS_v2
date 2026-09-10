@@ -61,6 +61,14 @@ function scheduleForDate(value?: string | null): Schedule {
   return { date, month: date.slice(0, 7), week_start, week_end: day.toISOString().slice(0, 10) };
 }
 
+function normaliseSubjectTitle(value?: string | null): string {
+  return (value || '')
+    .replace(/&amp;/gi, '&')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLocaleLowerCase();
+}
+
 export function groupSubjectActivities(activities: SubjectEntry[]) {
   const months = new Map<string, Map<string, SubjectEntry[]>>();
   for (const activity of activities) {
@@ -89,13 +97,36 @@ export function subjectsFrom(data: StudentActivityResponse | null, real: Learner
     subjects.set(key, subject);
   }
   const legacyByBuilder = new Map<string, string[]>();
+  const legacyByTitle = new Map<string, string[]>();
   for (const subject of subjects.values()) {
     const builder = builderSubjects[subject.id];
     if (builder) legacyByBuilder.set(builder.id, [...(legacyByBuilder.get(builder.id) || []), subject.id]);
+    const title = normaliseSubjectTitle(subject.title);
+    if (title) legacyByTitle.set(title, [...(legacyByTitle.get(title) || []), subject.id]);
+  }
+  const currentTitlesById = new Map<string, Set<string>>();
+  const currentIdsByTitle = new Map<string, Set<string>>();
+  const registerCurrentTitle = (moduleId: string, title?: string | null) => {
+    const normalised = normaliseSubjectTitle(title);
+    if (!moduleId || !normalised) return;
+    if (!currentTitlesById.has(moduleId)) currentTitlesById.set(moduleId, new Set());
+    currentTitlesById.get(moduleId)!.add(normalised);
+    if (!currentIdsByTitle.has(normalised)) currentIdsByTitle.set(normalised, new Set());
+    currentIdsByTitle.get(normalised)!.add(moduleId);
+  };
+  for (const subject of currentSubjects) registerCurrentTitle(subject.id, subject.title);
+  for (const item of real?.components || []) {
+    if (item.moduleId) registerCurrentTitle(item.moduleId, item.module);
   }
   const currentKey = (moduleId: string) => {
     const matches = legacyByBuilder.get(moduleId);
-    return matches?.length === 1 ? matches[0] : `current:${moduleId}`;
+    if (matches?.length === 1) return matches[0];
+    const titleMatches = new Set<string>();
+    for (const title of currentTitlesById.get(moduleId) || []) {
+      if (currentIdsByTitle.get(title)?.size !== 1) continue;
+      for (const legacyKey of legacyByTitle.get(title) || []) titleMatches.add(legacyKey);
+    }
+    return titleMatches.size === 1 ? [...titleMatches][0] : `current:${moduleId}`;
   };
   const completed = completedComponentIds(real);
   for (const subject of currentSubjects) {
@@ -132,15 +163,17 @@ export function subjectsFrom(data: StudentActivityResponse | null, real: Learner
   }
   const nativeTitles = new Set([...currentSubjects.map((subject) => subject.title), ...(real?.components || []).map((item) => item.module)]);
   for (const title of real?.modules || []) {
-    if (!nativeTitles.has(title)) subjects.set(`unlinked:${title}`, { id: `unlinked:${title}`, title, source: 'current', activities: [] });
+    if (nativeTitles.has(title)) continue;
+    const titleMatches = legacyByTitle.get(normaliseSubjectTitle(title));
+    if (titleMatches?.length !== 1) subjects.set(`unlinked:${title}`, { id: `unlinked:${title}`, title, source: 'current', activities: [] });
   }
   return [...subjects.values()].map((subject) => ({ ...subject, title: builderSubjects[subject.id]?.title || subject.title }))
     .sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
 }
 
 /** One roll-up for imported history and all later current-platform progress.
- * Exact source links merge the two representations before totals are
- * calculated, so the same activity can never be counted twice. */
+ * Exact source links merge the two representations first. A unique title match
+ * also merges the subject card when older imports have no source link. */
 export function buildUnifiedLearningSummary(
   data: StudentActivityResponse | null,
   real: LearnerDetail | null,

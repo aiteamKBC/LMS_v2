@@ -8,6 +8,7 @@ import { fetchEvidence } from '@/api/evidence';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { responsesForSection, type ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { ImportedReviewHistory } from '@/pages/learner/reviews/ImportedReviewHistory';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
 import ProgressReviewSlidesModal, { type ProgressReviewSlidesDeck } from '@/pages/coach/progress-reviews/components/ProgressReviewSlidesModal';
@@ -342,6 +343,7 @@ function ProgressReviewsList() {
             </>
           )}
         </section>
+        <ImportedReviewHistory kind={myLearner.kind} learnerId={myLearner.id} category="progress-review" />
       </main>
     </WorkspaceShell>
   );

@@ -269,7 +269,7 @@ describe('subjects shared with Module Builder', () => {
     expect(screen.getByText(/Programme totals use TP Planned/)).toBeInTheDocument();
   });
 
-  it('keeps distinct same-title courses and activities without a verified source link', () => {
+  it('merges a unique legacy/current title while keeping ambiguous same-title courses separate', () => {
     const separate = { ...linkedReal, components: [
       ...linkedReal.components,
       { ...linkedReal.components[0], moduleId: 'OTHER', componentId: 'OTHER-10' },
@@ -279,7 +279,9 @@ describe('subjects shared with Module Builder', () => {
     expect(subjects.find((s) => s.id === 'current:OTHER')?.activities).toHaveLength(1);
     const wrongScope = { ...linkedMetadata, activity_sources: { 'COMP-10': { module_id: 'OTHER', group_id: 1, activity_id: 10 } } };
     expect(subjectsFrom(data, linkedReal, wrongScope)[0].activities).toHaveLength(5);
-    expect(subjectsFrom(data, linkedReal, { ...linkedMetadata, builder_subjects: {} })).toHaveLength(2);
+    const titleLinked = subjectsFrom(data, linkedReal, { ...linkedMetadata, builder_subjects: {} });
+    expect(titleLinked).toHaveLength(1);
+    expect(titleLinked[0].activities).toHaveLength(3);
   });
 
   it('keeps the highest quiz score and a previous pass after a failed retake', () => {
