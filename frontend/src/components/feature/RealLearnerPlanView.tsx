@@ -261,7 +261,7 @@ function ModuleSection({ module, defaultOpen, kind, learnerId, completedIds, mar
         onClick={() => setCollapsed((c) => !c)}
         className={`flex w-full cursor-pointer items-center gap-3 text-left transition-colors hover:bg-primary-50/30 sm:gap-4 ${compact ? 'px-3.5 py-3 sm:px-4' : 'px-4 py-4 sm:px-5 md:px-6'}`}
       >
-        <div className={`flex shrink-0 items-center justify-center rounded-xl border border-primary-200/70 bg-primary-100 ${compact ? 'h-9 w-9' : 'h-10 w-10 sm:h-11 sm:w-11'}`}>
+        <div className={`flex shrink-0 items-center justify-center rounded-xl bg-primary-100 ${compact ? 'h-9 w-9' : 'h-10 w-10 sm:h-11 sm:w-11'}`}>
           <AppIcon className="ri-book-2-line text-lg text-primary-600" />
         </div>
         <div className="flex-1 min-w-0">

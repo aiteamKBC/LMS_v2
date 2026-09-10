@@ -9,7 +9,7 @@ import { useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import Swal from "sweetalert2";
-import { AlertTriangle, Check, FileText, LoaderCircle, Pencil, StickyNote, Undo2, Upload, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, CheckCircle2, FileText, LoaderCircle, Pencil, StickyNote, Undo2, Upload, X } from "lucide-react";
 import {
   editEvidence,
   getEvidenceList,
@@ -260,7 +260,7 @@ function EvidenceExplorerPage() {
                       {item.category_source.startsWith("hint") || item.category_source === "unresolved" ? (
                         <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold text-muted-foreground" title="Provisional — the content classifier has not verified this item yet">provisional</span>
                       ) : (
-                        <span className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-semibold text-success" title={item.confidence != null ? `Content-verified (confidence ${Math.round(item.confidence * 100)}%)` : "Content-verified"}>content ✓</span>
+                        <span className="inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-semibold text-success" title={item.confidence != null ? `Content-verified (confidence ${Math.round(item.confidence * 100)}%)` : "Content-verified"}>content <CheckCircle2 aria-hidden="true" className="h-2.5 w-2.5" /></span>
                       )}
                       {item.mismatch ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold text-destructive" title={item.mismatch_reason ?? "The content does not match the slot it was uploaded into"}>
@@ -268,7 +268,7 @@ function EvidenceExplorerPage() {
                         </span>
                       ) : null}
                       {item.review_status === "confirmed" ? (
-                        <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold text-success">Reviewed ✓</span>
+                        <span className="inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold text-success">Reviewed <CheckCircle2 aria-hidden="true" className="h-2.5 w-2.5" /></span>
                       ) : item.review_status === "rejected" ? (
                         <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Reverted to slot</span>
                       ) : null}
@@ -321,10 +321,10 @@ function EvidenceExplorerPage() {
                     ) : null}
                     <div className="mt-1.5">
                       {item.report_month ? (
-                        <span className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-semibold text-success">On the {item.report_month} report ✓</span>
+                        <span className="inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-semibold text-success">On the {item.report_month} report <CheckCircle2 aria-hidden="true" className="h-2.5 w-2.5" /></span>
                       ) : (
                         <button type="button" disabled={busyId === item.evidence_id} onClick={() => void handleTransfer(item)} className="rounded-md border border-[#182d48]/30 bg-card px-2.5 py-1 text-[11px] font-semibold text-[#182d48] hover:bg-secondary disabled:opacity-50">
-                          {busyId === item.evidence_id ? "Transferring…" : "→ Transfer to monthly report"}
+                          {busyId === item.evidence_id ? "Transferring…" : <><ArrowRight aria-hidden="true" className="mr-1 inline h-3 w-3" />Transfer to monthly report</>}
                         </button>
                       )}
                     </div>

@@ -112,6 +112,7 @@ import {
   Phone,
   Pin,
   Play,
+  Podcast,
   Plus,
   Plug,
   Power,
@@ -328,7 +329,8 @@ function resolveIcon(name: string): LucideIcon {
   if (/archive/.test(key)) return FolderOpen;
   if (/external/.test(key)) return ExternalLink;
   if (/pin/.test(key)) return Pin;
-  if (/headphone|podcast/.test(key)) return Headphones;
+  if (/podcast/.test(key)) return Podcast;
+  if (/headphone/.test(key)) return Headphones;
   if (/cloud/.test(key)) return Cloud;
   if (/graduation|education/.test(key)) return GraduationCap;
   if (/activity|engagement/.test(key)) return Activity;

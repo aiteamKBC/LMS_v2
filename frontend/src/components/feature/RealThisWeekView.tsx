@@ -6,7 +6,7 @@ import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import { fetchLmsSchema, type LmsCourse, type LmsMaterial, type LmsSection, type LmsStudent } from '@/api/lmsSchema';
 import {
-  buildLearnerJourney, quizAggregateStats, componentTypeMeta, formatHoursMinutes, gradePercent, hasComponentContent, isOpenableComponent,
+  buildLearnerJourney, quizAggregateStats, componentTypeMeta, resourceTypeMeta, formatHoursMinutes, gradePercent, hasComponentContent, isOpenableComponent,
   type JourneyModule, type JourneyWeek, type JourneyComponent,
 } from '@/utils/learnerJourney';
 import { EvidenceFilesButton } from '@/components/feature/EvidenceFilesButton';
@@ -179,20 +179,10 @@ interface FlatLmsMaterial {
   material: LmsMaterial;
 }
 
-const LMS_TYPE_META: Record<string, { icon: string; bg: string; text: string }> = {
-  video: { icon: 'ri-play-circle-line', bg: 'bg-red-50', text: 'text-red-600' },
-  recording: { icon: 'ri-record-circle-line', bg: 'bg-rose-50', text: 'text-rose-600' },
-  audio: { icon: 'ri-headphone-line', bg: 'bg-violet-50', text: 'text-violet-600' },
-  pdf: { icon: 'ri-file-pdf-2-line', bg: 'bg-red-50', text: 'text-red-600' },
-  word: { icon: 'ri-file-word-line', bg: 'bg-blue-50', text: 'text-blue-600' },
-  ppt: { icon: 'ri-slideshow-line', bg: 'bg-orange-50', text: 'text-orange-600' },
-  quiz: { icon: 'ri-questionnaire-line', bg: 'bg-amber-50', text: 'text-amber-600' },
-  text: { icon: 'ri-article-line', bg: 'bg-emerald-50', text: 'text-emerald-600' },
-  assignment: { icon: 'ri-file-add-line', bg: 'bg-primary-50', text: 'text-primary-600' },
-};
-
-function lmsMeta(contentType?: string | null) {
-  return LMS_TYPE_META[(contentType || '').toLowerCase()] || { icon: 'ri-checkbox-circle-line', bg: 'bg-background-100', text: 'text-foreground-500' };
+function lmsMeta(...types: Array<string | null | undefined>) {
+  const type = types.filter((value) => String(value || '').trim()).join(' ') || null;
+  const meta = resourceTypeMeta(type);
+  return { icon: meta.icon, bg: meta.bg, text: meta.color };
 }
 
 function flattenCourse(course: LmsCourse): FlatLmsMaterial[] {
@@ -334,7 +324,7 @@ function LmsSourceLibrary({ real }: { real: LearnerDetail | null }) {
 
 function LmsMaterialRow({ row, onOpen }: { row: FlatLmsMaterial; onOpen: () => void }) {
   const { material, section } = row;
-  const meta = lmsMeta(material.content_type);
+  const meta = lmsMeta(material.content_type, material.component_type, material.material_format, material.material_title);
   const status = String(material.student_activity?.status || section.section_status || 'not started').replace(/_/g, ' ');
   const duration = material.content_duration?.formatted || material.content_duration?.raw || null;
   const done = status.toLowerCase().includes('complete');
@@ -374,7 +364,7 @@ function LmsMaterialModal({ item, onClose }: { item: FlatLmsMaterial | null; onC
   if (!item) return null;
 
   const { material, section, course } = item;
-  const meta = lmsMeta(material.content_type);
+  const meta = lmsMeta(material.content_type, material.component_type, material.material_format, material.material_title);
   const urls = bestMaterialUrl(material);
   const contentType = (material.content_type || '').toLowerCase();
   const playableUrl = urls.file || urls.embed || urls.open || '';

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import Swal from "sweetalert2";
+import { CheckCircle2, Circle, CircleX } from "lucide-react";
 import { MreTable } from "@/features/audit/learner-log-pro-manual/components/MreTable";
 import { toGoogleEmbedUrl } from "@/features/audit/learner-log-pro-manual/lib/googleEmbed";
 import {
@@ -118,8 +119,8 @@ function QuizBody({ aptemId, learnerName, component }: {
           <p className="text-sm leading-6 text-foreground">
             <span className="mr-1.5 font-semibold text-muted-foreground">Q{question.question_order ?? qi + 1}.</span>
             {question.question_text}
-            <span className={`ml-2 text-xs font-semibold ${question.is_correct ? "text-success" : "text-destructive"}`}>
-              {question.is_correct ? "✓ correct" : "✗ incorrect"}
+            <span className={`ml-2 inline-flex items-center gap-1 text-xs font-semibold ${question.is_correct ? "text-success" : "text-destructive"}`}>
+              {question.is_correct ? <CheckCircle2 aria-hidden="true" className="h-3 w-3" /> : <CircleX aria-hidden="true" className="h-3 w-3" />} {question.is_correct ? "correct" : "incorrect"}
             </span>
           </p>
           <ul className="mt-2 space-y-1">
@@ -135,7 +136,7 @@ function QuizBody({ aptemId, learnerName, component }: {
                 }`}
               >
                 <span className="mt-0.5 shrink-0 text-xs">
-                  {option.is_correct ? "✓" : option.is_selected ? "✗" : "•"}
+                  {option.is_correct ? <CheckCircle2 aria-hidden="true" className="h-3 w-3" /> : option.is_selected ? <CircleX aria-hidden="true" className="h-3 w-3" /> : <Circle aria-hidden="true" className="h-3 w-3" />}
                 </span>
                 <span>
                   {option.option_text}

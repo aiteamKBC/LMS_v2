@@ -1003,7 +1003,7 @@ function LearnerCalendarBody() {
     try {
       const res = rescheduleEvent
         ? await rescheduleLearnerCalendarSession(myLearner.kind, myLearner.id, {
-            eventKey: rescheduleEvent.id,
+            eventKey: rescheduleEvent.eventKey || rescheduleEvent.id,
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
@@ -1678,7 +1678,7 @@ function LearnerCalendarBody() {
                 {/* Day cells */}
                 <div className="grid grid-cols-7">
                   {monthCells.map((day, idx) => {
-                    if (day === null) return <div key={`empty-${idx}`} className="aspect-square border-b border-r border-foreground-100 bg-background-50/40 sm:aspect-[4/3]" />;
+                    if (day === null) return <div key={`empty-${idx}`} className="min-h-[11.5rem] border-b border-r border-foreground-100 bg-background-50/40" />;
                     const eventsForDay = getEventsForDay(day, viewMonth);
                     const isSel = day === selectedDay && viewMode === 'monthly';
                     const isTdy = isToday(day, viewMonth, viewYear);
@@ -1698,7 +1698,7 @@ function LearnerCalendarBody() {
                         key={`d-${day}`}
                         onClick={() => { setSelectedDay(day); setShowDayDrawer(false); }}
                         title={dateRestriction || undefined}
-                        className={`relative flex aspect-square cursor-pointer flex-col border-b border-r border-foreground-100 p-1 text-left transition-all duration-150 hover:z-10 sm:aspect-[4/3] sm:p-1.5 ${isClosedDate ? 'bg-background-100/80' : 'bg-background-50 hover:bg-primary-50/20'} ${isSel ? 'z-10 border-primary-300 bg-primary-50/60 ring-1 ring-primary-300 ring-inset' : isTdy ? 'bg-primary-50/15' : ''}`}
+                        className={`relative flex min-h-[11.5rem] cursor-pointer flex-col border-b border-r border-foreground-100 p-1 text-left transition-all duration-150 hover:z-10 sm:p-1.5 ${isClosedDate ? 'bg-background-100/80' : 'bg-background-50 hover:bg-primary-50/20'} ${isSel ? 'z-10 border-primary-300 bg-primary-50/60 ring-1 ring-primary-300 ring-inset' : isTdy ? 'bg-primary-50/15' : ''}`}
                       >
                         <span className={`mb-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold sm:mb-1 sm:h-6 sm:w-6 sm:text-xs ${isSel ? 'bg-primary-100 text-primary-800' : isTdy ? 'bg-primary-500 text-white' : 'text-foreground-500'}`}>{day}</span>
                         {showClosedBadge && (
@@ -1706,7 +1706,7 @@ function LearnerCalendarBody() {
                             <AppIcon className="ri-lock-line" />Closed
                           </span>
                         )}
-                        <div className="flex-1 w-full overflow-hidden space-y-1.5 min-w-0">
+                        <div className="flex-1 w-full overflow-hidden space-y-1 min-w-0">
                           {visibleEvents.map((ev) => {
                             if (ev.type === 'Busy') {
                               return (
@@ -1722,7 +1722,7 @@ function LearnerCalendarBody() {
                               <div
                                 key={ev.id}
                                 onClick={(event) => { event.stopPropagation(); setSelectedEvent(ev); }}
-                                className={`rounded-lg border px-2 py-1.5 text-left shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:brightness-95 ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
+                                className={`rounded-lg border px-2 py-1 text-left shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:brightness-95 ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
                                 title={`${LEARNER_SOURCE_META[eventSource].label} · ${ev.title}`}
                               >
                                 <div className="flex min-w-0 items-center gap-1.5">
@@ -1731,11 +1731,11 @@ function LearnerCalendarBody() {
                                   <span className="truncate text-[11px] font-bold leading-tight">{ev.title}</span>
                                   <span className={`ml-auto h-2 w-2 shrink-0 rounded-full border border-white/80 ${LEARNER_STATUS_META[learnerEventStatus(ev)].dot}`} title={LEARNER_STATUS_META[learnerEventStatus(ev)].label}></span>
                                 </div>
-                                {(ev.host || ev.club) && <p className="mt-0.5 truncate text-[11px] font-medium opacity-75">{ev.host || ev.club}</p>}
+                                {(ev.host || ev.club) && <p className="mt-0.5 truncate text-[10px] font-medium opacity-75">{ev.host || ev.club}</p>}
                               </div>
                             );
                           })}
-                          {extraCount > 0 && <span className="text-[10px] text-foreground-400 font-semibold pl-2.5">+{extraCount} more</span>}
+                          {extraCount > 0 && <span className="block rounded-md bg-white/80 px-2 py-0.5 text-[10px] font-bold text-primary-700 ring-1 ring-primary-100">+{extraCount} more</span>}
                         </div>
                       </button>
                     );

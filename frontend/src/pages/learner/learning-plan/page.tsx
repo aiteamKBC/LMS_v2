@@ -29,6 +29,7 @@ export default function LearnerLearningPlanPage() {
     : '';
   const overviewHref = kind && id ? `/workspace/learner/${kind}/${id}` : '/workspace/learner';
   const modulesHref = learnerRoute('/learner/learning-plan/modules', kind, id);
+  const trainingPlanHref = learnerRoute('/learner/training-plan-timeline', kind, id);
 
   return (
     <WorkspaceShell
@@ -70,15 +71,15 @@ export default function LearnerLearningPlanPage() {
           </div>
         </section>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <Link
             to={modulesHref}
             className="group flex min-h-56 flex-col rounded-2xl border border-foreground-100/70 bg-background-50 p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary-300 hover:shadow-md md:p-6"
           >
-            <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary-100 text-primary-700 transition-colors group-hover:bg-primary-200">
+            <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary-50 text-primary-600 transition-colors group-hover:bg-primary-100">
               <AppIcon className="ri-book-2-line text-2xl" />
             </span>
-            <h2 className="mt-5 font-heading text-xl font-bold text-foreground-900">Module</h2>
+            <h2 className="mt-5 font-heading text-xl font-bold text-foreground-900">Modules</h2>
             <p className="mt-2 max-w-md text-sm leading-6 text-foreground-500">
               Open your learning modules, weeks, activities, presentations and forms.
             </p>
@@ -92,8 +93,8 @@ export default function LearnerLearningPlanPage() {
             to="/learner/calendar"
             className="group flex min-h-56 flex-col rounded-2xl border border-foreground-100/70 bg-background-50 p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary-300 hover:shadow-md md:p-6"
           >
-            <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700 transition-colors group-hover:bg-emerald-200">
-              <AppIcon className="ri-calendar-check-line text-2xl" />
+            <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary-50 text-primary-600 transition-colors group-hover:bg-primary-100">
+              <AppIcon className="ri-calendar-2-line text-2xl" />
             </span>
             <h2 className="mt-5 font-heading text-xl font-bold text-foreground-900">Calendar</h2>
             <p className="mt-2 max-w-md text-sm leading-6 text-foreground-500">
@@ -101,6 +102,23 @@ export default function LearnerLearningPlanPage() {
             </p>
             <span className="mt-auto inline-flex items-center gap-1.5 pt-6 text-sm font-bold text-primary-600 group-hover:text-primary-700">
               Open Calendar
+              <AppIcon className="ri-arrow-right-line transition-transform group-hover:translate-x-0.5" />
+            </span>
+          </Link>
+
+          <Link
+            to={trainingPlanHref}
+            className="group flex min-h-56 flex-col rounded-2xl border border-foreground-100/70 bg-background-50 p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary-300 hover:shadow-md md:p-6"
+          >
+            <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-violet-50 text-violet-600 transition-colors group-hover:bg-violet-100">
+              <AppIcon className="ri-calendar-todo-line text-2xl" />
+            </span>
+            <h2 className="mt-5 font-heading text-xl font-bold text-foreground-900">Training Plan</h2>
+            <p className="mt-2 max-w-md text-sm leading-6 text-foreground-500">
+              Review your training plan month by month alongside your learning progress.
+            </p>
+            <span className="mt-auto inline-flex items-center gap-1.5 pt-6 text-sm font-bold text-primary-600 group-hover:text-primary-700">
+              Open Training Plan
               <AppIcon className="ri-arrow-right-line transition-transform group-hover:translate-x-0.5" />
             </span>
           </Link>
