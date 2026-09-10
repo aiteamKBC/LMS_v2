@@ -1,351 +1,104 @@
-// ============================================================================
-// Learner → Training plan  (split view: Aptem plan ↔ LMS modules & progress)
-//
-// LEFT  = the APTEM TRAINING PLAN — months from Audit.learner_match
-//         (aptem_training_plan), matched to the learner server-side by aptem_id
-//         (email-confirmed). Each month expands to its training-plan activities
-//         (Aptem activity name + delivery type + status). Opening a month also
-//         selects it.
-//
-// RIGHT = the LMS MODULES & PROGRESS for the selected month — the learner's
-//         real Last_audit activity feed (fetchStudentActivity, already learner-
-//         gated). Activities are grouped month → module (group_name) → activity,
-//         each carrying real completion, OTJH and quiz score. Because a module's
-//         activities run across several months, a module naturally reappears
-//         under each month it touches. Rows reuse My Learning's StudentActivityRow
-//         (and its "Open material" flow) verbatim.
-// ============================================================================
 import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
+import { ArrowRight, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock3, GraduationCap, Headphones, Layers3, RefreshCw, TrendingUp, Users, Video } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { PageContainer } from '@/components/ui/PageContainer';
 import { roleNavMap } from '@/mocks/navigation';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
-import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
-import { fetchAptemTrainingPlan, type AptemPlanModule } from '@/api/aptemTrainingPlan';
-import { fetchStudentActivity, type StudentActivityItem, type StudentActivityResponse } from '@/api/studentActivity';
-import { formatHoursMinutes } from '@/lib/format';
-import { AppIcon } from '@/components/feature/AppIcon';
-import { PageContainer } from '@/components/ui/PageContainer';
-import { Panel } from '@/components/ui/Panel';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { StatusBadge } from '@/components/ui/StatusBadge';
-import { RowsSkeleton } from '@/components/feature/Skeletons';
-import type { StatusTone } from '@/lib/statusTone';
-import type { LearnerKind } from '@/api/learnerDetail';
+import { type TrainingPlanDashboard, type PlanSession } from '@/api/trainingPlanDashboard';
+import { subjectsFrom, type Subject } from '../my-learning/SubjectWorkspace';
+import { useTrainingPlanData } from './useTrainingPlanData';
+import { barPosition, buildPlanModules, monthMetrics, nextSession, percent, reviewDate, reviewToBook, sessionDay, timelineYears, uniquePlanSessions, type TimelineModule } from './model';
+import styles from './trainingPlan.module.css';
 
-const learnerNav = roleNavMap.learner;
+const nav = roleNavMap.learner;
+const palette = ['violet', 'green', 'amber', 'blue', 'pink'];
+const monthNames = Array.from({ length: 12 }, (_, i) => new Date(2024, i, 1).toLocaleDateString('en-GB', { month: 'short' }));
+const hours = (value: number | null | undefined) => value == null ? '—' : `${Number(value.toFixed(2))}`;
+const dateLabel = (value: string) => value ? new Date(`${value.slice(0, 10)}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', ...(Number(value.slice(0, 4)) !== new Date().getFullYear() ? { year: 'numeric' as const } : {}) }) : 'Dates coming soon';
+const monthLabel = (value: string) => new Date(`${value}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+const sessionTime = (value: string) => new Date(value).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/London' });
+function Meter({ value, label }: { value: number | null; label: string }) {
+  return <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value ?? undefined} className={styles.meter}><span style={{ width: `${value ?? 0}%` }} /></div>;
+}
+function State({ value }: { value: string }) {
+  return <span className={`${styles.state} ${['Completed', 'Attended'].includes(value) ? styles.positive : ['Not attended', 'Overdue'].includes(value) ? styles.warning : ''}`}>{value}</span>;
+}
+function moduleStatus(module: TimelineModule) { return module.activities.length && module.done === module.activities.length ? 'Completed' : module.done ? 'In progress' : 'Not started'; }
 
-interface AxisMonth {
-  key: string;
-  label: string;
-  date: string | null;
-  modules: AptemPlanModule[];
-}
-interface ActivityModule {
-  id: number;
-  name: string;
-  activities: StudentActivityItem[];
-}
-
-/** "YYYY-MM" bucket key for a date, or '' when undated. */
-function monthKey(dateIso?: string | null): string {
-  if (!dateIso) return '';
-  const m = /^(\d{4})-(\d{2})/.exec(dateIso);
-  return m ? `${m[1]}-${m[2]}` : '';
-}
-function monthLabelFromKey(key: string): string {
-  const m = /^(\d{4})-(\d{2})$/.exec(key);
-  if (!m) return key;
-  return new Date(Number(m[1]), Number(m[2]) - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
-}
-function isDone(status?: string | null): boolean {
-  return (status || '').trim().toLowerCase() === 'completed';
-}
-function rollupStatuses(statuses: (string | null | undefined)[]): { tone: StatusTone; label: string } {
-  const known = statuses.filter((s): s is string => Boolean(s && s.trim()));
-  if (known.length === 0) return { tone: 'neutral', label: 'No activity' };
-  const done = known.filter(isDone).length;
-  if (done === known.length) return { tone: 'positive', label: 'Complete' };
-  if (done > 0) return { tone: 'info', label: 'In progress' };
-  return { tone: 'neutral', label: 'Not started' };
+export function TrainingPlanBoard({ data, subjects, kind, learnerId, onRefresh, refreshing = false, onRetryContract = onRefresh }: {
+  data: TrainingPlanDashboard; subjects: Subject[]; kind: string; learnerId: string; onRefresh: () => void; refreshing?: boolean; onRetryContract?: () => void;
+}) {
+  const modules = useMemo(() => buildPlanModules(subjects, data), [subjects, data]);
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const today = new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
+  const thisMonth = today.slice(0, 7);
+  const [selectedMonth, setSelectedMonth] = useState(thisMonth);
+  const [selectedId, setSelectedId] = useState('');
+  const [filter, setFilter] = useState('all');
+  const year = Number(selectedMonth.slice(0, 4));
+  const sourceDates = [...Object.keys(data.months), ...data.actual.map(row => row.month), ...data.reviews.map(reviewDate), ...modules.flatMap(m => [m.start, m.end])];
+  const years = timelineYears(sourceDates.map(date => date.length === 7 ? `${date}-01` : date), Number(today.slice(0, 4)), year);
+  const activeModules = modules.filter(module => !module.start || (module.start < `${year + 1}-01-01` && module.end >= `${year}-01-01`));
+  const selected = modules.find(module => module.id === selectedId) || modules.find(module => module.start && module.start.slice(0, 7) <= selectedMonth && module.end.slice(0, 7) >= selectedMonth);
+  const sessions = uniquePlanSessions(modules);
+  const next = nextSession(sessions, now);
+  const currentMetrics = monthMetrics(thisMonth, modules, data), metrics = monthMetrics(selectedMonth, modules, data);
+  const month = data.months[selectedMonth];
+  const total = modules.reduce((sum, module) => sum + module.activities.length, 0), done = modules.reduce((sum, module) => sum + module.done, 0), overall = percent(done, total);
+  const monthSessions = sessions.filter(session => sessionDay(session.start).startsWith(selectedMonth));
+  const reviews = data.reviews.filter(review => review.source !== 'student-support' && review.status !== 'cancelled').sort((a, b) => reviewDate(a).localeCompare(reviewDate(b)));
+  const dueReview = reviewToBook(reviews);
+  const periodReviews = selected?.start && selected.end ? reviews.filter(review => reviewDate(review) >= selected.start && reviewDate(review) <= selected.end) : reviews.filter(review => reviewDate(review).startsWith(selectedMonth));
+  const selectedNext = selected ? nextSession(selected.sessions, now) : null;
+  const reviewDays = [...new Set(reviews.map(reviewDate).filter(date => date.startsWith(String(year))))].map(date => ({ date, items: reviews.filter(review => reviewDate(review) === date) }));
+  const subjectHref = (id: string) => `/learner/modules/${kind}/${learnerId}?subject=${encodeURIComponent(id)}`;
+  const learnerQuery = `kind=${encodeURIComponent(kind)}&learner=${encodeURIComponent(learnerId)}`;
+  const calendarHref = (event?: string) => `/learner/calendar?${learnerQuery}${event ? `&event=${encodeURIComponent(event)}` : ''}`;
+  const selectMonth = (key: string) => { setSelectedMonth(key); setSelectedId(''); };
+  const shiftMonth = (step: number) => { const date = new Date(`${selectedMonth}-01T12:00:00Z`); date.setUTCMonth(date.getUTCMonth() + step); selectMonth(date.toISOString().slice(0, 7)); };
+  const sessionStatus = (session: PlanSession) => session.attended === true ? 'Attended' : session.attended === false ? 'Not attended' : Date.parse(session.start) > now ? 'Scheduled' : 'Attendance pending';
+  const reviewStatus = (review: typeof reviews[number]) => ({ completed: 'Completed', scheduled: review.invited === false ? 'Booking pending' : 'Booked', 'not-scheduled': reviewDate(review) < today ? 'Overdue' : 'Not booked', 'awaiting-signature': 'Awaiting signatures', 'in-progress': 'In progress' }[review.status] || 'Not booked');
+  const visibleSessions = monthSessions.filter(session => filter !== 'completed' || session.attended === true).filter(session => filter !== 'pending' || session.attended !== true);
+  return <div className={styles.root}>
+    <header className={styles.heading}><div><span className={styles.eyebrow}>Your learning journey</span><h1>My Training Plan</h1><p>Your modules, study hours and coaching, all in one place.</p></div><div className={styles.headerActions}>{data.coach.bookingUrl && <a href={data.coach.bookingUrl} target="_blank" rel="noopener noreferrer" className={styles.secondary}><Headphones size={16} />Support session<ArrowRight size={15} /></a>}<button className={styles.iconButton} onClick={onRefresh} disabled={refreshing} aria-busy={refreshing} aria-label="Refresh training plan"><RefreshCw size={17} /></button></div></header>
+    {refreshing && <p role="status" className={styles.hint}>Refreshing your training plan…</p>}
+    {data.contractStatus === 'loading' && <p role="status" className={styles.hint}>Loading study hour targets…</p>}
+    {data.contractStatus === 'unavailable' && <p role="status" className={styles.hint}>Study hour targets could not be loaded. <button className={styles.secondary} onClick={onRetryContract}>Retry study hours</button></p>}
+    <section className={styles.highlights} aria-label="Training plan summary">
+      <article className={`${styles.highlight} ${styles.next}`}><span className={styles.tile}><CalendarDays size={21} /></span><div><p className={styles.kicker}>Next up</p><h2>{next?.title || 'Your next live session'}</h2><p className={styles.hint}>{next ? `${sessionTime(next.start)} · UK time · ${next.minutes} min` : 'Coming soon — your session will appear once scheduled.'}</p></div>{next?.joinUrl ? <a className={styles.primary} href={next.joinUrl} target="_blank" rel="noopener noreferrer">Join live session<ArrowRight size={16} /></a> : next ? <Link className={styles.primary} to={subjectHref(modules.find(m => m.moduleId === next.moduleId)?.id || '')}>View module<ArrowRight size={16} /></Link> : <span className={styles.soon}>Coming soon</span>}</article>
+      <article className={`${styles.highlight} ${styles.reviewHighlight}`}><span className={styles.tile}><Users size={21} /></span><div><p className={styles.kicker}>Review to book</p><h2>{dueReview ? `${dueReview.title}${dueReview.sequence ? ` ${dueReview.sequence}` : ''}` : 'Your coaching reviews'}</h2><p className={styles.hint}>{dueReview ? `Due ${dateLabel(reviewDate(dueReview))}${(dueReview.coachName || data.coach.name) ? ` · ${dueReview.coachName || data.coach.name}` : ''}` : 'Your next review will appear when it is planned.'}</p></div>{dueReview ? <Link className={styles.primary} to={calendarHref(dueReview.eventKey)}>Book review<ArrowRight size={16} /></Link> : data.coach.bookingUrl ? <a className={styles.primary} href={data.coach.bookingUrl} target="_blank" rel="noopener noreferrer">Book a support session<ArrowRight size={16} /></a> : <span className={styles.soon}>Coming soon</span>}</article>
+      <article className={`${styles.highlight} ${styles.hoursHighlight}`}><span className={styles.tile}><Clock3 size={21} /></span><div><p className={styles.kicker}>This month's study hours</p><h2>{hours(currentMetrics.actual)} <small>/ {hours(currentMetrics.planned)} hrs</small></h2><p className={styles.hint}>{monthLabel(thisMonth)}</p></div><div className={styles.highlightFooter}><Meter value={currentMetrics.progress} label="This month's study hours" /><p>{hours(currentMetrics.remaining)} hrs remaining · {hours(currentMetrics.weekly)} hrs / week</p></div></article>
+      <article className={`${styles.highlight} ${styles.progressHighlight}`}><span className={styles.tile}><TrendingUp size={21} /></span><div><p className={styles.kicker}>Overall progress</p><h2>{overall}<small>%</small></h2><p className={styles.hint}>{done} of {total} activities completed</p></div><div className={styles.highlightFooter}><Meter value={overall} label="Overall activity progress" /><p>{modules.filter(m => moduleStatus(m) === 'Completed').length} of {modules.length} modules completed</p></div></article>
+    </section>
+    <section className={styles.timeline} aria-label="Module timeline"><div className={styles.toolbar}><div className={styles.controls}><label>Year<select aria-label="Timeline year" value={year} onChange={event => selectMonth(`${event.target.value}-${selectedMonth.slice(5)}`)}>{years.map(y => <option key={y}>{y}</option>)}</select></label><button className={styles.secondary} onClick={() => selectMonth(thisMonth)}>Today</button></div><div className={styles.legend}><span><i className={styles.durationKey} />Module duration</span><span><i className={styles.todayKey} />Today</span><span><CheckCircle2 size={13} />Completed</span></div><label className={styles.jump}>Jump to<select aria-label="Jump to month" value={selectedMonth} onChange={event => selectMonth(event.target.value)}>{monthNames.map((name, index) => { const key = `${year}-${String(index + 1).padStart(2, '0')}`; return <option key={key} value={key}>{name} {year}{data.months[key]?.topics[0] ? ` — ${data.months[key].topics[0]}` : ''}</option>; })}</select></label></div>
+      <div className={styles.timelineScroll} tabIndex={0} aria-label="Scroll module timeline"><div className={styles.timelineGrid}><div className={styles.timelineHeader}><div className={styles.moduleHeading}>Modules <span>{activeModules.length}</span></div><div className={styles.months}>{monthNames.map((name, index) => { const key = `${year}-${String(index + 1).padStart(2, '0')}`; return <button key={key} className={key === selectedMonth ? styles.selectedMonth : ''} onClick={() => selectMonth(key)} aria-label={`${monthLabel(key)}${data.months[key]?.topics[0] ? ` — ${data.months[key].topics[0]}` : ''}`} aria-pressed={key === selectedMonth}><strong>{name}</strong><span title={data.months[key]?.topics.join(' · ')}>{data.months[key]?.topics[0] || ''}</span></button>; })}</div></div>
+        {activeModules.length ? activeModules.map((module, index) => { const position = barPosition(module.start, module.end, year); return <div key={module.id} className={`${styles.timelineRow} ${module.id === selected?.id ? styles.selectedRow : ''}`}><div className={styles.moduleLabel}><i className={`${styles.dot} ${styles[palette[index % palette.length]]}`} /><div><Link to={subjectHref(module.id)}>{module.title}</Link><p>{module.weeks || '—'} weeks · {module.sessions.length} live sessions</p><div className={styles.rowProgress}><Meter value={module.progress} label={`${module.title} activity progress`} /><span>{module.progress}%</span></div></div></div><div className={styles.track}>{monthNames.map((_, i) => <div key={i} className={`${styles.monthCell} ${selectedMonth === `${year}-${String(i + 1).padStart(2, '0')}` ? styles.selectedCell : ''}`} />)}{position ? <button className={`${styles.moduleBar} ${styles[palette[index % palette.length]]}`} style={{ left: `${position.left}%`, width: `${position.width}%` }} onClick={() => { setSelectedId(module.id); if (selectedMonth < module.start.slice(0, 7) || selectedMonth > module.end.slice(0, 7)) setSelectedMonth(module.start.slice(0, 7)); }} aria-label={`Show ${module.title} overview`} aria-pressed={module.id === selected?.id}><span className={styles.barFill} style={{ width: `${module.progress}%` }} /><span className={styles.barText}>{dateLabel(module.start)} – {dateLabel(module.end)}<small>{module.weeks || '—'} weeks · {module.sessions.length} sessions</small></span>{moduleStatus(module) === 'Completed' && <CheckCircle2 size={16} />}</button> : <button type="button" className={styles.noDates} onClick={() => setSelectedId(module.id)} aria-label={`Show ${module.title} overview`} aria-pressed={module.id === selected?.id}>Schedule coming soon · View overview<ArrowRight size={12} /></button>}{Number(today.slice(0, 4)) === year && <span className={styles.todayLine} style={{ left: `${barPosition(today, today, year)?.left || 0}%` }} />}</div></div>; }) : <p className={styles.empty}>No modules are scheduled for this year.</p>}
+        {!!reviewDays.length && <div className={`${styles.timelineRow} ${styles.reviewTimeline}`}><div className={styles.moduleLabel}><CalendarDays size={17} /><div><strong>Coaching reviews</strong><p>{reviewDays.reduce((sum, day) => sum + day.items.length, 0)} reviews this year</p></div></div><div className={styles.track}>{monthNames.map((_, i) => <div key={i} className={styles.monthCell} />)}{reviewDays.map(day => <Link key={day.date} className={`${styles.reviewMarker} ${day.items.every(review => review.status === 'completed') ? styles.positive : ''}`} to={calendarHref(day.items[0].eventKey)} style={{ left: `${barPosition(day.date, day.date, year)?.left || 0}%` }} aria-label={`${day.items.map(review => review.title).join(', ')} on ${dateLabel(day.date)}`} title={`${dateLabel(day.date)} · ${day.items.map(review => `${review.title}: ${reviewStatus(review)}`).join(' · ')}`}><CalendarDays size={14} />{day.items.length > 1 && <small>{day.items.length}</small>}</Link>)}</div></div>}
+      </div></div>
+    </section>
+    <div className={styles.details}>
+      <section className={styles.panel} aria-label="Monthly study plan"><div className={styles.panelHeading}><div><p className={styles.eyebrow}>Monthly focus</p><h2>{monthLabel(selectedMonth)}</h2></div><div className={styles.controls}><button className={styles.iconButton} onClick={() => shiftMonth(-1)} aria-label="Previous month"><ChevronLeft size={16} /></button><button className={styles.iconButton} onClick={() => shiftMonth(1)} aria-label="Next month"><ChevronRight size={16} /></button></div></div>{!!month?.topics.length && <p className={styles.focusTitle}>{month.topics.join(' · ')}</p>}
+        <div className={styles.monthStats}>{[['Planned', metrics.planned], ['Completed', metrics.actual], ['Remaining', metrics.remaining], ['Weekly target', metrics.weekly]].map(([label, value]) => <div key={String(label)}><span>{label}</span><strong>{hours(value as number | null)} <small>hrs</small></strong></div>)}</div><div className={styles.listHeading}><span>{monthSessions.length} live sessions this month</span><select aria-label="Filter monthly sessions" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All sessions</option><option value="completed">Attended</option><option value="pending">Pending</option></select></div>
+        <div className={styles.sessionList}>{visibleSessions.length ? visibleSessions.map(session => { const module = modules.find(m => m.moduleId === session.moduleId); return <article key={session.id} className={styles.session}><div className={styles.sessionTitle}><Video size={16} /><strong>{session.title}</strong><State value={sessionStatus(session)} /></div><p>{sessionTime(session.start)} · UK time · {session.minutes} min</p><div className={styles.sessionActions}>{module && <Link to={subjectHref(module.id)}>View session materials<ArrowRight size={14} /></Link>}{session.joinUrl && Date.parse(session.start) > now && <a href={session.joinUrl} target="_blank" rel="noopener noreferrer">Join Teams</a>}</div></article>; }) : <p className={styles.empty}>No {filter === 'all' ? '' : `${filter} `}live sessions to show this month.</p>}</div>
+        {selected && <Link className={styles.textLink} to={subjectHref(selected.id)}>View activities in {selected.title}<ArrowRight size={14} /></Link>}
+      </section>
+      <section className={styles.panel} aria-label="Reviews this period"><div className={styles.panelHeading}><div><p className={styles.eyebrow}>Your coaching</p><h2>Reviews this period</h2></div><Users size={20} /></div><p className={styles.hint}>{periodReviews.filter(r => r.status === 'completed').length} of {periodReviews.length} completed{selected?.start ? ` · ${dateLabel(selected.start)} – ${dateLabel(selected.end)}` : ''}</p><div className={styles.reviewList}>{periodReviews.length ? periodReviews.map(review => <article className={styles.review} key={review.eventKey}><span className={styles.reviewIcon}>{review.status === 'completed' ? <CheckCircle2 size={18} /> : <CalendarDays size={18} />}</span><div><h3>{review.title}{review.sequence ? ` ${review.sequence}` : ''}</h3><p>{dateLabel(reviewDate(review))}{review.scheduledTime ? ` · ${review.scheduledTime.slice(0, 5)}` : ''}</p><State value={reviewStatus(review)} /></div><Link className={styles.reviewAction} to={calendarHref(review.eventKey)}>{review.status === 'completed' ? 'View' : review.status === 'not-scheduled' ? 'Book now' : 'View booking'}<ArrowRight size={13} /></Link></article>) : <p className={styles.empty}>Your reviews will appear here once planned.</p>}</div><Link className={styles.textLink} to={`/learner/progress-reviews?${learnerQuery}`}>View all your reviews<ArrowRight size={15} /></Link><div className={styles.support}><Headphones size={20} /><div><h3>Need a little support?</h3><p>{data.coach.name ? `Book a session with ${data.coach.name}.` : 'Your coach booking link will appear here once available.'}</p>{data.coach.bookingUrl && <a href={data.coach.bookingUrl} target="_blank" rel="noopener noreferrer">Book a support session<ArrowRight size={14} /></a>}</div></div></section>
+      <section className={styles.panel} aria-label="Module overview"><div className={styles.panelHeading}><div><p className={styles.eyebrow}>In focus</p><h2>Module overview</h2></div>{selected && <Link className={styles.primary} to={subjectHref(selected.id)}>Go to module<ArrowRight size={15} /></Link>}</div>{selected ? <><h3 className={styles.overviewTitle}>{selected.title}</h3><State value={moduleStatus(selected)} />{selected.detail?.description && <p className={styles.description}>{selected.detail.description}</p>}<dl className={styles.overviewStats}><div><CalendarDays size={18} /><dt>Teaching weeks</dt><dd>{selected.weeks || '—'}<small>{selected.start ? `${dateLabel(selected.start)} – ${dateLabel(selected.end)}` : 'Schedule coming soon'}</small></dd></div><div><Layers3 size={18} /><dt>Live sessions</dt><dd>{selected.sessions.length}<small>{selected.sessions.filter(s => s.attended === true).length} attended</small></dd></div><div><Clock3 size={18} /><dt>Hours recorded</dt><dd>{hours(selected.actual)}<small>Accepted study hours</small></dd></div><div><Users size={18} /><dt>Coach</dt><dd>{data.coach.name || 'To be assigned'}</dd></div><div><GraduationCap size={18} /><dt>Tutor</dt><dd>{selected.detail?.tutor_name || 'To be assigned'}</dd></div><div><Video size={18} /><dt>Next session</dt><dd>{selectedNext ? sessionTime(selectedNext.start) : 'Coming soon'}</dd></div></dl><div className={styles.overviewProgress}><div><span>Activity progress</span><strong>{selected.progress}%</strong></div><Meter value={selected.progress} label="Selected module progress" /><p>{selected.done} of {selected.activities.length} activities completed</p></div></> : <p className={styles.empty}>{modules.length ? 'Choose a module on the timeline to see its details.' : 'Your modules will appear when they are assigned.'}</p>}</section>
+    </div>
+  </div>;
 }
 
 export default function TrainingPlanTimelinePage() {
-  const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
-  const { kind, id } = useResolvedLearner(urlKind, urlId);
-  const { real } = useLearnerDetailParam(kind, id);
-
-  const [plan, setPlan] = useState<AxisMonth[] | null>(null);
-  const [planLoading, setPlanLoading] = useState(true);
-  const [planError, setPlanError] = useState<string | null>(null);
-
-  const [activity, setActivity] = useState<StudentActivityResponse | null>(null);
-  const [activityLoading, setActivityLoading] = useState(true);
-  const [activityError, setActivityError] = useState<string | null>(null);
-
-  const [activeKey, setActiveKey] = useState<string>('');
-  const [openMonths, setOpenMonths] = useState<string[]>([]);
-
-  // --- fetch the Aptem training plan (left) ---
-  useEffect(() => {
-    if (!kind || !id) return;
-    let cancelled = false;
-    setPlanLoading(true);
-    setPlanError(null);
-    fetchAptemTrainingPlan(kind as LearnerKind, id)
-      .then((res) => {
-        if (cancelled) return;
-        const months: AxisMonth[] = (res.months || []).map((m, i) => {
-          const key = monthKey(m.date) || `plan:${i}`;
-          return {
-            key,
-            label: m.month || monthLabelFromKey(key) || 'Undated',
-            date: m.date,
-            modules: m.modules || [],
-          };
-        });
-        setPlan(months);
-      })
-      .catch((err) => { if (!cancelled) setPlanError(err instanceof Error ? err.message : 'Could not load the training plan'); })
-      .finally(() => { if (!cancelled) setPlanLoading(false); });
-    return () => { cancelled = true; };
-  }, [kind, id]);
-
-  // --- fetch the LMS activity feed (right) ---
-  useEffect(() => {
-    if (!kind || !id) return;
-    const controller = new AbortController();
-    setActivityLoading(true);
-    setActivityError(null);
-    fetchStudentActivity(kind as LearnerKind, id, controller.signal)
-      .then((res) => setActivity(res))
-      .catch((err) => { if (!controller.signal.aborted) setActivityError(err instanceof Error ? err.message : 'Could not load LMS activity'); })
-      .finally(() => { if (!controller.signal.aborted) setActivityLoading(false); });
-    return () => controller.abort();
-  }, [kind, id]);
-
-  // LMS activities grouped: month key → module → activities.
-  const activityByMonth = useMemo(() => {
-    const byMonth = new Map<string, Map<number, ActivityModule>>();
-    for (const item of activity?.activities || []) {
-      const mk = monthKey(item.date);
-      if (!mk) continue;
-      let modules = byMonth.get(mk);
-      if (!modules) { modules = new Map(); byMonth.set(mk, modules); }
-      let group = modules.get(item.group_id);
-      if (!group) { group = { id: item.group_id, name: item.group_name || 'Unnamed module', activities: [] }; modules.set(item.group_id, group); }
-      group.activities.push(item);
-    }
-    return byMonth;
-  }, [activity]);
-
-  // The month axis on the left: the Aptem plan when present, else fall back to
-  // the months the LMS activity itself covers (so the page is never empty when
-  // only one source has data).
-  const axis = useMemo<AxisMonth[]>(() => {
-    if (plan && plan.length) return plan;
-    return [...activityByMonth.keys()]
-      .sort()
-      .map((key) => ({ key, label: monthLabelFromKey(key), date: `${key}-01`, modules: [] }));
-  }, [plan, activityByMonth]);
-
-  // Default selection = first month, once the axis is known.
-  useEffect(() => {
-    if (!activeKey && axis.length) {
-      setActiveKey(axis[0].key);
-      setOpenMonths([axis[0].key]);
-    }
-  }, [axis, activeKey]);
-
-  const onMonthClick = (key: string) => {
-    setActiveKey(key);
-    setOpenMonths((prev) => (prev.includes(key) ? prev.filter((m) => m !== key) : [...prev, key]));
-  };
-
-  const activeModules = useMemo<ActivityModule[]>(() => {
-    const modules = activityByMonth.get(activeKey);
-    if (!modules) return [];
-    return [...modules.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [activityByMonth, activeKey]);
-
-  const activeMonth = axis.find((m) => m.key === activeKey) || null;
-  const monthActivities = activeModules.flatMap((m) => m.activities);
-  const monthDone = monthActivities.filter((a) => a.completed).length;
-  const monthHours = monthActivities.filter((a) => a.hours_mapped).reduce((n, a) => n + a.actual, 0);
-  const anyMonthHours = monthActivities.some((a) => a.hours_mapped);
-
-  const subtitle = real
-    ? [real.programme, real.employer, real.cohort ? `Cohort ${real.cohort}` : ''].filter(Boolean).join(' · ')
-    : '';
-
-  const noData = !planLoading && !activityLoading && axis.length === 0;
-
-  return (
-    <WorkspaceShell
-      role="learner"
-      roleLabel={learnerNav.label}
-      navItems={learnerNav.items}
-      workspaceLabel={learnerNav.workspaceLabel}
-      pageTitle="Training plan"
-      pageSubtitle={subtitle}
-      userName={real?.name || 'Learner'}
-      userRole={real?.programme ? `${real.programme} Learner` : 'Learner'}
-    >
-      <PageContainer>
-        {noData ? (
-          <Panel>
-            <EmptyState
-              size="sm"
-              title={planError || activityError || 'No training plan for this learner'}
-              description="This learner isn’t linked to an Aptem training plan or LMS activity record."
-            />
-          </Panel>
-        ) : (
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[340px_minmax(0,1fr)] lg:items-start">
-            {/* ══ LEFT: Aptem training plan, month by month ══ */}
-            <Panel padding="sm" className="lg:sticky lg:top-4">
-              <div className="mb-2 flex items-center gap-2 px-1">
-                <AppIcon className="ri-calendar-2-line text-sm text-primary-600" />
-                <h2 className="text-[11px] font-bold uppercase tracking-[0.12em] text-foreground-500">Training plan</h2>
-              </div>
-              {planLoading ? (
-                <RowsSkeleton rows={6} />
-              ) : (
-                <div className="space-y-1.5">
-                  {axis.map((m) => {
-                    const active = m.key === activeKey;
-                    const open = openMonths.includes(m.key);
-                    const status = rollupStatuses(m.modules.map((mod) => mod.components?.status));
-                    const lmsCount = activityByMonth.get(m.key)?.size ?? 0;
-                    return (
-                      <div
-                        key={m.key}
-                        className={`overflow-hidden rounded-xl border transition-colors ${active ? 'border-primary-300 bg-primary-50/40' : 'border-background-200 bg-background-50'}`}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => onMonthClick(m.key)}
-                          aria-expanded={open}
-                          aria-pressed={active}
-                          className={`flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors ${active ? 'bg-primary-50' : 'hover:bg-background-100'}`}
-                        >
-                          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[15px] ${active ? 'bg-primary-600 text-white' : 'bg-background-100 text-foreground-500'}`}>
-                            <AppIcon className="ri-calendar-2-line text-sm" />
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className={`block text-sm font-bold ${active ? 'text-primary-800' : 'text-foreground-800'}`}>{m.label}</span>
-                            <span className="mt-0.5 block text-[11px] font-medium text-foreground-400">
-                              {m.modules.length} plan {m.modules.length === 1 ? 'activity' : 'activities'}
-                              {lmsCount ? ` · ${lmsCount} LMS ${lmsCount === 1 ? 'module' : 'modules'}` : ''}
-                            </span>
-                          </span>
-                          {m.modules.length > 0 && (
-                            <span className="hidden shrink-0 sm:block">
-                              <StatusBadge tone={status.tone} label={status.label} size="sm" />
-                            </span>
-                          )}
-                          <AppIcon className={`ri-arrow-down-s-line shrink-0 text-base text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`} />
-                        </button>
-                        {open && (
-                          m.modules.length === 0 ? (
-                            <p className="border-t border-primary-100/70 bg-white px-3 py-3 text-[12px] text-foreground-400">
-                              No Aptem plan activities recorded for this month.
-                            </p>
-                          ) : (
-                            <ul className="space-y-1 border-t border-primary-100/70 bg-white p-2">
-                              {m.modules.map((mod, i) => (
-                                <li key={`${m.key}-${i}`} className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 hover:bg-background-100">
-                                  <div className="min-w-0">
-                                    <p className="truncate text-[13px] font-medium text-foreground-800">{mod.module || 'Activity'}</p>
-                                    {mod.components?.type && <p className="text-[11px] text-foreground-400">{mod.components.type}</p>}
-                                  </div>
-                                  {mod.components?.status && <StatusBadge status={mod.components.status} size="sm" dot={false} />}
-                                </li>
-                              ))}
-                            </ul>
-                          )
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </Panel>
-
-            {/* ══ RIGHT: LMS modules & progress for the selected month ══ */}
-            <div className="space-y-3">
-              <Panel padding="md">
-                <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-primary-600">
-                  {activeMonth?.label || 'No month selected'} · LMS activity
-                </p>
-                <h1 className="mt-0.5 text-lg font-bold text-foreground-900">
-                  {activeModules.length} {activeModules.length === 1 ? 'module' : 'modules'} this month
-                </h1>
-                <p className="mt-1 text-xs text-foreground-500">
-                  {monthActivities.length} {monthActivities.length === 1 ? 'activity' : 'activities'} · {monthDone} completed · Recorded OTJH {anyMonthHours ? formatHoursMinutes(monthHours) : 'unavailable'}
-                </p>
-              </Panel>
-
-              {activityLoading ? (
-                <Panel><RowsSkeleton rows={6} /></Panel>
-              ) : activityError ? (
-                <Panel><EmptyState size="sm" variant="error" title="Could not load LMS activity" description={activityError} /></Panel>
-              ) : activeModules.length === 0 ? (
-                <Panel>
-                  <EmptyState size="sm" title="No LMS activity this month" description="No recorded module activity falls in this month. Pick another month on the left." />
-                </Panel>
-              ) : (
-                activeModules.map((module) => {
-                  const complete = module.activities.filter((a) => a.completed).length;
-                  const moduleHasHours = module.activities.some((a) => a.hours_mapped);
-                  const moduleHours = module.activities.reduce((n, a) => n + (a.hours_mapped ? a.actual : 0), 0);
-                  return (
-                    <Panel key={module.id} padding="none" className="overflow-hidden">
-                      <div className="flex items-center gap-3 border-b border-foreground-100 px-4 py-3">
-                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600">
-                          <AppIcon className="ri-book-open-line text-base" />
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-[13px] font-semibold text-foreground-900">{module.name}</p>
-                          <p className="text-[11px] text-foreground-500">
-                            {complete} of {module.activities.length} completed · Recorded OTJH {moduleHasHours ? formatHoursMinutes(moduleHours) : 'unavailable'}
-                          </p>
-                        </div>
-                        <StatusBadge
-                          tone={complete === module.activities.length ? 'positive' : complete > 0 ? 'info' : 'neutral'}
-                          label={complete === module.activities.length ? 'Complete' : complete > 0 ? 'In progress' : 'Not started'}
-                          size="sm"
-                        />
-                      </div>
-                      <div className="divide-y divide-foreground-100">
-                        {module.activities.map((item) => {
-                          const score = item.quiz_score != null && item.quiz_maximum_score
-                            ? `${item.quiz_score}/${item.quiz_maximum_score}`
-                            : null;
-                          return (
-                            <div key={item.activity_id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-                              <span className={`h-2 w-2 shrink-0 rounded-full ${item.completed ? 'bg-emerald-500' : 'bg-foreground-300'}`} />
-                              <div className="min-w-0 flex-1">
-                                <p className="truncate text-[12px] font-semibold text-foreground-800">{item.activity}</p>
-                                <p className="mt-0.5 text-[10px] text-foreground-500">{[item.category, item.date, score].filter(Boolean).join(' · ')}</p>
-                              </div>
-                              <span className="text-right text-[11px] text-foreground-500">
-                                <span className="block">OTJH: {item.hours_mapped ? formatHoursMinutes(item.actual) : 'Unavailable'}</span>
-                                <span className="block">Planned: {item.planned_hours_mapped ? formatHoursMinutes(item.planned) : 'Unavailable'}</span>
-                              </span>
-                              <StatusBadge tone={item.completed ? 'positive' : 'neutral'} label={item.completed ? 'Completed' : (item.status || 'Not started')} size="sm" />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </Panel>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        )}
-      </PageContainer>
-    </WorkspaceShell>
-  );
+  const params = useParams<{ kind?: string; id?: string }>();
+  const { kind, id } = useResolvedLearner(params.kind, params.id);
+  const { snapshot, loading, error, refresh, retryContract } = useTrainingPlanData(kind, id);
+  const real = snapshot?.real;
+  const identity = `${kind}:${id}`;
+  const subjects = useMemo(() => subjectsFrom(snapshot?.activity || null, real || null, snapshot?.metadata), [snapshot?.activity, real, snapshot?.metadata]);
+  return <WorkspaceShell role="learner" roleLabel={nav.label} navItems={nav.items} workspaceLabel={nav.workspaceLabel} pageTitle="Training plan" pageSubtitle={real?.programme || ''} userName={real?.name || 'Learner'} userRole="Learner"><PageContainer>{error && <div role="alert" className={styles.error}><h1>Could not load your training plan</h1><p>{error}</p><button onClick={refresh} className={styles.primary}>Try again</button></div>}{snapshot ? <TrainingPlanBoard key={identity} data={snapshot.data} subjects={subjects} kind={kind!} learnerId={id!} onRefresh={refresh} refreshing={loading} onRetryContract={retryContract} /> : !error && <div role="status" className={styles.loading}><CalendarDays size={30} /><h1>Loading your training plan</h1><p>Getting your modules, schedule and study hours…</p></div>}</PageContainer></WorkspaceShell>;
 }

@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
@@ -156,8 +156,9 @@ function MonthList({ aptemId }: { aptemId?: number }) {
   const complete = summary.completed_months || 0;
   const remaining = Math.max(0, total - complete);
   const percent = total ? Math.min(100, Math.max(0, Math.round(complete / total * 100))) : 0;
-  const canBulkSign = auth.account?.role !== 'learner' && ['coach', 'super-admin'].includes(auth.account?.access || '');
-  const unsigned = summary.months.filter(item => item.is_required !== false && item.status !== 'complete');
+  const student = auth.account?.role === 'learner';
+  const canBulkSign = auth.account?.access !== 'record-monitor' && (student || ['coach', 'super-admin'].includes(auth.account?.access || ''));
+  const unsigned = summary.months.filter(item => item.is_required !== false && (student ? item.status !== 'complete' : !item.coach_signature));
   return <div className={styles.monthList}>
     <header className={styles.monthListHeader}>
       <p className={styles.eyebrow}>Previous learning record</p>
@@ -185,7 +186,7 @@ function MonthList({ aptemId }: { aptemId?: number }) {
       <div className={styles.monthCutoff}><AppIcon className="ri-calendar-line" /><div><span>Previous record through</span><strong>31 August 2026</strong></div></div>
     </section>
     {canBulkSign && <div className={styles.bulkActions}>
-      <p>{unsigned.length ? `${unsigned.length} ${unsigned.length === 1 ? 'month' : 'months'} remaining. Add the coach signature across the record.` : 'All months are complete.'}</p>
+      <p>{unsigned.length ? `${unsigned.length} ${unsigned.length === 1 ? 'month' : 'months'} awaiting your sign-off. ${student ? 'Sign once to complete your previous learning record.' : 'Add the coach signature across the record.'}` : 'Your signature is saved for all months.'}</p>
       <button className={btnPrimary} disabled={!unsigned.length} onClick={() => setBulkOpen(true)}><AppIcon className="ri-edit-line" />Sign all months</button>
     </div>}
     {bulkMessage && <p role="status" className={styles.bulkSuccess}>{bulkMessage}</p>}
@@ -224,12 +225,51 @@ function MonthList({ aptemId }: { aptemId?: number }) {
 
 function CoachList() {
   const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
+  // Debounced so typing does not fire a request per keystroke — the endpoint
+  // filters server-side, which is what makes search work across every page
+  // rather than only the 25 records on screen.
+  const [applied, setApplied] = useState('');
+  useEffect(() => {
+    const timer = window.setTimeout(() => setApplied(search.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+  // A new search starts at page 1; staying on page 3 of the previous results
+  // shows nothing and reads as "no matches".
+  useEffect(() => { setPage(1); }, [applied]);
+
   const { auth } = useAuth();
-  const query = useQuery({ queryKey: ['old-otjh', auth.account?.id, 'learners', page], queryFn: () => getLearners(page) });
-  if (query.isPending) return <PageSkeleton />;
+  const query = useQuery({
+    queryKey: ['old-otjh', auth.account?.id, 'learners', page, applied],
+    queryFn: () => getLearners(page, applied),
+    // Keeps the previous page on screen while the next one loads, so the list
+    // does not collapse to a skeleton on every keystroke.
+    placeholderData: previous => previous,
+  });
+
+  const searchField = (
+    <div className="relative">
+      <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400" />
+      <input
+        type="search"
+        value={search}
+        onChange={event => setSearch(event.target.value)}
+        placeholder="Search by name or email…"
+        aria-label="Search previous learning records by learner name or email"
+        className={`${inputClass} pl-9`}
+      />
+    </div>
+  );
+
+  if (query.isPending) return <><h1 className="text-2xl font-heading font-semibold">Previous learning records</h1>{searchField}<PageSkeleton /></>;
   if (query.error) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
   return <><h1 className="text-2xl font-heading font-semibold">Previous learning records</h1>
-    {!query.data?.learners.length && <EmptyState title="No previous records are assigned to you" />}
+    {searchField}
+    {!query.data?.learners.length && (
+      applied
+        ? <EmptyState title={`No record matches "${applied}"`} />
+        : <EmptyState title="No previous records are assigned to you" />
+    )}
     {query.data?.learners.map(learner => <Panel key={learner.id} className="flex flex-wrap items-center justify-between gap-3"><div>
       <h2 className="font-semibold">{learner.name}</h2><p className="text-sm text-foreground-500">{learner.programme}</p></div>
       <Link className={btnSecondary} to={`/old-otjh/coach/${learner.id}`}>Review record</Link></Panel>)}

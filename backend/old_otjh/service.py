@@ -146,11 +146,8 @@ def _state(month, source, signs, finalization, pending):
     student = signs.get((month, 'learner'))
     coach = signs.get((month, 'coach'))
     complete = bool(student and finalization and finalization['event_type'] == 'finalized')
-    has_data = bool(source and source['row_count'])
-    can_complete = bool(student and has_data and not pending and not complete)
-    status = ('complete' if complete else 'no_data' if not has_data else
-              'ready_to_complete' if can_complete else 'awaiting_coach' if student and not coach else
-              'student_signed' if student else 'needs_review')
+    can_complete = bool(student and not complete)
+    status = 'complete' if complete else 'ready_to_complete' if can_complete else 'awaiting_signature'
     return {'month': month, 'status': status, 'is_required': True,
             'student_signature': student, 'coach_signature': coach,
             'pending_revisions': pending, 'can_complete': can_complete,
@@ -258,18 +255,12 @@ def signing_review(learner, month, actor_role):
     require_writer(actor_role)
     state = review_month(summary(learner), month)
     own = 'student_signature' if actor_role == 'learner' else 'coach_signature'
-    if state['status'] == 'complete' or (state[own] and not state['can_complete']):
+    if (state['status'] == 'complete' and (actor_role == 'learner' or state[own])) or (state[own] and not state['can_complete']):
         return {'month': month, 'ready': False, 'reason': 'Your signature is already saved for this month.'}
-    try:
-        _valid_data(state)
-    except ServiceError as error:
-        return {'month': month, 'ready': False, 'reason': str(error)}
     rows = repo.month_rows(learner, month)
-    check = repo.content_review(learner, rows)
-    return {'month': month, 'ready': check['ready'], 'snapshot_digest': digest(rows),
-            'reason': ('The learner signature is saved. This month will be completed.' if state['can_complete'] else None)
-                      if check['ready'] else 'Learning materials need attention before signing.',
-            'issues': check['issues']}
+    return {'month': month, 'ready': True, 'snapshot_digest': digest(rows),
+            'reason': 'The learner signature is saved. This month will be completed.' if state['can_complete'] else None,
+            'issues': []}
 
 
 def sign_months(learner, months, account, actor_role, image_bytes, request_metadata):
@@ -294,7 +285,7 @@ def sign_months(learner, months, account, actor_role, image_bytes, request_metad
     record = summary(learner)
     if record.get('needs_start') or set(selected) != {m['month'] for m in record['months'] if m['is_required']}:
         raise ServiceError('Your month list has changed. Refresh the page before signing.', 'record_changed', 409)
-    needs_image = any(m['status'] != 'complete' and not m[own] for m in record['months'])
+    needs_image = any(not m[own] and (m['status'] != 'complete' or role == 'coach') for m in record['months'])
     try:
         # A single capture is shared only across this learner's monthly signoffs.
         # Keep Azure upload outside the DB lock and perform it just once.
@@ -308,7 +299,7 @@ def sign_months(learner, months, account, actor_role, image_bytes, request_metad
             states = {m['month']: m for m in fresh['months']}
             for month in selected:
                 state = states[month]
-                if state['status'] == 'complete':
+                if state['status'] == 'complete' and (role == 'learner' or state[own]):
                     skipped.append(month)
                     continue
                 if not state[own] and file_id is None:
@@ -329,7 +320,7 @@ def sign_months(learner, months, account, actor_role, image_bytes, request_metad
                     signed.append(month)
                 else:
                     skipped.append(month)
-                if role == 'learner' or state['student_signature']:
+                if state['status'] != 'complete' and (role == 'learner' or state['student_signature']):
                     repo.finalize(learner, month, snapshot, state['row_count'], account,
                                   metadata={'snapshot_kind': 'monthly_summary', 'completion_rule': 'learner_signature',
                                             'material_check_performed': False})
@@ -366,12 +357,6 @@ def content_review(learner, month):
     return {**repo.content_review(learner, rows), 'snapshot_digest': digest(rows)}
 
 
-def _valid_content(learner, rows):
-    if not repo.content_review(learner, rows)['ready']:
-        raise ServiceError('Some learning materials are unavailable. Restore the missing content before signing or completing this month.',
-                           'content_unavailable', 409)
-
-
 def _locked_scope(learner, month):
     transition = transition_for(learner, lock=True)
     require_month(transition, month)
@@ -379,46 +364,38 @@ def _locked_scope(learner, month):
     return transition, state
 
 
-def _valid_data(state):
-    if not state['row_count']:
-        raise ServiceError('This month has no available activity data. Please contact your coach.', 'no_data', 409)
-    if state['pending_revisions']:
-        raise ServiceError('Pending revisions must be resolved before signing or completing this month.', 'pending_revisions', 409)
-
-
 def _finalize_signed_month(learner, month, rows, transition, account, actor_role):
-    # Called under the transition lock after the learner's signature and the
-    # individual month's content/snapshot have been checked.
+    # Called under the transition lock after checking the report snapshot.
+    # Signing does not depend on material availability or pending hour revisions.
     snapshot = digest(rows)
-    repo.finalize(learner, month, snapshot, len(rows), account)
+    repo.finalize(learner, month, snapshot, len(rows), account, metadata={'material_check_performed': False})
     repo.event(transition['id'], month, 'completed', account, actor_role,
-               {'snapshot_digest': snapshot, 'completion_method': 'automatic_after_signing'})
+               {'snapshot_digest': snapshot, 'completion_method': 'automatic_after_signing', 'material_check_performed': False})
 
 
 def sign(learner, month, account, actor_role, image_bytes, expected_digest, request_metadata):
     require_writer(actor_role)
+    role = 'learner' if actor_role == 'learner' else 'coach'
     from . import storage
     file_id = None
     try:
         with repo.atomic():
             transition, state = _locked_scope(learner, month)
-            if state['status'] == 'complete':
+            if state['status'] == 'complete' and (role == 'learner' or state['coach_signature']):
                 raise ServiceError('This month is complete and its signatures are read-only.', 'month_complete', 409)
-            _valid_data(state)
             rows = repo.month_rows(learner, month)
             current_digest = digest(rows)
             if expected_digest != current_digest:
                 raise ServiceError('The record has changed. Review the latest details before signing.', 'record_changed', 409)
-            _valid_content(learner, rows)
             file_id = storage.save(image_bytes)
-            role = 'learner' if actor_role == 'learner' else 'coach'
             repo.save_signature(learner, month, role, account.display_name or '', file_id, current_digest)
             repo.event(transition['id'], month, 'signed', account, actor_role,
                        {**request_metadata, 'file_id': file_id, 'signer_role': role,
-                        'file_sha256': hashlib.sha256(image_bytes).hexdigest(), 'snapshot_digest': current_digest})
+                        'file_sha256': hashlib.sha256(image_bytes).hexdigest(), 'snapshot_digest': current_digest,
+                        'material_check_performed': False})
             if role == 'learner':
                 repo.save_learner_signature(learner, account.display_name or '', image_bytes)
-            if role == 'learner' or state['student_signature']:
+            if state['status'] != 'complete' and (role == 'learner' or state['student_signature']):
                 _finalize_signed_month(learner, month, rows, transition, account, actor_role)
             result = summary(learner, transition)
             repo.set_completed(transition['id'], result['can_access_lms'])
@@ -436,13 +413,12 @@ def complete(learner, month, account, actor_role):
         transition, state = _locked_scope(learner, month)
         if state['status'] == 'complete':
             return month_detail(learner, month)
-        _valid_data(state)
         if not state['student_signature']:
             raise ServiceError('The learner signature is required.', 'signatures_required', 409)
         rows = repo.month_rows(learner, month)
-        _valid_content(learner, rows)
-        repo.finalize(learner, month, digest(rows), len(rows), account)
-        repo.event(transition['id'], month, 'completed', account, actor_role, {'snapshot_digest': digest(rows)})
+        repo.finalize(learner, month, digest(rows), len(rows), account, metadata={'material_check_performed': False})
+        repo.event(transition['id'], month, 'completed', account, actor_role,
+                   {'snapshot_digest': digest(rows), 'material_check_performed': False})
         result = summary(learner, transition)
         repo.set_completed(transition['id'], result['can_access_lms'])
     return month_detail(learner, month)

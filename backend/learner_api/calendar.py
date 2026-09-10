@@ -374,6 +374,31 @@ def _serialize_event(record):
     }
 
 
+def coaching_events_for_learner(learner, mirror):
+    """One source for the calendar and Training Plan coaching dates/statuses."""
+    emails = {_s(getattr(learner, 'email', '')).strip().casefold(),
+              _s(getattr(mirror, 'email', '')).strip().casefold()} - {''}
+    match = Q()
+    for email in emails:
+        match |= Q(learner_email__iexact=email)
+    if mirror is not None:
+        match |= Q(learner_id=mirror.id) | Q(learner_id=learner.pk)
+    if not match:
+        return []
+    records = []
+    for record in CoachCalendarEvent.objects.filter(match).order_by('target_date', 'event_type', 'sequence'):
+        email = _s(getattr(record, 'learner_email', '')).strip().casefold()
+        # Created_users and learner profiles have different ID sequences.
+        # A matching number must never override another learner's email.
+        expected_id = learner.pk if _s(getattr(record, 'idempotency_key', '')).startswith('learner-book:') else getattr(mirror, 'id', None)
+        belongs = email in emails if email else expected_id is not None and str(record.learner_id) == str(expected_id)
+        if belongs and _belongs_to_current_cycle(record, mirror):
+            records.append(record)
+    events = [_serialize_event(record) for record in records]
+    events.extend(_generated_cycle_events(learner, mirror, {record.event_key for record in records}))
+    return events
+
+
 def _learner_calendar_record(kind, pk, event_key):
     """Resolve an event only when it belongs to the requested learner."""
     model = SOURCE_MODELS.get(kind)
@@ -555,18 +580,7 @@ def learner_calendar(request, kind, pk):
         })
 
     try:
-        records = [
-            record for record in CoachCalendarEvent.objects.filter(match).order_by(
-                "target_date", "event_type", "sequence"
-            )
-            if _belongs_to_current_cycle(record, mirror)
-        ]
-        events = [_serialize_event(record) for record in records]
-
-        # The cycle the coach timetable draws: every slot for this learner's
-        # programme, with the ones already scheduled left to their stored row.
-        stored_by_key = {_s(record.event_key) for record in records}
-        events.extend(_generated_cycle_events(learner, mirror, stored_by_key))
+        events = coaching_events_for_learner(learner, mirror)
 
         # Live curriculum sessions belong to the learner's placement, not to
         # their assigned coach. Use the same module/week/holiday planner as the

@@ -6,6 +6,7 @@ import { formatHoursMinutes } from '@/lib/format';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
 import {
   fetchCurriculumModuleKsbCoverage,
+  onCalendarOccurrences,
   previewModuleSessionPlan,
   type CurriculumKsbCoverageResponse,
   type CurriculumModule,
@@ -405,7 +406,7 @@ export default function ModuleWorkspacePage() {
 
   /** What Teams holds today, session number first and position as the fallback. */
   const teamsOccurrenceFor = useCallback((sessionNumber: number, index: number) => {
-    const occurrences = teams?.occurrences || [];
+    const occurrences = onCalendarOccurrences(teams?.occurrences);
     return occurrences.find(occurrence => Number(occurrence.session_number) === sessionNumber) || occurrences[index];
   }, [teams]);
 
@@ -419,7 +420,10 @@ export default function ModuleWorkspacePage() {
 
   const teamsDatesMatch = useMemo(() => {
     if (!teamsSummary || !plannedOccurrences.length) return false;
-    const held = teams?.occurrences || [];
+    // Cancelled rows are what the calendar used to hold, not what it holds.
+    // Counted here, one leftover row made the count differ for ever and this
+    // tab said "on the plan's dates: No" whatever the calendar was moved to.
+    const held = onCalendarOccurrences(teams?.occurrences);
     if (held.length !== plannedOccurrences.length) return false;
     return plannedOccurrences.every((occurrence, index) => (
       minuteKey(occurrence.startDateTimeUtc) === minuteKey(held[index]?.scheduled_start)
@@ -525,12 +529,20 @@ export default function ModuleWorkspacePage() {
   const componentCount = weekStructure.reduce((sum, week) => sum + (week.components?.length || 0), 0);
   const totalOtjh = structure?.totalOtjh ?? 0;
 
-  // Each week runs its own live session, one per session number -- so the plan
-  // preview built for the Schedule tab is also where a week's date lives. See
-  // "Every week gets its own live session" for why that pairing holds.
+  // A week's date is the first date it consumes, and a week can consume more
+  // than one: a group delivering Mon+Thu runs two live sessions of the same
+  // week, so week 2 starts on session 3 rather than session 2. The walk is the
+  // one `liveSessionNamesByNumber` does -- live components take the flat plan in
+  // week-then-display order, and a content-only week still takes one date -- so
+  // pairing week number with session number reads a week onto the wrong day the
+  // moment a group delivers more than once a week.
+  const planSessionDates = (plan?.sessions || []).map(session => session.date);
   const weekDateByNumber = new Map<number, string>();
-  (plan?.sessions || []).forEach(session => {
-    if (session.sessionNumber) weekDateByNumber.set(session.sessionNumber, session.date);
+  let planDateCursor = 0;
+  weekStructure.forEach(week => {
+    const liveComponents = (week.components || []).filter(component => component.type === 'live-session');
+    weekDateByNumber.set(week.weekNumber, planSessionDates[planDateCursor] || '');
+    planDateCursor += Math.max(1, liveComponents.length);
   });
   const weekMonthGroups: Array<{ key: string; label: string; weeks: typeof weekStructure }> = [];
   weekStructure.forEach(week => {
@@ -660,7 +672,7 @@ export default function ModuleWorkspacePage() {
                   <Link to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(context.programme))}?tab=modules`} className="text-primary-700 hover:underline">
                     {context.programmeName}
                   </Link>
-                ) : cleanText(context?.programmeName, '—')}
+                ) : cleanText(context?.programmeName, 'Unassigned')}
               />
               <DetailRow
                 label="Cohort"
@@ -668,7 +680,7 @@ export default function ModuleWorkspacePage() {
                   <Link to={`/curriculum/cohorts/${encodeURIComponent(context.cohortId)}`} className="text-primary-700 hover:underline">
                     {context.cohortName}
                   </Link>
-                ) : cleanText(context?.cohortName, '—')}
+                ) : cleanText(context?.cohortName, 'Unassigned')}
               />
               <DetailRow
                 label="Group"
@@ -676,7 +688,7 @@ export default function ModuleWorkspacePage() {
                   <Link to={namedCurriculumWorkspacePath('groups', context.groupId, context.groupName)} className="text-primary-700 hover:underline">
                     {context.groupName}
                   </Link>
-                ) : cleanText(context?.groupName, '—')}
+                ) : cleanText(context?.groupName, 'Unassigned')}
               />
               <DetailRow label="Coach" value={cleanText(module?.coach) || cleanText(context?.group?.coach, 'Unassigned')} />
               <DetailRow label="Tutor" value={cleanText(module?.tutor, 'Unassigned')} />

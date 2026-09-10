@@ -1,18 +1,55 @@
 """Database-free tests for the historical modules pilot and ownership gate."""
 
 import json
+import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.db import DatabaseError
 from django.test import RequestFactory, SimpleTestCase
 
-from learner_api.student_activity import student_activity
-from learner_api.student_activity_data import read_student_activity, summarize_activities, read_student_material
+from learner_api.student_activity import (
+    student_activity, subject_covers, upload_subject_cover,
+    _builder_cover_url, _builder_subject_metadata, _material_response,
+)
+from learner_api.student_activity_data import (
+    read_student_activity, summarize_activities, read_student_material,
+    read_curriculum_schedules, apply_curriculum_schedules,
+)
+from learner_api.subject_dates import activity_schedule
 from learner_api.student_activity_access import student_activity_available
+from learner_api.subject_content import build_material, grade_quiz
 
 
 class StudentActivityTests(SimpleTestCase):
+    def test_fractional_pass_mark_is_checked_before_display_rounding(self):
+        definition = {'quiz': {'ready': True, 'passing_percent': 1 / 3 * 100,
+            'questions': [{'id': str(index), 'type': 'single_choice', 'solution_ids': ['a'],
+                           'options': [{'id': 'a'}, {'id': 'b'}]} for index in range(3)]}}
+        result = grade_quiz(definition, {'0': ['a'], '1': ['b'], '2': ['b']})
+        self.assertEqual(result['score_percent'], 33.3333)
+        self.assertTrue(result['passed'])
+        self.assertFalse(grade_quiz(definition, {'0': ['b'], '1': ['b'], '2': ['b']})['passed'])
+
+    def test_audio_sources_keep_html_players_out_of_the_native_audio_element(self):
+        cases = [
+            ('https://kentbusinesscollege.org/wp-json/kbc-lms/v1/material/71833/embed?attachment_id=71832', 'embed'),
+            ('https://kentbusinesscollege.org/stm-lessons/podcast/', 'embed'),
+            ('https://open.spotify.com/embed/episode/example', 'embed'),
+            ('https://example.org/recording.mp3?download=1', 'audio'),
+            ('https://drive.google.com/file/d/abcdefghijklm/view', 'audio'),
+            ('/learner_api/media/legacy-attachment/71832/', 'audio'),
+        ]
+        for url, expected in cases:
+            with self.subTest(url=url):
+                stored = {'title': 'Podcast', 'audio_url': url, '_source': {}}
+                for schema in (None, {'component_type': 'lesson', 'content_type': 'podcast', 'iframe_url': url}):
+                    material = build_material(stored, schema)
+                    self.assertEqual(material['media'][0]['kind'], expected)
+                    self.assertEqual(material['media'][0]['url'], url)
+                    self.assertTrue(material['available'])
+                    self.assertFalse(material['has_reading'])
+
     def test_material_is_membership_scoped_and_omits_grading_keys(self):
         cursor = MagicMock()
         row = dict(learner_name='Anna', title='Quiz', video_iframe_url=None,
@@ -31,6 +68,29 @@ class StudentActivityTests(SimpleTestCase):
             self.assertTrue(student_activity_available(value))
         for value in (None, "", "Anna Rundell", 0, -1, "4176.0"):
             self.assertFalse(student_activity_available(value))
+
+    def test_material_completion_agrees_with_historical_rules_and_saved_attempts(self):
+        cases = [
+            ({'status': 'completed'}, [], True),
+            ({'video_completed': True}, [], True),
+            ({'reading_type': 'pdf', 'reading_viewed': True}, [], True),
+            ({'quiz_id': 5, 'quiz_passed': False}, [], False),
+            ({'quiz_id': 5, 'quiz_passed': True, 'reading_type': 'pdf', 'reading_viewed': False}, [], False),
+            ({'quiz_id': 5, 'quiz_passed': True, 'reading_type': 'pdf', 'reading_viewed': True}, [], True),
+            ({}, [{'completed': True}, {'completed': False}], True),
+            ({}, [{'completed': False}], False),
+        ]
+        with patch('learner_api.student_activity._definition_for', return_value={'quiz': None}), \
+             patch('learner_api.student_activity.authenticate_request', return_value=SimpleNamespace(role='learner', subject_id=132)):
+            for historical, attempts, expected in cases:
+                with self.subTest(historical=historical, attempts=attempts), \
+                     patch('learner_api.student_activity.subject_store.state', return_value={'ready': True, 'history': attempts}):
+                    response = _material_response(self.factory.get('/'), 132, 4176, {
+                        'learner_name': 'Anna', '_source': {'activity_id': 10, **historical},
+                    })
+                payload = json.loads(response.content)
+                self.assertEqual(payload['completed'], expected)
+                self.assertTrue(payload['can_attempt'])
 
     def test_missing_hours_are_not_zero_and_shared_activities_count_once(self):
         item = {"source_activity_id": 10, "group_id": 1, "completed": True,
@@ -88,6 +148,11 @@ class StudentActivityTests(SimpleTestCase):
 
     def setUp(self):
         self.factory = RequestFactory()
+        state_patch = patch('learner_api.student_activity.subject_store.state', return_value={
+            'ready': False, 'progress': [], 'history': [], 'covers': {},
+        })
+        state_patch.start()
+        self.addCleanup(state_patch.stop)
 
     @patch("login.permissions._auth_gate_enabled", return_value=True)
     @patch("login.permissions.authenticate_request")
@@ -118,6 +183,34 @@ class StudentActivityTests(SimpleTestCase):
 
     @patch("login.permissions._auth_gate_enabled", return_value=True)
     @patch("login.permissions.authenticate_request")
+    def test_activity_response_uses_lecture_dates_and_preserves_saved_progress(self, authenticate, _gate):
+        authenticate.return_value = SimpleNamespace(role='learner', subject_id=132)
+        model = MagicMock()
+        model.all_learners.only.return_value.get.return_value = SimpleNamespace(aptem_id='4176', email='')
+        item = dict(activity_id='la:1:10', source_activity_id=10, group_id=1, activity='Workshop',
+                    completed=False, hours_mapped=False, planned_hours_mapped=False, actual=0, planned=0,
+                    quiz_score=None, quiz_maximum_score=None, **activity_schedule('Workshop', '2026-05-14'))
+        payload = {'learner_name': 'Anna', **summarize_activities([item])}
+        schedules = {(1, 10): {'section_title': 'Workshop 1/06/2026', 'section_source': 'section_title'}}
+        saved = {'ready': True, 'covers': {}, 'history': [], 'progress': [{'activity_id': 10, 'completed': True, 'best_percent': 90, 'attempt_count': 1}]}
+        with patch('learner_api.student_activity.SOURCE_MODELS', {'commercial': model}), \
+             patch('learner_api.student_activity._connection'), \
+             patch('learner_api.student_activity.connections') as connections, \
+             patch('learner_api.student_activity.read_student_activity', return_value=payload), \
+             patch('learner_api.student_activity.subject_store.state', return_value=saved), \
+             patch('learner_api.student_activity.read_curriculum_schedules', return_value=schedules) as reader:
+            response = student_activity(self.factory.get('/'), kind='commercial', pk=132)
+        self.assertEqual(response.status_code, 200)
+        reader.assert_called_once_with(connections.__getitem__.return_value.cursor.return_value.__enter__.return_value, [1])
+        result = json.loads(response.content)
+        self.assertEqual(result['activities'][0]['date'], '2026-06-01')
+        self.assertEqual(result['activities'][0]['section_title'], 'Workshop 1/06/2026')
+        self.assertEqual(result['activities'][0]['best_score_percent'], 90)
+        self.assertEqual(result['count'], 1)
+        self.assertEqual(result['completed_count'], 1)
+
+    @patch("login.permissions._auth_gate_enabled", return_value=True)
+    @patch("login.permissions.authenticate_request")
     def test_unknown_audit_identity_returns_not_found(self, authenticate, _gate):
         authenticate.return_value = SimpleNamespace(role="staff")
         model = MagicMock()
@@ -140,3 +233,201 @@ class StudentActivityTests(SimpleTestCase):
             response = student_activity(self.factory.get("/"), kind="commercial", pk=132)
         self.assertEqual(response.status_code, 503)
         self.assertNotIn("private connection details", response.content.decode())
+
+
+class SubjectScheduleTests(SimpleTestCase):
+    def test_activity_title_precedes_lecture_date_and_creation_date(self):
+        schedule = activity_schedule('Workshop 20/02/26', '2026-03-06', '2026-03-03', section_title='Lecture 06/03/26')
+        self.assertEqual(schedule['date'], '2026-02-20')
+        self.assertEqual(schedule['date_source'], 'title')
+        self.assertFalse(schedule['date_needs_review'])
+
+    def test_lecture_title_date_precedes_cloned_upload_and_source_dates(self):
+        for title in ('Lecture 5 - 06/03/26', 'Lecture 5 6 March 2026', 'Lecture 5 March 6, 2026', 'Lecture 5 2026-03-06', 'Lecture 5 ٠٦/٠٣/٢٠٢٦'):
+            with self.subTest(title=title):
+                schedule = activity_schedule('Critical Chain', '2026-04-10', '2026-04-11', section_title=title)
+                self.assertEqual(schedule['date'], '2026-03-06')
+                self.assertEqual(schedule['date_source'], 'section_title')
+                self.assertEqual(schedule['source_date'], '2026-04-10')
+                self.assertFalse(schedule['date_needs_review'])
+
+    def test_ambiguous_and_partial_lecture_dates_need_review_without_upload_fallback(self):
+        for title in ('Workshop 6 March', 'Workshop 06/03/26 or 13/03/26', 'Workshop 31/02/26'):
+            with self.subTest(title=title):
+                schedule = activity_schedule('Critical Chain', '2026-04-10', section_title=title)
+                self.assertIsNone(schedule['date'])
+                self.assertEqual(schedule['month'], 'undated')
+                self.assertTrue(schedule['date_needs_review'])
+
+    def test_creation_and_stored_dates_remain_available_but_need_confirmation(self):
+        for created, expected, source in ((None, '2026-04-10', 'source_date'), ('2026-03-06T10:00:00Z', '2026-03-06', 'original_created_at')):
+            schedule = activity_schedule('Course templates', '2026-04-10', created, section_title='Important templates')
+            self.assertEqual(schedule['date'], expected)
+            self.assertEqual(schedule['date_source'], source)
+            self.assertTrue(schedule['date_needs_review'])
+
+    def test_curriculum_lookup_uses_ids_and_current_builder_week(self):
+        row = dict(course_id=1, activity_id='10', section_id='s1', section_title='Old lecture 01/02/26',
+                   original_created_at='2026-04-10', builder_week_id='w1', builder_week_title='Moved lecture 06/03/26')
+        cursor = MagicMock()
+        with patch('learner_api.student_activity_data._dict_rows', return_value=[row, row, {**row, 'course_id': 2, 'builder_week_id': None}]):
+            schedules = read_curriculum_schedules(cursor, [2, 1, 2])
+        self.assertEqual(cursor.execute.call_args.args[1], [[1, 2]])
+        self.assertEqual(schedules[(1, 10)]['section_source'], 'builder_section_title')
+        self.assertEqual(schedules[(1, 10)]['section_title'], 'Moved lecture 06/03/26')
+        self.assertEqual(schedules[(2, 10)]['section_title'], 'Old lecture 01/02/26')
+
+    def test_conflicting_section_placements_are_not_resolved_by_first_match(self):
+        row = dict(course_id=1, activity_id='10', section_id='s1', section_title='Lecture 06/03/26')
+        with patch('learner_api.student_activity_data._dict_rows', return_value=[row, {**row, 'section_id': 's2', 'section_title': 'Lecture 13/03/26'}]):
+            schedules = read_curriculum_schedules(MagicMock(), [1])
+        self.assertEqual(schedules[(1, 10)], {'ambiguous': True})
+        item = dict(group_id=1, source_activity_id=10, activity='Lesson', source_date='2026-04-10')
+        apply_curriculum_schedules([item], schedules)
+        self.assertIsNone(item['date'])
+        self.assertTrue(item['date_needs_review'])
+
+    def test_scheduling_never_changes_completion_or_matches_a_different_course(self):
+        base = dict(source_activity_id=10, activity='Workshop', source_date='2026-05-14', completed=True, best_score_percent=90)
+        items = [{**base, 'group_id': 1}, {**base, 'group_id': 2}]
+        apply_curriculum_schedules(items, {(1, 10): {
+            'section_title': 'Workshop 1/06/2026', 'section_source': 'section_title', 'original_created_at': '2026-05-24',
+        }})
+        self.assertEqual(items[0]['month'], '2026-06')
+        self.assertEqual(items[1], {**base, 'group_id': 2})
+        self.assertEqual(len(items), 2)
+        self.assertTrue(all(item['completed'] and item['best_score_percent'] == 90 for item in items))
+
+
+class SubjectBuilderCoverTests(SimpleTestCase):
+    def test_component_lineage_requires_an_unambiguous_original_id(self):
+        from .student_activity import _current_activity_sources
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            ('COMP-1', 'MOD-1', 42, '10'),
+            ('COMP-1', 'MOD-1', 42, '10'),
+            ('COMP-2', 'MOD-1', 42, '11'),
+            ('COMP-2', 'MOD-1', 42, '12'),
+            ('COMP-3', 'MOD-1', 42, None),
+        ]
+        self.assertEqual(_current_activity_sources(cursor, ['MOD-1']), {
+            'COMP-1': {'module_id': 'MOD-1', 'group_id': 42, 'activity_id': 10},
+        })
+        sql, params = cursor.execute.call_args.args
+        self.assertEqual(params, [['MOD-1']])
+        self.assertIn("c.id=material->>'component_id'", sql)
+        self.assertIn('c.module_catalogue_id=e.module_catalogue_id', sql)
+        self.assertIn('c.deleted_at IS NULL', sql)
+        cursor.reset_mock()
+        self.assertEqual(_current_activity_sources(cursor, []), {})
+        cursor.execute.assert_not_called()
+
+    @patch('login.permissions.authenticate_request')
+    def test_builder_image_save_only_updates_artwork(self, authenticate):
+        from curriculum_api.views import curriculum_module_detail
+        authenticate.return_value = SimpleNamespace(role='staff')
+        image = 'data:image/png;base64,aGVsbG8='
+        with patch('curriculum_api.views.connection') as connection, \
+             patch('curriculum_api.views.invalidate_curriculum_cache') as invalidate, \
+             patch('curriculum_api.views.save_module_authoring_structure') as save_structure:
+            cursor = connection.cursor.return_value.__enter__.return_value
+            cursor.fetchone.return_value = ('MOD-1',)
+            for cover in (image, ''):
+                request = RequestFactory().patch('/', json.dumps({'coverImage': cover}), content_type='application/json')
+                response = curriculum_module_detail(request, identifier='MOD-1')
+                self.assertEqual(response.status_code, 200)
+                sql, params = cursor.execute.call_args.args
+                self.assertEqual(params, [cover, 'MOD-1'])
+                self.assertIn('cover_image_url=%s,updated_at=CURRENT_TIMESTAMP', sql)
+                self.assertNotIn('weeks', sql)
+                self.assertEqual(json.loads(response.content)['coverImage'], cover)
+            self.assertEqual(cursor.execute.call_count, 2)
+            self.assertEqual(invalidate.call_count, 2)
+            save_structure.assert_not_called()
+
+    @patch('login.permissions.authenticate_request')
+    def test_learner_cannot_save_a_builder_image(self, authenticate):
+        from curriculum_api.views import curriculum_module_detail
+        authenticate.return_value = SimpleNamespace(role='learner', subject_id=132)
+        with patch('curriculum_api.views.connection') as connection:
+            request = RequestFactory().patch('/', json.dumps({'coverImage': ''}), content_type='application/json')
+            response = curriculum_module_detail(request, identifier='MOD-1')
+        self.assertEqual(response.status_code, 403)
+        connection.cursor.assert_not_called()
+
+    @patch('login.permissions.authenticate_request')
+    def test_invalid_builder_image_does_not_reach_storage(self, authenticate):
+        from curriculum_api.views import curriculum_module_detail
+        authenticate.return_value = SimpleNamespace(role='admin')
+        with patch('curriculum_api.views.connection') as connection:
+            for image in ('javascript:alert(1)', 'data:text/html;base64,aGVsbG8=', None):
+                request = RequestFactory().patch('/', json.dumps({'coverImage': image}), content_type='application/json')
+                self.assertEqual(curriculum_module_detail(request, identifier='MOD-1').status_code, 400)
+            connection.cursor.assert_not_called()
+
+    def test_builder_upload_data_urls_are_images_only(self):
+        image = 'data:image/png;base64,aGVsbG8='
+        self.assertEqual(_builder_cover_url(image), image)
+        for value in ('data:text/html;base64,aGVsbG8=', 'javascript:alert(1)',
+                      'data:image/png;base64,not valid', '//example.com/image.png'):
+            self.assertEqual(_builder_cover_url(value), '')
+        self.assertEqual(_builder_cover_url('/curriculum_api/curriculum/uploads/image.webp'),
+                         '/curriculum_api/curriculum/uploads/image.webp')
+
+    def test_legacy_and_current_cards_use_the_same_builder_cover_by_id(self):
+        cursor = MagicMock()
+        image = 'data:image/webp;base64,aGVsbG8='
+        cursor.fetchall.return_value = [('MOD-1', 'Impact &amp; Planning', 'mba-legacy', '42', image)]
+        covers, links = _builder_subject_metadata(cursor, ['legacy:42', 'current:MOD-1', 'legacy:99'])
+        self.assertEqual(covers, {'legacy:42': image, 'current:MOD-1': image})
+        self.assertEqual(links['legacy:42'], {'id': 'MOD-1', 'title': 'Impact & Planning'})
+        self.assertEqual(cursor.execute.call_args.args[1], [['MOD-1'], ['42', '99']])
+        self.assertNotIn('legacy:99', links)
+
+    def test_ambiguous_legacy_source_is_not_guessed_by_title(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            ('MOD-1', 'Same title', 'mba-legacy', '42', 'https://example.com/one.png'),
+            ('MOD-2', 'Same title', 'mba-legacy', '42', 'https://example.com/two.png'),
+        ]
+        covers, links = _builder_subject_metadata(cursor, ['legacy:42', 'current:MOD-1'])
+        self.assertNotIn('legacy:42', covers)
+        self.assertNotIn('legacy:42', links)
+        self.assertEqual(covers['current:MOD-1'], 'https://example.com/one.png')
+
+    @patch('login.permissions._auth_gate_enabled', return_value=True)
+    @patch('login.permissions.authenticate_request')
+    def test_builder_clearing_cover_overrides_old_subject_image(self, authenticate, _gate):
+        authenticate.return_value = SimpleNamespace(role='staff')
+        cursor = MagicMock()
+        cursor.fetchall.side_effect = [
+            [('legacy:42', '/media/curriculum_components/old.webp')],
+            [('MOD-1', 'Renamed subject')],
+            [('MOD-1', 'Renamed subject', 'mba-legacy', '42', '')],
+            [('COMP-1', 'Lesson', '2026-08-22', 'Lecture 06/03/26')],
+            [('COMP-1', 'MOD-1', 42, '10')],
+        ]
+        with patch('learner_api.student_activity.connections') as connections, \
+             patch('learner_api.student_activity.subject_store.ready', return_value=True), \
+             patch('learner_api.student_activity._cover_url', return_value='https://example.com/old.webp'):
+            connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
+            response = subject_covers(RequestFactory().get('/?refs=legacy:42'), pk=132)
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content)
+        self.assertEqual(payload['covers'], {'legacy:42': '', 'current:MOD-1': ''})
+        self.assertFalse(payload['can_manage'])
+        self.assertEqual(payload['builder_subjects']['legacy:42']['id'], 'MOD-1')
+        self.assertEqual(payload['activity_dates']['COMP-1']['date'], '2026-03-06')
+        self.assertEqual(payload['activity_dates']['COMP-1']['date_source'], 'builder_section_title')
+        self.assertFalse(payload['activity_dates']['COMP-1']['date_needs_review'])
+        self.assertEqual(payload['activity_sources']['COMP-1'], {'module_id': 'MOD-1', 'group_id': 42, 'activity_id': 10})
+
+    @patch('login.permissions.authenticate_request')
+    def test_old_upload_route_cannot_write_a_separate_cover(self, authenticate):
+        with patch.dict(os.environ, {'LEARNER_API_REQUIRE_AUTH': '1'}), \
+             patch('learner_api.student_activity.subject_store.save_cover') as save:
+            for role, expected in [('learner', 403), ('staff', 409)]:
+                authenticate.return_value = SimpleNamespace(role=role, subject_id=132)
+                response = upload_subject_cover(RequestFactory().post('/'), subject_ref='legacy:42')
+                self.assertEqual(response.status_code, expected)
+            save.assert_not_called()

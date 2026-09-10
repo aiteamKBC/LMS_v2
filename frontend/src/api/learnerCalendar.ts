@@ -74,13 +74,16 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 export function invalidateLearnerCalendarCache(kind?: LearnerKind, id?: string): void {
   if (kind && id) {
     calendarCache.delete(`${kind}:${id}`);
+    calendarRequests.delete(`${kind}:${id}`);
     return;
   }
   calendarCache.clear();
+  calendarRequests.clear();
 }
 
 export function fetchLearnerCalendarEvents(kind: LearnerKind, id: string, options: { force?: boolean } = {}): Promise<LearnerCalendarResponse> {
   const key = `${kind}:${id}`;
+  if (options.force) invalidateLearnerCalendarCache(kind, id);
   const cached = calendarCache.get(key);
   if (!options.force && cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.data);
 
@@ -89,10 +92,10 @@ export function fetchLearnerCalendarEvents(kind: LearnerKind, id: string, option
 
   const promise = request<LearnerCalendarResponse>(`${BASE}/${kind}/${id}/`)
     .then((data) => {
-      calendarCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+      if (calendarRequests.get(key) === promise) calendarCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
       return data;
     })
-    .finally(() => calendarRequests.delete(key));
+    .finally(() => { if (calendarRequests.get(key) === promise) calendarRequests.delete(key); });
   calendarRequests.set(key, promise);
   return promise;
 }

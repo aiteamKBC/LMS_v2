@@ -107,6 +107,7 @@ export function navItemsForStatus(
   programmeStatus: string | null | undefined,
   fullNav: SidebarNavItem[],
   learnerKind?: string,
+  hasPreviousLearning = false,
 ): SidebarNavItem[] {
   const commercial = learnerKind?.toLowerCase() === 'commercial';
   const availableNav = commercial ? withoutCommercialCompliance(fullNav) : fullNav;
@@ -119,7 +120,10 @@ export function navItemsForStatus(
 
   if (isFreshStatus(programmeStatus)) return pick(FRESH_NAV_IDS);
   if (isOnboardingStatus(programmeStatus)) return commercial ? pick(FRESH_NAV_IDS) : ONBOARDING_NAV_ITEMS;
-  if (isDeliveryStatus(programmeStatus)) return commercial ? pick(FRESH_NAV_IDS) : pick(DELIVERY_NAV_IDS);
+  if (isDeliveryStatus(programmeStatus)) {
+    const ids = commercial ? FRESH_NAV_IDS : DELIVERY_NAV_IDS;
+    return pick(hasPreviousLearning ? [...ids, 'learner-my-learning', 'learner-training-plan-view'] : ids);
+  }
   return availableNav;
 }
 

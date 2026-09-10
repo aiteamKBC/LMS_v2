@@ -23,7 +23,7 @@ from coach_api.views import (
     build_timetable_event_key,
 )
 
-from .calendar import _belongs_to_current_cycle, _generated_cycle_events
+from .calendar import _belongs_to_current_cycle, _generated_cycle_events, coaching_events_for_learner
 
 START = date(2026, 8, 3)
 END = date(2027, 8, 2)
@@ -70,6 +70,19 @@ def _record(event_type='mcr', learner_id=248, event_key='mcr:248:1:2026-09-02', 
 
 
 class GeneratedCycleTests(SimpleTestCase):
+    def test_shared_coaching_source_rejects_another_email_with_a_colliding_numeric_id(self):
+        mine=_record();mine.learner_email='AYA.KHATER@example.com'
+        foreign=_record(event_key='someone-else');foreign.learner_email='another@example.com'
+        blank=_record(event_key='legacy-empty-email');blank.learner_email=''
+        wrong_blank=_record(learner_id=101,event_key='ambiguous-source-id');wrong_blank.learner_email=''
+        queryset=Mock();queryset.order_by.return_value=[mine,foreign,blank,wrong_blank]
+        with patch('learner_api.calendar.CoachCalendarEvent.objects.filter',return_value=queryset), \
+             patch('learner_api.calendar._serialize_event',side_effect=lambda record:{'eventKey':record.event_key}), \
+             patch('learner_api.calendar._generated_cycle_events',return_value=[]) as generate:
+            events=coaching_events_for_learner(_learner(),_mirror())
+        self.assertEqual([row['eventKey'] for row in events],[mine.event_key,blank.event_key])
+        self.assertEqual(generate.call_args.args[2],{mine.event_key,blank.event_key})
+
     def test_the_cycle_is_generated_from_the_learners_window(self):
         events = _generated_cycle_events(_learner(), _mirror(), set())
 
@@ -203,6 +216,8 @@ class CalendarResponseTests(SimpleTestCase):
                 patch.object(module.CoachCalendarEvent.objects, 'filter', return_value=queryset), \
                 patch('coach_api.views.collect_live_session_events', return_value=live_events or []) as collect_live, \
                 patch.object(module, 'learner_profile_for_source', return_value=mirror):
+                patch.object(module, 'learner_profile_for_source', return_value=mirror), \
+                patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='staff', id=-1)):
             models['commercial'].all_learners.filter.return_value.first.return_value = _learner()
             response = inspect.unwrap(module.learner_calendar)(RequestFactory().get('/x'), 'commercial', 101)
         import json

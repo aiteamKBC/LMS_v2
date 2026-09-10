@@ -210,6 +210,13 @@ class EnrolmentUser(models.Model):
     # originally provisioned, while Last_audit stores the same value as bigint.
     aptem_id = models.TextField(db_column="aptem_id", null=True, blank=True)
 
+    # The coach this learner is assigned to, on the enrolment side. The coach
+    # workspace itself scopes on Learner.learners.coach_email -- these are the
+    # enrolment record, kept in step by assign_audit_coaches, so the assignment
+    # survives a mirror being rebuilt.
+    coach_name = models.TextField(db_column="Coach_name", null=True, blank=True)
+    coach_email = models.TextField(db_column="Coach_email", null=True, blank=True)
+
     # The user's permanent public identifier, added by apply_user_uuid. The
     # integer pk above stays the internal join key — ~25 columns across three
     # schemas hold it as bigint — so this is the id to expose in APIs and URLs,

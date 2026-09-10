@@ -5,7 +5,7 @@ export type SignatureCaptureMethod = 'draw' | 'upload' | 'import';
 export type MonthState = {
   is_required?: boolean;
   month: string;
-  status: 'needs_review' | 'student_signed' | 'awaiting_coach' | 'ready_to_complete' | 'complete' | 'no_data';
+  status: 'awaiting_signature' | 'needs_review' | 'student_signed' | 'awaiting_coach' | 'ready_to_complete' | 'complete' | 'no_data';
   row_count: number;
   planned_hours: number | string;
   actual_hours: number | string;
@@ -113,7 +113,14 @@ export const getActivityContent = (month: string, rowId: number, aptemId?: numbe
 export const getContentReview = (month: string, aptemId?: number) => request<ContentReview>(`/old-otjh/content-check/${query(aptemId, month)}`);
 export const getSignoffs = (aptemId: number, month: string) => request<{ month: string; signoffs: { learner: Signature | null; coach: Signature | null } }>(`/learners/${aptemId}/signoff/${query(aptemId, month)}`);
 export const getSigningReview = (month: string, aptemId?: number, signal?: AbortSignal) => request<SigningReview>(`/old-otjh/sign-months/${query(aptemId, month)}`, { signal });
-export const getLearners = (page: number) => request<LearnerList>(`/last-audit/cohort/?transition=1&page=${page}`);
+export const getLearners = (page: number, search = '') => {
+  // The endpoint already filters on name and email (see
+  // audit_api.last_audit_ledger_views.cohort); the client simply never passed
+  // it, so a coach with 42 records had to page through them to find somebody.
+  const params = new URLSearchParams({ transition: '1', page: String(page) });
+  if (search.trim()) params.set('search', search.trim());
+  return request<LearnerList>(`/last-audit/cohort/?${params}`);
+};
 export const completeMonth = (month: string) => post<MonthDetail>(`/last-audit/manual/finalization${query()}`, { month, action: 'complete' });
 export const reopenMonth = (month: string, aptemId: number, reason: string) => post<MonthDetail>(`/last-audit/manual/finalization${query(aptemId)}`, { month, action: 'reopen', reason });
 export const refreshMonths = (aptemId: number, reason: string) => post<Summary>(`/old-otjh/refresh-months/${query(aptemId)}`, { reason });

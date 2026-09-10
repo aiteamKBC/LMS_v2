@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { AppIcon } from '@/components/feature/AppIcon';
 import type { ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import DOMPurify from 'dompurify';
@@ -44,6 +45,7 @@ import { isNavigableComponent } from './weekPreview';
 import { componentRoute } from './componentRoute';
 import { AssignmentSubmissionWizard, type AssignmentAnswers } from './AssignmentSubmissionWizard';
 import { resolveDocEmbed } from '@/lib/docEmbed';
+import { normalizeReadingHtml } from '@/lib/readingHtml';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 import {
   loadTeamsMeetingArtifacts,
@@ -1693,7 +1695,7 @@ function AttachedFileCard({ url, fileName, previewed = false }: {
   );
 }
 
-function InlineAttachmentPreview({ url, title, fileName, readingPreferences, annotationKey, allowAnnotatedDownload = false }: {
+export function InlineAttachmentPreview({ url, title, fileName, readingPreferences, annotationKey, allowAnnotatedDownload = false }: {
   url: string;
   title: string;
   fileName?: string | null;
@@ -2310,25 +2312,6 @@ function DocumentEmbed({ url, title }: { url: string; title: string }) {
       <iframe title={title} src={embed.src} className="w-full h-full" />
     </div>
   );
-}
-
-/** Reading content authored through a plain textarea sometimes lands
- * double-escaped: each authored line is a real `<div>…</div>` (the browser's
- * contentEditable-style line wrapper), but its CONTENTS are HTML-escaped text
- * ("&lt;h2&gt;Overview&lt;/h2&gt;") instead of real tags. Detect that shape,
- * turn the real `<div>`/`<br>` line breaks into newlines, then decode the
- * escaped entities — turning it into genuine HTML that renders formatted
- * instead of showing literal "&lt;h2&gt;" tag text. */
-function normalizeReadingHtml(html: string): string {
-  const looksEscaped = /&lt;\/?[a-z][a-z0-9]*(&gt;|\s)/i.test(html);
-  if (!looksEscaped) return html;
-  const withBreaks = html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/div>\s*<div>/gi, '\n')
-    .replace(/<\/?div>/gi, '');
-  const textarea = document.createElement('textarea');
-  textarea.innerHTML = withBreaks;
-  return textarea.value;
 }
 
 /* ═══════════════════════════════════════════════════════

@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, videos, views
+from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
 from . import certificates
 
 urlpatterns = [
@@ -13,6 +13,10 @@ urlpatterns = [
     # The learner's learning plan: their group's modules, editable within the
     # same programme. Offered once the learner reaches Delivery.
     path("learning-plan/<int:pk>/", learning_plan.learning_plan, name="learning-plan"),
+    # The same assignment from the module's side: one module, every learner,
+    # ticked on or off. A tick is a plan save, so it writes the very same
+    # "Created_users" plan the route above reads.
+    path("module-learners/<str:module_id>/", learning_plan.module_learners, name="module-learners"),
     # The modules taught alongside one module — the alternatives a learner can be
     # shifted onto. The shift itself is a plan save, so it has no endpoint here.
     # "options/" before the <int:pk> route, which would otherwise never be
@@ -84,7 +88,12 @@ urlpatterns = [
     path("employers/<int:pk>/", employers.employer_detail, name="employer-detail"),
     path("learner-detail/<str:kind>/<int:pk>/", learner_detail.learner_detail, name="learner-detail"),
     path("student-activity/<str:kind>/<int:pk>/", student_activity.student_activity, name="student-activity"),
+    path("student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/attempts/", student_activity.start_subject_attempt, name="subject-attempt-start"),
+    path("student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/attempts/<uuid:attempt_id>/", student_activity.submit_subject_attempt, name="subject-attempt-submit"),
+    path("subject-covers/<int:pk>/", student_activity.subject_covers, name="subject-covers"),
+    path("subject-cover/<str:subject_ref>/", student_activity.upload_subject_cover, name="subject-cover-upload"),
     path("training-plan/<str:kind>/<int:pk>/", training_plan_view.training_plan, name="training-plan"),
+    path("training-plan-dashboard/<str:kind>/<int:pk>/", training_plan_dashboard.training_plan_dashboard, name="training-plan-dashboard"),
     path("certificates/verify/<uuid:token>/", certificates.verify_certificate, name="learner-certificate-verify"),
     path("certificates/<str:kind>/<int:pk>/template/", certificates.learner_certificate_template, name="learner-certificate-template"),
     path("certificates/<str:kind>/<int:pk>/", certificates.learner_certificate_status, name="learner-certificate-status"),
