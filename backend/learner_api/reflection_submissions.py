@@ -182,6 +182,8 @@ def _submit_reflection(request):
         return _error("learnerId is required.")
     if not activity_type or not activity_id:
         return _error("activityType and activityId are required.")
+    if activity_type == 'assignment' and activity_id.startswith('aptem:'):
+        return _error('Classified historical assignments are read-only.', 409)
     if submission_mode != "draft":
         if is_assignment_form:
             missing = []
@@ -413,6 +415,10 @@ def get_reflection_submission(request):
         return _error("activityType and activityId must be provided together.")
 
     try:
+        if ((not activity_type and request.GET.get('view') == 'assignments')
+                or (activity_type == 'assignment' and activity_id.startswith('aptem:'))):
+            from .legacy_assignments import classified_response
+            return classified_response(learner_kind, learner_id, activity_id)
         with connections["enrolment"].cursor() as cur:
             if not activity_type:
                 cur.execute(

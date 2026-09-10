@@ -80,13 +80,14 @@ export function MonthlyAnswerField({ label, value, onChange, disabled, title, ro
   </div>;
 }
 
-export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer, kind, learnerId, title, plannedOtjh, mappings, evidenceFiles, evidenceUploader, timeControl, disabled, payload, checks, checking, onCheck, onSave }: {
+export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer, kind, learnerId, title, plannedOtjh, mappings, evidenceFiles, evidenceUploader, timeControl, disabled, payload, checks, checking, onCheck, onSave, historical = false }: {
   step: number; data: MonthlyAssignment; onChange: Dispatch<SetStateAction<MonthlyAssignment>>;
   answers: AssignmentAnswers; onAnswer: (key: keyof AssignmentAnswers, value: string) => void;
   kind: LearnerKind; learnerId: string; title: string; plannedOtjh: number | null;
   mappings: ComponentKsbMapping[]; evidenceFiles: EvidenceRecord[]; evidenceUploader: ReactNode; timeControl: ReactNode;
   disabled: boolean; payload: () => LearningReflectionSubmissionInput;
   checks: AssignmentQualityCheck[]; checking: boolean; onCheck: () => Promise<boolean>; onSave: () => Promise<boolean>;
+  historical?: boolean;
 }) {
   const [library, setLibrary] = useState<EvidenceRecord[]>([]);
   const [showLibrary, setShowLibrary] = useState(false);
@@ -109,10 +110,11 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
   const qualifyingEvents = events.filter(event => event.source === 'mcr' && ['scheduled', 'in-progress', 'completed', 'awaiting-signature'].includes(event.status) && (event.scheduledDate || '') >= minBooking && (event.scheduledDate || '') <= maxBooking);
   useEffect(() => {
     let active = true;
+    if (historical) return;
     if ([2, 3].includes(step)) fetchLearnerDetail(kind, learnerId).then(result => { if (active) setDetail(result); }).catch(e => { if (active) setError(e.message); });
     if (step === 7) fetchLearnerCalendarEvents(kind, learnerId, { force: true }).then(result => { if (active) setEvents(result.events); }).catch(e => { if (active) setError(e.message); });
     return () => { active = false; };
-  }, [step, kind, learnerId]);
+  }, [step, kind, learnerId, historical]);
   const addFile = (file: EvidenceRecord) => {
     if (!data.evidence.some(e => e.id === file.id)) patch({ evidence: [...data.evidence, { id: file.id, name: file.filename, points: '' }] });
   };
