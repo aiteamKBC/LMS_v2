@@ -4,9 +4,91 @@ Separate from the mixed attendance/audit feed so pagination cannot silently
 drop modules and attendance/assignment hours cannot inflate activity totals.
 """
 
+from html import unescape
+
 from audit_api.last_audit_ledger_views import _activity_payload, _dict_rows
 from audit_api.last_audit_ledger_views import _json_list
 from .subject_dates import activity_schedule
+
+
+CURRICULUM_SCHEDULE_SQL = '''
+    WITH exports AS (
+        SELECT course_id,
+               CASE WHEN jsonb_typeof(curriculum)='string'
+                    THEN (curriculum #>> '{}')::jsonb ELSE curriculum END AS payload
+        FROM "MBA".course_curriculum WHERE course_id=ANY(%s)
+    )
+    SELECT e.course_id, material->>'source_component_id' AS activity_id,
+           section->>'source_section_id' AS section_id,
+           section->>'section_title' AS section_title,
+           material->>'created_at_utc' AS original_created_at,
+           w.id AS builder_week_id, w.title AS builder_week_title
+    FROM exports e
+    CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(payload->'sections')='array' THEN payload->'sections' ELSE '[]'::jsonb END
+    ) section
+    CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(section->'materials')='array' THEN section->'materials' ELSE '[]'::jsonb END
+    ) material
+    LEFT JOIN curriculum.modules m ON m.source_type='mba-legacy' AND m.source_id=e.course_id::text
+        AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
+    LEFT JOIN curriculum.components c ON c.id=material->>'component_id'
+        AND c.module_catalogue_id=m.module_catalogue_id
+        AND c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted,false)
+    LEFT JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=m.module_catalogue_id
+        AND w.deleted_at IS NULL AND NOT coalesce(w.is_programme_deleted,false)
+'''
+
+
+def read_curriculum_schedules(cursor, group_ids):
+    """Read scheduling context by exact course/activity ids, never by title.
+
+    The retained export also covers courses not yet in Module Builder. A linked
+    Builder component's current week takes precedence over its exported week.
+    Only date metadata leaves this query; no content or download tokens do.
+    """
+    if not group_ids:
+        return {}
+    cursor.execute(CURRICULUM_SCHEDULE_SQL, [sorted(set(group_ids))])
+    candidates = {}
+    for row in _dict_rows(cursor):
+        try:
+            key = (int(row['course_id']), int(row['activity_id']))
+        except (TypeError, ValueError):
+            continue
+        section = {
+            'section_id': row.get('builder_week_id') or row.get('section_id'),
+            'section_title': unescape(str((row.get('builder_week_title') if row.get('builder_week_id') else row.get('section_title')) or '')),
+            'section_source': 'builder_section_title' if row.get('builder_week_id') else 'section_title',
+            'original_created_at': row.get('original_created_at'),
+        }
+        matches = candidates.setdefault(key, [])
+        if section not in matches:
+            matches.append(section)
+    # Reused activities in different dated sections are ambiguous, not an
+    # invitation to select the first section (or silently use an upload date).
+    return {key: matches[0] if len(matches) == 1 else {'ambiguous': True}
+            for key, matches in candidates.items()}
+
+
+def apply_curriculum_schedules(items, schedules):
+    for item in items:
+        context = schedules.get((item['group_id'], item['source_activity_id']))
+        if not context:
+            continue
+        stored_date = item.get('source_date')
+        if context.get('ambiguous'):
+            schedule = activity_schedule(item['activity'])
+            if schedule['date_source'] == 'undated':
+                schedule.update(date_source='section_needs_review', date_needs_review=True)
+            item.update(schedule, source_date=stored_date)
+            continue
+        item.update(activity_schedule(
+            item['activity'], stored_date, context.get('original_created_at') or (item.get('date') if item.get('date_source') == 'original_created_at' else None),
+            section_title=context.get('section_title'), section_source=context['section_source'],
+        ))
+        item['section_title'] = context.get('section_title') or ''
+    return items
 
 
 ACTIVITY_SQL = '''

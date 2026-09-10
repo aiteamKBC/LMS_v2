@@ -5,7 +5,7 @@ import { fetchStudentActivity, subjectRequest, type StudentActivityItem, type St
 import { completedComponentIds, isComponentComplete, hasComponentContent, formatHoursMinutes, type JourneyComponent } from '@/utils/learnerJourney';
 import { StudentMaterial } from './StudentMaterial';
 
-type Schedule = Pick<StudentActivityItem, 'date' | 'month' | 'week_start' | 'week_end' | 'date_needs_review'>;
+type Schedule = Pick<StudentActivityItem, 'date' | 'month' | 'week_start' | 'week_end' | 'date_needs_review' | 'date_source'>;
 export type SubjectEntry = { id: string; title: string; category: string; completed: boolean; position: number; schedule: Schedule; week?: string; legacy?: StudentActivityItem; native?: JourneyComponent };
 type Subject = { id: string; title: string; source: 'legacy' | 'current'; activities: SubjectEntry[] };
 type BuilderSubject = { id: string; title: string };
@@ -69,11 +69,11 @@ function subjectsFrom(data: StudentActivityResponse | null, real: LearnerDetail 
     .sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
 }
 
-function Progress({ done, total, label = 'Subject progress', compact = false, showFormula = false }: {
-  done: number; total: number; label?: string; compact?: boolean; showFormula?: boolean;
+function Progress({ done, total, label = 'Subject progress', showFormula = false }: {
+  done: number; total: number; label?: string; showFormula?: boolean;
 }) {
   const percent = total ? Math.round(done / total * 10000) / 100 : 0;
-  return <div className="space-y-2"><div className="flex items-center justify-between gap-2 text-xs"><span className="text-foreground-500">{compact ? `${done}/${total}` : `${done} of ${total}`} completed</span><strong className="text-primary-700">{percent}%</strong></div>
+  return <div className="space-y-2"><div className="flex items-center justify-between gap-2 text-xs"><span className="text-foreground-500">{done} of {total} completed</span><strong className="text-primary-700">{percent}%</strong></div>
     <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} className="h-1.5 overflow-hidden rounded-full bg-foreground-100"><div className="h-full rounded-full bg-primary-500 transition-[width]" style={{ width: `${percent}%` }} /></div>
     {showFormula && <p className="text-xs text-foreground-500">Progress = completed activities ÷ total activities × 100{total > 0 ? ` = ${done} ÷ ${total} × 100 = ${percent}%` : '. No activities yet'}. Quizzes count as complete after passing.</p>}
   </div>;
@@ -82,16 +82,30 @@ function Progress({ done, total, label = 'Subject progress', compact = false, sh
 function ActivityGroup({ title, label = title, activities, level, children }: {
   title: string; label?: string; activities: SubjectEntry[]; level: 3 | 4; children: ReactNode;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const contentId = useId();
+  const progressId = `${contentId}-progress`;
   const Heading = level === 3 ? 'h3' : 'h4';
+  const done = activities.filter((entry) => entry.completed).length;
+  const percent = activities.length ? Math.round(done / activities.length * 10000) / 100 : 0;
+  const reviewCount = activities.filter((entry) => entry.schedule.date_needs_review).length;
   return <section aria-label={label} className={`overflow-hidden border border-foreground-200 bg-white ${level === 3 ? 'rounded-2xl' : 'rounded-xl'}`}>
     <Heading><button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded} aria-controls={contentId}
-      aria-label={`${expanded ? 'Collapse' : 'Expand'} ${label}`} className="flex w-full items-center justify-between gap-3 bg-background-100/70 px-4 py-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500">
-      <span className={`flex items-center gap-2 font-bold ${level === 3 ? 'text-base' : 'text-sm'}`}>{level === 3 && <CalendarDays size={20} className="shrink-0 text-primary-500" />}{title}</span>
-      <span className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-primary-700">{expanded ? 'Collapse' : 'Expand'}<ChevronDown size={17} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} /></span>
+      aria-label={`${expanded ? 'Collapse' : 'Expand'} ${label}`} aria-describedby={`${progressId}${reviewCount ? ` ${contentId}-review` : ''}`}
+      className="flex w-full flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 text-left transition-colors hover:bg-background-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500">
+      <span className="min-w-0 flex-1 basis-40">
+        <span className={`flex items-center gap-2 font-bold ${level === 3 ? 'text-base' : 'text-sm'}`}>{level === 3 && <CalendarDays size={20} className="shrink-0 text-primary-500" />}{title}</span>
+        {reviewCount > 0 && <span id={`${contentId}-review`} className="mt-1 block text-xs font-normal text-amber-700">{reviewCount} {reviewCount === 1 ? 'activity date needs' : 'activity dates need'} confirmation.</span>}
+      </span>
+      <span className="ml-auto flex shrink-0 items-center gap-3">
+        <span id={progressId} role="progressbar" aria-label={`${label} progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}
+          aria-valuetext={`${done} of ${activities.length} completed (${percent}%)`} className="flex items-center gap-2 whitespace-nowrap text-xs">
+          <span className="font-normal text-foreground-500">{done}/{activities.length} completed</span>
+          <span className={`rounded-full px-2.5 py-1 font-semibold tabular-nums ${percent === 100 ? 'bg-emerald-50 text-emerald-700' : 'bg-primary-50 text-primary-700'}`}>{percent}%</span>
+        </span>
+        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-background-100 text-primary-700"><ChevronDown size={17} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} /></span>
+      </span>
     </button></Heading>
-    <div className="px-4 py-3"><Progress done={activities.filter((entry) => entry.completed).length} total={activities.length} compact label={`${label} progress`} /></div>
     <div id={contentId} hidden={!expanded}>{children}</div>
   </section>;
 }
@@ -146,13 +160,14 @@ function ActivityRow({ entry, kind, learnerId, onProgress }: { entry: SubjectEnt
   const href = nativeHref(entry, kind, learnerId);
   const legacy = entry.legacy;
   const score = legacy?.best_score_percent ?? (legacy?.quiz_score != null && legacy.quiz_maximum_score ? legacy.quiz_score / legacy.quiz_maximum_score * 100 : null);
-  return <div className="border-t border-foreground-100 first:border-t-0"><div className="grid grid-cols-[2rem_minmax(0,1fr)] items-start gap-3 p-4 sm:flex sm:flex-wrap sm:items-center">
+  return <div role="group" aria-label={`${entry.title} activity`} className="border-t border-foreground-100 first:border-t-0"><div className="grid grid-cols-[2rem_minmax(0,1fr)] items-start gap-3 p-4 sm:flex sm:flex-wrap sm:items-center">
     <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${entry.completed ? 'bg-emerald-50 text-emerald-600' : 'bg-background-100 text-foreground-400'}`}>{entry.completed ? <CheckCircle2 size={18} /> : <BookOpen size={16} />}</span>
     <div className="min-w-0 flex-1"><h5 className="text-sm font-semibold text-foreground-900">
       {legacy && kind && learnerId ? <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={contentId} className="text-left text-primary-700 underline-offset-4 hover:underline focus-visible:underline">{entry.title}</button>
         : href ? <a href={href} className="text-primary-700 underline-offset-4 hover:underline focus-visible:underline">{entry.title}</a> : entry.title}
     </h5><p className="mt-1 text-xs text-foreground-500">{[entry.category, entry.schedule.date, score != null ? `Best score ${Math.round(score)}%` : ''].filter(Boolean).join(' · ')}</p>
-      {entry.schedule.date_needs_review && <p className="mt-1 text-xs text-amber-700">Date needs review</p>}
+      {legacy?.section_title && <p className="mt-1 text-xs text-foreground-500">Lecture: {legacy.section_title}</p>}
+      {entry.schedule.date_needs_review && <p className="mt-1 text-xs text-amber-700">{entry.schedule.date ? 'Date awaiting confirmation (original record).' : 'Date needs review'}</p>}
     </div>
     <div className="col-start-2 flex flex-wrap items-center gap-2 sm:ml-auto"><span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${entry.completed ? 'bg-emerald-50 text-emerald-700' : 'bg-background-100 text-foreground-600'}`}>{entry.completed ? 'Complete' : 'Not complete'}</span>
     {legacy && kind && learnerId && <button onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={contentId} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs font-semibold text-primary-700">{open ? 'Close activity' : 'Open activity'}</button>}

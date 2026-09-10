@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useId, useState } from 'react';
 import DOMPurify from 'dompurify';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
@@ -59,6 +59,7 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
   const [confirmed, setConfirmed] = useState(false);
   const [result, setResult] = useState('');
   const [savedResult, setSavedResult] = useState<SubjectAttemptResult | null>(null);
+  const completionHintId = useId();
   const base = `/learner_api/student-activity/${encodeURIComponent(kind)}/${encodeURIComponent(learnerId)}`;
   const attempts = `${base}/${groupId}/${activityId}/attempts/`;
   useEffect(() => {
@@ -71,7 +72,7 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
   }, [base, groupId, activityId, retry]);
   const post = <T,>(url: string, body: unknown) => subjectRequest<T>(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': data?.csrf_token || '' }, body: JSON.stringify(body) });
   const start = async () => {
-    if (!data) return;
+    if (!data || busy || !data.can_attempt || !data.persistence_ready || !data.available || !data.quiz?.ready) return;
     setBusy(true); setError(''); setResult('');
     try {
       const response = await post<{ attempt_id: string; definition: Partial<SubjectMaterial> }>(attempts, {});
@@ -80,7 +81,7 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
     finally { setBusy(false); }
   };
   const submit = async () => {
-    if (!data || busy || !data.can_attempt || !data.available) return;
+    if (!data || busy || !data.can_attempt || !data.persistence_ready || !data.available) return;
     setBusy(true); setError('');
     try {
       let id = attemptId;
@@ -109,7 +110,30 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
   const isComplete = completed || data.completed || savedResult?.completed || data.history.some((attempt) => attempt.completed);
   const answered = quiz?.questions.every((question) => (answers[question.id]?.length || 0) > 0) ?? true;
   const needsConfirmation = !!quiz && data.has_reading;
+  const blockedReason = !data.persistence_ready
+    ? 'Saving progress is temporarily unavailable. Please contact your learning team.'
+    : !data.can_attempt
+      ? 'Viewing read-only. Only the learner can submit this activity from their own account.'
+      : !data.available
+        ? 'This activity has no available content to complete yet.'
+        : quiz && !quiz.ready ? quiz.message : '';
+  const actionClass = 'shrink-0 rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50';
   return <div className="space-y-6 rounded-2xl border border-foreground-200 bg-white p-4 sm:p-6">
+    <section aria-label="Activity completion" className="sticky top-3 z-10 space-y-3 rounded-xl border border-primary-100 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div><h4 className="text-sm font-bold text-foreground-900">Activity progress</h4>
+          <p aria-live="polite" className={`mt-1 text-sm font-semibold ${isComplete ? 'text-emerald-700' : 'text-foreground-500'}`}>{isComplete ? 'Complete' : 'Not complete'}</p>
+        </div>
+        {quiz && !attemptId ? <button type="button" onClick={start} disabled={busy || !!blockedReason} aria-describedby={completionHintId} className={actionClass}>{busy ? 'Starting…' : isComplete || data.history.length || data.historical.attempt_number ? 'Try quiz again' : 'Start quiz'}</button>
+          : (quiz || !isComplete) && <button type="button" onClick={submit} disabled={busy || !!blockedReason || !answered || (needsConfirmation && !confirmed)} aria-describedby={completionHintId} className={actionClass}>{busy ? 'Saving…' : quiz ? 'Submit answers' : 'Submit & complete'}</button>}
+      </div>
+      <p id={completionHintId} className={`text-sm ${blockedReason ? 'text-amber-800' : 'text-foreground-500'}`}>
+        {blockedReason || (quiz ? 'Complete the quiz and submit your answers. Passing records this activity as complete.' : isComplete ? 'This activity is complete and included in your progress.' : 'When you have finished, select Submit & complete to save your completion and update your progress.')}
+      </p>
+      {needsConfirmation && !!attemptId && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={busy || !!blockedReason} onChange={(event) => setConfirmed(event.target.checked)} className="mt-1 accent-primary-600" />I have completed the reading material.</label>}
+      {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+      {result && <p role="status" className={`rounded-xl p-3 text-sm font-semibold ${savedResult?.completed ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{result}</p>}
+    </section>
     {!data.available && <p>No material is available for this activity yet.</p>}
     {data.media.map((item, index) => <Media key={`${index}:${item.url}`} value={item.url} kind={item.kind} title={item.title} canEmbed={item.can_embed} onEnded={() => setConfirmed(true)} />)}
     {data.reading_html && <Html value={data.reading_html} />}
@@ -118,7 +142,6 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
       <div className="flex flex-wrap items-center justify-between gap-3"><h4 className="text-lg font-bold">Quiz · {quiz.questions.length} {quiz.questions.length === 1 ? 'question' : 'questions'}</h4>{quiz.passing_percent != null && <p className="text-sm text-foreground-500">Pass mark: {Number(quiz.passing_percent).toFixed(0)}%</p>}</div>
       {quiz.body && <Html value={quiz.body} />}
       {!quiz.ready && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{quiz.message} Your previous results are kept.</p>}
-      {data.can_attempt && quiz.ready && !attemptId && <button onClick={start} disabled={busy} className="rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? 'Starting…' : data.history.length || data.historical.attempt_number ? 'Try quiz again' : 'Start quiz'}</button>}
       {quiz.questions.map((question, index) => <fieldset key={question.id} disabled={!attemptId || busy} className="space-y-3 rounded-xl border border-foreground-200 p-4">
         <legend className="px-2 text-sm font-bold">Question {index + 1}{question.type === 'multi_choice' ? ' · Select all that apply' : ''}</legend><Html value={question.text} />
         {question.options.map((option) => <label key={option.id} className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 ${answers[question.id]?.includes(option.id) ? 'border-primary-400 bg-primary-50' : 'border-foreground-200'}`}>
@@ -127,14 +150,6 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
         </label>)}
       </fieldset>)}
     </section>}
-    {data.can_attempt && data.available && (quiz ? !!attemptId : !isComplete) && <div className="space-y-3 border-t pt-4">
-      {needsConfirmation && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} className="mt-1 accent-primary-600" />I have completed the reading material.</label>}
-      {!quiz && <p className="text-sm text-foreground-500">When you have finished, submit this activity to record it as complete and update your progress.</p>}
-      <button onClick={submit} disabled={busy || !answered || (needsConfirmation && !confirmed)} className="rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? 'Saving…' : quiz ? 'Submit answers' : 'Submit'}</button>
-    </div>}
-    {!quiz && isComplete && <p className="text-sm font-semibold text-emerald-700">This activity is complete and included in your progress.</p>}
-    {!data.persistence_ready && <p className="rounded-xl bg-background-100 p-3 text-sm text-foreground-600">You can view your learning. Saving new attempts will be available once your learning team enables it.</p>}
-    {error && <p role="alert" className="text-sm text-red-700">{error}</p>}{result && <p role="status" className={`rounded-xl p-3 text-sm font-semibold ${savedResult?.completed ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{result}</p>}
     {(data.historical.answers.length > 0 || data.historical.score != null || data.history.length > 0) && <section className="space-y-3 border-t pt-4" aria-label="Attempt history">
       <h4 className="font-bold">Your attempt history</h4>
       {(data.historical.answers.length > 0 || data.historical.score != null) && <details className="rounded-xl border p-3"><summary className="cursor-pointer text-sm font-semibold">Previous learning{data.historical.score != null ? ` · ${data.historical.score}${data.historical.maximum_score ? ` / ${data.historical.maximum_score}` : ''}` : ''}</summary>

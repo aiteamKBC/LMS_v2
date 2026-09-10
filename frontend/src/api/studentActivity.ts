@@ -19,6 +19,7 @@ export interface StudentActivityItem {
   source_date?: string | null;
   date_source?: string;
   date_needs_review?: boolean;
+  section_title?: string;
   month?: string;
   week_start?: string | null;
   week_end?: string | null;

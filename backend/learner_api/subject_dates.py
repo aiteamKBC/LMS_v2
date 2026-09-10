@@ -30,7 +30,7 @@ def as_date(value):
         return None
 
 
-def activity_schedule(title, stored_date=None, original_created_at=None):
+def activity_schedule(title, stored_date=None, original_created_at=None, *, section_title=None, section_source='section_title'):
     text = unicodedata.normalize('NFKC', html.unescape(str(title or '')))
     text = text.translate(str.maketrans({'–': '-', '—': '-', '−': '-', '\u200b': ''}))
     text = ''.join(str(unicodedata.digit(char)) if char.isdecimal() else char for char in text)
@@ -72,6 +72,14 @@ def activity_schedule(title, stored_date=None, original_created_at=None):
         # A cloned upload date cannot safely supply the year missing in a title.
         chosen, source = None, 'partial_title_needs_review'
     else:
+        # Lesson titles often contain no date. The parent lecture/section title
+        # is a scheduling source; a cloned/uploaded timestamp is not one.
+        if section_title:
+            section = activity_schedule(section_title)
+            if section['date_source'] != 'undated':
+                return {**section,
+                        'source_date': as_date(stored_date).isoformat() if as_date(stored_date) else None,
+                        'date_source': section_source + ('_needs_review' if section['date_needs_review'] else '')}
         chosen = as_date(original_created_at) or as_date(stored_date)
         source = 'original_created_at' if as_date(original_created_at) else ('source_date' if chosen else 'undated')
     monday = chosen - timedelta(days=chosen.weekday()) if chosen else None
@@ -79,7 +87,7 @@ def activity_schedule(title, stored_date=None, original_created_at=None):
         'date': chosen.isoformat() if chosen else None,
         'source_date': as_date(stored_date).isoformat() if as_date(stored_date) else None,
         'date_source': source,
-        'date_needs_review': source.endswith('needs_review'),
+        'date_needs_review': source.endswith('needs_review') or source in {'original_created_at', 'source_date'},
         'month': chosen.strftime('%Y-%m') if chosen else 'undated',
         'week_start': monday.isoformat() if monday else None,
         'week_end': (monday + timedelta(days=6)).isoformat() if monday else None,

@@ -12,7 +12,11 @@ from learner_api.student_activity import (
     student_activity, subject_covers, upload_subject_cover,
     _builder_cover_url, _builder_subject_metadata, _material_response,
 )
-from learner_api.student_activity_data import read_student_activity, summarize_activities, read_student_material
+from learner_api.student_activity_data import (
+    read_student_activity, summarize_activities, read_student_material,
+    read_curriculum_schedules, apply_curriculum_schedules,
+)
+from learner_api.subject_dates import activity_schedule
 from learner_api.student_activity_access import student_activity_available
 
 
@@ -150,6 +154,34 @@ class StudentActivityTests(SimpleTestCase):
 
     @patch("login.permissions._auth_gate_enabled", return_value=True)
     @patch("login.permissions.authenticate_request")
+    def test_activity_response_uses_lecture_dates_and_preserves_saved_progress(self, authenticate, _gate):
+        authenticate.return_value = SimpleNamespace(role='learner', subject_id=132)
+        model = MagicMock()
+        model.all_learners.only.return_value.get.return_value = SimpleNamespace(aptem_id='4176', email='')
+        item = dict(activity_id='la:1:10', source_activity_id=10, group_id=1, activity='Workshop',
+                    completed=False, hours_mapped=False, planned_hours_mapped=False, actual=0, planned=0,
+                    quiz_score=None, quiz_maximum_score=None, **activity_schedule('Workshop', '2026-05-14'))
+        payload = {'learner_name': 'Anna', **summarize_activities([item])}
+        schedules = {(1, 10): {'section_title': 'Workshop 1/06/2026', 'section_source': 'section_title'}}
+        saved = {'ready': True, 'covers': {}, 'history': [], 'progress': [{'activity_id': 10, 'completed': True, 'best_percent': 90, 'attempt_count': 1}]}
+        with patch('learner_api.student_activity.SOURCE_MODELS', {'commercial': model}), \
+             patch('learner_api.student_activity._connection'), \
+             patch('learner_api.student_activity.connections') as connections, \
+             patch('learner_api.student_activity.read_student_activity', return_value=payload), \
+             patch('learner_api.student_activity.subject_store.state', return_value=saved), \
+             patch('learner_api.student_activity.read_curriculum_schedules', return_value=schedules) as reader:
+            response = student_activity(self.factory.get('/'), kind='commercial', pk=132)
+        self.assertEqual(response.status_code, 200)
+        reader.assert_called_once_with(connections.__getitem__.return_value.cursor.return_value.__enter__.return_value, [1])
+        result = json.loads(response.content)
+        self.assertEqual(result['activities'][0]['date'], '2026-06-01')
+        self.assertEqual(result['activities'][0]['section_title'], 'Workshop 1/06/2026')
+        self.assertEqual(result['activities'][0]['best_score_percent'], 90)
+        self.assertEqual(result['count'], 1)
+        self.assertEqual(result['completed_count'], 1)
+
+    @patch("login.permissions._auth_gate_enabled", return_value=True)
+    @patch("login.permissions.authenticate_request")
     def test_unknown_audit_identity_returns_not_found(self, authenticate, _gate):
         authenticate.return_value = SimpleNamespace(role="staff")
         model = MagicMock()
@@ -172,6 +204,70 @@ class StudentActivityTests(SimpleTestCase):
             response = student_activity(self.factory.get("/"), kind="commercial", pk=132)
         self.assertEqual(response.status_code, 503)
         self.assertNotIn("private connection details", response.content.decode())
+
+
+class SubjectScheduleTests(SimpleTestCase):
+    def test_activity_title_precedes_lecture_date_and_creation_date(self):
+        schedule = activity_schedule('Workshop 20/02/26', '2026-03-06', '2026-03-03', section_title='Lecture 06/03/26')
+        self.assertEqual(schedule['date'], '2026-02-20')
+        self.assertEqual(schedule['date_source'], 'title')
+        self.assertFalse(schedule['date_needs_review'])
+
+    def test_lecture_title_date_precedes_cloned_upload_and_source_dates(self):
+        for title in ('Lecture 5 - 06/03/26', 'Lecture 5 6 March 2026', 'Lecture 5 March 6, 2026', 'Lecture 5 2026-03-06', 'Lecture 5 ٠٦/٠٣/٢٠٢٦'):
+            with self.subTest(title=title):
+                schedule = activity_schedule('Critical Chain', '2026-04-10', '2026-04-11', section_title=title)
+                self.assertEqual(schedule['date'], '2026-03-06')
+                self.assertEqual(schedule['date_source'], 'section_title')
+                self.assertEqual(schedule['source_date'], '2026-04-10')
+                self.assertFalse(schedule['date_needs_review'])
+
+    def test_ambiguous_and_partial_lecture_dates_need_review_without_upload_fallback(self):
+        for title in ('Workshop 6 March', 'Workshop 06/03/26 or 13/03/26', 'Workshop 31/02/26'):
+            with self.subTest(title=title):
+                schedule = activity_schedule('Critical Chain', '2026-04-10', section_title=title)
+                self.assertIsNone(schedule['date'])
+                self.assertEqual(schedule['month'], 'undated')
+                self.assertTrue(schedule['date_needs_review'])
+
+    def test_creation_and_stored_dates_remain_available_but_need_confirmation(self):
+        for created, expected, source in ((None, '2026-04-10', 'source_date'), ('2026-03-06T10:00:00Z', '2026-03-06', 'original_created_at')):
+            schedule = activity_schedule('Course templates', '2026-04-10', created, section_title='Important templates')
+            self.assertEqual(schedule['date'], expected)
+            self.assertEqual(schedule['date_source'], source)
+            self.assertTrue(schedule['date_needs_review'])
+
+    def test_curriculum_lookup_uses_ids_and_current_builder_week(self):
+        row = dict(course_id=1, activity_id='10', section_id='s1', section_title='Old lecture 01/02/26',
+                   original_created_at='2026-04-10', builder_week_id='w1', builder_week_title='Moved lecture 06/03/26')
+        cursor = MagicMock()
+        with patch('learner_api.student_activity_data._dict_rows', return_value=[row, row, {**row, 'course_id': 2, 'builder_week_id': None}]):
+            schedules = read_curriculum_schedules(cursor, [2, 1, 2])
+        self.assertEqual(cursor.execute.call_args.args[1], [[1, 2]])
+        self.assertEqual(schedules[(1, 10)]['section_source'], 'builder_section_title')
+        self.assertEqual(schedules[(1, 10)]['section_title'], 'Moved lecture 06/03/26')
+        self.assertEqual(schedules[(2, 10)]['section_title'], 'Old lecture 01/02/26')
+
+    def test_conflicting_section_placements_are_not_resolved_by_first_match(self):
+        row = dict(course_id=1, activity_id='10', section_id='s1', section_title='Lecture 06/03/26')
+        with patch('learner_api.student_activity_data._dict_rows', return_value=[row, {**row, 'section_id': 's2', 'section_title': 'Lecture 13/03/26'}]):
+            schedules = read_curriculum_schedules(MagicMock(), [1])
+        self.assertEqual(schedules[(1, 10)], {'ambiguous': True})
+        item = dict(group_id=1, source_activity_id=10, activity='Lesson', source_date='2026-04-10')
+        apply_curriculum_schedules([item], schedules)
+        self.assertIsNone(item['date'])
+        self.assertTrue(item['date_needs_review'])
+
+    def test_scheduling_never_changes_completion_or_matches_a_different_course(self):
+        base = dict(source_activity_id=10, activity='Workshop', source_date='2026-05-14', completed=True, best_score_percent=90)
+        items = [{**base, 'group_id': 1}, {**base, 'group_id': 2}]
+        apply_curriculum_schedules(items, {(1, 10): {
+            'section_title': 'Workshop 1/06/2026', 'section_source': 'section_title', 'original_created_at': '2026-05-24',
+        }})
+        self.assertEqual(items[0]['month'], '2026-06')
+        self.assertEqual(items[1], {**base, 'group_id': 2})
+        self.assertEqual(len(items), 2)
+        self.assertTrue(all(item['completed'] and item['best_score_percent'] == 90 for item in items))
 
 
 class SubjectBuilderCoverTests(SimpleTestCase):
@@ -257,7 +353,7 @@ class SubjectBuilderCoverTests(SimpleTestCase):
             [('legacy:42', '/media/curriculum_components/old.webp')],
             [('MOD-1', 'Renamed subject')],
             [('MOD-1', 'Renamed subject', 'mba-legacy', '42', '')],
-            [],
+            [('COMP-1', 'Lesson', '2026-08-22', 'Lecture 06/03/26')],
         ]
         with patch('learner_api.student_activity.connections') as connections, \
              patch('learner_api.student_activity.subject_store.ready', return_value=True), \
@@ -269,6 +365,9 @@ class SubjectBuilderCoverTests(SimpleTestCase):
         self.assertEqual(payload['covers'], {'legacy:42': '', 'current:MOD-1': ''})
         self.assertFalse(payload['can_manage'])
         self.assertEqual(payload['builder_subjects']['legacy:42']['id'], 'MOD-1')
+        self.assertEqual(payload['activity_dates']['COMP-1']['date'], '2026-03-06')
+        self.assertEqual(payload['activity_dates']['COMP-1']['date_source'], 'builder_section_title')
+        self.assertFalse(payload['activity_dates']['COMP-1']['date_needs_review'])
 
     @patch('login.permissions.authenticate_request')
     def test_old_upload_route_cannot_write_a_separate_cover(self, authenticate):

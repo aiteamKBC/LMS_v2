@@ -18,7 +18,7 @@ from login.sessions import authenticate_request
 from .learner_detail import SOURCE_MODELS
 from .student_activity_data import read_student_activity, read_student_material
 from .student_activity_access import student_activity_available
-from .student_activity_data import summarize_activities
+from .student_activity_data import summarize_activities, read_curriculum_schedules, apply_curriculum_schedules
 from . import subject_store
 from .subject_content import (ContentUnavailable, material_schema, build_material, public_quiz, as_list)
 from .subject_dates import activity_schedule
@@ -38,8 +38,8 @@ CURRENT_SUBJECTS_SQL = '''
 '''
 
 CURRENT_DATES_SQL = '''
-    SELECT c.id,c.title,c.created_at FROM curriculum.components c
-    JOIN curriculum.weeks w ON w.id=c.week_id
+    SELECT c.id,c.title,c.created_at,w.title FROM curriculum.components c
+    JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
     WHERE c.module_catalogue_id=ANY(%s)
       AND c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted,false)
       AND w.deleted_at IS NULL AND NOT coalesce(w.is_programme_deleted,false)
@@ -101,8 +101,12 @@ def student_activity(request, kind, pk):
         return _material_response(request, pk, aptem_id, payload)
     try:
         saved = subject_store.state(pk, aptem_id)
+        if payload['activities']:
+            with connections['enrolment'].cursor() as cursor:
+                schedules = read_curriculum_schedules(cursor, [item['group_id'] for item in payload['activities']])
+            apply_curriculum_schedules(payload['activities'], schedules)
     except DatabaseError:
-        return _error('Could not load your latest progress. Please try again.', 503)
+        return _error('Could not load your subject progress and dates. Please try again.', 503)
     payload.update(summarize_activities(subject_store.overlay_progress(payload['activities'], saved['progress'])))
     payload['module_count'] = len(payload.get('subjects') or []) or payload['module_count']
     payload['persistence_ready'] = saved['ready']
@@ -306,7 +310,9 @@ def subject_covers(request, pk):
             )
             covers.update(builder_covers)
             cur.execute(CURRENT_DATES_SQL, [[subject['id'] for subject in current_subjects]])
-            dates = {str(component_id): activity_schedule(title, None, created_at) for component_id, title, created_at in cur.fetchall()}
+            dates = {str(component_id): activity_schedule(title, None, created_at,
+                     section_title=week_title, section_source='builder_section_title')
+                     for component_id, title, created_at, week_title in cur.fetchall()}
         return _private({'covers': covers, 'can_manage': False,
                          'persistence_ready': available, 'csrf_token': get_token(request),
                          'activity_dates': dates, 'current_subjects': current_subjects,
