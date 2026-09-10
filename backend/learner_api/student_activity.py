@@ -186,7 +186,6 @@ def student_activity(request, kind, pk):
     except DatabaseError:
         return _error('Could not load your subject progress and dates. Please try again.', 503)
     payload = subject_source.overlay_subjects(payload, live, schedules)
-        return _error('Could not load your subject progress. Please try again.', 503)
     payload.update(summarize_activities(subject_store.overlay_progress(payload['activities'], saved['progress'])))
     payload['module_count'] = len(payload.get('subjects') or []) or payload['module_count']
     payload['recorded_otjh_total'] = combined_recorded_otjh(
