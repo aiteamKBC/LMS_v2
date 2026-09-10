@@ -22,5 +22,10 @@ export type TrainingPlanDashboard = {
 };
 
 export function fetchTrainingPlanDashboard(kind: LearnerKind, id: string, signal?: AbortSignal) {
-  return subjectRequest<TrainingPlanDashboard>(`/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/`, { signal });
+  return subjectRequest<TrainingPlanDashboard>(`/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=overview`, { signal });
+}
+
+export type TrainingPlanContract = Pick<TrainingPlanDashboard, 'months' | 'contractStatus'>;
+export function fetchTrainingPlanContract(kind: LearnerKind, id: string, signal?: AbortSignal) {
+  return subjectRequest<TrainingPlanContract>(`/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=contract`, { signal });
 }

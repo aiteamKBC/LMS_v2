@@ -10,15 +10,23 @@ export type SubjectEntry = { id: string; title: string; category: string; comple
 export type Subject = { id: string; title: string; source: 'legacy' | 'current'; activities: SubjectEntry[] };
 type BuilderSubject = { id: string; title: string };
 type ActivitySource = { module_id: string; group_id: number; activity_id: number };
-type CoverMetadata = { covers: Record<string, string>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject>; activity_sources?: Record<string, ActivitySource> };
+export type CoverMetadata = { covers: Record<string, string>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject>; activity_sources?: Record<string, ActivitySource> };
+
+function subjectRefs(data: StudentActivityResponse | null, real: LearnerDetail | null) {
+  return [...new Set([
+    ...(data?.subjects || []).map(subject => `legacy:${subject.id}`),
+    ...(data?.activities || []).map(activity => `legacy:${activity.group_id}`),
+    ...(real?.components || []).flatMap(component => component.moduleId ? [`current:${component.moduleId}`] : []),
+  ])].sort().join(',');
+}
+
+export function fetchSubjectMetadata(data: StudentActivityResponse | null, real: LearnerDetail | null, learnerId: string, signal?: AbortSignal) {
+  return subjectRequest<CoverMetadata>(`/learner_api/subject-covers/${encodeURIComponent(learnerId)}/?refs=${encodeURIComponent(subjectRefs(data, real))}`, { signal });
+}
 
 export function useSubjectMetadata(data: StudentActivityResponse | null, real: LearnerDetail | null, kind?: string, learnerId?: string, enabled = true) {
   // Raw, sorted IDs are independent of Builder renames and the merged cards.
-  const refs = [...new Set([
-    ...(data?.subjects || []).map((subject) => `legacy:${subject.id}`),
-    ...(data?.activities || []).map((activity) => `legacy:${activity.group_id}`),
-    ...(real?.components || []).flatMap((component) => component.moduleId ? [`current:${component.moduleId}`] : []),
-  ])].sort().join(',');
+  const refs = subjectRefs(data, real);
   const key = `${kind}:${learnerId}:${refs}`;
   const [state, setState] = useState<{ key: string; real: LearnerDetail | null; data: CoverMetadata | null; error: string } | null>(null);
   const [retry, setRetry] = useState(0);

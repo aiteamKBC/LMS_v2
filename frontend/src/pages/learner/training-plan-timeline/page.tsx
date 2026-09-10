@@ -5,10 +5,9 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { roleNavMap } from '@/mocks/navigation';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
-import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
-import { fetchTrainingPlanDashboard, type TrainingPlanDashboard, type PlanSession } from '@/api/trainingPlanDashboard';
-import { fetchStudentActivity, type StudentActivityResponse } from '@/api/studentActivity';
-import { subjectsFrom, useSubjectMetadata, type Subject } from '../my-learning/SubjectWorkspace';
+import { type TrainingPlanDashboard, type PlanSession } from '@/api/trainingPlanDashboard';
+import { subjectsFrom, type Subject } from '../my-learning/SubjectWorkspace';
+import { useTrainingPlanData } from './useTrainingPlanData';
 import { barPosition, buildPlanModules, monthMetrics, nextSession, percent, reviewDate, reviewToBook, sessionDay, timelineYears, uniquePlanSessions, type TimelineModule } from './model';
 import styles from './trainingPlan.module.css';
 
@@ -27,8 +26,8 @@ function State({ value }: { value: string }) {
 }
 function moduleStatus(module: TimelineModule) { return module.activities.length && module.done === module.activities.length ? 'Completed' : module.done ? 'In progress' : 'Not started'; }
 
-export function TrainingPlanBoard({ data, subjects, kind, learnerId, onRefresh }: {
-  data: TrainingPlanDashboard; subjects: Subject[]; kind: string; learnerId: string; onRefresh: () => void;
+export function TrainingPlanBoard({ data, subjects, kind, learnerId, onRefresh, refreshing = false, onRetryContract = onRefresh }: {
+  data: TrainingPlanDashboard; subjects: Subject[]; kind: string; learnerId: string; onRefresh: () => void; refreshing?: boolean; onRetryContract?: () => void;
 }) {
   const modules = useMemo(() => buildPlanModules(subjects, data), [subjects, data]);
   const [now, setNow] = useState(Date.now);
@@ -66,7 +65,10 @@ export function TrainingPlanBoard({ data, subjects, kind, learnerId, onRefresh }
   const reviewStatus = (review: typeof reviews[number]) => ({ completed: 'Completed', scheduled: review.invited === false ? 'Booking pending' : 'Booked', 'not-scheduled': reviewDate(review) < today ? 'Overdue' : 'Not booked', 'awaiting-signature': 'Awaiting signatures', 'in-progress': 'In progress' }[review.status] || 'Not booked');
   const visibleSessions = monthSessions.filter(session => filter !== 'completed' || session.attended === true).filter(session => filter !== 'pending' || session.attended !== true);
   return <div className={styles.root}>
-    <header className={styles.heading}><div><span className={styles.eyebrow}>Your learning journey</span><h1>My Training Plan</h1><p>Your modules, study hours and coaching, all in one place.</p></div><div className={styles.headerActions}>{data.coach.bookingUrl && <a href={data.coach.bookingUrl} target="_blank" rel="noopener noreferrer" className={styles.secondary}><Headphones size={16} />Support session<ArrowRight size={15} /></a>}<button className={styles.iconButton} onClick={onRefresh} aria-label="Refresh training plan"><RefreshCw size={17} /></button></div></header>
+    <header className={styles.heading}><div><span className={styles.eyebrow}>Your learning journey</span><h1>My Training Plan</h1><p>Your modules, study hours and coaching, all in one place.</p></div><div className={styles.headerActions}>{data.coach.bookingUrl && <a href={data.coach.bookingUrl} target="_blank" rel="noopener noreferrer" className={styles.secondary}><Headphones size={16} />Support session<ArrowRight size={15} /></a>}<button className={styles.iconButton} onClick={onRefresh} disabled={refreshing} aria-busy={refreshing} aria-label="Refresh training plan"><RefreshCw size={17} /></button></div></header>
+    {refreshing && <p role="status" className={styles.hint}>Refreshing your training plan…</p>}
+    {data.contractStatus === 'loading' && <p role="status" className={styles.hint}>Loading study hour targets…</p>}
+    {data.contractStatus === 'unavailable' && <p role="status" className={styles.hint}>Study hour targets could not be loaded. <button className={styles.secondary} onClick={onRetryContract}>Retry study hours</button></p>}
     <section className={styles.highlights} aria-label="Training plan summary">
       <article className={`${styles.highlight} ${styles.next}`}><span className={styles.tile}><CalendarDays size={21} /></span><div><p className={styles.kicker}>Next up</p><h2>{next?.title || 'Your next live session'}</h2><p className={styles.hint}>{next ? `${sessionTime(next.start)} · UK time · ${next.minutes} min` : 'Coming soon — your session will appear once scheduled.'}</p></div>{next?.joinUrl ? <a className={styles.primary} href={next.joinUrl} target="_blank" rel="noopener noreferrer">Join live session<ArrowRight size={16} /></a> : next ? <Link className={styles.primary} to={subjectHref(modules.find(m => m.moduleId === next.moduleId)?.id || '')}>View module<ArrowRight size={16} /></Link> : <span className={styles.soon}>Coming soon</span>}</article>
       <article className={`${styles.highlight} ${styles.reviewHighlight}`}><span className={styles.tile}><Users size={21} /></span><div><p className={styles.kicker}>Review to book</p><h2>{dueReview ? `${dueReview.title}${dueReview.sequence ? ` ${dueReview.sequence}` : ''}` : 'Your coaching reviews'}</h2><p className={styles.hint}>{dueReview ? `Due ${dateLabel(reviewDate(dueReview))}${(dueReview.coachName || data.coach.name) ? ` · ${dueReview.coachName || data.coach.name}` : ''}` : 'Your next review will appear when it is planned.'}</p></div>{dueReview ? <Link className={styles.primary} to={calendarHref(dueReview.eventKey)}>Book review<ArrowRight size={16} /></Link> : data.coach.bookingUrl ? <a className={styles.primary} href={data.coach.bookingUrl} target="_blank" rel="noopener noreferrer">Book a support session<ArrowRight size={16} /></a> : <span className={styles.soon}>Coming soon</span>}</article>
@@ -94,23 +96,9 @@ export function TrainingPlanBoard({ data, subjects, kind, learnerId, onRefresh }
 export default function TrainingPlanTimelinePage() {
   const params = useParams<{ kind?: string; id?: string }>();
   const { kind, id } = useResolvedLearner(params.kind, params.id);
-  const { real, loading, loadError, refresh } = useLearnerDetailParam(kind, id, true);
+  const { snapshot, loading, error, refresh, retryContract } = useTrainingPlanData(kind, id);
+  const real = snapshot?.real;
   const identity = `${kind}:${id}`;
-  const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<{ identity: string; data: TrainingPlanDashboard | null; activity: StudentActivityResponse | null; error: string } | null>(null);
-  useEffect(() => {
-    if (!kind || !id || !real) return;
-    const controller = new AbortController();
-    setState(null);
-    void Promise.all([fetchTrainingPlanDashboard(kind, id, controller.signal), real.studentActivityAvailable ? fetchStudentActivity(kind, id, controller.signal) : Promise.resolve(null)])
-      .then(([data, activity]) => { if (!controller.signal.aborted) setState({ identity, data, activity, error: '' }); })
-      .catch(error => { if (!controller.signal.aborted) setState({ identity, data: null, activity: null, error: error instanceof Error ? error.message : 'Could not load your training plan.' }); });
-    return () => controller.abort();
-  }, [kind, id, identity, real, attempt]);
-  const current = state?.identity === identity ? state : null;
-  const { metadata, error: metadataError, retry } = useSubjectMetadata(current?.activity || null, real, kind, id, !!current?.data);
-  const subjects = useMemo(() => subjectsFrom(current?.activity || null, real, metadata), [current?.activity, real, metadata]);
-  const error = loadError || current?.error || metadataError;
-  const reload = () => { setAttempt(a => a + 1); retry(); refresh(); };
-  return <WorkspaceShell role="learner" roleLabel={nav.label} navItems={nav.items} workspaceLabel={nav.workspaceLabel} pageTitle="Training plan" pageSubtitle={real?.programme || ''} userName={real?.name || 'Learner'} userRole="Learner"><PageContainer>{error ? <div role="alert" className={styles.error}><h1>Could not load your training plan</h1><p>{error}</p><button onClick={reload} className={styles.primary}>Try again</button></div> : loading || !current?.data || !metadata ? <div role="status" className={styles.loading}><CalendarDays size={30} /><h1>Loading your training plan</h1><p>Getting your modules, schedule and study hours…</p></div> : <TrainingPlanBoard key={identity} data={current.data} subjects={subjects} kind={kind!} learnerId={id!} onRefresh={reload} />}</PageContainer></WorkspaceShell>;
+  const subjects = useMemo(() => subjectsFrom(snapshot?.activity || null, real || null, snapshot?.metadata), [snapshot?.activity, real, snapshot?.metadata]);
+  return <WorkspaceShell role="learner" roleLabel={nav.label} navItems={nav.items} workspaceLabel={nav.workspaceLabel} pageTitle="Training plan" pageSubtitle={real?.programme || ''} userName={real?.name || 'Learner'} userRole="Learner"><PageContainer>{error && <div role="alert" className={styles.error}><h1>Could not load your training plan</h1><p>{error}</p><button onClick={refresh} className={styles.primary}>Try again</button></div>}{snapshot ? <TrainingPlanBoard key={identity} data={snapshot.data} subjects={subjects} kind={kind!} learnerId={id!} onRefresh={refresh} refreshing={loading} onRetryContract={retryContract} /> : !error && <div role="status" className={styles.loading}><CalendarDays size={30} /><h1>Loading your training plan</h1><p>Getting your modules, schedule and study hours…</p></div>}</PageContainer></WorkspaceShell>;
 }

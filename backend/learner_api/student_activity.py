@@ -59,23 +59,28 @@ CURRENT_DATES_SQL = '''
 '''
 
 CURRENT_ACTIVITY_SOURCES_SQL = '''
-    WITH exports AS (
+    WITH exports AS MATERIALIZED (
         SELECT e.course_id, m.module_catalogue_id,
                CASE WHEN jsonb_typeof(e.curriculum)='string'
                     THEN (e.curriculum #>> '{}')::jsonb ELSE e.curriculum END AS payload
         FROM "MBA".course_curriculum e
         JOIN curriculum.modules m ON m.source_type='mba-legacy' AND m.source_id=e.course_id::text
         WHERE m.module_catalogue_id=ANY(%s)
+    ), materials AS MATERIALIZED (
+        SELECT e.module_catalogue_id,e.course_id,
+               material->>'component_id' AS component_id,
+               material->>'source_component_id' AS source_component_id
+        FROM exports e
+        CROSS JOIN LATERAL jsonb_array_elements(
+            CASE WHEN jsonb_typeof(payload->'sections')='array' THEN payload->'sections' ELSE '[]'::jsonb END
+        ) section
+        CROSS JOIN LATERAL jsonb_array_elements(
+            CASE WHEN jsonb_typeof(section->'materials')='array' THEN section->'materials' ELSE '[]'::jsonb END
+        ) material
     )
-    SELECT c.id, e.module_catalogue_id, e.course_id, material->>'source_component_id'
-    FROM exports e
-    CROSS JOIN LATERAL jsonb_array_elements(
-        CASE WHEN jsonb_typeof(payload->'sections')='array' THEN payload->'sections' ELSE '[]'::jsonb END
-    ) section
-    CROSS JOIN LATERAL jsonb_array_elements(
-        CASE WHEN jsonb_typeof(section->'materials')='array' THEN section->'materials' ELSE '[]'::jsonb END
-    ) material
-    JOIN curriculum.components c ON c.id=material->>'component_id'
+    SELECT c.id, e.module_catalogue_id, e.course_id, e.source_component_id
+    FROM materials e
+    JOIN curriculum.components c ON c.id=e.component_id
         AND c.module_catalogue_id=e.module_catalogue_id
     JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
     WHERE c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted,false)
@@ -84,7 +89,11 @@ CURRENT_ACTIVITY_SOURCES_SQL = '''
 
 
 def _current_activity_sources(cursor, module_ids):
-    """Link imported components to exact source activities, never titles or clones."""
+    """Link imported components to exact source activities, never titles or clones.
+
+    Materialize the selected exports and their materials before joining: an
+    inlined JSON expansion otherwise gets repeated for every component match.
+    """
     if not module_ids:
         return {}
     cursor.execute(CURRENT_ACTIVITY_SOURCES_SQL, [module_ids])

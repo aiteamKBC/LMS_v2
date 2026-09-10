@@ -1,13 +1,13 @@
 """Contract extraction and access controls without a test database."""
 from types import SimpleNamespace
 from datetime import datetime, timezone, timedelta
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from hashlib import sha256
 import json
 import pymupdf as fitz
 from django.test import SimpleTestCase, RequestFactory
-from .training_plan_contract import parse_contract, read_verified_extract, contract_extract_metadata
-from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session
+from .training_plan_contract import parse_contract, read_verified_extract, contract_extract_metadata, read_contract
+from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session, read_dashboard
 
 
 def contract_pdf(total=30, review_on_same_page=False, joined_provider=False, split_header=False, split_total=False):
@@ -45,6 +45,68 @@ def contract_pdf(total=30, review_on_same_page=False, joined_provider=False, spl
 
 
 class TrainingPlanDashboardTests(SimpleTestCase):
+    def test_overview_does_not_download_or_parse_contract(self):
+        source = SimpleNamespace(pk=125, aptem_id='92', email='learner@example.com')
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value.fetchall.return_value = []
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
+             patch('learner_api.training_plan_dashboard.rows', return_value=[]), \
+             patch('learner_api.training_plan_dashboard.find_contract', return_value={'azure_path':'stored'}), \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
+             patch('learner_api.calendar.coaching_events_for_learner', return_value=[]), \
+             patch('learner_api.training_plan_dashboard.contract_plan') as extract:
+            profiles.objects.filter.return_value.first.return_value = None
+            result = read_dashboard(source, section='overview')
+        self.assertEqual(result['contractStatus'], 'loading')
+        self.assertEqual(result['months'], {})
+        extract.assert_not_called()
+
+    def test_contract_section_does_not_read_modules_or_reviews(self):
+        source = SimpleNamespace(pk=101, aptem_id=None, email='learner@example.com')
+        connection = MagicMock()
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
+             patch('learner_api.calendar.coaching_events_for_learner') as reviews:
+            self.assertEqual(read_dashboard(source, section='contract'), {'months': {}, 'contractStatus': 'not-available'})
+        profiles.objects.filter.assert_not_called()
+        connection.cursor.return_value.__enter__.return_value.execute.assert_not_called()
+        reviews.assert_not_called()
+
+    def test_contract_download_uses_one_size_check_and_reuses_versioned_extract(self):
+        read_contract.cache_clear()
+        service = MagicMock()
+        client = service.get_blob_client.return_value
+        client.get_blob_properties.return_value.size = 100
+        client.download_blob.return_value.readall.return_value = contract_pdf()
+        try:
+            with patch('audit_api.views._azure_service_client') as storage, \
+                 patch('audit_api.views._parse_contract_azure_path', return_value=('contracts', 'plan.pdf')):
+                storage.return_value.__enter__.return_value = service
+                first = read_contract('stored', 30, 'version-1')
+                self.assertEqual(read_contract('stored', 30, 'version-1'), first)
+                self.assertEqual(first['2026-09']['planned'], 30)
+                client.get_blob_properties.assert_called_once_with(connection_timeout=5, read_timeout=10, retry_total=0)
+                client.download_blob.assert_called_once()
+                read_contract('stored', 30, 'version-2')
+                self.assertEqual(client.download_blob.call_count, 2)
+        finally:
+            read_contract.cache_clear()
+
+    def test_oversized_contract_is_not_downloaded(self):
+        read_contract.cache_clear()
+        service = MagicMock()
+        client = service.get_blob_client.return_value
+        client.get_blob_properties.return_value.size = 31 * 1024 * 1024
+        try:
+            with patch('audit_api.views._azure_service_client') as storage, \
+                 patch('audit_api.views._parse_contract_azure_path', return_value=('contracts', 'plan.pdf')):
+                storage.return_value.__enter__.return_value = service
+                self.assertIsNone(read_contract('oversize', None, '1'))
+                client.download_blob.assert_not_called()
+        finally:
+            read_contract.cache_clear()
+
     def test_occurrence_link_and_rescheduled_duration_win_over_series_defaults(self):
         start=datetime(2026,9,14,12,0,tzinfo=timezone.utc)
         row={'occurrence_id':'O1','session_id':'S1','module_id':'M1','module_title':'Marketing',

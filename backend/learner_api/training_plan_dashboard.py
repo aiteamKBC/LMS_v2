@@ -69,16 +69,47 @@ def plan_session(row):
             'status': row['status'] or row['series_status'] or 'scheduled', 'attended': row['attended']}
 
 
-def read_dashboard(source):
+def find_contract(cursor, aptem_id):
+    cursor.execute('''SELECT c.id,c.azure_path,c.training_plan_planned_hours,
+        coalesce(nullif(a.display_name,''),c.document_name) AS document_name,
+        c.date,c.fetched_at,c.fully_signed_date,c.raw AS extraction_metadata
+        FROM fetching_evidence.aptem_cv_contracts_probe c
+        LEFT JOIN "Audit".contract_document_archive a ON a.contract_id=c.id
+        WHERE c.learner_id=%s
+          AND lower(coalesce(nullif(a.display_name,''),c.document_name)) ~ 'training[[:space:]_-]*plan'
+          AND a.archived_at IS NULL AND a.deleted_at IS NULL
+        ORDER BY coalesce(c.fully_signed_date,c.date) DESC NULLS LAST,c.id DESC''', [aptem_id])
+    return selected_contract(rows(cursor))
+
+
+def contract_plan(source, contract):
+    months, status = {}, 'not-available'
+    if contract and contract['azure_path']:
+        try:
+            version = f"{contract['fetched_at']}:{int(time.time() // 1800)}"
+            extracted = read_contract(contract['azure_path'], contract['training_plan_planned_hours'], version,
+                                      contract_extract_metadata(contract.get('extraction_metadata')))
+            if extracted:
+                months = {key: {**value, 'label': '', 'source': 'contract'} for key, value in extracted.items()}
+                status = 'ready'
+            else:
+                status = 'unverified'
+        except Exception:
+            log.warning('Training-plan contract could not be read for enrolment %s', source.pk)
+            status = 'unavailable'
+    return {'months': months, 'contractStatus': status}
+
+
+def read_dashboard(source, section=None):
     try:
         aptem_id = int(str(source.aptem_id or '').strip())
     except (ValueError, TypeError):
         aptem_id = None
     email = str(source.email or '').strip().casefold()
-    months, actual, modules, sessions = {}, [], [], []
+    actual, modules, sessions = [], [], []
     historical = None
     contract = None
-    profile = LearnerProfile.objects.filter(enrolment_id=source.pk).first()
+    profile = LearnerProfile.objects.filter(enrolment_id=source.pk).first() if section != 'contract' else None
     with connections['enrolment'].cursor() as cur:
         if aptem_id:
             cur.execute('''SELECT l.learner_email,l.coach_name,l.coach_email
@@ -88,17 +119,10 @@ def read_dashboard(source):
             if len(candidates) > 1 or (candidates and (not email or email != str(candidates[0]['learner_email'] or '').strip().casefold())):
                 raise LookupError('The training plan is not linked to this learner.')
             historical = candidates[0] if candidates else None
-            cur.execute('''SELECT c.id,c.azure_path,c.training_plan_planned_hours,
-                coalesce(nullif(a.display_name,''),c.document_name) AS document_name,
-                c.date,c.fetched_at,c.fully_signed_date,c.raw AS extraction_metadata
-                FROM fetching_evidence.aptem_cv_contracts_probe c
-                LEFT JOIN "Audit".contract_document_archive a ON a.contract_id=c.id
-                WHERE c.learner_id=%s
-                  AND lower(coalesce(nullif(a.display_name,''),c.document_name)) ~ 'training[[:space:]_-]*plan'
-                  AND a.archived_at IS NULL AND a.deleted_at IS NULL
-                ORDER BY coalesce(c.fully_signed_date,c.date) DESC NULLS LAST,c.id DESC''', [aptem_id])
-            candidates = rows(cur)
-            contract = selected_contract(candidates)
+            contract = find_contract(cur, aptem_id)
+        if section == 'contract':
+            return contract_plan(source, contract)
+        if aptem_id:
             cur.execute('''SELECT month,group_id,sum(actual_hours) AS hours,count(*) AS activity_count
                 FROM structured_manual_activities.manual_learner_activities
                 WHERE aptem_id=%s AND accepted IS TRUE AND deleted_at IS NULL
@@ -137,22 +161,10 @@ def read_dashboard(source):
                 if not start:
                     continue
                 sessions.append(plan_session(row))
-    contract_status = 'not-available'
-    if contract and contract['azure_path']:
-        try:
-            version = f"{contract['fetched_at']}:{int(time.time() // 1800)}"
-            extracted = read_contract(contract['azure_path'], contract['training_plan_planned_hours'], version,
-                                      contract_extract_metadata(contract.get('extraction_metadata')))
-            if extracted:
-                # The signed contract wins over newer/different Aptem target maps.
-                months = {key: {**value, 'label': '', 'source': 'contract'} for key, value in extracted.items()}
-                contract_status = 'ready'
-            else:
-                contract_status = 'unverified'
-        except Exception:
-            # Do not expose storage paths, credentials or PDF internals to the learner.
-            log.warning('Training-plan contract could not be read for enrolment %s', source.pk)
-            contract_status = 'unavailable'
+    # The overview must never wait for an Azure PDF download. Older clients
+    # still receive the complete response when no section was requested.
+    contract_data = ({'months': {}, 'contractStatus': 'loading'} if section == 'overview'
+                     else contract_plan(source, contract))
     coach_name = (getattr(profile, 'coach_name', '') if profile else '') or (historical or {}).get('coach_name') or ''
     coach_email = (getattr(profile, 'coach_email', '') if profile else '') or (historical or {}).get('coach_email') or ''
     from .calendar import coaching_events_for_learner
@@ -163,8 +175,8 @@ def read_dashboard(source):
                     'scheduledDate', 'scheduledTime', 'durationMinutes', 'coachName', 'invited')
     reviews = [{key: event.get(key) for key in event_fields} for event in events
                if event.get('source') in ('mcr', 'progress-review', 'student-support')]
-    return {'months': months, 'actual': actual, 'actualAvailable': bool(aptem_id), 'modules': modules, 'moduleLinks': links,
-            'sessions': sessions, 'reviews': reviews, 'contractStatus': contract_status,
+    return {**contract_data, 'actual': actual, 'actualAvailable': bool(aptem_id), 'modules': modules, 'moduleLinks': links,
+            'sessions': sessions, 'reviews': reviews,
             'coach': {'name': coach_name, 'bookingUrl': booking_url(coach_email)},
             'generatedAt': datetime.now(timezone.utc).isoformat()}
 
@@ -177,7 +189,10 @@ def training_plan_dashboard(request, kind, pk):
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     try:
         source = model.all_learners.get(pk=pk)
-        payload = read_dashboard(source)
+        section = request.GET.get('section')
+        if section not in (None, 'overview', 'contract'):
+            return JsonResponse({'error': 'Invalid training plan section.'}, status=400)
+        payload = read_dashboard(source, section=section)
     except model.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     except LookupError as error:

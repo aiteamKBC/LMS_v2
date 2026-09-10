@@ -162,15 +162,27 @@ def read_verified_extract(data, metadata):
         return None
 
 
-@lru_cache(maxsize=128)
+@lru_cache(maxsize=512)
 def read_contract(azure_path, expected_total, version, verified_extract=None):
     # version (the selected contract's version/date) invalidates cached extracts.
     # The storage client is already configured for the audited contract viewer.
-    from audit_api.views import _azure_service_client, _parse_contract_azure_path, _blob_client_with_fallback
+    from audit_api.views import _azure_service_client, _parse_contract_azure_path
+    from azure.core.exceptions import ResourceNotFoundError
 
     container, blob = _parse_contract_azure_path(azure_path)
-    client = _blob_client_with_fallback(_azure_service_client(), container, blob)
-    if client.get_blob_properties().size > 30 * 1024 * 1024:
-        return None
-    data = client.download_blob(max_concurrency=1).readall()
+    # Avoid the shared viewer helper's extra HEAD request and long SDK retry
+    # delays. A slow/unreachable document must not occupy a worker indefinitely.
+    options = {'connection_timeout': 5, 'read_timeout': 10, 'retry_total': 0}
+    with _azure_service_client() as service:
+        client = service.get_blob_client(container=container, blob=blob)
+        try:
+            properties = client.get_blob_properties(**options)
+        except ResourceNotFoundError as error:
+            if container.endswith('s') or error.error_code != 'ContainerNotFound':
+                raise
+            client = service.get_blob_client(container=f'{container}s', blob=blob)
+            properties = client.get_blob_properties(**options)
+        if properties.size > 30 * 1024 * 1024:
+            return None
+        data = client.download_blob(max_concurrency=1, **options).readall()
     return parse_contract(data, expected_total) or read_verified_extract(data, verified_extract)
