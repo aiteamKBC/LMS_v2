@@ -83,6 +83,7 @@ import {
   IndentDecrease,
   IndentIncrease,
   Info,
+  Inbox,
   Italic,
   KeyRound,
   Layers3,
@@ -107,11 +108,13 @@ import {
   Minus,
   MoreHorizontal,
   Palette,
+  Pause,
   Paperclip,
   Pencil,
   Phone,
   Pin,
   Play,
+  Podcast,
   Plus,
   Plug,
   Power,
@@ -166,6 +169,7 @@ function resolveIcon(name: string): LucideIcon {
   const key = name.replace(/^ri-/, '').toLowerCase();
 
   if (/loader|loading/.test(key)) return Loader2;
+  if (/inbox/.test(key)) return Inbox;
   if (/accessibility|wheelchair/.test(key)) return Accessibility;
   if (/contrast/.test(key)) return Contrast;
   // These three sit above the generic branches deliberately. Further down,
@@ -317,6 +321,7 @@ function resolveIcon(name: string): LucideIcon {
   if (/download/.test(key)) return Download;
   if (/save/.test(key)) return Save;
   if (/delete|trash|remove/.test(key)) return Trash2;
+  if (/pause/.test(key)) return Pause;
   if (/play/.test(key)) return Play;
   if (/power|shut-down|forbid/.test(key)) return Power;
   if (/alarm|warning|alert|risk|error|concern|escalat/.test(key)) return AlertTriangle;
@@ -328,7 +333,8 @@ function resolveIcon(name: string): LucideIcon {
   if (/archive/.test(key)) return FolderOpen;
   if (/external/.test(key)) return ExternalLink;
   if (/pin/.test(key)) return Pin;
-  if (/headphone|podcast/.test(key)) return Headphones;
+  if (/podcast/.test(key)) return Podcast;
+  if (/headphone/.test(key)) return Headphones;
   if (/cloud/.test(key)) return Cloud;
   if (/graduation|education/.test(key)) return GraduationCap;
   if (/activity|engagement/.test(key)) return Activity;

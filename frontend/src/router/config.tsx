@@ -69,6 +69,7 @@ const CurriculumDeliveryHub = lazyRoute(() => import("../pages/curriculum/hubs/p
 const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumQualityHub })));
 const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-courses/page"));
 const CurriculumKsbFrameworksPage = lazyRoute(() => import("../pages/curriculum/ksb-frameworks/page"));
+const CurriculumAuditTrailPage = lazyRoute(() => import("../pages/curriculum/audit-trail/page"));
 const CurriculumCohorts = lazyRoute(() => import("../pages/curriculum/cohorts/page"));
 const CurriculumCohortWorkspace = lazyRoute(() => import("../pages/curriculum/cohort-workspace/page"));
 const CurriculumGroups = lazyRoute(() => import("../pages/curriculum/groups/page"));
@@ -157,7 +158,6 @@ const LearnerCompliancePage = lazyRoute(() => import("../pages/learner/complianc
 const LearnerOnboardingReviewsPage = lazyRoute(() => import("../pages/learner/onboarding/reviews/page"));
 const LearnerReviewFormPage = lazyRoute(() => import("../pages/learner/onboarding/reviews/form"));
 const LearnerOverview = lazyRoute(() => import("../pages/workspace/learner/page"));
-const LearnerDemoMaterialPage = lazyRoute(() => import("../pages/learner/demo-material/page"));
 const LearnerProfilePage = lazyRoute(() => import("../pages/learner/profile/page"));
 const MISDashboard = lazyRoute(() => import("../pages/workspace/mis/page"));
 // These two modules export both a detail page (default) and a list page (named),
@@ -186,6 +186,7 @@ const ModuleBuilder = lazyRoute(() => import("../pages/curriculum/module-builder
 const ModulesPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
 const MonthlyCyclePage = lazyRoute(() => import("../pages/learner/monthly-cycle/page"));
 const MonthlySubmissionPage = lazyRoute(() => import("../pages/learner/monthly-submission/page"));
+const HistoricalAssignmentPage = lazyRoute(() => import("../pages/learner/monthly-submission/HistoricalAssignmentPage"));
 const MyLearningPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
 const TrainingPlanTimelinePage = lazyRoute(() => import("../pages/learner/training-plan-timeline/page"));
 const MySchedulePage = lazyRoute(() => import("../pages/learner/clubs/events/schedule/page"));
@@ -355,19 +356,6 @@ const routes: RouteObject[] = [
   {
     path: "/workspace/learner/:kind/:id",
     element: <LearnerOverview />,
-  },
-  {
-    // Focused inspection accounts land directly on their material cards.
-    path: "/learner/materials",
-    element: <LearnerOverview />,
-  },
-  {
-    path: "/learner/material/:materialKey",
-    element: <LearnerDemoMaterialPage />,
-  },
-  {
-    path: "/learner/material/:materialKey/:kind/:id",
-    element: <LearnerDemoMaterialPage />,
   },
   {
     path: "/workspace/coach",
@@ -598,6 +586,10 @@ const routes: RouteObject[] = [
   {
     path: "/learner/monthly-submission/:kind/:id/:componentId",
     element: <VideoWatchPage />,
+  },
+  {
+    path: "/learner/historical-assignment/:kind/:id/:activityId",
+    element: <HistoricalAssignmentPage />,
   },
   {
     path: "/learner/monthly-cycle/:kind/:id",
@@ -1097,6 +1089,10 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/reports",
     element: <CurriculumReportsPage />,
+  },
+  {
+    path: "/curriculum/audit-trail",
+    element: <CurriculumAuditTrailPage />,
   },
   {
     path: "/curriculum/published",

@@ -2,7 +2,6 @@
 
 import json
 import re
-from collections import defaultdict
 from uuid import UUID
 
 from django.db import DatabaseError, connections
@@ -16,10 +15,14 @@ from login.permissions import learner_self_or_staff, learner_self_only, staff_on
 from login.sessions import authenticate_request
 
 from .learner_detail import SOURCE_MODELS
-from .student_activity_data import read_student_activity, read_student_material
+from .active_users import completed_hours_value_from_progress
+from .models import LearnerProfile
+from .student_activity_data import read_audit_hour_totals, read_student_activity, read_student_material
 from .student_activity_access import student_activity_available
 from .student_activity_data import summarize_activities, read_curriculum_schedules, apply_curriculum_schedules
 from . import subject_store, subject_source
+from .student_activity_data import summarize_activities
+from . import subject_store
 from .subject_content import (ContentUnavailable, material_schema, build_material, public_quiz, as_list)
 from .subject_dates import activity_schedule
 
@@ -41,71 +44,70 @@ CURRENT_SUBJECTS_SQL = '''
     )
     SELECT DISTINCT cm.module_catalogue_id,cm.title
     FROM assigned JOIN curriculum.modules cm ON cm.module_catalogue_id=assigned.module_id
-    LEFT JOIN curriculum.groups g ON g.group_id=cm.group_id
-    LEFT JOIN curriculum.cohorts ch ON ch.cohort_id=cm.cohort_id
-    LEFT JOIN curriculum.programmes p ON p.programme_id=cm.programme_id
-    WHERE cm.deleted_at IS NULL AND NOT coalesce(cm.is_programme_deleted,false)
-      AND (g.group_id IS NULL OR (g.deleted_at IS NULL AND NOT coalesce(g.is_programme_deleted,false)))
-      AND (ch.cohort_id IS NULL OR (ch.deleted_at IS NULL AND NOT coalesce(ch.is_programme_deleted,false)))
-      AND (p.programme_id IS NULL OR (p.deleted_at IS NULL AND NOT coalesce(p.is_archived,false)))
+    WHERE (cm.deleted_at IS NULL OR cm.deleted_via_parent IS NOT NULL)
 '''
 
 CURRENT_DATES_SQL = '''
     SELECT c.id,c.title,c.created_at,w.title FROM curriculum.components c
     JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
     WHERE c.module_catalogue_id=ANY(%s)
-      AND c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted,false)
-      AND w.deleted_at IS NULL AND NOT coalesce(w.is_programme_deleted,false)
+      AND (c.deleted_at IS NULL OR c.deleted_via_parent IS NOT NULL)
+      AND (w.deleted_at IS NULL OR w.deleted_via_parent IS NOT NULL)
 '''
 
-CURRENT_ACTIVITY_SOURCES_SQL = '''
-    WITH exports AS MATERIALIZED (
-        SELECT e.course_id, m.module_catalogue_id,
-               CASE WHEN jsonb_typeof(e.curriculum)='string'
-                    THEN (e.curriculum #>> '{}')::jsonb ELSE e.curriculum END AS payload
-        FROM "MBA".course_curriculum e
-        JOIN curriculum.modules m ON m.source_type='mba-legacy' AND m.source_id=e.course_id::text
-        WHERE m.module_catalogue_id=ANY(%s)
-    ), materials AS MATERIALIZED (
-        SELECT e.module_catalogue_id,e.course_id,
-               material->>'component_id' AS component_id,
-               material->>'source_component_id' AS source_component_id
-        FROM exports e
-        CROSS JOIN LATERAL jsonb_array_elements(
-            CASE WHEN jsonb_typeof(payload->'sections')='array' THEN payload->'sections' ELSE '[]'::jsonb END
-        ) section
-        CROSS JOIN LATERAL jsonb_array_elements(
-            CASE WHEN jsonb_typeof(section->'materials')='array' THEN section->'materials' ELSE '[]'::jsonb END
-        ) material
-    )
-    SELECT c.id, e.module_catalogue_id, e.course_id, e.source_component_id
-    FROM materials e
-    JOIN curriculum.components c ON c.id=e.component_id
-        AND c.module_catalogue_id=e.module_catalogue_id
-    JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
-    WHERE c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted,false)
-      AND w.deleted_at IS NULL AND NOT coalesce(w.is_programme_deleted,false)
-'''
+def _direct_progress_records(enrolment_id):
+    """Progress recorded after the historical audit snapshot was imported.
 
-
-def _current_activity_sources(cursor, module_ids):
-    """Link imported components to exact source activities, never titles or clones.
-
-    Materialize the selected exports and their materials before joining: an
-    inlined JSON expansion otherwise gets repeated for every component match.
+    The Last_audit total already covers every legacy subject displayed by this
+    endpoint.  Only direct/current-platform rows are added here; including the
+    imported normalized rows as well would count the historical time twice.
     """
-    if not module_ids:
-        return {}
-    cursor.execute(CURRENT_ACTIVITY_SOURCES_SQL, [module_ids])
-    candidates = defaultdict(set)
-    for component_id, module_id, group_id, activity_id in cursor.fetchall():
-        if str(activity_id or '').isdigit():
-            candidates[str(component_id)].add((str(module_id), int(group_id), int(activity_id)))
-    return {
-        component_id: {'module_id': module_id, 'group_id': group_id, 'activity_id': activity_id}
-        for component_id, matches in candidates.items() if len(matches) == 1
-        for module_id, group_id, activity_id in matches
-    }
+    profile = (
+        LearnerProfile.objects.using('enrolment')
+        .filter(enrolment_id=enrolment_id)
+        .only('id')
+        .first()
+    )
+    if profile is None:
+        return []
+    entries = (
+        profile.progress_entries.using('enrolment')
+        .filter(component_link_source__in=('direct', 'quiz_ref'))
+        .exclude(kind='activity_event')
+        .values(
+            'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
+            'module_title', 'week_title', 'reported_time', 'claimed_seconds',
+            'verified_seconds', 'time_tracking_source', 'expected_otjh',
+            'submitted_at', 'passed',
+        )
+    )
+    return [{
+        'kind': row['kind'],
+        'componentId': row['component_ref'],
+        'quizId': row['quiz_ref'],
+        'componentTitle': row['component_title'],
+        'componentType': row['component_type'],
+        'moduleTitle': row['module_title'],
+        'weekTitle': row['week_title'],
+        'reportedTime': row['reported_time'],
+        'claimedSeconds': row['claimed_seconds'],
+        'verifiedSeconds': row['verified_seconds'],
+        'timeTrackingSource': row['time_tracking_source'],
+        'expectedOtjh': float(row['expected_otjh']) if row['expected_otjh'] is not None else None,
+        'submittedAt': row['submitted_at'].isoformat() if row['submitted_at'] else '',
+        'passed': row['passed'],
+    } for row in entries]
+
+
+def _direct_progress_otjh(progress):
+    return completed_hours_value_from_progress(progress)
+
+
+def combined_recorded_otjh(historical_total, direct_total):
+    """All recorded learner time across displayed legacy and current subjects."""
+    if historical_total is None and not direct_total:
+        return None
+    return round(float(historical_total or 0) + float(direct_total or 0), 4)
 
 
 def _error(message, status):
@@ -157,6 +159,8 @@ def student_activity(request, kind, pk):
                 payload = read_student_material(cursor, aptem_id, group_id, activity_id, include_source=True)
             else:
                 payload = read_student_activity(cursor, aptem_id)
+                if payload is not None:
+                    payload.update(read_audit_hour_totals(cursor, aptem_id))
     except DatabaseError:
         return _error("Could not read Last_audit activities. Please try again.", 503)
     material_request = request.GET.get('activity_id') is not None
@@ -177,15 +181,19 @@ def student_activity(request, kind, pk):
     schedules = {}
     try:
         saved = subject_store.state(pk, aptem_id)
-        if payload['activities']:
-            with connections['enrolment'].cursor() as cursor:
-                schedules = read_curriculum_schedules(cursor, [item['group_id'] for item in payload['activities']])
-            apply_curriculum_schedules(payload['activities'], schedules)
+        direct_progress = _direct_progress_records(pk)
+        direct_otjh = _direct_progress_otjh(direct_progress)
     except DatabaseError:
         return _error('Could not load your subject progress and dates. Please try again.', 503)
     payload = subject_source.overlay_subjects(payload, live, schedules)
+        return _error('Could not load your subject progress. Please try again.', 503)
     payload.update(summarize_activities(subject_store.overlay_progress(payload['activities'], saved['progress'])))
     payload['module_count'] = len(payload.get('subjects') or []) or payload['module_count']
+    payload['recorded_otjh_total'] = combined_recorded_otjh(
+        payload.get('actual_total'),
+        direct_otjh,
+    )
+    payload['direct_otjh_activities'] = direct_progress
     payload['persistence_ready'] = saved['ready']
     allowed = {f"legacy:{item['group_id']}" for item in payload['activities']}
     payload['covers'] = {key: _cover_url(value) for key, value in saved['covers'].items() if key in allowed}
@@ -212,7 +220,6 @@ def _cover_url(path):
 
 
 def _definition_for(stored):
-    from .media_proxy import _legacy_attachment_upload_path
     try:
         schema = material_schema(stored['_source']['activity_id'])
     except ContentUnavailable:
@@ -236,6 +243,7 @@ def _definition_for(stored):
         path = _legacy_attachment_upload_path(reference)
         return '/curriculum_api/curriculum/uploads/' + path if path else ''
     return build_material(stored, schema, attachment_resolver=archive_url)
+    return build_material(stored, schema)
 
 
 def _local_pdf_urls(definition, kind, pk, group_id, activity_id):
@@ -384,39 +392,24 @@ def _builder_cover_url(value):
 
 
 def _builder_subject_metadata(cursor, refs):
-    """Resolve only stored source IDs; repeated titles are not identity links."""
+    """Resolve current module IDs without matching historical source records."""
     from .subject_content import clean_text
     native = [ref[8:] for ref in refs if ref.startswith('current:')]
-    legacy = [ref[7:] for ref in refs if ref.startswith('legacy:') and ref[7:].isdigit()]
-    if not native and not legacy:
+    if not native:
         return {}, {}
     cursor.execute('''
-        SELECT m.module_catalogue_id,m.title,m.source_type,m.source_id,m.cover_image_url
+        SELECT m.module_catalogue_id,m.title,m.cover_image_url
         FROM curriculum.modules m
-        LEFT JOIN curriculum.groups g ON g.group_id=m.group_id
-        LEFT JOIN curriculum.cohorts ch ON ch.cohort_id=m.cohort_id
-        LEFT JOIN curriculum.programmes p ON p.programme_id=m.programme_id
-        WHERE m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
-          AND (g.group_id IS NULL OR (g.deleted_at IS NULL AND NOT coalesce(g.is_programme_deleted,false)))
-          AND (ch.cohort_id IS NULL OR (ch.deleted_at IS NULL AND NOT coalesce(ch.is_programme_deleted,false)))
-          AND (p.programme_id IS NULL OR (p.deleted_at IS NULL AND NOT coalesce(p.is_archived,false)))
-          AND (m.module_catalogue_id=ANY(%s) OR (m.source_type='mba-legacy' AND m.source_id=ANY(%s)))
-    ''', [native, legacy])
-    candidates = defaultdict(dict)
-    for module_id, title, source_type, source_id, cover in cursor.fetchall():
+        WHERE (m.deleted_at IS NULL OR m.deleted_via_parent IS NOT NULL)
+          AND m.module_catalogue_id=ANY(%s)
+    ''', [native])
+    covers, links = {}, {}
+    for module_id, title, cover in cursor.fetchall():
         row = {'id': module_id, 'title': clean_text(title), 'cover': _builder_cover_url(cover)}
         if module_id in native:
-            candidates[f'current:{module_id}'][module_id] = row
-        if source_type == 'mba-legacy' and str(source_id) in legacy:
-            candidates[f'legacy:{source_id}'][module_id] = row
-    covers, links = {}, {}
-    for ref, matches in candidates.items():
-        if len(matches) != 1:
-            continue
-        row = next(iter(matches.values()))
-        # An explicitly empty Builder cover must also clear an old override.
-        covers[ref] = row['cover']
-        links[ref] = {'id': row['id'], 'title': row['title']}
+            ref = f'current:{module_id}'
+            covers[ref] = row['cover']
+            links[ref] = {'id': row['id'], 'title': row['title']}
     return covers, links
 
 
@@ -443,11 +436,10 @@ def subject_covers(request, pk):
             dates = {str(component_id): activity_schedule(title, None, created_at,
                      section_title=week_title, section_source='builder_section_title')
                      for component_id, title, created_at, week_title in cur.fetchall()}
-            activity_sources = _current_activity_sources(cur, [subject['id'] for subject in current_subjects])
         return _private({'covers': covers, 'can_manage': False,
                          'persistence_ready': available, 'csrf_token': get_token(request),
                          'activity_dates': dates, 'current_subjects': current_subjects,
-                         'builder_subjects': builder_subjects, 'activity_sources': activity_sources})
+                         'builder_subjects': builder_subjects})
     except DatabaseError:
         return _error('Could not load subject images.', 503)
 

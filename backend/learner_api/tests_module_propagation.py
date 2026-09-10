@@ -83,8 +83,7 @@ class LiveAssignedModuleTests(SimpleTestCase):
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
         cursor.fetchall.side_effect = rows
-        with patch('learner_api.learner_detail.connections', {'enrolment': connection}), \
-                patch('learner_api.learner_detail._audit_sources_by_component_id', return_value={}):
+        with patch('learner_api.learner_detail.connections', {'enrolment': connection}):
             result = _resolve_from_master(modules or [], weeks or [], components or [], assigned_modules=assigned)
         return result, cursor
 

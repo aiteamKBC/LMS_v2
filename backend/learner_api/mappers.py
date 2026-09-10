@@ -691,7 +691,13 @@ def to_commercial_row(u):
         "modules": _s(u.modules),
         "weeks": _s(u.weeks),
         "components": _s(u.components),
-        "trainingPlan": _as_list(u.training_plan),
+        # Resolved rather than read straight off Training_plan: an
+        # apprenticeship learner's plan is stored in Learning_plan and a
+        # commercial learner's in Training_plan (see stored_training_plan), so
+        # reading one column reported "no plan" for every learner whose plan
+        # was in the other -- while the Modules text column beside it listed
+        # the modules, which is how the discrepancy showed up.
+        "trainingPlan": _as_list(stored_training_plan(u)),
         # Aptem create-form fields — the directory reads type/status from these,
         # and the edit modal round-trips the rest.
         "type": _s(u.type) or "User",
@@ -969,6 +975,13 @@ def to_learner_detail(source, learner_profile):
     programme_start = getattr(source, "start_date", None)
     if hasattr(programme_start, "isoformat"):
         programme_start = programme_start.isoformat()
+    programme_end = (
+        getattr(source, "end_date", None)
+        or getattr(source, "practical_period_end_date", None)
+        or getattr(source, "apprenticeship_end_date", None)
+    )
+    if hasattr(programme_end, "isoformat"):
+        programme_end = programme_end.isoformat()
 
     return {
         "id": str(source.id),
@@ -991,6 +1004,7 @@ def to_learner_detail(source, learner_profile):
         "programmeStatus": _s(source.programme_status) or DEFAULT_PROGRAMME_STATUS,
         "learnerType": _s(getattr(source, "learner_type", "")) or "apprenticeship",
         "programmeStartDate": _s(programme_start),
+        "programmeEndDate": _s(programme_end),
         "cohort": _s(source.cohort),
         "group": _s(source.group),
         "employer": _s(getattr(source, "employer", "")),

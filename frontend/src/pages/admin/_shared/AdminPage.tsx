@@ -12,6 +12,8 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { AppIcon } from '@/components/feature/AppIcon';
+import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 
 const adminNav = roleNavMap.admin;
 
@@ -48,45 +50,37 @@ export function AdminPage({
       userName={auth.account?.displayName || auth.user?.fullName || 'Platform Admin'}
       userRole="Super Administrator"
     >
-      <div className="p-3 md:p-6 space-y-4 md:space-y-6">
-        <div className="super-admin-hero relative rounded-2xl overflow-hidden" style={{ background: 'var(--kbc-hero-gradient)' }}>
-          <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
-          <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
-          <div className="relative p-5 sm:p-7 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <AppIcon className={`${icon} text-white text-2xl`}></AppIcon>
-            </span>
-            <div className="flex-1 min-w-0">
-              <h2 className="text-lg font-heading font-bold text-white mb-1">{heroTitle}</h2>
-              <p className="text-[13px] text-white/80 leading-relaxed">{heroBlurb}</p>
-            </div>
-            {stats && stats.length > 0 && (
-              <div className="flex items-center gap-3 shrink-0 flex-wrap">
-                {stats.map(s => (
-                  <div key={s.label} className="coach-metric-card admin-hero-metric min-w-[80px]">
-                    <p className="whitespace-nowrap text-[10px] font-medium uppercase tracking-wide text-foreground-500">{s.label}</p>
-                    <p className="mt-1 text-[28px] font-semibold leading-none tabular-nums text-foreground-900">{s.value}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-            {actions}
-          </div>
-        </div>
+      <div className="admin-console-page min-w-0 space-y-4 p-3 md:space-y-5 md:p-6 [&_table_th]:!bg-primary-50/60 [&_table_th]:!font-semibold [&_table_th]:!text-primary-700 [&_tbody_tr:hover]:!bg-primary-50/40">
+        <AdminPageHeader title={heroTitle} description={heroBlurb} icon={icon} stats={stats} actions={actions} />
         {children}
       </div>
     </WorkspaceShell>
   );
 }
 
+/** Presentation shared by the console and the certificate editor. */
+export function AdminPageHeader({ title, description, icon, stats, actions, eyebrow = 'Administration' }: {
+  title: string;
+  description: ReactNode;
+  icon: string;
+  stats?: HeroStat[];
+  actions?: ReactNode;
+  eyebrow?: string;
+}) {
+  return (
+    <WorkspaceHeroBanner heading="h1" title={title} description={description} icon={icon} eyebrow={eyebrow} stats={stats} actions={actions} />
+  );
+}
+
 /** Panel that resolves loading / error / empty before rendering its children. */
 export function DataPanel({
-  loading, error, empty, emptyMessage, onRetry, children, className = '', skeleton,
+  loading, error, empty, emptyMessage, emptyIcon = 'ri-inbox-line', onRetry, children, className = '', skeleton,
 }: {
   loading: boolean;
   error: string | null;
   empty?: boolean;
   emptyMessage?: string;
+  emptyIcon?: string;
   onRetry?: () => void;
   children: ReactNode;
   className?: string;
@@ -98,7 +92,7 @@ export function DataPanel({
     // console page, so what is arriving is always a list of things — and the
     // page keeps its height instead of collapsing and jumping back.
     return (
-      <div className={`bg-background-50 rounded-xl p-5 shadow-sm ${className}`}>
+      <div className={`rounded-2xl border border-[var(--kbc-border)] bg-[var(--kbc-surface)] p-5 ${className}`}>
         {skeleton ?? <RowsSkeleton rows={5} />}
       </div>
     );
@@ -112,7 +106,7 @@ export function DataPanel({
         <p className="text-sm font-semibold text-red-900">Could not load this page</p>
         <p className="text-[12px] text-red-700 mt-1 max-w-md mx-auto">{error}</p>
         {onRetry && (
-          <button onClick={onRetry} className="mt-4 px-4 py-2 bg-red-500 text-white rounded-xl text-[12px] font-semibold hover:bg-red-600 transition-smooth cursor-pointer">
+          <button onClick={onRetry} className="mt-4 cursor-pointer rounded-xl border border-red-200 bg-red-50/50 px-4 py-2 text-xs font-semibold text-red-700 transition-colors hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500">
             Try again
           </button>
         )}
@@ -121,9 +115,9 @@ export function DataPanel({
   }
   if (empty) {
     return (
-      <div className={`bg-background-50 rounded-xl p-10 text-center shadow-sm ${className}`}>
-        <span className="w-10 h-10 rounded-xl bg-background-100 flex items-center justify-center mx-auto mb-3">
-          <AppIcon className="ri-inbox-line text-foreground-300 text-lg"></AppIcon>
+      <div className={`rounded-2xl border border-[var(--kbc-border)] bg-[var(--kbc-surface)] p-10 text-center ${className}`}>
+        <span className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-primary-100/60 text-primary-600 shadow-md shadow-primary-900/10">
+          <AppIcon name={emptyIcon} className="text-lg" aria-hidden="true" />
         </span>
         <p className="text-[13px] text-foreground-500">{emptyMessage || 'Nothing to show yet.'}</p>
       </div>
@@ -135,10 +129,10 @@ export function DataPanel({
 /** Status pill with the console's four tones. */
 export function StatusBadge({ status, tone }: { status: string; tone: 'ok' | 'bad' | 'warn' | 'neutral' }) {
   const map = {
-    ok: 'bg-emerald-50 text-emerald-700 border-emerald-200/50',
-    bad: 'bg-red-50 text-red-700 border-red-200/50',
-    warn: 'bg-amber-50 text-amber-700 border-amber-200/50',
-    neutral: 'bg-background-100 text-foreground-500 border-foreground-200/60',
+    ok: 'bg-emerald-50/50 text-emerald-700 border-emerald-200/60',
+    bad: 'bg-red-50/50 text-red-700 border-red-200/60',
+    warn: 'bg-amber-50/50 text-amber-700 border-amber-200/60',
+    neutral: 'bg-primary-50/60 text-primary-700 border-primary-200/60',
   };
   return (
     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border whitespace-nowrap capitalize ${map[tone]}`}>
@@ -150,8 +144,8 @@ export function StatusBadge({ status, tone }: { status: string; tone: 'ok' | 'ba
 /** Card explaining that a screen reports rather than configures. */
 export function SourceNote({ children }: { children: ReactNode }) {
   return (
-    <div className="bg-background-100/60 border border-foreground-200/60 rounded-xl p-3.5 flex items-start gap-2.5">
-      <AppIcon className="ri-information-line text-foreground-400 text-sm mt-0.5 shrink-0"></AppIcon>
+    <div className="flex items-start gap-2.5 rounded-xl border border-primary-200/40 bg-primary-50/40 p-3.5">
+      <AppIcon className="ri-information-line mt-0.5 shrink-0 text-sm text-primary-600" aria-hidden="true"></AppIcon>
       <p className="text-[11px] text-foreground-500 leading-relaxed">{children}</p>
     </div>
   );
@@ -172,7 +166,7 @@ export function Pager({ page, pageSize, count, onPage }: {
         <button
           disabled={page <= 1}
           onClick={() => onPage(page - 1)}
-          className="px-3 py-1.5 rounded-lg border border-foreground-200/60 text-[12px] text-foreground-600 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-background-100 transition-smooth cursor-pointer"
+          className="cursor-pointer rounded-lg border border-primary-200/60 bg-primary-50/60 px-3 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Previous
         </button>
@@ -180,7 +174,7 @@ export function Pager({ page, pageSize, count, onPage }: {
         <button
           disabled={page >= pages}
           onClick={() => onPage(page + 1)}
-          className="px-3 py-1.5 rounded-lg border border-foreground-200/60 text-[12px] text-foreground-600 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-background-100 transition-smooth cursor-pointer"
+          className="cursor-pointer rounded-lg border border-primary-200/60 bg-primary-50/60 px-3 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Next
         </button>

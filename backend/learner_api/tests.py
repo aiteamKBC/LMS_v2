@@ -846,7 +846,7 @@ class LearnerReflectionQuestionTests(SimpleTestCase):
 
 
 class LearnerSoftDeletedCurriculumVisibilityTests(SimpleTestCase):
-    def test_live_resolution_excludes_soft_deleted_curriculum_at_every_level(self):
+    def test_live_resolution_keeps_parent_deleted_rows_eligible_but_excludes_missing_rows(self):
         cursor = ScriptedCursor([[], [], []])
         weeks = [{
             "module": "Deleted module", "week": "Deleted week",
@@ -862,12 +862,9 @@ class LearnerSoftDeletedCurriculumVisibilityTests(SimpleTestCase):
 
         self.assertEqual(resolved, ([], [], []))
         module_query, week_query, component_query = [" ".join(query.lower().split()) for query in cursor.queries[:3]]
-        self.assertIn("m.deleted_at is null", module_query)
-        self.assertIn("g.deleted_at is null", module_query)
-        self.assertIn("ch.deleted_at is null", module_query)
-        self.assertIn("p.deleted_at is null", module_query)
-        self.assertIn("deleted_at is null", week_query)
-        self.assertIn("deleted_at is null", component_query)
+        self.assertIn("m.deleted_at is null or m.deleted_via_parent is not null", module_query)
+        self.assertIn("deleted_at is null or deleted_via_parent is not null", week_query)
+        self.assertIn("deleted_at is null or deleted_via_parent is not null", component_query)
 
 
 class LearnerWeekQuizVisibilityTests(SimpleTestCase):
@@ -1055,17 +1052,38 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
 
         self.assertEqual(completed_hours_from_progress(progress), "1.5")
 
-    def test_completed_hours_uses_bounded_mba_import_time(self):
+    def test_completed_hours_uses_verified_historical_import_time(self):
         progress = [{
             "kind": "component", "componentId": "component-1",
             "reportedTime": "", "claimedSeconds": 26418634,
             "verifiedSeconds": 7200,
-            "timeTrackingSource": "mba_import_bounded_by_authored_otjh",
+            "timeTrackingSource": "historical_import",
         }]
 
-        # The import keeps the raw MBA duration in claimedSeconds for audit,
-        # but only verifiedSeconds is eligible for OTJH credit.
+        # An automatic import's raw duration is not a learner-entered value;
+        # only the verified duration is eligible for OTJH credit.
         self.assertEqual(completed_hours_from_progress(progress), "2")
+
+    def test_new_platform_activity_appends_without_double_counting_imported_otjh(self):
+        progress = [
+            {
+                "kind": "component", "componentId": "component-1",
+                "attempt": 1, "reportedTime": "", "verifiedSeconds": 7200,
+                "timeTrackingSource": "historical_import",
+                "submittedAt": "2025-01-01T09:00:00Z",
+            },
+            {
+                "kind": "component", "componentId": "component-1",
+                "attempt": 2, "reportedTime": "3h", "verifiedSeconds": 1800,
+                "timeTrackingSource": "signed_session_capped_active_playback:input",
+                "submittedAt": "2026-09-10T09:00:00Z",
+            },
+        ]
+
+        # Both audit rows remain in history, while the activity contributes one
+        # OTJH value (the highest defensible attempt) to the learner total.
+        self.assertEqual(len(progress), 2)
+        self.assertEqual(completed_hours_from_progress(progress), "3")
 
     def test_completed_hours_counts_reported_time_before_tracked_time(self):
         # The learner entered 2h for both activities, so that input is used even

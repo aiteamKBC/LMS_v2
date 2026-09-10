@@ -141,6 +141,7 @@ export interface LearnerDetail {
   programmeStatus: string;
   learnerType?: LearnerKind;
   programmeStartDate?: string;
+  programmeEndDate?: string;
   cohort: string;
   /** The learner's cohort schedule, from curriculum.cohorts. Gateway is a date
    *  the cohort reaches, not something finishing the modules early unlocks. */

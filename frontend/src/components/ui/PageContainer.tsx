@@ -23,7 +23,7 @@ export function PageContainer({
   className?: string;
 }) {
   return (
-    <div className={cn('page-container mx-auto w-full max-w-[1800px] space-y-5 p-4 md:p-6', className)}>
+    <div className={cn('page-container mx-auto w-full min-w-0 space-y-3 p-3 md:space-y-4 md:p-6', className)}>
       {children}
     </div>
   );

@@ -15,10 +15,12 @@
  * for a second. These tests pin the fix: chrome only, and chrome that matches
  * the real shell so the swap moves nothing.
  */
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import { PageSkeleton } from '../Skeletons';
-import { SIDEBAR_RAIL_WIDTH } from '../Sidebar';
+import { SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH } from '../Sidebar';
+
+beforeEach(() => localStorage.clear());
 
 describe('PageSkeleton', () => {
   it('does not imply a page shape it cannot know', () => {
@@ -35,11 +37,13 @@ describe('PageSkeleton', () => {
     // The rail comes from the same constant the real sidebar uses, so it cannot drift.
     const rail = container.querySelector<HTMLElement>(`[style*="width"]`);
     expect(rail?.style.width).toBe(`${SIDEBAR_RAIL_WIDTH}px`);
+    expect(rail).toHaveClass('hidden', 'lg:block');
+    expect(rail?.style.marginInline).toBe('12px');
 
-    // Header.tsx is h-14 and the shell's breadcrumb strip is h-8. Both used to
+    // Header.tsx is h-16 and the shell's breadcrumb strip is h-8. Both used to
     // be missing or wrong here, which shifted the page vertically on every
     // navigation and then shifted it back.
-    expect(container.querySelector('.h-14')).not.toBeNull();
+    expect(container.querySelector('.h-16')).toHaveClass('mt-2', 'mb-2', 'lg:mt-3');
     expect(container.querySelector('.h-8')).not.toBeNull();
   });
 
@@ -48,5 +52,11 @@ describe('PageSkeleton', () => {
     const root = container.firstElementChild;
     expect(root?.getAttribute('aria-busy')).toBe('true');
     expect(root?.getAttribute('aria-label')).toBe('Loading page');
+  });
+
+  it('keeps room for an open sidebar while the next page loads', () => {
+    localStorage.setItem('kbc_sidebar_pinned', 'true');
+    const { container } = render(<PageSkeleton />);
+    expect(container.querySelector<HTMLElement>('[style*="width"]')?.style.width).toBe(`${SIDEBAR_EXPANDED_WIDTH}px`);
   });
 });

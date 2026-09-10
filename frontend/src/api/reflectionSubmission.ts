@@ -40,9 +40,28 @@ export interface LearningReflectionSubmissionInput {
   assignmentTimeSource?: 'timer' | 'input';
 }
 
+export interface HistoricalAssignmentContent {
+  method: string;
+  notices: string[];
+  cards: Array<{
+    title: string;
+    emptyMessage: string;
+    sections: Array<{ label: string; text: string; source: string; kind: 'original' | 'feedback' | 'record' }>;
+  }>;
+}
+
 export interface StoredLearningReflectionSubmission extends LearningReflectionSubmissionInput {
   /** Server-owned provenance; learners cannot request the import exemption. */
-  submissionOrigin?: 'learner' | 'imported_legacy';
+  submissionOrigin?: 'learner' | 'imported_legacy' | 'classified_legacy';
+  legacyAssignment?: {
+    content?: HistoricalAssignmentContent;
+    aptemLearnerId: number;
+    componentId: number;
+    evidenceIds: number[];
+    sourceStatus: string;
+    documents: Array<{ evidenceId: number; part: 'file' | 'report'; name: string }>;
+    feedbacks?: Array<{ author?: string; date?: string; message?: string }>;
+  };
   id: string;
   status: string;
   coachFeedback: string | null;

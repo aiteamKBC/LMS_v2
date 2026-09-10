@@ -21,6 +21,10 @@
 // so the reason is visible before the click, but it does not enforce them.
 // ============================================================================
 import { useState } from 'react';
+// Imported explicitly rather than relying on unplugin-auto-import: that plugin
+// does not run under vitest, so an auto-imported AppIcon makes this component
+// untestable.
+import { AppIcon } from '@/components/feature/AppIcon';
 import { ACCESS_OPTIONS, updateStaffUser, type StaffAccess } from '@/api/staffUsers';
 import type { PlatformAccount } from '@/api/platformAdmin';
 
@@ -108,12 +112,12 @@ export function AccessPanel({
       onClick={onClose}
     >
       <div
-        className="bg-background-50 rounded-2xl border border-background-200 max-w-xl w-full shadow-2xl max-h-[90vh] overflow-y-auto"
+        className="bg-[var(--kbc-surface)] rounded-2xl border border-background-200 max-w-xl w-full shadow-2xl max-h-[90vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
         <div className="px-6 pt-6 pb-4 border-b border-foreground-200/60 flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary-100 flex items-center justify-center shrink-0">
+          <div className="w-10 h-10 rounded-xl bg-primary-100/60 flex items-center justify-center shrink-0 !bg-none shadow-md shadow-primary-900/10 ring-1 ring-inset ring-primary-200/60">
             <span className="text-primary-700 text-[13px] font-semibold">
               {(account.displayName || account.email).charAt(0).toUpperCase()}
             </span>
@@ -197,16 +201,35 @@ export function AccessPanel({
                         {active && granted.length > 1 && (
                           <span
                             className="mt-2 inline-flex items-center gap-1.5 text-[10px] font-semibold text-primary-700"
-                            onClick={event => event.preventDefault()}
+                            // Stopped, not prevented. This radio sits inside the
+                            // label whose control is the access checkbox above,
+                            // so a click here would otherwise also toggle the
+                            // grant off. preventDefault stopped that but also
+                            // cancelled the radio's own selection, so choosing a
+                            // landing page appeared to do nothing.
+                            onClick={event => event.stopPropagation()}
                           >
                             <input
                               type="radio"
                               name="primary-access"
                               checked={primary === option.id}
                               onChange={() => setPrimary(option.id)}
-                              className="accent-primary-500"
+                              className="accent-primary-500 cursor-pointer"
                             />
-                            {primary === option.id ? 'Lands here at sign-in' : 'Land here instead'}
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => setPrimary(option.id)}
+                              onKeyDown={event => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault();
+                                  setPrimary(option.id);
+                                }
+                              }}
+                              className="cursor-pointer"
+                            >
+                              {primary === option.id ? 'Lands here at sign-in' : 'Land here instead'}
+                            </span>
                           </span>
                         )}
                       </span>

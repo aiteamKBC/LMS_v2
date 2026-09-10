@@ -181,7 +181,7 @@ export function WizardShell({
   };
 
   return (
-    <div className={mode === 'staff' ? 'min-h-screen bg-background-200' : ''}>
+    <div className={mode === 'staff' ? 'min-h-full bg-background-200' : ''}>
       <div className={mode === 'staff' ? 'max-w-6xl mx-auto px-6 py-6' : ''}>
         {header}
 

@@ -5,7 +5,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
-import { buildLearnerJourney, quizAggregateStats, parseHours, formatHoursMinutes, hasComponentContent, isOpenableComponent, type JourneyModule } from '@/utils/learnerJourney';
+import { buildLearnerJourney, completedComponentIds, isComponentComplete, quizAggregateStats, parseHours, formatHoursMinutes, hasComponentContent, isOpenableComponent, type JourneyModule } from '@/utils/learnerJourney';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
@@ -60,9 +60,11 @@ function weekDisplayLabel(week: string): string {
 }
 
 export function buildStations(journey: JourneyModule[], real: LearnerDetail | null): { stations: ModuleStation[]; overallPct: number; currentIndex: number; currentWeek: string | null } {
-  const watched = new Set((real?.videoProgress || []).map((v) => v.componentId));
-  // Generic (podcast/reading/slides/reflection/…) completions count as done too.
-  const completedComponents = new Set((real?.componentProgress || []).map((c) => c.componentId));
+  // Imported history and activity completed in this platform are deliberately
+  // one stream.  The shared helper de-duplicates them by component id and
+  // excludes explicit failures, so a new attempt appends to the history
+  // without either erasing or double-counting the imported baseline.
+  const completedIds = completedComponentIds(real);
 
   const raw = journey.map((mod, index) => {
     let trackableTotal = 0, trackableDone = 0, quizTotal = 0, quizTaken = 0, quizPassed = 0, videoTotal = 0, videoDone = 0, componentCount = 0, otjhPlanned = 0;
@@ -75,15 +77,17 @@ export function buildStations(journey: JourneyModule[], real: LearnerDetail | nu
         if (c.isQuiz && hasComponentContent(c)) {
           quizTotal += 1; trackableTotal += 1; wTotal += 1;
           const attempts = c.quizAttempts || [];
-          if (attempts.length > 0) { quizTaken += 1; trackableDone += 1; wDone += 1; }
-          if (attempts.some((a) => a.passed)) quizPassed += 1;
+          if (attempts.length > 0) quizTaken += 1;
+          if (isComponentComplete(c, completedIds)) {
+            quizPassed += 1; trackableDone += 1; wDone += 1;
+          }
         } else if (isVideoComponent(c)) {
           videoTotal += 1; trackableTotal += 1; wTotal += 1;
-          if (c.componentId && watched.has(c.componentId)) { videoDone += 1; trackableDone += 1; wDone += 1; }
+          if (isComponentComplete(c, completedIds)) { videoDone += 1; trackableDone += 1; wDone += 1; }
         } else if (isOpenableComponent(c)) {
           // Generic completable content (podcast/reading/slides/reflection/…).
           trackableTotal += 1; wTotal += 1;
-          if (c.componentId && completedComponents.has(c.componentId)) { trackableDone += 1; wDone += 1; }
+          if (isComponentComplete(c, completedIds)) { trackableDone += 1; wDone += 1; }
         }
       }
       weekDots.push({ week: w.week, total: wTotal, done: wDone });
@@ -98,7 +102,9 @@ export function buildStations(journey: JourneyModule[], real: LearnerDetail | nu
 
   const stations: ModuleStation[] = raw.map((m) => ({
     ...m,
-    status: currentIndex === -1 ? 'completed' : m.index < currentIndex ? 'completed' : m.index === currentIndex ? 'current' : 'upcoming',
+    status: m.trackableTotal > 0 && m.trackableDone >= m.trackableTotal
+      ? 'completed'
+      : m.index === currentIndex ? 'current' : 'upcoming',
   }));
 
   const totalTrackable = raw.reduce((n, m) => n + m.trackableTotal, 0);
@@ -948,9 +954,7 @@ function LearningHistorySection({ real }: { real: LearnerDetail }) {
 }
 
 function isJourneyComponentDone(component: JourneyModule['weeks'][number]['components'][number], real: LearnerDetail): boolean {
-  if (component.isQuiz) return Boolean(component.quizAttempts?.length);
-  if (isVideoComponent(component)) return Boolean(component.componentId && (real.videoProgress || []).some((item) => item.componentId === component.componentId));
-  return Boolean(component.componentId && (real.componentProgress || []).some((item) => item.componentId === component.componentId));
+  return isComponentComplete(component, completedComponentIds(real));
 }
 
 function WeeklyLearningSection({ real, station }: { real: LearnerDetail; station: ModuleStation | null }) {

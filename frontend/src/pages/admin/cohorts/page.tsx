@@ -55,7 +55,7 @@ export default function AdminCohortsPage() {
         { label: 'Running', value: loading && !data ? '—' : running },
       ]}
     >
-      <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4 flex flex-col md:flex-row gap-3 md:items-center">
+      <div className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] p-3 md:p-4 flex flex-col xl:flex-row gap-3 xl:items-center">
         <label className="text-[12px] text-foreground-500 shrink-0">Filter by programme</label>
         <select
           value={programme}
@@ -64,7 +64,7 @@ export default function AdminCohortsPage() {
             if (e.target.value) next.set('programme', e.target.value); else next.delete('programme');
             setParams(next, { replace: true });
           }}
-          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 flex-1 md:flex-none md:min-w-[260px]"
+          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 flex-1 md:flex-none md:min-w-[260px] min-w-0 max-w-full"
         >
           <option value="">All programmes</option>
           {programmes.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}
@@ -80,7 +80,7 @@ export default function AdminCohortsPage() {
           : programme ? `No cohorts defined for ${programme}.` : 'No cohorts have been defined yet.'}
         onRetry={reload}
       >
-        <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+        <div className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-[13px]">
               <thead>
@@ -97,7 +97,7 @@ export default function AdminCohortsPage() {
                 {cohorts.map(c => {
                   const p = phase(c.startDate, c.endDate);
                   return (
-                    <tr key={`${c.programme}-${c.name}`} className="border-b border-background-100/50 hover:bg-background-100/40 transition-smooth">
+                    <tr key={`${c.programme}-${c.name}`} className="border-b border-background-100/50 hover:bg-primary-50/40 transition-smooth">
                       <td className="px-4 py-3 font-medium text-foreground-800">{c.name}</td>
                       <td className="px-4 py-3 text-[12px] text-foreground-600">{c.programme || '—'}</td>
                       <td className="px-4 py-3 text-[12px] text-foreground-500 whitespace-nowrap">{fmtDate(c.startDate)}</td>

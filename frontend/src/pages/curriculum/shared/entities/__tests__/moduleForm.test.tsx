@@ -316,22 +316,152 @@ describe('ModuleFormDrawer', () => {
     expect(screen.getByText('Replacement delivered')).toBeInTheDocument();
   });
 
-  it('creates a catalogue draft when no group has been chosen', async () => {
-    const { onSaved } = renderDrawer();
+  it('hides the placement and delivery fields once Assign later is chosen', async () => {
+    renderDrawer();
 
-    await choose('Programme', 'Data Analyst');
-    await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Unplaced Module');
+    // Shown up front, under the default "Assign now" -- this is the regression
+    // check that the toggle did not change the pre-existing create experience.
+    expect(screen.getByRole('combobox', { name: /^Programme/ })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /^Tutor/ })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Assign later' }));
+
+    // The placement itself goes -- Programme, Cohort, Groups -- and so does the
+    // Tutor, which is the group's booking rather than the module's. An optional
+    // field still reads as "something to fill in" if it stays on screen.
+    expect(screen.queryByRole('combobox', { name: /^Programme/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: /^Cohort/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: /^Groups/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: /^Tutor/ })).not.toBeInTheDocument();
+    // The module's own shape stays: its name, how many weeks it runs and the
+    // window it is planned for are true of the module with or without a
+    // placement. The Session dates panel stays to say why it is empty, but its
+    // View sessions button does not: there is no plan to open without a group.
+    expect(screen.getByPlaceholderText('e.g. Data Modelling')).toBeInTheDocument();
+    expect(screen.getByRole('spinbutton')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /^Start date/ })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /^End date/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /view sessions/i })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Assign now' }));
+    expect(screen.getByRole('combobox', { name: /^Programme/ })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /^Tutor/ })).toBeInTheDocument();
+  });
+
+  it('creates a fully standalone module with no programme, cohort or group at all', async () => {
+    // Two selectable programmes on purpose: with only one, the form auto-picks
+    // it for convenience, which would hide the point of this case -- that none
+    // of the three is chosen at all.
+    const twoProgrammes = [...programmes, { id: 'program-ops', sourceId: 'PROG-OPS', name: 'Operations', level: '4', isActive: true, isArchived: false }] as CurriculumProgramme[];
+    const { onSaved } = renderDrawer({ programmes: twoProgrammes });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Assign later' }));
+    await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Bare Draft');
     await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
 
     expect(createGroupModuleMock).not.toHaveBeenCalled();
     expect(createNewModuleMock).toHaveBeenCalledTimes(1);
     expect(createNewModuleMock.mock.calls[0][0]).toMatchObject({
-      title: 'Unplaced Module',
-      programme: 'Data Analyst',
-      programmeId: 'PROG-DATA',
+      title: 'Bare Draft',
+      programmeId: '',
+      cohortId: '',
       status: 'draft',
     });
-    expect(onSaved).toHaveBeenCalledWith({ catalogueId: 'MOD-DRAFT', name: 'Unplaced Module', created: true });
+    expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ catalogueId: 'MOD-DRAFT', name: 'Bare Draft', created: true }));
+  });
+
+  it('still blocks a standalone-looking save when Assign now is selected', async () => {
+    // Default mode is 'now': leaving the cohort and group blank must refuse
+    // exactly as it always has, toggle or no toggle. (The one selectable
+    // programme in this fixture auto-fills, so the cohort is the first gap.)
+    renderDrawer();
+
+    await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Needs a home');
+    await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
+
+    expect(await screen.findByText('Choose the cohort this module runs for.')).toBeInTheDocument();
+    expect(createNewModuleMock).not.toHaveBeenCalled();
+    expect(createGroupModuleMock).not.toHaveBeenCalled();
+  });
+
+  it('lets an already-unassigned module be edited without forcing a placement', async () => {
+    const { onSaved } = renderDrawer({
+      module: {
+        id: 'MOD-DRAFT',
+        name: 'Bare Draft',
+        status: 'draft',
+      },
+    });
+
+    // No "Assign now/later" toggle while editing -- the placement fields are
+    // simply collapsed by default, since the record has never been placed, with
+    // a link to bring them back rather than a forced choice up front.
+    expect(screen.queryByRole('button', { name: 'Assign later' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: /^Programme/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Assign it now' })).toBeInTheDocument();
+    await userEvent.clear(screen.getByPlaceholderText('e.g. Data Modelling'));
+    await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Bare Draft Renamed');
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+
+    expect(updateCurriculumModuleMock).toHaveBeenCalledTimes(1);
+    expect(updateCurriculumModuleMock.mock.calls[0][0]).toBe('MOD-DRAFT');
+    expect(updateCurriculumModuleMock.mock.calls[0][1]).toMatchObject({ name: 'Bare Draft Renamed' });
+    expect(onSaved).toHaveBeenCalled();
+  });
+
+  it('re-requires dates and a tutor once a group is ticked on an unassigned module', async () => {
+    // Ticking a group turns the save back into a real delivery, so the fields a
+    // bare draft never needed are asked for again.
+    renderDrawer({
+      module: {
+        id: 'MOD-DRAFT',
+        name: 'Bare Draft',
+        status: 'draft',
+      },
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Assign it now' }));
+    await choose('Programme', 'Data Analyst');
+    await userEvent.click(screen.getByRole('combobox', { name: /^Cohort/ }));
+    await userEvent.click(screen.getByRole('option', { name: /^Sept 2026$/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Group A/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+
+    expect(await screen.findByText('Choose the tutor who delivers this module.')).toBeInTheDocument();
+    expect(updateCurriculumModuleMock).not.toHaveBeenCalled();
+  });
+
+  it('assigns an unassigned module to a programme, cohort and group through the edit flow', async () => {
+    const { onSaved } = renderDrawer({
+      module: {
+        id: 'MOD-DRAFT',
+        name: 'Bare Draft',
+        status: 'draft',
+        // Already dated, the way a module with no delivery yet still can be --
+        // only the parent chain and tutor are missing.
+        startDate: '2026-09-02',
+        endDate: '2026-10-07',
+        sessionsNumber: 6,
+      },
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Assign it now' }));
+    await choose('Programme', 'Data Analyst');
+    await userEvent.click(screen.getByRole('combobox', { name: /^Cohort/ }));
+    await userEvent.click(screen.getByRole('option', { name: /^Sept 2026$/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Group A/ }));
+    await choose('Tutor', 'Tutor One');
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+
+    await waitFor(() => expect(updateCurriculumModuleMock).toHaveBeenCalledTimes(1));
+    expect(updateCurriculumModuleMock.mock.calls[0][0]).toBe('MOD-DRAFT');
+    expect(updateCurriculumModuleMock.mock.calls[0][1]).toMatchObject({
+      programmeId: 'PROG-DATA',
+      cohortId: 'COHORT-1',
+      groupId: 'GROUP-1',
+      tutor: 'Tutor One',
+    });
+    expect(onSaved).toHaveBeenCalled();
   });
 
   it('refuses a module with no name before it calls anything', async () => {

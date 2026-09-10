@@ -5,7 +5,7 @@ import type { LearnerDetail } from '@/api/learnerDetail';
 import * as api from '@/api/studentActivity';
 import { ModulesTab, StudentActivityPanel } from './page';
 import { StudentMaterial } from './StudentMaterial';
-import { SubjectOverview, subjectsFrom, useSubjectMetadata } from './SubjectWorkspace';
+import { buildUnifiedLearningSummary, SubjectOverview, subjectsFrom, useSubjectMetadata } from './SubjectWorkspace';
 
 // AppIcon is normally supplied by the app build's auto-import plugin.
 vi.stubGlobal('AppIcon', () => <span />);
@@ -256,6 +256,37 @@ describe('subjects shared with Module Builder', () => {
     ]);
     expect(subjects[0].activities[1].legacy).toBe(data.activities[1]);
     expect(data.activities[1].completed).toBe(false);
+  });
+
+  it('builds the combined percentage only after linked old and new activities are deduplicated', () => {
+    const summary = buildUnifiedLearningSummary(data, linkedReal, linkedMetadata);
+    expect(summary).toMatchObject({
+      subjectCount: 1,
+      activityCount: 3,
+      completedActivityCount: 2,
+      completedSubjectCount: 0,
+      percent: 66.67,
+    });
+  });
+
+  it('shows recorded time across all displayed subjects, including later direct time', () => {
+    render(<StudentActivityPanel data={{ ...data, actual_total: 1, recorded_otjh_total: 3.5, planned_total: 2 }} loading={false} error={null} onRetry={vi.fn()} />);
+    expect(within(screen.getByText('Recorded OTJH').parentElement!).getByText('3h 30m')).toBeInTheDocument();
+    expect(within(screen.getByText('Planned OTJH').parentElement!).getByText('2h')).toBeInTheDocument();
+  });
+
+  it('uses comparable whole-programme OTJH totals when the audit supplies them', () => {
+    render(<StudentActivityPanel data={{
+      ...data,
+      actual_total: 1,
+      recorded_otjh_total: 3.5,
+      planned_total: 2,
+      audit_lms_actual: 1171.3406,
+      audit_tp_planned: 867,
+    }} loading={false} error={null} onRetry={vi.fn()} />);
+    expect(within(screen.getByText('Recorded OTJH').parentElement!).getByText('1171h 20m')).toBeInTheDocument();
+    expect(within(screen.getByText('Planned OTJH').parentElement!).getByText('867h')).toBeInTheDocument();
+    expect(screen.getByText(/Programme totals use TP Planned/)).toBeInTheDocument();
   });
 
   it('keeps distinct same-title courses and activities without a verified source link', () => {

@@ -205,12 +205,13 @@ class RoleRuleTests(SimpleTestCase):
             self._refusal("/curriculum_api/curriculum/presentations/slides/", "learner")
         )
 
-    def test_learners_may_read_programme_material_tables(self):
+    def test_programme_audit_material_tables_are_staff_only(self):
         path = "/curriculum_api/curriculum/programme-audit/materials/"
-        self.assertIsNone(self._refusal(path, "learner"))
-        refusal = self._refusal(path, "employer")
-        self.assertIsNotNone(refusal)
-        self.assertEqual(refusal.status_code, 403)
+        for role in ("learner", "employer"):
+            with self.subTest(role=role):
+                refusal = self._refusal(path, role)
+                self.assertIsNotNone(refusal)
+                self.assertEqual(refusal.status_code, 403)
 
     def test_learners_may_read_authored_uploads(self):
         path = "/curriculum_api/curriculum/uploads/_legacy_files/42/handout.pdf"

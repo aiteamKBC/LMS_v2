@@ -7,7 +7,7 @@
 // One picker now, so "schedule" looks and behaves the same wherever a coach
 // meets it.
 // ============================================================================
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { cn } from '@/lib/cn';
 
@@ -22,6 +22,29 @@ function calendarIso(date: Date) {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function floatingPickerStyle(
+  trigger: DOMRect,
+  { width, estimatedHeight }: { width: number; estimatedHeight: number },
+): CSSProperties {
+  const margin = 12;
+  const safeWidth = Math.min(width, window.innerWidth - margin * 2);
+  const left = Math.min(
+    Math.max(trigger.left, margin),
+    window.innerWidth - safeWidth - margin,
+  );
+  const spaceBelow = window.innerHeight - trigger.bottom;
+  const top = spaceBelow >= estimatedHeight || trigger.top < estimatedHeight
+    ? trigger.bottom + 8
+    : Math.max(margin, trigger.top - estimatedHeight - 8);
+
+  return {
+    position: 'fixed',
+    left,
+    top,
+    width: safeWidth,
+  };
 }
 
 /** The boxed label/value tile used inside an expanded row — target date, cohort, programme. */
@@ -53,6 +76,7 @@ export function ModernDatePicker({ value, onChange }: { value: string; onChange:
   const rootRef = useRef<HTMLDivElement>(null);
   const selectedDate = value ? parseCalendarDate(value) : null;
   const [open, setOpen] = useState(false);
+  const [popoverStyle, setPopoverStyle] = useState<CSSProperties>({});
   const [viewMonth, setViewMonth] = useState(() => {
     const initial = parseCalendarDate(value);
     return new Date(initial.getFullYear(), initial.getMonth(), 1);
@@ -66,11 +90,24 @@ export function ModernDatePicker({ value, onChange }: { value: string; onChange:
 
   useEffect(() => {
     if (!open) return undefined;
+    const updatePopoverPosition = () => {
+      const trigger = rootRef.current?.getBoundingClientRect();
+      if (!trigger) return;
+      setPopoverStyle(floatingPickerStyle(trigger, { width: 310, estimatedHeight: 390 }));
+    };
     const closeOnOutsideClick = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
+
+    updatePopoverPosition();
     document.addEventListener('pointerdown', closeOnOutsideClick);
-    return () => document.removeEventListener('pointerdown', closeOnOutsideClick);
+    window.addEventListener('resize', updatePopoverPosition);
+    window.addEventListener('scroll', updatePopoverPosition, true);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick);
+      window.removeEventListener('resize', updatePopoverPosition);
+      window.removeEventListener('scroll', updatePopoverPosition, true);
+    };
   }, [open]);
 
   const firstVisibleDay = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1 - viewMonth.getDay());
@@ -111,7 +148,7 @@ export function ModernDatePicker({ value, onChange }: { value: string; onChange:
       </button>
 
       {open ? (
-        <div className="absolute left-0 top-full z-[80] mt-2 w-[310px] rounded-2xl border border-foreground-200/70 bg-white p-4 shadow-panel">
+        <div style={popoverStyle} className="z-[120] rounded-2xl border border-foreground-200/70 bg-white p-4 shadow-panel">
           <div className="mb-4 flex items-center justify-between">
             <button type="button" onClick={() => moveMonth(-1)} className="flex h-9 w-9 items-center justify-center rounded-lg text-foreground-500 hover:bg-primary-50 hover:text-primary-700" aria-label="Previous month">
               <AppIcon className="ri-arrow-left-s-line text-lg"></AppIcon>
@@ -178,14 +215,31 @@ const DURATION_OPTIONS = [
 export function ModernDurationPicker({ value, onChange }: { value: number; onChange: (value: number) => void }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  const [popoverStyle, setPopoverStyle] = useState<CSSProperties>({});
 
   useEffect(() => {
     if (!open) return undefined;
+    const updatePopoverPosition = () => {
+      const trigger = rootRef.current?.getBoundingClientRect();
+      if (!trigger) return;
+      setPopoverStyle(floatingPickerStyle(trigger, {
+        width: Math.max(trigger.width, 230),
+        estimatedHeight: 260,
+      }));
+    };
     const closeOnOutsideClick = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
+
+    updatePopoverPosition();
     document.addEventListener('pointerdown', closeOnOutsideClick);
-    return () => document.removeEventListener('pointerdown', closeOnOutsideClick);
+    window.addEventListener('resize', updatePopoverPosition);
+    window.addEventListener('scroll', updatePopoverPosition, true);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick);
+      window.removeEventListener('resize', updatePopoverPosition);
+      window.removeEventListener('scroll', updatePopoverPosition, true);
+    };
   }, [open]);
 
   const selected = DURATION_OPTIONS.find(option => option.value === value) || DURATION_OPTIONS[2];
@@ -212,7 +266,7 @@ export function ModernDurationPicker({ value, onChange }: { value: number; onCha
       </button>
 
       {open ? (
-        <div className="absolute left-0 top-full z-[80] mt-2 w-full min-w-[230px] overflow-hidden rounded-2xl border border-foreground-200/70 bg-white p-1.5 shadow-panel">
+        <div style={popoverStyle} className="z-[120] overflow-hidden rounded-2xl border border-foreground-200/70 bg-white p-1.5 shadow-panel">
           {DURATION_OPTIONS.map(option => {
             const active = option.value === value;
             return (

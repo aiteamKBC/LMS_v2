@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
-import type { ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import DOMPurify from 'dompurify';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
@@ -19,14 +18,11 @@ import {
   type JourneyComponent,
 } from '@/utils/learnerJourney';
 import { fetchEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
-import { ReflectionWindow, formatClock, formatRecordedClock, parseClockSeconds } from '@/components/feature/ReflectionWindow';
+import { ReflectionWindow, formatClock, formatRecordedClock } from '@/components/feature/ReflectionWindow';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
-import { useAuth } from '@/hooks/useAuth';
-import { isInspectionDemoAccount } from '@/lib/learnerFlowAccess';
 import { formatSystemTimestamp, systemTimeZoneName } from '@/lib/format';
-import { demoTimeKey, expectedMinutesFor, setDemoTimeOverride, useDemoTimeOverrides } from '@/lib/demoTime';
 import {
   activityTimerStorageKey,
   canResumeActivityTimer,
@@ -35,7 +31,6 @@ import {
   saveActivityTimerElapsed,
   saveActivityTimerSession,
 } from '@/lib/activityTimer';
-import { DemoTimeChip } from '@/components/feature/DemoTimePanel';
 import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
 import { ComponentAccessNotice } from '@/components/feature/ComponentAccessNotice';
 import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
@@ -95,84 +90,6 @@ function completionTimeFor(component: JourneyComponent, detail: LearnerDetail | 
     return String(record.submittedAt || '') >= String(current.submittedAt || '') ? record : current;
   }, null);
   return formatRecordedClock(latest?.timeTaken);
-}
-
-function CompletionTimeInput({
-  value,
-  label = 'Time taken',
-  rightAddon,
-  onSave,
-}: {
-  value: string;
-  label?: string;
-  rightAddon?: ReactNode;
-  onSave: (seconds: number | null) => void;
-}) {
-  const [draft, setDraft] = useState(value);
-  const [invalid, setInvalid] = useState(false);
-
-  useEffect(() => {
-    setDraft(value);
-    setInvalid(false);
-  }, [value]);
-
-  const save = () => {
-    if (!draft.trim()) {
-      onSave(null);
-      return;
-    }
-    const seconds = parseClockSeconds(draft);
-    if (seconds == null) {
-      setInvalid(true);
-      return;
-    }
-    setInvalid(false);
-    const formatted = formatClock(seconds);
-    setDraft(formatted);
-    onSave(seconds);
-  };
-
-  const updateDraft = (nextValue: string) => {
-    setDraft(nextValue);
-    setInvalid(false);
-
-    // Persist as soon as the learner has entered a complete valid clock. This
-    // means a refresh or route change cannot lose the latest value just because
-    // the input did not get a chance to blur first.
-    if (!nextValue.trim()) {
-      onSave(null);
-      return;
-    }
-    const seconds = parseClockSeconds(nextValue);
-    if (seconds != null) onSave(seconds);
-  };
-
-  return (
-    <div className="flex items-center gap-2 border-t border-emerald-100 bg-emerald-50/70 px-4 py-2 text-[10px] font-semibold text-emerald-800">
-      <AppIcon className="ri-timer-line shrink-0 text-[11px]" />
-      <span className="shrink-0">{label}</span>
-      <input
-        type="text"
-        inputMode="numeric"
-        value={draft}
-        onChange={(event) => updateDraft(event.target.value)}
-        onBlur={save}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') event.currentTarget.blur();
-          if (event.key === 'Escape') { event.preventDefault(); setDraft(value); setInvalid(false); }
-        }}
-        placeholder="00:00:00"
-        aria-label="Completion time in hours, minutes and seconds"
-        aria-invalid={invalid}
-        className={`ml-auto w-24 rounded-md border bg-white px-2 py-1 text-center font-mono text-[11px] font-bold tabular-nums outline-none focus:ring-2 ${
-          invalid
-            ? 'border-red-400 text-red-700 focus:ring-red-200'
-            : 'border-emerald-200 text-emerald-800 focus:border-emerald-400 focus:ring-emerald-100'
-        }`}
-      />
-      {rightAddon}
-    </div>
-  );
 }
 
 function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange: (seconds: number | null) => void; initialSeconds?: number | null }) {
@@ -445,16 +362,6 @@ export default function ComponentViewPage() {
   const backHref = kind && id ? `/workspace/learner/${kind}/${id}` : '/workspace/learner';
 
 
-  // Inspection-demo accounts only — see isInspectionDemoAccount. The results
-  // screen shows an editable "demo time" beside the expected time; everyone
-  // else sees the page exactly as before.
-  const { auth } = useAuth();
-  const isDemoAccount = isInspectionDemoAccount(auth.account?.email);
-  const demoScopeKey = kind && id ? `${kind}:${id}` : '';
-  const demoTimeOverrides = useDemoTimeOverrides(demoScopeKey);
-  const demoKey = componentId ? demoTimeKey({ isQuiz: false, componentId }) : '';
-  const demoExpectedMinutes = component ? expectedMinutesFor(component) : null;
-
   // A quiz component has nowhere to show its questions — the quiz page owns
   // that. Reaching this page for one (a direct link, a bookmark, the sidebar
   // before its quiz was linked) would otherwise show the generic "complete this
@@ -690,13 +597,6 @@ export default function ComponentViewPage() {
         setRecord({ timeTaken: res.record.timeTaken, ksbs: res.record.ksbs, reportedTime: res.record.reportedTime, feedback: res.record.feedback });
       }
       clearActivityTimer(timerStorageKey);
-      if (isDemoAccount && demoKey) {
-        setDemoTimeOverride(
-          demoScopeKey,
-          demoKey,
-          timeSource === 'input' && manualTimeSeconds != null ? manualTimeSeconds / 60 : null,
-        );
-      }
       setWallElapsed(0);
       setManualTimeSeconds(null);
       setTimeSource(usesManualTimeOnly ? 'input' : 'timer');
@@ -1079,43 +979,7 @@ export default function ComponentViewPage() {
               kind={kind}
               id={id}
               currentComponentId={componentId}
-              // The demo accounts edit their own completion times, so the plain
-              // read-only time is shown to everyone else.
-              completionTimeFor={(c) => {
-                const key = c.componentId
-                  ? demoTimeKey({ isQuiz: c.isQuiz, quizId: c.quizMeta?.quizId, componentId: c.componentId })
-                  : '';
-                const override = key ? demoTimeOverrides[key] : null;
-                if (override != null) return isDemoAccount ? null : formatClock(Math.round(override * 60));
-                return isDemoAccount ? null : completionTimeFor(c, detail);
-              }}
-              rowExtras={(c, completed) => {
-                const key = c.componentId
-                  ? demoTimeKey({ isQuiz: c.isQuiz, quizId: c.quizMeta?.quizId, componentId: c.componentId })
-                  : '';
-                if (!completed || !isDemoAccount || !key) return null;
-                const override = demoTimeOverrides[key];
-                return (
-                  <CompletionTimeInput
-                    value={
-                      (override != null
-                        ? formatClock(Math.round(override * 60))
-                        : completionTimeFor(c, detail)) || '00:00:00'
-                    }
-                    label={override != null ? 'Input' : 'Time taken'}
-                    rightAddon={
-                      !c.isQuiz && c.componentId && kind && id ? (
-                        <EvidenceFilesButton kind={kind as LearnerKind} learnerId={id} componentId={c.componentId} />
-                      ) : null
-                    }
-                    onSave={(seconds) => setDemoTimeOverride(
-                      demoScopeKey,
-                      key,
-                      seconds == null ? null : seconds / 60,
-                    )}
-                  />
-                );
-              }}
+              completionTimeFor={(c) => completionTimeFor(c, detail)}
               routeFor={(c, week) => componentRoute(kind, id, c, moduleTitle, week)}
               accessOpen={componentAccess.open}
             />
@@ -1280,19 +1144,9 @@ function googleDriveFileId(url: string): string | null {
   return match?.[1] ?? null;
 }
 
-function legacyAttachmentId(url: string): string | null {
-  const match = url.match(/\/_legacy_files\/([0-9]{1,20})\//);
-  return match?.[1] ?? null;
-}
-
-function legacyAttachmentProxyUrl(url: string): string | null {
-  const id = legacyAttachmentId(url);
-  return id ? `/learner_api/media/legacy-attachment/${id}/` : null;
-}
-
 function proxiedMaterialUrl(url: string): string {
   const driveId = googleDriveFileId(url);
-  return driveId ? `/learner_api/media/google-drive/${driveId}/` : (legacyAttachmentProxyUrl(url) || url);
+  return driveId ? `/learner_api/media/google-drive/${driveId}/` : url;
 }
 
 function displayableMediaSource(url: string, fileName?: string | null): { kind: 'image' | 'video'; src: string } | null {
@@ -1708,7 +1562,6 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
 }) {
   const media = displayableMediaSource(url, fileName);
   const previewUrl = proxiedMaterialUrl(url);
-  const legacyId = legacyAttachmentId(url);
   const probe = fileProbe(url, fileName);
   const isPdf = PDF_FILE_RE.test(probe);
   const isWord = WORD_FILE_RE.test(probe);
@@ -1776,7 +1629,6 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
   if (media) return <InlineMediaPreview url={url} title={title} fileName={fileName} />;
 
   if (isPdf) {
-    if (legacyId) return <LegacyPdfImagePreview attachmentId={legacyId} title={title} fileName={fileName} readingPreferences={readingPreferences} />;
     const hostedPdfEmbed = resolveDocEmbed(previewUrl);
     if (hostedPdfEmbed.mode === 'deck') return <DocumentEmbed url={previewUrl} title={title} />;
     return <PdfCanvasPreview url={previewUrl} title={title} fileName={fileName} readingPreferences={readingPreferences} annotationKey={annotationKey} allowAnnotatedDownload={allowAnnotatedDownload} />;
@@ -1829,135 +1681,6 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
       </div>
     </>
   );
-}
-
-function LegacyPdfImagePreview({ attachmentId, title, fileName, readingPreferences }: {
-  attachmentId: string;
-  title: string;
-  fileName?: string | null;
-  readingPreferences?: ReadingPreferences;
-}) {
-  const [pageNumber, setPageNumber] = useState(1);
-  const [pageCount, setPageCount] = useState(1);
-  const [scale, setScale] = useState(1);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [error, setError] = useState<string | null>(null);
-  const infoUrl = `/learner_api/media/legacy-attachment/${attachmentId}/pdf-info/`;
-  const pageUrl = `/learner_api/media/legacy-attachment/${attachmentId}/pdf-page/${pageNumber}/`;
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadInfo() {
-      try {
-        setStatus('loading');
-        setError(null);
-        const response = await fetch(infoUrl, { credentials: 'same-origin' });
-        if (!response.ok) throw new Error(`File request failed (${response.status})`);
-        const data = await response.json() as { pages?: number };
-        if (!cancelled) {
-          setPageCount(Math.max(1, Number(data.pages) || 1));
-          setStatus('ready');
-        }
-      } catch (loadError) {
-        if (!cancelled) {
-          setStatus('error');
-          setError(loadError instanceof Error ? loadError.message : 'Could not load PDF preview.');
-        }
-      }
-    }
-    void loadInfo();
-    return () => {
-      cancelled = true;
-    };
-  }, [infoUrl]);
-
-  if (status === 'loading') {
-    return (
-      <div className="grid min-h-[420px] place-items-center rounded-xl border border-background-300 bg-white text-sm font-semibold text-foreground-500 shadow-sm">
-        <span className="inline-flex items-center gap-2"><AppIcon className="ri-loader-4-line animate-spin" />Loading PDF preview...</span>
-      </div>
-    );
-  }
-
-  if (status === 'error') {
-    return (
-      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-        <p className="font-bold">Could not show this PDF inline.</p>
-        <p className="mt-1 text-xs">{error || 'Could not load PDF pages.'}</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="overflow-hidden rounded-xl border border-background-300 bg-background-100 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-background-300 bg-white px-4 py-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-bold text-foreground-900">{fileLabelFrom('', fileName) || title}</p>
-          <p className="text-xs text-foreground-500">Page {pageNumber} of {pageCount}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setScale((value) => Math.max(0.75, Number((value - 0.25).toFixed(2))))}
-            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50"
-            aria-label="Zoom out"
-          >
-            <AppIcon className="ri-subtract-line" />
-          </button>
-          <span className="min-w-12 text-center text-xs font-bold text-foreground-600">{Math.round(scale * 100)}%</span>
-          <button
-            type="button"
-            onClick={() => setScale((value) => Math.min(2.5, Number((value + 0.25).toFixed(2))))}
-            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50"
-            aria-label="Zoom in"
-          >
-            <AppIcon className="ri-add-line" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setPageNumber((value) => Math.max(1, value - 1))}
-            disabled={pageNumber <= 1}
-            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50 disabled:cursor-not-allowed disabled:opacity-40"
-            aria-label="Previous page"
-          >
-            <AppIcon className="ri-arrow-left-s-line" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setPageNumber((value) => Math.min(pageCount, value + 1))}
-            disabled={pageNumber >= pageCount}
-            className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50 disabled:cursor-not-allowed disabled:opacity-40"
-            aria-label="Next page"
-          >
-            <AppIcon className="ri-arrow-right-s-line" />
-          </button>
-        </div>
-      </div>
-      <div
-        className="max-h-[72vh] overflow-auto p-4"
-        style={{ backgroundColor: readingPreferences?.colourMode === 'cream' ? '#fff7dc' : readingPreferences?.colourMode === 'dark' ? '#111827' : undefined }}
-      >
-        <img
-          key={pageUrl}
-          src={pageUrl}
-          alt={`${title} page ${pageNumber}`}
-          className="mx-auto block rounded-lg bg-white shadow-sm"
-          style={{
-            width: `${scale * 100}%`,
-            maxWidth: scale <= 1 ? '100%' : 'none',
-            filter: readingPreferences?.colourMode === 'monochrome' ? 'grayscale(1) contrast(1.15)' : readingPreferences?.colourMode === 'dark' ? 'grayscale(1) invert(1)' : undefined,
-          }}
-        />
-      </div>
-    </div>
-  );
-}
-
-interface PdfHighlight {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
 }
 
 function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotationKey, allowAnnotatedDownload }: {

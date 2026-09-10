@@ -1393,6 +1393,127 @@ export interface CurriculumStaffProfile {
   [key: string]: unknown;
 }
 
+export type CurriculumAuditAction = 'created' | 'updated' | 'archived';
+
+export interface CurriculumAuditEvent {
+  id: string;
+  /** ISO stamp of the write itself, not a display date. */
+  at: string;
+  action: CurriculumAuditAction;
+  entity: 'programme' | 'module' | 'week' | 'component' | 'cohort' | 'group' | string;
+  entityLabel: string;
+  entityId: string;
+  title: string;
+  /** The record's parent - a programme name, or a module catalogue id. */
+  context: string;
+  /**
+   * The write handler's reason code on an archive (`component-delete`,
+   * `programme-archive`). It is NOT a person: no authoring table records an
+   * author, which is what `authorRecorded: false` states.
+   */
+  reason: string;
+  viaParent: string;
+  href: string;
+}
+
+export interface CurriculumAuditTrail {
+  generatedAt: string;
+  windowDays: number;
+  since: string;
+  limit: number;
+  total: number;
+  truncated: boolean;
+  actionCounts: Record<CurriculumAuditAction, number>;
+  entityCounts: Record<string, number>;
+  /** Entities whose table could not be read, so the page can name the gap. */
+  unreadable: string[];
+  /** Always false today: the authoring tables carry no author column. */
+  authorRecorded: boolean;
+  events: CurriculumAuditEvent[];
+}
+
+export type CurriculumVersionEntityType = 'module' | 'week' | 'component';
+export type CurriculumRevisionAction = 'created' | 'updated' | 'archived' | 'restored';
+
+/** One field that moved between two revisions. Long values are cut server-side. */
+export interface CurriculumFieldChange {
+  field: string;
+  from: string;
+  to: string;
+  truncated?: boolean;
+}
+
+export interface CurriculumRevision {
+  id: number;
+  entityType: CurriculumVersionEntityType | string;
+  entityId: string;
+  revisionNo: number;
+  action: CurriculumRevisionAction | string;
+  moduleCatalogueId: string;
+  parentId: string;
+  title: string;
+  versionLabel: string;
+  contentStatus: string;
+  changedFields: CurriculumFieldChange[];
+  /** The signed-in account that saved. Empty for a write with no session. */
+  actorName: string;
+  actorEmail: string;
+  /** Only set on an archive: the write handler's reason code. */
+  reason: string;
+  at: string;
+}
+
+/** A revision an author named — a component moving to 0.2, a module published. */
+export interface CurriculumNamedVersion {
+  id: number;
+  versionLabel: string;
+  revisionNo: number;
+  contentStatus: string;
+  note: string;
+  actorName: string;
+  at: string;
+}
+
+export interface CurriculumVersionEntity {
+  entityType: CurriculumVersionEntityType | string;
+  entityId: string;
+  title: string;
+  moduleCatalogueId: string;
+  parentId: string;
+  versionLabel: string;
+  contentStatus: string;
+  action: string;
+  revisions: number;
+  namedVersions: number;
+  lastChangeAt: string;
+  firstChangeAt: string;
+  lastActorName: string;
+}
+
+export interface CurriculumVersionIndex {
+  /** False when the history tables have not been created; `reason` says so. */
+  available: boolean;
+  reason?: string;
+  generatedAt?: string;
+  totalRevisions: number;
+  totalNamedVersions: number;
+  count: number;
+  entities: CurriculumVersionEntity[];
+}
+
+export interface CurriculumRecordHistory {
+  available: boolean;
+  reason?: string;
+  entityType: string;
+  entityId: string;
+  title: string;
+  moduleCatalogueId?: string;
+  versions: CurriculumNamedVersion[];
+  revisions: CurriculumRevision[];
+  /** Populated only when a revision number was asked for: its stored content. */
+  snapshot: { revisionNo: number; at: string; content: Record<string, unknown> } | null;
+}
+
 export interface CurriculumOverview {
   schema: string;
   stats: {
@@ -2460,6 +2581,76 @@ export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal,
 
 export { fetchCurriculumOverview as fetchCurriculumOverviewBundle };
 
+/**
+ * Versioned curriculum records, most recently changed first. Answers
+ * `available: false` — not an error — when the history tables do not exist.
+ */
+export function fetchCurriculumVersions(
+  options: { module?: string; entityType?: string; search?: string; limit?: number; signal?: AbortSignal; skipCache?: boolean } = {},
+): Promise<CurriculumVersionIndex> {
+  const query = new URLSearchParams();
+  if (options.module) query.set('module', options.module);
+  if (options.entityType && options.entityType !== 'all') query.set('entity_type', options.entityType);
+  if (options.search) query.set('search', options.search);
+  if (options.limit) query.set('limit', String(options.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumVersionIndex>(`/curriculum/quality/versions/${suffix}`, {
+    signal: options.signal,
+    skipCache: options.skipCache,
+    timeoutMs: 30000,
+  });
+}
+
+/**
+ * One record's timeline. Pass `snapshot` to also get the stored content of that
+ * revision — what the record actually held, which is what a version number is
+ * looked up in order to see.
+ */
+export function fetchCurriculumRecordHistory(
+  entityType: string,
+  entityId: string,
+  options: { snapshot?: number; limit?: number; signal?: AbortSignal; skipCache?: boolean } = {},
+): Promise<CurriculumRecordHistory> {
+  const query = new URLSearchParams();
+  if (options.snapshot) query.set('snapshot', String(options.snapshot));
+  if (options.limit) query.set('limit', String(options.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumRecordHistory>(
+    `/curriculum/quality/versions/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}/${suffix}`,
+    { signal: options.signal, skipCache: options.skipCache, timeoutMs: 30000 },
+  );
+}
+
+/**
+ * Record activity across the curriculum authoring tables: what was created,
+ * edited or archived, newest first. Derived from created_at/updated_at/
+ * deleted_at on the records themselves - Quality owns no log of its own.
+ */
+export function fetchCurriculumAuditTrail(
+  options: {
+    days?: number;
+    limit?: number;
+    entity?: string;
+    action?: string;
+    search?: string;
+    signal?: AbortSignal;
+    skipCache?: boolean;
+  } = {},
+): Promise<CurriculumAuditTrail> {
+  const query = new URLSearchParams();
+  if (options.days) query.set('days', String(options.days));
+  if (options.limit) query.set('limit', String(options.limit));
+  if (options.entity && options.entity !== 'all') query.set('entity', options.entity);
+  if (options.action && options.action !== 'all') query.set('action', options.action);
+  if (options.search) query.set('search', options.search);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumAuditTrail>(`/curriculum/quality/audit-trail/${suffix}`, {
+    signal: options.signal,
+    skipCache: options.skipCache,
+    timeoutMs: 30000,
+  });
+}
+
 function postJson<T>(path: string, body: unknown): Promise<T> {
   return fetchJson<T>(path, { method: 'POST', body: JSON.stringify(body) });
 }
@@ -2863,4 +3054,327 @@ export function updateCurriculumHoliday(id: string | number, input: CurriculumHo
 
 export function archiveCurriculumHoliday(id: string | number) {
   return deleteJson(`/curriculum/holidays/${encodeURIComponent(String(id))}/`);
+}
+
+// ---------------------------------------------------------------------------
+// Programme Reviews ("Reviews ID" tab)
+//
+// A Review here is a reusable *template* belonging to one Programme -- its
+// recurrence, eligibility and Form Builder questions. It is not a learner's
+// completed review; that is a future, separate domain. Review ids are opaque
+// strings minted by the backend (REV-...), the same id style as every other
+// curriculum entity (MOD-..., PROG-...) -- never parsed here, never generated
+// here.
+
+/**
+ * The canonical Programme status values (learner_api/constants.py
+ * PROGRAMME_STATUS_CHOICES). No frontend copy of this existed before Reviews;
+ * kept in sync by hand since curriculum_api has no read endpoint for it yet.
+ */
+export const CURRICULUM_PROGRAMME_STATUSES = [
+  'Fresh user', 'Onboarding', 'Delivery', 'Ready to enrol', 'Active', 'Withdrawn', 'On break', 'Completed',
+] as const;
+
+export type ReviewRecurrenceUnit = 'days' | 'weeks' | 'months';
+
+export type ReviewFieldType =
+  | 'text'
+  | 'boolean'
+  | 'numeric'
+  | 'date'
+  | 'list_item'
+  | 'boolean_case_block'
+  | 'email'
+  | 'phone'
+  | 'postcode_address'
+  | 'title_description'
+  | 'text_multiline';
+
+export const REVIEW_FIELD_TYPE_LABELS: Record<ReviewFieldType, string> = {
+  text: 'Text',
+  boolean: 'Boolean',
+  numeric: 'Numeric',
+  date: 'Date',
+  list_item: 'List item',
+  boolean_case_block: 'Boolean with case block',
+  email: 'Email',
+  phone: 'Phone number',
+  postcode_address: 'Post code and address',
+  title_description: 'Title & description',
+  text_multiline: 'Text (multiline)',
+};
+
+export const REVIEW_FIELD_TYPES: ReviewFieldType[] = Object.keys(REVIEW_FIELD_TYPE_LABELS) as ReviewFieldType[];
+
+/** Field types that carry a Boolean with case block's IF YES / IF NO children. */
+export const CONDITIONAL_FIELD_TYPE: ReviewFieldType = 'boolean_case_block';
+
+/** Field types with no learner-entered answer -- Required/Optional is not shown for these. */
+export const DISPLAY_ONLY_FIELD_TYPES: ReviewFieldType[] = ['title_description'];
+
+export type ReviewParticipantRole = 'advisor' | 'employer' | 'participant' | 'referrer';
+
+export type ReviewConditionValue = 'yes' | 'no';
+
+export interface ListItemConfiguration {
+  options: string[];
+}
+
+export interface TitleDescriptionConfiguration {
+  description: string;
+}
+
+/** Discriminated by fieldType at the call site; falls back to a generic bag for
+ * types (text, boolean, numeric, date, email, phone, postcode_address, ...)
+ * that carry no field-specific configuration today. */
+export type ReviewFieldConfiguration = ListItemConfiguration | TitleDescriptionConfiguration | Record<string, unknown>;
+
+export interface ReviewField {
+  id: string;
+  reviewId: string;
+  sectionId: string;
+  /** Set only on a conditional child -- the id of its Boolean-with-case-block parent. */
+  parentFieldId: string | null;
+  /** Set only on a conditional child -- which branch of its parent it belongs to. */
+  conditionValue: ReviewConditionValue | null;
+  title: string;
+  fieldType: ReviewFieldType;
+  required: boolean;
+  displayOrder: number;
+  configuration: ReviewFieldConfiguration;
+  createdAt: string;
+  updatedAt: string;
+  /** Present (possibly empty) only when fieldType is 'boolean_case_block'. */
+  yesFields?: ReviewField[];
+  /** Present (possibly empty) only when fieldType is 'boolean_case_block'. */
+  noFields?: ReviewField[];
+}
+
+export interface ReviewFieldInput {
+  id?: string;
+  title: string;
+  fieldType: ReviewFieldType;
+  required: boolean;
+  configuration?: ReviewFieldConfiguration;
+  /** boolean_case_block only. */
+  yesFields?: ReviewFieldInput[];
+  /** boolean_case_block only. */
+  noFields?: ReviewFieldInput[];
+}
+
+export interface ReviewSection {
+  id: string;
+  reviewId: string;
+  title: string;
+  estimatedMinutes: number;
+  displayOrder: number;
+  enabled: boolean;
+  fields: ReviewField[];
+}
+
+export interface ReviewSectionInput {
+  id?: string;
+  title: string;
+  estimatedMinutes: number;
+  enabled: boolean;
+  fields: ReviewFieldInput[];
+}
+
+export interface ReviewRoleFlags {
+  advisor: boolean;
+  employer: boolean;
+  participant: boolean;
+  referrer: boolean;
+}
+
+export interface ReviewNotificationFlags {
+  employer: boolean;
+  participant: boolean;
+}
+
+export interface ReviewSummary {
+  id: string;
+  programmeId: string;
+  name: string;
+  enabled: boolean;
+  recurrence: { interval: number; unit: ReviewRecurrenceUnit };
+  /** The date the first occurrence is calculated from -- see the Review Schedule below. */
+  scheduleAnchorDate: string;
+  applicableStatuses: string[];
+  fieldCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReviewDetail extends ReviewSummary {
+  signatures: ReviewRoleFlags;
+  visibleTo: ReviewRoleFlags;
+  recordTimeSpent: boolean;
+  allowEditingPriorDays: number;
+  notifications: ReviewNotificationFlags;
+  incompleteMarker: string;
+  createdBy: string;
+  updatedBy: string;
+  /** Canonical Form Builder structure: Section -> Field -> optional conditional children. */
+  sections: ReviewSection[];
+  /** Flattened convenience view (every top-level field, across every section) -- see reviews.py. */
+  fields: ReviewField[];
+}
+
+export interface CreateReviewInput {
+  name: string;
+  enabled: boolean;
+  recurrence: { interval: number; unit: ReviewRecurrenceUnit };
+  /** Optional -- defaults to today on the backend when omitted. */
+  scheduleAnchorDate?: string;
+  applicableStatuses: string[];
+  signatures: ReviewRoleFlags;
+  visibleTo: ReviewRoleFlags;
+  recordTimeSpent: boolean;
+  allowEditingPriorDays: number;
+  notifications: ReviewNotificationFlags;
+  incompleteMarker: string;
+  sections: ReviewSectionInput[];
+}
+
+export type UpdateReviewInput = Partial<CreateReviewInput>;
+
+export interface CloneReviewRequest {
+  sourceProgrammeId: string;
+  reviewIds: string[];
+}
+
+export interface CloneReviewResponse {
+  cloned: boolean;
+  sourceProgrammeId: string;
+  programmeId: string;
+  reviewIds: string[];
+  reviews: ReviewSummary[];
+}
+
+export interface FetchReviewsOptions {
+  signal?: AbortSignal;
+  skipCache?: boolean;
+  revalidate?: boolean;
+}
+
+export function fetchProgrammeReviews(programmeId: string, options: FetchReviewsOptions = {}) {
+  return fetchCollection<ReviewSummary>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/reviews/`, {
+    signal: options.signal,
+    skipCache: options.skipCache,
+    revalidate: options.revalidate,
+  });
+}
+
+export async function fetchReviewDetail(reviewId: string, options: FetchReviewsOptions = {}) {
+  const payload = await fetchJson<{ review: ReviewDetail }>(`/curriculum/reviews/${encodeURIComponent(reviewId)}/`, {
+    signal: options.signal,
+    skipCache: options.skipCache,
+    revalidate: options.revalidate,
+  });
+  return payload.review;
+}
+
+export async function createReviewTemplate(programmeId: string, input: CreateReviewInput) {
+  const payload = await postJson<{ created: boolean; review: ReviewDetail }>(
+    `/curriculum/programmes/${encodeURIComponent(programmeId)}/reviews/`, input,
+  );
+  return payload.review;
+}
+
+export async function updateReviewTemplate(reviewId: string, input: UpdateReviewInput) {
+  const payload = await patchJson<{ updated: boolean; review: ReviewDetail }>(
+    `/curriculum/reviews/${encodeURIComponent(reviewId)}/`, input,
+  );
+  return payload.review;
+}
+
+export function archiveReviewTemplate(reviewId: string) {
+  return deleteJson<{ deleted: boolean; permanent: boolean; archived: boolean; id: string }>(
+    `/curriculum/reviews/${encodeURIComponent(reviewId)}/`,
+  );
+}
+
+export function cloneReviewTemplates(programmeId: string, input: CloneReviewRequest) {
+  return postJson<CloneReviewResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/reviews/clone/`, input);
+}
+
+// ---------------------------------------------------------------------------
+// Review Schedule / clash resolution
+//
+// A Programme can have several recurring Review templates whose occurrences
+// land in the same calendar month (e.g. a Progress Review every 12 weeks and
+// a Monthly Coaching Meeting every month). This previews each template's
+// projected occurrences, groups them by month, and lets staff decide -- per
+// month -- which occurrences stay scheduled. "Skip" removes one occurrence
+// from the effective schedule; it never disables or deletes the recurring
+// template, so future months are unaffected.
+
+export type ReviewScheduleOccurrenceStatus = 'scheduled' | 'skipped';
+export type ReviewScheduleResolutionStatus = 'none' | 'unresolved' | 'resolved' | 'kept_all';
+export type ReviewClashDecisionAction = 'skip' | 'keep';
+
+export interface ReviewScheduleOccurrence {
+  reviewId: string;
+  reviewName: string;
+  occurrenceDate: string;
+  recurrenceLabel: string;
+  status: ReviewScheduleOccurrenceStatus;
+  skippedBy: string | null;
+  skippedAt: string | null;
+  reason: string | null;
+}
+
+export interface ReviewScheduleMonth {
+  /** 'YYYY-MM' */
+  month: string;
+  hasClash: boolean;
+  resolutionStatus: ReviewScheduleResolutionStatus;
+  clashSignature: string | null;
+  occurrences: ReviewScheduleOccurrence[];
+}
+
+export interface ReviewScheduleResponse {
+  programmeId: string;
+  windowStart: string;
+  windowEnd: string;
+  monthsPreviewed: number;
+  months: ReviewScheduleMonth[];
+}
+
+export interface ReviewClashDecisionItem {
+  reviewId: string;
+  occurrenceDate: string;
+  action: ReviewClashDecisionAction;
+  reason?: string;
+}
+
+export interface ReviewClashResolutionInput {
+  month: string;
+  occurrences: ReviewClashDecisionItem[];
+}
+
+export interface ReviewClashResolutionResponse {
+  resolved: boolean;
+  programmeId: string;
+  month: ReviewScheduleMonth;
+}
+
+export interface FetchReviewScheduleOptions extends FetchReviewsOptions {
+  months?: number;
+}
+
+export function fetchReviewSchedule(programmeId: string, options: FetchReviewScheduleOptions = {}) {
+  const query = options.months ? `?months=${encodeURIComponent(String(options.months))}` : '';
+  return fetchJson<ReviewScheduleResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/reviews/schedule/${query}`, {
+    signal: options.signal,
+    skipCache: options.skipCache,
+    revalidate: options.revalidate,
+  });
+}
+
+export function resolveReviewClash(programmeId: string, input: ReviewClashResolutionInput) {
+  return postJson<ReviewClashResolutionResponse>(
+    `/curriculum/programmes/${encodeURIComponent(programmeId)}/reviews/clashes/resolve/`, input,
+  );
 }

@@ -3,6 +3,7 @@ import { fetchLeaderboard, type LeaderboardEntry as RankedEntry } from '@/api/en
 import { fetchLearnerDetail } from '@/api/learnerDetail';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { POINT_RULES, POINTS_HISTORY, COMMUNITY_IMPACT } from '../data';
+import { Medal } from 'lucide-react';
 
 // 'club' maps to a cohort-scoped ranking (the viewer's own cohort) — true
 // club-membership ranking is deferred until clubs have per-learner membership
@@ -144,7 +145,7 @@ export function LeaderboardTab() {
                   >
                     <div className="w-8 text-center shrink-0">
                       {entry.rank <= 3 ? (
-                        <span className="text-lg">{entry.rank === 1 ? '🥇' : entry.rank === 2 ? '🥈' : '🥉'}</span>
+                        <Medal aria-label={`Rank ${entry.rank}`} role="img" className={`h-5 w-5 ${entry.rank === 1 ? 'text-amber-500 dark:text-amber-400' : entry.rank === 2 ? 'text-slate-400 dark:text-slate-300' : 'text-orange-700 dark:text-orange-400'}`} />
                       ) : (
                         <span className="text-sm font-bold text-foreground-400">#{entry.rank}</span>
                       )}
