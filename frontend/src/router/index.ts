@@ -1,9 +1,8 @@
 import { Suspense, createElement, useEffect } from "react";
-import { Navigate, useLocation, useNavigate, useRoutes, type NavigateFunction } from "react-router-dom";
+import { useLocation, useNavigate, useRoutes, type NavigateFunction } from "react-router-dom";
 import { RouteErrorBoundary } from "@/components/feature/RouteErrorBoundary";
 import { PageSkeleton } from "@/components/feature/Skeletons";
 import { useAuth } from "@/hooks/useAuth";
-import { isLearnerFlowAccount, isLearnerFlowPath } from "@/lib/learnerFlowAccess";
 import routes from "./config";
 import { OldOtjhProvider } from '@/features/old-otjh/hooks';
 
@@ -45,17 +44,11 @@ export function AppRoutes() {
   // reflection and results continue to work. A copied/bookmarked URL to any
   // other learner page returns to Materials instead of exposing the normal
   // learner workspace.
-  const focusedLearner = auth.account?.role === 'learner'
-    && isLearnerFlowAccount(auth.account.email);
-  const guardedElement = focusedLearner && !isLearnerFlowPath(pathname)
-    ? createElement(Navigate, { to: '/learner/materials', replace: true })
-    : element;
-
   // Keyed by pathname so the boundary resets on navigation: a crashed page must
   // not survive a Back or a link click as a permanent error screen.
   return createElement(OldOtjhProvider, {
     key: auth.account?.id ?? 'signed-out',
     children: createElement(RouteErrorBoundary, { key: pathname },
-      createElement(Suspense, { fallback: createElement(RouteLoadingFallback) }, guardedElement)),
+      createElement(Suspense, { fallback: createElement(RouteLoadingFallback) }, element)),
   });
 }

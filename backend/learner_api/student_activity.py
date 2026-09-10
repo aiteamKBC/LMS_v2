@@ -16,6 +16,8 @@ from login.permissions import learner_self_or_staff, learner_self_only, staff_on
 from login.sessions import authenticate_request
 
 from .learner_detail import SOURCE_MODELS
+from .active_users import completed_hours_value_from_progress
+from .models import LearnerProfile
 from .student_activity_data import read_student_activity, read_student_material
 from .student_activity_access import student_activity_available
 from .student_activity_data import summarize_activities, read_curriculum_schedules, apply_curriculum_schedules
@@ -108,6 +110,61 @@ def _current_activity_sources(cursor, module_ids):
     }
 
 
+def _direct_progress_records(enrolment_id):
+    """Progress recorded after the historical audit snapshot was imported.
+
+    The Last_audit total already covers every legacy subject displayed by this
+    endpoint.  Only direct/current-platform rows are added here; including the
+    imported normalized rows as well would count the historical time twice.
+    """
+    profile = (
+        LearnerProfile.objects.using('enrolment')
+        .filter(enrolment_id=enrolment_id)
+        .only('id')
+        .first()
+    )
+    if profile is None:
+        return []
+    entries = (
+        profile.progress_entries.using('enrolment')
+        .filter(component_link_source__in=('direct', 'quiz_ref'))
+        .exclude(kind='activity_event')
+        .values(
+            'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
+            'module_title', 'week_title', 'reported_time', 'claimed_seconds',
+            'verified_seconds', 'time_tracking_source', 'expected_otjh',
+            'submitted_at', 'passed',
+        )
+    )
+    return [{
+        'kind': row['kind'],
+        'componentId': row['component_ref'],
+        'quizId': row['quiz_ref'],
+        'componentTitle': row['component_title'],
+        'componentType': row['component_type'],
+        'moduleTitle': row['module_title'],
+        'weekTitle': row['week_title'],
+        'reportedTime': row['reported_time'],
+        'claimedSeconds': row['claimed_seconds'],
+        'verifiedSeconds': row['verified_seconds'],
+        'timeTrackingSource': row['time_tracking_source'],
+        'expectedOtjh': float(row['expected_otjh']) if row['expected_otjh'] is not None else None,
+        'submittedAt': row['submitted_at'].isoformat() if row['submitted_at'] else '',
+        'passed': row['passed'],
+    } for row in entries]
+
+
+def _direct_progress_otjh(progress):
+    return completed_hours_value_from_progress(progress)
+
+
+def combined_recorded_otjh(historical_total, direct_total):
+    """All recorded learner time across displayed legacy and current subjects."""
+    if historical_total is None and not direct_total:
+        return None
+    return round(float(historical_total or 0) + float(direct_total or 0), 4)
+
+
 def _error(message, status):
     return JsonResponse({"error": message}, status=status)
 
@@ -163,6 +220,8 @@ def student_activity(request, kind, pk):
         return _material_response(request, pk, aptem_id, payload)
     try:
         saved = subject_store.state(pk, aptem_id)
+        direct_progress = _direct_progress_records(pk)
+        direct_otjh = _direct_progress_otjh(direct_progress)
         if payload['activities']:
             with connections['enrolment'].cursor() as cursor:
                 schedules = read_curriculum_schedules(cursor, [item['group_id'] for item in payload['activities']])
@@ -171,6 +230,11 @@ def student_activity(request, kind, pk):
         return _error('Could not load your subject progress and dates. Please try again.', 503)
     payload.update(summarize_activities(subject_store.overlay_progress(payload['activities'], saved['progress'])))
     payload['module_count'] = len(payload.get('subjects') or []) or payload['module_count']
+    payload['recorded_otjh_total'] = combined_recorded_otjh(
+        payload.get('actual_total'),
+        direct_otjh,
+    )
+    payload['direct_otjh_activities'] = direct_progress
     payload['persistence_ready'] = saved['ready']
     allowed = {f"legacy:{item['group_id']}" for item in payload['activities']}
     payload['covers'] = {key: _cover_url(value) for key, value in saved['covers'].items() if key in allowed}
@@ -197,15 +261,11 @@ def _cover_url(path):
 
 
 def _definition_for(stored):
-    from .media_proxy import _legacy_attachment_upload_path
     try:
         schema = material_schema(stored['_source']['activity_id'])
     except ContentUnavailable:
         schema = None
-    def archive_url(reference):
-        path = _legacy_attachment_upload_path(reference)
-        return '/curriculum_api/curriculum/uploads/' + path if path else ''
-    return build_material(stored, schema, attachment_resolver=archive_url)
+    return build_material(stored, schema)
 
 
 def _material_response(request, pk, aptem_id, stored):

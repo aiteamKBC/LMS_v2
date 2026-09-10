@@ -1,8 +1,9 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { OtjhBody } from '../RealOtjhView';
 import type { LearnerDetail } from '@/api/learnerDetail';
+import type { StudentActivityResponse } from '@/api/studentActivity';
 
 // ---------------------------------------------------------------------------
 // The activity log is what the "Completed" figure is made of, so it has to
@@ -70,6 +71,83 @@ function renderBody(overrides: Partial<LearnerDetail>) {
 }
 
 describe('OTJ hours activity log', () => {
+  it('uses the same all-subject total and contributing rows as the learner workspace', () => {
+    const activityData = {
+      learner_name: 'Test Learner',
+      count: 3,
+      unique_activity_count: 2,
+      module_count: 38,
+      completed_count: 2,
+      actual_total: 1,
+      recorded_otjh_total: 1.5,
+      planned_total: 2,
+      mapped_count: 2,
+      planned_mapped_count: 1,
+      activities: [
+        {
+          activity_id: 'la:1:10', source_activity_id: 10, group_id: 1, group_name: 'Old subject',
+          date: '2026-09-30', source_date: '2026-05-21', category: 'Reading', activity: 'Historical &amp; reading', status: 'complete',
+          completed: true, actual: 1, planned: 2, planned_hours_mapped: true, hours_mapped: true,
+          quiz_score: null, quiz_maximum_score: null,
+        },
+        {
+          activity_id: 'la:2:10', source_activity_id: 10, group_id: 2, group_name: 'Shared subject',
+          date: '2026-09-30', source_date: '2026-05-21', category: 'Reading', activity: 'Historical &amp; reading', status: 'complete',
+          completed: true, actual: 1, planned: 2, planned_hours_mapped: true, hours_mapped: true,
+          quiz_score: null, quiz_maximum_score: null,
+        },
+        {
+          activity_id: 'la:1:11', source_activity_id: 11, group_id: 1, group_name: 'Old subject',
+          date: '2026-09-30', source_date: '2026-05-21', category: 'Video', activity: 'Mapped but zero time', status: null,
+          completed: false, actual: 0, planned: 0, planned_hours_mapped: false, hours_mapped: true,
+          quiz_score: null, quiz_maximum_score: null,
+        },
+      ],
+      direct_otjh_activities: [{
+        kind: 'component', componentId: 'NEW-READING', componentTitle: 'New reading',
+        componentType: 'reading', reportedTime: '30m', submittedAt: '2026-09-10T09:00:00Z',
+      }],
+    } as StudentActivityResponse;
+
+    render(<OtjhBody real={detail()} loading={false} showHero={false} activityData={activityData} />);
+
+    expect(screen.getAllByText('1h 30m').length).toBeGreaterThan(0);
+    expect(screen.getByText(/2 entries · 1h 30m/)).toBeTruthy();
+    expect(screen.getByText('38 subjects')).toBeTruthy();
+    expect(screen.getByText('Historical & reading')).toBeTruthy();
+    expect(screen.queryByText('Historical &amp; reading')).toBeNull();
+    expect(screen.queryByText('Mapped but zero time')).toBeNull();
+    expect(screen.getByText(/May 21, 2026/)).toBeTruthy();
+    expect(screen.queryByText(/Sep 30, 2026/)).toBeNull();
+    expect(screen.getByText('Partial mapped plan')).toBeTruthy();
+    expect(screen.getByText('1 activity carries planned time')).toBeTruthy();
+    expect(screen.queryByText('Current target')).toBeNull();
+    expect(screen.queryByText('Progress against current target')).toBeNull();
+  });
+
+  it('allocates rounded category minutes so the breakdown equals the visible total', () => {
+    const makeActivity = (id: number, category: string) => ({
+      activity_id: `la:1:${id}`, source_activity_id: id, group_id: 1, group_name: 'Subject',
+      date: '2026-08-10', category, activity: `${category} activity`, status: 'complete',
+      completed: true, actual: 30.5 / 60, planned: 0, planned_hours_mapped: false, hours_mapped: true,
+      quiz_score: null, quiz_maximum_score: null,
+    });
+    const activityData = {
+      learner_name: 'Test Learner', count: 2, unique_activity_count: 2, module_count: 1,
+      completed_count: 2, actual_total: 61 / 60, recorded_otjh_total: 61 / 60,
+      planned_total: null, mapped_count: 2, planned_mapped_count: 0,
+      activities: [makeActivity(10, 'Video'), makeActivity(11, 'Reading')],
+    } as StudentActivityResponse;
+
+    render(<OtjhBody real={detail()} loading={false} showHero={false} activityData={activityData} />);
+
+    expect(screen.getByText(/2 entries · 1h 1m/)).toBeTruthy();
+    const breakdownPanel = screen.getByText('By activity type').closest('section');
+    expect(breakdownPanel).not.toBeNull();
+    expect(within(breakdownPanel!).getByText('31m')).toBeTruthy();
+    expect(within(breakdownPanel!).getByText('30m')).toBeTruthy();
+  });
+
   it('lists every kind of completion, not just quizzes and videos', () => {
     renderBody({
       videoProgress: [video],
