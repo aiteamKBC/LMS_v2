@@ -127,6 +127,7 @@ interface SidebarProps {
 function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   const key = `${id} ${label} ${sourceIcon}`.toLowerCase();
 
+  if (/clipboard/.test(sourceIcon.toLowerCase())) return ClipboardList;
   if (/dashboard|overview|\bhome\b/.test(key)) return LayoutDashboard;
   // Curriculum workspace groups get distinct icons so the sidebar is scannable.
   if (/programme\s*-?\s*design|programme-design/.test(key)) return Presentation;

@@ -29,7 +29,7 @@ import type { LearnerKind } from '@/api/learnerDetail';
 
 const learnerNav = roleNavMap.learner;
 
-type TabKey = 'overview' | 'modules' | 'quizzes';
+type TabKey = 'modules' | 'quizzes';
 
 /** Training Plan and Quizzes used to be their own pages; their old URLs still
  * work (staff/coach deep-links and saved links depend on it) but now land on
@@ -37,7 +37,7 @@ type TabKey = 'overview' | 'modules' | 'quizzes';
 function defaultTabForPath(pathname: string): TabKey {
   if (pathname.startsWith('/learner/training-plan') || pathname.startsWith('/learner/modules')) return 'modules';
   if (pathname.startsWith('/learner/quizzes')) return 'quizzes';
-  return 'overview';
+  return 'modules';
 }
 
 export default function MyLearningPage() {
@@ -107,7 +107,6 @@ export default function MyLearningPage() {
     : '';
 
   const tabs: PageTabItem[] = [
-    { value: 'overview', label: 'Overview' },
     { value: 'modules', label: 'Modules' },
     { value: 'quizzes', label: 'Quizzes' },
   ];
@@ -128,14 +127,6 @@ export default function MyLearningPage() {
 
         {!isRealMode ? (
           <Panel><EmptyState size="sm" title="No learner selected" description="Open this page from a learner record." /></Panel>
-        ) : tab === 'overview' ? (
-          <OverviewTab
-            real={real} loading={loading} loadError={loadError}
-            journey={journey} stations={stations} overallPct={overallPct} currentIndex={currentIndex}
-            currentWeek={currentWeek} completedIds={completedIds} otj={otj}
-            nextComponentHref={nextComponentHref}
-            onGoToModules={() => setTab('modules')}
-          />
         ) : tab === 'modules' ? (
           <ModulesTab key={`${kind}:${id}`} real={real} loading={loading} loadError={loadError} kind={kind} id={id} showReadOnlyNotice={showReadOnlyNotice} />
         ) : (
@@ -625,12 +616,15 @@ function ActivityStat({ label, value }: { label: string; value: number | string 
 
 function StudentActivityRow({ item, kind, learnerId }: { item: StudentActivityItem; kind?: string; learnerId?: string }) {
   const [open, setOpen] = useState(false);
+  const materialMeta = componentTypeMeta(item.category);
   const score = item.quiz_score != null && item.quiz_maximum_score
     ? `${item.quiz_score}/${item.quiz_maximum_score}`
     : null;
   return (
     <div><div className="flex flex-wrap items-center gap-3 px-4 py-3">
-      <span className={`h-2 w-2 shrink-0 rounded-full ${item.completed ? 'bg-emerald-500' : 'bg-foreground-300'}`} />
+      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${materialMeta.bg}`}>
+        <AppIcon className={`${materialMeta.icon} text-[14px] ${materialMeta.color}`} />
+      </span>
       <div className="min-w-0 flex-1">
         <p className="truncate text-[12px] font-semibold text-foreground-800">{item.activity}</p>
         <p className="mt-0.5 text-[10px] text-foreground-500">{[item.category, item.date, score].filter(Boolean).join(' · ')}</p>

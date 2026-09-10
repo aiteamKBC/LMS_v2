@@ -21,7 +21,7 @@ export const learnerNavItems: SidebarNavItem[] = [
 
   // Training plan — the learner's Aptem training plan, month by month. Its
   // "View components" action drops into My Learning to actually work through it.
-  { id: 'learner-training-plan-view', label: 'Training plan', icon: 'ri-calendar-todo-line', href: '/learner/training-plan-timeline' },
+  { id: 'learner-training-plan-view', label: 'Training plan', icon: 'ri-clipboard-line', href: '/learner/training-plan-timeline' },
 
   // Calendar
   { id: 'learner-calendar', label: 'Calendar', icon: 'ri-calendar-2-line', href: '/learner/calendar', statusDot: 'green' },

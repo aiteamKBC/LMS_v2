@@ -11,6 +11,7 @@ import { Link } from 'react-router-dom';
 import { AdminPage, DataPanel, Pager, SourceNote, StatusBadge } from '../_shared/AdminPage';
 import { useAdminData } from '../_shared/useAdminData';
 import { fetchAdminDocuments } from '@/api/platformAdmin';
+import { CheckCircle2 } from 'lucide-react';
 
 const PAGE_SIZE = 25;
 
@@ -155,7 +156,7 @@ export default function AdminDocumentsPage() {
                       <StatusBadge status={doc.signed ? 'signed' : 'unsigned'} tone={doc.signed ? 'ok' : 'warn'} />
                       {(doc.learnerSignedAt || doc.employerSignedAt) && (
                         <p className="text-[10px] text-foreground-400 mt-0.5">
-                          {doc.learnerSignedAt ? 'learner ✓' : ''}{doc.learnerSignedAt && doc.employerSignedAt ? ' · ' : ''}{doc.employerSignedAt ? 'employer ✓' : ''}
+                          {doc.learnerSignedAt ? <span className="inline-flex items-center gap-0.5">learner <CheckCircle2 aria-hidden="true" className="h-3 w-3" /></span> : ''}{doc.learnerSignedAt && doc.employerSignedAt ? ' · ' : ''}{doc.employerSignedAt ? <span className="inline-flex items-center gap-0.5">employer <CheckCircle2 aria-hidden="true" className="h-3 w-3" /></span> : ''}
                         </p>
                       )}
                     </td>

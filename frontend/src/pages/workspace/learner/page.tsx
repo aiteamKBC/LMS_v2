@@ -866,7 +866,7 @@ export default function LearnerOverview() {
           <SectionReveal delay={0}>
             <header
               className="learner-super-admin-hero relative overflow-hidden rounded-2xl px-5 py-5 shadow-sm md:px-7 md:py-6"
-              style={{ background: 'linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 30%, oklch(var(--primary-100)) 66%, oklch(var(--background-50)) 100%)' }}
+              style={{ background: 'linear-gradient(108deg, oklch(var(--primary-800)) 0%, oklch(var(--primary-700)) 30%, oklch(var(--primary-500)) 66%, oklch(var(--primary-400)) 100%)' }}
             >
             <div
               aria-hidden="true"
@@ -908,7 +908,7 @@ export default function LearnerOverview() {
                   className="learner-overview-learning-plan-button inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/70 bg-white/15 px-3 text-[12px] font-semibold text-white shadow-sm transition"
                 >
                   <AppIcon className="ri-book-2-line" />
-                  Learning Plan
+                  Learner's Map
                 </button>
               </div>
             </div>

@@ -203,7 +203,7 @@ export default function AdminDashboard() {
       <div className="super-admin-dashboard space-y-3 p-3 md:space-y-4 md:p-8">
         <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
           <div>
-            <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground-950 md:text-3xl">Welcome back, Super Admin 👋</h1>
+            <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground-950 md:text-3xl">Welcome back, Super Admin</h1>
             <p className="mt-1 text-[11px] text-foreground-500 md:text-xs">Monitor platform health, user engagement and system performance in real time.</p>
           </div>
           <div className="flex items-center gap-2">
@@ -487,37 +487,63 @@ export default function AdminDashboard() {
               </div>
               {recentEventsOpen && (
                 <div id="super-admin-recent-events-content">
-                  {audit.length === 0 ? (
-                    <p className="text-[12px] text-foreground-400 py-6 text-center">
-                      {loading ? 'Loading audit trail…' : 'No access events recorded yet.'}
-                    </p>
-                  ) : (
-                    <div className="space-y-1">
-                      {audit.map(entry => (
-                        <div key={entry.id} className="flex items-start gap-2.5 py-2 border-b border-background-100/50 last:border-0">
-                          <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${
-                            entry.severity === 'critical' ? 'bg-red-500' : entry.severity === 'warning' ? 'bg-amber-500' : 'bg-emerald-500'
-                          }`}></span>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-[12px] font-medium text-foreground-800">
-                              {eventLabel(entry.event)}
-                              {!entry.succeeded && <span className="ml-1.5 text-[10px] font-semibold text-red-600">failed{entry.reason ? ` · ${entry.reason}` : ''}</span>}
-                            </p>
-                            <p className="text-[10px] text-foreground-400 truncate">{entry.email || 'unknown address'}</p>
-                          </div>
-                          <div className="text-right shrink-0 flex flex-col items-end gap-1">
-                            <p className="text-[10px] text-foreground-400 whitespace-nowrap">{timeAgo(entry.createdAt)}</p>
-                            {entry.ipAddress && <p className="text-[10px] text-foreground-300 whitespace-nowrap">{entry.ipAddress}</p>}
-                            {/* A failed invitation is the one access-log row an
-                                administrator can actually act on from here. */}
-                            {canResendInvitation(entry) && (
-                              <ResendInvitationButton entry={entry} onResent={reloadAudit} />
-                            )}
-                          </div>
-                        </div>
-                      ))}
+                  <div className="admin-cool-table bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="recent-access-events-table w-full min-w-[640px] text-[13px]">
+                        <thead>
+                          <tr className="border-b border-foreground-400/50">
+                            <th scope="col" className="text-center px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Event</th>
+                            <th scope="col" className="min-w-[14rem] text-center px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Account</th>
+                            <th scope="col" className="text-center px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">IP address</th>
+                            <th scope="col" className="text-center px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Time</th>
+                            <th scope="col" className="text-center px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {loading ? (
+                            <tr>
+                              <td colSpan={5} className="px-4 py-6 text-center text-[12px] text-foreground-400">Loading audit trail…</td>
+                            </tr>
+                          ) : audit.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="px-4 py-6 text-center text-[12px] text-foreground-400">No access events recorded yet.</td>
+                            </tr>
+                          ) : audit.map(entry => (
+                            <tr key={entry.id} className="border-b border-background-100/50 hover:bg-background-100/40 transition-smooth">
+                              <td className="px-4 py-2.5 text-center">
+                                <div className="flex items-center justify-center gap-2">
+                                  <span
+                                    aria-hidden="true"
+                                    className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+                                      entry.severity === 'critical' ? 'bg-red-500' : entry.severity === 'warning' ? 'bg-amber-500' : 'bg-emerald-500'
+                                    }`}
+                                  />
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-medium text-foreground-800 whitespace-nowrap">{eventLabel(entry.event)}</p>
+                                    {!entry.succeeded && (
+                                      <p className="text-[10px] font-semibold text-red-600 truncate" title={entry.reason || 'Event failed'}>
+                                        failed{entry.reason ? ` · ${entry.reason}` : ''}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="min-w-[14rem] px-4 py-2.5 text-center">
+                                <p className="text-sm font-medium text-foreground-800 truncate" title={entry.email || 'unknown address'}>{entry.email || 'unknown address'}</p>
+                              </td>
+                              <td className="px-4 py-2.5 text-center text-[13px] text-foreground-500 whitespace-nowrap">{entry.ipAddress || '—'}</td>
+                              <td className="px-4 py-2.5 text-center text-[13px] text-foreground-500 whitespace-nowrap">{timeAgo(entry.createdAt)}</td>
+                              <td className="px-4 py-2.5 text-center">
+                                {/* A failed invitation is the one access-log row an
+                                    administrator can actually act on from here. */}
+                                {canResendInvitation(entry) && <ResendInvitationButton entry={entry} onResent={reloadAudit} />}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
-                  )}
+                  </div>
                 </div>
               )}
             </section>

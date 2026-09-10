@@ -1326,7 +1326,7 @@ export default function CoachDashboard() {
             dashboard: a welcome row followed by the shared control hero. */}
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
           <div>
-            <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground-950 md:text-3xl">Welcome back, {ownerName} 👋</h1>
+            <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground-950 md:text-3xl">Welcome back, {ownerName}</h1>
             <p className="mt-1 text-[11px] text-foreground-500 md:text-xs">Monitor your caseload health, learner progress and coaching actions in real time.</p>
           </div>
           <div className="flex items-center gap-2">

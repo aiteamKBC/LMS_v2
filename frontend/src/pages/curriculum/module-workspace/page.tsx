@@ -473,7 +473,7 @@ export default function ModuleWorkspacePage() {
               type="button"
               onClick={() => toggleMeeting(detailKey)}
               aria-expanded={open}
-              className="inline-flex h-6 items-center gap-1 rounded-lg border border-background-200 bg-background-0 px-2 text-[10px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
+              className="inline-flex h-6 items-center gap-1 rounded-lg border border-primary-200 bg-primary-50 px-2 text-[10px] font-bold text-primary-700 transition-smooth hover:border-primary-300 hover:bg-primary-100"
             >
               <AppIcon className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-xs`}></AppIcon>
               {open ? 'Hide detail' : 'Attendance & recording'}

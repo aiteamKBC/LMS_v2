@@ -13,12 +13,13 @@ import { Link } from 'react-router-dom';
 import { AdminPage, DataPanel, SourceNote } from '../_shared/AdminPage';
 import { useAdminData } from '../_shared/useAdminData';
 import { fetchRoles } from '@/api/platformAdmin';
+import { Building2, GraduationCap, ShieldCheck, UserRound, Users, type LucideIcon } from 'lucide-react';
 
-const ROLE_EMOJIS: Record<string, string> = {
-  admin: '🛡️',
-  staff: '👥',
-  employer: '🏢',
-  learner: '🎓',
+const ROLE_ICONS: Record<string, LucideIcon> = {
+  admin: ShieldCheck,
+  staff: Users,
+  employer: Building2,
+  learner: GraduationCap,
 };
 
 const ROLE_ICON_STYLES: Record<string, string> = {
@@ -54,7 +55,10 @@ export default function AdminRolesPage() {
             <div key={role.id} className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
               <div className="flex items-start gap-3 mb-4">
                 <span className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${ROLE_ICON_STYLES[role.id] || 'bg-primary-100 text-primary-600'}`}>
-                  <span aria-hidden="true" className="text-xl leading-none">{ROLE_EMOJIS[role.id] || '👤'}</span>
+                  {(() => {
+                    const RoleIcon = ROLE_ICONS[role.id] || UserRound;
+                    return <RoleIcon aria-hidden="true" className="h-5 w-5" />;
+                  })()}
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">

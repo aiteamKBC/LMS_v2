@@ -30,6 +30,7 @@ import { Panel } from '@/components/ui/Panel';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { componentTypeMeta } from '@/utils/learnerJourney';
 import type { StatusTone } from '@/lib/statusTone';
 import type { LearnerKind } from '@/api/learnerDetail';
 
@@ -319,12 +320,15 @@ export default function TrainingPlanTimelinePage() {
                       </div>
                       <div className="divide-y divide-foreground-100">
                         {module.activities.map((item) => {
+                          const materialMeta = componentTypeMeta(item.category);
                           const score = item.quiz_score != null && item.quiz_maximum_score
                             ? `${item.quiz_score}/${item.quiz_maximum_score}`
                             : null;
                           return (
                             <div key={item.activity_id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-                              <span className={`h-2 w-2 shrink-0 rounded-full ${item.completed ? 'bg-emerald-500' : 'bg-foreground-300'}`} />
+                              <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${materialMeta.bg}`}>
+                                <AppIcon className={`${materialMeta.icon} text-[14px] ${materialMeta.color}`} />
+                              </span>
                               <div className="min-w-0 flex-1">
                                 <p className="truncate text-[12px] font-semibold text-foreground-800">{item.activity}</p>
                                 <p className="mt-0.5 text-[10px] text-foreground-500">{[item.category, item.date, score].filter(Boolean).join(' · ')}</p>

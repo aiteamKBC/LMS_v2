@@ -689,8 +689,8 @@ export default function UsersListPage() {
                       <span className="text-foreground-700">{row.subscriptionStatus}</span>
                       {row.subscriptionStatus ? (row.subscriptionVerified ? <i className="ri-checkbox-circle-fill text-emerald-500 ml-1.5 align-middle" title="Verified" /> : <i className="ri-close-circle-fill text-red-500 ml-1.5 align-middle" title="Unverified" />) : null}
                     </td>
-                    <td className="py-2.5 px-3">
-                      <span className="flex flex-wrap items-center gap-2">
+                    <td className="py-2.5 px-3 text-center">
+                      <span className="flex flex-wrap items-center justify-center gap-2">
                         {isLearner && PLAN_EDITABLE_STATUSES.includes(row.programmeStatus || '') ? (
                           <button
                             onClick={() => setPlanFor(row)}
@@ -744,9 +744,9 @@ export default function UsersListPage() {
                       </span>
                     </td>
                     <td className="py-2.5 px-3">{isLearner && row.programmeStatus ? <StatusBadge status={row.programmeStatus} /> : null}</td>
-                    <td className="py-2.5 px-3">
+                    <td className="py-2.5 px-3 text-center">
                       {openInPlace ? (
-                        <span className="flex items-center gap-2">
+                        <span className="flex items-center justify-center gap-2">
                           <button
                             onClick={openInPlace}
                             title={isEmployer ? `Open ${row.name}'s employer page` : `Edit ${row.name}'s details`}
@@ -770,7 +770,7 @@ export default function UsersListPage() {
                           )}
                         </span>
                       ) : isLearner ? (
-                        <span className="flex items-center gap-2">
+                        <span className="flex items-center justify-center gap-2">
                           <button
                             onClick={() => openLearnerPage(row)}
                             title={`Open ${row.name}'s learner page`}

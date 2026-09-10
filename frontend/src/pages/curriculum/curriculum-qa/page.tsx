@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
+import { CheckCircle2 } from 'lucide-react';
 
 // ─────────────────── Types ───────────────────
 type ReviewStatus = 'Pending' | 'In Review' | 'Approved' | 'Rejected' | 'Needs Revision';
@@ -497,7 +498,7 @@ export default function CurriculumQAPage() {
                         <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ml-auto ${findingStatusColor(f.status)}`}>{f.status}</span>
                       </div>
                       <p className="text-[12px] text-foreground-700">{f.description}</p>
-                      {f.resolution && <p className="text-[11px] text-emerald-600 mt-1.5 italic">✓ {f.resolution}</p>}
+                      {f.resolution && <p className="text-[11px] text-emerald-600 mt-1.5 italic"><CheckCircle2 aria-hidden="true" className="mr-1 inline h-3 w-3" />{f.resolution}</p>}
                       <div className="flex items-center gap-4 mt-2 text-[10px] text-foreground-400">
                         <span>Owner: <strong className="text-foreground-600">{f.owner}</strong></span>
                         <span>Raised: {f.raisedDate}</span>
