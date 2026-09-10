@@ -1,0 +1,71 @@
+/* Scope the matrix rhythm so workspace-wide table rules cannot reshape it. */
+:global(.dashboard-theme) .panel .matrix {
+  table-layout: fixed;
+  min-width: 720px;
+}
+
+:global(.dashboard-theme) .panel .matrix :is(th, td) {
+  padding: 10px 20px;
+  border-radius: 0;
+  text-align: center;
+  vertical-align: middle;
+}
+
+:global(.dashboard-theme) .panel .matrix thead th {
+  height: 64px;
+  font-size: 11px;
+  line-height: 16px;
+  text-transform: uppercase;
+}
+
+:global(.dashboard-theme) .panel .matrix .permission {
+  text-align: left;
+  z-index: 1;
+  overflow-wrap: anywhere;
+}
+
+.roleName {
+  display: block;
+  font-weight: 700;
+}
+
+.accountCount {
+  display: block;
+  margin-top: 4px;
+  color: var(--action-primary-foreground);
+  opacity: 0.8;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 16px;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+:global(.dashboard-theme) .panel .matrix tbody td {
+  height: 44px;
+  line-height: 20px;
+}
+
+:global(.dashboard-theme) .panel .matrix .permissionRow {
+  background: var(--kbc-surface) !important;
+}
+
+:global(.dashboard-theme) .panel .matrix .permissionRow:hover {
+  background: var(--kbc-purple-wash) !important;
+}
+
+:global(.dashboard-theme) .panel .matrix .group td {
+  height: 34px;
+  padding: 6px 20px;
+  background: var(--kbc-purple-wash) !important;
+  color: var(--kbc-table-text);
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+:global(.dashboard-theme) .panel .matrix td > [role='img'] {
+  vertical-align: middle;
+}

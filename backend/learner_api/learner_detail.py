@@ -29,7 +29,7 @@ from login.permissions import learner_self_or_staff
 from .active_users import completed_hours_from_progress, fmt_hours, hydrate_source_training_plan, target_by_elapsed_time, week_by_elapsed_time
 from .identity import learner_profile_for_source
 from .learner_progression import access_gate, advance_learner
-from .mappers import _s, to_learner_detail
+from .mappers import _s, get_training_plan, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
 
 logger = logging.getLogger(__name__)
@@ -549,7 +549,7 @@ def _matching_module_ids_for_quiz_record(quiz_record, modules_by_id, explicit_mo
     return []
 
 
-def _append_week_quizzes(weeks, components):
+def _append_week_quizzes(weeks, components, assigned_modules=None):
     """Append published quizzes for the learner's weeks/modules.
 
     Visibility now honours explicit module assignments (curriculum.quiz_course_links)
@@ -561,7 +561,10 @@ def _append_week_quizzes(weeks, components):
     week_ids_by_key = _resolve_week_ids(weeks)
     resolved_week_ids = sorted({week_id for week_id in week_ids_by_key.values() if week_id})
     weeks_by_module_id = {}
-    module_order = []
+    module_order = list(dict.fromkeys(
+        _s(entry.get("moduleId")) for entry in (assigned_modules or [])
+        if isinstance(entry, dict) and _s(entry.get("moduleId"))
+    ))
     module_titles_by_id = {}
     for week in weeks:
         module_id = _s(week.get("moduleId"))
@@ -603,9 +606,10 @@ def _append_week_quizzes(weeks, components):
             if module_order:
                 cur.execute(
                     """
-                    SELECT module_catalogue_id, title, COALESCE(programme_id, ''), COALESCE(programme_name, '')
-                    FROM curriculum.modules
-                    WHERE module_catalogue_id = ANY(%s)
+                    SELECT m.module_catalogue_id, m.title, COALESCE(m.programme_id, ''), COALESCE(m.programme_name, '')
+                    FROM curriculum.modules m
+                    WHERE m.module_catalogue_id = ANY(%s)
+                      AND (m.deleted_at IS NULL OR m.deleted_via_parent IS NOT NULL)
                     """,
                     [module_order],
                 )
@@ -618,6 +622,7 @@ def _append_week_quizzes(weeks, components):
                         "programmeId": _s(programme_id),
                         "programme": _s(programme_name),
                     }
+                module_order = [module_id for module_id in module_order if module_id in modules_by_id]
             if resolved_week_ids:
                 cur.execute(
                     """
@@ -1092,7 +1097,8 @@ def refresh_learner_otjh_snapshot(learner_profile, *, source=None, detail=None):
     if resolved_detail is None:
         resolved_detail = to_learner_detail(resolved_source, learner_profile)
         resolved_detail["modules"], resolved_detail["week"], resolved_detail["components"] = _resolve_from_master(
-            resolved_detail["modules"], resolved_detail["week"], resolved_detail["components"]
+            resolved_detail["modules"], resolved_detail["week"], resolved_detail["components"],
+            assigned_modules=get_training_plan(resolved_source),
         )
         resolved_detail["components"] = _apply_programme_assignment_template(
             resolved_detail["components"], getattr(resolved_source, "programme", "")
@@ -1101,6 +1107,7 @@ def refresh_learner_otjh_snapshot(learner_profile, *, source=None, detail=None):
         resolved_detail["week"], resolved_detail["components"] = _append_week_quizzes(
             resolved_detail["week"],
             resolved_detail["components"],
+            assigned_modules=get_training_plan(resolved_source),
         )
 
     snapshot = _live_otjh_snapshot(resolved_detail, learner_profile)
@@ -1203,97 +1210,6 @@ def _component_resource_url(settings):
     return None
 
 
-def _audit_sources_by_component_id(component_ids):
-    """Best-effort source fallback from programme_audit rows.
-
-    Some learner-plan components are present in curriculum.components but their
-    live settings do not carry the playable/upload source the audit import
-    captured. When that happens, use programme_audit as a secondary catalogue
-    keyed by component_id so videos, audio, images and files still render for
-    learners.
-    """
-    ids = sorted({_s(value) for value in component_ids if _s(value)})
-    if not ids:
-        return {}
-    try:
-        with connections["enrolment"].cursor() as cur:
-            cur.execute(
-                """
-                SELECT table_name
-                FROM information_schema.columns
-                WHERE table_schema = 'programme_audit'
-                  AND column_name = 'component_id'
-                ORDER BY CASE WHEN table_name = 'assets' THEN 0 ELSE 1 END, table_name
-                """
-            )
-            tables = [row[0] for row in cur.fetchall()]
-
-            by_component = {}
-            for table in tables:
-                cur.execute(
-                    """
-                    SELECT column_name
-                    FROM information_schema.columns
-                    WHERE table_schema = 'programme_audit' AND table_name = %s
-                    """,
-                    [table],
-                )
-                columns = {row[0] for row in cur.fetchall()}
-                wanted = [
-                    name for name in (
-                        "component_id",
-                        "content_kind",
-                        "source_url",
-                        "embed_url",
-                        "file_name",
-                        "content_type",
-                        "duration_minutes",
-                        "settings",
-                        "raw_component",
-                    )
-                    if name in columns
-                ]
-                if "component_id" not in wanted:
-                    continue
-                selected_columns = ", ".join(f'"{name}"' for name in wanted)
-                cur.execute(
-                    f'SELECT {selected_columns} '
-                    f'FROM "programme_audit"."{table}" WHERE "component_id" = ANY(%s)',
-                    [ids],
-                )
-                for row in cur.fetchall():
-                    item = dict(zip(wanted, row))
-                    component_id = _s(item.get("component_id"))
-                    if not component_id or component_id in by_component:
-                        continue
-                    settings = item.get("settings")
-                    if isinstance(settings, str):
-                        try:
-                            settings = json.loads(settings) if settings else {}
-                        except (ValueError, TypeError):
-                            settings = {}
-                    raw_component = item.get("raw_component")
-                    if isinstance(raw_component, str):
-                        try:
-                            raw_component = json.loads(raw_component) if raw_component else {}
-                        except (ValueError, TypeError):
-                            raw_component = {}
-                    by_component[component_id] = {
-                        "contentKind": _s(item.get("content_kind")),
-                        "sourceUrl": _s(item.get("source_url")),
-                        "embedUrl": _s(item.get("embed_url")),
-                        "fileName": _s(item.get("file_name")),
-                        "contentType": _s(item.get("content_type")),
-                        "durationMinutes": item.get("duration_minutes"),
-                        "settings": settings if isinstance(settings, dict) else {},
-                        "rawComponent": raw_component if isinstance(raw_component, dict) else {},
-                    }
-            return by_component
-    except DatabaseError as exc:
-        logger.warning("Could not look up programme_audit source fallback: %s", exc)
-        return {}
-
-
 def _cohort_schedule(cohort_name, programme_name):
     """The dates the learner's cohort runs to, or an empty dict.
 
@@ -1351,15 +1267,15 @@ def _apply_cohort_schedule(detail, source):
     detail.update(_cohort_schedule(getattr(source, "cohort", ""), getattr(source, "programme", "")))
 
 
-def _resolve_from_master(modules, weeks, components):
+def _resolve_from_master(modules, weeks, components, assigned_modules=None):
     """Rebuild the module -> week -> component tree LIVE from the master
-    authoring tables (curriculum.module_authoring_*) so coach edits in the
+    authoring tables (curriculum.modules/weeks/components) so coach edits in the
     Module Builder show up immediately for already-enrolled learners.
 
-    Membership at the MODULE level stays driven by the learner's own snapshot
-    (they are enrolled in specific modules). Within each of those modules, the
+    Membership at the MODULE level comes from the learner's source assignments
+    (including modules with no children yet). Within each of those modules, the
     weeks + components — their titles, order, and set — come live from master,
-    keyed by the ids the snapshot already carries. So renames propagate, and
+    keyed by the assigned module ids. So renames propagate, and
     weeks/components added or removed in Module Builder appear/disappear here.
 
     Only structured-plan (id-bearing) modules are resolved. Legacy id-less
@@ -1368,16 +1284,21 @@ def _resolve_from_master(modules, weeks, components):
     handled module-by-module. On any DB error the snapshot tree is returned
     unchanged — never 500 the page because master is unreachable.
     """
-    # Module ids present in the snapshot, keyed to their snapshot title (used
-    # as the join key for legacy passthrough and to preserve module order).
-    module_ids = []
+    # Read membership from the source assignments even when an assigned module
+    # has no weeks/components yet. Flattening its snapshot loses that module id.
+    if assigned_modules == []:
+        return [], [], []
+    module_ids = list(dict.fromkeys(
+        _s(entry.get("moduleId")) for entry in (assigned_modules or [])
+        if isinstance(entry, dict) and _s(entry.get("moduleId"))
+    ))
     for w in weeks:
         mid = w.get("moduleId")
-        if mid and mid not in module_ids:
+        if assigned_modules is None and mid and mid not in module_ids:
             module_ids.append(mid)
     for c in components:
         mid = c.get("moduleId")
-        if mid and mid not in module_ids:
+        if assigned_modules is None and mid and mid not in module_ids:
             module_ids.append(mid)
 
     if not module_ids:
@@ -1387,14 +1308,12 @@ def _resolve_from_master(modules, weeks, components):
         with connections["enrolment"].cursor() as cur:
             cur.execute(
                 "SELECT m.module_catalogue_id, m.title FROM curriculum.modules m "
-                "LEFT JOIN curriculum.groups g ON g.group_id = m.group_id "
-                "LEFT JOIN curriculum.cohorts ch ON ch.cohort_id = m.cohort_id "
-                "LEFT JOIN curriculum.programmes p ON p.programme_id = m.programme_id "
                 "WHERE m.module_catalogue_id = ANY(%s) "
-                "AND m.deleted_at IS NULL AND COALESCE(m.is_programme_deleted, false) = false "
-                "AND (g.group_id IS NULL OR (g.deleted_at IS NULL AND COALESCE(g.is_programme_deleted, false) = false)) "
-                "AND (ch.cohort_id IS NULL OR (ch.deleted_at IS NULL AND COALESCE(ch.is_programme_deleted, false) = false)) "
-                "AND (p.programme_id IS NULL OR (p.deleted_at IS NULL AND COALESCE(p.is_archived, false) = false))",
+                # An assignment is a learner-owned snapshot. Keep content that
+                # was cascade-hidden with its parent programme available to an
+                # already-assigned learner; a row deleted on its own remains
+                # excluded. ``deleted_via_parent`` distinguishes the two cases.
+                "AND (m.deleted_at IS NULL OR m.deleted_via_parent IS NOT NULL)",
                 [module_ids],
             )
             master_module_title = {mid: title for mid, title in cur.fetchall()}
@@ -1402,7 +1321,7 @@ def _resolve_from_master(modules, weeks, components):
             cur.execute(
                 "SELECT id, module_catalogue_id, title, week_number, display_order "
                 "FROM curriculum.weeks WHERE module_catalogue_id = ANY(%s) "
-                "AND deleted_at IS NULL AND COALESCE(is_programme_deleted, false) = false "
+                "AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL) "
                 "ORDER BY module_catalogue_id, display_order, week_number, id",
                 [module_ids],
             )
@@ -1413,7 +1332,7 @@ def _resolve_from_master(modules, weeks, components):
                 "live_sessions_link, display_order, ksb_mappings, reflection_required, \"Reflection_Question\", "
                 "tutor_validation_required "
                 "FROM curriculum.components WHERE module_catalogue_id = ANY(%s) "
-                "AND deleted_at IS NULL AND COALESCE(is_programme_deleted, false) = false "
+                "AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL) "
                 "ORDER BY week_id, display_order, id",
                 [module_ids],
             )
@@ -1486,7 +1405,7 @@ def _resolve_from_master(modules, weeks, components):
                     "SELECT component_id, ksb_code, ksb_description, classification, weight, weight_class "
                     "FROM curriculum.ksb_mappings "
                     "WHERE component_id = ANY(%s) "
-                    "AND deleted_at IS NULL AND COALESCE(is_programme_deleted, false) = false "
+                    "AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL) "
                     "ORDER BY component_id, ksb_code",
                     [missing_ksb_component_ids],
                 )
@@ -1502,7 +1421,6 @@ def _resolve_from_master(modules, weeks, components):
                 component_id: (sum(float(item.get("weight") or 0) for item in items), len(items))
                 for component_id, items in ksbs_by_component.items()
             }
-            audit_sources_by_component = _audit_sources_by_component_id(component_ids)
     except DatabaseError as exc:
         logger.warning("Could not live-resolve training plan from master: %s", exc)
         return modules, weeks, components
@@ -1524,20 +1442,6 @@ def _resolve_from_master(modules, weeks, components):
                 settings = {}
         if not isinstance(settings, dict):
             settings = {}
-        audit_source = audit_sources_by_component.get(comp_id, {})
-        audit_settings = audit_source.get("settings") if isinstance(audit_source.get("settings"), dict) else {}
-        audit_raw = audit_source.get("rawComponent") if isinstance(audit_source.get("rawComponent"), dict) else {}
-        audit_url = (
-            _s(audit_source.get("sourceUrl"))
-            or _s(audit_source.get("embedUrl"))
-            or _s(audit_settings.get("videoUrl"))
-            or _s(audit_settings.get("audioUrl"))
-            or _s(audit_settings.get("podcastUrl"))
-            or _s(audit_settings.get("resourceUrl"))
-            or _s(audit_settings.get("uploadedFileUrl"))
-            or _s(audit_raw.get("videoUrl"))
-            or _s(audit_raw.get("resourceUrl"))
-        )
         live_session_url = (
             _s(stored_live_link)
             or _s(settings.get("liveSessionUrl"))
@@ -1545,15 +1449,14 @@ def _resolve_from_master(modules, weeks, components):
             or None
         )
         normalised_type = _s(ctype).strip().lower().replace("-", "_")
-        audit_kind = _s(audit_source.get("contentKind")).strip().lower().replace("-", "_")
-        video_url = _s(settings.get("videoUrl")) or (audit_url if normalised_type == "video" or audit_kind == "video" else "") or None
+        video_url = _s(settings.get("videoUrl")) or None
         # Generalised content payload per component type (mirrors the authoring
         # settings_json keys in the Module Builder). Lets the learner open a
         # podcast / reading / slide deck / reflection the same way as a video.
         # Podcast audio may be an external listening-page link (podcastUrl) or an
         # uploaded file (uploadedFileUrl) — either can be a real audio source.
         #
-        audio_url = component_audio_url(settings, ctype) or (audit_url if normalised_type == "podcast" or audit_kind == "audio" else None)
+        audio_url = component_audio_url(settings, ctype)
         content_html = _s(settings.get("readingContent")) or None
         file_name = (
             _s(settings.get("fileName"))
@@ -1562,7 +1465,6 @@ def _resolve_from_master(modules, weeks, components):
             # assignment-specific keys would otherwise show its document with
             # no name on it.
             or _s(settings.get("assignmentFileName"))
-            or _s(audit_source.get("fileName"))
             or None
         )
         download_allowed = bool(settings.get("downloadAllowed"))
@@ -1604,7 +1506,7 @@ def _resolve_from_master(modules, weeks, components):
         # PowerPoint (presentationUrl / uploadedFileUrl) and any other component
         # with an attached link/file all resolve to the same resourceUrl field,
         # picking the one the author actually chose — see _component_resource_url.
-        resource_url = _component_resource_url(settings) or (audit_url if not video_url and not audio_url else None)
+        resource_url = _component_resource_url(settings)
         # An assignment's attached document has its own pair of keys, which the
         # generic resolution above does not know. The Module Builder writes them
         # alongside `uploadedFileUrl` today, but rows authored before that
@@ -1666,14 +1568,16 @@ def _resolve_from_master(modules, weeks, components):
 
     for mid in module_ids:
         if mid not in master_module_title:
-            continue  # module deleted from master; drop it (full sync)
+            continue  # independently deleted/missing modules stay unavailable
         live_module = _s(master_module_title[mid])
-        # Skip blanks, and dedupe titles that would otherwise collide under the
-        # frontend's title-based grouping (keep the first).
-        if not live_module or live_module in seen_modules:
+        # The label list is unique for older consumers. Keep every module's
+        # weeks/components: the subject workspace groups by moduleId, and two
+        # assigned subjects must not lose content because they share a title.
+        if not live_module:
             continue
+        if live_module not in seen_modules:
+            out_modules.append(live_module)
         seen_modules.add(live_module)
-        out_modules.append(live_module)
 
         for week_id, live_wk in weeks_by_module.get(mid, []):
             out_weeks.append({
@@ -1789,13 +1693,16 @@ def build_learner_detail(source, pk):
     # Live-resolve titles + membership from the master authoring tables so coach
     # edits in Module Builder reflect here immediately (structured-plan learners).
     detail["modules"], detail["week"], detail["components"] = _resolve_from_master(
-        detail["modules"], detail["week"], detail["components"]
+        detail["modules"], detail["week"], detail["components"],
+        assigned_modules=get_training_plan(source),
     )
     detail["components"] = _apply_programme_assignment_template(
         detail["components"], getattr(source, "programme", "")
     )
     detail["components"], detail["totalExpectedOtjh"] = _annotate_otjh(detail["components"])
-    detail["week"], detail["components"] = _append_week_quizzes(detail["week"], detail["components"])
+    detail["week"], detail["components"] = _append_week_quizzes(
+        detail["week"], detail["components"], assigned_modules=get_training_plan(source),
+    )
     snapshot = _live_otjh_snapshot(detail, learner_profile)
     _apply_live_otjh_snapshot(detail, snapshot)
     if learner_profile is not None:

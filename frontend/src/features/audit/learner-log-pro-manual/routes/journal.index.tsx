@@ -4,7 +4,7 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import SignaturePad from "signature_pad";
 import Swal from "sweetalert2";
-import { ArrowLeft, ArrowRight, CheckCircle2, Download, LoaderCircle, PenLine, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle2, Download, Flag, LoaderCircle, PenLine, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { fetchAuditSignoff, saveAuditSignoff } from "@/features/audit/learner-log-pro-manual/lib/signoff-api";
 import { ActivityTableHeader, InlineActivityCreateRow, InlineActivityRow } from "@/features/audit/learner-log-pro-manual/components/InlineActivityRow";
 import { Button } from "@/features/audit/learner-log-pro-manual/components/ui/button";
@@ -186,8 +186,8 @@ function OtjhCard({ otjh }: { otjh?: any }) {
           <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Off-the-job hours ({provenanceLabel})</p>
           {otjh.applied_date && <p className="mt-0.5 text-xs text-muted-foreground">Adjustment applied {otjh.applied_date}</p>}
         </div>
-        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${flagged ? "bg-red-600 text-white" : "bg-emerald-600/10 text-emerald-700"}`}>
-          {flagged ? "⚑ " : ""}{otjhStatusLabel(otjh.status)}
+        <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${flagged ? "bg-red-600 text-white" : "bg-emerald-600/10 text-emerald-700"}`}>
+          {flagged ? <Flag aria-hidden="true" className="h-3 w-3" /> : null}{otjhStatusLabel(otjh.status)}
         </span>
       </div>
       <div className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">

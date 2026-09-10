@@ -1,7 +1,7 @@
 /**
  * Which video URLs the player can actually embed.
  *
- * The legacy MBA import brought in 3,884 Google Drive links, all in Drive's
+ * Historical imports can contain Google Drive links in Drive's
  * share form (".../view"). That URL in an iframe renders Drive's own web page —
  * a sign-in or "you need permission" notice — rather than a player, which is
  * exactly what learners saw. They now go through the media proxy, which returns

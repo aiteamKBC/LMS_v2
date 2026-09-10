@@ -1,7 +1,11 @@
+import { WorkspaceMetricContent } from '@/components/ui/WorkspaceMetricContent';
 import { useMemo, useRef, useState, useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { AppIcon } from '@/components/feature/AppIcon';
+import { AdminPageHeader } from '@/pages/admin/_shared/AdminPage';
+import { useAuth } from '@/hooks/useAuth';
 import { roleNavMap } from '@/mocks/navigation';
 import { CASE_OWNER_OPTIONS } from '@/mocks/enrolment-console';
 import { fetchEnrolmentUsers, STATUS_OPTIONS, TYPE_OPTIONS, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
@@ -9,7 +13,7 @@ import { fetchStaffUsers, type StaffUserRow } from '@/api/staffUsers';
 import { fetchProgrammes, fetchCohorts, fetchGroups } from '@/api/curriculum';
 import { listEmployers, type EmployerRow } from '@/api/employers';
 import type { UserListRow, UsersFilter } from './types';
-import { StatusBadge, Pagination, inputClass, btnGold, btnSecondary } from './components/ui';
+import { StatusBadge, Pagination, inputClass, btnPrimary, btnSecondary } from './components/ui';
 import { SendInvitationButton } from './components/SendInvitationButton';
 import { CreateUserModal } from './components/CreateUserModal';
 import { CreateStaffModal } from './components/CreateStaffModal';
@@ -125,7 +129,7 @@ function MultiSelect({ label, placeholder, options, selected, onChange, disabled
           className={`${inputClass} text-left flex items-center justify-between ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
         >
           <span className={selected.length ? 'text-foreground-900 truncate' : 'text-foreground-300'}>{selected.length ? selected.join(', ') : placeholder}</span>
-          <i className="ri-arrow-down-s-line text-foreground-400 shrink-0" />
+          <AppIcon className="ri-arrow-down-s-line text-foreground-400 shrink-0" />
         </button>
         {open && !disabled && (
           <div className="absolute z-20 mt-1 w-full bg-background-50 border border-foreground-200 rounded-lg shadow-lg max-h-56 overflow-y-auto py-1">
@@ -162,27 +166,9 @@ function SelectFilter({ label, value, options, onChange, disabled = false }: { l
   );
 }
 
-function UserMetricCard({ icon, label, value, detail, tone, onClick, active = false }: { icon: string; label: string; value: ReactNode; detail: string; tone: 'primary' | 'amber' | 'violet' | 'emerald'; onClick?: () => void; active?: boolean }) {
-  const iconStyles = {
-    primary: 'border-white/30 bg-gradient-to-br from-[#d8c9ff] via-[#8b5cf6] to-[#5420a8] text-white shadow-md shadow-primary-500/25',
-    amber: 'border-white/30 bg-gradient-to-br from-[#f8dda0] via-[#d49a38] to-[#b27715] text-white shadow-md shadow-[#b27715]/25',
-    violet: 'border-white/30 bg-gradient-to-br from-[#ddd6fe] via-[#a78bfa] to-[#6d28d9] text-white shadow-md shadow-violet-500/25',
-    emerald: 'border-white/30 bg-gradient-to-br from-[#b9f6db] via-[#34d399] to-[#059669] text-white shadow-md shadow-emerald-500/25',
-  }[tone];
-
-  const surface = `coach-metric-card flex min-h-[112px] items-start gap-3 text-left transition ${active ? 'ring-2 ring-primary-300' : 'hover:-translate-y-0.5 hover:shadow-md'} ${onClick ? 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400' : ''}`;
-  const content = (
-    <>
-      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border text-[18px] ring-1 ring-black/5 ${iconStyles}`}>
-        <i className={icon} />
-      </span>
-      <div className="min-w-0">
-        <p className="truncate text-[11px] font-medium text-foreground-500">{label}</p>
-        <p className="mt-1 text-[25px] font-semibold leading-none tabular-nums text-foreground-950">{value}</p>
-        <p className="mt-1.5 truncate text-[11px] leading-snug text-foreground-500">{detail}</p>
-      </div>
-    </>
-  );
+function UserMetricCard({ icon, label, value, detail, onClick, active = false }: { icon: string; label: string; value: ReactNode; detail: string; onClick?: () => void; active?: boolean }) {
+  const surface = `card-premium flex min-h-[88px] items-center gap-3 rounded-xl border border-foreground-200/60 bg-background-50 px-3.5 py-3 text-left transition ${active ? 'ring-2 ring-primary-300' : 'hover:bg-primary-100/60'} ${onClick ? 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400' : ''}`;
+  const content = <WorkspaceMetricContent label={label} value={value} note={detail} icon={icon} />;
 
   return onClick ? <button type="button" onClick={onClick} aria-pressed={active} className={surface}>{content}</button> : <div className={surface}>{content}</div>;
 }
@@ -197,23 +183,20 @@ function ActiveProgrammeCard({ active, total, onClick, selected = false }: { act
         <p className="mt-3 text-[28px] font-semibold leading-none tracking-tight text-foreground-950">{active}</p>
         <p className="mt-1 text-[12px] text-foreground-500">{percentage}% of learners</p>
       </div>
-      <div className="flex shrink-0 items-center gap-5">
-        <svg viewBox="0 0 108 42" className="hidden h-12 w-28 text-emerald-500 sm:block" aria-hidden="true">
-          <path d="M2 24 C12 17, 18 17, 27 24 S40 37, 49 25 S64 19, 73 28 S87 33, 106 29" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-        </svg>
+      <div className="flex shrink-0 items-center">
         <div
-          className="flex h-[76px] w-[76px] items-center justify-center rounded-full"
+          className="flex h-16 w-16 items-center justify-center rounded-full"
           style={{ background: `conic-gradient(#35b98a ${percentage}%, var(--enrolment-ring-track, #ebeaf1) 0)` }}
         >
-          <div className="flex h-[58px] w-[58px] items-center justify-center rounded-full bg-white text-[16px] font-semibold text-foreground-700">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-[16px] font-semibold text-foreground-700">
             {percentage}%
           </div>
-          </div>
         </div>
+      </div>
     </>
   );
 
-  const surface = `flex min-h-[132px] items-center justify-between gap-4 rounded-2xl border border-primary-100/70 bg-white/90 p-5 text-left shadow-sm transition ${selected ? 'ring-2 ring-primary-300' : 'hover:-translate-y-0.5 hover:shadow-md'} ${onClick ? 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400' : ''}`;
+  const surface = `flex min-h-[112px] items-center justify-between gap-3 rounded-xl border border-primary-200/40 bg-primary-50/60 p-4 text-left transition ${selected ? 'ring-2 ring-primary-300' : 'hover:bg-primary-100/60'} ${onClick ? 'cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400' : ''}`;
   return onClick ? <button type="button" onClick={onClick} aria-pressed={selected} className={surface}>{content}</button> : <div className={surface}>{content}</div>;
 }
 
@@ -246,6 +229,7 @@ function matches(row: DirectoryRow, f: UsersFilter): boolean {
 }
 
 export default function UsersListPage() {
+  const { isAdmin } = useAuth();
   const navigate = useNavigate();
   const [draft, setDraft] = useState<UsersFilter>(EMPTY_FILTER);
   const [applied, setApplied] = useState<UsersFilter>(EMPTY_FILTER);
@@ -462,12 +446,12 @@ export default function UsersListPage() {
     navigate(`/users/${row.id}${q(row)}`);
   };
 
-  // The learner's own workspace view. `source` doubles as the :kind segment —
-  // staff and employers have no learner record, so their rows get no link.
+  // Open the learner's subjects directly, including restored learning for
+  // enrolments whose new programme is still at Delivery.
   const openLearnerPage = (row: UserListRow) => {
     if (isNonLearner(row)) return;
     const kind = row.source === 'commercial' ? 'commercial' : 'apprenticeship';
-    navigate(`/workspace/learner/${kind}/${row.id}`);
+    navigate(`/learner/modules/${kind}/${row.id}`);
   };
 
   // Staff/admin rows have no profile page — editing their details in place is
@@ -504,28 +488,22 @@ export default function UsersListPage() {
   };
 
   return (
-    <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Users" pageSubtitle="Directory of learners and administrators" userName="Enrolment Officer" userRole="Enrolment Officer">
-      <div className="enrolment-users-page p-6 space-y-6">
-        <div
-          className="enrolment-users-hero relative overflow-visible rounded-2xl border border-primary-100/80 p-5 shadow-sm sm:p-7"
-          style={{
-            backgroundColor: '#f8f6ff',
-            backgroundImage: 'radial-gradient(circle at 82% 18%, rgba(126, 87, 220, 0.12), transparent 28%), repeating-radial-gradient(ellipse at 78% 10%, transparent 0 18px, rgba(126, 87, 220, 0.07) 19px 21px, transparent 22px 34px)',
-          }}
-        >
-          <div className="flex flex-col items-start justify-between gap-5 sm:flex-row sm:items-center">
-            <div>
-              <h1 className="text-[25px] font-semibold tracking-tight text-foreground-950 sm:text-[28px]">User Management</h1>
-              <p className="mt-1 text-[13px] text-foreground-500">Manage learners, administrators and employers across all programmes.</p>
-            </div>
+    <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Users" pageSubtitle="Directory of learners, administrators and employers">
+      <div className="admin-console-page enrolment-users-page min-w-0 space-y-4 p-3 md:space-y-5 md:p-6">
+        <AdminPageHeader
+          title="User Management"
+          description="Manage learners, administrators and employers across all programmes."
+          icon="ri-group-line"
+          eyebrow={isAdmin ? 'Administration' : 'Enrolment'}
+          actions={
             <div ref={createRef} className="relative">
               <button
                 type="button"
                 ref={createBtnRef}
                 onClick={() => setCreateOpen((o) => !o)}
-                className={btnGold}
+                className={btnPrimary}
               >
-                <i className="ri-add-line" />Create user<i className="ri-arrow-down-s-line" />
+                <AppIcon className="ri-add-line" />Create user<AppIcon className="ri-arrow-down-s-line" />
               </button>
               {createOpen && menuPos && createPortal(
                 <div
@@ -533,40 +511,40 @@ export default function UsersListPage() {
                   style={{ top: menuPos.top, right: menuPos.right }}
                   className="fixed z-[200] w-56 rounded-xl border border-foreground-200 bg-background-50 py-1.5 shadow-xl"
                 >
-                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateModalOpen(true); }}><i className="ri-user-add-line mr-2 text-foreground-400" />Create user</button>
-                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateAdminOpen(true); }}><i className="ri-shield-user-line mr-2 text-foreground-400" />Create admin</button>
-                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateTutorOpen(true); }}><i className="ri-presentation-line mr-2 text-foreground-400" />Create tutor</button>
-                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateEmployerOpen(true); }}><i className="ri-briefcase-line mr-2 text-foreground-400" />Create employer profile</button>
-                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateOrgOpen(true); }}><i className="ri-building-line mr-2 text-foreground-400" />Create organisation profile</button>
+                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateModalOpen(true); }}><AppIcon className="ri-user-add-line mr-2 text-foreground-400" />Create user</button>
+                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateAdminOpen(true); }}><AppIcon className="ri-shield-user-line mr-2 text-foreground-400" />Create admin</button>
+                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateTutorOpen(true); }}><AppIcon className="ri-presentation-line mr-2 text-foreground-400" />Create tutor</button>
+                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateEmployerOpen(true); }}><AppIcon className="ri-briefcase-line mr-2 text-foreground-400" />Create employer profile</button>
+                  <button className="w-full cursor-pointer px-3 py-2 text-left text-[13px] text-foreground-700 hover:bg-background-100" onClick={() => { setCreateOpen(false); setCreateOrgOpen(true); }}><AppIcon className="ri-building-line mr-2 text-foreground-400" />Create organisation profile</button>
                 </div>,
                 document.body,
               )}
             </div>
-          </div>
+          }
+        />
 
-          <div className="mt-7 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[repeat(4,minmax(0,1fr))_1.45fr]">
-            <UserMetricCard icon="ri-group-line" label="Total users" value={rows.length} detail="Across all roles" tone="primary" active={summaryFilter === 'all'} onClick={() => selectSummary('all')} />
-            <UserMetricCard icon="ri-graduation-cap-line" label="Learners" value={learners} detail={`${rows.length ? Math.round((learners / rows.length) * 100) : 0}% of total`} tone="amber" active={summaryFilter === 'learners'} onClick={() => selectSummary('learners')} />
-            <UserMetricCard icon="ri-user-line" label="Admins" value={admins} detail={`${rows.length ? Math.round((admins / rows.length) * 100) : 0}% of total`} tone="violet" active={summaryFilter === 'admins'} onClick={() => selectSummary('admins')} />
-            <UserMetricCard icon="ri-briefcase-line" label="Employers" value={employerCount} detail={`${rows.length ? Math.round((employerCount / rows.length) * 100) : 0}% of total`} tone="amber" active={summaryFilter === 'employers'} onClick={() => selectSummary('employers')} />
-            <ActiveProgrammeCard active={active} total={rows.length} selected={summaryFilter === 'active'} onClick={() => selectSummary('active')} />
-          </div>
+        <div aria-label="User totals" className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 min-[1600px]:grid-cols-5">
+          <UserMetricCard icon="ri-group-line" label="Total users" value={rows.length} detail="Across all roles" active={summaryFilter === 'all'} onClick={() => selectSummary('all')} />
+          <UserMetricCard icon="ri-graduation-cap-line" label="Learners" value={learners} detail={`${rows.length ? Math.round((learners / rows.length) * 100) : 0}% of total`} active={summaryFilter === 'learners'} onClick={() => selectSummary('learners')} />
+          <UserMetricCard icon="ri-user-line" label="Admins" value={admins} detail={`${rows.length ? Math.round((admins / rows.length) * 100) : 0}% of total`} active={summaryFilter === 'admins'} onClick={() => selectSummary('admins')} />
+          <UserMetricCard icon="ri-briefcase-line" label="Employers" value={employerCount} detail={`${rows.length ? Math.round((employerCount / rows.length) * 100) : 0}% of total`} active={summaryFilter === 'employers'} onClick={() => selectSummary('employers')} />
+          <ActiveProgrammeCard active={active} total={rows.length} selected={summaryFilter === 'active'} onClick={() => selectSummary('active')} />
         </div>
 
         {/* Filter card */}
         <div className="overflow-hidden rounded-2xl border border-foreground-100 bg-background-50 shadow-sm">
-          <div className="flex items-center justify-between gap-4 px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-5">
             <div className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary-600"><i className="ri-filter-3-line" /></span>
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary-600"><AppIcon className="ri-filter-3-line" /></span>
               <div>
                 <h2 className="text-[14px] font-semibold text-foreground-900">Filter users</h2>
                 <p className="mt-0.5 text-[11px] text-foreground-400">Use filters to refine the user list.</p>
               </div>
             </div>
-            <button type="button" className="hidden items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700 sm:inline-flex"><i className="ri-star-line" />Save view</button>
+            <button type="button" className="hidden items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700 sm:inline-flex"><AppIcon className="ri-star-line" />Save view</button>
           </div>
-          <div className="border-t border-foreground-100 px-5 py-5">
-          <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="border-t border-foreground-100 p-4 md:p-5">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <TextFilter label="Search" placeholder="Search by name or email..." value={draft.userName ?? ''} onChange={(v) => set({ userName: v })} />
             {/* Programme -> cohort -> group, same gate as the Cohort filter: a
                 group only means something inside a programme. */}
@@ -606,23 +584,23 @@ export default function UsersListPage() {
           </div>
           <div className="mt-5 flex items-center justify-end gap-4 lg:col-span-4">
             <button type="button" className="text-[12px] font-medium text-foreground-600 transition hover:text-primary-700" onClick={reset}>Clear all</button>
-            <button type="button" className={btnGold} onClick={search}><i className="ri-filter-3-line" />Apply filters</button>
+            <button type="button" className={btnPrimary} onClick={search}><AppIcon className="ri-filter-3-line" />Apply filters</button>
           </div>
           </div>
         </div>
 
         {/* Results table */}
         <div className="admin-cool-table overflow-hidden rounded-2xl border border-foreground-100 bg-background-50 shadow-sm">
-          <div className="flex items-center justify-between gap-4 px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-5">
             <div className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary-600"><i className="ri-group-line" /></span>
+              <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary-600"><AppIcon className="ri-group-line" /></span>
               <div className="flex items-center gap-2">
                 <h2 className="text-[15px] font-semibold text-foreground-900">Users ({rows.length})</h2>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button type="button" className="hidden items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700 sm:inline-flex"><i className="ri-layout-column-line" />Columns</button>
-              <button type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700"><i className="ri-download-line" />Export<i className="ri-arrow-down-s-line" /></button>
+              <button type="button" className="hidden items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700 sm:inline-flex"><AppIcon className="ri-layout-column-line" />Columns</button>
+              <button type="button" className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-100 px-3 py-2 text-[12px] font-medium text-foreground-600 transition hover:border-primary-200 hover:text-primary-700"><AppIcon className="ri-download-line" />Export<AppIcon className="ri-arrow-down-s-line" /></button>
             </div>
           </div>
           <div className="overflow-x-auto">
@@ -641,8 +619,8 @@ export default function UsersListPage() {
                 {loading && <TableBodySkeleton rows={6} columns={9} />}
                 {!loading && error && (
                   <tr><td colSpan={9} className="py-10 text-center text-[13px]">
-                    <p className="text-red-600 mb-2"><i className="ri-error-warning-line mr-1.5" />{error}</p>
-                    <button className={btnSecondary} onClick={load}><i className="ri-refresh-line" />Retry</button>
+                    <p className="text-red-600 mb-2"><AppIcon className="ri-error-warning-line mr-1.5" />{error}</p>
+                    <button className={btnSecondary} onClick={load}><AppIcon className="ri-refresh-line" />Retry</button>
                   </td></tr>
                 )}
                 {!loading && !error && pageRows.map((row, i) => {
@@ -687,17 +665,17 @@ export default function UsersListPage() {
                     </td>
                     <td className="py-2.5 px-3 whitespace-nowrap">
                       <span className="text-foreground-700">{row.subscriptionStatus}</span>
-                      {row.subscriptionStatus ? (row.subscriptionVerified ? <i className="ri-checkbox-circle-fill text-emerald-500 ml-1.5 align-middle" title="Verified" /> : <i className="ri-close-circle-fill text-red-500 ml-1.5 align-middle" title="Unverified" />) : null}
+                      {row.subscriptionStatus ? (row.subscriptionVerified ? <AppIcon className="ri-checkbox-circle-fill text-emerald-500 ml-1.5 align-middle" title="Verified" /> : <AppIcon className="ri-close-circle-fill text-red-500 ml-1.5 align-middle" title="Unverified" />) : null}
                     </td>
-                    <td className="py-2.5 px-3">
-                      <span className="flex flex-wrap items-center gap-2">
+                    <td className="py-2.5 px-3 text-center">
+                      <span className="flex flex-wrap items-center justify-center gap-2">
                         {isLearner && PLAN_EDITABLE_STATUSES.includes(row.programmeStatus || '') ? (
                           <button
                             onClick={() => setPlanFor(row)}
                             title={`${row.hasLearningPlan ? 'Edit' : 'Add'} ${row.name}'s learning plan`}
                             className="inline-flex max-w-full items-center gap-1 rounded-lg border border-foreground-200 px-2 py-1 text-[11px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
                           >
-                            <i className={`ri-${row.hasLearningPlan ? 'edit' : 'add'}-line shrink-0 text-[12px]`} />
+                            <AppIcon className={`ri-${row.hasLearningPlan ? 'edit' : 'add'}-line shrink-0 text-[12px]`} />
                             <span className="truncate">{row.hasLearningPlan ? 'Edit learning plan' : 'Add learning plan'}</span>
                           </button>
                         ) : isLearner && row.learningPlan ? (
@@ -723,7 +701,7 @@ export default function UsersListPage() {
                             title={`Shift ${row.name} from one module to another`}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
                           >
-                            <i className="ri-arrow-left-right-line" />
+                            <AppIcon className="ri-arrow-left-right-line" />
                             Shift module
                           </button>
                         )}
@@ -744,17 +722,17 @@ export default function UsersListPage() {
                       </span>
                     </td>
                     <td className="py-2.5 px-3">{isLearner && row.programmeStatus ? <StatusBadge status={row.programmeStatus} /> : null}</td>
-                    <td className="py-2.5 px-3">
+                    <td className="py-2.5 px-3 text-center">
                       {openInPlace ? (
-                        <span className="flex items-center gap-2">
+                        <span className="flex items-center justify-center gap-2">
                           <button
                             onClick={openInPlace}
                             title={isEmployer ? `Open ${row.name}'s employer page` : `Edit ${row.name}'s details`}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
                           >
                             {isEmployer
-                              ? <><i className="ri-external-link-line text-[13px]" />View</>
-                              : <><i className="ri-edit-line text-[13px]" />Edit</>}
+                              ? <><AppIcon className="ri-external-link-line text-[13px]" />View</>
+                              : <><AppIcon className="ri-edit-line text-[13px]" />Edit</>}
                           </button>
                           {/* An employer's own details are still editable — the
                               primary action is now their page, so this is a
@@ -770,13 +748,13 @@ export default function UsersListPage() {
                           )}
                         </span>
                       ) : isLearner ? (
-                        <span className="flex items-center gap-2">
+                        <span className="flex items-center justify-center gap-2">
                           <button
                             onClick={() => openLearnerPage(row)}
                             title={`Open ${row.name}'s learner page`}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
                           >
-                            <i className="ri-external-link-line text-[13px]" />View
+                            <AppIcon className="ri-external-link-line text-[13px]" />View
                           </button>
                           {/* The columns of this table — group, programme and
                               both statuses — are fields on the learner record,

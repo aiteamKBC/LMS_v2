@@ -15,7 +15,7 @@ import type { DirectoryCoach } from '@/api/coachDirectory';
 import { cn } from '@/lib/cn';
 import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE, formatHoursMinutes } from '@/lib/format';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
-import { PageContainer } from '@/components/ui/PageContainer';
+import { WorkspaceDashboardLayout } from '@/components/feature/WorkspaceDashboardLayout';
 import { SectionHeader, SectionLabel } from '@/components/ui/SectionHeader';
 import { MetricCard, CompactMetric, MetricRow } from '@/components/ui/MetricCard';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -118,12 +118,27 @@ interface CaseloadApiResponse {
   learners?: CaseloadApiLearner[];
 }
 
+interface CoachAssignedGroup {
+  id: string;
+  name: string;
+  programmeId?: string;
+  programme: string;
+  cohortId?: string;
+  cohort: string;
+  coach: string;
+  status: string;
+  schedule: string;
+  startDate?: string;
+  endDate?: string;
+}
+
 interface CoachDashboardApiResponse extends CaseloadApiResponse {
   attendance?: AttendanceApiResponse;
   timetable?: {
     events?: CoachCalendarEvent[];
   };
   evidence?: MarkingQueueResponse;
+  assignedGroups?: CoachAssignedGroup[];
   errors?: Record<string, string>;
 }
 
@@ -155,6 +170,21 @@ function normalizeIdentity(value?: string | number | null): string {
   return displayValue(value)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '');
+}
+
+function assignmentValuesMatch(left?: string | number | null, right?: string | number | null): boolean {
+  const leftKey = normalizeIdentity(left);
+  const rightKey = normalizeIdentity(right);
+  return Boolean(leftKey && rightKey && leftKey === rightKey);
+}
+
+function learnerBelongsToAssignedGroup(learner: CoachLearner, group: CoachAssignedGroup): boolean {
+  if (!assignmentValuesMatch(learner.group, group.name)) return false;
+  const groupCohort = displayValue(group.cohort);
+  const groupProgramme = displayValue(group.programme);
+  const cohortMatches = groupCohort === EMPTY_VALUE || assignmentValuesMatch(learner.cohortName, group.cohort);
+  const programmeMatches = groupProgramme === EMPTY_VALUE || assignmentValuesMatch(learner.programme, group.programme);
+  return cohortMatches && programmeMatches;
 }
 
 function toNumber(value?: number | string | null): number {
@@ -860,7 +890,7 @@ function shortDateLabel(value?: string | null) {
 const KPI_FILTER_LABEL: Record<DashboardKpi, string> = {
   caseload: 'Full caseload',
   active: 'Active learners',
-  'on-break': 'Learners on break',
+  'on-break': 'Paused learners',
   'on-track': 'On track learners',
   'at-risk': 'At risk learners',
   'need-attention': 'Learners needing attention',
@@ -969,6 +999,7 @@ export default function CoachDashboard() {
   const [priorityFilter, setPriorityFilter] = useState<PriorityKey | null>(null);
   const [ownerName, setOwnerName] = useState('Coach');
   const [learners, setLearners] = useState<CoachLearner[]>([]);
+  const [assignedGroups, setAssignedGroups] = useState<CoachAssignedGroup[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<CoachCalendarEvent[]>([]);
   const [calendarPreviewEvents, setCalendarPreviewEvents] = useState<CoachCalendarEvent[]>([]);
   const [liveSessionEvents, setLiveSessionEvents] = useState<CoachCalendarEvent[]>([]);
@@ -1019,6 +1050,7 @@ export default function CoachDashboard() {
       if (!authenticatedCoachEmail) {
         setOwnerName(authenticatedCoachName);
         setLearners([]);
+        setAssignedGroups([]);
         setCalendarEvents([]);
         setCalendarPreviewEvents([]);
         setLiveSessionEvents([]);
@@ -1052,6 +1084,7 @@ export default function CoachDashboard() {
           mergeAttendanceRates(normalizedLearners, attendanceLearners),
           queueItems,
         ));
+        setAssignedGroups(dashboard.assignedGroups || []);
         setEvidenceQueue(queueItems);
         setCalendarEvents(nonLiveEvents);
         setCalendarPreviewEvents(nonLiveEvents.filter(isWithinCalendarPreviewWindow));
@@ -1064,6 +1097,7 @@ export default function CoachDashboard() {
       } catch (error) {
         if (controller.signal.aborted) return;
         setLearners([]);
+        setAssignedGroups([]);
         setCalendarEvents([]);
         setCalendarPreviewEvents([]);
         setLiveSessionEvents([]);
@@ -1117,9 +1151,17 @@ export default function CoachDashboard() {
     [evidenceQueue],
   );
   const atRiskCount = atRiskLearners.length;
-  const needAttentionCount = needAttentionLearners.length;
   const onTrackCount = onTrackLearners.length;
   const totalCaseload = enrichedLearners.length;
+  const assignedGroupRows = useMemo(() => assignedGroups.map(group => {
+    const groupLearners = activeLearners.filter(learner => learnerBelongsToAssignedGroup(learner, group));
+    return {
+      ...group,
+      learnerCount: groupLearners.length,
+      atRiskCount: groupLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'at-risk').length,
+      needAttentionCount: groupLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'need-attention').length,
+    };
+  }), [activeLearners, assignedGroups]);
   const pendingEvidence = useMemo(
     () => evidenceLearners.reduce((total, learner) => total + learner.pendingEvidence, 0),
     [evidenceLearners],
@@ -1316,57 +1358,12 @@ export default function CoachDashboard() {
       pageTitle="Coach Dashboard" pageSubtitle="Who needs attention, what needs doing today, what is coming next"
       userName={ownerName} userRole="Progress Coach"
     >
-      <PageContainer>
-
-        {/* ═══════════════════════════════════════════════════
-            1. CASELOAD HEALTH — the 3-4 numbers that matter, not
-               eight equally-loud tiles.
-            ═══════════════════════════════════════════════════ */}
-        {/* The coach dashboard uses the same opening rhythm as the Super Admin
-            dashboard: a welcome row followed by the shared control hero. */}
-        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
-          <div>
-            <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground-950 md:text-3xl">Welcome back, {ownerName} 👋</h1>
-            <p className="mt-1 text-[11px] text-foreground-500 md:text-xs">Monitor your caseload health, learner progress and coaching actions in real time.</p>
+      <WorkspaceDashboardLayout className="coach-dashboard" overview={<div className="space-y-5">
+          <div className="flex items-center gap-3">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary-100 text-primary-600"><AppIcon className="ri-user-heart-line h-5 w-5" /></span>
+            <div className="min-w-0"><p className="break-words text-sm font-semibold text-foreground-900">{ownerName}</p><p className="mt-0.5 text-xs text-foreground-500">Coach overview</p></div>
           </div>
-          <div className="flex items-center gap-2">
-            <Link
-              to="/coach/timetable"
-              className="inline-flex h-9 items-center gap-2 rounded-lg border border-foreground-200/70 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700 shadow-sm transition-smooth hover:border-primary-300 hover:bg-primary-50/40"
-            >
-              <AppIcon className="ri-calendar-line text-sm text-foreground-500"></AppIcon>
-              <span>{formatWeekRangeLabel()}</span>
-              <AppIcon className="ri-arrow-right-s-line text-xs text-foreground-400"></AppIcon>
-            </Link>
-            <button
-              type="button"
-              onClick={scrollToAttention}
-              className="inline-flex h-9 items-center gap-2 rounded-lg border border-foreground-200/70 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700 shadow-sm transition-smooth hover:border-primary-300 hover:bg-primary-50/40"
-            >
-              <AppIcon className="ri-filter-3-line text-sm text-foreground-500"></AppIcon>
-              <span>Filters</span>
-            </button>
-          </div>
-        </div>
-
-        <WorkspaceHeroBanner
-          title="Coach Control"
-          description="Caseload health, learner progress and coaching actions"
-          icon="ri-user-heart-line"
-          stats={[
-            { label: 'Caseload', value: String(totalCaseload) },
-            { label: 'At risk', value: String(atRiskCount) },
-            { label: 'Need action', value: String(needsActionCount) },
-          ]}
-        />
-
-        {/* ═══════════════════════════════════════════════════
-            2. TODAY & NEEDS ACTION — overdue reviews, at-risk
-               learners, evidence and unscheduled sessions.
-            ═══════════════════════════════════════════════════ */}
-        <SectionReveal delay={40}>
-          <div id="today-actions" className="scroll-mt-4">
-          <Panel padding="lg">
+          <section id="today-actions" className="scroll-mt-4 border-t border-[var(--kbc-border)] pt-5">
             <SectionHeader
               icon="ri-calendar-schedule-line"
               title="Today's schedule"
@@ -1437,9 +1434,118 @@ export default function CoachDashboard() {
                 </div>
               </div>
             )}
-          </Panel>
+          </section>
+            <section className="border-t border-[var(--kbc-border)] pt-5">
+              <SectionHeader
+                icon="ri-node-tree"
+                title="My Assigned Groups"
+                description="Official curriculum group assignments"
+                actions={<StatusBadge tone="brand" dot={false} label={`${assignedGroupRows.length} groups`} />}
+              />
+              <div className="mt-3.5 space-y-2.5">
+                {loading && assignedGroupRows.length === 0 && (
+                  <>
+                    <LoadingBlock className="h-20 rounded-xl" />
+                    <LoadingBlock className="h-20 rounded-xl" />
+                  </>
+                )}
+                {!loading && assignedGroupRows.length === 0 && (
+                  <EmptyState
+                    size="sm"
+                    icon="ri-user-search-line"
+                    title="No groups assigned"
+                    description="No official curriculum groups are assigned to this coach yet."
+                  />
+                )}
+                {!loading && assignedGroupRows.slice(0, 4).map(group => (
+                  <div key={group.id || `${group.programme}-${group.cohort}-${group.name}`} className="rounded-xl border border-foreground-200/70 bg-background-50 p-3 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold text-foreground-950" title={group.name}>{group.name}</p>
+                        <p className="mt-0.5 truncate text-[12px] text-foreground-500" title={`${group.programme} · ${group.cohort}`}>{group.programme} <span className="text-foreground-300">·</span> {group.cohort}</p>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-primary-50 px-2.5 py-1 text-[11px] font-bold text-primary-700">{group.learnerCount}</span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                      <div className="rounded-lg bg-background-100 px-2 py-1.5">
+                        <p className="text-[10px] font-bold text-foreground-900">{group.learnerCount}</p>
+                        <p className="text-[9px] uppercase text-foreground-400">Active</p>
+                      </div>
+                      <div className="rounded-lg bg-amber-50 px-2 py-1.5">
+                        <p className="text-[10px] font-bold text-amber-700">{group.needAttentionCount}</p>
+                        <p className="text-[9px] uppercase text-amber-600">Attention</p>
+                      </div>
+                      <div className="rounded-lg bg-red-50 px-2 py-1.5">
+                        <p className="text-[10px] font-bold text-red-700">{group.atRiskCount}</p>
+                        <p className="text-[9px] uppercase text-red-600">At risk</p>
+                      </div>
+                    </div>
+                    {displayValue(group.schedule) !== EMPTY_VALUE && (
+                      <p className="mt-2 truncate text-[11px] text-foreground-400" title={group.schedule}>
+                        <AppIcon className="ri-time-line mr-1 text-[12px]"></AppIcon>
+                        {group.schedule}
+                      </p>
+                    )}
+                  </div>
+                ))}
+                {!loading && assignedGroupRows.length > 4 && (
+                  <Link to="/coach/caseload" className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-primary-100 bg-primary-50 px-3 py-2 text-[12px] font-semibold text-primary-700 transition-colors hover:bg-primary-100">
+                    Open My Learners
+                    <AppIcon className="ri-arrow-right-line text-[13px]"></AppIcon>
+                  </Link>
+                )}
+              </div>
+            </section>
+        </div>}>
+
+        {/* ═══════════════════════════════════════════════════
+            1. CASELOAD HEALTH — the 3-4 numbers that matter, not
+               eight equally-loud tiles.
+            ═══════════════════════════════════════════════════ */}
+        {/* The coach dashboard uses the same opening rhythm as the Super Admin
+            dashboard: a welcome row followed by the shared control hero. */}
+        <div className="flex flex-col justify-between gap-3 min-[1800px]:flex-row min-[1800px]:items-end">
+          <div>
+            <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground-950 md:text-3xl">Welcome back, {ownerName}</h1>
+            <p className="mt-1 text-[11px] text-foreground-500 md:text-xs">Monitor your caseload health, learner progress and coaching actions in real time.</p>
           </div>
-        </SectionReveal>
+          <div className="flex items-center gap-2">
+            <Link
+              to="/coach/timetable"
+              className="inline-flex h-9 items-center gap-2 rounded-lg border border-foreground-200/70 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700 shadow-sm transition-smooth hover:border-primary-300 hover:bg-primary-50/40"
+            >
+              <AppIcon className="ri-calendar-line text-sm text-foreground-500"></AppIcon>
+              <span>{formatWeekRangeLabel()}</span>
+              <AppIcon className="ri-arrow-right-s-line text-xs text-foreground-400"></AppIcon>
+            </Link>
+            <button
+              type="button"
+              onClick={scrollToAttention}
+              className="inline-flex h-9 items-center gap-2 rounded-lg border border-foreground-200/70 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700 shadow-sm transition-smooth hover:border-primary-300 hover:bg-primary-50/40"
+            >
+              <AppIcon className="ri-filter-3-line text-sm text-foreground-500"></AppIcon>
+              <span>Filters</span>
+            </button>
+          </div>
+        </div>
+
+        <WorkspaceHeroBanner
+          eyebrow="Coaching"
+          title="Coach Control"
+          description="Caseload health, learner progress and coaching actions"
+          icon="ri-user-heart-line"
+          stats={[
+            { label: 'Caseload', value: String(totalCaseload) },
+            { label: 'At risk', value: String(atRiskCount) },
+            { label: 'Need action', value: String(needsActionCount) },
+          ]}
+        />
+
+        {/* ═══════════════════════════════════════════════════
+            2. TODAY & NEEDS ACTION — overdue reviews, at-risk
+               learners, evidence and unscheduled sessions.
+            ═══════════════════════════════════════════════════ */}
+
 
         {(loading || loadWarning) && (
           <div className={`rounded-lg border px-3.5 py-2.5 text-[12.5px] ${loadWarning ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-foreground-200/60 bg-background-50 text-foreground-500'}`}>
@@ -1451,60 +1557,59 @@ export default function CoachDashboard() {
             CASELOAD HEALTH
             ═══════════════════════════════════════════════════ */}
         <SectionReveal delay={70}>
-          <div className="space-y-3">
-            <SectionHeader icon="ri-heart-pulse-line" title="Caseload health" />
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-              <FilterMetricCard
-                label="Caseload"
-                value={totalCaseload}
-                note={`${onTrackCount} on track`}
-                tone="brand"
-                icon="ri-group-line"
-                active={kpiFilter === 'caseload'}
-                onFilter={() => setSelectedKpi('caseload')}
-              />
-              <FilterMetricCard
-                label="Active"
-                value={activeLearners.length}
-                note="Currently active"
-                tone="positive"
-                icon="ri-user-follow-line"
-                active={kpiFilter === 'active'}
-                onFilter={() => setSelectedKpi('active')}
-              />
-              <FilterMetricCard
-                label="On break"
-                value={onBreakLearners.length}
-                note="Programme paused"
-                tone="caution"
-                icon="ri-cup-line"
-                active={kpiFilter === 'on-break'}
-                onFilter={() => setSelectedKpi('on-break')}
-              />
-              <FilterMetricCard
-                label="Gateway"
-                value={gatewayLearners.length}
-                note="At gateway stage"
-                tone="upcoming"
-                icon="ri-flag-line"
-                active={kpiFilter === 'gateway'}
-                onFilter={() => setSelectedKpi('gateway')}
-              />
-              <FilterMetricCard
-                label="EPA"
-                value={epaLearners.length}
-                note="At EPA stage"
-                tone="info"
-                icon="ri-medal-line"
-                active={kpiFilter === 'epa'}
-                onFilter={() => setSelectedKpi('epa')}
-              />
+          <div className="min-w-0">
+            <div className="space-y-3">
+              <SectionHeader icon="ri-heart-pulse-line" title="Caseload health" />
+              <div className="grid grid-cols-2 gap-3 min-[1600px]:grid-cols-5">
+                <FilterMetricCard
+                  label="Caseload"
+                  value={totalCaseload}
+                  note={`${onTrackCount} on track`}
+                  tone="brand"
+                  icon="ri-group-line"
+                  active={kpiFilter === 'caseload'}
+                  onFilter={() => setSelectedKpi('caseload')}
+                />
+                <FilterMetricCard
+                  label="Active"
+                  value={activeLearners.length}
+                  note="Currently active"
+                  tone="positive"
+                  icon="ri-user-follow-line"
+                  active={kpiFilter === 'active'}
+                  onFilter={() => setSelectedKpi('active')}
+                />
+                <FilterMetricCard
+                  label="Paused"
+                  value={onBreakLearners.length}
+                  note="Programme paused"
+                  tone="caution"
+                  icon="ri-pause-line"
+                  active={kpiFilter === 'on-break'}
+                  onFilter={() => setSelectedKpi('on-break')}
+                />
+                <FilterMetricCard
+                  label="Gateway"
+                  value={gatewayLearners.length}
+                  note="At gateway stage"
+                  tone="upcoming"
+                  icon="ri-flag-line"
+                  active={kpiFilter === 'gateway'}
+                  onFilter={() => setSelectedKpi('gateway')}
+                />
+                <FilterMetricCard
+                  label="EPA"
+                  value={epaLearners.length}
+                  note="At EPA stage"
+                  tone="info"
+                  icon="ri-medal-line"
+                  active={kpiFilter === 'epa'}
+                  onFilter={() => setSelectedKpi('epa')}
+                />
+              </div>
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <FilterCompactMetric label="On track" value={onTrackCount} note={OTJH_STATUS_META['on-track'].sub} tone="positive" active={kpiFilter === 'on-track'} onFilter={() => setSelectedKpi('on-track')} />
-              <FilterCompactMetric label="Need attention" value={needAttentionCount} note={OTJH_STATUS_META['need-attention'].sub} tone="caution" active={kpiFilter === 'need-attention'} onFilter={() => setSelectedKpi('need-attention')} />
-              <FilterCompactMetric label="At risk" value={atRiskCount} note={OTJH_STATUS_META['at-risk'].sub} tone="critical" active={kpiFilter === 'at-risk'} onFilter={() => setSelectedKpi('at-risk')} />
-            </div>
+
+
           </div>
         </SectionReveal>
 
@@ -1512,10 +1617,10 @@ export default function CoachDashboard() {
             3. LEARNERS REQUIRING ATTENTION  +  4. UPCOMING SCHEDULE
             ═══════════════════════════════════════════════════ */}
         <SectionReveal delay={100}>
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:items-start">
+          <div className="grid grid-cols-1 items-stretch gap-4 min-[1800px]:grid-cols-3">
 
-            <div id="learner-caseload" className="scroll-mt-4 lg:col-span-2">
-            <Panel className="flex flex-col" padding="lg">
+            <div id="learner-caseload" className="scroll-mt-4 min-[1800px]:col-span-2">
+            <Panel className="flex h-full flex-col" padding="lg">
               <SectionHeader
                 icon="ri-user-search-line"
                 title={attentionPanelTitle}
@@ -1624,7 +1729,7 @@ export default function CoachDashboard() {
               />
 
               {scheduleExpanded && (
-                <div id="coach-schedule-content" className="coach-upcoming-schedule__content mt-3.5 max-h-[36rem] overflow-y-auto pr-1.5">
+                <div id="coach-schedule-content" className={cn('coach-upcoming-schedule__content mt-3.5 overflow-y-auto', !schedulePanelLoading && !upcomingScheduleGroups.length ? 'flex-1 justify-center' : 'max-h-[36rem] pr-1.5')}>
                   {schedulePanelLoading && <ScheduleSkeleton />}
                   {!schedulePanelLoading && upcomingScheduleGroups.map(group => (
                     <div key={`schedule-group-${group.date}`} className="coach-upcoming-schedule__group rounded-lg border border-foreground-200/60 bg-background-100/40 p-3">
@@ -1674,7 +1779,7 @@ export default function CoachDashboard() {
           </div>
         </SectionReveal>
 
-      </PageContainer>
+      </WorkspaceDashboardLayout>
 
       {selectedKpi && (
         <KpiDetailModal
@@ -1716,9 +1821,11 @@ function FilterMetricCard({ label, value, note, tone, icon, active, onFilter }: 
       <MetricCard
         label={label}
         value={value}
+        valuePosition="end"
         note={note}
         tone={tone}
         icon={icon}
+        iconClassName="!bg-primary-100/60 !text-primary-600"
         active={active}
         className={cn(
           'border border-transparent transition-all',
@@ -1733,35 +1840,10 @@ function FilterMetricCard({ label, value, note, tone, icon, active, onFilter }: 
         title={`Open ${label} details`}
         className="absolute inset-0 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
       />
-      <span className="pointer-events-none absolute right-2.5 top-2.5 z-10 flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-100 bg-background-50/90 text-foreground-400 shadow-sm transition-colors">
+      <span className="pointer-events-none absolute right-2 top-2 z-10 text-foreground-400">
         <AppIcon className="ri-arrow-right-up-line text-[14px]"></AppIcon>
       </span>
     </div>
-  );
-}
-
-function FilterCompactMetric({ label, value, note, tone, active, onFilter }: {
-  label: string;
-  value: number;
-  note?: string;
-  tone: StatusTone;
-  active: boolean;
-  onFilter: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onFilter}
-      aria-pressed={active}
-      className={cn(
-        'rounded-lg border bg-background-50 p-3 text-left shadow-sm transition-all hover:shadow-md',
-        active
-          ? 'border-primary-300 bg-primary-50/70 shadow-sm ring-2 ring-primary-300/60'
-          : 'border-foreground-100 hover:border-primary-100 hover:bg-background-50',
-      )}
-    >
-      <CompactMetric label={label} value={value} note={note} tone={tone} />
-    </button>
   );
 }
 
@@ -1884,7 +1966,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
   const meta: Record<DashboardKpi, { title: string; subtitle: string; icon: string; iconStyle: string }> = {
     caseload: { title: 'Learner caseload', subtitle: 'All learners currently assigned to you', icon: 'ri-group-line', iconStyle: 'bg-primary-100 text-primary-600' },
     active: { title: 'Active learners', subtitle: 'Learners currently active on their programme', icon: 'ri-user-follow-line', iconStyle: 'bg-emerald-100 text-emerald-600' },
-    'on-break': { title: 'Learners on break', subtitle: 'Learners whose programme is currently paused', icon: 'ri-cup-line', iconStyle: 'bg-amber-100 text-amber-600' },
+    'on-break': { title: 'Paused learners', subtitle: 'Learners whose programme is currently paused', icon: 'ri-pause-line', iconStyle: 'bg-amber-100 text-amber-600' },
     'on-track': { title: 'Learners on track', subtitle: 'Learners currently meeting their OTJH target', icon: 'ri-checkbox-circle-line', iconStyle: 'bg-emerald-100 text-emerald-600' },
     'at-risk': { title: 'Learners at risk', subtitle: 'Learners requiring immediate coaching action', icon: 'ri-alarm-warning-line', iconStyle: 'bg-red-100 text-red-600' },
     'need-attention': { title: 'Learners needing attention', subtitle: 'Learners who need targeted support this week', icon: 'ri-error-warning-line', iconStyle: 'bg-amber-100 text-amber-600' },

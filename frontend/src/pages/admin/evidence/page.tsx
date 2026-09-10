@@ -89,7 +89,7 @@ function ClassifiedLearnerList() {
       heroBlurb="Review each active learner’s independently classified assignments, recommended portfolio and human-verification requirements."
       stats={[{ label: 'Matching learners', value: loading && !data ? '—' : (data?.count ?? 0) }]}
     >
-      <div className="rounded-xl border border-foreground-200/60 bg-background-50 p-3 md:p-4">
+      <div className="rounded-2xl border border-[var(--kbc-border)] bg-[var(--kbc-surface)] p-3 md:p-4">
         <div className="grid gap-3 md:grid-cols-3">
           <LearnerNameInput value={draft.q} learners={learners} error={error}
             loading={loading || draft.q.trim() !== (filters.q || '')}
@@ -125,7 +125,7 @@ function ClassifiedLearnerList() {
       </div>
 
       <DataPanel loading={loading && !data} error={error} empty={learners.length === 0} emptyMessage="No active learners match these filters." onRetry={reload}>
-        <div className="overflow-hidden rounded-xl border border-foreground-200/60 bg-background-50">
+        <div className="overflow-hidden rounded-2xl border border-[var(--kbc-border)] bg-[var(--kbc-surface)]">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1180px] text-[12px]">
               <thead>
@@ -210,10 +210,10 @@ function LearnerEvidenceDetail({ learnerId }: { learnerId: number }) {
       stats={learner ? [
         { label: 'Assignments', value: data?.count ?? 0 },
       ] : undefined}
-      actions={<button type="button" onClick={() => navigate('/admin/evidence')} className="rounded-xl bg-white/90 px-4 py-2 text-xs font-semibold text-primary-700 shadow-sm hover:bg-white"><AppIcon className="ri-arrow-left-line mr-1" />All learners</button>}
+      actions={<button type="button" onClick={() => navigate('/admin/evidence')} className="rounded-xl border border-primary-200/60 bg-primary-50/60 px-4 py-2 text-xs font-semibold text-primary-700 shadow-sm hover:bg-primary-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500"><AppIcon className="ri-arrow-left-line mr-1" />All learners</button>}
     >
       {learner?.portfolioSummary && learner.runId !== null && (
-        <section className="rounded-xl border border-foreground-200/60 bg-background-50 p-5 !shadow-none sm:p-6">
+        <section className="rounded-2xl border border-[var(--kbc-border)] bg-[var(--kbc-surface)] p-5 !shadow-none sm:p-6">
           <div className="mb-3 flex flex-wrap items-center gap-3">
             <h3 className="text-sm font-semibold text-foreground-900">Portfolio overview</h3>
             <StatusBadge status={label(learner.portfolioReadiness)} tone={readinessTone(learner.portfolioReadiness)} />
@@ -248,7 +248,7 @@ function LearnerEvidenceDetail({ learnerId }: { learnerId: number }) {
           {assignments.map(assignment => (
             <AssignmentCard key={`${assignment.componentId}-${assignment.evidenceId}`} assignment={assignment} learnerId={learnerId} runId={learner?.runId ?? null} onPreview={(path, title) => setPreview({ path, title, evidenceId: assignment.evidenceId })} onBuildReport={() => setBuildingReport(assignment.evidenceId)} onSelection={() => void changeSelection(assignment)} onKsbSaved={reload} selectionDisabled={loading || saving !== null} saving={saving === assignment.evidenceId} />
           ))}
-          <div className="overflow-hidden rounded-xl border border-foreground-200/60 bg-background-50">
+          <div className="overflow-hidden rounded-2xl border border-[var(--kbc-border)] bg-[var(--kbc-surface)]">
             <Pager page={page} pageSize={ASSIGNMENT_PAGE_SIZE} count={data?.count ?? 0} onPage={setPage} />
           </div>
         </div>
@@ -311,7 +311,7 @@ function AssignmentCard({ assignment, learnerId, runId, onPreview, onBuildReport
   };
 
   return (
-    <article className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 !shadow-none">
+    <article className="overflow-hidden rounded-2xl border border-[var(--kbc-border)] bg-[var(--kbc-surface)] !shadow-none">
       <header className="flex flex-col gap-5 border-b border-foreground-200/50 px-5 py-5 xl:flex-row xl:items-center xl:justify-between sm:px-6">
         <div className="min-w-0">
           <div className="mb-3 flex flex-wrap items-center gap-2">

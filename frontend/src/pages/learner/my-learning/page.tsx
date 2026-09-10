@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
+import { StudentActivityPanel as SubjectCardsPanel } from './SubjectWorkspace';
+export { StudentActivityPanel } from './SubjectWorkspace';
 import { StudentMaterial } from './StudentMaterial';
+import { AssignmentsTab } from './AssignmentsTab';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -7,7 +10,6 @@ import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
-import { LearnerPlanBody } from '@/components/feature/RealLearnerPlanView';
 import { buildStations } from '@/components/feature/RealLearningJourneyView';
 import { buildLinkedQuizzes, splitLinkedQuizWeek, type LinkedQuiz } from '@/utils/linkedQuizzes';
 import {
@@ -25,11 +27,11 @@ import { ProgressBar } from '@/components/ui/ProgressMetric';
 import { toneStyle, statusTone, type StatusTone } from '@/lib/statusTone';
 import { EMPTY_VALUE } from '@/lib/format';
 import { fetchStudentActivity, type StudentActivityItem, type StudentActivityResponse } from '@/api/studentActivity';
-import type { LearnerKind } from '@/api/learnerDetail';
+import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 
 const learnerNav = roleNavMap.learner;
 
-type TabKey = 'overview' | 'modules' | 'quizzes';
+type TabKey = 'overview' | 'modules' | 'quizzes' | 'assignments';
 
 /** Training Plan and Quizzes used to be their own pages; their old URLs still
  * work (staff/coach deep-links and saved links depend on it) but now land on
@@ -37,7 +39,7 @@ type TabKey = 'overview' | 'modules' | 'quizzes';
 function defaultTabForPath(pathname: string): TabKey {
   if (pathname.startsWith('/learner/training-plan') || pathname.startsWith('/learner/modules')) return 'modules';
   if (pathname.startsWith('/learner/quizzes')) return 'quizzes';
-  return 'overview';
+  return 'modules';
 }
 
 export default function MyLearningPage() {
@@ -48,7 +50,7 @@ export default function MyLearningPage() {
   const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
   const { canProgress, showReadOnlyNotice } = useLearnerWorkspaceAccess(id);
 
-  const [tab, setTab] = useState<TabKey>(() => defaultTabForPath(location.pathname));
+  const [tab, setTab] = useState<TabKey>(() => new URLSearchParams(location.search).get('tab') === 'assignments' ? 'assignments' : defaultTabForPath(location.pathname));
 
   const journey = useMemo(() => buildLearnerJourney(real), [real]);
   const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
@@ -107,9 +109,9 @@ export default function MyLearningPage() {
     : '';
 
   const tabs: PageTabItem[] = [
-    { value: 'overview', label: 'Overview' },
     { value: 'modules', label: 'Modules' },
     { value: 'quizzes', label: 'Quizzes' },
+    { value: 'assignments', label: 'Assignments' },
   ];
 
   return (
@@ -128,17 +130,10 @@ export default function MyLearningPage() {
 
         {!isRealMode ? (
           <Panel><EmptyState size="sm" title="No learner selected" description="Open this page from a learner record." /></Panel>
-        ) : tab === 'overview' ? (
-          <OverviewTab
-            real={real} loading={loading} loadError={loadError}
-            journey={journey} stations={stations} overallPct={overallPct} currentIndex={currentIndex}
-            currentWeek={currentWeek} completedIds={completedIds} otj={otj}
-            nextComponentHref={nextComponentHref}
-            onGoToModules={() => setTab('modules')}
-          />
         ) : tab === 'modules' ? (
           <ModulesTab key={`${kind}:${id}`} real={real} loading={loading} loadError={loadError} kind={kind} id={id} showReadOnlyNotice={showReadOnlyNotice} />
         ) : (
+          tab === 'assignments' ? <AssignmentsTab key={`${kind}:${id}`} kind={kind} id={id} /> :
           <QuizzesTab real={real} loading={loading} loadError={loadError} kind={kind} id={id} canTake={canTake} navigate={navigate} />
         )}
       </PageContainer>
@@ -439,38 +434,40 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
   loadError: string | null;
   kind?: LearnerKind;
   id?: string;
-  showReadOnlyNotice: boolean;
+  showReadOnlyNotice?: boolean;
 }) {
-  const [activityData, setActivityData] = useState<StudentActivityResponse | null>(null);
-  const [activityLoading, setActivityLoading] = useState(true);
-  const [activityError, setActivityError] = useState<string | null>(null);
+  const identity = `${kind}:${id}`;
+  const [activityState, setActivityState] = useState<{
+    identity: string; real: LearnerDetail | null; retry: number;
+    data: StudentActivityResponse | null; error: string | null;
+  } | null>(null);
   const [activityRetry, setActivityRetry] = useState(0);
-  const activityAvailable = !loading && !loadError && !!real?.studentActivityAvailable;
+  const activityAvailable = !!real?.studentActivityAvailable;
+  const current = activityState?.identity === identity && activityState.real === real && activityState.retry === activityRetry ? activityState : null;
+  const activityData = activityState?.identity === identity && activityAvailable ? activityState.data : null;
+  const activityLoading = activityAvailable && !current && !loadError;
 
   useEffect(() => {
-    if (!activityAvailable || !kind || !id) return;
+    if (loading || loadError || !activityAvailable || !kind || !id) return;
     const controller = new AbortController();
-    setActivityLoading(true);
-    setActivityError(null);
-    setActivityData(null);
     void fetchStudentActivity(kind, id, controller.signal).then((data) => {
-      if (!controller.signal.aborted) setActivityData(data);
+      if (!controller.signal.aborted) setActivityState({ identity, real, retry: activityRetry, data, error: null });
     }).catch((error: unknown) => {
-      if (!controller.signal.aborted) setActivityError(error instanceof Error ? error.message : 'Could not load student activity.');
-    }).finally(() => {
-      if (!controller.signal.aborted) setActivityLoading(false);
+      if (!controller.signal.aborted) setActivityState(previous => ({ identity, real, retry: activityRetry,
+        data: previous?.identity === identity ? previous.data : null,
+        error: error instanceof Error ? error.message : 'Could not load student activity.' }));
     });
     return () => controller.abort();
-  }, [activityAvailable, kind, id, activityRetry]);
+  }, [activityAvailable, loading, loadError, real, kind, id, identity, activityRetry]);
 
   return (
     <div className="space-y-3">
       <SectionHeader
         title="Modules"
-        description={activityAvailable ? 'Your recorded modules, activities and OTJ hours' : 'Your training plan, week by week'}
+        description="Your subjects, activities and progress"
         icon="ri-book-2-line"
       />
-      {showReadOnlyNotice && !activityAvailable && (
+      {showReadOnlyNotice && (
         <div className="flex items-start gap-2.5 rounded-xl border border-primary-200/70 bg-primary-50/60 px-3.5 py-2.5">
           <AppIcon className="ri-eye-line mt-0.5 shrink-0 text-[15px] text-primary-600" />
           <p className="text-[12px] leading-snug text-foreground-600">
@@ -479,35 +476,19 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
           </p>
         </div>
       )}
-      {activityAvailable && kind && id ? (
-        <StudentActivityPanel
-          kind={kind} learnerId={id}
-          data={activityData}
-          loading={activityLoading}
-          error={activityError}
-          onRetry={() => setActivityRetry((value) => value + 1)}
-        />
-      ) : <LearnerPlanBody
-        real={real}
-        loading={loading}
-        loadError={loadError}
-        pageLabel="Modules"
-        kind={kind}
-        learnerId={id}
-        showHero={false}
-        compact
-      />}
-      {activityAvailable && ((real?.modules?.length || 0) > 0 || (real?.components?.length || 0) > 0) && (
-        <div className="space-y-3 pt-4">
-          <SectionHeader title="Current training plan" description="Your current learning activities" icon="ri-book-2-line" />
-          <LearnerPlanBody real={real} loading={loading} loadError={loadError} pageLabel="Modules" kind={kind} learnerId={id} showHero={false} compact />
-        </div>
-      )}
+      <SubjectCardsPanel
+        kind={kind} learnerId={id} real={real}
+        data={activityData}
+        loading={loading || (activityAvailable && activityLoading)}
+        error={loadError || current?.error || null}
+        onRetry={() => setActivityRetry((value) => value + 1)}
+        onProgress={() => setActivityRetry((value) => value + 1)}
+      />
     </div>
   );
 }
 
-export function StudentActivityPanel({ data, loading, error, onRetry, kind, learnerId }: {
+function LegacyStudentActivityPanel({ data, loading, error, onRetry, kind, learnerId }: {
   kind?: string;
   learnerId?: string;
   data: StudentActivityResponse | null;
@@ -545,6 +526,10 @@ export function StudentActivityPanel({ data, loading, error, onRetry, kind, lear
     });
   };
 
+  const recordedOtjh = data?.audit_lms_actual ?? data?.recorded_otjh_total ?? data?.actual_total ?? null;
+  const plannedOtjh = data?.audit_tp_planned ?? data?.planned_total ?? null;
+  const hasProgrammeOtjh = data?.audit_lms_actual != null || data?.audit_tp_planned != null;
+
   return (
       <section aria-labelledby="student-activity-title" className="overflow-hidden rounded-2xl border border-foreground-200 bg-white">
         <header className="flex items-center justify-between border-b border-foreground-100 px-5 py-4">
@@ -573,12 +558,13 @@ export function StudentActivityPanel({ data, loading, error, onRetry, kind, lear
                 <ActivityStat label="Modules" value={data.module_count} />
                 <ActivityStat label="Activities" value={data.count} />
                 <ActivityStat label="Completed" value={data.completed_count} />
-                <ActivityStat label="Recorded OTJH" value={data.actual_total == null ? 'Unavailable' : formatHoursMinutes(data.actual_total)} />
-                <ActivityStat label="Planned OTJH" value={data.planned_total == null ? 'Unavailable' : formatHoursMinutes(data.planned_total)} />
+                <ActivityStat label="Recorded OTJH" value={recordedOtjh == null ? 'Unavailable' : formatHoursMinutes(recordedOtjh)} />
+                <ActivityStat label="Planned OTJH" value={plannedOtjh == null ? 'Unavailable' : formatHoursMinutes(plannedOtjh)} />
               </div>
               <p className="text-[12px] text-foreground-500">
-                OTJ hours available for {data.mapped_count} of {data.unique_activity_count} unique activities; planned hours for {data.planned_mapped_count}.
-                {' '}Totals exclude attendance and separate assignment records. Shared activities count once. Missing hours are shown as unavailable, so totals may be incomplete.
+                {hasProgrammeOtjh
+                  ? 'Programme totals use TP Planned and accepted LMS Actual. Activity-level hours below only cover mapped historical activities.'
+                  : <>OTJ hours available for {data.mapped_count} of {data.unique_activity_count} unique activities; planned hours for {data.planned_mapped_count}. Totals exclude attendance and separate assignment records. Shared activities count once. Missing hours are shown as unavailable, so totals may be incomplete.</>}
               </p>
               <label className="relative block">
                 <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400" />
@@ -625,12 +611,15 @@ function ActivityStat({ label, value }: { label: string; value: number | string 
 
 function StudentActivityRow({ item, kind, learnerId }: { item: StudentActivityItem; kind?: string; learnerId?: string }) {
   const [open, setOpen] = useState(false);
+  const materialMeta = componentTypeMeta(item.category);
   const score = item.quiz_score != null && item.quiz_maximum_score
     ? `${item.quiz_score}/${item.quiz_maximum_score}`
     : null;
   return (
     <div><div className="flex flex-wrap items-center gap-3 px-4 py-3">
-      <span className={`h-2 w-2 shrink-0 rounded-full ${item.completed ? 'bg-emerald-500' : 'bg-foreground-300'}`} />
+      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${materialMeta.bg}`}>
+        <AppIcon className={`${materialMeta.icon} text-[14px] ${materialMeta.color}`} />
+      </span>
       <div className="min-w-0 flex-1">
         <p className="truncate text-[12px] font-semibold text-foreground-800">{item.activity}</p>
         <p className="mt-0.5 text-[10px] text-foreground-500">{[item.category, item.date, score].filter(Boolean).join(' · ')}</p>

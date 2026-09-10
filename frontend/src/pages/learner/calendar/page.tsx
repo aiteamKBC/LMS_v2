@@ -1,12 +1,12 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 import { type CalendarEvent } from '@/pages/learner/clubs/data';
 import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from '@/utils/ics-generator';
-import { useMyLearner } from '@/hooks/useMyLearner';
+import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PageContainer } from '@/components/ui/PageContainer';
@@ -144,6 +144,15 @@ function parseEventDate(ev: CalendarEvent): { day: number; month: number; year: 
   return { day, month, year: null };
 }
 
+function eventMonthLabel(isoDate?: string | null): string {
+  if (!isoDate) return '';
+  const [year, month, day] = isoDate.split('-').map(Number);
+  if (!year || !month || !day) return '';
+  const date = new Date(year, month - 1, day);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+}
+
 /** Map a Coach.coach_calendar_event row (backend JSON) to the page's display shape. */
 function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
   if (ev.status === 'cancelled') return null;
@@ -170,7 +179,11 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
   ) && (isLiveSession || ev.invited !== false);
   return {
     id: ev.id,
-    title: !isLiveSession && ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title,
+    title: ev.source === 'mcr' && ev.sequence
+      ? `Monthly Coaching Meeting — ${eventMonthLabel(iso)} #${ev.sequence}`
+      : ev.source === 'progress-review' && ev.sequence
+        ? `Progress Review — ${eventMonthLabel(iso)} #${ev.sequence}`
+        : !isLiveSession && ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title,
     date: `${d} ${MONTH_NAMES[m - 1].substring(0, 3)}`,
     dayName,
     time,
@@ -273,7 +286,7 @@ function getEventColorClass(type: string, customColor?: string) {
   }
   const map: Record<string, string> = {
     'Live Session': 'bg-violet-50 text-violet-800 border-l-violet-500',
-    'Monthly Coaching': 'bg-orange-50 text-orange-800 border-l-orange-500',
+    'Monthly Coaching Meeting': 'bg-orange-50 text-orange-800 border-l-orange-500',
     'Progress Review': 'bg-teal-50 text-teal-800 border-l-teal-500',
     'Catch-up': 'bg-rose-50 text-rose-800 border-l-rose-500',
     'Student Support': 'bg-blue-50 text-blue-800 border-l-blue-500',
@@ -299,7 +312,7 @@ function getEventDotColor(type: string, customColor?: string) {
     if (color) return color.dot;
   }
   const map: Record<string, string> = {
-    'Live Session': 'bg-violet-500', 'Monthly Coaching': 'bg-orange-500', 'Progress Review': 'bg-teal-500',
+    'Live Session': 'bg-violet-500', 'Monthly Coaching Meeting': 'bg-orange-500', 'Progress Review': 'bg-teal-500',
     'Catch-up': 'bg-rose-500', 'Student Support': 'bg-blue-500',
     Workshop: 'bg-primary-500', 'Hands-on Lab': 'bg-secondary-500', Masterclass: 'bg-accent-500',
     'Panel Discussion': 'bg-amber-500', 'Case Study': 'bg-emerald-500', Showcase: 'bg-rose-500',
@@ -398,8 +411,8 @@ const LEARNER_STATUS_FILTERS: LearnerStatusFilter[] = ['all', 'needs-schedule', 
 const LEARNER_SOURCE_META: Record<LearnerSourceFilter, { label: string; short: string; dot: string }> = {
   all: { label: 'All Sources', short: 'All', dot: 'bg-foreground-400' },
   'live-session': { label: 'Live Sessions', short: 'Live Session', dot: 'bg-violet-500' },
-  mcr: { label: 'Monthly Coaching', short: 'MCM', dot: 'bg-orange-500' },
-  'progress-review': { label: 'Progress Reviews', short: 'PR', dot: 'bg-teal-500' },
+  mcr: { label: 'Monthly Coaching Meeting', short: 'Monthly Coaching Meeting', dot: 'bg-orange-500' },
+  'progress-review': { label: 'Progress Review', short: 'Progress Review', dot: 'bg-teal-500' },
   'catch-up': { label: 'Catch-up', short: 'Catch-up', dot: 'bg-rose-500' },
   'student-support': { label: 'Student Support', short: 'Support', dot: 'bg-blue-500' },
   personal: { label: 'Personal Events', short: 'Personal', dot: 'bg-sky-500' },
@@ -453,7 +466,7 @@ function isProgrammeCycleSessionType(value?: CalendarEvent['bookingSessionType']
 function sessionTypeLabel(value?: CalendarEvent['bookingSessionType'] | BookableSessionType): string {
   switch (value) {
     case 'mcr':
-      return 'Monthly Coaching';
+      return 'Monthly Coaching Meeting';
     case 'progress-review':
       return 'Progress Review';
     case 'student-support':
@@ -485,6 +498,15 @@ function learnerEventStatus(event: CalendarEvent): LearnerStatusFilter {
   return 'scheduled';
 }
 
+function shouldShowMeetingArtifacts(event: CalendarEvent): boolean {
+  return Boolean(
+    event.eventKey
+    && event.meetingLink
+    && ['mcr', 'catch-up', 'progress-review', 'student-support'].includes(event.source || '')
+    && ['completed', 'awaiting-signature'].includes(event.bookingStatus || '')
+  );
+}
+
 function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-background-200' }: { pct: number; size?: number; stroke?: number; color: string; trackClass?: string }) {
   const r = (size - stroke) / 2;
   const circ = 2 * Math.PI * r;
@@ -512,7 +534,15 @@ export default function LearnerCalendarPage() {
 
 /** Calendar body without the page shell — reusable as an embedded section (e.g. on the learner overview page). */
 export function LearnerCalendarContent() {
-  const myLearner = useMyLearner();
+  const learner = useLinkedLearner();
+  // A staff View link can switch learners without unmounting the route.
+  // Bookings, coach details and open dialogs must belong to the new identity.
+  return <LearnerCalendarBody key={`${learner.kind}:${learner.id}`} />;
+}
+
+function LearnerCalendarBody() {
+  const location = useLocation();
+  const myLearner = useLinkedLearner();
   const loadArtifacts = useCallback((eventKey: string, signal?: AbortSignal) => fetchLearnerMeetingArtifacts(myLearner.kind, myLearner.id, eventKey, signal), [myLearner.id, myLearner.kind]);
   const artifactContentUrl = useCallback((eventKey: string, artifactType: string, artifactId: string, options: { preview?: boolean } = {}) => learnerMeetingArtifactContentUrl(myLearner.kind, myLearner.id, eventKey, artifactType, artifactId, options), [myLearner.id, myLearner.kind]);
   const [viewMode, setViewMode] = useState<ViewMode>('monthly');
@@ -569,6 +599,7 @@ export function LearnerCalendarContent() {
   const [visibleBusySlots, setVisibleBusySlots] = useState<CalendarBusySlot[]>([]);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const handledFocusEventRef = useRef<string | null>(null);
 
   const today = new Date();
   const todayDay = today.getDate();
@@ -589,6 +620,19 @@ export function LearnerCalendarContent() {
     return Array.from(unique.values()).map(mapBusySlot).filter((event): event is CalendarEvent => event !== null);
   }, [visibleBusySlots]);
   const displayedEvents = useMemo(() => [...myEvents, ...personalBusyEvents], [myEvents, personalBusyEvents]);
+  const focusedEventKey = useMemo(() => new URLSearchParams(location.search).get('event') || '', [location.search]);
+  useEffect(() => {
+    if (!focusedEventKey || handledFocusEventRef.current === focusedEventKey) return;
+    const focusEvent = displayedEvents.find((event) => event.eventKey === focusedEventKey || event.id === focusedEventKey);
+    const focusDate = focusEvent ? parseEventDate(focusEvent) : null;
+    if (!focusEvent || !focusDate) return;
+    handledFocusEventRef.current = focusedEventKey;
+    setViewMode('monthly');
+    setViewYear(focusDate.year ?? viewYear);
+    setViewMonth(focusDate.month);
+    setSelectedDay(focusDate.day);
+    setSelectedEvent(focusEvent);
+  }, [displayedEvents, focusedEventKey, viewYear]);
   const visibleRangeEvents = useMemo(() => (
     displayedEvents.filter((event) => {
       const eventDate = parseEventDate(event);
@@ -828,7 +872,7 @@ export function LearnerCalendarContent() {
   useEffect(() => {
     let cancelled = false;
     setCalendarLoading(true);
-    fetchLearnerCalendarEvents(myLearner.kind, myLearner.id)
+    fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { force: true })
       .then((res) => {
         if (cancelled) return;
         const coachEvents = res.events
@@ -937,17 +981,17 @@ export function LearnerCalendarContent() {
     }
     if (sameWeekSession) {
       setBookError(rescheduleEvent
-        ? `Another “${sameWeekSession.title}” is already booked for ${describeCalendarEventSlot(sameWeekSession)}. The same session type can only be booked once per week.`
-        : `You already have “${sameWeekSession.title}” booked for ${describeCalendarEventSlot(sameWeekSession)}. Would you like to reschedule it instead?`);
+        ? `Another ${sessionTypeLabel(bookType)} is already booked in this week. The same session type can only be booked once per week.`
+        : `You already have a ${sessionTypeLabel(bookType)} booked in this week. Would you like to reschedule it instead?`);
       return;
     }
     if (selectedLmsConflict) {
       const cycleConflictHint = isProgrammeCycleSessionType(selectedLmsConflict.bookingSessionType)
-        ? ' Official Monthly Coaching and Progress Review sessions are scheduled from their own calendar cards.'
+        ? ' Official Monthly Coaching Meeting and Progress Review sessions are scheduled from their own calendar cards.'
         : '';
       setBookError(canRescheduleTimeConflict
-        ? `That time is occupied by “${selectedLmsConflict.title}”, booked for ${describeCalendarEventSlot(selectedLmsConflict)}. Would you like to reschedule it instead?`
-        : `That time overlaps “${selectedLmsConflict.title}”, scheduled for ${describeCalendarEventSlot(selectedLmsConflict)}. Please choose another time.${cycleConflictHint}`);
+        ? 'That time is already occupied by one of your coach-session bookings. Would you like to reschedule it instead?'
+        : `That time is unavailable because it overlaps another calendar event. Please choose another time.${cycleConflictHint}`);
       return;
     }
     if (selectedSlotConflicts) {
@@ -959,7 +1003,7 @@ export function LearnerCalendarContent() {
     try {
       const res = rescheduleEvent
         ? await rescheduleLearnerCalendarSession(myLearner.kind, myLearner.id, {
-            eventKey: rescheduleEvent.id,
+            eventKey: rescheduleEvent.eventKey || rescheduleEvent.id,
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
@@ -1167,7 +1211,7 @@ export function LearnerCalendarContent() {
                 : bookingSourceEvent
                   ? <>Choose a date and time for <strong className="text-foreground-700">{bookingSourceEvent.title}</strong>. This will book the official {sessionTypeLabel(bookingSourceEvent.bookingSessionType)} session for you and your coach.</>
                 : coach
-                  ? <>Choose the support you need. Catch-up and Student Support requests go to <strong className="text-foreground-700">{coach.name}</strong> for approval. Monthly Coaching and Progress Reviews are scheduled from their calendar cards.</>
+                  ? <>Choose the support you need. Catch-up and Student Support requests go to <strong className="text-foreground-700">{coach.name}</strong> for approval. Monthly Coaching Meeting and Progress Review sessions are scheduled from their calendar cards.</>
                   : 'No coach has been assigned to you yet — please contact your programme team.'}
             </p>
             <div className="space-y-4">
@@ -1214,8 +1258,8 @@ export function LearnerCalendarContent() {
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-semibold">
                         {rescheduleEvent
-                          ? <>Another “{sameWeekSession.title}” is booked for {describeCalendarEventSlot(sameWeekSession)}. The same session type can only be booked once per week, so choose a different week.</>
-                          : <>You already have “{sameWeekSession.title}” booked for {describeCalendarEventSlot(sameWeekSession)}. The same session type can only be booked once per week. Would you like to reschedule it?</>}
+                          ? <>Another {sessionTypeLabel(bookType)} is already booked in this week. The same session type can only be booked once per week, so choose a different week.</>
+                          : <>You already have a {sessionTypeLabel(bookType)} booked in this week. Would you like to reschedule it?</>}
                       </p>
                       {!rescheduleEvent && (
                         <div className="mt-2 flex flex-wrap gap-2">
@@ -1238,8 +1282,10 @@ export function LearnerCalendarContent() {
                     <AppIcon className={`${canRescheduleTimeConflict ? 'ri-calendar-schedule-line' : 'ri-calendar-close-line'} mt-0.5 shrink-0`} />
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-semibold leading-relaxed">
-                        That time {canRescheduleTimeConflict ? 'is occupied by' : 'overlaps'} “{selectedLmsConflict.title}”, booked for {describeCalendarEventSlot(selectedLmsConflict)}. {canRescheduleTimeConflict ? 'Would you like to reschedule it?' : 'Choose another time.'}
-                        {!canRescheduleTimeConflict && isProgrammeCycleSessionType(selectedLmsConflict.bookingSessionType) ? ' Official Monthly Coaching and Progress Review sessions are scheduled from their own calendar cards.' : ''}
+                        {canRescheduleTimeConflict
+                          ? 'That time is already occupied by one of your coach-session bookings. Would you like to reschedule it?'
+                          : 'That time is unavailable because it overlaps another calendar event. Choose another time.'}
+                        {!canRescheduleTimeConflict && isProgrammeCycleSessionType(selectedLmsConflict.bookingSessionType) ? ' Official Monthly Coaching Meeting and Progress Review sessions are scheduled from their own calendar cards.' : ''}
                       </p>
                       {canRescheduleTimeConflict && (
                         <div className="mt-2 flex flex-wrap gap-2">
@@ -1334,7 +1380,7 @@ export function LearnerCalendarContent() {
               <div className="flex items-center gap-2 text-sm text-foreground-600"><AppIcon className="ri-team-line text-foreground-400"></AppIcon><span>{showEventDetails.club}</span></div>
             </div>
             <p className="text-sm text-foreground-500 leading-relaxed mb-5">{showEventDetails.description}</p>
-            {showEventDetails.eventKey && ['mcr', 'catch-up'].includes(showEventDetails.source || '') ? (
+            {shouldShowMeetingArtifacts(showEventDetails) ? (
               <CoachMeetingArtifactsPanel event={{ id: showEventDetails.id, eventKey: showEventDetails.eventKey, source: showEventDetails.source, meetingLink: showEventDetails.meetingLink }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="mb-5 border-primary-100 bg-primary-50/30" />
             ) : null}
             {showEventDetails.timeToBeConfirmed && showEventDetails.bookingSessionType && (
@@ -1632,7 +1678,7 @@ export function LearnerCalendarContent() {
                 {/* Day cells */}
                 <div className="grid grid-cols-7">
                   {monthCells.map((day, idx) => {
-                    if (day === null) return <div key={`empty-${idx}`} className="aspect-square border-b border-r border-foreground-100 bg-background-50/40 sm:aspect-[4/3]" />;
+                    if (day === null) return <div key={`empty-${idx}`} className="min-h-[11.5rem] border-b border-r border-foreground-100 bg-background-50/40" />;
                     const eventsForDay = getEventsForDay(day, viewMonth);
                     const isSel = day === selectedDay && viewMode === 'monthly';
                     const isTdy = isToday(day, viewMonth, viewYear);
@@ -1652,7 +1698,7 @@ export function LearnerCalendarContent() {
                         key={`d-${day}`}
                         onClick={() => { setSelectedDay(day); setShowDayDrawer(false); }}
                         title={dateRestriction || undefined}
-                        className={`relative flex aspect-square cursor-pointer flex-col border-b border-r border-foreground-100 p-1 text-left transition-all duration-150 hover:z-10 sm:aspect-[4/3] sm:p-1.5 ${isClosedDate ? 'bg-background-100/80' : 'bg-background-50 hover:bg-primary-50/20'} ${isSel ? 'z-10 border-primary-300 bg-primary-50/60 ring-1 ring-primary-300 ring-inset' : isTdy ? 'bg-primary-50/15' : ''}`}
+                        className={`relative flex min-h-[11.5rem] cursor-pointer flex-col border-b border-r border-foreground-100 p-1 text-left transition-all duration-150 hover:z-10 sm:p-1.5 ${isClosedDate ? 'bg-background-100/80' : 'bg-background-50 hover:bg-primary-50/20'} ${isSel ? 'z-10 border-primary-300 bg-primary-50/60 ring-1 ring-primary-300 ring-inset' : isTdy ? 'bg-primary-50/15' : ''}`}
                       >
                         <span className={`mb-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold sm:mb-1 sm:h-6 sm:w-6 sm:text-xs ${isSel ? 'bg-primary-100 text-primary-800' : isTdy ? 'bg-primary-500 text-white' : 'text-foreground-500'}`}>{day}</span>
                         {showClosedBadge && (
@@ -1660,7 +1706,7 @@ export function LearnerCalendarContent() {
                             <AppIcon className="ri-lock-line" />Closed
                           </span>
                         )}
-                        <div className="flex-1 w-full overflow-hidden space-y-1.5 min-w-0">
+                        <div className="flex-1 w-full overflow-hidden space-y-1 min-w-0">
                           {visibleEvents.map((ev) => {
                             if (ev.type === 'Busy') {
                               return (
@@ -1676,7 +1722,7 @@ export function LearnerCalendarContent() {
                               <div
                                 key={ev.id}
                                 onClick={(event) => { event.stopPropagation(); setSelectedEvent(ev); }}
-                                className={`rounded-lg border px-2 py-1.5 text-left shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:brightness-95 ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
+                                className={`rounded-lg border px-2 py-1 text-left shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:brightness-95 ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
                                 title={`${LEARNER_SOURCE_META[eventSource].label} · ${ev.title}`}
                               >
                                 <div className="flex min-w-0 items-center gap-1.5">
@@ -1685,11 +1731,11 @@ export function LearnerCalendarContent() {
                                   <span className="truncate text-[11px] font-bold leading-tight">{ev.title}</span>
                                   <span className={`ml-auto h-2 w-2 shrink-0 rounded-full border border-white/80 ${LEARNER_STATUS_META[learnerEventStatus(ev)].dot}`} title={LEARNER_STATUS_META[learnerEventStatus(ev)].label}></span>
                                 </div>
-                                {(ev.host || ev.club) && <p className="mt-0.5 truncate text-[11px] font-medium opacity-75">{ev.host || ev.club}</p>}
+                                {(ev.host || ev.club) && <p className="mt-0.5 truncate text-[10px] font-medium opacity-75">{ev.host || ev.club}</p>}
                               </div>
                             );
                           })}
-                          {extraCount > 0 && <span className="text-[10px] text-foreground-400 font-semibold pl-2.5">+{extraCount} more</span>}
+                          {extraCount > 0 && <span className="block rounded-md bg-white/80 px-2 py-0.5 text-[10px] font-bold text-primary-700 ring-1 ring-primary-100">+{extraCount} more</span>}
                         </div>
                       </button>
                     );

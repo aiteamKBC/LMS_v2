@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { PageContainer } from '@/components/ui/PageContainer';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { AdminPageHeader } from '../_shared/AdminPage';
 import { CertificateDocument, type CertificateElementId } from '@/components/feature/CertificateDocument';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchCertificateTemplate, saveCertificateTemplate, type CertificateTemplate } from '@/api/platformAdmin';
@@ -133,7 +133,7 @@ function SelectField({
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-11 w-full rounded-xl border border-foreground-200 bg-white px-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-primary-200"
+        className="h-11 w-full rounded-xl border border-foreground-200 bg-white px-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-primary-200 min-w-0 max-w-full"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>{option.label}</option>
@@ -460,17 +460,17 @@ export default function CertificateBuilderPage() {
       userName="Super Admin"
       userRole="Super Admin"
     >
-      <PageContainer>
-        <PageHeader
+      <PageContainer className="min-w-0">
+        <AdminPageHeader
           title="Certificate Builder"
           description="Configure the certificate unlocked when a learner reaches the eligibility threshold."
           icon="ri-award-line"
           actions={(
             <div className="flex gap-2">
-              <button disabled={busy} onClick={() => void save(false)} className="h-10 rounded-xl border border-primary-200 bg-white px-4 text-xs font-bold text-primary-700">
+              <button disabled={busy} onClick={() => void save(false)} className="h-10 rounded-xl border border-primary-200/60 bg-primary-50/60 px-4 text-xs font-semibold text-primary-700 transition-colors hover:bg-primary-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-50">
                 Save draft
               </button>
-              <button disabled={busy} onClick={() => void save(true)} className="primary-action h-10 rounded-xl bg-primary-700 px-4 text-xs font-bold text-white">
+              <button disabled={busy} onClick={() => void save(true)} className="h-10 rounded-xl bg-[var(--kbc-primary)] px-4 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-[var(--kbc-primary-deep)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 disabled:opacity-50">
                 Publish
               </button>
             </div>
@@ -479,8 +479,8 @@ export default function CertificateBuilderPage() {
 
         {notice ? <div className="rounded-xl border border-primary-100 bg-primary-50 p-3 text-sm font-semibold text-primary-800">{notice}</div> : null}
 
-        <div className="grid gap-5 lg:grid-cols-[380px_1fr]">
-          <section className="space-y-4 rounded-2xl border border-foreground-200 bg-white p-5">
+        <div className="grid min-w-0 gap-5 2xl:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
+          <section className="space-y-4 rounded-2xl border border-[var(--kbc-border)] bg-[var(--kbc-surface)] p-5">
             {renderSelectedEditor()}
             <Field label="Template name" value={form.name} onChange={(value) => setForm({ ...form, name: value })} />
             <Field label="Certificate title" value={form.title} onChange={(value) => setForm({ ...form, title: value })} />
@@ -514,7 +514,7 @@ export default function CertificateBuilderPage() {
                 { value: 'none', label: 'No decoration' },
               ]}
             />
-            <div className="rounded-2xl border border-foreground-100 bg-background-50 p-3">
+            <div className="rounded-2xl border border-foreground-100 bg-[var(--kbc-surface)] p-3">
               <p className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-foreground-500">Background image</p>
               <input
                 type="file"
@@ -555,7 +555,7 @@ export default function CertificateBuilderPage() {
                 Tip: if the Canva image already includes border/decorations, set Decoration style to No decoration and turn off Show default frame.
               </p>
             </div>
-            <div className="rounded-2xl border border-foreground-100 bg-background-50 p-3">
+            <div className="rounded-2xl border border-foreground-100 bg-[var(--kbc-surface)] p-3">
               <p className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-foreground-500">Element sizes (%)</p>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Decoration" value={form.layoutConfig.decorationSize ?? 82} onChange={(value) => updateLayout({ decorationSize: Number(value) })} type="number" />
@@ -601,7 +601,7 @@ export default function CertificateBuilderPage() {
               <input type="checkbox" checked={form.requireFinalTest} onChange={(event) => setForm({ ...form, requireFinalTest: event.target.checked })} />
               Require final test pass
             </label>
-            <div className="rounded-2xl border border-foreground-100 bg-background-50 p-3">
+            <div className="rounded-2xl border border-foreground-100 bg-[var(--kbc-surface)] p-3">
               <div className="mb-3 flex items-center justify-between gap-2">
                 <div>
                   <p className="text-xs font-black uppercase tracking-[0.18em] text-foreground-500">Additional fields</p>
@@ -618,7 +618,7 @@ export default function CertificateBuilderPage() {
               {customFields.length ? (
                 <div className="space-y-3">
                   {customFields.map((field, index) => (
-                    <div key={`${index}-${field.label || field.value || 'field'}`} className="rounded-xl border border-foreground-100 bg-white p-3">
+                    <div key={`${index}-${field.label || field.value || 'field'}`} className="rounded-2xl border border-foreground-100 bg-[var(--kbc-surface)] p-3">
                       <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
                         <Field label="Value" value={field.value || ''} onChange={(value) => updateCustomField(index, { value })} />
                         <Field label="Label" value={field.label || ''} onChange={(value) => updateCustomField(index, { label: value })} />
@@ -639,7 +639,7 @@ export default function CertificateBuilderPage() {
                 </p>
               )}
             </div>
-            <div className="rounded-2xl border border-foreground-100 bg-background-50 p-3">
+            <div className="rounded-2xl border border-foreground-100 bg-[var(--kbc-surface)] p-3">
               <p className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-foreground-500">Visible sections</p>
               <div className="grid grid-cols-2 gap-2 text-sm font-semibold">
                 <label className="flex items-center gap-2">
@@ -683,7 +683,7 @@ export default function CertificateBuilderPage() {
           </section>
 
           <section
-            className="rounded-2xl border border-foreground-200 bg-background-100 p-6"
+            className="min-w-0 overflow-x-auto rounded-2xl border border-primary-200/60 bg-primary-50/60 p-4 md:p-6"
             onClick={() => setSelectedElement(null)}
           >
             <CertificateDocument

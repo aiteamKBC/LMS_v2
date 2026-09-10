@@ -142,12 +142,12 @@ export default function AdminAccountsPage() {
       icon="ri-shield-user-line"
       heroTitle="Platform accounts"
       heroBlurb={
-        <>Every identity that can sign in, sourced from <strong>login.Login_accounts</strong>. People who have not been invited yet appear in the <Link to="/users" className="underline hover:text-white">user directory</Link>, not here.</>
+        <>Every identity that can sign in, sourced from <strong>login.Login_accounts</strong>. People who have not been invited yet appear in the <Link to="/users" className="text-primary-700 underline underline-offset-2 hover:text-primary-800">user directory</Link>, not here.</>
       }
       stats={[{ label: 'Accounts', value: loading && !data ? '—' : count }]}
     >
       {/* Filters */}
-      <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4 flex flex-col md:flex-row gap-3 md:items-center">
+      <div className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] p-3 md:p-4 flex flex-col xl:flex-row gap-3 xl:items-center">
         <div className="relative flex-1 min-w-0">
           <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
           <input
@@ -162,14 +162,14 @@ export default function AdminAccountsPage() {
         <select
           value={role}
           onChange={e => setFilter('role', e.target.value)}
-          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200"
+          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0 max-w-full"
         >
           {ROLE_FILTERS.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
         </select>
         <select
           value={status}
           onChange={e => setFilter('status', e.target.value)}
-          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200"
+          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 min-w-0 max-w-full"
         >
           {STATUS_FILTERS.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
         </select>
@@ -202,7 +202,7 @@ export default function AdminAccountsPage() {
         emptyMessage={term || role || status ? 'No accounts match these filters.' : 'No accounts have been created yet.'}
         onRetry={reload}
       >
-        <div className="admin-cool-table bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+        <div className="bg-[var(--kbc-surface)] rounded-2xl border border-[var(--kbc-border)] overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-[13px]">
               <thead>
@@ -218,10 +218,10 @@ export default function AdminAccountsPage() {
               </thead>
               <tbody>
                 {rows.map(account => (
-                  <tr key={account.id} className="border-b border-background-100/50 hover:bg-background-100/40 transition-smooth">
+                  <tr key={account.id} className="border-b border-background-100/50 hover:bg-primary-50/40 transition-smooth">
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-2.5">
-                        <div className="w-7 h-7 rounded-full bg-primary-100 flex items-center justify-center shrink-0 ring-1 ring-primary-200/50">
+                        <div className="w-7 h-7 rounded-full bg-primary-100/60 flex items-center justify-center shrink-0 ring-1 ring-primary-200/50 !bg-none shadow-md shadow-primary-900/10 ring-1 ring-inset ring-primary-200/60">
                           <span className="text-primary-700 text-[10px] font-semibold">
                             {(account.displayName || account.email).charAt(0).toUpperCase()}
                           </span>
@@ -400,9 +400,9 @@ function ActionButton({ onClick, tone, icon, label, busy }: {
   onClick: () => void; tone: 'ok' | 'bad' | 'warn'; icon: string; label: string; busy: boolean;
 }) {
   const map = {
-    ok: 'text-emerald-700 border-emerald-200/60 hover:bg-emerald-50',
-    bad: 'text-red-700 border-red-200/60 hover:bg-red-50',
-    warn: 'text-amber-700 border-amber-200/60 hover:bg-amber-50',
+    ok: 'bg-emerald-50/50 text-emerald-700 border-emerald-200/60 hover:bg-emerald-100',
+    bad: 'bg-red-50/50 text-red-700 border-red-200/60 hover:bg-red-100',
+    warn: 'bg-amber-50/50 text-amber-700 border-amber-200/60 hover:border-red-200 hover:bg-red-50 hover:text-red-700',
   };
   return (
     <button

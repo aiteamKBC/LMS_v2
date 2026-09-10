@@ -3,6 +3,7 @@ import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-route
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { coachNavItems } from '@/mocks/navigation';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { PageSkeleton } from '@/components/feature/Skeletons';
 import { Panel } from '@/components/ui/Panel';
@@ -37,11 +38,14 @@ function Shell({ children }: { children: ReactNode }) {
       { id: 'previous-record', label: 'Previous learning record', href: '/old-otjh/months', icon: 'ri-history-line' },
     ] : monitor ? [
       { id: 'record-monitor', label: 'Record monitoring', href: '/old-otjh/monitor', icon: 'ri-dashboard-line' },
-    ] : [
-      { id: 'coach-overview', label: 'Coach workspace', href: '/workspace/coach', icon: 'ri-dashboard-line' },
-      { id: 'previous-records', label: 'Previous learning records', href: '/old-otjh/coach', icon: 'ri-history-line' },
-      ...(auth.account?.access === 'super-admin' ? [{ id: 'record-monitor', label: 'Record monitoring', href: '/old-otjh/monitor', icon: 'ri-dashboard-line' }] : []),
-    ]}><PageContainer className={`${styles.scope} ${styles.page}`}>{children}</PageContainer></WorkspaceShell>;
+    ] : coachNavItems.map(item => item.id === 'coach-previous-records' ? {
+        ...item,
+        href: '',
+        children: [
+          { id: 'previous-records-list', label: 'Learning records', href: '/old-otjh/coach', icon: 'ri-history-line' },
+          ...(auth.account?.access === 'super-admin' ? [{ id: 'record-monitor', label: 'Record monitoring', href: '/old-otjh/monitor', icon: 'ri-dashboard-line' }] : []),
+        ],
+      } : item)}><PageContainer className={`${styles.scope} ${styles.page}`}>{children}</PageContainer></WorkspaceShell>;
 }
 
 function ErrorState({ error, retry }: { error: Error; retry: () => void }) {
@@ -156,8 +160,9 @@ function MonthList({ aptemId }: { aptemId?: number }) {
   const complete = summary.completed_months || 0;
   const remaining = Math.max(0, total - complete);
   const percent = total ? Math.min(100, Math.max(0, Math.round(complete / total * 100))) : 0;
-  const canBulkSign = auth.account?.role !== 'learner' && ['coach', 'super-admin'].includes(auth.account?.access || '');
-  const unsigned = summary.months.filter(item => item.is_required !== false && item.status !== 'complete');
+  const student = auth.account?.role === 'learner';
+  const canBulkSign = auth.account?.access !== 'record-monitor' && (student || ['coach', 'super-admin'].includes(auth.account?.access || ''));
+  const unsigned = summary.months.filter(item => item.is_required !== false && (student ? item.status !== 'complete' : !item.coach_signature));
   return <div className={styles.monthList}>
     <header className={styles.monthListHeader}>
       <p className={styles.eyebrow}>Previous learning record</p>
@@ -185,7 +190,7 @@ function MonthList({ aptemId }: { aptemId?: number }) {
       <div className={styles.monthCutoff}><AppIcon className="ri-calendar-line" /><div><span>Previous record through</span><strong>31 August 2026</strong></div></div>
     </section>
     {canBulkSign && <div className={styles.bulkActions}>
-      <p>{unsigned.length ? `${unsigned.length} ${unsigned.length === 1 ? 'month' : 'months'} remaining. Add the coach signature across the record.` : 'All months are complete.'}</p>
+      <p>{unsigned.length ? `${unsigned.length} ${unsigned.length === 1 ? 'month' : 'months'} awaiting your sign-off. ${student ? 'Sign once to complete your previous learning record.' : 'Add the coach signature across the record.'}` : 'Your signature is saved for all months.'}</p>
       <button className={btnPrimary} disabled={!unsigned.length} onClick={() => setBulkOpen(true)}><AppIcon className="ri-edit-line" />Sign all months</button>
     </div>}
     {bulkMessage && <p role="status" className={styles.bulkSuccess}>{bulkMessage}</p>}

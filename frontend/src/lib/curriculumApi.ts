@@ -2999,6 +2999,10 @@ export function updateCurriculumModule(id: string, input: CurriculumModuleInput)
   return patchJson<{ updated: boolean; module: CurriculumModule; teamsCalendarsToUpdate?: StaleTeamsCalendar[] }>(`/curriculum/modules/${encodeURIComponent(id)}/`, input);
 }
 
+export function updateCurriculumModuleCover(id: string, coverImage: string) {
+  return patchJson<{ updated: boolean; coverImage: string }>(`/curriculum/modules/${encodeURIComponent(id)}/`, { coverImage });
+}
+
 export function archiveCurriculumModule(id: string) {
   return deleteJson<{ archived: boolean; id: string }>(`/curriculum/modules/${encodeURIComponent(id)}/`);
 }

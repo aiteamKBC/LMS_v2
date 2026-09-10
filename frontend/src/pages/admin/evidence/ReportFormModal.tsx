@@ -75,7 +75,7 @@ export function ReportFormModal({ learnerId, evidenceId, onClose, onSaved }: {
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-[#0e1524]/35 p-3" onMouseDown={event => { if (event.target === event.currentTarget && !saving) onClose(); }}>
-      <section className="flex max-h-[90vh] w-[min(680px,96vw)] flex-col overflow-hidden rounded-xl bg-background-50 shadow-[0_24px_64px_rgba(14,21,36,0.30)]" role="dialog" aria-modal="true" aria-labelledby="report-form-title">
+      <section className="flex max-h-[90vh] w-[min(680px,96vw)] flex-col overflow-hidden rounded-2xl bg-[var(--kbc-surface)] shadow-[0_24px_64px_rgba(14,21,36,0.30)]" role="dialog" aria-modal="true" aria-labelledby="report-form-title">
         <header className="relative border-b border-foreground-200 px-[22px] py-[18px]">
           <button type="button" onClick={onClose} disabled={saving} aria-label="Close report form" className="absolute right-[18px] top-4 border-0 bg-transparent text-[22px] leading-none text-foreground-400 hover:text-foreground-800 disabled:opacity-50">×</button>
           <p className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-foreground-400">Assessment report</p>
@@ -125,7 +125,7 @@ export function ReportFormModal({ learnerId, evidenceId, onClose, onSaved }: {
 
       {confirmingAnalysis && (
         <div className="fixed inset-0 z-[130] flex items-center justify-center bg-[#0e1524]/45 p-4" onMouseDown={event => { if (event.target === event.currentTarget) setConfirmingAnalysis(false); }}>
-          <section className="w-full max-w-md overflow-hidden rounded-xl bg-white shadow-[0_24px_64px_rgba(14,21,36,0.35)]" role="alertdialog" aria-modal="true" aria-labelledby="analysis-choice-title">
+          <section className="w-full max-w-md overflow-hidden rounded-2xl bg-[var(--kbc-surface)] shadow-[0_24px_64px_rgba(14,21,36,0.35)]" role="alertdialog" aria-modal="true" aria-labelledby="analysis-choice-title">
             <div className="border-b border-foreground-200 px-5 py-4">
               <h4 id="analysis-choice-title" className="text-base font-semibold text-foreground-900">How should the current analysis be handled?</h4>
               <p className="mt-1.5 text-xs leading-5 text-foreground-500">Choose whether the new report should require a fresh audit or keep the existing analysed result.</p>

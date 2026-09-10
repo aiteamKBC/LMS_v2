@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { CircleAlert, Frown, Hand, Heart, Laugh, Smile, ThumbsUp, type LucideIcon } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
@@ -13,6 +14,15 @@ import MessageInfo from './components/MessageInfo';
 import FloatingFab from './components/FloatingFab';
 
 const learnerNav = roleNavMap.learner;
+
+const REACTION_ICONS: Record<string, LucideIcon> = {
+  '👍': ThumbsUp,
+  '❤️': Heart,
+  '😂': Laugh,
+  '😮': CircleAlert,
+  '😢': Frown,
+  '🙏': Hand,
+};
 
 interface Contact {
   id: string;
@@ -277,7 +287,6 @@ export default function MessagesPage() {
   // Reactions & thread replies
   const [replyToId, setReplyToId] = useState<string | null>(null);
   const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
-  const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
   // Message pinning
   const [pinnedMessages, setPinnedMessages] = useState<Record<string, string | null>>({});
@@ -824,7 +833,7 @@ export default function MessagesPage() {
     const msg: Message = {
       id: `vn-${Date.now()}`,
       from: 'me',
-      text: '🎤 Voice note',
+      text: 'Voice note',
       time: timeStr,
       date: dateStr,
       status: 'sent',
@@ -1321,8 +1330,9 @@ export default function MessagesPage() {
                             {/* Reactions display */}
                             {hasReactions && (
                               <div className="flex items-center gap-0.5">
-                                {Object.entries(msg.reactions!).map(([emoji, users]) => (
-                                  <button
+                                {Object.entries(msg.reactions!).map(([emoji, users]) => {
+                                  const ReactionIcon = REACTION_ICONS[emoji] || Smile;
+                                  return <button
                                     key={emoji}
                                     onClick={() => handleAddReaction(msg.id, emoji)}
                                     className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] transition-smooth cursor-pointer ${
@@ -1332,10 +1342,10 @@ export default function MessagesPage() {
                                     }`}
                                     title={users.join(', ')}
                                   >
-                                    <span className="text-xs">{emoji}</span>
+                                    <ReactionIcon aria-hidden="true" className="h-3 w-3" />
                                     {users.length > 1 && <span className="text-[9px] font-medium">{users.length}</span>}
                                   </button>
-                                ))}
+                                })}
                               </div>
                             )}
 

@@ -7,6 +7,7 @@
 // Persisted on enrolment."Created_users"."Learning_plan" (jsonb).
 // ============================================================================
 import { formatHoursMinutes } from '@/lib/format';
+import { invalidateLearnerDetailCache } from './learnerDetail';
 const BASE = '/learner_api/learning-plan';
 const MODULE_BASE = '/learner_api/module-learners';
 
@@ -93,13 +94,15 @@ export async function saveLearningPlan(
   learnerId: string | number,
   moduleIds: string[],
 ): Promise<LearningPlanResponse> {
-  return parse(
+  const result = await parse(
     await fetch(`${BASE}/${learnerId}/`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ modules: moduleIds.map((moduleId) => ({ moduleId })) }),
     }),
   );
+  invalidateLearnerDetailCache();
+  return result;
 }
 
 /** A module's window date for reading. '' stays an em dash, not "Invalid Date". */
@@ -174,11 +177,14 @@ export async function saveModuleLearners(
   moduleId: string,
   learnerIds: Array<string | number>,
 ): Promise<ModuleLearnersResponse> {
-  return parse(
+  const result = await parse(
     await fetch(`${MODULE_BASE}/${encodeURIComponent(moduleId)}/`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ learnerIds: learnerIds.map(String) }),
     }),
   );
+  // This roster also removes assignments for learners omitted from the list.
+  invalidateLearnerDetailCache();
+  return result;
 }

@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,6 +20,7 @@ import type { CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumPro
  */
 
 const updateCurriculumModule = vi.fn(async () => ({ updated: true }));
+const updateCurriculumModuleCover = vi.fn(async () => ({ updated: true }));
 const reload = vi.fn(async () => null);
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({
@@ -169,6 +170,7 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   fetchCurriculumOverview: vi.fn(async () => ({ programmes, cohorts, groups, modules })),
   fetchCurriculumHolidays: vi.fn(async () => []),
   updateCurriculumModule: (...args: unknown[]) => updateCurriculumModule(...(args as [])),
+  updateCurriculumModuleCover: (...args: unknown[]) => updateCurriculumModuleCover(...(args as [])),
 }));
 
 async function renderCatalogue(search = '') {
@@ -204,6 +206,7 @@ function deliveryRowFor(title: string, deliveryLabel: string) {
 describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
   beforeEach(() => {
     updateCurriculumModule.mockClear();
+    updateCurriculumModuleCover.mockReset().mockResolvedValue({ updated: true });
     reload.mockClear();
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       id: 'module-MOD-1',
@@ -234,6 +237,31 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     window.history.replaceState({}, '', '/');
+  });
+
+  it('uploads a module image without opening or saving the delivery form', async () => {
+    await renderCatalogue();
+    const card = screen.getByRole('heading', { name: 'Data Foundations' }).closest('article')!;
+    await userEvent.click(within(card).getByRole('button', { name: 'Upload image' }));
+    expect(await screen.findByText('Module image')).toBeInTheDocument();
+    expect(screen.queryByTestId('module-form-defaults')).not.toBeInTheDocument();
+    const file = new File(['cover'], 'cover.png', { type: 'image/png' });
+    await userEvent.upload(document.querySelector<HTMLInputElement>('input[type="file"]')!, file);
+    const image = await screen.findByAltText('Data Foundations cover');
+    await userEvent.click(screen.getByRole('button', { name: 'Save image' }));
+    await waitFor(() => expect(updateCurriculumModuleCover).toHaveBeenCalledWith('MOD-1', image.getAttribute('src')));
+    expect(updateCurriculumModule).not.toHaveBeenCalled();
+    expect(reload).toHaveBeenCalledWith({ silent: true });
+  });
+
+  it('keeps the image editor open when saving fails', async () => {
+    updateCurriculumModuleCover.mockRejectedValueOnce(new Error('Could not save the module image.'));
+    await renderCatalogue();
+    await userEvent.click(cardFor('Data Foundations').getByRole('button', { name: 'Upload image' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save image' }));
+    expect(await screen.findByText('Could not save the module image.')).toBeInTheDocument();
+    expect(screen.getByText('Module image')).toBeInTheDocument();
+    expect(reload).not.toHaveBeenCalled();
   });
 
   it('shows each module with the delivery it runs in', async () => {

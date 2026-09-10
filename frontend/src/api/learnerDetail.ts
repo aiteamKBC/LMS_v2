@@ -17,6 +17,8 @@ export type LearnerKind = 'commercial' | 'apprenticeship';
 export interface LearnerWeekEntry {
   module: string | null;
   week: string;
+  moduleId?: string | null;
+  weekId?: string | null;
 }
 /** A KSB authored against a component, with the weight it contributes. */
 export interface ComponentKsbMapping {
@@ -139,6 +141,7 @@ export interface LearnerDetail {
   programmeStatus: string;
   learnerType?: LearnerKind;
   programmeStartDate?: string;
+  programmeEndDate?: string;
   cohort: string;
   /** The learner's cohort schedule, from curriculum.cohorts. Gateway is a date
    *  the cohort reaches, not something finishing the modules early unlocks. */
@@ -246,23 +249,6 @@ export interface LearnerVideoProgress {
 }
 
 async function request<T>(url: string): Promise<T> {
-  const existingRequest = pendingRequests.get(url) as Promise<T> | undefined;
-  if (existingRequest) {
-    return existingRequest;
-  }
-
-  const pendingRequest = requestUncached<T>(url);
-  pendingRequests.set(url, pendingRequest);
-  try {
-    return await pendingRequest;
-  } finally {
-    pendingRequests.delete(url);
-  }
-}
-
-const pendingRequests = new Map<string, Promise<unknown>>();
-
-async function requestUncached<T>(url: string): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, { headers: { 'Content-Type': 'application/json' } });
@@ -294,9 +280,11 @@ async function requestUncached<T>(url: string): Promise<T> {
 export function invalidateLearnerDetailCache(kind?: LearnerKind, id?: string): void {
   if (kind && id) {
     detailCache.delete(`${kind}:${id}`);
+    detailRequests.delete(`${kind}:${id}`);
     return;
   }
   detailCache.clear();
+  detailRequests.clear();
 }
 
 /**
@@ -314,10 +302,10 @@ export function fetchLearnerDetail(kind: LearnerKind, id: string, options: { for
 
   const promise = request<LearnerDetail>(`${BASE}/${kind}/${id}/`)
     .then((data) => {
-      detailCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+      if (detailRequests.get(key) === promise) detailCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
       return data;
     })
-    .finally(() => detailRequests.delete(key));
+    .finally(() => { if (detailRequests.get(key) === promise) detailRequests.delete(key); });
   detailRequests.set(key, promise);
   return promise;
 }

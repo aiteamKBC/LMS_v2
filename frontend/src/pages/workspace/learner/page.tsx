@@ -3,17 +3,10 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE, WEEKLY_LEARNING_COMPONENTS } from '@/mocks/learner-profile';
-import { TRAINING_ACTIVITIES } from '@/mocks/training-plan';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
-import { useAuth } from '@/hooks/useAuth';
-import { isInspectionDemoAccount } from '@/lib/learnerFlowAccess';
-import { demoProgrammeFor, materialForModuleId, type DemoMaterialDef } from '@/lib/demoProgrammeMaterials';
-import { buildDemoTimings, currentWeekStatus, summariseDemoTimings, timingsForModuleIds, useDemoTimeOverrides, type DemoProgrammeSummary } from '@/lib/demoTime';
-import { DemoMaterialCard } from '@/components/feature/DemoTimePanel';
-import { SignOutConfirmModal } from '@/components/feature/Header';
-import { buildLearnerJourney, completedComponentIds, componentTypeMeta, componentNoun, evidencedTargetKsbCodes, gradePercent, formatHoursMinutes, hasComponentContent, isOpenableComponent, parseHours, type JourneyComponent, type JourneyModule, type JourneyWeek } from '@/utils/learnerJourney';
+import { buildLearnerJourney, componentTypeMeta, componentNoun, evidencedTargetKsbCodes, gradePercent, formatHoursMinutes, hasComponentContent, isOpenableComponent, parseHours, type JourneyComponent } from '@/utils/learnerJourney';
 import type {
   ComponentMarking,
   LearnerComponentProgress,
@@ -29,7 +22,6 @@ import { syncLearnerStatus } from '@/hooks/useLearnerNavGate';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
 import { fetchLearnerCertificateStatus, issueLearnerCertificate, type LearnerCertificate, type LearnerCertificateStatus } from '@/api/learnerCertificates';
 import type { CertificateTemplate } from '@/api/platformAdmin';
-import { fetchEvidence, type EvidenceRecord } from '@/api/evidence';
 import type React from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { CertificateDocument } from '@/components/feature/CertificateDocument';
@@ -37,18 +29,17 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { Panel } from '@/components/ui/Panel';
 import { SectionHeader } from '@/components/ui/SectionHeader';
-import { ActionRow, RowAction } from '@/components/ui/ActionRow';
-import { StatusBadge } from '@/components/ui/StatusBadge';
+import { RowAction } from '@/components/ui/ActionRow';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ProgressBar } from '@/components/ui/ProgressMetric';
 import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
 import { toneStyle, statusTone, type StatusTone } from '@/lib/statusTone';
 import { waitingCopy } from '@/utils/learnerAccessGate';
 import { displayValue, EMPTY_VALUE, ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
-import { fetchDemoMaterialSummaries, type DemoMaterialTable } from '@/api/demoMaterials';
 import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
 import { COMPONENT_ACCESS_MESSAGE } from '@/lib/componentAccessWindow';
 import { isNavigableComponent } from '@/pages/learner/video-watch/weekPreview';
+import { useUnifiedLearningSummary } from '@/pages/learner/my-learning/SubjectWorkspace';
 
 /* ─────────────────────────────────────────────
    Real-learner component progress + current-week UI
@@ -255,7 +246,6 @@ export default function LearnerOverview() {
 
   const [attendance, setAttendance] = useState<LearnerAttendance | null>(null);
   const [attendanceLoading, setAttendanceLoading] = useState(isRealMode);
-  const [evidence, setEvidence] = useState<EvidenceRecord[]>([]);
   const [reflectionStatuses, setReflectionStatuses] = useState<LearningReflectionStatusMap>({});
   const [coach, setCoach] = useState<{ name: string; email: string } | null>(null);
   const [calendarEvents, setCalendarEvents] = useState<LearnerCalendarEvent[]>([]);
@@ -306,27 +296,6 @@ export default function LearnerOverview() {
     };
   }, [isRealMode, kind, id, skipPreStartData]);
 
-  useEffect(() => {
-    if (!isRealMode || !kind || !id || skipPreStartData) {
-      setEvidence([]);
-      return;
-    }
-
-    let cancelled = false;
-    setEvidence([]);
-    fetchEvidence(kind, id)
-      .then((records) => {
-        if (!cancelled) setEvidence(records);
-      })
-      .catch(() => {
-        if (!cancelled) setEvidence([]);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isRealMode, kind, id, skipPreStartData]);
-
   // Assigned coach — powers the "My Coach" card and the header's coach fact.
   useEffect(() => {
     if (!isRealMode || !id || skipPreStartData) {
@@ -356,14 +325,6 @@ export default function LearnerOverview() {
       .finally(() => { if (!cancelled) setCalendarLoading(false); });
     return () => { cancelled = true; };
   }, [isRealMode, learnerKind, id, skipPreStartData]);
-
-  const evidenceStats = useMemo(() => {
-    const approved = evidence.filter((record) => record.status === 'approved').length;
-    const pending = evidence.filter((record) => record.status === 'pending').length;
-    const rejected = evidence.filter((record) => record.status === 'rejected').length;
-    const progress = evidence.length ? Math.round((approved / evidence.length) * 100) : 0;
-    return { total: evidence.length, approved, pending, rejected, progress };
-  }, [evidence]);
 
   /* ── Onboarding learners land on their enrolment wizard, not the overview ──
      Gated on `!loading` so a not-yet-loaded status never reads as "not onboarding". */
@@ -411,149 +372,60 @@ export default function LearnerOverview() {
   const startDateDisplay = isRealMode
     ? (formatProgrammeStartDate(real?.programmeStartDate) || EMPTY_VALUE)
     : p.startDate;
-  const plannedEndDisplay = isRealMode ? EMPTY_VALUE : p.plannedEndDate;
+  const plannedEndDisplay = isRealMode
+    ? (formatProgrammeStartDate(real?.programmeEndDate) || EMPTY_VALUE)
+    : p.plannedEndDate;
   const coachDisplayName = isRealMode ? (coach?.name || 'Not yet assigned') : p.coach.name;
   const coachDisplayEmail = isRealMode ? (coach?.email || '') : p.coach.email;
 
   /* ── Real learner's training-plan journey, grouped module -> week -> components ── */
   const journey = useMemo(() => (isRealMode ? buildLearnerJourney(real) : []), [isRealMode, real]);
   const { stations, overallPct, currentIndex, currentWeek: currentWeekLabel } = useMemo(() => buildStations(journey, real), [journey, real]);
+  const learnerSelectionKey = `${kind ?? ''}:${id ?? ''}`;
+  const [moduleSelection, setModuleSelection] = useState<{ learnerKey: string; index: number } | null>(null);
+  const selectedModuleIndex = moduleSelection?.learnerKey === learnerSelectionKey ? moduleSelection.index : null;
   const currentStation = currentIndex >= 0 ? stations[currentIndex] : null;
+  const selectedStation = selectedModuleIndex == null
+    ? null
+    : stations.find((station) => station.index === selectedModuleIndex) ?? null;
+  const displayedStation = selectedStation ?? currentStation;
   const journeyAllDone = currentIndex === -1 && stations.length > 0;
   const currentModuleLabel = isRealMode
-    ? (currentStation ? currentStation.module.module : journeyAllDone ? 'Gateway ready' : EMPTY_VALUE)
+    ? (displayedStation ? displayedStation.module.module : journeyAllDone ? 'Gateway ready' : EMPTY_VALUE)
     : p.currentModule;
 
-  // Use the first incomplete week in the current module so Continue Learning
-  // follows the learner's actual progress instead of remaining on week one.
+  // The learner's live module opens on its current week. Selecting another
+  // module from the journey swaps this page to that module's first unfinished
+  // week (or its first week when the module is complete).
   const currentWeek = useMemo(() => {
-    if (currentStation) {
-      const weekIndex = Math.max(0, currentStation.module.weeks.findIndex((week) => week.week === currentWeekLabel));
-      const week = currentStation.module.weeks[weekIndex];
+    if (displayedStation) {
+      const liveWeekIndex = displayedStation.index === currentIndex
+        ? displayedStation.module.weeks.findIndex((week) => week.week === currentWeekLabel)
+        : -1;
+      const unfinishedWeekIndex = displayedStation.weekDots.findIndex((week) => week.total > 0 && week.done < week.total);
+      const weekIndex = liveWeekIndex >= 0 ? liveWeekIndex : unfinishedWeekIndex >= 0 ? unfinishedWeekIndex : 0;
+      const week = displayedStation.module.weeks[weekIndex];
       if (week) return {
-        module: currentStation.module.module,
+        module: displayedStation.module.module,
         week,
         weekIndex,
-        totalWeeks: currentStation.module.weeks.length,
+        totalWeeks: displayedStation.module.weeks.length,
       };
+      return null;
     }
     for (const mod of journey) {
       if (mod.weeks.length > 0) return { module: mod.module, week: mod.weeks[0], weekIndex: 0, totalWeeks: mod.weeks.length };
     }
     return null;
-  }, [currentStation, currentWeekLabel, journey]);
+  }, [currentIndex, currentWeekLabel, displayedStation, journey]);
   const evidencedKsbCodes = useMemo(() => evidencedTargetKsbCodes(real), [real]);
 
-  /* ── Inspection-demo time overlay — scoped to the 3 provisioned accounts ──
-     Everything here is derived from data already fetched above (journey,
-     videoProgress, componentProgress); see lib/demoTime.ts. The
-     programme/material structure itself comes from the central config in
-     lib/demoProgrammeMaterials.ts — nothing here string-matches a title. */
-  const { auth, logout } = useAuth();
-  const [demoSignOutOpen, setDemoSignOutOpen] = useState(false);
-  const demoProgramme = useMemo(
-    () => demoProgrammeFor(auth.account?.email, real?.programme),
-    [auth.account?.email, real?.programme],
+  const unifiedLearning = useUnifiedLearningSummary(
+    real,
+    learnerKind ?? undefined,
+    id,
+    isRealMode && !skipPreStartData && !!real?.studentActivityAvailable,
   );
-  // Keep the focused Materials-only presentation limited to the three
-  // dedicated inspection accounts. Every ordinary learner, including people
-  // enrolled on ME/MM/PCP, keeps the standard Overview workspace.
-  const isDemoAccount = isRealMode
-    && isInspectionDemoAccount(auth.account?.email)
-    && demoProgramme != null;
-  const [demoMaterialTables, setDemoMaterialTables] = useState<DemoMaterialTable[]>([]);
-  useEffect(() => {
-    if (!isDemoAccount || !demoProgramme) {
-      setDemoMaterialTables([]);
-      return;
-    }
-    let cancelled = false;
-    fetchDemoMaterialSummaries(demoProgramme.accountLabel)
-      .then((tables) => { if (!cancelled) setDemoMaterialTables(tables); })
-      .catch(() => { if (!cancelled) setDemoMaterialTables([]); });
-    return () => { cancelled = true; };
-  }, [demoProgramme, isDemoAccount]);
-  const demoScopeKey = kind && id ? `${kind}:${id}` : '';
-  const demoOverrides = useDemoTimeOverrides(demoScopeKey);
-  const allJourneyComponents = useMemo(() => journey.flatMap((m) => m.weeks.flatMap((w) => w.components)), [journey]);
-  const demoCompletedIds = useMemo(() => completedComponentIds(real), [real]);
-  const demoTimings = useMemo(
-    () => (isDemoAccount
-      ? buildDemoTimings(allJourneyComponents, real?.videoProgress ?? [], real?.componentProgress ?? [], demoCompletedIds, demoOverrides)
-      : []),
-    [isDemoAccount, allJourneyComponents, real, demoCompletedIds, demoOverrides],
-  );
-  // Each material's constituent modules (by authored module id), its own
-  // component-level rollup, and its "current week" — the same journey data
-  // used everywhere else, grouped per lib/demoProgrammeMaterials.ts.
-  const demoMaterialCards = useMemo(() => {
-    if (!demoProgramme) return [];
-    return demoProgramme.materials.map((materialDef: DemoMaterialDef) => {
-      const modules = journey.filter((m) => m.weeks.some((w) => w.components.some((c) => materialForModuleId(demoProgramme, c.moduleId)?.key === materialDef.key)));
-      const timings = timingsForModuleIds(demoTimings, materialDef.moduleIds);
-      const weekStatus = currentWeekStatus(modules, demoCompletedIds);
-      const table = demoMaterialTables.find((item) => item.key === materialDef.key) || null;
-      const journeySummary = summariseDemoTimings(timings);
-      const tableSummary = table && table.ready ? {
-        expectedMinutes: table.expectedMinutes,
-        completedMinutes: 0,
-        remainingMinutes: table.expectedMinutes,
-        materialsCompleted: 0,
-        materialsTotal: table.count,
-        completionPct: 0,
-        quizzesPassed: 0,
-        quizzesTotal: 0,
-      } : null;
-      return {
-        def: materialDef,
-        modules,
-        table,
-        summary: journeySummary.materialsTotal > 0 ? journeySummary : (tableSummary || journeySummary),
-        weekStatus: journeySummary.materialsTotal > 0
-          ? weekStatus
-          : { label: table?.firstWeekTitle || null, complete: false },
-        available: (table?.ready && table.count > 0) || (materialDef.moduleIds.length > 0 && modules.length > 0),
-      };
-    });
-  }, [demoProgramme, journey, demoTimings, demoCompletedIds, demoMaterialTables]);
-  /** Jump straight into a material's first unfinished activity. A fully
-   * completed material reopens from its first activity for review. */
-  const openDemoMaterial = useCallback((material: (typeof demoMaterialCards)[number]) => {
-    if (kind && id && canProgress) {
-      const activities = material.modules.flatMap((module) =>
-        module.weeks.flatMap((week) =>
-          week.components.map((component) => {
-            const query = `?module=${encodeURIComponent(module.module)}&week=${encodeURIComponent(week.week)}`;
-            let href: string | null = null;
-            if (component.isQuiz && hasComponentContent(component)) {
-              href = `/learner/quiz/${kind}/${id}/${component.quizMeta!.quizId}${query}`;
-            } else if (component.type === 'video' && component.videoUrl && component.componentId) {
-              href = `/learner/video/${kind}/${id}/${component.componentId}${query}`;
-            } else if (isOpenableComponent(component)) {
-              href = `/learner/component/${kind}/${id}/${component.componentId}${query}`;
-            }
-            const state = componentProgress(component, real?.videoProgress ?? [], real?.componentProgress ?? [], real?.componentMarkingStatus ?? {}).state;
-            const complete = state === 'passed' || state === 'watched' || state === 'completed';
-            return { href, complete };
-          }),
-        ),
-      ).filter((activity): activity is { href: string; complete: boolean } => activity.href !== null);
-
-      const next = activities.find((activity) => !activity.complete) || activities[0];
-      if (next) {
-        navigate(next.href);
-        return;
-      }
-    }
-
-    // A table-only material (currently AI in Marketing) has no authored journey
-    // component to hand to the legacy runner, so retain the table reader as a
-    // fallback instead of making the card unavailable.
-    if (material.table?.ready && material.table.count > 0) {
-      const materialPath = `/learner/material/${encodeURIComponent(material.def.key)}`;
-      navigate(kind && id ? `${materialPath}/${kind}/${id}` : materialPath);
-    }
-  }, [canProgress, id, kind, navigate, real?.componentProgress, real?.videoProgress]);
   // OTJ hours: completed + planned come from the backend (stored in
   // Active_users.Completed_hours / planned_hours). "activities" counts every
   // completed item across kinds (distinct quizzes + videos + future types).
@@ -579,12 +451,24 @@ export default function LearnerOverview() {
   }, [real]);
 
   /* ── Compact progress cards ── */
-  const modulesDone = stations.filter((s) => s.status === 'completed').length;
+  const planActivitiesDone = stations.reduce((total, station) => total + station.trackableDone, 0);
+  const planActivitiesTotal = stations.reduce((total, station) => total + station.trackableTotal, 0);
 
-  const programmeProgressPercent = isRealMode ? (stations.length ? overallPct : null) : p.overallProgress;
+  const usesCombinedProgress = isRealMode && !!real?.studentActivityAvailable;
+  const programmeProgressPercent = isRealMode
+    ? usesCombinedProgress
+      ? unifiedLearning.summary ? Math.round(unifiedLearning.summary.percent) : null
+      : stations.length ? overallPct : null
+    : p.overallProgress;
   const programmeProgressValue = programmeProgressPercent == null ? EMPTY_VALUE : `${programmeProgressPercent}%`;
   const programmeProgressCaption = isRealMode
-    ? (stations.length ? `${modulesDone}/${stations.length} modules complete` : 'No training plan yet')
+    ? usesCombinedProgress
+      ? unifiedLearning.summary
+        ? `${unifiedLearning.summary.completedActivityCount}/${unifiedLearning.summary.activityCount} activities complete`
+        : unifiedLearning.error ? 'Combined progress unavailable' : 'Loading combined progress...'
+      : planActivitiesTotal > 0
+        ? `${planActivitiesDone}/${planActivitiesTotal} activities complete`
+        : (stations.length ? 'No trackable activities yet' : 'No training plan yet')
     : `${p.currentWeek ? `Week ${p.currentWeek} · ` : ''}${p.currentModule}`;
 
   const attendancePercent = isRealMode ? (attendance ? attendance.attendanceRate : null) : p.attendanceRate;
@@ -596,14 +480,27 @@ export default function LearnerOverview() {
     ? 'neutral'
     : attendancePercent >= ATTENDANCE_EXPECTED_RATE ? 'positive' : attendancePercent >= ATTENDANCE_MINIMUM_RATE ? 'caution' : 'critical';
 
-  const otjPercent = isRealMode ? (otj.targetHours > 0 ? otj.targetPercent : otj.percent) : Math.round((p.otjhCompleted / p.otjhTarget) * 100);
-  const otjValue = isRealMode
-    ? formatHoursMinutes(otj.activities > 0 ? otj.completedHours : otj.plannedHours)
-    : formatHoursMinutes(p.otjhCompleted);
+  const auditTpPlanned = unifiedLearning.data?.audit_tp_planned;
+  const auditLmsActual = unifiedLearning.data?.audit_lms_actual;
+  const otjPlannedHours = isRealMode
+    ? usesCombinedProgress ? auditTpPlanned : otj.plannedHours
+    : p.otjhTarget;
+  const otjActualHours = isRealMode
+    ? usesCombinedProgress ? auditLmsActual : otj.completedHours
+    : p.otjhCompleted;
+  const otjPercent = otjActualHours != null && otjPlannedHours != null && otjPlannedHours > 0
+    ? Math.round((otjActualHours / otjPlannedHours) * 100)
+    : null;
+  const otjPlannedValue = otjPlannedHours != null ? `${otjPlannedHours.toFixed(2)} h` : EMPTY_VALUE;
+  const otjActualValue = otjActualHours != null ? `${otjActualHours.toFixed(2)} h` : EMPTY_VALUE;
   const otjCaption = isRealMode
-    ? (otj.targetHours > 0 ? `Target ${formatHoursMinutes(otj.targetHours)}${otj.status ? ` · ${otj.status}` : ''}` : `${otj.activities} ${otj.activities === 1 ? 'activity' : 'activities'} logged`)
+    ? usesCombinedProgress
+      ? unifiedLearning.summary
+        ? `Across ${unifiedLearning.summary.subjectCount} subjects`
+        : unifiedLearning.error ? 'Recorded time unavailable' : 'Loading recorded time...'
+      : (otj.targetHours > 0 ? `Target ${formatHoursMinutes(otj.targetHours)}${otj.status ? ` · ${otj.status}` : ''}` : `${otj.activities} ${otj.activities === 1 ? 'activity' : 'activities'} logged`)
     : `${formatHoursMinutes(p.otjhCompleted)} / ${formatHoursMinutes(p.otjhTarget)} planned`;
-  const otjTone: StatusTone = isRealMode ? (otj.status ? statusTone(otj.status) : 'brand') : 'brand';
+  const otjTone: StatusTone = isRealMode ? (usesCombinedProgress ? 'brand' : otj.status ? statusTone(otj.status) : 'brand') : 'brand';
 
   const ksbTotal = isRealMode ? (real?.ksbs.length || 0) : p.ksbTotal;
   const ksbPercent = isRealMode
@@ -681,68 +578,6 @@ export default function LearnerOverview() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), []);
-
-  /* ── My Tasks ── */
-  const realTasks = useMemo(() => {
-    if (!isRealMode) return [];
-    const list: Array<{ id: string; title: string; subtitle?: string; tone: StatusTone; actionLabel: string; actionHref: string }> = [];
-    const referredCount = Object.values(reflectionStatuses).filter((s) => s === 'referred' || s === 'reject' || s === 'rejected').length;
-    if (referredCount > 0) {
-      list.push({
-        id: 'reflections',
-        title: `${referredCount} reflection${referredCount === 1 ? '' : 's'} need changes`,
-        subtitle: 'A coach or tutor asked for an update before this can be accepted.',
-        tone: 'caution',
-        actionLabel: 'Review',
-        actionHref: trainingPlanHref,
-      });
-    }
-    if (evidenceStats.rejected > 0) {
-      list.push({
-        id: 'evidence',
-        title: `${evidenceStats.rejected} evidence item${evidenceStats.rejected === 1 ? '' : 's'} rejected`,
-        subtitle: 'Resubmit with the changes your coach asked for.',
-        tone: 'critical',
-        actionLabel: 'View evidence',
-        actionHref: '/learner/evidence',
-      });
-    }
-    if (otj.status && /at risk|need/i.test(otj.status)) {
-      list.push({
-        id: 'otjh',
-        title: /at risk/i.test(otj.status) ? 'Off-the-job hours are at risk' : 'Off-the-job hours need attention',
-        subtitle: otj.progressHours < 0 ? `${formatHoursMinutes(Math.abs(otj.progressHours))} behind the current-week target.` : undefined,
-        tone: statusTone(otj.status),
-        actionLabel: 'Log hours',
-        actionHref: '/learner/otjh',
-      });
-    }
-    if (attendance && attendance.attendanceRate < ATTENDANCE_EXPECTED_RATE) {
-      list.push({
-        id: 'attendance',
-        title: `Attendance is ${attendance.attendanceRate}%`,
-        subtitle: `Target is ${ATTENDANCE_EXPECTED_RATE}% or above.`,
-        tone: attendance.attendanceRate < ATTENDANCE_MINIMUM_RATE ? 'critical' : 'caution',
-        actionLabel: 'View attendance',
-        actionHref: '/learner/attendance',
-      });
-    }
-    return list;
-  }, [isRealMode, reflectionStatuses, evidenceStats, otj, attendance, trainingPlanHref]);
-
-  const mockTasks = useMemo(() => TRAINING_ACTIVITIES
-    .filter((a) => a.status === 'overdue' || a.status === 'Referred' || a.status === 'Evidence Required')
-    .slice(0, 4)
-    .map((a) => ({
-      id: a.id,
-      title: a.title,
-      subtitle: a.status === 'overdue' ? `Was due ${a.dueDate}` : a.status === 'Referred' ? 'Needs changes before it can be accepted.' : 'Evidence required to complete this activity.',
-      tone: (a.status === 'overdue' ? 'critical' : 'caution') as StatusTone,
-      actionLabel: a.primaryAction || 'Open',
-      actionHref: '/learner/training-plan',
-    })), []);
-
-  const tasks = isRealMode ? realTasks : mockTasks;
 
   // Nothing of the overview is rendered until the learner's programme status is
   // known. The onboarding redirect can only decide once the detail has loaded,
@@ -854,22 +689,20 @@ export default function LearnerOverview() {
       roleLabel={learnerNav.label}
       navItems={learnerNav.items}
       workspaceLabel={learnerNav.workspaceLabel}
-      pageTitle={isDemoAccount ? 'Materials' : 'Overview'}
-      pageSubtitle={isDemoAccount ? undefined : isRealMode ? subtitleParts.join(' · ') : `${p.programme} ${p.programmeLevel} · ${p.employer} · Cohort ${p.cohort}`}
+      pageTitle="Overview"
+      pageSubtitle={isRealMode ? subtitleParts.join(' · ') : `${p.programme} ${p.programmeLevel} · ${p.employer} · Cohort ${p.cohort}`}
       userName={isRealMode ? heroFullName : p.fullName}
       userRole={isRealMode ? (heroProgramme ? `${heroProgramme} Learner` : 'Learner') : `${p.programme} Apprentice`}
-      hidePageChrome={isDemoAccount}
     >
       <PageContainer>
 
         {/* ================================================================
             PROFILE HEADER
             ================================================================ */}
-        {!isDemoAccount && (
-          <SectionReveal delay={0}>
+        <SectionReveal delay={0}>
             <header
               className="learner-super-admin-hero relative overflow-hidden rounded-2xl px-5 py-5 shadow-sm md:px-7 md:py-6"
-              style={{ background: 'linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 30%, oklch(var(--primary-100)) 66%, oklch(var(--background-50)) 100%)' }}
+              style={{ background: 'linear-gradient(108deg, oklch(var(--primary-800)) 0%, oklch(var(--primary-700)) 30%, oklch(var(--primary-500)) 66%, oklch(var(--primary-400)) 100%)' }}
             >
             <div
               aria-hidden="true"
@@ -911,7 +744,7 @@ export default function LearnerOverview() {
                   className="learner-overview-learning-plan-button inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/70 bg-white/15 px-3 text-[12px] font-semibold text-white shadow-sm transition"
                 >
                   <AppIcon className="ri-book-2-line" />
-                  Learning Plan
+                  Learner's Map
                 </button>
               </div>
             </div>
@@ -928,82 +761,71 @@ export default function LearnerOverview() {
               <ProfileFact icon="ri-calendar-check-line" label="Planned end" value={plannedEndDisplay} />
             </div>
             </header>
-          </SectionReveal>
-        )}
-
-        {/* ================================================================
-            INSPECTION-DEMO: material cards
-            ================================================================ */}
-        {isDemoAccount && (
-          <SectionReveal delay={0} immediate>
-            <div className="learner-super-admin-hero overflow-hidden rounded-3xl bg-gradient-to-br from-primary-800 via-primary-600 to-violet-400 px-6 py-7 text-white shadow-lg shadow-primary-950/10 md:px-8">
-              <div className="flex flex-wrap items-center justify-between gap-5">
-                <div className="flex min-w-0 items-center gap-4">
-                  <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-white/15 ring-1 ring-white/20">
-                    <AppIcon className="ri-book-2-line text-2xl" />
-                  </span>
-                  <div className="min-w-0">
-                    <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/65">Learning programme</p>
-                    <h1 className="mt-1 text-2xl font-heading font-bold leading-tight text-white">Your Materials</h1>
-                    <p className="mt-1 text-[13px] text-white/75">{demoProgramme?.programmeName}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="rounded-2xl bg-white/10 px-5 py-3 text-right ring-1 ring-white/15">
-                    <p className="text-2xl font-bold tabular-nums">{demoMaterialCards.length}</p>
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-white/65">Materials</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setDemoSignOutOpen(true)}
-                    className="inline-flex h-12 items-center gap-2 rounded-2xl bg-white/10 px-4 text-[12px] font-semibold text-white ring-1 ring-white/20 transition hover:bg-white/20"
-                  >
-                    <AppIcon className="ri-logout-box-r-line text-base" />
-                    Logout
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
-              {demoMaterialCards.map((material, index) => (
-                <div
-                  key={material.def.key}
-                  className={demoMaterialCards.length % 2 === 1 && index === demoMaterialCards.length - 1 ? 'lg:col-span-2' : undefined}
-                >
-                  <DemoMaterialCard
-                    name={material.def.name}
-                    order={material.def.order}
-                    summary={material.summary}
-                    currentWeekLabel={material.weekStatus.label}
-                    complete={material.weekStatus.complete}
-                    available={material.available}
-                    onContinue={() => openDemoMaterial(material)}
-                  />
-                </div>
-              ))}
-            </div>
-          </SectionReveal>
-        )}
+        </SectionReveal>
 
         {/* ================================================================
             COMPACT PROGRESS CARDS
             ================================================================ */}
-        {!isDemoAccount && (
-          <SectionReveal delay={60}>
+        <SectionReveal delay={60}>
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               <ProgressStat href={programmeProgressHref} icon="ri-road-map-line" label="Programme Progress" value={programmeProgressValue} percent={programmeProgressPercent} caption={programmeProgressCaption} tone="brand" />
               <ProgressStat href="/learner/attendance" icon="ri-calendar-check-line" label="Attendance" value={attendanceValue} percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
-              <ProgressStat href={otjhProgressHref} icon="ri-time-line" label="OTJ Hours" value={otjValue} percent={otjPercent} caption={otjCaption} tone={otjTone} />
+              <ProgressStat
+                href={otjhProgressHref}
+                icon="ri-time-line"
+                label="OTJ Hours"
+                value={otjActualValue}
+                values={[
+                  { label: 'TP Planned', value: otjPlannedValue },
+                  { label: 'Actual', value: otjActualValue },
+                ]}
+                percent={otjPercent}
+                caption={otjCaption}
+                tone={otjTone}
+              />
               <ProgressStat href={ksbProgressHref} icon="ri-bar-chart-2-line" label="KSB Progress" value={ksbValue} percent={ksbPercent} caption={ksbCaption} tone={ksbTone} />
             </div>
-          </SectionReveal>
-        )}
+        </SectionReveal>
+
+        <SectionReveal delay={100}>
+          <Panel>
+            <SectionHeader
+              title="My Apprenticeship Journey"
+              icon="ri-road-map-line"
+              actions={
+                <Link to={journeyHref} className="compact-action text-[12px] font-semibold text-primary-600 hover:text-primary-700">
+                  View full journey <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
+                </Link>
+              }
+            />
+            <div className="mt-4">
+              {isRealMode ? (
+                <MiniJourney
+                  real={real}
+                  loading={loading}
+                  loadError={loadError}
+                  progressPercent={programmeProgressPercent}
+                  progressCaption={programmeProgressCaption}
+                  selectedModuleIndex={displayedStation?.index ?? null}
+                  onSelectModule={(index) => setModuleSelection({ learnerKey: learnerSelectionKey, index })}
+                />
+              ) : (
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-[13px] font-semibold text-foreground-900">{p.overallProgress}% complete</span>
+                    <span className="text-[12px] text-foreground-400">Currently on: <span className="font-semibold text-foreground-700">{p.currentModule}</span></span>
+                  </div>
+                  <ProgressBar percent={p.overallProgress} />
+                </div>
+              )}
+            </div>
+          </Panel>
+        </SectionReveal>
 
         {/* ================================================================
             CONTINUE LEARNING + UPCOMING / MY COACH
             ================================================================ */}
-        {!isDemoAccount && <SectionReveal delay={100}>
+        <SectionReveal delay={180}>
           <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
             <div className="space-y-4 lg:col-span-2">
               <Panel>
@@ -1118,81 +940,9 @@ export default function LearnerOverview() {
               </Panel>
             </div>
           </div>
-        </SectionReveal>}
-
-        {!isDemoAccount && <SectionReveal delay={140}>
-          <Panel>
-            <SectionHeader
-              title="My Tasks"
-              count={tasks.length}
-              description="What needs your attention next"
-              icon="ri-list-check-3"
-              actions={<Link to="/tasks" className="text-[12px] font-semibold text-primary-600 hover:text-primary-700">View all tasks</Link>}
-            />
-            <div className="mt-3 space-y-2">
-              {tasks.length === 0 ? (
-                <div className="flex min-h-[112px] items-center justify-center gap-4 px-4 py-4 text-left">
-                  <TaskEmptyIllustration />
-                  <div>
-                    <p className="text-[13px] font-semibold text-foreground-900">You&apos;re all caught up</p>
-                    <p className="mt-1 text-[12px] text-foreground-500">Nothing needs your attention right now.</p>
-                  </div>
-                </div>
-              ) : (
-                tasks.map((t) => (
-                  <ActionRow
-                    key={t.id}
-                    title={t.title}
-                    subtitle={t.subtitle}
-                    tone={t.tone}
-                    status={<StatusBadge tone={t.tone} label={t.tone === 'critical' ? 'Action needed' : 'Needs attention'} />}
-                    actions={<RowAction label={t.actionLabel} emphasis="primary" onClick={() => navigate(t.actionHref)} />}
-                  />
-                ))
-              )}
-            </div>
-          </Panel>
-        </SectionReveal>}
-
-        {!isDemoAccount && <SectionReveal delay={180}>
-          <Panel>
-            <SectionHeader
-              title="My Apprenticeship Journey"
-              icon="ri-road-map-line"
-              actions={
-                <Link to={journeyHref} className="compact-action text-[12px] font-semibold text-primary-600 hover:text-primary-700">
-                  View full journey <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
-                </Link>
-              }
-            />
-            <div className="mt-4">
-              {isRealMode ? (
-                <MiniJourney real={real} loading={loading} loadError={loadError} journeyHref={journeyHref} />
-              ) : (
-                <div>
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-[13px] font-semibold text-foreground-900">{p.overallProgress}% complete</span>
-                    <span className="text-[12px] text-foreground-400">Currently on: <span className="font-semibold text-foreground-700">{p.currentModule}</span></span>
-                  </div>
-                  <ProgressBar percent={p.overallProgress} />
-                </div>
-              )}
-            </div>
-          </Panel>
-        </SectionReveal>}
+        </SectionReveal>
 
       </PageContainer>
-      {demoSignOutOpen && (
-        <SignOutConfirmModal
-          displayName={heroFullName}
-          email={auth.user?.email || auth.account?.email || 'Signed in'}
-          onClose={() => setDemoSignOutOpen(false)}
-          onConfirm={() => {
-            setDemoSignOutOpen(false);
-            logout();
-          }}
-        />
-      )}
     </WorkspaceShell>
   );
 }
@@ -1224,17 +974,6 @@ function LearningEmptyIllustration() {
   );
 }
 
-function TaskEmptyIllustration() {
-  return (
-    <span aria-hidden="true" className="relative flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-primary-50 text-primary-600">
-      <span className="absolute top-1.5 h-2 w-5 rounded-full bg-primary-400" />
-      <span className="flex h-10 w-9 items-center justify-center rounded-md bg-primary-100 shadow-sm ring-1 ring-primary-200/70">
-        <AppIcon className="ri-list-check-3 text-2xl" />
-      </span>
-    </span>
-  );
-}
-
 function DashboardNextStep({ icon, label, href, tone = 'brand', iconTone }: { icon: string; label: string; href: string; tone?: StatusTone; iconTone?: 'otj' }) {
   const style = toneStyle(tone);
   const iconClasses = iconTone === 'otj'
@@ -1257,8 +996,15 @@ function DashboardNextStep({ icon, label, href, tone = 'brand', iconTone }: { ic
 }
 
 /** A compact linked stat card: label, value, progress bar, caption. The four "quick health check" cards. */
-function ProgressStat({ href, icon, label, value, percent, caption, tone = 'neutral' }: {
-  href: string; icon: string; label: string; value: string; percent: number | null; caption?: string; tone?: StatusTone;
+function ProgressStat({ href, icon, label, value, values, percent, caption, tone = 'neutral' }: {
+  href: string;
+  icon: string;
+  label: string;
+  value: string;
+  values?: readonly { label: string; value: string }[];
+  percent: number | null;
+  caption?: string;
+  tone?: StatusTone;
 }) {
   const style = toneStyle(tone);
   return (
@@ -1272,7 +1018,18 @@ function ProgressStat({ href, icon, label, value, percent, caption, tone = 'neut
       </span>
       <div className="min-w-0 flex-1">
         <p className="truncate text-[12px] font-semibold text-foreground-500">{label}</p>
-        <p className={`mt-1 text-[22px] font-semibold leading-none tabular-nums ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{value}</p>
+        {values ? (
+          <div className="mt-1 grid grid-cols-2 gap-x-3">
+            {values.map((item, index) => (
+              <div key={item.label} className={index > 0 ? 'border-l border-foreground-200 pl-3' : ''}>
+                <p className="truncate text-[9px] font-semibold uppercase tracking-[0.05em] text-foreground-400">{item.label}</p>
+                <p className={`mt-1 truncate text-[17px] font-semibold leading-none tabular-nums ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{item.value}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className={`mt-1 text-[22px] font-semibold leading-none tabular-nums ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{value}</p>
+        )}
         <ProgressBar percent={percent} tone={percent == null || tone === 'neutral' ? undefined : style.dot} className="mt-2.5" />
         {caption ? <p className="mt-1.5 truncate text-[12px] leading-snug text-foreground-500">{caption}</p> : null}
       </div>
@@ -1314,7 +1071,6 @@ function CurrentWeekRow({ c, videos, completions, markingStatus, reflectionStatu
   reflectionStatus?: string;
   onOpen?: () => void;
   accessRestricted?: boolean;
-  /** Inspection-demo accounts only — see isInspectionDemoAccount. */
 }) {
   const meta = componentTypeMeta(c.title);
   const prog = componentProgress(c, videos, completions, markingStatus);
@@ -1394,7 +1150,7 @@ function CurrentWeekRow({ c, videos, completions, markingStatus, reflectionStatu
 }
 
 /** The Continue Learning card body: progress + this week's components. */
-function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, components, videos, completions, markingStatus, kind, learnerId, reflectionStatuses, canProgress, showWeekHeading = false, hideHeader = false, showReadOnlyNotice = false }: {
+function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, components, videos, completions, markingStatus, kind, learnerId, reflectionStatuses, canProgress, showReadOnlyNotice = false }: {
   moduleTitle: string; weekLabel: string; weekIndex: number; totalWeeks: number; components: JourneyComponent[];
   videos: LearnerVideoProgress[]; completions: LearnerComponentProgress[];
   /** Coach decision per component id — an activity needing tutor validation is
@@ -1405,11 +1161,6 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
   /** False for a staff/coach viewer: the rows still show progress, but none of
    *  them opens the runner that would record progress as the learner. */
   canProgress: boolean;
-  /** Inspection-demo accounts only — see isInspectionDemoAccount. */
-  showWeekHeading?: boolean;
-  /** Suppress both built-in headings — the inspection-demo drill-down draws
-   *  its own week header instead. */
-  hideHeader?: boolean;
   /** Show a read-only notice for non-learner viewers. */
   showReadOnlyNotice?: boolean;
 }) {
@@ -1454,7 +1205,20 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
 
   return (
     <div>
-      <LearningWeekStrip />
+      <LearningWeekStrip
+        completedDates={availableComponents.flatMap((component) => {
+          const state = componentProgress(component, videos, completions, markingStatus).state;
+          if (!['passed', 'watched', 'completed'].includes(state)) return [];
+          if (component.isQuiz) {
+            return (component.quizAttempts || []).filter((attempt) => attempt.passed).map((attempt) => attempt.submittedAt);
+          }
+          const isVideo = (component.type || '').toLowerCase() === 'video' || Boolean(component.videoUrl);
+          const records = isVideo ? [...videos, ...completions] : completions;
+          return records
+            .filter((entry) => entry.componentId === component.componentId && entry.passed !== false)
+            .map((entry) => entry.submittedAt);
+        })}
+      />
       {showReadOnlyNotice && (
         <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-primary-200/70 bg-primary-50/60 px-3.5 py-2.5">
           <AppIcon className="ri-eye-line mt-0.5 shrink-0 text-[15px] text-primary-600" />
@@ -1474,13 +1238,6 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
           </span>
         </span>
       </div>
-      {!hideHeader && (
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <span className="text-[13px] font-semibold text-foreground-900">{done}/{total} complete</span>
-          <span className="text-[13px] font-semibold tabular-nums text-primary-700">{percent}%</span>
-        </div>
-      )}
-      {!hideHeader && <ProgressBar percent={total ? percent : null} className="mb-4" />}
       {showAccessNotice && (
         <div role="alert" className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-[12px] text-amber-900">
           <AppIcon className="ri-time-line mt-0.5 shrink-0 text-sm" />
@@ -1526,17 +1283,30 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
   );
 }
 
-function LearningWeekStrip() {
+function LearningWeekStrip({ completedDates = [] }: { completedDates?: string[] }) {
   const days = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+  const today = new Date();
+  const todayIndex = (today.getDay() + 6) % 7;
+  const weekStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - todayIndex);
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 7);
+  const completedDayIndexes = new Set(completedDates.flatMap((value) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime()) || date < weekStart || date >= weekEnd) return [];
+    return [(date.getDay() + 6) % 7];
+  }));
   return (
     <div className="mb-4 flex items-start px-2 sm:px-5">
       {days.map((day, index) => (
         <Fragment key={day}>
           <div className="flex min-w-0 flex-1 flex-col items-center gap-1.5">
-            <span className={`flex h-6 w-6 items-center justify-center rounded-full border ${index === 0 ? 'border-primary-700 bg-primary-700 ring-4 ring-primary-100 text-white' : 'border-foreground-200 bg-background-50 text-transparent'}`}>
-              {index === 0 ? <AppIcon className="ri-check-line text-[12px]" /> : null}
+            <span
+              aria-label={[day, index === todayIndex ? 'today' : '', completedDayIndexes.has(index) ? 'activity completed' : ''].filter(Boolean).join(', ')}
+              className={`flex h-6 w-6 items-center justify-center rounded-full border ${completedDayIndexes.has(index) ? 'border-emerald-600 bg-emerald-500 text-white' : index === todayIndex ? 'border-primary-700 bg-primary-50 text-primary-700' : 'border-foreground-200 bg-background-50 text-transparent'} ${index === todayIndex ? 'ring-4 ring-primary-100' : ''}`}
+            >
+              {completedDayIndexes.has(index) ? <AppIcon className="ri-check-line text-[12px]" /> : index === todayIndex ? <span className="h-1.5 w-1.5 rounded-full bg-primary-700" /> : null}
             </span>
-            <span className={`text-[10px] font-semibold ${index === 0 ? 'text-foreground-700' : 'text-foreground-400'}`}>{day}</span>
+            <span className={`text-[10px] font-semibold ${index === todayIndex ? 'text-primary-700' : completedDayIndexes.has(index) ? 'text-emerald-700' : 'text-foreground-400'}`}>{day}</span>
           </div>
           {index < days.length - 1 ? <span className="mt-3 h-px flex-1 border-t border-dashed border-foreground-200" /> : null}
         </Fragment>
@@ -1546,275 +1316,18 @@ function LearningWeekStrip() {
 }
 
 
-function DemoMaterialStatusBadge({ available, complete, completionPct }: { available: boolean; complete: boolean; completionPct?: number }) {
-  if (!available) {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-background-200 px-2 py-0.5 text-[10px] font-semibold text-foreground-500">
-        <AppIcon className="ri-lock-line text-[10px]" />
-        Not yet available
-      </span>
-    );
-  }
-
-  if (complete) {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-        <AppIcon className="ri-check-line text-[10px]" />
-        Complete
-      </span>
-    );
-  }
-
-  if ((completionPct ?? 0) > 0) {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-primary-100 px-2 py-0.5 text-[10px] font-semibold text-primary-700">
-        <AppIcon className="ri-play-circle-line text-[10px]" />
-        In progress
-      </span>
-    );
-  }
-
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-semibold text-foreground-600">
-      <AppIcon className="ri-play-circle-line text-[10px]" />
-      Ready to start
-    </span>
-  );
-}
-
-/* ─────────────────────────────────────────────
-   Inspection-demo material drill-down — see isInspectionDemoAccount.
-   A client-side view toggle (never a route): header with back/progress/time,
-   then a per-week timeline built from the exact same CurrentWeekCard /
-   CurrentWeekRow used above, so the components inside stay the existing
-   real components.
-   ───────────────────────────────────────────── */
-function DemoMaterialDrilldown({
-  material,
-  kind,
-  id,
-  videos,
-  completions,
-  reflectionStatuses,
-  canProgress,
-  demoCompletedIds,
-  onBack,
-  onContinue,
-}: {
-  material: {
-    def: DemoMaterialDef;
-    modules: JourneyModule[];
-    summary: DemoProgrammeSummary;
-    weekStatus: { label: string | null; complete: boolean };
-    available: boolean;
-  };
-  kind?: string;
-  id?: string;
-  videos: LearnerVideoProgress[];
-  completions: LearnerComponentProgress[];
-  reflectionStatuses: LearningReflectionStatusMap;
-  canProgress: boolean;
-  demoCompletedIds: Set<string>;
-  onBack: () => void;
-  onContinue: () => void;
-}) {
-  const { def, modules, summary, weekStatus, available } = material;
-
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={onBack}
-        className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-primary-600 hover:text-primary-700"
-      >
-        <AppIcon className="ri-arrow-left-line text-[13px]" />
-        Back to programme
-      </button>
-
-      <Panel className="mt-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[16px] font-bold leading-snug text-foreground-900">{def.name}</p>
-            {available && (
-              <p className="mt-0.5 text-[12px] text-foreground-400">
-                {weekStatus.complete ? 'All components complete' : weekStatus.label ? `Continue: ${weekStatus.label}` : 'Ready to start'}
-              </p>
-            )}
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <DemoMaterialStatusBadge available={available} complete={weekStatus.complete} completionPct={summary.completionPct} />
-            {available && !weekStatus.complete && (
-              <button
-                type="button"
-                onClick={onContinue}
-                className="inline-flex items-center gap-1 rounded-lg bg-primary-600 px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-primary-700"
-              >
-                Continue
-                <AppIcon className="ri-play-circle-line text-[13px]" />
-              </button>
-            )}
-          </div>
-        </div>
-
-        {available && (
-          <>
-            <div className="mt-4 flex items-center justify-between gap-2">
-              <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-foreground-400">Material progress</span>
-              <span className="text-[12px] font-semibold tabular-nums text-foreground-800">{summary.completionPct}%</span>
-            </div>
-            <ProgressBar percent={summary.completionPct} tone="bg-primary-500" className="mt-1" />
-            <div className="mt-3 flex flex-wrap gap-2">
-              <span className="inline-flex items-center gap-1 rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-medium text-foreground-600">
-                <AppIcon className="ri-time-line text-[11px]" />
-                {formatHoursMinutes(summary.completedMinutes)} of {formatHoursMinutes(summary.expectedMinutes)}
-              </span>
-              <span className="inline-flex items-center gap-1 rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-medium text-foreground-600">
-                <AppIcon className="ri-list-check-2 text-[11px]" />
-                {summary.materialsCompleted}/{summary.materialsTotal} components complete
-              </span>
-            </div>
-          </>
-        )}
-      </Panel>
-
-      {available ? (
-        <div className="mt-4 space-y-4">
-          {modules.map((mod) => (
-            <div key={mod.module}>
-              {modules.length > 1 && (
-                <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-foreground-400">{mod.module}</p>
-              )}
-              <div className="space-y-3">
-                {mod.weeks.map((week, weekIndex) => (
-                  <DemoWeekAccordion
-                    key={`${mod.module}-${week.week}`}
-                    week={week}
-                    weekIndex={weekIndex}
-                    totalWeeks={mod.weeks.length}
-                    moduleTitle={mod.module}
-                    kind={kind}
-                    learnerId={id}
-                    videos={videos}
-                    completions={completions}
-                    reflectionStatuses={reflectionStatuses}
-                    canProgress={canProgress}
-                    demoCompletedIds={demoCompletedIds}
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="mt-4">
-          <EmptyState size="sm" title="Not yet available" description="This material has no published content yet." />
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** One week's row in the drill-down timeline: title, component count,
- * completion progress, expected time and status — expands to the week's
- * existing component rows (CurrentWeekCard/CurrentWeekRow, unchanged). */
-function DemoWeekAccordion({
-  week,
-  weekIndex,
-  totalWeeks,
-  moduleTitle,
-  kind,
-  learnerId,
-  videos,
-  completions,
-  reflectionStatuses,
-  canProgress,
-  demoCompletedIds,
-}: {
-  week: JourneyWeek;
-  weekIndex: number;
-  totalWeeks: number;
-  moduleTitle: string;
-  kind?: string;
-  learnerId?: string;
-  videos: LearnerVideoProgress[];
-  completions: LearnerComponentProgress[];
-  reflectionStatuses: LearningReflectionStatusMap;
-  canProgress: boolean;
-  demoCompletedIds: Set<string>;
-}) {
-  const openable = week.components.filter(hasComponentContent);
-  const total = openable.length;
-  const done = openable.filter((c) => demoCompletedIds.has(c.componentId || '')).length;
-  const percent = total ? Math.round((done / total) * 100) : 0;
-  const status: 'completed' | 'in-progress' | 'not-started' = total === 0 ? 'not-started' : done === total ? 'completed' : done > 0 ? 'in-progress' : 'not-started';
-  const expectedMinutes = openable.reduce((n, c) => n + ('expectedMinutes' in c && typeof c.expectedMinutes === 'number' ? c.expectedMinutes : 0), 0);
-  const [expanded, setExpanded] = useState(weekIndex === 0 && status !== 'completed');
-
-  const statusMeta: Record<typeof status, { label: string; tone: 'positive' | 'info' | 'neutral' }> = {
-    completed: { label: 'Completed', tone: 'positive' },
-    'in-progress': { label: 'In progress', tone: 'info' },
-    'not-started': { label: 'Not started', tone: 'neutral' },
-  };
-  const meta = statusMeta[status];
-
-  return (
-    <Panel padding="none" className="overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-background-100/70"
-      >
-        <div className="flex min-w-0 items-center gap-3">
-          <AppIcon className={`ri-arrow-right-s-line shrink-0 text-[16px] text-foreground-400 transition-transform ${expanded ? 'rotate-90' : ''}`} />
-          <div className="min-w-0">
-            <p className="truncate text-[13px] font-semibold text-foreground-900">{week.week}</p>
-            <p className="mt-0.5 truncate text-[11px] text-foreground-400">
-              {total} {total === 1 ? 'component' : 'components'}
-              {expectedMinutes > 0 ? ` · ${formatHoursMinutes(expectedMinutes)}` : ''}
-            </p>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-3">
-          {total > 0 && (
-            <span className="hidden items-center gap-2 sm:flex">
-              <ProgressBar percent={percent} tone="bg-primary-500" className="w-20" />
-              <span className="text-[11px] font-semibold tabular-nums text-foreground-600">{done}/{total}</span>
-            </span>
-          )}
-          <StatusBadge tone={meta.tone} label={meta.label} size="sm" />
-        </div>
-      </button>
-      {expanded && (
-        <div className="border-t border-foreground-100 px-4 py-3.5">
-          <CurrentWeekCard
-            moduleTitle={moduleTitle}
-            weekLabel={week.week}
-            weekIndex={weekIndex}
-            totalWeeks={totalWeeks}
-            components={week.components}
-            videos={videos}
-            completions={completions}
-            kind={kind}
-            learnerId={learnerId}
-            reflectionStatuses={reflectionStatuses}
-            canProgress={canProgress}
-            hideHeader
-          />
-        </div>
-      )}
-    </Panel>
-  );
-}
-
-/* ─────────────────────────────────────────────
-   MiniJourney — the learner's journey as a milestone
-   track (Start → modules → Gateway) with a progress
-   ring on each node and a rich "current module" card.
-   ───────────────────────────────────────────── */
 type StationTone = 'done' | 'current' | 'upcoming';
 
 /** A node with an SVG progress ring — the fill shows how far through the module the learner is. */
-function JourneyNode({ icon, label, sub, tone, pct, href }: { icon: string; label: string; sub?: string; tone: StationTone; pct?: number; href?: string }) {
+function JourneyNode({ icon, label, sub, tone, pct, selected = false, onClick }: {
+  icon: string;
+  label: string;
+  sub?: string;
+  tone: StationTone;
+  pct?: number;
+  selected?: boolean;
+  onClick?: () => void;
+}) {
   const t = tone === 'done'
     ? { fill: '#10b981', bg: 'bg-emerald-500 text-white', label: 'text-foreground-700', shadow: 'shadow-emerald-500/25' }
     : tone === 'current'
@@ -1839,14 +1352,16 @@ function JourneyNode({ icon, label, sub, tone, pct, href }: { icon: string; labe
     </>
   );
 
-  return href ? (
-    <Link
-      to={href}
-      aria-label={`Open ${label}`}
-      className="group flex w-[76px] shrink-0 cursor-pointer flex-col items-center gap-1.5 rounded-xl py-1 text-center transition-all duration-200 hover:-translate-y-1 hover:bg-primary-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+  return onClick ? (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`Select ${label}`}
+      aria-pressed={selected}
+      className={`group flex w-[76px] shrink-0 cursor-pointer flex-col items-center gap-1.5 rounded-xl py-1 text-center transition-all duration-200 hover:-translate-y-1 hover:bg-primary-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 ${selected ? 'bg-primary-50 ring-2 ring-primary-300 ring-offset-2' : ''}`}
     >
       {content}
-    </Link>
+    </button>
   ) : (
     <div className="flex w-[76px] shrink-0 flex-col items-center gap-1.5 py-1 text-center">
       {content}
@@ -1915,7 +1430,23 @@ function CertificatePreview({ certificate, template, onClose }: { certificate: L
   );
 }
 
-function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerDetail | null; loading: boolean; loadError: string | null; journeyHref: string }) {
+function MiniJourney({
+  real,
+  loading,
+  loadError,
+  progressPercent,
+  progressCaption,
+  selectedModuleIndex,
+  onSelectModule,
+}: {
+  real: LearnerDetail | null;
+  loading: boolean;
+  loadError: string | null;
+  progressPercent: number | null;
+  progressCaption: string;
+  selectedModuleIndex: number | null;
+  onSelectModule: (index: number) => void;
+}) {
   const journey = useMemo(() => buildLearnerJourney(real), [real]);
   const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
   const [certificateStatus, setCertificateStatus] = useState<LearnerCertificateStatus | null>(null);
@@ -1946,22 +1477,22 @@ function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerD
   if (journey.length === 0) return <EmptyState size="sm" title="No training plan built for this learner yet." />;
 
   const current = currentIndex >= 0 ? stations[currentIndex] : null;
+  const selected = selectedModuleIndex == null
+    ? current
+    : stations.find((station) => station.index === selectedModuleIndex) ?? current;
   const allDone = currentIndex === -1 && stations.length > 0;
-  const modulesDone = stations.filter((s) => s.status === 'completed').length;
-
   return (
     <div>
       {/* Overall progress banner */}
       <div className="rounded-xl bg-primary-50/60 border border-primary-100/60 p-3 mb-4">
         <div className="flex items-center justify-between mb-2">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-primary-600">Overall progress</span>
-          <span className="text-[15px] font-heading font-bold text-foreground-900 tabular-nums">{overallPct}%</span>
+          <span className="text-[15px] font-heading font-bold text-foreground-900 tabular-nums">
+            {progressPercent == null ? EMPTY_VALUE : `${progressPercent}%`}
+          </span>
         </div>
-        <ProgressBar percent={overallPct} height="h-2" />
-        <p className="text-[11px] text-foreground-500 mt-1.5">
-          {modulesDone}/{stations.length} {stations.length === 1 ? 'module' : 'modules'} complete
-          {current ? ` · currently on Module ${current.index + 1}` : allDone ? ' · Gateway ready' : ''}
-        </p>
+        <ProgressBar percent={progressPercent} height="h-2" />
+        <p className="text-[11px] text-foreground-500 mt-1.5">{progressCaption}</p>
       </div>
 
       {certificateStatus?.template ? (
@@ -2020,7 +1551,8 @@ function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerD
                 sub={s.pct == null ? '—' : `${s.pct}%`}
                 tone={stationTone(s)}
                 pct={s.pct ?? 0}
-                href={s.status === 'completed' || s.status === 'current' ? `${journeyHref}?module=${s.index + 1}` : undefined}
+                selected={selected?.index === s.index}
+                onClick={() => onSelectModule(s.index)}
               />
             </Fragment>
           ))}
@@ -2029,28 +1561,28 @@ function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerD
         </div>
       </div>
 
-      {/* Current-module card */}
-      {current ? (
-        <Link
-          to={`${journeyHref}?module=${current.index + 1}`}
-          aria-label={`Open Module ${current.index + 1}: ${current.module.module}`}
-          className="group mt-4 block cursor-pointer rounded-xl border border-primary-200/60 bg-primary-50/30 p-3.5 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary-300 hover:bg-primary-50/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+      {/* Selected-module card */}
+      {selected ? (
+        <div
+          aria-live="polite"
+          className="mt-4 rounded-xl border border-primary-200/60 bg-primary-50/30 p-3.5"
         >
           <div className="flex items-center gap-2 mb-2.5">
             <span className="w-7 h-7 rounded-lg bg-primary-500 text-white flex items-center justify-center shrink-0"><AppIcon className="ri-flag-2-fill text-sm" /></span>
             <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-primary-600 leading-none">You are here</p>
-              <p className="text-[13px] font-semibold text-foreground-900 truncate leading-tight mt-0.5">{current.module.module}</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-primary-600 leading-none">
+                {selected.index === current?.index ? 'You are here' : `Selected Module ${selected.index + 1}`}
+              </p>
+              <p className="text-[13px] font-semibold text-foreground-900 truncate leading-tight mt-0.5">{selected.module.module}</p>
             </div>
-            <span className="ml-auto text-[13px] font-heading font-bold text-primary-700 tabular-nums shrink-0">{current.pct ?? 0}%</span>
-            <AppIcon className="ri-arrow-right-line text-primary-500 transition-transform duration-200 group-hover:translate-x-1" />
+            <span className="ml-auto text-[13px] font-heading font-bold text-primary-700 tabular-nums shrink-0">{selected.pct == null ? EMPTY_VALUE : `${selected.pct}%`}</span>
           </div>
           <div className="grid grid-cols-3 gap-2">
-            <JourneyStat icon="ri-stack-line" label="Components" value={`${current.componentCount}`} />
-            <JourneyStat icon="ri-questionnaire-line" label="Quizzes" value={current.quizTotal > 0 ? `${current.quizTaken}/${current.quizTotal}` : '—'} />
-            <JourneyStat icon="ri-play-circle-line" label="Videos" value={current.videoTotal > 0 ? `${current.videoDone}/${current.videoTotal}` : '—'} />
+            <JourneyStat icon="ri-stack-line" label="Components" value={`${selected.componentCount}`} />
+            <JourneyStat icon="ri-questionnaire-line" label="Quizzes" value={selected.quizTotal > 0 ? `${selected.quizTaken}/${selected.quizTotal}` : '—'} />
+            <JourneyStat icon="ri-play-circle-line" label="Videos" value={selected.videoTotal > 0 ? `${selected.videoDone}/${selected.videoTotal}` : '—'} />
           </div>
-        </Link>
+        </div>
       ) : allDone ? (
         <div className="mt-4 rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-3.5 flex items-center gap-2.5">
           <span className="w-8 h-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0"><AppIcon className="ri-trophy-fill" /></span>

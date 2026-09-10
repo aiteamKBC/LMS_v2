@@ -557,14 +557,26 @@ def _legacy_plan_from_csv(source):
     return plan
 
 
+def training_plan_field(source):
+    """Use the same source column for assignment reads and writes, including []."""
+    return "training_plan" if isinstance(_maybe_json(getattr(source, "training_plan", None)), list) else "learning_plan"
+
+
+def stored_training_plan(source):
+    """None means unsaved; an empty array is an explicitly cleared assignment."""
+    for field in ("training_plan", "learning_plan"):
+        plan = _maybe_json(getattr(source, field, None))
+        if isinstance(plan, list):
+            return [entry for entry in plan if isinstance(entry, dict)]
+    return None
+
+
 def get_training_plan(source):
     """The structured plan for a CommercialUser or EnrolmentUser instance.
     Falls back to reconstructing one from the legacy CSV columns if the
     learner hasn't been re-saved since the structured format was introduced."""
-    plan = getattr(source, "training_plan", None)
-    if plan is None:
-        plan = getattr(source, "learning_plan", None)
-    if plan:
+    plan = stored_training_plan(source)
+    if plan is not None:
         return plan
     return _legacy_plan_from_csv(source)
 
@@ -679,7 +691,13 @@ def to_commercial_row(u):
         "modules": _s(u.modules),
         "weeks": _s(u.weeks),
         "components": _s(u.components),
-        "trainingPlan": _as_list(u.training_plan),
+        # Resolved rather than read straight off Training_plan: an
+        # apprenticeship learner's plan is stored in Learning_plan and a
+        # commercial learner's in Training_plan (see stored_training_plan), so
+        # reading one column reported "no plan" for every learner whose plan
+        # was in the other -- while the Modules text column beside it listed
+        # the modules, which is how the discrepancy showed up.
+        "trainingPlan": _as_list(stored_training_plan(u)),
         # Aptem create-form fields — the directory reads type/status from these,
         # and the edit modal round-trips the rest.
         "type": _s(u.type) or "User",
@@ -957,6 +975,13 @@ def to_learner_detail(source, learner_profile):
     programme_start = getattr(source, "start_date", None)
     if hasattr(programme_start, "isoformat"):
         programme_start = programme_start.isoformat()
+    programme_end = (
+        getattr(source, "end_date", None)
+        or getattr(source, "practical_period_end_date", None)
+        or getattr(source, "apprenticeship_end_date", None)
+    )
+    if hasattr(programme_end, "isoformat"):
+        programme_end = programme_end.isoformat()
 
     return {
         "id": str(source.id),
@@ -979,6 +1004,7 @@ def to_learner_detail(source, learner_profile):
         "programmeStatus": _s(source.programme_status) or DEFAULT_PROGRAMME_STATUS,
         "learnerType": _s(getattr(source, "learner_type", "")) or "apprenticeship",
         "programmeStartDate": _s(programme_start),
+        "programmeEndDate": _s(programme_end),
         "cohort": _s(source.cohort),
         "group": _s(source.group),
         "employer": _s(getattr(source, "employer", "")),

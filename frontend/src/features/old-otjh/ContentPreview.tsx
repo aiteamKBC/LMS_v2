@@ -18,6 +18,7 @@ const questionHtml = (text: string) => DOMPurify.sanitize(text, {
   ALLOWED_TAGS: ['p', 'br', 'strong', 'b', 'i', 'em', 'sub', 'sup', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'td', 'th', 'img'],
   ALLOWED_ATTR: ['src', 'alt', 'colspan', 'rowspan'],
 });
+const CORRECT_ICON = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M21.801 10A10 10 0 1 1 17 3.335"/><path d="m9 11 3 3L22 4"/></svg>';
 
 export function QuizPreview({ quiz, title }: { quiz: NonNullable<ActivityContent['parts'][number]['quiz']>; title: string }) {
   const attempt = quiz.attempt;
@@ -33,7 +34,7 @@ export function QuizPreview({ quiz, title }: { quiz: NonNullable<ActivityContent
   const html = `<h1>${escapeHtml(title)}</h1><p>Saved quiz attempt · ${escapeHtml(attempt.status)} · ${escapeHtml(attempt.score ?? '—')} / ${escapeHtml(attempt.maximum_score ?? '—')}</p><p>Attempt ${escapeHtml(attempt.attempt_number)} · ${questions.length} questions</p><ol>${questions.map(question =>
     `<li><div>${questionHtml(question.question_text)}</div>
       <p><strong>Your answer:</strong> ${question.learner_selected_answers.map(escapeHtml).join(', ') || '—'}</p>
-      <p>${question.is_correct ? '✓ Correct' : `Incorrect · Correct answer: ${question.correct_answers.map(escapeHtml).join(', ') || '—'}`}</p>
+      <p>${question.is_correct ? `${CORRECT_ICON} Correct` : `Incorrect · Correct answer: ${question.correct_answers.map(escapeHtml).join(', ') || '—'}`}</p>
       ${question.answer_options?.length ? `<details><summary>Answer options</summary><ul>${question.answer_options.map(option => `<li>${escapeHtml(option.option_text)}${option.is_selected ? ' (selected)' : ''}</li>`).join('')}</ul></details>` : ''}</li>`).join('')}</ol>`;
   return <HtmlPreview html={html} title={`Saved quiz attempt: ${title}`} />;
 }

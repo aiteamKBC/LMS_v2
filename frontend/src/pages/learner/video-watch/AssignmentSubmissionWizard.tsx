@@ -5,6 +5,7 @@ import {
   loadLearningReflectionSubmission,
   saveLearningReflectionSubmission,
   type LearningReflectionSubmissionInput,
+  type HistoricalAssignmentContent,
 } from '@/api/reflectionSubmission';
 import {
   getEvidenceDownloadUrl,
@@ -15,6 +16,7 @@ import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { checkMonthlyAssignment, emptyMonthlyAssignment, MONTHLY_STEPS, type MonthlyAssignment, type AssignmentQualityCheck } from '@/api/monthlyAssignment';
 import { MonthlyAnswerField, MonthlyAssignmentSteps } from './MonthlyAssignmentSteps';
+import { HistoricalAssignmentCards } from './HistoricalAssignmentCards';
 
 export type AssignmentAnswers = {
   assignmentAnswer: string;
@@ -65,6 +67,10 @@ export function AssignmentSubmissionWizard({
   onEvidenceChanged,
   onRestoreTime,
   onSubmitProgress,
+  historicalReadOnly = false,
+  resolveEvidenceUrl,
+  renderEvidencePreview,
+  historicalContent,
 }: {
   kind: LearnerKind;
   learnerId: string;
@@ -89,6 +95,10 @@ export function AssignmentSubmissionWizard({
   onEvidenceChanged: (files: EvidenceRecord[]) => void;
   onRestoreTime: (seconds: number, source: 'timer' | 'input') => void;
   onSubmitProgress: (answers: AssignmentAnswers) => Promise<void>;
+  historicalReadOnly?: boolean;
+  resolveEvidenceUrl?: (file: EvidenceRecord) => Promise<string>;
+  renderEvidencePreview?: (file: EvidenceRecord, url: string) => ReactNode;
+  historicalContent?: HistoricalAssignmentContent;
 }) {
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState<AssignmentAnswers>(EMPTY_ANSWERS);
@@ -119,7 +129,7 @@ export function AssignmentSubmissionWizard({
 
   useEffect(() => { onRestoreTimeRef.current = onRestoreTime; }, [onRestoreTime]);
 
-  const locked = imported || status === 'submitted_for_tutor_review' || status === 'accepted';
+  const locked = historicalReadOnly || imported || status === 'submitted_for_tutor_review' || status === 'accepted';
   const readOnly = locked || loadFailed || submittingProgress;
   lockedRef.current = locked;
   const evidenceNames = evidenceFiles.map(file => file.filename);
@@ -199,7 +209,7 @@ export function AssignmentSubmissionWizard({
         // network failure. It never supersedes a submitted/server-newer record.
         try {
           const local = JSON.parse(sessionStorage.getItem(recoveryKey) || 'null');
-          const serverLocked = submission?.status === 'submitted_for_tutor_review' || submission?.status === 'accepted' || submission?.submissionOrigin === 'imported_legacy';
+          const serverLocked = submission?.status === 'submitted_for_tutor_review' || submission?.status === 'accepted' || ['imported_legacy', 'classified_legacy'].includes(submission?.submissionOrigin || '');
           if (local?.payload?.activityId === componentId && !serverLocked && Number(local.at) > (Date.parse(submission?.submittedAt || '') || 0)) {
             submission = { ...submission, ...local.payload, status: submission?.status || 'draft' };
             setRecoveredDraft(true);
@@ -212,7 +222,7 @@ export function AssignmentSubmissionWizard({
           businessImpact: submission.businessImpact || submission.benefitExplanation || '',
         });
         setStatus(submission.status || '');
-        setImported(submission.submissionOrigin === 'imported_legacy');
+        setImported(['imported_legacy', 'classified_legacy'].includes(submission.submissionOrigin || ''));
         if (submission.monthlyAssignment) {
           const restored = { ...emptyMonthlyAssignment(ksbMappings.map(m => m.code), londonDate().slice(0, 7)), ...submission.monthlyAssignment };
           setMonthly(restored);
@@ -360,7 +370,7 @@ export function AssignmentSubmissionWizard({
     setOpeningEvidenceId(file.id);
     setSaveError('');
     try {
-      const url = await getEvidenceDownloadUrl(kind, learnerId, file.id);
+      const url = resolveEvidenceUrl ? await resolveEvidenceUrl(file) : await getEvidenceDownloadUrl(kind, learnerId, file.id);
       setEvidencePreview({ file, url });
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : 'Could not open the evidence file.');
@@ -401,7 +411,7 @@ export function AssignmentSubmissionWizard({
               )}
               {locked && (
                 <span className="rounded-full bg-emerald-100 px-3 py-1.5 text-[11px] font-bold text-emerald-700">
-                  <AppIcon className="ri-checkbox-circle-line mr-1" />Submitted
+                  <AppIcon className="ri-checkbox-circle-line mr-1" />{imported ? 'Historical submission' : 'Submitted'}
                 </span>
               )}
               {locked && (
@@ -419,7 +429,7 @@ export function AssignmentSubmissionWizard({
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-700">
             <label>Submission month <input aria-label="Submission month" type="month" value={monthly.month} disabled={readOnly || savingDraft} onChange={e => { if (e.target.value) changeMonthly(m => ({ ...m, month: e.target.value, meetingKey: '', presentationToken: '' })); }} className="ml-2 rounded-lg border border-slate-200 px-2 py-1" /></label>
             <span>Step {step + 1} of 8 — {MONTHLY_STEPS[step]}</span>
-            <span>{checks.length ? `${checks.filter(c => c.passed).length}/13 checks passed at last check` : 'Quality checks not run yet'}</span>
+            <span>{imported ? 'Historical record — new submission checks do not apply' : checks.length ? `${checks.filter(c => c.passed).length}/13 checks passed at last check` : 'Quality checks not run yet'}</span>
           </div>
           <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full bg-slate-900 transition-all" style={{ width: `${(step + 1) / 8 * 100}%` }} /></div>
           <div className="mt-4 flex flex-wrap gap-2">
@@ -443,11 +453,11 @@ export function AssignmentSubmissionWizard({
           {recoveredDraft && <p role="status" className="mb-4 rounded-xl bg-blue-50 p-3 text-sm text-blue-900">Recovered your most recent unsaved changes from this tab. Use Save draft to confirm they are stored on the server.</p>}
           {locked && (
             <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
-              This assignment has been submitted for tutor review. Your saved answers and evidence remain available in Preview.
+              {imported ? (historicalContent ? 'Original assignment content is organised into the eight sections below. Extracts retain their source; tutor observations are labelled separately. This remains a historical submission.' : 'Historical assignment. Original files and assessment reports are preserved in Preview. Sections not captured in the original record are left blank; new submission requirements do not apply.') : 'This assignment has been submitted for tutor review. Your saved answers and evidence remain available in Preview.'}
             </div>
           )}
 
-          {step === 0 && (
+          {historicalContent ? <HistoricalAssignmentCards content={historicalContent} step={step} files={evidenceFiles} onPreviewFile={file => { setPreviewOpen(true); void openEvidence(file); }} /> : step === 0 && (
             <div className="space-y-5">
               <div>
                 <p className="text-[10px] font-black uppercase tracking-[0.14em] text-primary-600">Assignment question</p>
@@ -463,14 +473,14 @@ export function AssignmentSubmissionWizard({
             </div>
           )}
 
-          <div className="mt-5">
-            <MonthlyAssignmentSteps step={step} data={monthly} onChange={changeMonthly} answers={answers} onAnswer={setAnswer}
+          {!historicalContent && <div className="mt-5">
+            {historicalReadOnly && step === 6 ? <p className="text-sm text-slate-600">This historical submission keeps its original assessment status. New-form completeness checks do not apply.</p> : <MonthlyAssignmentSteps step={step} data={monthly} onChange={changeMonthly} answers={answers} onAnswer={setAnswer}
               kind={kind} learnerId={learnerId} title={title} plannedOtjh={plannedOtjh} mappings={ksbMappings}
-              evidenceFiles={evidenceFiles} timeControl={timeControl} disabled={readOnly || submittingRef.current}
-              evidenceUploader={<AssignmentEvidence kind={kind} learnerId={learnerId} componentId={componentId} trainingPlanDetails={evidenceDetails} onUploaded={onEvidenceChanged} readOnly={readOnly} />}
+              evidenceFiles={evidenceFiles} timeControl={timeControl} disabled={readOnly || submittingRef.current} historical={historicalReadOnly}
+              evidenceUploader={historicalReadOnly ? <button type="button" className="text-sm font-semibold text-primary-700" onClick={() => setPreviewOpen(true)}>View original files and assessment reports in Preview</button> : <AssignmentEvidence kind={kind} learnerId={learnerId} componentId={componentId} trainingPlanDetails={evidenceDetails} onUploaded={onEvidenceChanged} readOnly={readOnly} />}
               payload={() => payload('draft')} checks={checks} checking={checking} onCheck={runChecks} onSave={saveDraft}
-            />
-          </div>
+            />}
+          </div>}
 
           {saveError && (
             <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{saveError}</p>
@@ -541,6 +551,7 @@ export function AssignmentSubmissionWizard({
             {evidencePreview ? (
               <div className="min-h-0 flex-1 overflow-auto bg-background-950/95 p-4">
                 {(() => {
+                  if (renderEvidencePreview) return renderEvidencePreview(evidencePreview.file, evidencePreview.url);
                   const fileName = evidencePreview.file.filename.toLowerCase();
                   const contentType = (evidencePreview.file.contentType || '').toLowerCase();
                   const isImage = contentType.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(fileName);
@@ -556,7 +567,7 @@ export function AssignmentSubmissionWizard({
               </div>
             ) : (
               <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5 sm:p-6">
-                {[
+                {historicalContent ? <HistoricalAssignmentCards content={historicalContent} files={evidenceFiles} onPreviewFile={file => void openEvidence(file)} /> : <>{[
                   ['1. Assignment answer', answers.assignmentAnswer],
                   ['2. What You Learned / Achieved KSBs', answers.whatYouLearned],
                   ['3. Business Impact', answers.businessImpact],
@@ -573,12 +584,12 @@ export function AssignmentSubmissionWizard({
                 ].map(([label, value]) => (
                   <section key={label} className="rounded-xl border border-background-200 bg-background-50 p-4">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-primary-700">{label}</h3>
-                    <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-foreground-800">{value || 'Not answered yet.'}</p>
+                    <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-foreground-800">{value || (imported ? 'Not captured as a separate field in the original submission. See the original assignment file below.' : 'Not answered yet.')}</p>
                   </section>
                 ))}
                 <section className="rounded-xl border border-background-200 p-4 text-sm">
                   <h3 className="font-bold">Submission details</h3>
-                  <p>Month: {monthly.month} · Time: {savedTimeSeconds ? (savedTimeSeconds / 3600).toFixed(2) : '0'} hours</p>
+                  <p>Month: {monthly.month} · Time: {savedTimeSeconds ? `${(savedTimeSeconds / 3600).toFixed(2)} hours` : imported ? 'See original source record' : '0 hours'}</p>
                   <p>Coaching reference: {monthly.meetingKey || 'Not linked'}</p>
                   {monthly.claims.map(c => <p key={c.code} className="mt-2 whitespace-pre-wrap"><strong>{c.code}</strong>: {c.explanation}</p>)}
                 </section>
@@ -605,6 +616,7 @@ export function AssignmentSubmissionWizard({
                     </ul>
                   )}
                 </section>
+                </>}
                 {saveError && (
                   <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{saveError}</p>
                 )}

@@ -1,8 +1,11 @@
+import { WorkspaceMetricContent } from '@/components/ui/WorkspaceMetricContent';
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
+import { PageContainer } from '@/components/ui/PageContainer';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { curriculumNavItems } from '@/mocks/navigation';
@@ -152,31 +155,20 @@ export default function CurriculumStudio() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Curriculum Home" pageSubtitle="Your next curriculum actions, in priority order" userName="Rachel Myers" userRole="Curriculum Designer">
-      <main className="curriculum-home-page min-h-full bg-background-100 p-4 sm:p-5 lg:p-6">
+      <PageContainer className="curriculum-home-page">
         <div className="mx-auto max-w-[1560px] space-y-4">
-          <section className="curriculum-home-hero relative min-h-[145px] overflow-hidden rounded-2xl border border-primary-300/35 bg-[linear-gradient(106deg,#43129a_0%,#6d28d9_34%,#b8a7ee_64%,#f7f6ff_100%)] shadow-[0_14px_32px_-22px_rgba(67,18,154,0.5)]">
-            <div className="absolute inset-y-0 right-0 hidden w-1/2 bg-gradient-to-l from-white/35 via-white/10 to-transparent lg:block" />
-            <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 hidden w-[48%] overflow-hidden opacity-45 lg:block">
-              <div className="absolute -right-24 top-1/2 h-[135%] w-[92%] -translate-y-1/2 rotate-[-16deg] rounded-[50%] border border-white/30" />
-              <div className="absolute -right-32 top-1/2 h-[108%] w-[82%] -translate-y-1/2 rotate-[-16deg] rounded-[50%] border border-white/25" />
-              <div className="absolute -right-40 top-1/2 h-[82%] w-[70%] -translate-y-1/2 rotate-[-16deg] rounded-[50%] border border-primary-100/55" />
-            </div>
-            <div className="relative z-10 grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,700px)] lg:items-center lg:p-6">
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-full bg-white/15 px-3 py-1 text-[10px] font-extrabold uppercase tracking-[0.14em] text-white">Curriculum home</span>
-                  {!loading && <span className={`rounded-full px-3 py-1 text-[10px] font-bold ${openIssueCount ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>{openIssueCount ? `${openIssueCount} open actions` : 'Everything looks clear'}</span>}
-                </div>
-                <h1 className="mt-3 font-heading text-3xl font-bold leading-tight tracking-tight text-white">What needs your attention?</h1>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-white/75">Start with a blocker, continue your latest module, or create a programme. Supporting reports stay out of the way until you need them.</p>
-              </div>
-              <div className="grid w-full max-w-none grid-cols-1 gap-2 justify-self-end sm:grid-cols-2 lg:grid-cols-3">
-                <Link to="/curriculum/programmes?create=programme" className="inline-flex h-10 min-h-10 w-full min-w-0 items-center justify-center gap-2 rounded-xl bg-[#b27715] px-3 py-2 text-center text-[12px] font-extrabold leading-4 text-white shadow-[0_8px_18px_rgba(178,119,21,0.3)] ring-1 ring-[#b27715]/30 transition-all duration-200 hover:bg-[#965f0d] hover:shadow-[0_10px_24px_rgba(178,119,21,0.4)] focus:outline-none focus:ring-2 focus:ring-[#b27715] focus:ring-offset-2 active:translate-y-px lg:whitespace-nowrap"><AppIcon className="ri-add-circle-line shrink-0 text-lg" />Create programme</Link>
-                <Link to="/curriculum/module-builder" className="curriculum-home-continue-button inline-flex h-10 min-h-10 w-full min-w-0 items-center justify-center gap-2 rounded-xl border border-primary-200/70 bg-white/80 px-3 py-2 text-center text-[12px] font-bold leading-4 text-primary-800 transition-all duration-200 hover:border-primary-300 hover:bg-white hover:text-primary-900 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2 active:translate-y-px lg:whitespace-nowrap"><AppIcon className="ri-edit-box-line shrink-0 text-lg" />Continue authoring</Link>
-                <button type="button" onClick={() => setGuideOpen(true)} className="inline-flex h-10 min-h-10 w-full min-w-0 items-center justify-center gap-2 rounded-xl border border-primary-300/70 bg-primary-50/85 px-3 py-2 text-center text-[12px] font-bold leading-4 text-primary-800 transition-all duration-200 hover:border-primary-400 hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2 active:translate-y-px lg:whitespace-nowrap"><AppIcon className="ri-road-map-line shrink-0 text-lg" />How to build a programme</button>
-              </div>
-            </div>
-          </section>
+          <WorkspaceHeroBanner
+            eyebrow="Curriculum"
+            title="What needs your attention?"
+            description="Start with a blocker, continue your latest module, or create a programme. Supporting reports stay out of the way until you need them."
+            icon="ri-book-open-line"
+            footer={<div className="mt-3">{!loading && <span className={`inline-flex rounded-full px-3 py-1 text-[10px] font-semibold ${openIssueCount ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>{openIssueCount ? `${openIssueCount} open actions` : 'Everything looks clear'}</span>}</div>}
+            actions={              <div className="flex max-w-full flex-wrap gap-2">
+                <Link to="/curriculum/programmes?create=programme" className="inline-flex h-10 min-h-10 min-w-0 items-center justify-center gap-2 rounded-xl bg-[#b27715] px-3 py-2 text-center text-[12px] font-extrabold leading-4 text-white shadow-[0_8px_18px_rgba(178,119,21,0.3)] ring-1 ring-[#b27715]/30 transition-all duration-200 hover:bg-[#965f0d] hover:shadow-[0_10px_24px_rgba(178,119,21,0.4)] focus:outline-none focus:ring-2 focus:ring-[#b27715] focus:ring-offset-2 active:translate-y-px lg:whitespace-nowrap"><AppIcon className="ri-add-circle-line shrink-0 text-lg" />Create programme</Link>
+                <Link to="/curriculum/module-builder" className="curriculum-home-continue-button inline-flex h-10 min-h-10 min-w-0 items-center justify-center gap-2 rounded-xl border border-primary-200/70 bg-white/80 px-3 py-2 text-center text-[12px] font-bold leading-4 text-primary-800 transition-all duration-200 hover:border-primary-300 hover:bg-white hover:text-primary-900 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2 active:translate-y-px lg:whitespace-nowrap"><AppIcon className="ri-edit-box-line shrink-0 text-lg" />Continue authoring</Link>
+                <button type="button" onClick={() => setGuideOpen(true)} className="inline-flex h-10 min-h-10 min-w-0 items-center justify-center gap-2 rounded-xl border border-primary-300/70 bg-primary-50/85 px-3 py-2 text-center text-[12px] font-bold leading-4 text-primary-800 transition-all duration-200 hover:border-primary-400 hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2 active:translate-y-px lg:whitespace-nowrap"><AppIcon className="ri-road-map-line shrink-0 text-lg" />How to build a programme</button>
+              </div>}
+          />
 
           {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[12px] font-semibold text-red-700">Curriculum data could not be refreshed: {error}</div>}
 
@@ -216,7 +208,7 @@ export default function CurriculumStudio() {
             <WorkflowCard step="3" title="Check quality" detail="Resolve KSB and readiness gaps before learners depend on the content." href="/curriculum/quality" icon="ri-shield-check-line" />
           </section>
         </div>
-      </main>
+      </PageContainer>
       <CurriculumGuideModal open={guideOpen} onClose={() => setGuideOpen(false)} />
     </WorkspaceShell>
   );
@@ -328,7 +320,12 @@ function CurriculumGuideModal({ open, onClose }: { open: boolean; onClose: () =>
 }
 
 function SummaryCard({ label, value, detail, href, icon, loading, warning = false }: { label: string; value: number; detail: string; href: string; icon: string; loading: boolean; warning?: boolean }) {
-  return <Link to={href} className={`group flex min-h-[88px] items-center gap-3 rounded-[14px] border border-foreground-200/75 bg-background-50 px-4 py-3 shadow-[0_5px_16px_-12px_rgba(31,14,59,0.28)] transition-all duration-200 hover:border-primary-200 hover:shadow-[0_10px_22px_-14px_rgba(68,30,115,0.3)] focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2 ${warning ? 'curriculum-summary-attention-card' : ''}`}><span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${warning ? 'bg-amber-50 text-amber-700' : 'bg-primary-50 text-primary-700'}`}><AppIcon className={`${icon} text-lg`} /></span><span className="min-w-0 flex-1"><span className="block text-[10px] font-extrabold uppercase tracking-[0.08em] text-foreground-400">{label}</span><span className="mt-1 block font-heading text-2xl font-bold leading-none text-foreground-950">{loading ? '—' : value}</span><span className="mt-1 block truncate text-[11px] leading-4 text-foreground-500">{detail}</span></span><AppIcon className="ri-arrow-right-s-line shrink-0 text-foreground-300 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-primary-600" /></Link>;
+  return (
+    <Link to={href} className="card-premium flex min-h-[88px] items-center rounded-xl border border-foreground-200/60 bg-background-50 px-4 py-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300">
+      <WorkspaceMetricContent label={label} value={loading ? '—' : value} note={detail} icon={icon}
+        iconClassName={warning ? '!bg-amber-50 !text-amber-700' : ''} />
+    </Link>
+  );
 }
 
 function AttentionRow({ issue }: { issue: AttentionIssue }) {

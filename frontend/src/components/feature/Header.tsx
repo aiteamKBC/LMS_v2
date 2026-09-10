@@ -1,21 +1,27 @@
-import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { Moon, Sun } from 'lucide-react';
-import { Menu } from 'lucide-react';
+import { LogOut, Menu } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { apiForgotPassword } from '@/api/auth';
+// Explicit rather than auto-imported: unplugin-auto-import does not run under
+// vitest, so an auto-imported AppIcon makes this component untestable.
+import { AppIcon } from '@/components/feature/AppIcon';
 import { useTheme } from '@/hooks/useTheme';
 import { BrandLockup } from '@/components/BrandLockup';
 import { WorkspaceSwitcher } from '@/components/feature/WorkspaceSwitcher';
 
 interface HeaderProps {
   pageTitle: string;
+  pageIcon?: ReactNode;
   pageSubtitle?: string;
   onOpenSearch: () => void;
   userName?: string;
   onToggleMobileSidebar?: () => void;
   mobileSidebarOpen?: boolean;
   role?: string;
+  workspaceLabel?: string;
 }
 
 /** "Demo Admin" -> "DA". A single word falls back to its first two letters. */
@@ -158,7 +164,7 @@ export function SignOutConfirmModal({
 }
 
 // Notification sound
-export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, role }: HeaderProps) {
+export function Header({ pageTitle, pageIcon, pageSubtitle, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, role, workspaceLabel }: HeaderProps) {
   const { auth, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   // Profile is the only dropdown left in the header, so the state that used to
@@ -167,9 +173,34 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
   const [profileOpen, setProfileOpen] = useState(false);
   const [signOutOpen, setSignOutOpen] = useState(false);
   const [accessibilityOpen, setAccessibilityOpen] = useState(false);
+  // Sending the reset email is an action with an outcome, so the item reports
+  // it in place rather than closing the menu and leaving the person guessing
+  // whether anything happened.
+  const [resetState, setResetState] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
+  const [resetError, setResetError] = useState('');
   const [monochrome, setMonochrome] = useState(readMonochromePreference);
 
   const profileRef = useRef<HTMLDivElement>(null);
+
+  /** Email this person a password-reset link.
+   *
+   * Uses the same endpoint the sign-in page's "Forgot password?" uses, so there
+   * is one reset flow rather than a second one that could drift. That endpoint
+   * deliberately does not disclose whether an account exists, and its uniform
+   * message is what gets shown back.
+   */
+  async function sendPasswordReset(address: string) {
+    if (!address || resetState === 'sending') return;
+    setResetState('sending');
+    setResetError('');
+    try {
+      await apiForgotPassword(address);
+      setResetState('sent');
+    } catch (error) {
+      setResetState('failed');
+      setResetError(error instanceof Error ? error.message : 'Could not send the email.');
+    }
+  }
 
   // Black-and-white mode is deliberately scoped to Light Mode. The preference
   // is kept while Dark Mode is active so returning to Light Mode restores the
@@ -222,9 +253,8 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
 
   return (
     <>
-    {/* Height and border deliberately match the sidebar's brand row, so the two
-        read as one continuous bar across the top of the workspace. */}
-    <header className={`kbc-workspace-topbar workspace-topbar flex shrink-0 items-center gap-2 border-b border-foreground-100 bg-background-50 px-2 sm:px-3 md:gap-3 md:px-4 ${role === 'admin' ? 'h-[60px]' : role === 'curriculum' ? 'h-[70px]' : 'h-14'}`}>
+    {/* Every workspace shares the same frame as its icon rail. */}
+    <header className="kbc-workspace-topbar workspace-topbar mx-2 mb-2 mt-2 flex h-16 shrink-0 items-center gap-2 rounded-[20px] border-b border-foreground-100 bg-background-50 px-2 sm:px-3 md:gap-3 md:px-4 lg:ml-0 lg:mr-3 lg:mt-3 lg:gap-4 lg:px-5 [&_.kbc-workspace-switcher-button]:h-10 [&_.kbc-workspace-switcher-button]:gap-2.5 [&_.kbc-workspace-switcher-button]:px-3 [&_.kbc-workspace-switcher-button]:focus-visible:outline-none [&_.kbc-workspace-switcher-button]:focus-visible:ring-2 [&_.kbc-workspace-switcher-button]:focus-visible:ring-white/80">
       {/* Labelled navigation controls, with the action matching the screen size. */}
       {onToggleMobileSidebar && (
         <div className="shrink-0 lg:hidden">
@@ -243,18 +273,23 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
       {/* Provider logo — below lg only. From lg up the sidebar carries the
           brand, and showing it twice was the duplication that read as clutter. */}
       <Link to="/" className="flex shrink-0 lg:hidden" aria-label="Kent Business College home">
-        <BrandLockup size="compact" />
+        <BrandLockup size="compact" className="max-w-16 sm:max-w-none" />
       </Link>
 
       {/* Where the page says what it is. These props were being passed by every
           page and thrown away, which is what left the bar looking empty. */}
-      <div className={`hidden min-w-0 lg:block ${role === 'admin' ? 'w-[22rem] shrink-0' : 'flex-1'}`}>
+      <div className="hidden min-w-0 flex-1 lg:block">
         <div className="flex min-w-0 items-center gap-3">
-          <p className="kbc-topbar-title truncate font-heading text-[14px] font-bold leading-tight text-foreground-900">{pageTitle}</p>
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 text-white ring-1 ring-inset ring-white/10" aria-hidden="true">
+            {pageIcon ?? <AppIcon className="ri-dashboard-line h-5 w-5" />}
+          </span>
+          <div className="min-w-0">
+            <p className="kbc-topbar-title truncate font-heading text-[15px] font-bold leading-tight tracking-tight text-foreground-900">{pageTitle}</p>
+            {pageSubtitle && (
+              <p className="kbc-topbar-subtitle mt-1 truncate text-[11.5px] leading-tight text-foreground-400">{pageSubtitle}</p>
+            )}
+          </div>
         </div>
-        {role !== 'admin' && pageSubtitle && (
-          <p className="kbc-topbar-subtitle truncate text-[11.5px] leading-tight text-foreground-400">{pageSubtitle}</p>
-        )}
       </div>
 
       {/* Below lg the title has no room, so the actions simply push right. */}
@@ -267,22 +302,22 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
           administrators can return to the workspace list from any page. */}
       <WorkspaceSwitcher />
 
-      {/* Profile — kept: it is the only route to Sign Out. */}
-      <div className="flex items-center gap-0.5">
+      {/* Profile and its existing account actions. */}
+      <div className="flex shrink-0 items-center gap-0.5 lg:border-l lg:border-white/15 lg:pl-4">
         <div className="relative" ref={profileRef}>
           <button
             onClick={() => { closeOthers('profile'); setProfileOpen(!profileOpen); }}
             aria-haspopup="menu"
             aria-expanded={profileOpen}
             aria-label="Account menu"
-            className={`kbc-topbar-profile flex cursor-pointer items-center gap-1.5 rounded-full p-1 ring-1 transition-smooth sm:pr-2 ${
+            className={`kbc-topbar-profile flex min-h-10 cursor-pointer items-center gap-2.5 rounded-xl p-1 ring-1 transition-smooth focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 sm:pr-2 ${
               profileOpen
                 ? 'bg-primary-50 ring-primary-200'
                 : 'ring-transparent hover:bg-primary-50/60 hover:ring-primary-100'
             }`}
           >
-            <AccountAvatar initials={initials} className="h-7 w-7 shadow-sm shadow-primary-900/25" />
-            {role === 'admin' && <span className="kbc-topbar-user-name hidden max-w-[5rem] truncate text-[11px] font-semibold text-white xl:inline">Super Admin</span>}
+            <AccountAvatar initials={initials} className="h-8 w-8 shadow-sm shadow-primary-900/25" />
+            <span className="kbc-topbar-user-name hidden max-w-[8rem] truncate text-xs font-semibold text-white xl:inline">{workspaceLabel || roleLabel || displayName}</span>
             <AppIcon
               className={`ri-arrow-down-s-line hidden text-xs text-foreground-400 transition-transform duration-200 sm:inline ${profileOpen ? 'rotate-180' : ''}`}
             ></AppIcon>
@@ -375,6 +410,47 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
                   </div>
                 )}
 
+                {/* Reset by email rather than in place: the person may not
+                    remember the current password, and the emailed link is the
+                    one flow that proves they still control the address. */}
+                {email && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={resetState === 'sending' || resetState === 'sent'}
+                    onClick={() => void sendPasswordReset(email)}
+                    className="group flex w-full cursor-pointer items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-smooth hover:bg-background-100/70 focus:outline-none focus-visible:bg-background-100/70 disabled:cursor-default"
+                  >
+                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-smooth ${
+                      resetState === 'sent'
+                        ? 'bg-emerald-100 text-emerald-600'
+                        : 'bg-background-100 text-foreground-400 group-hover:bg-primary-100 group-hover:text-primary-600'
+                    }`}>
+                      <AppIcon className={`text-base ${
+                        resetState === 'sending' ? 'ri-loader-4-line animate-spin'
+                          : resetState === 'sent' ? 'ri-mail-check-line'
+                          : 'ri-lock-password-line'
+                      }`}></AppIcon>
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-[0.8125rem] font-semibold text-foreground-700 transition-smooth group-hover:text-foreground-900">
+                        {resetState === 'sending' ? 'Sending…'
+                          : resetState === 'sent' ? 'Reset email sent'
+                          : 'Reset password'}
+                      </span>
+                      {/* The address is named: somebody with two accounts needs
+                          to know which inbox to open. */}
+                      <span className="block truncate text-[0.6875rem] text-foreground-400">
+                        {resetState === 'sent'
+                          ? `Check ${email} for the link`
+                          : resetState === 'failed'
+                            ? resetError
+                            : `We will email a link to ${email}`}
+                      </span>
+                    </span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   role="menuitem"
@@ -393,6 +469,19 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
         </div>
       </div>
     </header>
+
+    {role && createPortal(
+      <button
+        type="button"
+        onClick={() => { setProfileOpen(false); setSignOutOpen(true); }}
+        aria-label="Sign out"
+        title="Sign out"
+        className="fixed bottom-8 left-8 z-50 hidden h-12 w-12 items-center justify-center rounded-xl bg-white/10 text-white/80 transition-colors hover:bg-white/20 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 lg:flex"
+      >
+        <LogOut className="h-5 w-5" aria-hidden="true" />
+      </button>,
+      document.body,
+    )}
 
     {/* Sign Out Confirmation Modal — portalled to the body so no ancestor of the
         header can clip it or outrank it in the stacking order. */}

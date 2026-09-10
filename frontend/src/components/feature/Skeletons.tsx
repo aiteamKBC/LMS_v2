@@ -14,7 +14,8 @@
 // not action feedback. A button that has been clicked keeps its spinner, because
 // what the reader is waiting for there is an outcome, not a layout.
 // ============================================================================
-import { SIDEBAR_RAIL_WIDTH } from './Sidebar';
+import { useState } from 'react';
+import { SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH, SIDEBAR_CONTENT_GAP } from './Sidebar';
 
 interface SkeletonProps {
   className?: string;
@@ -283,12 +284,19 @@ export function HeroSkeleton() {
  * away from the real sidebar's.
  */
 export function PageSkeleton() {
+  const [sidebarExpanded] = useState(() => {
+    try {
+      return localStorage.getItem('kbc_sidebar_pinned') === 'true';
+    } catch {
+      return false;
+    }
+  });
   return (
     <div className="flex h-screen overflow-hidden bg-background-200" aria-busy="true" aria-label="Loading page">
       {/* Sidebar rail — hidden below md, matching the real off-canvas drawer. */}
       <div
-        className="hidden md:block shrink-0 border-r border-background-300/40 bg-background-100/40 p-4 space-y-4"
-        style={{ width: SIDEBAR_RAIL_WIDTH }}
+        className="hidden lg:block shrink-0 my-3 ml-3 mr-3 rounded-[24px] bg-brand-deep p-4 space-y-4"
+        style={{ width: sidebarExpanded ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH, marginInline: SIDEBAR_CONTENT_GAP / 2 }}
       >
         <SkeletonBlock className="h-9 w-9 rounded-xl mx-auto" />
         <div className="space-y-3 pt-2">
@@ -300,7 +308,7 @@ export function PageSkeleton() {
 
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {/* Header — same height, border and surface as Header.tsx. */}
-        <div className="flex h-14 shrink-0 items-center gap-3 border-b border-foreground-100 bg-background-50 px-2 sm:px-3 md:px-4">
+        <div className="mx-2 mb-2 mt-2 flex h-16 shrink-0 items-center gap-3 rounded-[20px] border-b border-foreground-100 bg-background-50 px-2 sm:px-3 md:px-4 lg:ml-0 lg:mr-3 lg:mt-3 lg:px-5">
           <div className="min-w-0 flex-1 space-y-2">
             <SkeletonBlock className="h-3 w-48 max-w-[45%]" />
             <SkeletonBlock className="h-2 w-64 max-w-[60%]" />
@@ -310,7 +318,7 @@ export function PageSkeleton() {
         </div>
 
         {/* Breadcrumb strip — same height, border and surface as the shell's. */}
-        <div className="flex h-8 shrink-0 items-center border-b border-background-300/40 bg-background-200 px-3 md:px-5">
+        <div className="mx-2 flex h-8 shrink-0 items-center rounded-xl border-b border-background-300/40 bg-background-200 px-3 md:px-5 lg:ml-0 lg:mr-3">
           <SkeletonBlock className="h-2 w-40" />
         </div>
 

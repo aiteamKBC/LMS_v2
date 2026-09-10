@@ -1,0 +1,187 @@
+/* Super Admin is the shared visual reference. Keep these rules scoped to the
+   shell so legacy workspace styles cannot restore oversized gradient heroes. */
+/* Scrolling stays enabled by each panel's overflow rules; only the visible
+   scrollbar and its reserved gutter are removed, across all workspaces. */
+:global(.dashboard-theme[data-workspace-role]).shell,
+:global(.dashboard-theme[data-workspace-role]).shell * {
+  scrollbar-width: none !important;
+  scrollbar-gutter: auto !important;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell::-webkit-scrollbar,
+:global(.dashboard-theme[data-workspace-role]).shell *::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) {
+  padding: 0;
+  background-image: none !important;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) :global(.page-container) {
+  max-width: none;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) :is(.hero, :global(.workspace-page-hero), :global(.page-header), :global(.curriculum-department-hero)) {
+  min-height: 0;
+  border: 1px solid oklch(var(--primary-200) / 0.6) !important;
+  border-radius: 1rem !important;
+  background: oklch(var(--primary-50) / 0.6) !important;
+  box-shadow: none !important;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) :is(.hero, :global(.workspace-page-hero), :global(.page-header), :global(.curriculum-department-hero)) :is(h1, h2, h3) {
+  color: oklch(var(--primary-800)) !important;
+  font-size: clamp(1.25rem, 1.5vw, 1.5rem);
+  font-weight: 600;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) .hero :global(.workspace-hero-description) {
+  color: oklch(var(--foreground-500)) !important;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) :is(:global(.workspace-page-hero), :global(.page-header), :global(.curriculum-department-hero)) p {
+  color: oklch(var(--foreground-500)) !important;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) .hero :global(.workspace-hero-eyebrow) {
+  color: oklch(var(--primary-600)) !important;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) .hero :global(.workspace-hero-banner__icon) {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 0.75rem;
+  background: oklch(var(--primary-100) / 0.6) !important;
+  color: oklch(var(--primary-600)) !important;
+  box-shadow: 0 4px 8px -5px oklch(var(--primary-900) / 0.2) !important;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) .hero :global(.workspace-hero-banner__icon) > svg {
+  color: inherit !important;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) .hero :global(.workspace-hero-decoration) {
+  display: none;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) :is(:global(.ui-panel), :global(.card-premium), :global(.ui-metric-card), :global(.coach-metric-card)),
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) :is(section, article, div)[class*="bg-background-50"][class*="rounded"] {
+  border: 1px solid var(--kbc-border) !important;
+  border-radius: 0.75rem !important;
+  background: var(--kbc-surface) !important;
+  box-shadow: 0 1px 2px oklch(var(--primary-900) / 0.04), 0 8px 18px -16px oklch(var(--primary-900) / 0.2) !important;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) :is(:global(.coach-metric-card), :global(.workspace-hero-metric))::before {
+  display: none;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.coach-dashboard) :global(.ui-metric-card) {
+  display: flex;
+  align-items: center;
+  min-height: 4.75rem;
+  padding: 0.75rem 1rem !important;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) .hero :global(.workspace-hero-metric) {
+  min-width: 6rem;
+  min-height: 0;
+  padding: 0.75rem 1rem !important;
+  border: 1px solid oklch(var(--primary-200) / 0.4) !important;
+  background: oklch(var(--primary-100) / 0.4) !important;
+  box-shadow: none !important;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) .hero :global(.workspace-hero-metric) p:last-child {
+  color: oklch(var(--primary-800)) !important;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) :global(.section-header) h2 {
+  font-size: 1rem;
+  letter-spacing: -0.02em;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) h2 { font-size: 1rem; }
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) h3 { font-size: 0.875rem; }
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) :global(.ui-empty-state) {
+  padding-block: 1.25rem;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) table :is(th, td) {
+  border-radius: 0 !important;
+  vertical-align: middle;
+}
+
+/* The embedded audit systems retain their tools and tables, using the same
+   page gutters, white panels and typography as the surrounding workspaces. */
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-audit-content) main {
+  max-width: none;
+  padding: 0.75rem;
+}
+
+:global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-audit-content) :global(.shadow-panel) {
+  border: 1px solid var(--kbc-border);
+  border-radius: 0.75rem;
+  background: var(--kbc-surface);
+  box-shadow: 0 1px 2px oklch(var(--primary-900) / 0.04);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 1.25rem;
+  padding: 0.75rem;
+}
+
+.content { min-width: 0; }
+.content > * + * { margin-top: 0.75rem; }
+
+.overview {
+  min-width: 0;
+  border: 1px solid var(--kbc-border);
+  border-radius: 1rem;
+  background: var(--kbc-surface);
+  padding: 1.25rem;
+}
+
+@media (min-width: 768px) {
+  .layout { padding: 1.5rem; }
+  .content > * + * { margin-top: 1rem; }
+  :global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-audit-content) main { padding: 1.5rem; }
+}
+
+@media (min-width: 1280px) {
+  :global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main):has(> .withOverview) {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  :global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main):has(> .withOverview) > :not(.withOverview) { flex-shrink: 0; }
+  .withOverview {
+    flex: 1;
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr) 18rem;
+    grid-template-rows: minmax(0, 1fr);
+    overflow: hidden;
+  }
+  .withOverview > .content,
+  .overview {
+    max-height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .withOverview > .content { padding: 0 0.25rem 0.5rem; }
+  .withOverview > .overview { align-self: stretch; }
+}
+
+@media (min-width: 1536px) {
+  .withOverview { grid-template-columns: minmax(0, 1fr) 20rem; }
+}

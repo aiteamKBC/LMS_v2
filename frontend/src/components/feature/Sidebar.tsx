@@ -42,6 +42,7 @@ import {
   Link2,
   LockKeyhole,
   MessageSquare,
+  Menu,
   PanelLeftClose,
   PanelLeftOpen,
   Phone,
@@ -71,10 +72,9 @@ import { useAuth } from '@/hooks/useAuth';
 // ============================================================================
 // Workspace navigation.
 //
-// Two widths, one renderer. The rail (RAIL_WIDTH) shows an icon above its
-// label, so nothing is ever icon-only guesswork; the expanded panel
-// (EXPANDED_WIDTH) shows full rows and is used for hover-preview, the pinned
-// state and the mobile drawer alike.
+// Every workspace uses the same desktop icon rail and secondary panel. The
+// current role supplies its own permission-filtered destinations. On mobile,
+// those destinations appear as full rows in an off-canvas drawer.
 //
 // Presentation lives here in Tailwind classes keyed to the theme tokens —
 // there is deliberately no accompanying stylesheet. The `kbc-sb-*` class names
@@ -84,8 +84,10 @@ import { useAuth } from '@/hooks/useAuth';
 
 /** Rail and expanded widths. WorkspaceShell reserves the same numbers, so they
  *  are exported rather than duplicated as magic numbers in two files. */
-export const SIDEBAR_RAIL_WIDTH = 92;
-export const SIDEBAR_EXPANDED_WIDTH = 268;
+export const SIDEBAR_RAIL_WIDTH = 88;
+export const SIDEBAR_EXPANDED_WIDTH = 338;
+/** Outer inset plus the gap between navigation and page content. */
+export const SIDEBAR_CONTENT_GAP = 24;
 
 export interface SidebarNavItem {
   id: string;
@@ -118,7 +120,7 @@ interface SidebarProps {
   navItems: SidebarNavItem[];
   userName?: string;
   userRole?: string;
-  /** Pinned open: the panel stays expanded and the shell makes room for it. */
+  /** Secondary panel visibility; the shell reserves its expanded width. */
   pinned?: boolean;
   onPinChange?: (pinned: boolean) => void;
   mobileOpen: boolean;
@@ -134,6 +136,7 @@ interface SidebarProps {
 function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   const key = `${id} ${label} ${sourceIcon}`.toLowerCase();
 
+  if (/clipboard/.test(sourceIcon.toLowerCase())) return ClipboardList;
   if (/dashboard|overview|\bhome\b/.test(key)) return LayoutDashboard;
   // Curriculum workspace groups get distinct icons so the sidebar is scannable.
   if (/programme\s*-?\s*design|programme-design/.test(key)) return Presentation;
@@ -203,7 +206,7 @@ function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   return Circle;
 }
 
-function SidebarIcon({ id, label, sourceIcon, size = 18, className }: {
+export function SidebarIcon({ id, label, sourceIcon, size = 18, className }: {
   id?: string;
   label: string;
   sourceIcon?: string;
@@ -252,8 +255,10 @@ export function Sidebar({
   onHoverChange,
 }: SidebarProps) {
   const location = useLocation();
+  const secondaryNavigationId = `${role}-secondary-navigation`;
   const { canSeeNavItem } = useAuth();
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+  const [previewId, setPreviewId] = useState<string | null>(null);
   const [isHovering, setIsHovering] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
     try {
@@ -272,7 +277,8 @@ export function Sidebar({
   // Close dropdown on route change
   useEffect(() => {
     setActiveDropdown(null);
-  }, [location.pathname]);
+    setPreviewId(null);
+  }, [role, location.pathname, location.search]);
 
   // Click outside to close dropdown
   useEffect(() => {
@@ -396,6 +402,17 @@ export function Sidebar({
   // the pointer leaves a sidebar the user deliberately kept open.
   const desktopExpanded = pinned || isHovering;
 
+  // The workspace preview follows hover/focus without changing the current route.
+  const previewItem = filteredNavItems.find(item => item.id === previewId)
+    ?? filteredNavItems.find(item => isActive(item.href, item.matchPaths)
+      || item.children?.some(child => isActive(child.href, child.matchPaths)))
+    ?? filteredNavItems[0];
+
+  const openPreview = (id: string) => {
+    setPreviewId(id);
+    onPinChange?.(true);
+  };
+
   // Rail and expanded render different components for a grouped item (RailGroup's
   // flyout vs ExpandedGroup's inline disclosure), so a mode switch unmounts
   // whichever one was showing. If a flyout's close was still pending when that
@@ -481,18 +498,87 @@ export function Sidebar({
 
   return (
     <>
-      {/* Desktop — a labelled rail that previews the full panel on hover, or
-          stays expanded when pinned. Only the hover preview overlays content;
-          the pinned width is reserved by WorkspaceShell. */}
-      <div
-        className="fixed left-0 top-0 z-40 hidden h-screen overflow-hidden shadow-sm transition-[width] duration-300 ease-out lg:block"
-        data-workspace-role={role}
-        style={{ width: desktopExpanded ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH }}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-      >
-        {desktopExpanded ? panel('expanded', { showPin: true }) : panel('rail')}
-      </div>
+      <aside
+          aria-label={`${roleLabel} sidebar`}
+          className="fixed bottom-3 left-3 top-3 z-40 hidden overflow-hidden rounded-[24px] shadow-sm transition-[width] duration-300 ease-in-out motion-reduce:transition-none lg:flex"
+          data-workspace-role={role}
+          style={{ width: pinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH }}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={() => {
+            handleMouseLeave();
+            onPinChange?.(false);
+          }}
+        >
+          <div className="flex h-full w-[88px] shrink-0 flex-col items-center border-r border-white/10 bg-brand-deep pb-24 pt-5">
+            <img
+              src="https://jokdxsdbxorzciulkdyl.supabase.co/storage/v1/object/public/images/16480272afc94729b2911a62d1bbf85d.webp"
+              alt="KENT logo"
+              className="h-10 w-10 shrink-0 rounded-xl object-contain"
+            />
+            {onPinChange && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (!pinned) setPreviewId(null);
+                  onPinChange(!pinned);
+                }}
+                aria-label={pinned ? 'Collapse navigation' : 'Expand navigation'}
+                aria-expanded={pinned}
+                aria-controls={secondaryNavigationId}
+                title={pinned ? 'Collapse navigation' : 'Expand navigation'}
+                className="mt-5 flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-white/90 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/80"
+              >
+                <Menu className="h-6 w-6" aria-hidden="true" />
+              </button>
+            )}
+            <nav aria-label={`${roleLabel} primary navigation`} className="mt-7 min-h-0 w-full flex-1 space-y-4 overflow-y-auto px-5 [scrollbar-width:none]">
+              {filteredNavItems.map(item => (
+                <div key={item.id} onMouseEnter={() => setPreviewId(item.id)} onFocus={() => setPreviewId(item.id)}>
+                {hasChildren(item) ? (
+                  <ExpandedGroup
+                    item={item}
+                    isActive={isActive}
+                    isExpanded={pinned && previewItem?.id === item.id}
+                    onToggle={() => openPreview(item.id)}
+                    onNavigate={onCloseMobile}
+                    presentation="rail"
+                  />
+                ) : (
+                  <ExpandedLink item={item} isActive={isActive} onNavigate={() => { openPreview(item.id); onCloseMobile(); }} presentation="rail" />
+                )}
+                </div>
+              ))}
+            </nav>
+          </div>
+          <div
+            id={secondaryNavigationId}
+            aria-hidden={!pinned}
+            inert={!pinned}
+            className={`flex h-full shrink-0 flex-col overflow-hidden bg-[color-mix(in_srgb,var(--kbc-primary)_90%,transparent)] text-white backdrop-blur-md transition-[width,opacity,visibility] duration-300 ease-in-out motion-reduce:transition-none ${pinned ? 'visible w-[250px] opacity-100' : 'invisible w-0 opacity-0'}`}
+          >
+            <div className="w-[250px] shrink-0 px-6 pb-6 pt-7">
+              <p className="font-heading text-xl font-bold tracking-tight">{roleLabel}</p>
+              <p className="mt-1 text-[11px] text-white/65">Kent Business College</p>
+            </div>
+            <nav aria-label={`${roleLabel} secondary navigation`} className="min-h-0 w-[250px] flex-1 space-y-7 overflow-y-auto px-5 pb-8 [scrollbar-width:thin]">
+              {previewItem && (
+                hasChildren(previewItem) ? (
+                  <ExpandedGroup
+                    key={previewItem.id}
+                    item={previewItem}
+                    isActive={isActive}
+                    isExpanded
+                    onToggle={() => setPreviewId(previewItem.id)}
+                    onNavigate={onCloseMobile}
+                    presentation="tiles"
+                  />
+                ) : (
+                  <ExpandedLink item={previewItem} isActive={isActive} onNavigate={onCloseMobile} presentation="tile" />
+                )
+              )}
+            </nav>
+          </div>
+        </aside>
 
       {/* Mobile overlay */}
       {mobileOpen && (
@@ -504,6 +590,9 @@ export function Sidebar({
 
       {/* Mobile drawer — the same expanded panel */}
       <div
+        aria-label={`${roleLabel} mobile navigation`}
+        aria-hidden={!mobileOpen}
+        inert={!mobileOpen}
         className={`fixed left-0 top-0 z-50 h-screen w-[268px] shadow-xl transition-transform duration-300 ease-out lg:hidden ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
         {panel('expanded')}
@@ -605,11 +694,12 @@ function RailGroup({ item, isActive, isDropdownOpen, onOpen, onClose }: {
    and the mobile drawer
    ═══════════════════════════════════════════════════════ */
 
-function ExpandedLink({ item, isActive, onNavigate, compact }: {
+function ExpandedLink({ item, isActive, onNavigate, compact, presentation }: {
   item: SidebarNavItem;
   isActive: (href?: string, matchPaths?: string[]) => boolean;
   onNavigate?: () => void;
   compact?: boolean;
+  presentation?: 'rail' | 'tile';
 }) {
   const active = isActive(item.href, item.matchPaths);
   return (
@@ -617,14 +707,15 @@ function ExpandedLink({ item, isActive, onNavigate, compact }: {
       to={item.href ?? '#'}
       aria-current={active ? 'page' : undefined}
       onClick={onNavigate}
-      className={`${ROW_BASE} ${active ? ROW_ACTIVE : ROW_IDLE} gap-2.5 px-2.5 ${compact ? 'py-1.5 text-[12px]' : 'py-2 text-[13px]'}`}
+      title={presentation === 'rail' ? item.label : undefined}
+      className={presentation === 'rail' ? `relative flex h-12 w-12 items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 ${active ? 'bg-brand-accent text-white shadow-sm' : 'bg-white/10 text-white/75 hover:bg-white/20 hover:text-white'}` : presentation === 'tile' ? 'group flex w-full flex-col items-center gap-3 rounded-xl px-3 py-4 text-center text-sm font-semibold text-white/90 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80' : `${ROW_BASE} ${active ? ROW_ACTIVE : ROW_IDLE} gap-2.5 px-2.5 ${compact ? 'py-1.5 text-[12px]' : 'py-2 text-[13px]'}`}
     >
-      {active && <ActiveMarker />}
-      <span className="kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center">
-        <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={compact ? 16 : 18} />
+      {active && <span className={presentation ? 'hidden' : 'contents'}><ActiveMarker /></span>}
+      <span className={presentation === 'rail' ? 'flex h-5 w-5 items-center justify-center' : presentation === 'tile' ? `flex h-12 w-12 items-center justify-center rounded-xl ${active ? 'bg-white text-brand' : 'bg-white/15 text-white group-hover:bg-white/25'}` : 'kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center'}>
+        <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={compact ? 16 : 18} className={presentation ? 'h-5 w-5' : undefined} />
       </span>
-      <span className="min-w-0 flex-1 truncate">{item.label}</span>
-      <span className="flex shrink-0 items-center gap-1.5">
+      <span className={presentation === 'rail' ? 'sr-only' : presentation === 'tile' ? 'w-full break-words' : 'min-w-0 flex-1 truncate'}>{item.label}</span>
+      <span className={presentation === 'rail' ? 'absolute -right-1 -top-1 flex items-center gap-1' : 'flex shrink-0 items-center gap-1.5'}>
         {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
         {item.statusDot && <StatusDot color={item.statusDot} />}
         {item.badge ? <NavBadge count={item.badge} /> : null}
@@ -638,29 +729,37 @@ function ExpandedLink({ item, isActive, onNavigate, compact }: {
  * sessions); hovering opens the same flyout the rail uses, so a pointer user
  * can reach a child without disturbing their saved disclosure state.
  */
-function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate }: {
+function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, presentation }: {
   item: SidebarNavItem;
   isActive: (href?: string, matchPaths?: string[]) => boolean;
   isExpanded: boolean;
   onToggle: () => void;
   onNavigate?: () => void;
+  presentation?: 'rail' | 'tiles';
 }) {
   const anyChildActive = item.children?.some(child => isActive(child.href, child.matchPaths)) ?? false;
 
   return (
     <div>
+      {presentation === 'tiles' ? (
+        <p className="mb-5 flex w-full items-center justify-center rounded-xl border border-white/30 bg-white/15 px-3 py-2 text-center text-[13px] font-bold leading-snug text-white shadow-sm">{item.label}</p>
+      ) : (
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={isExpanded}
-        className={`${ROW_BASE} ${anyChildActive && !isExpanded ? ROW_ACTIVE : ROW_IDLE} w-full cursor-pointer gap-2.5 px-2.5 py-2 text-[13px]`}
+        aria-current={presentation === 'rail' && anyChildActive ? 'true' : undefined}
+        title={presentation === 'rail' ? item.label : undefined}
+        className={presentation === 'rail'
+          ? `relative flex h-12 w-12 cursor-pointer items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 ${anyChildActive ? 'bg-brand-accent text-white shadow-sm' : 'bg-white/10 text-white/75 hover:bg-white/20 hover:text-white'}`
+          : `${ROW_BASE} ${anyChildActive && !isExpanded ? ROW_ACTIVE : ROW_IDLE} w-full cursor-pointer gap-2.5 px-2.5 py-2 text-[13px]`}
       >
-        {anyChildActive && !isExpanded && <ActiveMarker />}
-        <span className="kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center">
-          <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} />
+        {anyChildActive && !isExpanded && <span className={presentation ? 'hidden' : 'contents'}><ActiveMarker /></span>}
+        <span className={presentation === 'rail' ? 'flex h-5 w-5 items-center justify-center' : 'kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center'}>
+          <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} className={presentation === 'rail' ? 'h-5 w-5' : undefined} />
         </span>
-        <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
-        <span className="flex shrink-0 items-center gap-1.5">
+        <span className={presentation === 'rail' ? 'sr-only' : 'min-w-0 flex-1 truncate text-left'}>{item.label}</span>
+        <span className={presentation === 'rail' ? 'sr-only' : 'flex shrink-0 items-center gap-1.5'}>
           {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
           {item.badge ? <NavBadge count={item.badge} /> : null}
           {isExpanded
@@ -668,9 +767,10 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate }: {
             : <ChevronDown size={14} strokeWidth={1.8} className="text-foreground-300" aria-hidden="true" />}
         </span>
       </button>
+      )}
 
-      {isExpanded && item.children && (
-        <div className="ml-[19px] mt-0.5 space-y-0.5 border-l border-foreground-100 pl-2">
+      {presentation !== 'rail' && isExpanded && item.children && (
+        <div className={presentation === 'tiles' ? 'grid grid-cols-2 gap-x-3 gap-y-5' : 'ml-[19px] mt-0.5 space-y-0.5 border-l border-foreground-100 pl-2'}>
           {item.children.map(child => {
             const childActive = isActive(child.href, child.matchPaths);
             return (
@@ -679,12 +779,12 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate }: {
                 to={child.href ?? '#'}
                 aria-current={childActive ? 'page' : undefined}
                 onClick={onNavigate}
-                className={`${ROW_BASE} ${childActive ? ROW_ACTIVE : ROW_IDLE} gap-2 px-2.5 py-1.5 text-[12.5px]`}
+                className={presentation === 'tiles' ? `group flex min-w-0 flex-col items-center gap-2.5 rounded-xl px-1 py-1 text-center text-xs leading-snug transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 ${childActive ? 'font-semibold text-white' : 'text-white/75 hover:text-white'}` : `${ROW_BASE} ${childActive ? ROW_ACTIVE : ROW_IDLE} gap-2 px-2.5 py-1.5 text-[12.5px]`}
               >
-                <span className="kbc-sidebar-icon-well kbc-sidebar-child-icon-well flex h-4 w-4 shrink-0 items-center justify-center">
-                  <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={15} />
+                <span className={presentation === 'tiles' ? `flex h-12 w-12 shrink-0 items-center justify-center rounded-xl transition-colors ${childActive ? 'bg-white text-brand shadow-sm' : 'bg-white/15 text-white/90 group-hover:bg-white/25'}` : 'kbc-sidebar-icon-well kbc-sidebar-child-icon-well flex h-4 w-4 shrink-0 items-center justify-center'}>
+                  <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={15} className={presentation === 'tiles' ? 'h-5 w-5' : undefined} />
                 </span>
-                <span className="min-w-0 flex-1 truncate">{child.label}</span>
+                <span className={presentation === 'tiles' ? 'w-full break-words' : 'min-w-0 flex-1 truncate'}>{child.label}</span>
                 <span className="flex shrink-0 items-center gap-1.5">
                   {child.comingSoon ? <SoonBadge /> : child.tag ? <NavTag label={child.tag} /> : null}
                   {child.statusDot && <StatusDot color={child.statusDot} />}

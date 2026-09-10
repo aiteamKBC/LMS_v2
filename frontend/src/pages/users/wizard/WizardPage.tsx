@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useToast } from '@/hooks/useToast';
+import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { roleNavMap } from '@/mocks/navigation';
 import { fetchEnrolmentBoard, updateEnrolmentUser } from '@/api/enrolmentUsers';
 import { fetchCommercialBoard, updateCommercialBoard } from '@/api/commercialUsers';
 import { WIZARD_STEPS, type EnrolmentBoard } from '../types';
@@ -79,7 +81,7 @@ function WizardInner({ currentIndex }: { currentIndex: number }) {
   );
 }
 
-export default function WizardPage() {
+function WizardPageContent() {
   const { userId = '', stepSlug } = useParams();
   const [search] = useSearchParams();
   const navigate = useNavigate();
@@ -115,7 +117,7 @@ export default function WizardPage() {
 
   if (loading || loadError || !board) {
     return (
-      <div className="min-h-screen bg-background-200 flex items-center justify-center p-6">
+      <div className="min-h-full bg-background-200 flex items-center justify-center p-6">
         <div className="text-center">
           {loading && <p className="text-[13px] text-foreground-400"><AppIcon className="ri-loader-4-line animate-spin mr-2" />Loading enrolment…</p>}
           {!loading && loadError && (
@@ -138,5 +140,15 @@ export default function WizardPage() {
     <WizardProvider userId={userId} isCommercial={isCommercial} board={board} readOnlyLearnerSteps>
       <WizardInner currentIndex={currentIndex} />
     </WizardProvider>
+  );
+}
+
+export default function WizardPage() {
+  const config = roleNavMap.compliance;
+  return (
+    <WorkspaceShell role="compliance" roleLabel={config.label} navItems={config.items}
+      workspaceLabel={config.workspaceLabel} pageTitle="Enrolment Wizard">
+      <WizardPageContent />
+    </WorkspaceShell>
   );
 }

@@ -32,6 +32,7 @@ from django.utils.text import get_valid_filename
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 from django.views.decorators.clickjacking import xframe_options_sameorigin
+from login.permissions import require_role
 
 from learner_api.progress_rules import (
     progress_achievement_status,
@@ -22293,10 +22294,39 @@ def curriculum_module_week_detail(request, module_catalogue_id, week_id):
     return JsonResponse({'deleted': True, 'permanent': False, 'moduleCatalogueId': module_catalogue_id, 'weekId': week_id})
 
 
+@require_role('admin', 'staff')
+def _update_module_cover(request, identifier, payload):
+    """Update artwork without resaving weeks, delivery dates or components."""
+    from learner_api.student_activity import _builder_cover_url
+    image = payload.get('coverImage')
+    if not isinstance(image, str) or len(image) > 4 * 1024 * 1024 + 256:
+        return json_error('Choose an image up to 3 MB.', status=400)
+    image = image.strip()
+    if image and not _builder_cover_url(image):
+        return json_error('Choose a valid module image.', status=400)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute('''UPDATE curriculum.modules SET cover_image_url=%s,updated_at=CURRENT_TIMESTAMP
+                              WHERE module_catalogue_id=%s AND deleted_at IS NULL
+                                AND NOT coalesce(is_programme_deleted,false)
+                              RETURNING module_catalogue_id''', [image, identifier])
+            if not cursor.fetchone():
+                return json_error('Module not found.', status=404)
+    except DatabaseError:
+        return json_error('Could not save the module image. Please try again.', status=503)
+    invalidate_curriculum_cache()
+    return JsonResponse({'updated': True, 'coverImage': image})
+
+
 @csrf_exempt
 def curriculum_module_detail(request, identifier):
     if request.method not in {'PATCH', 'DELETE'}:
         return json_error('Method not allowed.', status=405)
+
+    if request.method == 'PATCH':
+        cover_payload = json_body(request)
+        if isinstance(cover_payload, dict) and set(cover_payload) == {'coverImage'}:
+            return _update_module_cover(request, identifier, cover_payload)
 
     ident = clean_str(identifier)
     if ident.startswith('training-module-'):

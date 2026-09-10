@@ -5,7 +5,7 @@ export type SignatureCaptureMethod = 'draw' | 'upload' | 'import';
 export type MonthState = {
   is_required?: boolean;
   month: string;
-  status: 'needs_review' | 'student_signed' | 'awaiting_coach' | 'ready_to_complete' | 'complete' | 'no_data';
+  status: 'awaiting_signature' | 'needs_review' | 'student_signed' | 'awaiting_coach' | 'ready_to_complete' | 'complete' | 'no_data';
   row_count: number;
   planned_hours: number | string;
   actual_hours: number | string;
