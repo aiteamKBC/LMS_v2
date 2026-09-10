@@ -10,6 +10,7 @@ import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm'
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
+import { ImportedReviewHistory } from '@/pages/learner/reviews/ImportedReviewHistory';
 import {
   activityTimeLabel,
   learningKsbCodes,
@@ -174,6 +175,7 @@ function useMonthlyCoachingData() {
 }
 
 export function MonthlyCoachingListPage() {
+  const myLearner = useMyLearner();
   const { learner, sessions, loading, error } = useMonthlyCoachingData();
   const [page, setPage] = useState(1);
   const pageSize = 10;
@@ -281,6 +283,7 @@ export function MonthlyCoachingListPage() {
             </>
           )}
         </section>
+        <ImportedReviewHistory kind={myLearner.kind} learnerId={myLearner.id} category="monthly-coaching" />
       </main>
     </WorkspaceShell>
   );
