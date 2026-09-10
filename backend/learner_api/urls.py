@@ -99,6 +99,7 @@ urlpatterns = [
     path("certificates/<str:kind>/<int:pk>/", certificates.learner_certificate_status, name="learner-certificate-status"),
     path("certificates/<str:kind>/<int:pk>/issue/", certificates.issue_learner_certificate, name="learner-certificate-issue"),
     path("kbc-lms/all-students-schema/", lms_schema.all_students_schema, name="kbc-lms-all-students-schema"),
+    path('student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/files/<int:attachment_id>/', student_activity.subject_file, name='subject-file'),
     path("media/google-drive/<str:file_id>/", media_proxy.google_drive_media, name="google-drive-media"),
     path("attendance/<str:kind>/<int:learner_id>/", attendance.learner_attendance, name="learner-attendance"),
     path("learners/<int:pk>/coach/", views.learner_coach, name="learner-coach"),

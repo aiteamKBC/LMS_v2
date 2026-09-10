@@ -11,6 +11,11 @@ MONTHS = {name: number for number, names in enumerate((
     ('sep', 'sept', 'september'), ('oct', 'october'), ('nov', 'november'), ('dec', 'december'),
 ), 1) for name in names}
 MONTH = '(?:' + '|'.join(sorted(MONTHS, key=len, reverse=True)) + ')'
+# Owner-designated sections outside the calendar, shared by every learner on the
+# course. Source IDs keep this independent of names, upload dates and progress.
+SECTION_PLACEMENTS = {
+    (125600, '2043'): 'extra_activity',  # Commercial Intelligence, Lec13
+}
 YMD = re.compile(r'(?<!\d)(\d{4})\s*[/.-]\s*(\d{1,2})\s*[/.-]\s*(\d{1,2})(?!\d)')
 DMY = re.compile(r'(?<!\d)(\d{1,2})\s*[/.-]\s*(\d{1,2})\s*[/.-]\s*(\d{4}|\d{2})(?!\d)')
 OVERLAPPING_DMY = re.compile(r'(?=(' + DMY.pattern + r'))')
@@ -30,6 +35,24 @@ def as_date(value):
         return None
 
 
+def apply_section_placement(item, group_id, section_id):
+    placement = SECTION_PLACEMENTS.get((group_id, str(section_id)))
+    if placement:
+        item.update(date=None, month='undated', week_start=None, week_end=None,
+                    date_source=placement, date_needs_review=False)
+    return item
+
+
+def is_introduction_section(title):
+    text = unicodedata.normalize('NFKC', html.unescape(str(title or '')))
+    text = ''.join(char for char in text if unicodedata.category(char) != 'Cf')
+    text = ' '.join(re.sub(r'[:.\-–—]+', ' ', text).casefold().split())
+    # Match a whole section heading, never "Introduction to ..." in a lesson
+    # title. Dated lecture headings retain their calendar placement.
+    return text in {'introduction', 'intro', 'course introduction', 'module introduction',
+                    'introduction session', 'first day introduction'}
+
+
 def activity_schedule(title, stored_date=None, original_created_at=None, *, section_title=None, section_source='section_title'):
     text = unicodedata.normalize('NFKC', html.unescape(str(title or '')))
     text = text.translate(str.maketrans({'–': '-', '—': '-', '−': '-', '\u200b': ''}))
@@ -43,6 +66,10 @@ def activity_schedule(title, stored_date=None, original_created_at=None, *, sect
                 year, month, day = map(int, parts)
             elif order == 'dmy':
                 day, month, year = map(int, parts)
+                # Legacy lecture titles mix UK dates with unambiguous US dates.
+                # Keep day-first for ambiguous values such as 8/9/2026.
+                if month > 12 and 1 <= day <= 12:
+                    day, month = month, day
             elif order == 'named_dmy':
                 day, month, year = int(parts[0]), MONTHS[parts[1].lower()], int(parts[2])
             else:
@@ -71,6 +98,10 @@ def activity_schedule(title, stored_date=None, original_created_at=None, *, sect
     elif PARTIAL.search(text):
         # A cloned upload date cannot safely supply the year missing in a title.
         chosen, source = None, 'partial_title_needs_review'
+    elif is_introduction_section(section_title):
+        # Applies equally to live legacy sections, retained exports and newly
+        # created Module Builder weeks, independently of course/learner IDs.
+        chosen, source = None, 'introduction'
     else:
         # Lesson titles often contain no date. The parent lecture/section title
         # is a scheduling source; a cloned/uploaded timestamp is not one.
