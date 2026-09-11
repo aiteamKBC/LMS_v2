@@ -24841,21 +24841,30 @@ def week_template_number(value, default=0):
 
 def week_template_scope_fields(payload, course_type):
     # Paid templates keep their programme/module/group scope; free templates
-    # clear it. Empty string (not None) so update_rows actually clears columns
-    # when a template switches paid -> free.
+    # clear it.
+    #
+    # An absent id is NULL, never ''. programme_id and group_id carry foreign
+    # keys to curriculum.programmes/groups, and '' is not a key any row holds --
+    # so an unscoped insert is rejected outright. The constraints are NOT
+    # VALIDATED, which is why the legacy '' rows written before they existed are
+    # still sitting there unbothered; new rows are checked normally. NULL is
+    # what "no scope" has to mean, and the columns are all nullable.
+    #
+    # The names beside them are free text with no constraint, so '' is fine and
+    # keeps update_rows clearing them when a template loses its scope.
     if course_type == 'free':
         return {
-            'programme_id': '',
+            'programme_id': None,
             'programme_name': '',
-            'module_catalogue_id': '',
-            'group_id': '',
+            'module_catalogue_id': None,
+            'group_id': None,
             'group_name': '',
         }
     return {
-        'programme_id': clean_str(payload.get('programmeId')),
+        'programme_id': clean_str(payload.get('programmeId')) or None,
         'programme_name': clean_str(payload.get('programmeName')),
-        'module_catalogue_id': clean_str(payload.get('moduleCatalogueId')),
-        'group_id': clean_str(payload.get('groupId')),
+        'module_catalogue_id': clean_str(payload.get('moduleCatalogueId')) or None,
+        'group_id': clean_str(payload.get('groupId')) or None,
         'group_name': clean_str(payload.get('groupName')),
     }
 
