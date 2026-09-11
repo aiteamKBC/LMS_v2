@@ -61,6 +61,8 @@ export type LearnerList = { learners: { id: number; name: string; programme: str
 export type SigningReview = { month: string; ready: boolean; reason?: string | null; snapshot_digest?: string; issues?: ContentReview['issues'] };
 export type SignedMonths = { signed_months: string[]; skipped_months: string[]; completed_months: string[]; summary: Summary };
 
+import { coachViewAs } from '@/lib/coachViewAs';
+
 const BASE = '/audit_api';
 export const CONTACT_COACH = 'Please contact your coach to complete the review and signing of your previous learning record before entering the LMS.';
 
@@ -94,11 +96,24 @@ export async function request<T>(path: string, init: globalThis.RequestInit = {}
   return body as T;
 }
 
+/** The coach whose workspace an admin currently has open, if any.
+ *
+ * These routes scope on the signed-in account, so an administrator reached them
+ * as an administrator and saw the whole cohort -- under a banner naming one
+ * coach. Passing the selection lets the server narrow the caseload to that
+ * coach. It can only ever narrow: the server pins a coach to their own email
+ * and ignores the parameter (see old_otjh.views._coach_cohort). */
+const viewAsParams = (params: URLSearchParams) => {
+  const selection = coachViewAs();
+  if (selection) params.set('viewAsCoach', selection.email);
+  return params;
+};
+
 const query = (aptemId?: number, month?: string) => {
   const params = new URLSearchParams({ transition: '1' });
   if (aptemId !== undefined) params.set('aptem_id', String(aptemId));
   if (month) params.set('month', month);
-  return `?${params}`;
+  return `?${viewAsParams(params)}`;
 };
 const post = <T>(path: string, body: object) => request<T>(path, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -119,7 +134,7 @@ export const getLearners = (page: number, search = '') => {
   // it, so a coach with 42 records had to page through them to find somebody.
   const params = new URLSearchParams({ transition: '1', page: String(page) });
   if (search.trim()) params.set('search', search.trim());
-  return request<LearnerList>(`/last-audit/cohort/?${params}`);
+  return request<LearnerList>(`/last-audit/cohort/?${viewAsParams(params)}`);
 };
 export const completeMonth = (month: string) => post<MonthDetail>(`/last-audit/manual/finalization${query()}`, { month, action: 'complete' });
 export const reopenMonth = (month: string, aptemId: number, reason: string) => post<MonthDetail>(`/last-audit/manual/finalization${query(aptemId)}`, { month, action: 'reopen', reason });

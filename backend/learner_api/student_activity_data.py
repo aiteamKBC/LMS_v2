@@ -232,6 +232,45 @@ def read_audit_hour_totals(cursor, aptem_id):
     }
 
 
+def read_audit_hour_totals_bulk(cursor, aptem_ids):
+    """read_audit_hour_totals for many learners in one query.
+
+    The coach caseload renders a whole caseload in one response, so it cannot
+    afford the per-learner round trip the learner workspace makes. Returns
+    {aptem_id (int): {'audit_tp_planned': ..., 'audit_lms_actual': ...}} with an
+    entry only for the ids that exist in the audit mirror; callers keep their
+    existing Active_users figures for anyone missing.
+    """
+    ids = []
+    for value in aptem_ids or []:
+        try:
+            parsed = int(str(value).strip())
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            ids.append(parsed)
+    if not ids:
+        return {}
+    cursor.execute('''
+        SELECT l.aptem_id,
+               l.planned_hours_total,
+               COALESCE((
+                   SELECT SUM(m.actual_hours) FILTER (WHERE m.accepted)
+                   FROM "structured_manual_activities"."manual_learner_activities" m
+                   WHERE m.aptem_id = l.aptem_id AND m.deleted_at IS NULL
+               ), 0) AS accepted_actual_total
+        FROM "Last_audit".learners l
+        WHERE l.aptem_id = ANY(%s)
+    ''', [sorted(set(ids))])
+    totals = {}
+    for row in cursor.fetchall():
+        totals[int(row[0])] = {
+            'audit_tp_planned': round(float(row[1]), 2) if row[1] is not None else None,
+            'audit_lms_actual': round(float(row[2]), 2) if row[2] is not None else None,
+        }
+    return totals
+
+
 def read_student_activity(cursor, aptem_id):
     cursor.execute('''
         SELECT learner_id, learner_name, learner_email FROM "Last_audit".learners WHERE aptem_id = %s

@@ -44,7 +44,7 @@ import {
 
 const coachNav = roleNavMap.coach;
 
-type DashboardKpi = 'caseload' | 'active' | 'on-break' | 'on-track' | 'at-risk' | 'need-attention' | 'gateway' | 'epa' | 'evidence' | 'reviews';
+type DashboardKpi = 'caseload' | 'active' | 'on-break' | 'on-track' | 'at-risk' | 'need-attention' | 'completed' | 'epa' | 'evidence' | 'reviews';
 type OtjhStatusKey = 'at-risk' | 'need-attention' | 'on-track' | 'unknown';
 type PerformanceStatus = 'on-track' | 'at-risk' | 'high' | 'new-starter';
 type ScheduleStatus = 'upcoming' | 'overdue' | 'needs-schedule' | 'none';
@@ -253,8 +253,12 @@ function isOnBreakLearner(learner: CoachLearner): boolean {
   return normalizedProgramStatus(learner).includes('break');
 }
 
-function isGatewayLearner(learner: CoachLearner): boolean {
-  return normalizedProgramStatus(learner) === 'gateway';
+// Finished the programme. Matched on the canonical "Completed" status from
+// learner_api.constants, the value enrolment actually writes -- unlike the
+// gateway stage this replaced, which was never a programme status the platform
+// set, so that card could only ever read zero.
+function isCompletedLearner(learner: CoachLearner): boolean {
+  return normalizedProgramStatus(learner) === 'completed';
 }
 
 function isEpaLearner(learner: CoachLearner): boolean {
@@ -847,6 +851,7 @@ function learnerAvatarTone(learner: CoachLearner): StatusTone {
   if (otjhStatus === 'at-risk') return 'critical';
   if (otjhStatus === 'need-attention') return 'caution';
   const programmeStatus = normalizedProgramStatus(learner);
+  if (programmeStatus === 'completed') return 'positive';
   if (programmeStatus === 'gateway') return 'brand';
   if (programmeStatus === 'epa') return 'info';
   return 'neutral';
@@ -894,7 +899,7 @@ const KPI_FILTER_LABEL: Record<DashboardKpi, string> = {
   'on-track': 'On track learners',
   'at-risk': 'At risk learners',
   'need-attention': 'Learners needing attention',
-  gateway: 'Gateway learners',
+  completed: 'Completed learners',
   epa: 'EPA learners',
   evidence: 'Evidence awaiting review',
   reviews: 'Upcoming reviews',
@@ -1130,7 +1135,7 @@ export default function CoachDashboard() {
   const enrichedLearners = useMemo(() => enrichLearnerSchedule(learners, calendarEvents), [learners, calendarEvents]);
   const activeLearners = useMemo(() => enrichedLearners.filter(isActiveLearner), [enrichedLearners]);
   const onBreakLearners = useMemo(() => enrichedLearners.filter(isOnBreakLearner), [enrichedLearners]);
-  const gatewayLearners = useMemo(() => enrichedLearners.filter(isGatewayLearner), [enrichedLearners]);
+  const completedLearners = useMemo(() => enrichedLearners.filter(isCompletedLearner), [enrichedLearners]);
   const epaLearners = useMemo(() => enrichedLearners.filter(isEpaLearner), [enrichedLearners]);
   const atRiskLearners = useMemo(
     () => activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'at-risk'),
@@ -1255,7 +1260,7 @@ export default function CoachDashboard() {
       case 'caseload': return () => true;
       case 'active': return isActiveLearner;
       case 'on-break': return isOnBreakLearner;
-      case 'gateway': return isGatewayLearner;
+      case 'completed': return isCompletedLearner;
       case 'epa': return isEpaLearner;
       case 'at-risk':
       case 'need-attention':
@@ -1589,13 +1594,13 @@ export default function CoachDashboard() {
                   onFilter={() => setSelectedKpi('on-break')}
                 />
                 <FilterMetricCard
-                  label="Gateway"
-                  value={gatewayLearners.length}
-                  note="At gateway stage"
-                  tone="upcoming"
-                  icon="ri-flag-line"
-                  active={kpiFilter === 'gateway'}
-                  onFilter={() => setSelectedKpi('gateway')}
+                  label="Completed"
+                  value={completedLearners.length}
+                  note="Finished the programme"
+                  tone="positive"
+                  icon="ri-verified-badge-line"
+                  active={kpiFilter === 'completed'}
+                  onFilter={() => setSelectedKpi('completed')}
                 />
                 <FilterMetricCard
                   label="EPA"
@@ -1970,7 +1975,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
     'on-track': { title: 'Learners on track', subtitle: 'Learners currently meeting their OTJH target', icon: 'ri-checkbox-circle-line', iconStyle: 'bg-emerald-100 text-emerald-600' },
     'at-risk': { title: 'Learners at risk', subtitle: 'Learners requiring immediate coaching action', icon: 'ri-alarm-warning-line', iconStyle: 'bg-red-100 text-red-600' },
     'need-attention': { title: 'Learners needing attention', subtitle: 'Learners who need targeted support this week', icon: 'ri-error-warning-line', iconStyle: 'bg-amber-100 text-amber-600' },
-    gateway: { title: 'Gateway learners', subtitle: 'Learners currently at the gateway stage', icon: 'ri-flag-line', iconStyle: 'bg-accent-100 text-accent-700' },
+    completed: { title: 'Completed learners', subtitle: 'Learners who have finished the programme', icon: 'ri-verified-badge-line', iconStyle: 'bg-green-100 text-green-700' },
     epa: { title: 'EPA learners', subtitle: 'Learners currently at the end-point assessment stage', icon: 'ri-award-line', iconStyle: 'bg-secondary-100 text-secondary-700' },
     evidence: { title: 'Evidence awaiting review', subtitle: 'Evidence submissions and review status', icon: 'ri-file-search-line', iconStyle: 'bg-secondary-100 text-secondary-600' },
     reviews: { title: 'Upcoming reviews', subtitle: 'Progress reviews scheduled in the next 14 days', icon: 'ri-file-chart-line', iconStyle: 'bg-primary-100 text-primary-600' },
@@ -1983,7 +1988,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
     'on-track': 'on-track',
     'at-risk': 'at-risk',
     'need-attention': 'need-attention',
-    gateway: 'gateway',
+    completed: 'completed',
     epa: 'epa',
   };
   const modalLearners = type === 'caseload'
@@ -1992,8 +1997,8 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
       ? learners.filter(isActiveLearner)
       : type === 'on-break'
         ? learners.filter(isOnBreakLearner)
-      : type === 'gateway'
-        ? learners.filter(isGatewayLearner)
+      : type === 'completed'
+        ? learners.filter(isCompletedLearner)
       : type === 'epa'
         ? learners.filter(isEpaLearner)
     : type === 'on-track' || type === 'at-risk' || type === 'need-attention'
@@ -2051,7 +2056,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-background-50 to-background-100/50 p-4 sm:p-6">
-          {(type === 'caseload' || type === 'active' || type === 'on-break' || type === 'on-track' || type === 'at-risk' || type === 'need-attention' || type === 'gateway' || type === 'epa') && (
+          {(type === 'caseload' || type === 'active' || type === 'on-break' || type === 'on-track' || type === 'at-risk' || type === 'need-attention' || type === 'completed' || type === 'epa') && (
             <div className="space-y-3.5">
               {modalLearners.map(learner => {
                 const status = OTJH_STATUS_META[normalizeOtjhStatus(learner.otjhStatus)];
@@ -2073,8 +2078,8 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
                           <span className="truncate text-sm font-bold text-foreground-900 transition-colors group-hover:text-primary-700 sm:text-[15px]">{learner.name}</span>
                           {type === 'active' || type === 'on-break' ? (
                             <StatusBadge tone={isActiveLearner(learner) ? 'positive' : 'caution'} label={displayValue(learner.rawProgramStatus)} size="sm" />
-                          ) : type === 'gateway' || type === 'epa' ? (
-                            <StatusBadge tone={type === 'gateway' ? 'upcoming' : 'info'} label={type === 'gateway' ? 'Gateway' : 'EPA'} size="sm" />
+                          ) : type === 'completed' || type === 'epa' ? (
+                            <StatusBadge tone={type === 'completed' ? 'positive' : 'info'} label={type === 'completed' ? 'Completed' : 'EPA'} size="sm" />
                           ) : (
                             <StatusBadge tone={status.tone} label={status.label} size="sm" />
                           )}

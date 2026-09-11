@@ -82,6 +82,10 @@ export interface Learner {
   /** completed - target, as a string. Negative means behind the current target. */
   otjhProgressHours?: string;
   otjhStatus?: string;
+  /** 'audit' when the hours above are the whole-programme Audit figures
+   *  (TP Planned / LMS Actual) the learner sees on their own workspace,
+   *  rather than the training-plan reflection totals. */
+  otjhSource?: 'audit';
 
   ksbCompleted?: number;
   ksbTarget?: number;
