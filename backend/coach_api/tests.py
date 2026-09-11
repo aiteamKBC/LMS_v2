@@ -30,7 +30,11 @@ from coach_api.views import (
     curriculum_monthly_target_hours,
     curriculum_monthly_target_hours_weeks,
     apply_audit_hour_totals,
+    apply_evidenced_ksb_count,
     caseload_audit_hour_totals,
+    caseload_aptem_ids,
+    caseload_evidenced_ksb_counts,
+    dashboard_attendance_rows,
     fetch_caseload_learner_profiles,
     fetch_evidence_file_queue,
     fetch_source_schedule_rows,
@@ -47,6 +51,115 @@ def call_coach_view(view, request):
     """Unit-test view logic below the integration-tested auth boundary."""
     request.coach_email = "coach@example.com"
     return unwrap(view)(request)
+
+
+class AuditKsbOverlayTests(SimpleTestCase):
+    """KSB comes from the audit mapping keyed by Aptem id, as a count.
+
+    The mapping spans several apprenticeship standards (71 distinct codes, with
+    individual learners reaching 60) and carries no per-learner denominator, so
+    a percentage here would be against the wrong total -- the learner's own
+    workspace shows the same figure as a count for that reason.
+    """
+
+    def test_the_count_is_overlaid_without_inventing_a_percentage(self):
+        payload = {"ksbCompleted": 0, "ksbTarget": 14, "ksbProgress": 0}
+
+        overlaid = apply_evidenced_ksb_count(payload, 23)
+
+        self.assertEqual(overlaid["ksbEvidencedCount"], 23)
+        self.assertEqual(overlaid["ksbCompleted"], 23)
+        self.assertEqual(overlaid["ksbSource"], "audit")
+        # Untouched: 23 of a 14-code curriculum target would read past 100%.
+        self.assertEqual(overlaid["ksbProgress"], 0)
+        self.assertEqual(overlaid["ksbTarget"], 14)
+
+    def test_learners_without_audit_ksbs_keep_their_own(self):
+        payload = {"ksbCompleted": 3, "ksbTarget": 14, "ksbProgress": 21}
+
+        self.assertEqual(apply_evidenced_ksb_count(dict(payload), None), payload)
+
+    @patch("coach_api.views.read_evidenced_ksb_counts_bulk")
+    @patch("coach_api.views.audit_connection")
+    def test_counts_are_keyed_by_profile_id(self, connection, read_bulk):
+        read_bulk.return_value = {4321: 23}
+        linked = SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))
+        unlinked = SimpleNamespace(id=8, _caseload_source=SimpleNamespace(aptem_id=None))
+
+        self.assertEqual(caseload_evidenced_ksb_counts([linked, unlinked]), {7: 23})
+
+    @patch("coach_api.views.audit_connection")
+    def test_an_unreachable_audit_mirror_leaves_the_caseload_renderable(self, connection):
+        connection.side_effect = DatabaseError("audit mirror down")
+        linked = SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))
+
+        self.assertEqual(caseload_evidenced_ksb_counts([linked]), {})
+
+
+class CaseloadAptemIdTests(SimpleTestCase):
+    def test_attached_source_rows_are_used_without_a_query(self):
+        rows = [SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id=" 4321 "))]
+
+        with patch("coach_api.views.fetch_caseload_aptem_ids") as lean:
+            self.assertEqual(caseload_aptem_ids(rows), {7: 4321})
+        lean.assert_not_called()
+
+    def test_rows_without_a_source_fall_back_to_the_lean_query(self):
+        """The dashboard skips the wide Created_users join, so its rows arrive
+        with no `_caseload_source` and must still resolve."""
+        rows = [SimpleNamespace(id=9, _caseload_source=None)]
+
+        with patch("coach_api.views.fetch_caseload_aptem_ids", return_value={9: 77}) as lean:
+            self.assertEqual(caseload_aptem_ids(rows), {9: 77})
+        self.assertEqual(list(lean.call_args.args[0]), rows)
+
+
+class DashboardAttendanceTests(SimpleTestCase):
+    """The dashboard's caseload modal renders attendance, so the payload it used
+    to send empty now carries the learner's own KBC register figures."""
+
+    @patch("coach_api.views.fetch_kbc_attendance_rates")
+    def test_rows_carry_the_register_rate(self, rates):
+        rates.return_value = {"4321": {"sessions": 62, "present": 59, "absent": 3, "rate": 95}}
+        rows = [SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))]
+        learners = [{"id": "7", "name": "A Learner", "email": "a@example.com"}]
+
+        payload = dashboard_attendance_rows(rows, learners)
+
+        self.assertEqual(len(payload), 1)
+        self.assertEqual(payload[0]["attendance"], 95)
+        self.assertTrue(payload[0]["hasAttendance"])
+        self.assertEqual(payload[0]["present"], 59)
+
+    @patch("coach_api.views.fetch_kbc_attendance_rates", return_value={})
+    def test_learners_with_no_register_are_left_out(self, rates):
+        rows = [SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))]
+        learners = [{"id": "7", "name": "A Learner", "email": "a@example.com"}]
+
+        self.assertEqual(dashboard_attendance_rows(rows, learners), [])
+
+    @patch("coach_api.views.fetch_kbc_attendance_rates")
+    def test_a_partial_learner_dict_does_not_break_the_dashboard(self, rates):
+        """This helper enriches whatever the serializer produced; a missing key
+        must never turn the whole dashboard into a 503."""
+        rates.return_value = {"4321": {"sessions": 4, "present": 4, "absent": 0, "rate": 100}}
+        rows = [SimpleNamespace(id=2, _caseload_source=SimpleNamespace(aptem_id="4321"))]
+
+        payload = dashboard_attendance_rows(rows, [{"id": "2"}])
+
+        self.assertEqual(payload[0]["learner"], None)
+        self.assertEqual(payload[0]["attendance"], 100)
+
+    @patch("coach_api.views.fetch_kbc_attendance_rates", side_effect=RuntimeError("register down"))
+    def test_an_unreachable_register_leaves_the_dashboard_renderable(self, rates):
+        rows = [SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))]
+
+        self.assertEqual(dashboard_attendance_rows(rows, [{"id": "7", "name": "A"}]), [])
+
+    def test_no_query_runs_for_an_empty_caseload(self):
+        with patch("coach_api.views.fetch_kbc_attendance_rates") as rates:
+            self.assertEqual(dashboard_attendance_rows([], []), [])
+        rates.assert_not_called()
 
 
 class AuditHourOverlayTests(SimpleTestCase):

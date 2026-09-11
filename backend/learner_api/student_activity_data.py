@@ -271,6 +271,47 @@ def read_audit_hour_totals_bulk(cursor, aptem_ids):
     return totals
 
 
+def read_evidenced_ksb_counts_bulk(cursor, aptem_ids):
+    """Distinct KSB codes evidenced per learner, from the audit KSB mapping.
+
+    KSBs for the monthly audit rows live in
+    ``structured_manual_activities.learner_journal_row_ksbs``, joined to the
+    same accepted ledger rows the OTJ Actual total comes from -- so a code only
+    counts once the row carrying it was accepted.
+
+    A count, not a percentage: the mapping spans several apprenticeship
+    standards (71 distinct codes overall, and individual learners reach 60), so
+    it carries no per-learner denominator to divide by. The learner's own
+    workspace shows this same figure as a count for the same reason, and the
+    coach must not show a percentage derived from a different, smaller
+    curriculum target -- that would read past 100%.
+
+    Returns {aptem_id (int): count} with an entry only for learners that have
+    at least one evidenced code.
+    """
+    ids = []
+    for value in aptem_ids or []:
+        try:
+            parsed = int(str(value).strip())
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            ids.append(parsed)
+    if not ids:
+        return {}
+    cursor.execute('''
+        SELECT j.aptem_id,
+               count(DISTINCT e->>'code') AS evidenced_codes
+        FROM "structured_manual_activities"."learner_journal_row_ksbs" j
+        JOIN "structured_manual_activities"."manual_learner_activities" m
+          ON m.id = j.row_id AND m.deleted_at IS NULL AND m.accepted
+        CROSS JOIN LATERAL jsonb_array_elements(j.ksbs) e
+        WHERE j.aptem_id = ANY(%s)
+        GROUP BY 1
+    ''', [sorted(set(ids))])
+    return {int(row[0]): int(row[1] or 0) for row in cursor.fetchall()}
+
+
 def read_student_activity(cursor, aptem_id):
     cursor.execute('''
         SELECT learner_id, learner_name, learner_email FROM "Last_audit".learners WHERE aptem_id = %s

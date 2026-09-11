@@ -17,7 +17,8 @@ from login.sessions import authenticate_request
 from .learner_detail import SOURCE_MODELS
 from .active_users import completed_hours_value_from_progress
 from .models import LearnerProfile
-from .student_activity_data import read_audit_hour_totals, read_student_activity, read_student_material
+from .student_activity_data import (read_audit_hour_totals, read_evidenced_ksb_counts_bulk,
+                                    read_student_activity, read_student_material)
 from .student_activity_access import student_activity_available
 from .student_activity_data import summarize_activities, read_curriculum_schedules, apply_curriculum_schedules
 from . import subject_store, subject_source
@@ -161,6 +162,11 @@ def student_activity(request, kind, pk):
                 payload = read_student_activity(cursor, aptem_id)
                 if payload is not None:
                     payload.update(read_audit_hour_totals(cursor, aptem_id))
+                    # Same audit mapping the coach caseload counts, so a coach
+                    # and their learner never read different KSB figures.
+                    payload['audit_ksb_evidenced'] = read_evidenced_ksb_counts_bulk(
+                        cursor, [aptem_id],
+                    ).get(aptem_id)
     except DatabaseError:
         return _error("Could not read Last_audit activities. Please try again.", 503)
     material_request = request.GET.get('activity_id') is not None

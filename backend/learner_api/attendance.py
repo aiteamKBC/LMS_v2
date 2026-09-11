@@ -136,6 +136,58 @@ def fetch_kbc_attendance_rows(*, aptem_id, learner_id, learner_name, learner_ema
             ]
 
 
+def fetch_kbc_attendance_rates(aptem_ids):
+    """Attendance rates for many learners in one query, keyed by Aptem id.
+
+    The per-learner reader above opens a connection and runs a query for each
+    learner, which a coach caseload cannot afford. The counting rules are kept
+    identical to ``_normalize_kbc_attendance_row`` + ``_summarize_attendance``:
+    ``Attendance`` is the signal (1 attended, 0 absent) and ``attendance_status``
+    only ever distinguishes 'late', which counts as attended in both the
+    numerator and the denominator. So a coach and their learner never read
+    different percentages for the same register.
+
+    Returns {aptem_id (str): {'sessions', 'present', 'absent', 'rate'}} with an
+    entry only for learners that actually have counted rows.
+    """
+    keys = sorted({str(value).strip() for value in (aptem_ids or []) if str(value or '').strip()})
+    if not keys:
+        return {}
+    dsn = _kbc_attendance_connection_string()
+    if not dsn:
+        raise RuntimeError('KBC attendance database is not configured.')
+
+    with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                '''
+                SELECT "ID"::text AS aptem_id,
+                       "Attendance" AS attended,
+                       count(*) AS row_count
+                FROM public.kbc_attendance
+                WHERE "ID"::text = ANY(%s)
+                  AND "Attendance" IN (0, 1)
+                  AND "date" IS NOT NULL
+                GROUP BY 1, 2
+                ''',
+                [keys],
+            )
+            rows = cursor.fetchall()
+
+    totals = {}
+    for row in rows:
+        bucket = totals.setdefault(row['aptem_id'], {'sessions': 0, 'present': 0, 'absent': 0})
+        count = int(row['row_count'] or 0)
+        bucket['sessions'] += count
+        if row['attended'] == 1:
+            bucket['present'] += count
+        else:
+            bucket['absent'] += count
+    for bucket in totals.values():
+        bucket['rate'] = round((bucket['present'] / bucket['sessions']) * 100) if bucket['sessions'] else 0
+    return totals
+
+
 def _summarize_attendance(rows):
     """Convert the KBC register's session-per-row data into the learner summary."""
     def status(row):

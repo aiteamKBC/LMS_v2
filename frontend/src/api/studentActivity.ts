@@ -60,6 +60,10 @@ export interface StudentActivityResponse {
   /** Whole-programme figures from the same sources as Audit learner search. */
   audit_tp_planned?: number | null;
   audit_lms_actual?: number | null;
+  /** Distinct KSB codes evidenced in the audit mapping. A count, not a
+   *  percentage: the mapping spans several standards, so it carries no
+   *  per-learner denominator to divide by. */
+  audit_ksb_evidenced?: number | null;
   direct_otjh_activities?: DirectOtjhActivity[];
   planned_total: number | null;
   mapped_count: number;

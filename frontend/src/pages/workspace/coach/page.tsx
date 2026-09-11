@@ -93,6 +93,10 @@ interface CoachLearner {
   otjhStatus?: string | null;
   ksbProgress: number;
   ksbProgressAvailable?: boolean;
+  /** Distinct KSB codes evidenced in the audit mapping. A count, not a
+   *  percentage -- the mapping spans several standards, so it carries no
+   *  per-learner denominator. Matches the learner's own workspace. */
+  ksbEvidencedCount?: number | null;
   evidenceCount: number;
   evidenceCountAvailable?: boolean;
   evidenceCompletedCount: number;
@@ -309,6 +313,7 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     otjhStatus: displayValue(learner.otjhStatus),
     ksbProgress: clampPercent(learner.ksbProgress),
     ksbProgressAvailable: learner.ksbProgressAvailable,
+    ksbEvidencedCount: learner.ksbEvidencedCount ?? null,
     evidenceCount: toNumber(learner.evidenceCount),
     evidenceCountAvailable: learner.evidenceCountAvailable,
     evidenceCompletedCount: toNumber(learner.evidenceCompletedCount),
@@ -322,6 +327,15 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     rawProgramStatus: learner.rawProgramStatus || null,
   };
 }
+
+/** KSB as the learner's own workspace shows it: the number of distinct codes
+ *  evidenced. Falls back to the curriculum percentage for learners with no
+ *  audit mapping, and to "--" when neither figure exists. */
+function ksbCellValue(learner: CoachLearner): string {
+  if (learner.ksbEvidencedCount != null) return `${learner.ksbEvidencedCount}`;
+  return learner.ksbProgressAvailable ? `${learner.ksbProgress}%` : EMPTY_VALUE;
+}
+
 
 function findAttendanceRecord(learner: CoachLearner, attendanceLearners: AttendanceApiLearner[]) {
   const learnerId = normalizeIdentity(learner.id);
@@ -2034,11 +2048,20 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
     onClose();
   };
 
+  // Scrolls the whole overlay rather than centring a fixed-height box. A
+  // centred flex item taller than its container overflows in BOTH directions,
+  // and the half above the viewport cannot be scrolled back to -- which cropped
+  // the header, cutting the icon in half and pushing the title under the panel
+  // edge. `my-auto` inside a `min-h-full` wrapper still centres a short dialog,
+  // while a tall one starts at the top where it can actually be read.
   return createPortal(
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-6 lg:p-8" role="dialog" aria-modal="true" aria-labelledby="kpi-modal-title" aria-describedby="kpi-modal-description">
-      <button type="button" onClick={onClose} className="absolute inset-0 bg-foreground-950/10 backdrop-blur-[5px] backdrop-saturate-125" aria-label="Close popup"></button>
-      <div className="relative flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-white/80 bg-background-50 shadow-xl">
-        <header className="relative overflow-hidden border-b border-foreground-100/80 bg-gradient-to-r from-primary-50/90 via-background-50 to-secondary-50/60 px-5 py-5 sm:px-7 sm:py-6">
+    <div className="fixed inset-0 z-[9999] overflow-y-auto overscroll-contain p-3 sm:p-6 lg:p-8" role="dialog" aria-modal="true" aria-labelledby="kpi-modal-title" aria-describedby="kpi-modal-description">
+      <button type="button" onClick={onClose} className="fixed inset-0 bg-foreground-950/10 backdrop-blur-[5px] backdrop-saturate-125" aria-label="Close popup"></button>
+      <div className="relative mx-auto flex min-h-full w-full max-w-5xl items-start justify-center">
+        <div className="relative my-auto flex max-h-[88vh] w-full flex-col overflow-hidden rounded-2xl border border-white/80 bg-background-50 shadow-xl">
+        {/* shrink-0 so a long caseload cannot squeeze the header away: the body
+            below is the flex child that scrolls, and this stays put. */}
+        <header className="relative z-10 shrink-0 overflow-hidden border-b border-foreground-100/80 bg-gradient-to-r from-primary-50/90 via-background-50 to-secondary-50/60 px-5 py-5 sm:px-7 sm:py-6">
           <div className="pointer-events-none absolute -right-12 -top-20 h-48 w-48 rounded-full bg-primary-200/25 blur-3xl"></div>
           <div className="relative flex items-start justify-between gap-4">
             <div className="flex min-w-0 items-center gap-4">
@@ -2089,7 +2112,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
                     </div>
                     <div className="grid min-w-0 grid-cols-3 gap-2 text-center sm:col-span-2 lg:col-span-1 lg:min-w-[320px]">
                       <ModalMiniMetric label="OTJH" value={otjh} />
-                      <ModalMiniMetric label="KSB" value={learner.ksbProgressAvailable ? `${learner.ksbProgress}%` : EMPTY_VALUE} />
+                      <ModalMiniMetric label="KSB" value={ksbCellValue(learner)} />
                       <ModalMiniMetric label="Attendance" value={attendance} tone={percentTone(learner.attendanceRateAvailable ? learner.attendanceRate : null, ATTENDANCE_MINIMUM_RATE, ATTENDANCE_EXPECTED_RATE)} />
                     </div>
                     <span className="hidden h-10 w-10 items-center justify-center rounded-lg bg-background-100 text-foreground-400 transition-colors group-hover:bg-primary-50 group-hover:text-primary-700 sm:flex"><AppIcon className="ri-arrow-right-s-line text-xl"></AppIcon></span>
@@ -2173,6 +2196,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
           {type === 'evidence' && <Link to="/coach/marking-queue" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open marking queue</Link>}
           {type === 'reviews' && <Link to="/coach/progress-reviews" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open reviews</Link>}
         </footer>
+        </div>
       </div>
     </div>,
     document.body,

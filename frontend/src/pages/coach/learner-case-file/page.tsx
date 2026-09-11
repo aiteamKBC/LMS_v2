@@ -274,7 +274,7 @@ export default function LearnerCaseFile() {
             <div className="grid gap-2 border-t border-white/20 pt-4 sm:grid-cols-2 lg:grid-cols-6">
               <CaseFileHeroMetric label="Overall" value={formatPercent(data?.overallProgress ?? null)} />
               <CaseFileHeroMetric label="OTJH" value={data ? formatFraction(data.otjhCompleted, data.otjhTarget) : '--'} />
-              <CaseFileHeroMetric label="KSB" value={formatPercent(data?.ksbProgress ?? null)} />
+              <CaseFileHeroMetric label="KSB" value={ksbHeadlineValue(data)} />
               <CaseFileHeroMetric label="Attendance" value={formatPercent(data?.attendanceRate ?? null)} />
               <CaseFileHeroMetric label="Gateway" value={data?.gatewayReviewDate || '--'} />
               <CaseFileHeroMetric label="Next session" value={nextLiveSession?.summary || '--'} wide />
@@ -1168,7 +1168,13 @@ function buildRiskItems(data: CoachLearnerCaseFileData) {
       : `${data.evidenceCount ?? 0} evidence item(s) in coach snapshot`,
   });
 
-  if (data.ksbProgress !== null) {
+  if (data.ksbEvidencedCount !== null) {
+    items.push({
+      label: 'KSB Progress',
+      tone: 'green',
+      detail: `${data.ksbEvidencedCount} KSB(s) evidenced in the audit record`,
+    });
+  } else if (data.ksbProgress !== null) {
     items.push({
       label: 'KSB Progress',
       tone: toneFromPercent(data.ksbProgress, 60),
@@ -1236,6 +1242,17 @@ function statusLabel(data: CoachLearnerCaseFileData | null) {
   }
   return data.programStatus || '--';
 }
+
+/** KSB as the learner's own workspace shows it: the number of distinct codes
+ *  evidenced in the audit mapping. That mapping spans several apprenticeship
+ *  standards and carries no per-learner denominator, so there is no
+ *  percentage to quote; learners with no audit record fall back to the
+ *  curriculum percentage. */
+function ksbHeadlineValue(data: CoachLearnerCaseFileData | null): string {
+  if (data?.ksbEvidencedCount != null) return `${data.ksbEvidencedCount}`;
+  return formatPercent(data?.ksbProgress ?? null);
+}
+
 
 function toneFromOtjh(current: number | null, target: number | null): 'green' | 'amber' | 'red' | 'neutral' {
   if (current === null || target === null || target <= 0) {
