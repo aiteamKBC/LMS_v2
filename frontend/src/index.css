@@ -5483,7 +5483,7 @@ table tbody td:last-child {
   --kbc-radius-control: 0.625rem;
   --kbc-shadow-card: 0 1px 2px rgb(36 27 53 / 0.03), 0 12px 26px -20px rgb(36 27 53 / 0.24);
   --kbc-shadow-popover: 0 20px 48px -24px rgb(36 27 53 / 0.32), 0 4px 12px -8px rgb(36 27 53 / 0.18);
-  --kbc-chrome-color: #4B168C;
+  --kbc-chrome-color: #a4adb7;
   /* Shared hero colour: this is the same purple-to-lilac treatment used by
      the Super Admin dashboard hero. All page heroes consume this token. */
   --kbc-hero-gradient: linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 28%, oklch(var(--primary-100)) 62%, oklch(var(--background-50)) 100%);
@@ -8152,3 +8152,33 @@ body .dashboard-theme .workspace-main table.recent-access-events-table tbody tr:
 body .dashboard-theme .workspace-main table.recent-access-events-table tbody tr:hover > td {
   background: var(--kbc-purple-wash) !important;
 }
+
+/* Legacy monthly reports use the neutral journal table header palette. */
+.dashboard-theme .workspace-main table.activityTable thead th,
+.dashboard-theme .workspace-main table.signTable thead th {
+  background: #a4adb7 !important;
+  color: #263f54 !important;
+}
+
+/* Final neutral override for legacy journal tables. */
+html body #root .dashboard-theme .workspace-main table.activityTable thead th,
+html body #root .dashboard-theme .workspace-main table.signTable thead th {
+  background-color: rgb(164, 173, 183) !important;
+  background-image: none !important;
+  color: rgb(38, 63, 84) !important;
+}
+
+/* Neutralise the shared chrome token for monthly journal tables. */
+.dashboard-theme .workspace-main table.activityTable,
+.dashboard-theme .workspace-main table.signTable {
+  --kbc-chrome-color: #a4adb7 !important;
+  --action-primary-foreground: #263f54 !important;
+}
+.dashboard-theme .workspace-main table.activityTable thead,
+.dashboard-theme .workspace-main table.signTable thead,
+.dashboard-theme .workspace-main table.activityTable thead tr,
+.dashboard-theme .workspace-main table.signTable thead tr {
+  background: #a4adb7 !important;
+  background-image: none !important;
+}
+

@@ -1,7 +1,7 @@
 import { Suspense, createElement, useEffect } from "react";
 import { useLocation, useNavigate, useRoutes, type NavigateFunction } from "react-router-dom";
 import { RouteErrorBoundary } from "@/components/feature/RouteErrorBoundary";
-import { PageSkeleton } from "@/components/feature/Skeletons";
+import { RouteLoadingSkeleton } from "@/components/feature/RouteLoadingSkeleton";
 import { useAuth } from "@/hooks/useAuth";
 import routes from "./config";
 import { OldOtjhProvider } from '@/features/old-otjh/hooks';
@@ -24,7 +24,7 @@ export const navigatePromise = new Promise<NavigateFunction>((resolve) => {
 // and rebuilt it, which reads as a page flash on every navigation. PageSkeleton
 // holds the shape instead: rail, breadcrumb, header, content.
 function RouteLoadingFallback() {
-  return createElement(PageSkeleton);
+  return createElement(RouteLoadingSkeleton);
 }
 
 export function AppRoutes() {

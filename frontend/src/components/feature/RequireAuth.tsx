@@ -1,6 +1,6 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { PageSkeleton } from '@/components/feature/Skeletons';
+import { RouteLoadingSkeleton } from './RouteLoadingSkeleton';
 import { homeRouteFor, mayAccessRoute } from '@/lib/routeAccess';
 import { OldOtjhGate } from '@/features/old-otjh/hooks';
 
@@ -35,7 +35,7 @@ export function RequireAuth() {
 
   // Session unresolved: hold the page's shape rather than flashing either the
   // login form or a console we may be about to take away.
-  if (!isInitialized) return <PageSkeleton />;
+  if (!isInitialized) return <RouteLoadingSkeleton />;
 
   const account = auth.account;
 

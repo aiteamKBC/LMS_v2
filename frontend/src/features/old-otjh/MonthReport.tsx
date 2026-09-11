@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { Panel } from '@/components/ui/Panel';
@@ -81,21 +81,15 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
   if (!query.data) return null;
   const data = query.data;
   const busy = signing.isPending || completion.isPending;
-  const canSign = !readOnly && (data.status !== 'complete' || (!student && !data.coach_signature));
-  const mutationError = signing.error || completion.error || reopening.error;
-  const base = aptemId === undefined ? '/old-otjh/months' : `/old-otjh/coach/${aptemId}/months`;
+  const canSign = !readOnly && (data.status !== 'complete' || (!student && !data.coach_signature));
   const months = summary.data.months;
   const unsigned = months.filter(item => item.is_required !== false && (student ? item.status !== 'complete' : !item.coach_signature));
-  const index = months.findIndex(item => item.month === month);
-  const previous = months[index - 1]; const next = months[index + 1];
+  const currentIndex = months.findIndex(item => item.month === month);
+  const nextMonth = months[currentIndex + 1];
+  const base = aptemId === undefined ? '/old-otjh/months' : `/old-otjh/coach/${aptemId}/months`;
   const reusableSignature = previousMonthSignature(months, month, student ? 'learner' : 'coach');
   const signatureRows = [{ role: 'Learner', signature: data.student_signature, own: student },
-    { role: 'Coach', signature: data.coach_signature, own: !student && !readOnly }];
-  let completionHint = student
-    ? 'The learner’s signature completes the record. Use Sign all months to sign once for every month.'
-    : 'The learner’s signature completes this month. Coach signatures can be added separately.';
-  if (data.student_signature) completionHint = 'Your learner signature is saved for this month.';
-  if (readOnly) completionHint = 'Viewing only. The learner completes this record from their own account.';
+    { role: 'Coach', signature: data.coach_signature, own: !student && !readOnly }];
   return <div className={`${design.reportPage} ${journal.page}`}>
     {message && <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-800">{message}</div>}
     {error && <div role="alert" className="flex flex-wrap items-center gap-3 text-[13px] text-foreground-600">Updates are temporarily unavailable. Your draft is still here.
@@ -108,9 +102,6 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
           <select id="journal-report-month" className={journal.monthSelect} value={month} disabled={busy} onChange={event => navigate(`${base}/${event.target.value}`)}>
             {months.map(item => <option key={item.month} value={item.month}>{monthLabel(item.month)} · {monthStatus(item)}</option>)}
           </select>
-          <button className={btnSecondary} disabled={!previous || busy} onClick={() => navigate(`${base}/${previous.month}`)} aria-label="Previous month" title="Previous month"><AppIcon className="ri-arrow-left-s-line" /></button>
-          <button className={btnSecondary} disabled={!next || busy} onClick={() => navigate(`${base}/${next.month}`)} aria-label="Next month" title="Next month"><AppIcon className="ri-arrow-right-s-line" /></button>
-          <Link to={aptemId === undefined ? base : `/old-otjh/coach/${aptemId}`} className={btnSecondary} title="View all months"><AppIcon className="ri-layout-grid-line" />All months</Link>
         </div>
       </div>
     </nav>
@@ -127,7 +118,7 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
     <ActivityLog data={data} aptemId={aptemId} />
     <section className={`${journal.card} ${journal.signoff}`} aria-label="Monthly sign-off"><div className={journal.sectionHeading}><div><h2 className="font-heading">Report sign-off</h2>
       <p>Your learner and coach signatures for this month’s record.</p></div>
-      {!readOnly && <button className={btnPrimary} disabled={busy || !unsigned.length} onClick={() => setBulkOpen(true)}><AppIcon className="ri-edit-line" />Sign all months</button>}
+      <div className="flex flex-wrap items-center justify-end gap-2">{!readOnly && <button className={btnPrimary} disabled={busy || !unsigned.length} onClick={() => setBulkOpen(true)}><AppIcon className="ri-edit-line" />Sign all months</button>}{student && data.student_signature && (nextMonth || summary.data.can_access_lms) && <button className={btnPrimary} disabled={busy} onClick={() => nextMonth ? navigate(`${base}/${nextMonth.month}`) : navigate('/workspace/learner')}>{nextMonth ? 'Next month' : 'Open LMS'}<AppIcon className="ri-arrow-right-line" /></button>}</div>
       </div>
       <div className={journal.signoffBody}><div className={styles.reportTableWrap}>
       <table className={styles.signTable} aria-label="Report sign-off"><thead><tr>{['Role', 'Signature', 'Print name', 'Date', 'Status'].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead>
@@ -148,17 +139,6 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
           <td data-label="Date"><span className="whitespace-nowrap text-[12px]">{displayDate(row.signature?.signed_at)}</span></td>
           <td data-label="Status"><RecordBadge tone={row.signature ? 'positive' : 'pending'}><AppIcon className={row.signature ? 'ri-checkbox-circle-line' : 'ri-time-line'} />{row.signature ? 'Signed' : 'Awaiting signature'}</RecordBadge></td>
         </tr>)}</tbody></table></div></div>
-      <div className={`${design.signFooter} ${journal.signoffFooter} space-y-3`}>
-        {!readOnly && <p className={journal.signingNote}>{unsigned.length ? 'One signature for all months in this previous learning record.' : 'Your signature is saved for all months.'}</p>}
-        <p className={design.syncNote} role="status"><AppIcon className={live.isError ? 'ri-wifi-off-line' : 'ri-refresh-line'} />
-          {live.isError ? 'Signature updates are temporarily delayed. Retrying automatically.' : 'Signatures update automatically while you review. Each person signs from their own account.'}</p>
-        {data.status === 'complete' ? <div className="flex items-start gap-3 text-emerald-700"><AppIcon className="ri-checkbox-circle-line text-xl" />
-          <div><p className="text-[13px] font-semibold">This month has been reviewed, signed and completed.</p><p className="mt-1 text-[12px]">Saved signatures are read-only. The coach can still add their signature. You can view activities and documents.</p></div></div>
-          : <><p role="status" className="text-[13px] text-foreground-600">{completionHint}</p>
-            {student && data.can_complete && <button className={btnPrimary} disabled={busy} onClick={() => setConfirming(true)}>Complete month<AppIcon className="ri-check-line" /></button>}</>}
-        {student && summary.data.can_access_lms && <Link className={btnPrimary} to="/workspace/learner">Open LMS<AppIcon className="ri-arrow-right-line" /></Link>}
-        {mutationError && <p role="alert" className="text-[13px] text-red-600">{mutationError.message}</p>}
-      </div>
     </section>
     {confirming && <Modal size="max-w-lg" className={`${design.scope} ${design.dialog}`} title={`Complete ${monthLabel(month)}?`} onClose={() => { if (!busy) setConfirming(false); }} footer={<>
       <button className={btnSecondary} disabled={busy} onClick={() => setConfirming(false)}>Keep reviewing</button>
@@ -170,3 +150,5 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
     </Panel>}
   </div>;
 }
+
+
