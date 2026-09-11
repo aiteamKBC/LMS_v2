@@ -53,6 +53,7 @@ import ProgressReviewSlidesModal, {
   type ProgressReviewSlideListItem,
   type ProgressReviewSlidesDeck,
 } from './components/ProgressReviewSlidesModal';
+import ProgressReviewGeneratePanel from './components/ProgressReviewGeneratePanel';
 import {
   buildKsbProgress,
   completedComponentIds,
@@ -677,6 +678,324 @@ export function buildProgressReviewSlidesDeck(
     },
   ];
 
+  const learnerName = displayValue(detail.name);
+  const programmeName = displayValue(detail.programme || review.programme);
+  const employerName = displayValue(detail.employer);
+  const managerName = displayValue(detail.lineManager);
+  const priorityKsbs = weakestKsbs.length ? weakestKsbs : strongestKsbs.slice(0, 4);
+  const activityByMonth = Array.from(recentActivities.reduce((map, activity) => {
+    const date = parseLocalDate(activity.at);
+    const key = date
+      ? new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(date)
+      : 'Undated activity';
+    const current = map.get(key) || { count: 0, minutes: 0, items: [] as ProgressReviewActivity[] };
+    current.count += 1;
+    current.minutes += activity.minutes;
+    current.items.push(activity);
+    map.set(key, current);
+    return map;
+  }, new Map<string, { count: number; minutes: number; items: ProgressReviewActivity[] }>())).slice(0, 4);
+  const actionPlanItems: ProgressReviewSlideListItem[] = [
+    {
+      title: 'Close evidence admin',
+      badge: pendingEvidence ? `${pendingEvidence} pending` : 'Check',
+      tone: pendingEvidence ? 'warn' : 'default',
+      detail: 'Review pending uploads, confirm naming, and map useful artefacts to the right plan areas.',
+      meta: 'Owner: coach and learner',
+    },
+    {
+      title: 'Agree workplace evidence project',
+      badge: priorityKsbs.length ? `${priorityKsbs.length} KSBs` : 'Optional',
+      tone: priorityKsbs.length ? 'warn' : 'good',
+      detail: 'Choose one live workplace project that can evidence planning, delivery, stakeholder input, and impact.',
+      meta: 'Owner: learner and manager',
+    },
+    {
+      title: 'Protect learning time',
+      badge: displayValue(detail.otjhStatus),
+      tone: toneForStatus(detail.otjhStatus),
+      detail: 'Confirm the learner has a practical routine for completing activities and recording learning time.',
+      meta: window.label,
+    },
+  ];
+
+  slides.splice(
+    2,
+    0,
+    {
+      id: 'closure-next-phase',
+      title: 'Closure & Next Phase',
+      type: 'lists',
+      heading: 'Progress review closure and next learning phase',
+      subheading: 'Confirm what is being closed today and what the learner should focus on next.',
+      columns: [
+        {
+          title: 'Position today',
+          items: [
+            { title: 'Review status', badge: statusLabel(review.status), tone: toneForStatus(review.status), detail: `Current review window: ${window.label}.` },
+            { title: 'Programme position', badge: `${ksbCoverage}% KSB`, tone: ksbCoverage >= 70 ? 'good' : ksbCoverage >= 45 ? 'warn' : 'danger', detail: `${recentActivities.length} activities and ${recentEvidence.length} evidence items found.` },
+            { title: 'OTJ position', badge: displayValue(detail.otjhStatus), tone: toneForStatus(detail.otjhStatus), detail: displayValue(detail.otjhProgressHours) !== '--' ? displayValue(detail.otjhProgressHours) : 'Confirm recorded OTJ hours during the review.' },
+          ],
+        },
+        {
+          title: 'Next phase prompts',
+          items: [
+            { title: 'Learning focus', detail: modulesTouched.slice(0, 3).join(' - ') || 'Agree the next released module or learning activity.' },
+            { title: 'Evidence focus', detail: priorityKsbs.slice(0, 3).map(item => item.code).join(', ') || 'Confirm the next evidence opportunity.' },
+            { title: 'Manager input', detail: 'Confirm the manager can verify contribution and workplace impact.' },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'progress-otj-lms',
+      title: 'Progress, OTJ & LMS',
+      type: 'metrics',
+      heading: 'Programme progress, OTJ and LMS',
+      subheading: 'A practical dashboard slide for discussing progress position and admin gaps.',
+      metrics: [
+        { label: 'KSB coverage', value: `${ksbCoverage}%`, tone: ksbCoverage >= 70 ? 'good' : ksbCoverage >= 45 ? 'warn' : 'danger' },
+        { label: 'OTJ status', value: displayValue(detail.otjhStatus), tone: toneForStatus(detail.otjhStatus) },
+        { label: 'Recorded time', value: recentMinutes ? formatHoursMinutes(recentMinutes / 60) : '--' },
+        { label: 'Active modules', value: String(modulesTouched.length) },
+        { label: 'Evidence uploads', value: String(recentEvidence.length) },
+        { label: 'Approved evidence', value: String(approvedEvidence), tone: approvedEvidence ? 'good' : 'default' },
+        { label: 'Quiz average', value: quizAverage !== null ? `${quizAverage}%` : '--', tone: quizAverage !== null && quizAverage < 70 ? 'warn' : 'good' },
+        { label: 'Review status', value: statusLabel(review.status), tone: toneForStatus(review.status) },
+      ],
+      highlights: actionPlanItems,
+    },
+    {
+      id: 'epa-readiness',
+      title: 'EPA Readiness',
+      type: 'lists',
+      heading: 'EPA readiness and evidence admin',
+      subheading: 'Frame portfolio quality, evidence mapping, and next evidence-building decisions.',
+      columns: [
+        {
+          title: 'Current readiness',
+          items: [
+            { title: 'Portfolio position', badge: approvedEvidence ? 'Evidence present' : 'Needs review', tone: approvedEvidence ? 'good' : 'warn', detail: `${approvedEvidence} approved, ${pendingEvidence} pending, and ${rejectedEvidence} rejected evidence items.` },
+            { title: 'Assessment position', badge: quizAverage !== null ? `${quizAverage}%` : 'No quiz data', tone: quizAverage !== null && quizAverage >= 70 ? 'good' : 'warn', detail: recentQuizzes.length ? `${passedQuizzes}/${recentQuizzes.length} recent quizzes passed.` : 'No recent quiz attempts found.' },
+            { title: 'KSB position', badge: `${ksbCoverage}%`, tone: ksbCoverage >= 70 ? 'good' : ksbCoverage >= 45 ? 'warn' : 'danger', detail: 'Use priority KSB slides to agree evidence depth and manager verification.' },
+          ],
+        },
+        {
+          title: 'Evidence admin',
+          items: [
+            { title: 'Naming and mapping', detail: 'Confirm files are named clearly and linked to the right module, week, component, or KSB.' },
+            { title: 'Manager verification', detail: 'Agree what the manager can verify and whether a witness statement is needed.' },
+            { title: 'Reflection quality', detail: 'Check evidence shows context, personal action, outcome, and reflection.' },
+          ],
+        },
+      ],
+    },
+  );
+
+  slides.splice(
+    8,
+    0,
+    ...activityByMonth.map(([month, summary], index): ProgressReviewSlide => ({
+      id: `activity-${index + 1}`,
+      title: `${month} Evidence`,
+      type: 'lists',
+      heading: `${month} workplace evidence`,
+      subheading: 'Auto-filled from recent activity. Edit this into a narrative evidence spotlight.',
+      columns: [
+        {
+          title: 'Strongest evidence',
+          items: summary.items.slice(0, 5).map(activity => ({
+            title: activity.title,
+            badge: activity.status,
+            tone: toneForStatus(activity.status),
+            detail: activity.detail,
+            meta: `${activity.module} - ${activity.week}`,
+          })),
+        },
+        {
+          title: 'Portfolio value',
+          items: [
+            { title: 'Activity count', badge: `${summary.count}`, detail: `${summary.count} learning activities were found in ${month}.` },
+            { title: 'Recorded time', badge: summary.minutes ? formatHoursMinutes(summary.minutes / 60) : '--', detail: 'Use this only as a discussion aid unless the OTJ record is signed.' },
+            { title: 'Evidence prompt', detail: 'Add artefacts, screenshots, outputs, manager comments, and a short reflection.' },
+          ],
+        },
+      ],
+    })),
+  );
+
+  slides.push(
+    {
+      id: 'workplace-impact',
+      title: 'Workplace Impact',
+      type: 'lists',
+      heading: `Workplace application and impact at ${employerName}`,
+      subheading: 'A structured slide for discussing value delivered through the programme.',
+      columns: [
+        {
+          title: 'Impact themes',
+          items: [
+            { title: 'Quality and consistency', detail: 'What improved in learner output, process, or professional judgement?' },
+            { title: 'Efficiency and ownership', detail: 'Where has the learner taken more ownership or reduced friction for the team?' },
+            { title: 'Insight and evaluation', detail: 'What evidence shows the learner using data, feedback, or reflection to improve work?' },
+          ],
+        },
+        {
+          title: 'Evidence to retain',
+          items: [
+            { title: 'Before and after', detail: 'Capture baseline, final output, and what changed because of the learner contribution.' },
+            { title: 'Stakeholder voice', detail: 'Capture manager, colleague, customer, or stakeholder feedback where available.' },
+            { title: 'Measurable result', detail: 'Add performance data, quality checks, time saved, or decision records.' },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'ksbs-to-strengthen',
+      title: 'KSBs To Strengthen',
+      type: 'lists',
+      heading: 'KSBs to strengthen next',
+      subheading: 'These are evidence-building opportunities, not performance concerns.',
+      columns: [
+        {
+          title: 'Priority KSBs',
+          items: priorityKsbs.slice(0, 6).map(item => ({
+            title: `${item.code} - ${item.description || 'KSB focus area'}`,
+            badge: `${item.pct}%`,
+            tone: item.pct >= 70 ? 'default' : item.pct >= 45 ? 'warn' : 'danger',
+            detail: `${item.doneCount} of ${item.totalCount} linked activities completed.`,
+            meta: item.contributors.slice(0, 2).map(contributor => contributor.title).join(' - ') || 'Agree a workplace evidence route.',
+          })),
+        },
+        {
+          title: 'Evidence ideas',
+          items: [
+            { title: 'Live project', detail: 'Use one authentic workplace project with clear objective, owner, deadline, and output.' },
+            { title: 'Evidence pack', detail: 'Retain brief, plan, drafts, approvals, screenshots, results, and reflection.' },
+            { title: 'Manager verification', detail: 'Ask the manager to verify personal contribution and workplace impact.' },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'next-actions',
+      title: 'Next Actions',
+      type: 'lists',
+      heading: 'Next actions: learning evidence opportunities',
+      subheading: 'Agree specific evidence actions, owners, and dates before closing the meeting.',
+      columns: [
+        { title: 'Action plan', items: actionPlanItems },
+        {
+          title: 'Decision prompts',
+          items: [
+            { title: 'Project or activity', detail: 'Which upcoming work can the learner contribute to meaningfully?' },
+            { title: 'Evidence owner', detail: 'Who will provide artefacts, manager comments, or verification?' },
+            { title: 'Deadline', detail: 'Agree the upload deadline and the next review checkpoint.' },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'smart-targets',
+      title: 'SMART Targets',
+      type: 'lists',
+      heading: 'SMART targets and action plan',
+      subheading: 'Turn the review into measurable next steps.',
+      columns: [
+        {
+          title: 'Learning and portfolio',
+          items: [
+            { title: 'Specific', detail: 'Complete the agreed learning activity or project evidence pack.' },
+            { title: 'Measurable', detail: 'Evidence includes outputs, dates, mapped KSBs, and manager verification.' },
+            { title: 'Time-bound', detail: 'Set a clear deadline before the next progress review.' },
+          ],
+        },
+        {
+          title: 'Success measures',
+          items: [
+            { title: 'Evidence uploaded', detail: 'Files are named, mapped, and supported by reflection.' },
+            { title: 'Manager verified', detail: 'Manager confirms learner contribution and impact.' },
+            { title: 'Progress reviewed', detail: 'Coach reviews and updates support plan if needed.' },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'professional-responsibilities',
+      title: 'Professional Duties',
+      type: 'lists',
+      heading: 'Professional responsibilities and EPA brief',
+      subheading: 'A closing reminder covering safeguarding, British Values, and EPA evidence quality.',
+      columns: [
+        {
+          title: 'Professional responsibilities',
+          items: [
+            { title: 'Safeguarding', detail: 'Recognise, respond, report, record, and refer concerns through the correct route.' },
+            { title: 'British Values', detail: 'Democracy, rule of law, individual liberty, mutual respect, and tolerance.' },
+            { title: 'Ethical practice', detail: 'Keep data, consent, accessibility, inclusion, and approvals in view.' },
+          ],
+        },
+        {
+          title: 'EPA evidence quality',
+          items: [
+            { title: 'Context', detail: 'Explain the workplace situation and learner responsibility.' },
+            { title: 'Action and outcome', detail: 'Show what the learner did and what changed as a result.' },
+            { title: 'Reflection', detail: 'Capture what the learner learned and what they would improve.' },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'manager-questions',
+      title: 'Manager Questions',
+      type: 'lists',
+      heading: 'Manager questions: workplace impact check',
+      subheading: `Questions for ${managerName !== '--' ? managerName : 'the learner manager'} to confirm impact, support, and evidence.`,
+      columns: [
+        {
+          title: 'Questions',
+          items: [
+            'What improvements have you seen in confidence, independence, or professional judgement?',
+            'Which workplace examples best show applied learning rather than routine activity?',
+            'Which upcoming project can create strong evidence for the priority KSBs?',
+            'What evidence can you verify for portfolio and EPA readiness?',
+            'Are there any concerns, barriers, or support needs to address before the next review?',
+          ].map((question, index) => ({ title: `${index + 1}. ${question}`, detail: 'Coach to capture notes during the review.' })),
+        },
+        {
+          title: 'Manager notes',
+          items: [
+            { title: 'Impact observed', detail: 'Add notes here.' },
+            { title: 'Support agreed', detail: 'Add notes here.' },
+            { title: 'Evidence project', detail: 'Project / role / evidence to upload / review date.' },
+          ],
+        },
+      ],
+    },
+  );
+
+  while (slides.length < 18) {
+    slides.splice(slides.length - 5, 0, {
+      id: `evidence-planning-${slides.length}`,
+      title: 'Evidence Planning',
+      type: 'lists',
+      heading: `${learnerName} evidence planning`,
+      subheading: `Editable planning slide for ${programmeName}.`,
+      columns: [
+        {
+          title: 'Evidence opportunity',
+          items: [
+            { title: 'Workplace task', detail: 'Describe the live work, learner responsibility, and intended outcome.' },
+            { title: 'KSB mapping', detail: priorityKsbs.slice(0, 4).map(item => item.code).join(', ') || 'Add target KSBs.' },
+            { title: 'Verification', detail: `Manager: ${managerName}. Add witness notes and sign-off route.` },
+          ],
+        },
+      ],
+    });
+  }
+
+  if (slides.length > 18) slides.splice(18);
+
   return {
     learnerName: displayValue(detail.name),
     reviewLabel: 'Progress review slides',
@@ -960,6 +1279,8 @@ export default function CoachProgressReviews() {
             {error}
           </div>
         ) : null}
+
+        <ProgressReviewGeneratePanel />
 
         <Panel padding="none">
           <div className="border-b border-foreground-100 p-4">

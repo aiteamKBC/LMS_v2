@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
 import { useToast } from '@/hooks/useToast';
+import { saveProgressReviewPptx } from '../lib/progressReviewPptx';
 
 type SlideTone = 'default' | 'good' | 'warn' | 'danger';
 
@@ -84,91 +85,142 @@ function toneValueClass(tone?: SlideTone) {
   return 'text-foreground-950';
 }
 
+function cleanText(value?: string | null) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function detailValue(slide: ProgressReviewSlide, label: string) {
+  if (slide.type !== 'cover') return '';
+  return cleanText(slide.details.find((detail) => detail.label.toLowerCase() === label.toLowerCase())?.value);
+}
+
+function slideMeta(slide: ProgressReviewSlide) {
+  const programme = detailValue(slide, 'Programme') || 'Marketing Executive Level 4 Apprenticeship';
+  const employer = detailValue(slide, 'Employer') || 'KBC LearningOS';
+  const manager = detailValue(slide, 'Line manager');
+  return { programme, employer, manager };
+}
+
+function bullets(items: ProgressReviewSlideListItem[], limit = 5) {
+  return items.slice(0, limit).map((item) => (
+    <li key={`${item.title}-${item.meta || ''}`} className="leading-snug">
+      <span className="font-bold text-slate-950">{item.title}</span>
+      {item.badge ? <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] font-bold ${toneChipClass(item.tone)}`}>{item.badge}</span> : null}
+      {item.detail ? <span className="block pt-1 text-slate-600">{item.detail}</span> : null}
+      {item.meta ? <span className="block pt-1 text-[11px] font-semibold uppercase text-slate-400">{item.meta}</span> : null}
+    </li>
+  ));
+}
+
+function SlideShell({
+  slide,
+  exportMode,
+  children,
+}: {
+  slide: ProgressReviewSlide;
+  exportMode: boolean;
+  children: ReactNode;
+}) {
+  const meta = slideMeta(slide);
+  return (
+    <div className={`relative aspect-video overflow-hidden bg-white text-slate-950 shadow-sm ${exportMode ? '' : 'rounded-xl border border-slate-200'}`}>
+      <div className="absolute inset-x-0 top-0 h-14 bg-[#24103f] text-white">
+        <div className="flex h-full items-center justify-between px-8">
+          <p className="max-w-[58%] truncate text-[10px] font-bold uppercase tracking-[0.16em] text-violet-100">{meta.programme}</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-violet-100">Progress Review</p>
+        </div>
+      </div>
+      <div className="absolute left-8 right-8 top-20">
+        <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-violet-700">{slide.title}</p>
+        {'heading' in slide ? <h2 className="mt-2 max-w-[920px] text-[26px] font-black leading-tight text-slate-950">{slide.heading}</h2> : null}
+        {'subheading' in slide ? <p className="mt-2 max-w-[900px] text-[14px] leading-6 text-slate-600">{slide.subheading}</p> : null}
+      </div>
+      <div className="absolute left-8 right-8 top-[190px] bottom-14 overflow-hidden">
+        {children}
+      </div>
+      <div className="absolute inset-x-0 bottom-0 flex h-10 items-center justify-between border-t border-slate-200 bg-slate-50 px-8">
+        <p className="max-w-[60%] truncate text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">{meta.employer}</p>
+        {meta.manager ? <p className="text-[10px] font-semibold text-slate-500">Manager: {meta.manager}</p> : null}
+      </div>
+    </div>
+  );
+}
+
 function renderSlideContent(slide: ProgressReviewSlide, exportMode = false) {
-  const frameClass = exportMode
-    ? 'min-h-[640px] rounded-2xl border border-foreground-200 bg-white p-10'
-    : 'min-h-[560px] rounded-2xl border border-foreground-200 bg-white p-8';
+  const shellClass = exportMode ? 'h-[640px] w-full' : 'mx-auto w-full max-w-[1120px]';
 
   return (
-    <div className={frameClass}>
+    <div className={shellClass}>
       {slide.type === 'cover' ? (
-        <div className="flex min-h-[560px] flex-col justify-between">
-          <div>
-            <p className="text-[12px] font-bold uppercase tracking-[0.24em] text-foreground-400">{slide.eyebrow}</p>
-            <h2 className="mt-5 max-w-3xl text-4xl font-heading font-bold tracking-[-0.03em] text-foreground-950">{slide.heading}</h2>
-            <p className="mt-4 max-w-2xl text-base leading-8 text-foreground-500">{slide.subheading}</p>
+        <div className={`relative aspect-video overflow-hidden bg-white text-slate-950 shadow-sm ${exportMode ? '' : 'rounded-xl border border-slate-200'}`}>
+          <div className="absolute inset-x-0 top-0 h-20 bg-[#24103f]" />
+          <div className="absolute left-10 top-10 rounded-full bg-white px-4 py-2 text-[11px] font-black uppercase tracking-[0.2em] text-violet-800 shadow-sm">
+            {slide.eyebrow}
           </div>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {slide.details.map((detail) => (
-              <div key={detail.label} className="rounded-2xl border border-foreground-200 bg-background-100/60 px-5 py-4">
-                <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-foreground-400">{detail.label}</p>
-                <p className="mt-3 text-lg font-semibold leading-7 text-foreground-950">{detail.value}</p>
+          <div className="absolute left-10 top-36 max-w-[720px]">
+            <h1 className="text-[44px] font-black leading-tight text-slate-950">{slide.heading}</h1>
+            <p className="mt-5 text-[18px] leading-8 text-slate-600">{slide.subheading}</p>
+          </div>
+          <div className="absolute bottom-16 left-10 right-10 grid grid-cols-4 gap-3">
+            {slide.details.slice(0, 8).map((detail) => (
+              <div key={detail.label} className="min-h-[82px] border-l-4 border-violet-700 bg-slate-50 px-4 py-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">{detail.label}</p>
+                <p className="mt-2 text-[16px] font-bold leading-snug text-slate-950">{detail.value}</p>
               </div>
             ))}
+          </div>
+          <div className="absolute inset-x-0 bottom-0 flex h-10 items-center justify-between border-t border-slate-200 bg-slate-50 px-10">
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">{detailValue(slide, 'Employer') || 'KBC LearningOS'}</p>
+            <p className="text-[10px] font-semibold text-slate-500">{detailValue(slide, 'Review window')}</p>
           </div>
         </div>
       ) : null}
 
       {slide.type === 'metrics' ? (
-        <div className="space-y-6">
-          <div>
-            <h3 className="text-2xl font-heading font-bold text-foreground-950">{slide.heading}</h3>
-            <p className="mt-2 text-sm leading-7 text-foreground-500">{slide.subheading}</p>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            {slide.metrics.map((metric) => (
-              <div key={metric.label} className="rounded-2xl border border-foreground-200 bg-background-100/60 px-5 py-4">
-                <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-foreground-400">{metric.label}</p>
-                <p className={`mt-3 text-2xl font-heading font-bold ${toneValueClass(metric.tone)}`}>{metric.value}</p>
+        <SlideShell slide={slide} exportMode={exportMode}>
+          <div className="grid grid-cols-4 gap-3">
+            {slide.metrics.slice(0, 8).map((metric) => (
+              <div key={metric.label} className="min-h-[92px] border-t-4 border-violet-700 bg-slate-50 px-4 py-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-400">{metric.label}</p>
+                <p className={`mt-2 text-[26px] font-black leading-none ${toneValueClass(metric.tone)}`}>{metric.value}</p>
               </div>
             ))}
           </div>
           {slide.highlights?.length ? (
-            <div className="rounded-2xl border border-foreground-200 bg-white px-5 py-5">
-              <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-foreground-400">Highlights</p>
-              <div className="mt-4 grid gap-3 xl:grid-cols-2">
-                {slide.highlights.map((item) => (
-                  <div key={`${item.title}-${item.meta || ''}`} className="rounded-2xl border border-foreground-200 bg-background-100/45 px-4 py-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-semibold text-foreground-900">{item.title}</p>
-                      {item.badge ? (
-                        <span className={`rounded-full border px-2.5 py-1 text-[12px] font-bold ${toneChipClass(item.tone)}`}>
-                          {item.badge}
-                        </span>
-                      ) : null}
-                    </div>
-                    {item.detail ? <p className="mt-2 text-sm leading-6 text-foreground-600">{item.detail}</p> : null}
-                    {item.meta ? <p className="mt-2 text-[12px] font-medium text-foreground-400">{item.meta}</p> : null}
+            <div className="mt-5 grid grid-cols-2 gap-4">
+              {slide.highlights.slice(0, 4).map((item) => (
+                <div key={`${item.title}-${item.meta || ''}`} className="min-h-[102px] bg-white p-4 ring-1 ring-slate-200">
+                  <div className="flex items-center gap-2">
+                    <p className="text-[14px] font-black text-slate-950">{item.title}</p>
+                    {item.badge ? <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${toneChipClass(item.tone)}`}>{item.badge}</span> : null}
                   </div>
-                ))}
-              </div>
+                  {item.detail ? <p className="mt-2 text-[12px] leading-5 text-slate-600">{item.detail}</p> : null}
+                  {item.meta ? <p className="mt-2 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">{item.meta}</p> : null}
+                </div>
+              ))}
             </div>
           ) : null}
-        </div>
+        </SlideShell>
       ) : null}
 
       {slide.type === 'table' ? (
-        <div className="space-y-6">
-          <div>
-            <h3 className="text-2xl font-heading font-bold text-foreground-950">{slide.heading}</h3>
-            <p className="mt-2 text-sm leading-7 text-foreground-500">{slide.subheading}</p>
-          </div>
-          <div className="overflow-hidden rounded-2xl border border-foreground-200">
-            <table className="min-w-full divide-y divide-foreground-200 text-left text-[12px]">
-              <thead className="bg-background-100/80">
+        <SlideShell slide={slide} exportMode={exportMode}>
+          <div className="overflow-hidden border border-slate-200">
+            <table className="min-w-full border-collapse text-left text-[11px]">
+              <thead className="bg-[#24103f] text-white">
                 <tr>
                   {slide.headers.map((header) => (
-                    <th key={header} className="px-4 py-3 font-bold uppercase tracking-[0.12em] text-foreground-500">
+                    <th key={header} className="px-3 py-2 font-black uppercase tracking-[0.12em]">
                       {header}
                     </th>
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-foreground-200 bg-white">
-                {slide.rows.map((row, rowIndex) => (
-                  <tr key={`${slide.id}-${rowIndex}`} className={rowIndex % 2 === 1 ? 'bg-background-100/35' : ''}>
+              <tbody className="bg-white">
+                {slide.rows.slice(0, 10).map((row, rowIndex) => (
+                  <tr key={`${slide.id}-${rowIndex}`} className={rowIndex % 2 === 1 ? 'bg-slate-50' : ''}>
                     {row.map((cell, cellIndex) => (
-                      <td key={`${slide.id}-${rowIndex}-${cellIndex}`} className="px-4 py-3 align-top text-foreground-700">
+                      <td key={`${slide.id}-${rowIndex}-${cellIndex}`} className="border-t border-slate-200 px-3 py-2 align-top text-slate-700">
                         {cell}
                       </td>
                     ))}
@@ -178,47 +230,34 @@ function renderSlideContent(slide: ProgressReviewSlide, exportMode = false) {
             </table>
           </div>
           {slide.note ? (
-            <div className="rounded-2xl border border-foreground-200 bg-background-100/55 px-4 py-3 text-sm leading-6 text-foreground-600">
+            <div className="mt-4 border-l-4 border-violet-700 bg-violet-50 px-4 py-3 text-[12px] leading-5 text-slate-700">
               {slide.note}
             </div>
           ) : null}
-        </div>
+        </SlideShell>
       ) : null}
 
       {slide.type === 'lists' ? (
-        <div className="space-y-6">
-          <div>
-            <h3 className="text-2xl font-heading font-bold text-foreground-950">{slide.heading}</h3>
-            <p className="mt-2 text-sm leading-7 text-foreground-500">{slide.subheading}</p>
-          </div>
-          <div className={`grid gap-4 ${slide.columns.length > 1 ? 'xl:grid-cols-2' : ''}`}>
+        <SlideShell slide={slide} exportMode={exportMode}>
+          <div className={`grid h-full gap-6 ${slide.columns.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
             {slide.columns.map((column) => (
-              <section key={column.title} className="rounded-2xl border border-foreground-200 bg-white px-5 py-5">
-                <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-foreground-400">{column.title}</p>
-                <div className="mt-4 space-y-3">
-                  {column.items.length ? column.items.map((item) => (
-                    <div key={`${column.title}-${item.title}-${item.meta || ''}`} className="rounded-2xl border border-foreground-200 bg-background-100/45 px-4 py-3">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-semibold text-foreground-900">{item.title}</p>
-                        {item.badge ? (
-                          <span className={`rounded-full border px-2.5 py-1 text-[12px] font-bold ${toneChipClass(item.tone)}`}>
-                            {item.badge}
-                          </span>
-                        ) : null}
-                      </div>
-                      {item.detail ? <p className="mt-2 text-sm leading-6 text-foreground-600">{item.detail}</p> : null}
-                      {item.meta ? <p className="mt-2 text-[12px] font-medium text-foreground-400">{item.meta}</p> : null}
-                    </div>
-                  )) : (
-                    <div className="rounded-2xl border border-dashed border-foreground-200 bg-background-100/45 px-4 py-5 text-sm text-foreground-400">
-                      No data available for this section.
-                    </div>
-                  )}
+              <section key={column.title} className="bg-white">
+                <div className="border-l-4 border-violet-700 pl-3">
+                  <p className="text-[12px] font-black uppercase tracking-[0.16em] text-violet-700">{column.title}</p>
                 </div>
+                {column.items.length ? (
+                  <ul className="mt-4 space-y-3 text-[12px] text-slate-600">
+                    {bullets(column.items, slide.columns.length > 1 ? 5 : 8)}
+                  </ul>
+                ) : (
+                  <div className="mt-4 border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-[12px] text-slate-400">
+                    No data available for this section.
+                  </div>
+                )}
               </section>
             ))}
           </div>
-        </div>
+        </SlideShell>
       ) : null}
     </div>
   );
@@ -238,6 +277,7 @@ export default function ProgressReviewSlidesModal({
   const [currentSlide, setCurrentSlide] = useState(0);
   const [mounted, setMounted] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [isExportingPptx, setIsExportingPptx] = useState(false);
   const exportContainerRef = useRef<HTMLDivElement>(null);
   const { success, error } = useToast();
 
@@ -284,6 +324,18 @@ export default function ProgressReviewSlidesModal({
     }
   }
 
+  async function handleExportPptx() {
+    setIsExportingPptx(true);
+    try {
+      await saveProgressReviewPptx(deck);
+      success('PPTX exported', 'The editable progress review PowerPoint was downloaded.');
+    } catch {
+      error('Export failed', 'Something went wrong while generating the PowerPoint deck.');
+    } finally {
+      setIsExportingPptx(false);
+    }
+  }
+
   return (
     <>
       <div ref={exportContainerRef} className="fixed left-[-9999px] top-0 z-[-1] w-[1280px]" aria-hidden="true">
@@ -306,7 +358,7 @@ export default function ProgressReviewSlidesModal({
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
         <div className="absolute inset-0 bg-foreground-950/60 backdrop-blur-sm" onClick={onClose} />
         <div
-          className="relative flex h-[92vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#f5f5f4] shadow-2xl transition-all duration-300"
+          className="relative flex h-[94vh] w-full max-w-[1500px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#eef1f5] shadow-2xl transition-all duration-300"
           style={{
             opacity: mounted ? 1 : 0,
             transform: mounted ? 'translateY(0px) scale(1)' : 'translateY(16px) scale(0.98)',
@@ -336,6 +388,15 @@ export default function ProgressReviewSlidesModal({
                 </button>
                 <button
                   type="button"
+                  onClick={handleExportPptx}
+                  disabled={isExportingPptx}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-foreground-200 bg-white px-4 text-[12px] font-semibold text-foreground-700 transition hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <AppIcon className={isExportingPptx ? 'ri-loader-4-line animate-spin' : 'ri-slideshow-line'}></AppIcon>
+                  {isExportingPptx ? 'Exporting PPTX' : 'Export PPTX'}
+                </button>
+                <button
+                  type="button"
                   onClick={onClose}
                   className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-foreground-950 px-4 text-[12px] font-semibold text-white transition hover:bg-foreground-800"
                 >
@@ -346,7 +407,7 @@ export default function ProgressReviewSlidesModal({
           </header>
 
           <div className="border-b border-foreground-200 bg-white px-6 py-3">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2 overflow-x-auto pb-1">
               {deck.slides.map((slide, index) => (
                 <button
                   key={slide.id}
@@ -370,7 +431,7 @@ export default function ProgressReviewSlidesModal({
           </div>
 
           <div className="flex-1 overflow-y-auto p-6">
-            <div className="mx-auto max-w-6xl">
+            <div className="mx-auto max-w-[1200px]">
               <div className="mb-4 flex items-center justify-between">
                 <div>
                   <p className="text-[12px] font-bold uppercase tracking-[0.18em] text-foreground-400">Current Slide</p>

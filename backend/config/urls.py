@@ -41,6 +41,7 @@ urlpatterns = [
     path('login_api/', include('login.urls')),
     path('api/chat/', include('chat.urls')),
     path('api/calendar/', include('learner_api.calendar_urls')),
+    path('api/progress-reviews/', include('progress_reviews_api.urls')),
 ]
 
 if settings.DEBUG:
