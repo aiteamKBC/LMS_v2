@@ -25030,10 +25030,13 @@ def curriculum_week_template_collection(request):
         return json_error('courseType must be "paid" or "free".', fields=['courseType'])
     if not clean_str(payload.get('title')):
         return json_error('Missing required fields.', fields=['title'])
-    if course_type == 'paid':
-        missing = [field for field in ('programmeId', 'moduleCatalogueId', 'groupId') if not clean_str(payload.get(field))]
-        if missing:
-            return json_error('A paid week template needs a programme, module and group.', fields=missing)
+    # Scope is optional. A week template used to be required to name a
+    # programme, module and group up front, which forced that decision before
+    # the author had written anything -- and it is not a decision the template
+    # needs: the library lists every template regardless, and scope only drives
+    # the group lock in the editor. Templates that carry it keep it; one saved
+    # without it is a perfectly good template that has not been pointed at a
+    # module yet.
 
     components = payload.get('components') if isinstance(payload.get('components'), list) else []
     total_otjh, points, component_count = week_template_component_metrics(components)
