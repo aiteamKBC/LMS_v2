@@ -1,0 +1,226 @@
+{
+  "committed_at_utc": "2026-09-11T11:47:36.215537+00:00",
+  "rule": "Jan-Feb -> Feb; Mar-Jun -> Jun; Jul-Oct -> Oct; Nov-Dec -> next Feb",
+  "active_cohorts": 22,
+  "active_groups": 84,
+  "new_cohorts": 5,
+  "archived_cohorts": 38,
+  "archived_groups": 42,
+  "learner_records_updated": 160,
+  "enrolment_records_updated": 158,
+  "verified_learners": 365,
+  "verified_enrolments": 359,
+  "authored_modules_preserved": 1,
+  "by_programme": [
+    {
+      "programme": "Associate Project Manager Level 4",
+      "cohorts": 4,
+      "groups": 5,
+      "intakes": [
+        "Feb 2026",
+        "Jun 2026",
+        "Oct 2025",
+        "Oct 2026"
+      ]
+    },
+    {
+      "programme": "Marketing Executive Level 4",
+      "cohorts": 6,
+      "groups": 24,
+      "intakes": [
+        "Feb 2025",
+        "Feb 2026",
+        "Jun 2025",
+        "Jun 2026",
+        "Oct 2025",
+        "Oct 2026"
+      ]
+    },
+    {
+      "programme": "Marketing Manager Level 6",
+      "cohorts": 5,
+      "groups": 24,
+      "intakes": [
+        "Feb 2026",
+        "Jun 2025",
+        "Jun 2026",
+        "Oct 2025",
+        "Oct 2026"
+      ]
+    },
+    {
+      "programme": "Project Controls Professional Level 6",
+      "cohorts": 7,
+      "groups": 31,
+      "intakes": [
+        "Feb 2025",
+        "Feb 2026",
+        "Jun 2025",
+        "Jun 2026",
+        "Oct 2024",
+        "Oct 2025",
+        "Oct 2026"
+      ]
+    }
+  ],
+  "statements": [
+    {
+      "operation": "INSERT INTO curriculum.cohorts (\"cohort_id\", \"cohort_name\", \"programme_id\", \"programme_name\", \"start_date\", \"source_type\", \"group_ids\", \"module_names\")",
+      "rows": 5
+    },
+    {
+      "operation": "UPDATE curriculum.cohorts t",
+      "rows": 17
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE curriculum.groups t",
+      "rows": 1
+    },
+    {
+      "operation": "UPDATE \"Learner\".learners t",
+      "rows": 160
+    },
+    {
+      "operation": "UPDATE enrolment.\"Created_users\" t",
+      "rows": 158
+    },
+    {
+      "operation": "UPDATE curriculum.groups",
+      "rows": 42
+    },
+    {
+      "operation": "UPDATE curriculum.cohorts",
+      "rows": 38
+    }
+  ],
+  "post_commit_verified_at_utc": "2026-09-11T11:48:39.831840+00:00",
+  "post_commit_errors": 0
+}

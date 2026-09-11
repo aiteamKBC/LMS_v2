@@ -315,6 +315,9 @@ export default function ModuleBuilder() {
   const [pendingComponentSelection, setPendingComponentSelection] = useState<{ weekId: string; componentId: string } | null>(null);
   const [reusePickerWeekId, setReusePickerWeekId] = useState<string | null>(null);
   const [weekTemplateImportOpen, setWeekTemplateImportOpen] = useState(false);
+  // Which week a picked template should be added to. Null means the picker was
+  // opened from the module header, where a template still becomes a new week.
+  const [weekTemplateTargetWeekId, setWeekTemplateTargetWeekId] = useState<string | null>(null);
   const [bulkTeamsMeetingOpen, setBulkTeamsMeetingOpen] = useState(false);
   const [ksbTarget, setKsbTarget] = useState<KsbTarget | null>(null);
   const [ksbMapModule, setKsbMapModule] = useState<ModuleBuilderListItem | null>(null);
@@ -1243,6 +1246,46 @@ export default function ModuleBuilder() {
     setWeekTemplateImportOpen(false);
   }, [updateWorkingModule]);
 
+  // Add a template's components to a week that already exists, keeping whatever
+  // is in it. Appended, not replaced: a template is a set of lessons to drop in
+  // beside the ones already authored, and picking one should never quietly
+  // discard a week's existing work.
+  //
+  // Every component is given a fresh id and rebound to this week, exactly as
+  // importing a template as a new week does -- reusing the template's own ids
+  // would make two modules claim the same component.
+  const addWeekTemplateToWeek = useCallback((weekId: string, template: WeekTemplate) => {
+    if (!workingModule) return;
+    const week = workingModule.weekStructure.find(item => item.id === weekId);
+    if (!week) return;
+    const copies = (template.components || []).map(component => ({
+      ...component,
+      id: makeAuthoringId('component'),
+      weekId: week.id,
+      ksbMappings: (component.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
+    }));
+    const lastComponent = copies.at(-1);
+    updateWorkingModule(module => ({
+      ...module,
+      weekStructure: module.weekStructure.map(item => {
+        if (item.id !== weekId) return item;
+        return {
+          ...item,
+          // The week keeps its own title and summary. Only the KSB mappings are
+          // merged, because those describe the components being added.
+          components: [...item.components, ...copies],
+          ksbMappings: [
+            ...(item.ksbMappings || []),
+            ...(template.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
+          ],
+        };
+      }),
+    }));
+    setWeekTemplateImportOpen(false);
+    setWeekTemplateTargetWeekId(null);
+    if (lastComponent) openAddedComponent(weekId, lastComponent.id);
+  }, [openAddedComponent, updateWorkingModule, workingModule]);
+
   // Copy components chosen from the reuse library into an existing week. The
   // copies land in client state and are persisted by the normal module save -
   // a per-component write would be undone by it, because saving re-upserts the
@@ -1810,6 +1853,7 @@ export default function ModuleBuilder() {
                     setLessonPickerWeekId(selectedWeek.id);
                   }}
                   onReuseComponents={() => setReusePickerWeekId(selectedWeek.id)}
+                  onAddFromTemplate={() => { setWeekTemplateTargetWeekId(selectedWeek.id); setWeekTemplateImportOpen(true); }}
                 />
               ) : (
                 <EmptyEditor onAddWeek={() => {
@@ -1920,8 +1964,23 @@ export default function ModuleBuilder() {
         {weekTemplateImportOpen && workingModule && (
           <WeekTemplateImportModal
             scope={{ programmeId: workingModule.programmeId, programmeName: workingModule.programmeName }}
-            onClose={() => setWeekTemplateImportOpen(false)}
-            onImport={importWeekTemplateAsNewWeek}
+            // Named so the dialog can say where the components will land, which
+            // is the whole difference between the two ways in.
+            targetWeekLabel={(() => {
+              if (!weekTemplateTargetWeekId) return '';
+              const week = workingModule.weekStructure.find(item => item.id === weekTemplateTargetWeekId);
+              return week ? weekPlacementLabel(week, ' — ') : '';
+            })()}
+            existingComponentCount={(() => {
+              if (!weekTemplateTargetWeekId) return 0;
+              const week = workingModule.weekStructure.find(item => item.id === weekTemplateTargetWeekId);
+              return week?.components.length ?? 0;
+            })()}
+            onClose={() => { setWeekTemplateImportOpen(false); setWeekTemplateTargetWeekId(null); }}
+            onImport={template => {
+              if (weekTemplateTargetWeekId) addWeekTemplateToWeek(weekTemplateTargetWeekId, template);
+              else importWeekTemplateAsNewWeek(template);
+            }}
           />
         )}
         {/* Bulk "Create all Teams meetings": the same create form a single live
@@ -3099,12 +3158,13 @@ function LoadingProgressBar({ tone = 'primary', complete }: { tone?: 'primary' |
 // different: it copies real authored components out of the library instead
 // of creating empty ones. The only saved-template control on this screen is
 // "From template" in the Course structure rail, which builds a whole new week.
-function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson, onReuseComponents }: {
+function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson, onReuseComponents, onAddFromTemplate }: {
   week: ModuleWeek;
   onChange: (updates: Partial<ModuleWeek>) => void;
   onOpenSessionKsbMapping?: () => void;
   onAddLesson: () => void;
   onReuseComponents: () => void;
+  onAddFromTemplate: () => void;
 }) {
   const totalOtjh = week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
 
@@ -3122,6 +3182,14 @@ function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson,
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          {/* Adds a template's components to THIS week, beside whatever is
+              already in it. The module header's own template button still
+              creates a whole new week — both ways in are useful, and which one
+              you get follows from where you pressed. */}
+          <button onClick={onAddFromTemplate} title="Add a saved week template's components to this week" className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100">
+            <AppIcon className="ri-layout-masonry-line"></AppIcon>
+            From template
+          </button>
           <button onClick={onReuseComponents} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100">
             <AppIcon className="ri-file-copy-line"></AppIcon>
             Reuse
@@ -5017,10 +5085,15 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
   );
 }
 
-function WeekTemplateImportModal({ scope, onClose, onImport }: {
+function WeekTemplateImportModal({ scope, onClose, onImport, targetWeekLabel = '', existingComponentCount = 0 }: {
   scope: { programmeId: string; programmeName: string };
   onClose: () => void;
   onImport: (template: WeekTemplate) => void;
+  /** Set when the picker was opened from a week, empty when opened from the
+   *  module header. The two do different things — add to this week, or create a
+   *  new one — so the dialog says which is about to happen. */
+  targetWeekLabel?: string;
+  existingComponentCount?: number;
 }) {
   const [templates, setTemplates] = useState<WeekTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -5055,8 +5128,17 @@ function WeekTemplateImportModal({ scope, onClose, onImport }: {
       <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-4 border-b border-background-200 px-5 py-4">
           <div>
-            <h3 className="font-heading text-[15px] font-bold text-foreground-950">Add a week from a template</h3>
-            <p className="mt-0.5 text-[11px] text-foreground-500">Copies the template's components into a new week in this module.</p>
+            <h3 className="font-heading text-[15px] font-bold text-foreground-950">
+              {targetWeekLabel ? 'Add template components to this week' : 'Add a week from a template'}
+            </h3>
+            <p className="mt-0.5 text-[11px] text-foreground-500">
+              {targetWeekLabel
+                ? `Copies the template's components into ${targetWeekLabel}`
+                  + (existingComponentCount
+                    ? `, keeping the ${existingComponentCount} already there.`
+                    : '.')
+                : "Copies the template's components into a new week in this module."}
+            </p>
           </div>
           <button type="button" onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg bg-background-100 text-foreground-500 hover:bg-background-200"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
         </div>

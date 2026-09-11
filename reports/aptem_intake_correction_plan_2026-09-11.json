@@ -1,0 +1,3639 @@
+{
+  "rule": "Jan-Feb -> Feb; Mar-Jun -> Jun; Jul-Oct -> Oct; Nov-Dec -> next Feb",
+  "cohort_map": {
+    "APTEM-COHORT-064931326b3f466b4251202bf9adc8a6": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+    "APTEM-COHORT-073afabcf88690234405cb0be014a75f": "APTEM-COHORT-fb1a6b370f9c881a4d342cfac202030b",
+    "APTEM-COHORT-0d153ff3e536b190c63e3b3b2614dd34": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+    "APTEM-COHORT-15287ecb866eb42169b72c4089552469": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+    "APTEM-COHORT-1c8ac2164e91eaacc3a28ffa90505e65": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+    "APTEM-COHORT-1efca5965de8ca4ec0dfb67fa2b2e2fc": "APTEM-COHORT-fb1a6b370f9c881a4d342cfac202030b",
+    "APTEM-COHORT-21ad502f29c0fc08bff3579d3d91185a": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+    "APTEM-COHORT-21c5cbc62e8cb49a7cee98c93a2f8719": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+    "APTEM-COHORT-282383f1d8588946fe182da5dcc91226": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+    "APTEM-COHORT-2c53ab1768dfbeb4b95a6c4baf73eacc": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+    "APTEM-COHORT-35e204960a6fdc11c4ef01ec7a0352b6": "APTEM-COHORT-04c1d23f6f88f5cab16e8ab7dacf9fea",
+    "APTEM-COHORT-3aa4c598da40960c122e22d8951a36e6": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+    "APTEM-COHORT-3da911748b86270475549d092c7ce8a4": "APTEM-COHORT-6af03e32c1e23e2a70b313ef2ae25761",
+    "APTEM-COHORT-423ea36a0bae25f747c94886ebf3b7d5": "APTEM-COHORT-423ea36a0bae25f747c94886ebf3b7d5",
+    "APTEM-COHORT-463da4392169b39426a9bd8d296ad451": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+    "APTEM-COHORT-4fc129bbcb80dc8bc630853e608a2eee": "APTEM-COHORT-6af03e32c1e23e2a70b313ef2ae25761",
+    "APTEM-COHORT-5225a58d7e9019707fdbeec43267efe1": "APTEM-COHORT-eaa5565efb2c615b4b3a941d7ebaf927",
+    "APTEM-COHORT-52c4e3492ccffb684a98b2756d3acb1b": "APTEM-COHORT-423ea36a0bae25f747c94886ebf3b7d5",
+    "APTEM-COHORT-57fbba572c6d6a54e3b8e1fb08808d07": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+    "APTEM-COHORT-66ef51303780a2870d14c6264ebb2a99": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+    "APTEM-COHORT-6a79eb278c7e909ec1729bc11a93d7d5": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+    "APTEM-COHORT-6aad23528f9aa20a3423820845eddc3d": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+    "APTEM-COHORT-6af03e32c1e23e2a70b313ef2ae25761": "APTEM-COHORT-6af03e32c1e23e2a70b313ef2ae25761",
+    "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+    "APTEM-COHORT-6ee9f505fc6cf6731ad40e48434c9fc9": "APTEM-COHORT-ef4b156b4ea4c0c94ee777864ed7e4d2",
+    "APTEM-COHORT-71d4abfb584f2cfdfc819b06f856a886": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+    "APTEM-COHORT-7f7395ac46be89a47d5720a9e36c7a76": "APTEM-COHORT-65eac77d14df8a4ff93a126c5200a7c6",
+    "APTEM-COHORT-8273f1bfebb50bb5a6dc0ce4cb5d828f": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+    "APTEM-COHORT-84d33829c80fdcfcb906734346b7a27c": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+    "APTEM-COHORT-8509461eb28acb159b900ed33a33a14c": "APTEM-COHORT-b45a30dbbc81cae561e5ab8269b54a08",
+    "APTEM-COHORT-8c2e9aeb84136f20c26c421166cc9b5a": "APTEM-COHORT-423ea36a0bae25f747c94886ebf3b7d5",
+    "APTEM-COHORT-8f08f9d831574fe989865491f21a7762": "APTEM-COHORT-8f08f9d831574fe989865491f21a7762",
+    "APTEM-COHORT-9bbdd25a81f57854148332d25ba21475": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+    "APTEM-COHORT-9ca349e582362d93c2c49d79b245fc95": "APTEM-COHORT-9ca349e582362d93c2c49d79b245fc95",
+    "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+    "APTEM-COHORT-a68482ec1c251bf56b15bebe36a5609a": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+    "APTEM-COHORT-a73af6836e7a71689d9ef1bfdad83dce": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+    "APTEM-COHORT-ad5d4058ba79a86a537caeafee928770": "APTEM-COHORT-ad5d4058ba79a86a537caeafee928770",
+    "APTEM-COHORT-afc4510aed0e126b2bc917596d1458b2": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+    "APTEM-COHORT-b45a30dbbc81cae561e5ab8269b54a08": "APTEM-COHORT-b45a30dbbc81cae561e5ab8269b54a08",
+    "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+    "APTEM-COHORT-b66b6d68134927a594bf5f383ebfb6a5": "APTEM-COHORT-8f08f9d831574fe989865491f21a7762",
+    "APTEM-COHORT-c073a881aefbb1f24328444f8756bcb6": "APTEM-COHORT-ef5a1e79a3e31e8f37ab503b33a0e678",
+    "APTEM-COHORT-c70ab82bbd53303d9ce7c4be6f881d8a": "APTEM-COHORT-ef4b156b4ea4c0c94ee777864ed7e4d2",
+    "APTEM-COHORT-ccabd3d719be7859d9593afa268737a9": "APTEM-COHORT-8f08f9d831574fe989865491f21a7762",
+    "APTEM-COHORT-ce5db9d28e3d1a53e9889cd391fc957e": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+    "APTEM-COHORT-dc91b979e90b4edb5a12cbc6b6aaf5d2": "APTEM-COHORT-dc91b979e90b4edb5a12cbc6b6aaf5d2",
+    "APTEM-COHORT-e69a231d3ede48178881fc4b3aa052f7": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+    "APTEM-COHORT-e9505bcab011b272a0f554d7059b4187": "APTEM-COHORT-e9505bcab011b272a0f554d7059b4187",
+    "APTEM-COHORT-e98e9508869c35598a487f6f127eece6": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+    "APTEM-COHORT-eaa5565efb2c615b4b3a941d7ebaf927": "APTEM-COHORT-eaa5565efb2c615b4b3a941d7ebaf927",
+    "APTEM-COHORT-ef4b156b4ea4c0c94ee777864ed7e4d2": "APTEM-COHORT-ef4b156b4ea4c0c94ee777864ed7e4d2",
+    "APTEM-COHORT-ef5a1e79a3e31e8f37ab503b33a0e678": "APTEM-COHORT-ef5a1e79a3e31e8f37ab503b33a0e678",
+    "APTEM-COHORT-fb1a6b370f9c881a4d342cfac202030b": "APTEM-COHORT-fb1a6b370f9c881a4d342cfac202030b",
+    "APTEM-COHORT-fe9d82eef70b693b5e4e446b7829b40f": "APTEM-COHORT-ad5d4058ba79a86a537caeafee928770"
+  },
+  "group_map": {
+    "APTEM-GROUP-dac4be52d68a378669edd316a7e73c43": "APTEM-GROUP-dac4be52d68a378669edd316a7e73c43",
+    "APTEM-GROUP-c865cebb4c7d8e6cb8130f6e50920392": "APTEM-GROUP-c865cebb4c7d8e6cb8130f6e50920392",
+    "APTEM-GROUP-732c861115b11ef45174bd6be22c0081": "APTEM-GROUP-732c861115b11ef45174bd6be22c0081",
+    "APTEM-GROUP-3e67a01a51b0933a4140220620e3763d": "APTEM-GROUP-732c861115b11ef45174bd6be22c0081",
+    "APTEM-GROUP-af396841cb8464f34312d480584bfe86": "APTEM-GROUP-af396841cb8464f34312d480584bfe86",
+    "APTEM-GROUP-1fcd3db549b29ac242d91f8ef7f73fd3": "APTEM-GROUP-af396841cb8464f34312d480584bfe86",
+    "APTEM-GROUP-b6fead6a48189f9d2fc5ab9d1860b0b1": "APTEM-GROUP-b6fead6a48189f9d2fc5ab9d1860b0b1",
+    "APTEM-GROUP-28fba71f0f325196175b9bd15869c181": "APTEM-GROUP-b6fead6a48189f9d2fc5ab9d1860b0b1",
+    "APTEM-GROUP-b3a3e03a8c80092af15c5fefdbbdaf61": "APTEM-GROUP-b3a3e03a8c80092af15c5fefdbbdaf61",
+    "APTEM-GROUP-38a774c5b960467407a89ff3701b4a6f": "APTEM-GROUP-38a774c5b960467407a89ff3701b4a6f",
+    "APTEM-GROUP-b039f483d3ab4f4476fdbdc14995b40e": "APTEM-GROUP-38a774c5b960467407a89ff3701b4a6f",
+    "APTEM-GROUP-05364105f33e7e1b89f63c5cca5bf2ee": "APTEM-GROUP-05364105f33e7e1b89f63c5cca5bf2ee",
+    "APTEM-GROUP-aece8d2a447207799d8aa3d0952a9462": "APTEM-GROUP-05364105f33e7e1b89f63c5cca5bf2ee",
+    "APTEM-GROUP-7b417dd9e201edc0e97feb6adc63e627": "APTEM-GROUP-7b417dd9e201edc0e97feb6adc63e627",
+    "APTEM-GROUP-e228c600d0920dda5352a22bfeb5e3d1": "APTEM-GROUP-e228c600d0920dda5352a22bfeb5e3d1",
+    "APTEM-GROUP-e69e6b9310393d1065a1a6f4bce6251f": "APTEM-GROUP-e69e6b9310393d1065a1a6f4bce6251f",
+    "APTEM-GROUP-534a2cb2e3dc598938655846d138c2d7": "APTEM-GROUP-534a2cb2e3dc598938655846d138c2d7",
+    "APTEM-GROUP-7917c27c6b685d2933686ec2db586140": "APTEM-GROUP-7917c27c6b685d2933686ec2db586140",
+    "APTEM-GROUP-863f0cb57929fa17cfdca18347b27bd7": "APTEM-GROUP-863f0cb57929fa17cfdca18347b27bd7",
+    "APTEM-GROUP-e7026dadfd4a549d95caed5118c8c6e4": "APTEM-GROUP-e7026dadfd4a549d95caed5118c8c6e4",
+    "APTEM-GROUP-642abd7e5859e8d8461fdca3216a898f": "APTEM-GROUP-e7026dadfd4a549d95caed5118c8c6e4",
+    "APTEM-GROUP-299cd9a25c27441ada955be715d5b316": "APTEM-GROUP-299cd9a25c27441ada955be715d5b316",
+    "APTEM-GROUP-246277cbc10b0f666233e4f6c4aeda36": "APTEM-GROUP-246277cbc10b0f666233e4f6c4aeda36",
+    "APTEM-GROUP-7697824303707f51053356beea93a015": "APTEM-GROUP-7697824303707f51053356beea93a015",
+    "APTEM-GROUP-d04104579d829a84f5f0647c41f34b66": "APTEM-GROUP-d04104579d829a84f5f0647c41f34b66",
+    "APTEM-GROUP-dd2a991b5b90a38694a2e856620f915f": "APTEM-GROUP-d04104579d829a84f5f0647c41f34b66",
+    "APTEM-GROUP-3683e8d32de9045c293f6c9a775889ac": "APTEM-GROUP-3683e8d32de9045c293f6c9a775889ac",
+    "APTEM-GROUP-4d41c234ac55d7a5a230cba30c674f80": "APTEM-GROUP-4d41c234ac55d7a5a230cba30c674f80",
+    "APTEM-GROUP-58fc8541503788b1fa37f475d6bad273": "APTEM-GROUP-58fc8541503788b1fa37f475d6bad273",
+    "APTEM-GROUP-d87eebeaf6c507a3bf415dab349837b6": "APTEM-GROUP-58fc8541503788b1fa37f475d6bad273",
+    "APTEM-GROUP-3a685f72680a7b849aafe49754f06e59": "APTEM-GROUP-3a685f72680a7b849aafe49754f06e59",
+    "APTEM-GROUP-c1ccf33b20b29f47ea80680fe23cdd36": "APTEM-GROUP-3a685f72680a7b849aafe49754f06e59",
+    "APTEM-GROUP-2676a39ec60710b8a73200bdaf4fba8a": "APTEM-GROUP-2676a39ec60710b8a73200bdaf4fba8a",
+    "APTEM-GROUP-7dbcbdbc9f31c5f69b0242b2a8280fe5": "APTEM-GROUP-2676a39ec60710b8a73200bdaf4fba8a",
+    "APTEM-GROUP-f3c1c488e7865c768fc1fdf8713cc029": "APTEM-GROUP-2676a39ec60710b8a73200bdaf4fba8a",
+    "APTEM-GROUP-68af72414372681f3ecca3de84f3399d": "APTEM-GROUP-68af72414372681f3ecca3de84f3399d",
+    "APTEM-GROUP-ba859f9ae87d98e08b6570cf24bb9c88": "APTEM-GROUP-ba859f9ae87d98e08b6570cf24bb9c88",
+    "APTEM-GROUP-8d927c1d07f2da52cf6d9316f1535f07": "APTEM-GROUP-8d927c1d07f2da52cf6d9316f1535f07",
+    "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+    "APTEM-GROUP-39e8fbf60fcd8abfc06ee41a1a75ebb9": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+    "APTEM-GROUP-8b37c0dd4f7313843ccdcac213ba6537": "APTEM-GROUP-8b37c0dd4f7313843ccdcac213ba6537",
+    "APTEM-GROUP-38a1153b1d667cf1d42ba93fef2f82e7": "APTEM-GROUP-38a1153b1d667cf1d42ba93fef2f82e7",
+    "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+    "APTEM-GROUP-2ae81d527149f635da2d4c614128d5c5": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+    "APTEM-GROUP-c045f45aa92ba95710a3fcf2dc543679": "APTEM-GROUP-c045f45aa92ba95710a3fcf2dc543679",
+    "APTEM-GROUP-e2feaae373d9422b448aaf4094027a12": "APTEM-GROUP-e2feaae373d9422b448aaf4094027a12",
+    "APTEM-GROUP-8e95c01e0a1ec7bbda65604d9e446c82": "APTEM-GROUP-e2feaae373d9422b448aaf4094027a12",
+    "APTEM-GROUP-9b746a12c8d906d7a792208c9378628e": "APTEM-GROUP-e2feaae373d9422b448aaf4094027a12",
+    "APTEM-GROUP-f9e8da3672f17566e88b5e80ea6369b2": "APTEM-GROUP-e2feaae373d9422b448aaf4094027a12",
+    "APTEM-GROUP-d82a3b19d576471a6d2446c80cfd5cff": "APTEM-GROUP-d82a3b19d576471a6d2446c80cfd5cff",
+    "APTEM-GROUP-c46fc3e7d74fe2bfc57625e055773133": "APTEM-GROUP-c46fc3e7d74fe2bfc57625e055773133",
+    "APTEM-GROUP-7d24494d163e1c271c1d3f7d7c163d8c": "APTEM-GROUP-7d24494d163e1c271c1d3f7d7c163d8c",
+    "APTEM-GROUP-d0947524a35c49703c536226096ac4cd": "APTEM-GROUP-7d24494d163e1c271c1d3f7d7c163d8c",
+    "APTEM-GROUP-d858cbf9c5dbe8c0615e77ac354218dd": "APTEM-GROUP-d858cbf9c5dbe8c0615e77ac354218dd",
+    "APTEM-GROUP-7013be7cb67dbebeeb0738f4812c79cf": "APTEM-GROUP-7013be7cb67dbebeeb0738f4812c79cf",
+    "APTEM-GROUP-3093e5af9f76d8bc1d2addf1ed5bc4bd": "APTEM-GROUP-3093e5af9f76d8bc1d2addf1ed5bc4bd",
+    "APTEM-GROUP-955228c1b775dcafed217ef27b3babd8": "APTEM-GROUP-3093e5af9f76d8bc1d2addf1ed5bc4bd",
+    "APTEM-GROUP-6db3ce476c920e5e6130bf015091f074": "APTEM-GROUP-6db3ce476c920e5e6130bf015091f074",
+    "APTEM-GROUP-e4c61b4af0c3802a6b4ee459ef8015cc": "APTEM-GROUP-e4c61b4af0c3802a6b4ee459ef8015cc",
+    "APTEM-GROUP-b8a868591bbc99b824a6819dfea65d3f": "APTEM-GROUP-e4c61b4af0c3802a6b4ee459ef8015cc",
+    "APTEM-GROUP-4d0bf743cf6d8e9a5cb60a44d25c34b0": "APTEM-GROUP-4d0bf743cf6d8e9a5cb60a44d25c34b0",
+    "APTEM-GROUP-07a3151d0af939b9c86f26e559ef1f27": "APTEM-GROUP-4d0bf743cf6d8e9a5cb60a44d25c34b0",
+    "APTEM-GROUP-ae7f38f5018d44d552c0ffdaaa49e991": "APTEM-GROUP-4d0bf743cf6d8e9a5cb60a44d25c34b0",
+    "APTEM-GROUP-f35c2e1cb800f303218bc87a5c74ccd6": "APTEM-GROUP-f35c2e1cb800f303218bc87a5c74ccd6",
+    "APTEM-GROUP-d2f16268c154597156c87ec94242baf6": "APTEM-GROUP-d2f16268c154597156c87ec94242baf6",
+    "APTEM-GROUP-3acb8f480a9bcdc44bd48932a8b2d108": "APTEM-GROUP-3acb8f480a9bcdc44bd48932a8b2d108",
+    "APTEM-GROUP-9f6062d8eacaaccecda4e568dd99bb9b": "APTEM-GROUP-9f6062d8eacaaccecda4e568dd99bb9b",
+    "APTEM-GROUP-7c61ff9b1e060caf726fb9909adc6a8d": "APTEM-GROUP-9f6062d8eacaaccecda4e568dd99bb9b",
+    "APTEM-GROUP-f93b4cc142df0fc74551575851de18f2": "APTEM-GROUP-9f6062d8eacaaccecda4e568dd99bb9b",
+    "APTEM-GROUP-da3651b4e6a91b331131b133c9916bd7": "APTEM-GROUP-da3651b4e6a91b331131b133c9916bd7",
+    "APTEM-GROUP-4e5d950777a819088f49f94758382e85": "APTEM-GROUP-4e5d950777a819088f49f94758382e85",
+    "APTEM-GROUP-8172be55ba04030ef4719b1f6d15ab94": "APTEM-GROUP-8172be55ba04030ef4719b1f6d15ab94",
+    "APTEM-GROUP-1cc046050ced9420ef1f3992856b33f6": "APTEM-GROUP-8172be55ba04030ef4719b1f6d15ab94",
+    "APTEM-GROUP-906566955fecff40da50753ba9ac27fa": "APTEM-GROUP-906566955fecff40da50753ba9ac27fa",
+    "APTEM-GROUP-d213c47345c717901848c828599a4449": "APTEM-GROUP-906566955fecff40da50753ba9ac27fa",
+    "APTEM-GROUP-96741788c787836e397b561fd671b623": "APTEM-GROUP-96741788c787836e397b561fd671b623",
+    "APTEM-GROUP-3a76d8081cf4248a95e30f3608ddbae8": "APTEM-GROUP-3a76d8081cf4248a95e30f3608ddbae8",
+    "APTEM-GROUP-3a598da08c6ef623b601c9adea3d7c00": "APTEM-GROUP-3a598da08c6ef623b601c9adea3d7c00",
+    "APTEM-GROUP-440c1741c2221b7de71fc4908fd6b03a": "APTEM-GROUP-3a598da08c6ef623b601c9adea3d7c00",
+    "APTEM-GROUP-0737dfdc9ac35044157382c909b0c938": "APTEM-GROUP-0737dfdc9ac35044157382c909b0c938",
+    "APTEM-GROUP-cc6999733b7cd5dbd496c0d02209466b": "APTEM-GROUP-cc6999733b7cd5dbd496c0d02209466b",
+    "APTEM-GROUP-0bce9a0ca03a20e9f8514e83461d23ab": "APTEM-GROUP-cc6999733b7cd5dbd496c0d02209466b",
+    "APTEM-GROUP-7a51047223014eb8d602a792bfd75240": "APTEM-GROUP-7a51047223014eb8d602a792bfd75240",
+    "APTEM-GROUP-5cbfd087fe56669d9800f06c108da855": "APTEM-GROUP-5cbfd087fe56669d9800f06c108da855",
+    "APTEM-GROUP-014aacd7555a52a6d9b404637daff680": "APTEM-GROUP-5cbfd087fe56669d9800f06c108da855",
+    "APTEM-GROUP-5b2a17ea97cb791ca9828d6cd6c78491": "APTEM-GROUP-5b2a17ea97cb791ca9828d6cd6c78491",
+    "APTEM-GROUP-8ad429dbe9487a72f64815a1236144a9": "APTEM-GROUP-5b2a17ea97cb791ca9828d6cd6c78491",
+    "APTEM-GROUP-2d4f0f9a477a0ad7d2c977a1521b06c4": "APTEM-GROUP-2d4f0f9a477a0ad7d2c977a1521b06c4",
+    "APTEM-GROUP-d7c7d21cb4b4c780d57b748602c3375f": "APTEM-GROUP-2d4f0f9a477a0ad7d2c977a1521b06c4",
+    "APTEM-GROUP-50b2dd33f48ca0a8d011269b8839c822": "APTEM-GROUP-50b2dd33f48ca0a8d011269b8839c822",
+    "APTEM-GROUP-aaff10ecfb7afd7665b3c4a86cb1ac82": "APTEM-GROUP-aaff10ecfb7afd7665b3c4a86cb1ac82",
+    "APTEM-GROUP-6e9919f3b1fa2e9475df01a53c5b8245": "APTEM-GROUP-aaff10ecfb7afd7665b3c4a86cb1ac82",
+    "APTEM-GROUP-bec3c2e068b808cacbb9a429168171eb": "APTEM-GROUP-aaff10ecfb7afd7665b3c4a86cb1ac82",
+    "APTEM-GROUP-f362638f17e9110deca3c1e9197ce18f": "APTEM-GROUP-aaff10ecfb7afd7665b3c4a86cb1ac82",
+    "APTEM-GROUP-f916f18e64e2a54709b38bc4410c3728": "APTEM-GROUP-f916f18e64e2a54709b38bc4410c3728",
+    "APTEM-GROUP-85791b934b945abe5f4fe8451002925a": "APTEM-GROUP-85791b934b945abe5f4fe8451002925a",
+    "APTEM-GROUP-7bebeb13d1ff5b2e5b056f292bcdf402": "APTEM-GROUP-85791b934b945abe5f4fe8451002925a",
+    "APTEM-GROUP-71c9b8973b088851580d839485899711": "APTEM-GROUP-71c9b8973b088851580d839485899711",
+    "APTEM-GROUP-1d04bba80d20dd1d82894ad011a8d68c": "APTEM-GROUP-71c9b8973b088851580d839485899711",
+    "APTEM-GROUP-f05e49ee6c6e6ffb6dd4b0becbf5c1c0": "APTEM-GROUP-f05e49ee6c6e6ffb6dd4b0becbf5c1c0",
+    "APTEM-GROUP-08bad5b3b7e6bca5899b5f077022b09f": "APTEM-GROUP-08bad5b3b7e6bca5899b5f077022b09f",
+    "APTEM-GROUP-7ac2bfcea2e7e323a7ab9b58d8152f76": "APTEM-GROUP-7ac2bfcea2e7e323a7ab9b58d8152f76",
+    "APTEM-GROUP-371ca69fc92eeb83d9f31e528dd74178": "APTEM-GROUP-371ca69fc92eeb83d9f31e528dd74178",
+    "APTEM-GROUP-0fe5280c558df8cbc9ba3872b6d6d325": "APTEM-GROUP-0fe5280c558df8cbc9ba3872b6d6d325",
+    "APTEM-GROUP-aa70d0bf1e661f712469e61b1e56138a": "APTEM-GROUP-0fe5280c558df8cbc9ba3872b6d6d325",
+    "APTEM-GROUP-a2ca6eed79334c6f1f6303c1716ca4d3": "APTEM-GROUP-a2ca6eed79334c6f1f6303c1716ca4d3",
+    "APTEM-GROUP-ae162644fbc25e5b3ff28a5b8c5dd2a4": "APTEM-GROUP-ae162644fbc25e5b3ff28a5b8c5dd2a4",
+    "APTEM-GROUP-183bb96019207a740ab0314ff04658ed": "APTEM-GROUP-183bb96019207a740ab0314ff04658ed",
+    "APTEM-GROUP-55b90b2a6a21246be36a63fbf953981e": "APTEM-GROUP-55b90b2a6a21246be36a63fbf953981e",
+    "APTEM-GROUP-9c82e52b6d4ff161208fd86630b696b9": "APTEM-GROUP-55b90b2a6a21246be36a63fbf953981e",
+    "APTEM-GROUP-261f68e3c0c912a9643195baa4accf63": "APTEM-GROUP-261f68e3c0c912a9643195baa4accf63",
+    "APTEM-GROUP-5ed1069a499db0dabe9067bb78554af8": "APTEM-GROUP-5ed1069a499db0dabe9067bb78554af8",
+    "APTEM-GROUP-81fd8ddaf063f8f7e113ae4e2736bf65": "APTEM-GROUP-5ed1069a499db0dabe9067bb78554af8",
+    "APTEM-GROUP-cf1de9993afb801fa30a5a5f8c193523": "APTEM-GROUP-cf1de9993afb801fa30a5a5f8c193523",
+    "APTEM-GROUP-cd24c66e53ae6a2df871cc9750aaa75a": "APTEM-GROUP-cf1de9993afb801fa30a5a5f8c193523",
+    "APTEM-GROUP-f35c14c03dfcf4075c2a275e9e2a6cb5": "APTEM-GROUP-f35c14c03dfcf4075c2a275e9e2a6cb5",
+    "APTEM-GROUP-f9b312bba7244e3b57dd1f98d318eb16": "APTEM-GROUP-f9b312bba7244e3b57dd1f98d318eb16",
+    "APTEM-GROUP-e8cabf9d68fb92795e7efa3410074859": "APTEM-GROUP-e8cabf9d68fb92795e7efa3410074859",
+    "APTEM-GROUP-aea54172e5cee031c57faf3ca6bb0efa": "APTEM-GROUP-e8cabf9d68fb92795e7efa3410074859",
+    "APTEM-GROUP-413ac5c867c30fbfe33be65298ce43a5": "APTEM-GROUP-413ac5c867c30fbfe33be65298ce43a5",
+    "APTEM-GROUP-cbbdc4be8bd0a6e6409bb71f7615376b": "APTEM-GROUP-cbbdc4be8bd0a6e6409bb71f7615376b",
+    "APTEM-GROUP-72a16ad34405083c617ebf5ff3a3ebbc": "APTEM-GROUP-72a16ad34405083c617ebf5ff3a3ebbc",
+    "APTEM-GROUP-d3829c8323daaff5bded03e5ca4da0a1": "APTEM-GROUP-d3829c8323daaff5bded03e5ca4da0a1",
+    "APTEM-GROUP-95608a32970e201328304a6b6fa27455": "APTEM-GROUP-d3829c8323daaff5bded03e5ca4da0a1",
+    "APTEM-GROUP-fa65b1183c9b90d707ff6d2dd44f808e": "APTEM-GROUP-d3829c8323daaff5bded03e5ca4da0a1",
+    "APTEM-GROUP-beaaef86ec8d2b027f41f4e50faf4fdd": "APTEM-GROUP-beaaef86ec8d2b027f41f4e50faf4fdd"
+  },
+  "cohorts": [
+    {
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "cohort_name": "Oct 2025",
+      "programme_id": "PROG-PCP-L6",
+      "programme_name": "Project Controls Professional Level 6",
+      "start_date": "2025-10-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-2676a39ec60710b8a73200bdaf4fba8a",
+        "APTEM-GROUP-3a685f72680a7b849aafe49754f06e59",
+        "APTEM-GROUP-4d41c234ac55d7a5a230cba30c674f80",
+        "APTEM-GROUP-58fc8541503788b1fa37f475d6bad273",
+        "APTEM-GROUP-68af72414372681f3ecca3de84f3399d",
+        "APTEM-GROUP-ba859f9ae87d98e08b6570cf24bb9c88"
+      ],
+      "module_names": [],
+      "is_new": true
+    },
+    {
+      "cohort_id": "APTEM-COHORT-fb1a6b370f9c881a4d342cfac202030b",
+      "cohort_name": "Oct 2026",
+      "programme_id": "PROG-PCP-L6",
+      "programme_name": "Project Controls Professional Level 6",
+      "start_date": "2026-10-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-72a16ad34405083c617ebf5ff3a3ebbc",
+        "APTEM-GROUP-beaaef86ec8d2b027f41f4e50faf4fdd",
+        "APTEM-GROUP-cbbdc4be8bd0a6e6409bb71f7615376b",
+        "APTEM-GROUP-d3829c8323daaff5bded03e5ca4da0a1"
+      ],
+      "module_names": [],
+      "is_new": false
+    },
+    {
+      "cohort_id": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+      "cohort_name": "Feb 2026",
+      "programme_id": "PROG-PCP-L6",
+      "programme_name": "Project Controls Professional Level 6",
+      "start_date": "2026-02-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-3093e5af9f76d8bc1d2addf1ed5bc4bd",
+        "APTEM-GROUP-4d0bf743cf6d8e9a5cb60a44d25c34b0",
+        "APTEM-GROUP-6db3ce476c920e5e6130bf015091f074",
+        "APTEM-GROUP-7013be7cb67dbebeeb0738f4812c79cf",
+        "APTEM-GROUP-d2f16268c154597156c87ec94242baf6",
+        "APTEM-GROUP-e4c61b4af0c3802a6b4ee459ef8015cc",
+        "APTEM-GROUP-f35c2e1cb800f303218bc87a5c74ccd6"
+      ],
+      "module_names": [],
+      "is_new": false
+    },
+    {
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "cohort_name": "Oct 2025",
+      "programme_id": "PROG-ME-L4",
+      "programme_name": "Marketing Executive Level 4",
+      "start_date": "2025-10-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-05364105f33e7e1b89f63c5cca5bf2ee",
+        "APTEM-GROUP-7b417dd9e201edc0e97feb6adc63e627",
+        "APTEM-GROUP-e228c600d0920dda5352a22bfeb5e3d1"
+      ],
+      "module_names": [],
+      "is_new": true
+    },
+    {
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "cohort_name": "Jun 2026",
+      "programme_id": "PROG-ME-L4",
+      "programme_name": "Marketing Executive Level 4",
+      "start_date": "2026-06-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-38a774c5b960467407a89ff3701b4a6f",
+        "APTEM-GROUP-732c861115b11ef45174bd6be22c0081",
+        "APTEM-GROUP-af396841cb8464f34312d480584bfe86",
+        "APTEM-GROUP-b3a3e03a8c80092af15c5fefdbbdaf61",
+        "APTEM-GROUP-b6fead6a48189f9d2fc5ab9d1860b0b1",
+        "APTEM-GROUP-c865cebb4c7d8e6cb8130f6e50920392"
+      ],
+      "module_names": [],
+      "is_new": false
+    },
+    {
+      "cohort_id": "APTEM-COHORT-04c1d23f6f88f5cab16e8ab7dacf9fea",
+      "cohort_name": "Oct 2024",
+      "programme_id": "PROG-PCP-L6",
+      "programme_name": "Project Controls Professional Level 6",
+      "start_date": "2024-10-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-dac4be52d68a378669edd316a7e73c43"
+      ],
+      "module_names": [],
+      "is_new": true
+    },
+    {
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "cohort_name": "Jun 2026",
+      "programme_id": "PROG-MM-L6",
+      "programme_name": "Marketing Manager Level 6",
+      "start_date": "2026-06-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+        "APTEM-GROUP-38a1153b1d667cf1d42ba93fef2f82e7",
+        "APTEM-GROUP-8b37c0dd4f7313843ccdcac213ba6537",
+        "APTEM-GROUP-8d927c1d07f2da52cf6d9316f1535f07",
+        "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+        "APTEM-GROUP-c045f45aa92ba95710a3fcf2dc543679",
+        "APTEM-GROUP-d82a3b19d576471a6d2446c80cfd5cff",
+        "APTEM-GROUP-e2feaae373d9422b448aaf4094027a12"
+      ],
+      "module_names": [],
+      "is_new": false
+    },
+    {
+      "cohort_id": "APTEM-COHORT-6af03e32c1e23e2a70b313ef2ae25761",
+      "cohort_name": "Oct 2026",
+      "programme_id": "PROG-20260907141619067932",
+      "programme_name": "Associate Project Manager Level 4",
+      "start_date": "2026-10-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-7d24494d163e1c271c1d3f7d7c163d8c",
+        "APTEM-GROUP-d858cbf9c5dbe8c0615e77ac354218dd"
+      ],
+      "module_names": [],
+      "is_new": false
+    },
+    {
+      "cohort_id": "APTEM-COHORT-423ea36a0bae25f747c94886ebf3b7d5",
+      "cohort_name": "Feb 2026",
+      "programme_id": "PROG-ME-L4",
+      "programme_name": "Marketing Executive Level 4",
+      "start_date": "2026-02-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-246277cbc10b0f666233e4f6c4aeda36",
+        "APTEM-GROUP-299cd9a25c27441ada955be715d5b316",
+        "APTEM-GROUP-3683e8d32de9045c293f6c9a775889ac",
+        "APTEM-GROUP-7697824303707f51053356beea93a015",
+        "APTEM-GROUP-d04104579d829a84f5f0647c41f34b66",
+        "APTEM-GROUP-e7026dadfd4a549d95caed5118c8c6e4"
+      ],
+      "module_names": [],
+      "is_new": false
+    },
+    {
+      "cohort_id": "APTEM-COHORT-eaa5565efb2c615b4b3a941d7ebaf927",
+      "cohort_name": "Jun 2025",
+      "programme_id": "PROG-ME-L4",
+      "programme_name": "Marketing Executive Level 4",
+      "start_date": "2025-06-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-0fe5280c558df8cbc9ba3872b6d6d325",
+        "APTEM-GROUP-183bb96019207a740ab0314ff04658ed",
+        "APTEM-GROUP-55b90b2a6a21246be36a63fbf953981e",
+        "APTEM-GROUP-a2ca6eed79334c6f1f6303c1716ca4d3",
+        "APTEM-GROUP-ae162644fbc25e5b3ff28a5b8c5dd2a4"
+      ],
+      "module_names": [],
+      "is_new": false
+    },
+    {
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "cohort_name": "Jun 2026",
+      "programme_id": "PROG-PCP-L6",
+      "programme_name": "Project Controls Professional Level 6",
+      "start_date": "2026-06-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-08bad5b3b7e6bca5899b5f077022b09f",
+        "APTEM-GROUP-50b2dd33f48ca0a8d011269b8839c822",
+        "APTEM-GROUP-71c9b8973b088851580d839485899711",
+        "APTEM-GROUP-85791b934b945abe5f4fe8451002925a",
+        "APTEM-GROUP-aaff10ecfb7afd7665b3c4a86cb1ac82",
+        "APTEM-GROUP-f05e49ee6c6e6ffb6dd4b0becbf5c1c0",
+        "APTEM-GROUP-f916f18e64e2a54709b38bc4410c3728"
+      ],
+      "module_names": [],
+      "is_new": false
+    },
+    {
+      "cohort_id": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+      "cohort_name": "Feb 2026",
+      "programme_id": "PROG-MM-L6",
+      "programme_name": "Marketing Manager Level 6",
+      "start_date": "2026-02-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-0737dfdc9ac35044157382c909b0c938",
+        "APTEM-GROUP-3a598da08c6ef623b601c9adea3d7c00",
+        "APTEM-GROUP-3a76d8081cf4248a95e30f3608ddbae8",
+        "APTEM-GROUP-7a51047223014eb8d602a792bfd75240",
+        "APTEM-GROUP-8172be55ba04030ef4719b1f6d15ab94",
+        "APTEM-GROUP-906566955fecff40da50753ba9ac27fa",
+        "APTEM-GROUP-96741788c787836e397b561fd671b623",
+        "APTEM-GROUP-cc6999733b7cd5dbd496c0d02209466b"
+      ],
+      "module_names": [],
+      "is_new": false
+    },
+    {
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "cohort_name": "Oct 2025",
+      "programme_id": "PROG-MM-L6",
+      "programme_name": "Marketing Manager Level 6",
+      "start_date": "2025-10-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-534a2cb2e3dc598938655846d138c2d7",
+        "APTEM-GROUP-7917c27c6b685d2933686ec2db586140",
+        "APTEM-GROUP-863f0cb57929fa17cfdca18347b27bd7",
+        "APTEM-GROUP-e69e6b9310393d1065a1a6f4bce6251f"
+      ],
+      "module_names": [],
+      "is_new": true
+    },
+    {
+      "cohort_id": "APTEM-COHORT-ef4b156b4ea4c0c94ee777864ed7e4d2",
+      "cohort_name": "Jun 2025",
+      "programme_id": "PROG-PCP-L6",
+      "programme_name": "Project Controls Professional Level 6",
+      "start_date": "2025-06-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-261f68e3c0c912a9643195baa4accf63",
+        "APTEM-GROUP-5ed1069a499db0dabe9067bb78554af8",
+        "APTEM-GROUP-cf1de9993afb801fa30a5a5f8c193523",
+        "APTEM-GROUP-f35c14c03dfcf4075c2a275e9e2a6cb5",
+        "APTEM-GROUP-f9b312bba7244e3b57dd1f98d318eb16"
+      ],
+      "module_names": [],
+      "is_new": false
+    },
+    {
+      "cohort_id": "APTEM-COHORT-65eac77d14df8a4ff93a126c5200a7c6",
+      "cohort_name": "Oct 2025",
+      "programme_id": "PROG-20260907141619067932",
+      "programme_name": "Associate Project Manager Level 4",
+      "start_date": "2025-10-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-c46fc3e7d74fe2bfc57625e055773133"
+      ],
+      "module_names": [],
+      "is_new": true
+    },
+    {
+      "cohort_id": "APTEM-COHORT-b45a30dbbc81cae561e5ab8269b54a08",
+      "cohort_name": "Jun 2025",
+      "programme_id": "PROG-MM-L6",
+      "programme_name": "Marketing Manager Level 6",
+      "start_date": "2025-06-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-2d4f0f9a477a0ad7d2c977a1521b06c4"
+      ],
+      "module_names": [],
+      "is_new": false
+    },
+    {
+      "cohort_id": "APTEM-COHORT-8f08f9d831574fe989865491f21a7762",
+      "cohort_name": "Oct 2026",
+      "programme_id": "PROG-MM-L6",
+      "programme_name": "Marketing Manager Level 6",
+      "start_date": "2026-10-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-3acb8f480a9bcdc44bd48932a8b2d108",
+        "APTEM-GROUP-9f6062d8eacaaccecda4e568dd99bb9b",
+        "APTEM-GROUP-da3651b4e6a91b331131b133c9916bd7"
+      ],
+      "module_names": [],
+      "is_new": false
+    },
+    {
+      "cohort_id": "APTEM-COHORT-9ca349e582362d93c2c49d79b245fc95",
+      "cohort_name": "Jun 2026",
+      "programme_id": "PROG-20260907141619067932",
+      "programme_name": "Associate Project Manager Level 4",
+      "start_date": "2026-06-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-4e5d950777a819088f49f94758382e85"
+      ],
+      "module_names": [],
+      "is_new": false
+    },
+    {
+      "cohort_id": "APTEM-COHORT-ad5d4058ba79a86a537caeafee928770",
+      "cohort_name": "Oct 2026",
+      "programme_id": "PROG-ME-L4",
+      "programme_name": "Marketing Executive Level 4",
+      "start_date": "2026-10-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-5b2a17ea97cb791ca9828d6cd6c78491",
+        "APTEM-GROUP-5cbfd087fe56669d9800f06c108da855"
+      ],
+      "module_names": [
+        "Marketing Impact and Planning - Oct 2026"
+      ],
+      "is_new": false
+    },
+    {
+      "cohort_id": "APTEM-COHORT-ef5a1e79a3e31e8f37ab503b33a0e678",
+      "cohort_name": "Feb 2025",
+      "programme_id": "PROG-ME-L4",
+      "programme_name": "Marketing Executive Level 4",
+      "start_date": "2025-02-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-413ac5c867c30fbfe33be65298ce43a5",
+        "APTEM-GROUP-e8cabf9d68fb92795e7efa3410074859"
+      ],
+      "module_names": [],
+      "is_new": false
+    },
+    {
+      "cohort_id": "APTEM-COHORT-dc91b979e90b4edb5a12cbc6b6aaf5d2",
+      "cohort_name": "Feb 2026",
+      "programme_id": "PROG-20260907141619067932",
+      "programme_name": "Associate Project Manager Level 4",
+      "start_date": "2026-02-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-7ac2bfcea2e7e323a7ab9b58d8152f76"
+      ],
+      "module_names": [],
+      "is_new": false
+    },
+    {
+      "cohort_id": "APTEM-COHORT-e9505bcab011b272a0f554d7059b4187",
+      "cohort_name": "Feb 2025",
+      "programme_id": "PROG-PCP-L6",
+      "programme_name": "Project Controls Professional Level 6",
+      "start_date": "2025-02-01",
+      "source_type": "aptem_intakes",
+      "group_ids": [
+        "APTEM-GROUP-371ca69fc92eeb83d9f31e528dd74178"
+      ],
+      "module_names": [],
+      "is_new": false
+    }
+  ],
+  "groups": [
+    {
+      "group_id": "APTEM-GROUP-dac4be52d68a378669edd316a7e73c43",
+      "group_name": "Ray-Project Management Office (PMO)",
+      "cohort_id": "APTEM-COHORT-04c1d23f6f88f5cab16e8ab7dacf9fea",
+      "cohort_name": "Oct 2024",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-c865cebb4c7d8e6cb8130f6e50920392",
+      "group_name": "G2-Juliane -Impact and Planning June 2026",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "cohort_name": "Jun 2026",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-732c861115b11ef45174bd6be22c0081",
+      "group_name": "G2-Juliane -Impact and Planning June 2026(Recorded Sessions)",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "cohort_name": "Jun 2026",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-af396841cb8464f34312d480584bfe86",
+      "group_name": "Juliane – Impact and Planning June 2026",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "cohort_name": "Jun 2026",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-b6fead6a48189f9d2fc5ab9d1860b0b1",
+      "group_name": "Juliane – Impact and Planning June 2026(Recorded Sessions)",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "cohort_name": "Jun 2026",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-b3a3e03a8c80092af15c5fefdbbdaf61",
+      "group_name": "ME Level 4 - June 2026",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "cohort_name": "Jun 2026",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-38a774c5b960467407a89ff3701b4a6f",
+      "group_name": "ME Level 4 - October 2026",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "cohort_name": "Jun 2026",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-05364105f33e7e1b89f63c5cca5bf2ee",
+      "group_name": "Dr. Samar - Marketing Technology - ME July 2025",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "cohort_name": "Oct 2025",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-7b417dd9e201edc0e97feb6adc63e627",
+      "group_name": "Nathan - Marketing Technology-(MarTech) Wed",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "cohort_name": "Oct 2025",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-e228c600d0920dda5352a22bfeb5e3d1",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "cohort_name": "Oct 2025",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-e69e6b9310393d1065a1a6f4bce6251f",
+      "group_name": "Femi-Commercial Intelligence-Oct 25",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "cohort_name": "Oct 2025",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-534a2cb2e3dc598938655846d138c2d7",
+      "group_name": "G1 Keith-Commercial Intelligence-Oct 25",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "cohort_name": "Oct 2025",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-7917c27c6b685d2933686ec2db586140",
+      "group_name": "G2 Keith-Commercial Intelligence-Oct 25",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "cohort_name": "Oct 2025",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-863f0cb57929fa17cfdca18347b27bd7",
+      "group_name": "Keith – AI in Marketing | Friday | May 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "cohort_name": "Oct 2025",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-e7026dadfd4a549d95caed5118c8c6e4",
+      "group_name": "G2 - Julian - Social Media",
+      "cohort_id": "APTEM-COHORT-423ea36a0bae25f747c94886ebf3b7d5",
+      "cohort_name": "Feb 2026",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-299cd9a25c27441ada955be715d5b316",
+      "group_name": "G2 - Julian - Social Media (Recorded Sessions)",
+      "cohort_id": "APTEM-COHORT-423ea36a0bae25f747c94886ebf3b7d5",
+      "cohort_name": "Feb 2026",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-246277cbc10b0f666233e4f6c4aeda36",
+      "group_name": "ME Level 4 - February 2026",
+      "cohort_id": "APTEM-COHORT-423ea36a0bae25f747c94886ebf3b7d5",
+      "cohort_name": "Feb 2026",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-7697824303707f51053356beea93a015",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "cohort_id": "APTEM-COHORT-423ea36a0bae25f747c94886ebf3b7d5",
+      "cohort_name": "Feb 2026",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-d04104579d829a84f5f0647c41f34b66",
+      "group_name": "Social Media – Prof. Charl",
+      "cohort_id": "APTEM-COHORT-423ea36a0bae25f747c94886ebf3b7d5",
+      "cohort_name": "Feb 2026",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-3683e8d32de9045c293f6c9a775889ac",
+      "group_name": "Social Media – Prof. Charl (Recorded Sessions)",
+      "cohort_id": "APTEM-COHORT-423ea36a0bae25f747c94886ebf3b7d5",
+      "cohort_name": "Feb 2026",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-4d41c234ac55d7a5a230cba30c674f80",
+      "group_name": "Ray-Project Management Office (PMO)",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "cohort_name": "Oct 2025",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-58fc8541503788b1fa37f475d6bad273",
+      "group_name": "Stephen-Portfolio Management 2026",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "cohort_name": "Oct 2025",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-3a685f72680a7b849aafe49754f06e59",
+      "group_name": "Stephen-Portfolio Management 2026 Recorded sessions",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "cohort_name": "Oct 2025",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-2676a39ec60710b8a73200bdaf4fba8a",
+      "group_name": "Steve-Earned Value Management(EVM)2026",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "cohort_name": "Oct 2025",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-68af72414372681f3ecca3de84f3399d",
+      "group_name": "Steve-Earned Value Management(EVM)2026 Recorded Session",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "cohort_name": "Oct 2025",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-ba859f9ae87d98e08b6570cf24bb9c88",
+      "group_name": "Steve-Earned Value Management(EVM)2026 Recorded Sessions",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "cohort_name": "Oct 2025",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-8d927c1d07f2da52cf6d9316f1535f07",
+      "group_name": "G2 - Keith - Strategy and Planning - June 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "cohort_name": "Jun 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+      "group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "cohort_name": "Jun 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-8b37c0dd4f7313843ccdcac213ba6537",
+      "group_name": "G3 - Femi - Customer Journey Optimisation",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "cohort_name": "Jun 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-38a1153b1d667cf1d42ba93fef2f82e7",
+      "group_name": "Keith | Strategy & Planning – June 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "cohort_name": "Jun 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+      "group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "cohort_name": "Jun 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-c045f45aa92ba95710a3fcf2dc543679",
+      "group_name": "MM Level 6 - June 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "cohort_name": "Jun 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-e2feaae373d9422b448aaf4094027a12",
+      "group_name": "MM Level 6 - October 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "cohort_name": "Jun 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-d82a3b19d576471a6d2446c80cfd5cff",
+      "group_name": "Test Accounts",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "cohort_name": "Jun 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-c46fc3e7d74fe2bfc57625e055773133",
+      "group_name": "PCP Level 6 - October 2025",
+      "cohort_id": "APTEM-COHORT-65eac77d14df8a4ff93a126c5200a7c6",
+      "cohort_name": "Oct 2025",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-7d24494d163e1c271c1d3f7d7c163d8c",
+      "group_name": "APM Level 4 - October 2026",
+      "cohort_id": "APTEM-COHORT-6af03e32c1e23e2a70b313ef2ae25761",
+      "cohort_name": "Oct 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-d858cbf9c5dbe8c0615e77ac354218dd",
+      "group_name": "Test Accounts",
+      "cohort_id": "APTEM-COHORT-6af03e32c1e23e2a70b313ef2ae25761",
+      "cohort_name": "Oct 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-7013be7cb67dbebeeb0738f4812c79cf",
+      "group_name": "AI in Project Control 2026",
+      "cohort_id": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+      "cohort_name": "Feb 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-3093e5af9f76d8bc1d2addf1ed5bc4bd",
+      "group_name": "Andrew-Scheduling Professional (SP) Jan 2026",
+      "cohort_id": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+      "cohort_name": "Feb 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-6db3ce476c920e5e6130bf015091f074",
+      "group_name": "PCP - November 2025 (Alfanar)",
+      "cohort_id": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+      "cohort_name": "Feb 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-e4c61b4af0c3802a6b4ee459ef8015cc",
+      "group_name": "PCP Level 6 - February 2026",
+      "cohort_id": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+      "cohort_name": "Feb 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-4d0bf743cf6d8e9a5cb60a44d25c34b0",
+      "group_name": "Ray-Managing Successful Programmes (MSP) Jan 2026",
+      "cohort_id": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+      "cohort_name": "Feb 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-f35c2e1cb800f303218bc87a5c74ccd6",
+      "group_name": "Stephen-Portfolio Management 2026 Recorded sessions",
+      "cohort_id": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+      "cohort_name": "Feb 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-d2f16268c154597156c87ec94242baf6",
+      "group_name": "Test Accounts",
+      "cohort_id": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+      "cohort_name": "Feb 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-3acb8f480a9bcdc44bd48932a8b2d108",
+      "group_name": "MM Level 6 - February 2027",
+      "cohort_id": "APTEM-COHORT-8f08f9d831574fe989865491f21a7762",
+      "cohort_name": "Oct 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-9f6062d8eacaaccecda4e568dd99bb9b",
+      "group_name": "MM Level 6 - October 2026",
+      "cohort_id": "APTEM-COHORT-8f08f9d831574fe989865491f21a7762",
+      "cohort_name": "Oct 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-da3651b4e6a91b331131b133c9916bd7",
+      "group_name": "Test Accounts",
+      "cohort_id": "APTEM-COHORT-8f08f9d831574fe989865491f21a7762",
+      "cohort_name": "Oct 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-4e5d950777a819088f49f94758382e85",
+      "group_name": "Ray | PMP – June 2026",
+      "cohort_id": "APTEM-COHORT-9ca349e582362d93c2c49d79b245fc95",
+      "cohort_name": "Jun 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-8172be55ba04030ef4719b1f6d15ab94",
+      "group_name": "Femi-Commercial Intelligence-Oct 25",
+      "cohort_id": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+      "cohort_name": "Feb 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-906566955fecff40da50753ba9ac27fa",
+      "group_name": "G1 Keith-Commercial Intelligence-Oct 25",
+      "cohort_id": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+      "cohort_name": "Feb 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-96741788c787836e397b561fd671b623",
+      "group_name": "G1- Femi - Customer Journey Optimisation",
+      "cohort_id": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+      "cohort_name": "Feb 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-3a76d8081cf4248a95e30f3608ddbae8",
+      "group_name": "G2 - Femi - Customer Journey Optimisation",
+      "cohort_id": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+      "cohort_name": "Feb 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-3a598da08c6ef623b601c9adea3d7c00",
+      "group_name": "G3 - Femi - Customer Journey Optimisation",
+      "cohort_id": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+      "cohort_name": "Feb 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-0737dfdc9ac35044157382c909b0c938",
+      "group_name": "Keith – AI in Marketing | Friday | May 2025",
+      "cohort_id": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+      "cohort_name": "Feb 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-cc6999733b7cd5dbd496c0d02209466b",
+      "group_name": "MM Level 6 - February 2026",
+      "cohort_id": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+      "cohort_name": "Feb 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-7a51047223014eb8d602a792bfd75240",
+      "group_name": "MM Level 6 - October 2026",
+      "cohort_id": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+      "cohort_name": "Feb 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-5cbfd087fe56669d9800f06c108da855",
+      "group_name": "ME Level 4 - October 2026",
+      "cohort_id": "APTEM-COHORT-ad5d4058ba79a86a537caeafee928770",
+      "cohort_name": "Oct 2026",
+      "module_ids": [
+        "MOD-20260911110642658914"
+      ],
+      "module_names": [
+        "Marketing Impact and Planning - Oct 2026"
+      ],
+      "coach_name": "",
+      "session_week_day": "",
+      "session_start_time": "",
+      "session_end_time": "",
+      "color": ""
+    },
+    {
+      "group_id": "APTEM-GROUP-5b2a17ea97cb791ca9828d6cd6c78491",
+      "group_name": "Test Accounts",
+      "cohort_id": "APTEM-COHORT-ad5d4058ba79a86a537caeafee928770",
+      "cohort_name": "Oct 2026",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-2d4f0f9a477a0ad7d2c977a1521b06c4",
+      "group_name": "Keith – AI in Marketing | Friday | May 2025",
+      "cohort_id": "APTEM-COHORT-b45a30dbbc81cae561e5ab8269b54a08",
+      "cohort_name": "Jun 2025",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-50b2dd33f48ca0a8d011269b8839c822",
+      "group_name": "PCP Level 6 - June 2026",
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "cohort_name": "Jun 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-aaff10ecfb7afd7665b3c4a86cb1ac82",
+      "group_name": "PCP Level 6 - October 2026",
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "cohort_name": "Jun 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-f916f18e64e2a54709b38bc4410c3728",
+      "group_name": "Project Controls Professional Level 6",
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "cohort_name": "Jun 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-85791b934b945abe5f4fe8451002925a",
+      "group_name": "Ray | PMP – June 2026",
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "cohort_name": "Jun 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-71c9b8973b088851580d839485899711",
+      "group_name": "Ray | PMP – June 2026(Recorded Sessions)",
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "cohort_name": "Jun 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-f05e49ee6c6e6ffb6dd4b0becbf5c1c0",
+      "group_name": "Ray-Project Management Office (PMO)",
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "cohort_name": "Jun 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-08bad5b3b7e6bca5899b5f077022b09f",
+      "group_name": "Test Accounts",
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "cohort_name": "Jun 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-7ac2bfcea2e7e323a7ab9b58d8152f76",
+      "group_name": "AI in Project Control 2026",
+      "cohort_id": "APTEM-COHORT-dc91b979e90b4edb5a12cbc6b6aaf5d2",
+      "cohort_name": "Feb 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-371ca69fc92eeb83d9f31e528dd74178",
+      "group_name": "PCP Level 6 - August 2024 - Recorded Sessions",
+      "cohort_id": "APTEM-COHORT-e9505bcab011b272a0f554d7059b4187",
+      "cohort_name": "Feb 2025",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-0fe5280c558df8cbc9ba3872b6d6d325",
+      "group_name": "Crispin - Marketing Technology-(MarTech)",
+      "cohort_id": "APTEM-COHORT-eaa5565efb2c615b4b3a941d7ebaf927",
+      "cohort_name": "Jun 2025",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-a2ca6eed79334c6f1f6303c1716ca4d3",
+      "group_name": "Femi - Marketing Technology-(MarTech)",
+      "cohort_id": "APTEM-COHORT-eaa5565efb2c615b4b3a941d7ebaf927",
+      "cohort_name": "Jun 2025",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-ae162644fbc25e5b3ff28a5b8c5dd2a4",
+      "group_name": "ME Level 4 - May 2025",
+      "cohort_id": "APTEM-COHORT-eaa5565efb2c615b4b3a941d7ebaf927",
+      "cohort_name": "Jun 2025",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-183bb96019207a740ab0314ff04658ed",
+      "group_name": "Nathan - Marketing Technology-(MarTech)",
+      "cohort_id": "APTEM-COHORT-eaa5565efb2c615b4b3a941d7ebaf927",
+      "cohort_name": "Jun 2025",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-55b90b2a6a21246be36a63fbf953981e",
+      "group_name": "Nathan - Marketing Technology-(MarTech) Wed",
+      "cohort_id": "APTEM-COHORT-eaa5565efb2c615b4b3a941d7ebaf927",
+      "cohort_name": "Jun 2025",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-261f68e3c0c912a9643195baa4accf63",
+      "group_name": "PCP Level 6 - May 2025",
+      "cohort_id": "APTEM-COHORT-ef4b156b4ea4c0c94ee777864ed7e4d2",
+      "cohort_name": "Jun 2025",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-5ed1069a499db0dabe9067bb78554af8",
+      "group_name": "Project Planning & Control (PPC) | Andrew",
+      "cohort_id": "APTEM-COHORT-ef4b156b4ea4c0c94ee777864ed7e4d2",
+      "cohort_name": "Jun 2025",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-cf1de9993afb801fa30a5a5f8c193523",
+      "group_name": "Ray-Project Management Office (PMO)",
+      "cohort_id": "APTEM-COHORT-ef4b156b4ea4c0c94ee777864ed7e4d2",
+      "cohort_name": "Jun 2025",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-f35c14c03dfcf4075c2a275e9e2a6cb5",
+      "group_name": "Recorded Session (PMO) May 25",
+      "cohort_id": "APTEM-COHORT-ef4b156b4ea4c0c94ee777864ed7e4d2",
+      "cohort_name": "Jun 2025",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-f9b312bba7244e3b57dd1f98d318eb16",
+      "group_name": "Recorded Sessions (PPC)May 2025",
+      "cohort_id": "APTEM-COHORT-ef4b156b4ea4c0c94ee777864ed7e4d2",
+      "cohort_name": "Jun 2025",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-e8cabf9d68fb92795e7efa3410074859",
+      "group_name": "ME Level 4 - January 2025",
+      "cohort_id": "APTEM-COHORT-ef5a1e79a3e31e8f37ab503b33a0e678",
+      "cohort_name": "Feb 2025",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-413ac5c867c30fbfe33be65298ce43a5",
+      "group_name": "ME Level 4 - October 2025",
+      "cohort_id": "APTEM-COHORT-ef5a1e79a3e31e8f37ab503b33a0e678",
+      "cohort_name": "Feb 2025",
+      "module_ids": [],
+      "module_names": [],
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-cbbdc4be8bd0a6e6409bb71f7615376b",
+      "group_name": "PCP L6 - Oct 2026",
+      "cohort_id": "APTEM-COHORT-fb1a6b370f9c881a4d342cfac202030b",
+      "cohort_name": "Oct 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-72a16ad34405083c617ebf5ff3a3ebbc",
+      "group_name": "PCP Level 6 - June 2026",
+      "cohort_id": "APTEM-COHORT-fb1a6b370f9c881a4d342cfac202030b",
+      "cohort_name": "Oct 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-d3829c8323daaff5bded03e5ca4da0a1",
+      "group_name": "PCP Level 6 - October 2026",
+      "cohort_id": "APTEM-COHORT-fb1a6b370f9c881a4d342cfac202030b",
+      "cohort_name": "Oct 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    },
+    {
+      "group_id": "APTEM-GROUP-beaaef86ec8d2b027f41f4e50faf4fdd",
+      "group_name": "Test Accounts",
+      "cohort_id": "APTEM-COHORT-fb1a6b370f9c881a4d342cfac202030b",
+      "cohort_name": "Oct 2026",
+      "module_ids": null,
+      "module_names": null,
+      "coach_name": null,
+      "session_week_day": null,
+      "session_start_time": null,
+      "session_end_time": null,
+      "color": null
+    }
+  ],
+  "archived_cohorts": [
+    "APTEM-COHORT-064931326b3f466b4251202bf9adc8a6",
+    "APTEM-COHORT-073afabcf88690234405cb0be014a75f",
+    "APTEM-COHORT-0d153ff3e536b190c63e3b3b2614dd34",
+    "APTEM-COHORT-15287ecb866eb42169b72c4089552469",
+    "APTEM-COHORT-1c8ac2164e91eaacc3a28ffa90505e65",
+    "APTEM-COHORT-1efca5965de8ca4ec0dfb67fa2b2e2fc",
+    "APTEM-COHORT-21ad502f29c0fc08bff3579d3d91185a",
+    "APTEM-COHORT-21c5cbc62e8cb49a7cee98c93a2f8719",
+    "APTEM-COHORT-2c53ab1768dfbeb4b95a6c4baf73eacc",
+    "APTEM-COHORT-35e204960a6fdc11c4ef01ec7a0352b6",
+    "APTEM-COHORT-3aa4c598da40960c122e22d8951a36e6",
+    "APTEM-COHORT-3da911748b86270475549d092c7ce8a4",
+    "APTEM-COHORT-4fc129bbcb80dc8bc630853e608a2eee",
+    "APTEM-COHORT-5225a58d7e9019707fdbeec43267efe1",
+    "APTEM-COHORT-52c4e3492ccffb684a98b2756d3acb1b",
+    "APTEM-COHORT-57fbba572c6d6a54e3b8e1fb08808d07",
+    "APTEM-COHORT-66ef51303780a2870d14c6264ebb2a99",
+    "APTEM-COHORT-6a79eb278c7e909ec1729bc11a93d7d5",
+    "APTEM-COHORT-6aad23528f9aa20a3423820845eddc3d",
+    "APTEM-COHORT-6ee9f505fc6cf6731ad40e48434c9fc9",
+    "APTEM-COHORT-71d4abfb584f2cfdfc819b06f856a886",
+    "APTEM-COHORT-7f7395ac46be89a47d5720a9e36c7a76",
+    "APTEM-COHORT-8273f1bfebb50bb5a6dc0ce4cb5d828f",
+    "APTEM-COHORT-84d33829c80fdcfcb906734346b7a27c",
+    "APTEM-COHORT-8509461eb28acb159b900ed33a33a14c",
+    "APTEM-COHORT-8c2e9aeb84136f20c26c421166cc9b5a",
+    "APTEM-COHORT-9bbdd25a81f57854148332d25ba21475",
+    "APTEM-COHORT-a68482ec1c251bf56b15bebe36a5609a",
+    "APTEM-COHORT-a73af6836e7a71689d9ef1bfdad83dce",
+    "APTEM-COHORT-afc4510aed0e126b2bc917596d1458b2",
+    "APTEM-COHORT-b66b6d68134927a594bf5f383ebfb6a5",
+    "APTEM-COHORT-c073a881aefbb1f24328444f8756bcb6",
+    "APTEM-COHORT-c70ab82bbd53303d9ce7c4be6f881d8a",
+    "APTEM-COHORT-ccabd3d719be7859d9593afa268737a9",
+    "APTEM-COHORT-ce5db9d28e3d1a53e9889cd391fc957e",
+    "APTEM-COHORT-e69a231d3ede48178881fc4b3aa052f7",
+    "APTEM-COHORT-e98e9508869c35598a487f6f127eece6",
+    "APTEM-COHORT-fe9d82eef70b693b5e4e446b7829b40f"
+  ],
+  "archived_groups": [
+    "APTEM-GROUP-014aacd7555a52a6d9b404637daff680",
+    "APTEM-GROUP-07a3151d0af939b9c86f26e559ef1f27",
+    "APTEM-GROUP-0bce9a0ca03a20e9f8514e83461d23ab",
+    "APTEM-GROUP-1cc046050ced9420ef1f3992856b33f6",
+    "APTEM-GROUP-1d04bba80d20dd1d82894ad011a8d68c",
+    "APTEM-GROUP-1fcd3db549b29ac242d91f8ef7f73fd3",
+    "APTEM-GROUP-28fba71f0f325196175b9bd15869c181",
+    "APTEM-GROUP-2ae81d527149f635da2d4c614128d5c5",
+    "APTEM-GROUP-39e8fbf60fcd8abfc06ee41a1a75ebb9",
+    "APTEM-GROUP-3e67a01a51b0933a4140220620e3763d",
+    "APTEM-GROUP-440c1741c2221b7de71fc4908fd6b03a",
+    "APTEM-GROUP-642abd7e5859e8d8461fdca3216a898f",
+    "APTEM-GROUP-6e9919f3b1fa2e9475df01a53c5b8245",
+    "APTEM-GROUP-7bebeb13d1ff5b2e5b056f292bcdf402",
+    "APTEM-GROUP-7c61ff9b1e060caf726fb9909adc6a8d",
+    "APTEM-GROUP-7dbcbdbc9f31c5f69b0242b2a8280fe5",
+    "APTEM-GROUP-81fd8ddaf063f8f7e113ae4e2736bf65",
+    "APTEM-GROUP-8ad429dbe9487a72f64815a1236144a9",
+    "APTEM-GROUP-8e95c01e0a1ec7bbda65604d9e446c82",
+    "APTEM-GROUP-955228c1b775dcafed217ef27b3babd8",
+    "APTEM-GROUP-95608a32970e201328304a6b6fa27455",
+    "APTEM-GROUP-9b746a12c8d906d7a792208c9378628e",
+    "APTEM-GROUP-9c82e52b6d4ff161208fd86630b696b9",
+    "APTEM-GROUP-aa70d0bf1e661f712469e61b1e56138a",
+    "APTEM-GROUP-ae7f38f5018d44d552c0ffdaaa49e991",
+    "APTEM-GROUP-aea54172e5cee031c57faf3ca6bb0efa",
+    "APTEM-GROUP-aece8d2a447207799d8aa3d0952a9462",
+    "APTEM-GROUP-b039f483d3ab4f4476fdbdc14995b40e",
+    "APTEM-GROUP-b8a868591bbc99b824a6819dfea65d3f",
+    "APTEM-GROUP-bec3c2e068b808cacbb9a429168171eb",
+    "APTEM-GROUP-c1ccf33b20b29f47ea80680fe23cdd36",
+    "APTEM-GROUP-cd24c66e53ae6a2df871cc9750aaa75a",
+    "APTEM-GROUP-d0947524a35c49703c536226096ac4cd",
+    "APTEM-GROUP-d213c47345c717901848c828599a4449",
+    "APTEM-GROUP-d7c7d21cb4b4c780d57b748602c3375f",
+    "APTEM-GROUP-d87eebeaf6c507a3bf415dab349837b6",
+    "APTEM-GROUP-dd2a991b5b90a38694a2e856620f915f",
+    "APTEM-GROUP-f362638f17e9110deca3c1e9197ce18f",
+    "APTEM-GROUP-f3c1c488e7865c768fc1fdf8713cc029",
+    "APTEM-GROUP-f93b4cc142df0fc74551575851de18f2",
+    "APTEM-GROUP-f9e8da3672f17566e88b5e80ea6369b2",
+    "APTEM-GROUP-fa65b1183c9b90d707ff6d2dd44f808e"
+  ],
+  "learner_updates": [
+    {
+      "id": 272,
+      "cohort": "Oct 2024",
+      "cohort_id": "APTEM-COHORT-04c1d23f6f88f5cab16e8ab7dacf9fea",
+      "group_name": "Ray-Project Management Office (PMO)",
+      "group_id": "APTEM-GROUP-dac4be52d68a378669edd316a7e73c43"
+    },
+    {
+      "id": 274,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Steve-Earned Value Management(EVM)2026 Recorded Sessions",
+      "group_id": "APTEM-GROUP-ba859f9ae87d98e08b6570cf24bb9c88"
+    },
+    {
+      "id": 275,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Steve-Earned Value Management(EVM)2026 Recorded Session",
+      "group_id": "APTEM-GROUP-68af72414372681f3ecca3de84f3399d"
+    },
+    {
+      "id": 277,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Steve-Earned Value Management(EVM)2026",
+      "group_id": "APTEM-GROUP-2676a39ec60710b8a73200bdaf4fba8a"
+    },
+    {
+      "id": 278,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Steve-Earned Value Management(EVM)2026 Recorded Session",
+      "group_id": "APTEM-GROUP-68af72414372681f3ecca3de84f3399d"
+    },
+    {
+      "id": 279,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Stephen-Portfolio Management 2026",
+      "group_id": "APTEM-GROUP-58fc8541503788b1fa37f475d6bad273"
+    },
+    {
+      "id": 280,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Stephen-Portfolio Management 2026",
+      "group_id": "APTEM-GROUP-58fc8541503788b1fa37f475d6bad273"
+    },
+    {
+      "id": 281,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Stephen-Portfolio Management 2026",
+      "group_id": "APTEM-GROUP-58fc8541503788b1fa37f475d6bad273"
+    },
+    {
+      "id": 282,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Steve-Earned Value Management(EVM)2026",
+      "group_id": "APTEM-GROUP-2676a39ec60710b8a73200bdaf4fba8a"
+    },
+    {
+      "id": 284,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Steve-Earned Value Management(EVM)2026",
+      "group_id": "APTEM-GROUP-2676a39ec60710b8a73200bdaf4fba8a"
+    },
+    {
+      "id": 285,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Stephen-Portfolio Management 2026 Recorded sessions",
+      "group_id": "APTEM-GROUP-3a685f72680a7b849aafe49754f06e59"
+    },
+    {
+      "id": 286,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Steve-Earned Value Management(EVM)2026 Recorded Sessions",
+      "group_id": "APTEM-GROUP-ba859f9ae87d98e08b6570cf24bb9c88"
+    },
+    {
+      "id": 287,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+      "group_name": "Stephen-Portfolio Management 2026 Recorded sessions",
+      "group_id": "APTEM-GROUP-f35c2e1cb800f303218bc87a5c74ccd6"
+    },
+    {
+      "id": 288,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Stephen-Portfolio Management 2026",
+      "group_id": "APTEM-GROUP-58fc8541503788b1fa37f475d6bad273"
+    },
+    {
+      "id": 289,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Steve-Earned Value Management(EVM)2026 Recorded Sessions",
+      "group_id": "APTEM-GROUP-ba859f9ae87d98e08b6570cf24bb9c88"
+    },
+    {
+      "id": 290,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Steve-Earned Value Management(EVM)2026",
+      "group_id": "APTEM-GROUP-2676a39ec60710b8a73200bdaf4fba8a"
+    },
+    {
+      "id": 291,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Steve-Earned Value Management(EVM)2026 Recorded Sessions",
+      "group_id": "APTEM-GROUP-ba859f9ae87d98e08b6570cf24bb9c88"
+    },
+    {
+      "id": 292,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Stephen-Portfolio Management 2026 Recorded sessions",
+      "group_id": "APTEM-GROUP-3a685f72680a7b849aafe49754f06e59"
+    },
+    {
+      "id": 293,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Steve-Earned Value Management(EVM)2026",
+      "group_id": "APTEM-GROUP-2676a39ec60710b8a73200bdaf4fba8a"
+    },
+    {
+      "id": 294,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Steve-Earned Value Management(EVM)2026 Recorded Sessions",
+      "group_id": "APTEM-GROUP-ba859f9ae87d98e08b6570cf24bb9c88"
+    },
+    {
+      "id": 295,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Stephen-Portfolio Management 2026 Recorded sessions",
+      "group_id": "APTEM-GROUP-3a685f72680a7b849aafe49754f06e59"
+    },
+    {
+      "id": 296,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Stephen-Portfolio Management 2026 Recorded sessions",
+      "group_id": "APTEM-GROUP-3a685f72680a7b849aafe49754f06e59"
+    },
+    {
+      "id": 297,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Ray-Project Management Office (PMO)",
+      "group_id": "APTEM-GROUP-4d41c234ac55d7a5a230cba30c674f80"
+    },
+    {
+      "id": 298,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Stephen-Portfolio Management 2026",
+      "group_id": "APTEM-GROUP-58fc8541503788b1fa37f475d6bad273"
+    },
+    {
+      "id": 299,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Steve-Earned Value Management(EVM)2026",
+      "group_id": "APTEM-GROUP-2676a39ec60710b8a73200bdaf4fba8a"
+    },
+    {
+      "id": 300,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Steve-Earned Value Management(EVM)2026",
+      "group_id": "APTEM-GROUP-2676a39ec60710b8a73200bdaf4fba8a"
+    },
+    {
+      "id": 301,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Stephen-Portfolio Management 2026",
+      "group_id": "APTEM-GROUP-58fc8541503788b1fa37f475d6bad273"
+    },
+    {
+      "id": 302,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Steve-Earned Value Management(EVM)2026",
+      "group_id": "APTEM-GROUP-2676a39ec60710b8a73200bdaf4fba8a"
+    },
+    {
+      "id": 303,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+      "group_name": "Stephen-Portfolio Management 2026 Recorded sessions",
+      "group_id": "APTEM-GROUP-f35c2e1cb800f303218bc87a5c74ccd6"
+    },
+    {
+      "id": 304,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Stephen-Portfolio Management 2026",
+      "group_id": "APTEM-GROUP-58fc8541503788b1fa37f475d6bad273"
+    },
+    {
+      "id": 305,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Stephen-Portfolio Management 2026 Recorded sessions",
+      "group_id": "APTEM-GROUP-3a685f72680a7b849aafe49754f06e59"
+    },
+    {
+      "id": 306,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Stephen-Portfolio Management 2026 Recorded sessions",
+      "group_id": "APTEM-GROUP-3a685f72680a7b849aafe49754f06e59"
+    },
+    {
+      "id": 307,
+      "cohort": "Oct 2024",
+      "cohort_id": "APTEM-COHORT-04c1d23f6f88f5cab16e8ab7dacf9fea",
+      "group_name": "Ray-Project Management Office (PMO)",
+      "group_id": "APTEM-GROUP-dac4be52d68a378669edd316a7e73c43"
+    },
+    {
+      "id": 308,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Stephen-Portfolio Management 2026 Recorded sessions",
+      "group_id": "APTEM-GROUP-3a685f72680a7b849aafe49754f06e59"
+    },
+    {
+      "id": 309,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-455d4927b79d27e352db15e30bd8b450",
+      "group_name": "Steve-Earned Value Management(EVM)2026 Recorded Sessions",
+      "group_id": "APTEM-GROUP-ba859f9ae87d98e08b6570cf24bb9c88"
+    },
+    {
+      "id": 310,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "Femi-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-e69e6b9310393d1065a1a6f4bce6251f"
+    },
+    {
+      "id": 311,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+      "group_name": "G1 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-906566955fecff40da50753ba9ac27fa"
+    },
+    {
+      "id": 312,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G1 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-534a2cb2e3dc598938655846d138c2d7"
+    },
+    {
+      "id": 313,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G1 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-534a2cb2e3dc598938655846d138c2d7"
+    },
+    {
+      "id": 314,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G1 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-534a2cb2e3dc598938655846d138c2d7"
+    },
+    {
+      "id": 315,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "Femi-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-e69e6b9310393d1065a1a6f4bce6251f"
+    },
+    {
+      "id": 316,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G1 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-534a2cb2e3dc598938655846d138c2d7"
+    },
+    {
+      "id": 317,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "Femi-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-e69e6b9310393d1065a1a6f4bce6251f"
+    },
+    {
+      "id": 319,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "Femi-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-e69e6b9310393d1065a1a6f4bce6251f"
+    },
+    {
+      "id": 320,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+      "group_name": "Femi-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-8172be55ba04030ef4719b1f6d15ab94"
+    },
+    {
+      "id": 321,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G1 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-534a2cb2e3dc598938655846d138c2d7"
+    },
+    {
+      "id": 322,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G2 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-7917c27c6b685d2933686ec2db586140"
+    },
+    {
+      "id": 323,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G1 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-534a2cb2e3dc598938655846d138c2d7"
+    },
+    {
+      "id": 324,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+      "group_name": "Femi-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-8172be55ba04030ef4719b1f6d15ab94"
+    },
+    {
+      "id": 325,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+      "group_name": "G1 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-906566955fecff40da50753ba9ac27fa"
+    },
+    {
+      "id": 326,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "Femi-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-e69e6b9310393d1065a1a6f4bce6251f"
+    },
+    {
+      "id": 327,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "Femi-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-e69e6b9310393d1065a1a6f4bce6251f"
+    },
+    {
+      "id": 328,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "Femi-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-e69e6b9310393d1065a1a6f4bce6251f"
+    },
+    {
+      "id": 329,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G1 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-534a2cb2e3dc598938655846d138c2d7"
+    },
+    {
+      "id": 330,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G1 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-534a2cb2e3dc598938655846d138c2d7"
+    },
+    {
+      "id": 331,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+      "group_name": "G1 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-906566955fecff40da50753ba9ac27fa"
+    },
+    {
+      "id": 332,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+      "group_name": "Femi-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-8172be55ba04030ef4719b1f6d15ab94"
+    },
+    {
+      "id": 333,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "Femi-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-e69e6b9310393d1065a1a6f4bce6251f"
+    },
+    {
+      "id": 334,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+      "group_name": "Femi-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-8172be55ba04030ef4719b1f6d15ab94"
+    },
+    {
+      "id": 335,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G1 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-534a2cb2e3dc598938655846d138c2d7"
+    },
+    {
+      "id": 336,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "Femi-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-e69e6b9310393d1065a1a6f4bce6251f"
+    },
+    {
+      "id": 337,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G1 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-534a2cb2e3dc598938655846d138c2d7"
+    },
+    {
+      "id": 338,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G1 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-534a2cb2e3dc598938655846d138c2d7"
+    },
+    {
+      "id": 339,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G1 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-534a2cb2e3dc598938655846d138c2d7"
+    },
+    {
+      "id": 340,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G1 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-534a2cb2e3dc598938655846d138c2d7"
+    },
+    {
+      "id": 341,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "Femi-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-e69e6b9310393d1065a1a6f4bce6251f"
+    },
+    {
+      "id": 379,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+      "group_name": "G3 - Femi - Customer Journey Optimisation",
+      "group_id": "APTEM-GROUP-3a598da08c6ef623b601c9adea3d7c00"
+    },
+    {
+      "id": 399,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "group_name": "G2-Juliane -Impact and Planning June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-732c861115b11ef45174bd6be22c0081"
+    },
+    {
+      "id": 400,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "group_name": "Juliane – Impact and Planning June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-b6fead6a48189f9d2fc5ab9d1860b0b1"
+    },
+    {
+      "id": 401,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "group_name": "G2-Juliane -Impact and Planning June 2026",
+      "group_id": "APTEM-GROUP-c865cebb4c7d8e6cb8130f6e50920392"
+    },
+    {
+      "id": 408,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "group_name": "G2-Juliane -Impact and Planning June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-732c861115b11ef45174bd6be22c0081"
+    },
+    {
+      "id": 411,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "group_name": "G2-Juliane -Impact and Planning June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-732c861115b11ef45174bd6be22c0081"
+    },
+    {
+      "id": 412,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "group_name": "G2-Juliane -Impact and Planning June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-732c861115b11ef45174bd6be22c0081"
+    },
+    {
+      "id": 414,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "group_name": "G2-Juliane -Impact and Planning June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-732c861115b11ef45174bd6be22c0081"
+    },
+    {
+      "id": 415,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "group_name": "G2-Juliane -Impact and Planning June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-732c861115b11ef45174bd6be22c0081"
+    },
+    {
+      "id": 418,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-423ea36a0bae25f747c94886ebf3b7d5",
+      "group_name": "Social Media – Prof. Charl",
+      "group_id": "APTEM-GROUP-d04104579d829a84f5f0647c41f34b66"
+    },
+    {
+      "id": 430,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "group_name": "G2-Juliane -Impact and Planning June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-732c861115b11ef45174bd6be22c0081"
+    },
+    {
+      "id": 431,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "group_name": "Juliane – Impact and Planning June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-b6fead6a48189f9d2fc5ab9d1860b0b1"
+    },
+    {
+      "id": 432,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "group_name": "G2-Juliane -Impact and Planning June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-732c861115b11ef45174bd6be22c0081"
+    },
+    {
+      "id": 434,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "group_name": "Juliane – Impact and Planning June 2026",
+      "group_id": "APTEM-GROUP-af396841cb8464f34312d480584bfe86"
+    },
+    {
+      "id": 436,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "group_name": "Juliane – Impact and Planning June 2026",
+      "group_id": "APTEM-GROUP-af396841cb8464f34312d480584bfe86"
+    },
+    {
+      "id": 437,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "group_name": "ME Level 4 - June 2026",
+      "group_id": "APTEM-GROUP-b3a3e03a8c80092af15c5fefdbbdaf61"
+    },
+    {
+      "id": 439,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-282383f1d8588946fe182da5dcc91226",
+      "group_name": "G2-Juliane -Impact and Planning June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-732c861115b11ef45174bd6be22c0081"
+    },
+    {
+      "id": 442,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f"
+    },
+    {
+      "id": 443,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-423ea36a0bae25f747c94886ebf3b7d5",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "group_id": "APTEM-GROUP-7697824303707f51053356beea93a015"
+    },
+    {
+      "id": 444,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "group_id": "APTEM-GROUP-e228c600d0920dda5352a22bfeb5e3d1"
+    },
+    {
+      "id": 445,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "group_id": "APTEM-GROUP-e228c600d0920dda5352a22bfeb5e3d1"
+    },
+    {
+      "id": 449,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "group_name": "G3 - Femi - Customer Journey Optimisation",
+      "group_id": "APTEM-GROUP-8b37c0dd4f7313843ccdcac213ba6537"
+    },
+    {
+      "id": 451,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "group_id": "APTEM-GROUP-e228c600d0920dda5352a22bfeb5e3d1"
+    },
+    {
+      "id": 452,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f"
+    },
+    {
+      "id": 453,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f"
+    },
+    {
+      "id": 454,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "group_id": "APTEM-GROUP-e228c600d0920dda5352a22bfeb5e3d1"
+    },
+    {
+      "id": 455,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f"
+    },
+    {
+      "id": 456,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "group_id": "APTEM-GROUP-e228c600d0920dda5352a22bfeb5e3d1"
+    },
+    {
+      "id": 458,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "group_id": "APTEM-GROUP-e228c600d0920dda5352a22bfeb5e3d1"
+    },
+    {
+      "id": 459,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-423ea36a0bae25f747c94886ebf3b7d5",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "group_id": "APTEM-GROUP-7697824303707f51053356beea93a015"
+    },
+    {
+      "id": 460,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "group_name": "MM Level 6 - June 2026",
+      "group_id": "APTEM-GROUP-c045f45aa92ba95710a3fcf2dc543679"
+    },
+    {
+      "id": 461,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "group_name": "MM Level 6 - June 2026",
+      "group_id": "APTEM-GROUP-c045f45aa92ba95710a3fcf2dc543679"
+    },
+    {
+      "id": 462,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "group_name": "G3 - Femi - Customer Journey Optimisation",
+      "group_id": "APTEM-GROUP-8b37c0dd4f7313843ccdcac213ba6537"
+    },
+    {
+      "id": 463,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "group_id": "APTEM-GROUP-e228c600d0920dda5352a22bfeb5e3d1"
+    },
+    {
+      "id": 465,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f"
+    },
+    {
+      "id": 466,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-423ea36a0bae25f747c94886ebf3b7d5",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "group_id": "APTEM-GROUP-7697824303707f51053356beea93a015"
+    },
+    {
+      "id": 467,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "group_id": "APTEM-GROUP-e228c600d0920dda5352a22bfeb5e3d1"
+    },
+    {
+      "id": 468,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "group_name": "G2 - Keith - Strategy and Planning - June 2026",
+      "group_id": "APTEM-GROUP-8d927c1d07f2da52cf6d9316f1535f07"
+    },
+    {
+      "id": 470,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "group_id": "APTEM-GROUP-e228c600d0920dda5352a22bfeb5e3d1"
+    },
+    {
+      "id": 472,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f"
+    },
+    {
+      "id": 473,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "group_id": "APTEM-GROUP-e228c600d0920dda5352a22bfeb5e3d1"
+    },
+    {
+      "id": 474,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f"
+    },
+    {
+      "id": 475,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f"
+    },
+    {
+      "id": 478,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "group_name": "MM Level 6 - June 2026",
+      "group_id": "APTEM-GROUP-c045f45aa92ba95710a3fcf2dc543679"
+    },
+    {
+      "id": 480,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "group_id": "APTEM-GROUP-e228c600d0920dda5352a22bfeb5e3d1"
+    },
+    {
+      "id": 481,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239"
+    },
+    {
+      "id": 482,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "group_id": "APTEM-GROUP-e228c600d0920dda5352a22bfeb5e3d1"
+    },
+    {
+      "id": 483,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-423ea36a0bae25f747c94886ebf3b7d5",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "group_id": "APTEM-GROUP-7697824303707f51053356beea93a015"
+    },
+    {
+      "id": 486,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f"
+    },
+    {
+      "id": 490,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f"
+    },
+    {
+      "id": 491,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239"
+    },
+    {
+      "id": 492,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "group_id": "APTEM-GROUP-e228c600d0920dda5352a22bfeb5e3d1"
+    },
+    {
+      "id": 493,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "group_id": "APTEM-GROUP-e228c600d0920dda5352a22bfeb5e3d1"
+    },
+    {
+      "id": 494,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-463da4392169b39426a9bd8d296ad451",
+      "group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f"
+    },
+    {
+      "id": 495,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "group_name": "Samar - Marketing Technology (MarTech) oct 25",
+      "group_id": "APTEM-GROUP-e228c600d0920dda5352a22bfeb5e3d1"
+    },
+    {
+      "id": 497,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G2 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-7917c27c6b685d2933686ec2db586140"
+    },
+    {
+      "id": 500,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "group_name": "Dr. Samar - Marketing Technology - ME July 2025",
+      "group_id": "APTEM-GROUP-05364105f33e7e1b89f63c5cca5bf2ee"
+    },
+    {
+      "id": 501,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "Keith – AI in Marketing | Friday | May 2025",
+      "group_id": "APTEM-GROUP-863f0cb57929fa17cfdca18347b27bd7"
+    },
+    {
+      "id": 502,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G2 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-7917c27c6b685d2933686ec2db586140"
+    },
+    {
+      "id": 504,
+      "cohort": "Jun 2025",
+      "cohort_id": "APTEM-COHORT-b45a30dbbc81cae561e5ab8269b54a08",
+      "group_name": "Keith – AI in Marketing | Friday | May 2025",
+      "group_id": "APTEM-GROUP-2d4f0f9a477a0ad7d2c977a1521b06c4"
+    },
+    {
+      "id": 509,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G2 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-7917c27c6b685d2933686ec2db586140"
+    },
+    {
+      "id": 510,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-3800d30f95cd8df6dddd12237e9208d2",
+      "group_name": "Dr. Samar - Marketing Technology - ME July 2025",
+      "group_id": "APTEM-GROUP-05364105f33e7e1b89f63c5cca5bf2ee"
+    },
+    {
+      "id": 511,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "Femi-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-e69e6b9310393d1065a1a6f4bce6251f"
+    },
+    {
+      "id": 513,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G2 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-7917c27c6b685d2933686ec2db586140"
+    },
+    {
+      "id": 515,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-a4fdc26e0429e472d712096ccb6ae62c",
+      "group_name": "Keith – AI in Marketing | Friday | May 2025",
+      "group_id": "APTEM-GROUP-0737dfdc9ac35044157382c909b0c938"
+    },
+    {
+      "id": 516,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G2 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-7917c27c6b685d2933686ec2db586140"
+    },
+    {
+      "id": 519,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "G2 Keith-Commercial Intelligence-Oct 25",
+      "group_id": "APTEM-GROUP-7917c27c6b685d2933686ec2db586140"
+    },
+    {
+      "id": 525,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+      "group_name": "Ray-Managing Successful Programmes (MSP) Jan 2026",
+      "group_id": "APTEM-GROUP-4d0bf743cf6d8e9a5cb60a44d25c34b0"
+    },
+    {
+      "id": 536,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-65eac77d14df8a4ff93a126c5200a7c6",
+      "group_name": "PCP Level 6 - October 2025",
+      "group_id": "APTEM-GROUP-c46fc3e7d74fe2bfc57625e055773133"
+    },
+    {
+      "id": 543,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+      "group_name": "Ray-Managing Successful Programmes (MSP) Jan 2026",
+      "group_id": "APTEM-GROUP-4d0bf743cf6d8e9a5cb60a44d25c34b0"
+    },
+    {
+      "id": 546,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+      "group_name": "Andrew-Scheduling Professional (SP) Jan 2026",
+      "group_id": "APTEM-GROUP-3093e5af9f76d8bc1d2addf1ed5bc4bd"
+    },
+    {
+      "id": 549,
+      "cohort": "Oct 2026",
+      "cohort_id": "APTEM-COHORT-fb1a6b370f9c881a4d342cfac202030b",
+      "group_name": "PCP Level 6 - June 2026",
+      "group_id": "APTEM-GROUP-72a16ad34405083c617ebf5ff3a3ebbc"
+    },
+    {
+      "id": 554,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+      "group_name": "Ray-Managing Successful Programmes (MSP) Jan 2026",
+      "group_id": "APTEM-GROUP-4d0bf743cf6d8e9a5cb60a44d25c34b0"
+    },
+    {
+      "id": 556,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+      "group_name": "Ray-Managing Successful Programmes (MSP) Jan 2026",
+      "group_id": "APTEM-GROUP-4d0bf743cf6d8e9a5cb60a44d25c34b0"
+    },
+    {
+      "id": 560,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+      "group_name": "Ray-Managing Successful Programmes (MSP) Jan 2026",
+      "group_id": "APTEM-GROUP-4d0bf743cf6d8e9a5cb60a44d25c34b0"
+    },
+    {
+      "id": 566,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-6c02084ae2e88522bac93c144b638ff7",
+      "group_name": "Ray-Managing Successful Programmes (MSP) Jan 2026",
+      "group_id": "APTEM-GROUP-4d0bf743cf6d8e9a5cb60a44d25c34b0"
+    },
+    {
+      "id": 577,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-423ea36a0bae25f747c94886ebf3b7d5",
+      "group_name": "G2 - Julian - Social Media",
+      "group_id": "APTEM-GROUP-e7026dadfd4a549d95caed5118c8c6e4"
+    },
+    {
+      "id": 581,
+      "cohort": "Feb 2026",
+      "cohort_id": "APTEM-COHORT-423ea36a0bae25f747c94886ebf3b7d5",
+      "group_name": "G2 - Julian - Social Media",
+      "group_id": "APTEM-GROUP-e7026dadfd4a549d95caed5118c8c6e4"
+    },
+    {
+      "id": 610,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "group_name": "PCP Level 6 - June 2026",
+      "group_id": "APTEM-GROUP-50b2dd33f48ca0a8d011269b8839c822"
+    },
+    {
+      "id": 611,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "group_name": "Ray | PMP – June 2026",
+      "group_id": "APTEM-GROUP-85791b934b945abe5f4fe8451002925a"
+    },
+    {
+      "id": 613,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "group_name": "Ray | PMP – June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-71c9b8973b088851580d839485899711"
+    },
+    {
+      "id": 614,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "group_name": "Ray | PMP – June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-71c9b8973b088851580d839485899711"
+    },
+    {
+      "id": 616,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "group_name": "Ray | PMP – June 2026",
+      "group_id": "APTEM-GROUP-85791b934b945abe5f4fe8451002925a"
+    },
+    {
+      "id": 617,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "group_name": "PCP Level 6 - June 2026",
+      "group_id": "APTEM-GROUP-50b2dd33f48ca0a8d011269b8839c822"
+    },
+    {
+      "id": 620,
+      "cohort": "Jun 2025",
+      "cohort_id": "APTEM-COHORT-ef4b156b4ea4c0c94ee777864ed7e4d2",
+      "group_name": "Ray-Project Management Office (PMO)",
+      "group_id": "APTEM-GROUP-cf1de9993afb801fa30a5a5f8c193523"
+    },
+    {
+      "id": 623,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "group_name": "PCP Level 6 - June 2026",
+      "group_id": "APTEM-GROUP-50b2dd33f48ca0a8d011269b8839c822"
+    },
+    {
+      "id": 624,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "group_name": "Ray | PMP – June 2026",
+      "group_id": "APTEM-GROUP-85791b934b945abe5f4fe8451002925a"
+    },
+    {
+      "id": 626,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "group_name": "PCP Level 6 - June 2026",
+      "group_id": "APTEM-GROUP-50b2dd33f48ca0a8d011269b8839c822"
+    },
+    {
+      "id": 628,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "group_name": "Ray | PMP – June 2026",
+      "group_id": "APTEM-GROUP-85791b934b945abe5f4fe8451002925a"
+    },
+    {
+      "id": 635,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "group_name": "Ray | PMP – June 2026",
+      "group_id": "APTEM-GROUP-85791b934b945abe5f4fe8451002925a"
+    },
+    {
+      "id": 636,
+      "cohort": "Jun 2025",
+      "cohort_id": "APTEM-COHORT-ef4b156b4ea4c0c94ee777864ed7e4d2",
+      "group_name": "Project Planning & Control (PPC) | Andrew",
+      "group_id": "APTEM-GROUP-5ed1069a499db0dabe9067bb78554af8"
+    },
+    {
+      "id": 637,
+      "cohort": "Jun 2026",
+      "cohort_id": "APTEM-COHORT-b52bfd08a338facec3acc1dd6c5de8e0",
+      "group_name": "Ray | PMP – June 2026(Recorded Sessions)",
+      "group_id": "APTEM-GROUP-71c9b8973b088851580d839485899711"
+    },
+    {
+      "id": 641,
+      "cohort": "Jun 2025",
+      "cohort_id": "APTEM-COHORT-ef4b156b4ea4c0c94ee777864ed7e4d2",
+      "group_name": "Ray-Project Management Office (PMO)",
+      "group_id": "APTEM-GROUP-cf1de9993afb801fa30a5a5f8c193523"
+    },
+    {
+      "id": 645,
+      "cohort": "Oct 2025",
+      "cohort_id": "APTEM-COHORT-405be62ffe7708323eea70ab7fe2e61d",
+      "group_name": "Keith – AI in Marketing | Friday | May 2025",
+      "group_id": "APTEM-GROUP-863f0cb57929fa17cfdca18347b27bd7"
+    }
+  ],
+  "enrolment_updates": [
+    {
+      "id": 125,
+      "Cohort": "Oct 2024",
+      "Group": "Ray-Project Management Office (PMO)"
+    },
+    {
+      "id": 132,
+      "Cohort": "Oct 2025",
+      "Group": "Steve-Earned Value Management(EVM)2026 Recorded Sessions"
+    },
+    {
+      "id": 134,
+      "Cohort": "Oct 2025",
+      "Group": "G2 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 135,
+      "Cohort": "Oct 2025",
+      "Group": "Steve-Earned Value Management(EVM)2026 Recorded Session"
+    },
+    {
+      "id": 137,
+      "Cohort": "Jun 2026",
+      "Group": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 142,
+      "Cohort": "Feb 2026",
+      "Group": "Ray-Managing Successful Programmes (MSP) Jan 2026"
+    },
+    {
+      "id": 144,
+      "Cohort": "Oct 2025",
+      "Group": "Femi-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 146,
+      "Cohort": "Oct 2025",
+      "Group": "Steve-Earned Value Management(EVM)2026"
+    },
+    {
+      "id": 147,
+      "Cohort": "Oct 2025",
+      "Group": "Dr. Samar - Marketing Technology - ME July 2025"
+    },
+    {
+      "id": 150,
+      "Cohort": "Feb 2026",
+      "Group": "Samar - Marketing Technology (MarTech) oct 25"
+    },
+    {
+      "id": 151,
+      "Cohort": "Oct 2025",
+      "Group": "Samar - Marketing Technology (MarTech) oct 25"
+    },
+    {
+      "id": 152,
+      "Cohort": "Oct 2025",
+      "Group": "Steve-Earned Value Management(EVM)2026 Recorded Session"
+    },
+    {
+      "id": 156,
+      "Cohort": "Oct 2025",
+      "Group": "Stephen-Portfolio Management 2026"
+    },
+    {
+      "id": 157,
+      "Cohort": "Oct 2025",
+      "Group": "Keith – AI in Marketing | Friday | May 2025"
+    },
+    {
+      "id": 158,
+      "Cohort": "Oct 2025",
+      "Group": "G2 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 160,
+      "Cohort": "Feb 2026",
+      "Group": "G1 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 161,
+      "Cohort": "Oct 2025",
+      "Group": "Samar - Marketing Technology (MarTech) oct 25"
+    },
+    {
+      "id": 162,
+      "Cohort": "Oct 2025",
+      "Group": "G1 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 165,
+      "Cohort": "Oct 2025",
+      "Group": "Stephen-Portfolio Management 2026"
+    },
+    {
+      "id": 172,
+      "Cohort": "Oct 2025",
+      "Group": "G1 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 173,
+      "Cohort": "Oct 2025",
+      "Group": "Stephen-Portfolio Management 2026"
+    },
+    {
+      "id": 174,
+      "Cohort": "Oct 2025",
+      "Group": "Steve-Earned Value Management(EVM)2026"
+    },
+    {
+      "id": 177,
+      "Cohort": "Jun 2025",
+      "Group": "Keith – AI in Marketing | Friday | May 2025"
+    },
+    {
+      "id": 182,
+      "Cohort": "Oct 2025",
+      "Group": "Steve-Earned Value Management(EVM)2026"
+    },
+    {
+      "id": 184,
+      "Cohort": "Oct 2025",
+      "Group": "G1 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 189,
+      "Cohort": "Jun 2026",
+      "Group": "G3 - Femi - Customer Journey Optimisation"
+    },
+    {
+      "id": 190,
+      "Cohort": "Oct 2025",
+      "Group": "Femi-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 191,
+      "Cohort": "Oct 2025",
+      "Group": "G1 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 206,
+      "Cohort": "Oct 2025",
+      "Group": "Samar - Marketing Technology (MarTech) oct 25"
+    },
+    {
+      "id": 207,
+      "Cohort": "Oct 2025",
+      "Group": "Stephen-Portfolio Management 2026 Recorded sessions"
+    },
+    {
+      "id": 210,
+      "Cohort": "Jun 2026",
+      "Group": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 213,
+      "Cohort": "Oct 2025",
+      "Group": "Steve-Earned Value Management(EVM)2026 Recorded Sessions"
+    },
+    {
+      "id": 216,
+      "Cohort": "Jun 2026",
+      "Group": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 224,
+      "Cohort": "Oct 2025",
+      "Group": "Femi-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 228,
+      "Cohort": "Feb 2026",
+      "Group": "Stephen-Portfolio Management 2026 Recorded sessions"
+    },
+    {
+      "id": 230,
+      "Cohort": "Jun 2026",
+      "Group": "G2-Juliane -Impact and Planning June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 232,
+      "Cohort": "Jun 2026",
+      "Group": "Juliane – Impact and Planning June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 233,
+      "Cohort": "Oct 2025",
+      "Group": "G2 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 234,
+      "Cohort": "Oct 2025",
+      "Group": "PCP Level 6 - October 2025"
+    },
+    {
+      "id": 235,
+      "Cohort": "Oct 2025",
+      "Group": "Samar - Marketing Technology (MarTech) oct 25"
+    },
+    {
+      "id": 237,
+      "Cohort": "Feb 2026",
+      "Group": "G2 - Julian - Social Media"
+    },
+    {
+      "id": 238,
+      "Cohort": "Jun 2026",
+      "Group": "G2-Juliane -Impact and Planning June 2026"
+    },
+    {
+      "id": 239,
+      "Cohort": "Jun 2026",
+      "Group": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 246,
+      "Cohort": "Jun 2026",
+      "Group": "PCP Level 6 - June 2026"
+    },
+    {
+      "id": 251,
+      "Cohort": "Oct 2025",
+      "Group": "Femi-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 252,
+      "Cohort": "Jun 2026",
+      "Group": "Ray | PMP – June 2026"
+    },
+    {
+      "id": 253,
+      "Cohort": "Oct 2025",
+      "Group": "Samar - Marketing Technology (MarTech) oct 25"
+    },
+    {
+      "id": 256,
+      "Cohort": "Oct 2025",
+      "Group": "Stephen-Portfolio Management 2026"
+    },
+    {
+      "id": 259,
+      "Cohort": "Jun 2026",
+      "Group": "Ray | PMP – June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 260,
+      "Cohort": "Jun 2026",
+      "Group": "Ray | PMP – June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 262,
+      "Cohort": "Feb 2026",
+      "Group": "Femi-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 264,
+      "Cohort": "Oct 2025",
+      "Group": "Samar - Marketing Technology (MarTech) oct 25"
+    },
+    {
+      "id": 265,
+      "Cohort": "Oct 2025",
+      "Group": "G1 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 266,
+      "Cohort": "Feb 2026",
+      "Group": "Samar - Marketing Technology (MarTech) oct 25"
+    },
+    {
+      "id": 269,
+      "Cohort": "Jun 2026",
+      "Group": "MM Level 6 - June 2026"
+    },
+    {
+      "id": 270,
+      "Cohort": "Oct 2025",
+      "Group": "G2 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 271,
+      "Cohort": "Oct 2025",
+      "Group": "Dr. Samar - Marketing Technology - ME July 2025"
+    },
+    {
+      "id": 273,
+      "Cohort": "Jun 2026",
+      "Group": "MM Level 6 - June 2026"
+    },
+    {
+      "id": 277,
+      "Cohort": "Jun 2026",
+      "Group": "G3 - Femi - Customer Journey Optimisation"
+    },
+    {
+      "id": 280,
+      "Cohort": "Oct 2025",
+      "Group": "Samar - Marketing Technology (MarTech) oct 25"
+    },
+    {
+      "id": 286,
+      "Cohort": "Oct 2025",
+      "Group": "G1 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 287,
+      "Cohort": "Jun 2026",
+      "Group": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 288,
+      "Cohort": "Jun 2026",
+      "Group": "Ray | PMP – June 2026"
+    },
+    {
+      "id": 289,
+      "Cohort": "Jun 2026",
+      "Group": "G2-Juliane -Impact and Planning June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 290,
+      "Cohort": "Jun 2026",
+      "Group": "PCP Level 6 - June 2026"
+    },
+    {
+      "id": 292,
+      "Cohort": "Oct 2025",
+      "Group": "Femi-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 296,
+      "Cohort": "Feb 2026",
+      "Group": "Samar - Marketing Technology (MarTech) oct 25"
+    },
+    {
+      "id": 297,
+      "Cohort": "Oct 2025",
+      "Group": "Samar - Marketing Technology (MarTech) oct 25"
+    },
+    {
+      "id": 298,
+      "Cohort": "Oct 2025",
+      "Group": "Steve-Earned Value Management(EVM)2026 Recorded Sessions"
+    },
+    {
+      "id": 300,
+      "Cohort": "Oct 2025",
+      "Group": "Steve-Earned Value Management(EVM)2026"
+    },
+    {
+      "id": 301,
+      "Cohort": "Jun 2026",
+      "Group": "G2-Juliane -Impact and Planning June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 302,
+      "Cohort": "Feb 2026",
+      "Group": "Femi-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 303,
+      "Cohort": "Jun 2026",
+      "Group": "G2-Juliane -Impact and Planning June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 305,
+      "Cohort": "Jun 2026",
+      "Group": "G2 - Keith - Strategy and Planning - June 2026"
+    },
+    {
+      "id": 307,
+      "Cohort": "Feb 2026",
+      "Group": "G1 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 308,
+      "Cohort": "Jun 2026",
+      "Group": "G2-Juliane -Impact and Planning June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 312,
+      "Cohort": "Oct 2025",
+      "Group": "Samar - Marketing Technology (MarTech) oct 25"
+    },
+    {
+      "id": 314,
+      "Cohort": "Feb 2026",
+      "Group": "Ray-Managing Successful Programmes (MSP) Jan 2026"
+    },
+    {
+      "id": 316,
+      "Cohort": "Oct 2025",
+      "Group": "Femi-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 317,
+      "Cohort": "Jun 2026",
+      "Group": "G2-Juliane -Impact and Planning June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 322,
+      "Cohort": "Oct 2025",
+      "Group": "Steve-Earned Value Management(EVM)2026 Recorded Sessions"
+    },
+    {
+      "id": 323,
+      "Cohort": "Jun 2025",
+      "Group": "Ray-Project Management Office (PMO)"
+    },
+    {
+      "id": 324,
+      "Cohort": "Jun 2026",
+      "Group": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 325,
+      "Cohort": "Oct 2025",
+      "Group": "Stephen-Portfolio Management 2026 Recorded sessions"
+    },
+    {
+      "id": 328,
+      "Cohort": "Feb 2026",
+      "Group": "Social Media – Prof. Charl"
+    },
+    {
+      "id": 331,
+      "Cohort": "Oct 2025",
+      "Group": "Femi-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 332,
+      "Cohort": "Feb 2026",
+      "Group": "Andrew-Scheduling Professional (SP) Jan 2026"
+    },
+    {
+      "id": 333,
+      "Cohort": "Oct 2025",
+      "Group": "Samar - Marketing Technology (MarTech) oct 25"
+    },
+    {
+      "id": 338,
+      "Cohort": "Oct 2025",
+      "Group": "Femi-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 339,
+      "Cohort": "Oct 2025",
+      "Group": "Steve-Earned Value Management(EVM)2026"
+    },
+    {
+      "id": 341,
+      "Cohort": "Oct 2025",
+      "Group": "Steve-Earned Value Management(EVM)2026 Recorded Sessions"
+    },
+    {
+      "id": 342,
+      "Cohort": "Oct 2025",
+      "Group": "Stephen-Portfolio Management 2026 Recorded sessions"
+    },
+    {
+      "id": 343,
+      "Cohort": "Feb 2026",
+      "Group": "G2 - Julian - Social Media"
+    },
+    {
+      "id": 344,
+      "Cohort": "Oct 2025",
+      "Group": "G2 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 348,
+      "Cohort": "Oct 2026",
+      "Group": "PCP Level 6 - June 2026"
+    },
+    {
+      "id": 353,
+      "Cohort": "Oct 2025",
+      "Group": "Stephen-Portfolio Management 2026 Recorded sessions"
+    },
+    {
+      "id": 355,
+      "Cohort": "Feb 2026",
+      "Group": "Keith – AI in Marketing | Friday | May 2025"
+    },
+    {
+      "id": 358,
+      "Cohort": "Jun 2026",
+      "Group": "PCP Level 6 - June 2026"
+    },
+    {
+      "id": 363,
+      "Cohort": "Oct 2025",
+      "Group": "G2 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 364,
+      "Cohort": "Jun 2026",
+      "Group": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 366,
+      "Cohort": "Oct 2025",
+      "Group": "G1 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 367,
+      "Cohort": "Oct 2025",
+      "Group": "G1 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 371,
+      "Cohort": "Oct 2025",
+      "Group": "Ray-Project Management Office (PMO)"
+    },
+    {
+      "id": 375,
+      "Cohort": "Jun 2026",
+      "Group": "Ray | PMP – June 2026"
+    },
+    {
+      "id": 377,
+      "Cohort": "Oct 2025",
+      "Group": "G2 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 378,
+      "Cohort": "Oct 2025",
+      "Group": "Stephen-Portfolio Management 2026"
+    },
+    {
+      "id": 385,
+      "Cohort": "Feb 2026",
+      "Group": "G1 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 386,
+      "Cohort": "Oct 2025",
+      "Group": "Steve-Earned Value Management(EVM)2026"
+    },
+    {
+      "id": 388,
+      "Cohort": "Jun 2026",
+      "Group": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 389,
+      "Cohort": "Feb 2026",
+      "Group": "Ray-Managing Successful Programmes (MSP) Jan 2026"
+    },
+    {
+      "id": 390,
+      "Cohort": "Oct 2025",
+      "Group": "Steve-Earned Value Management(EVM)2026"
+    },
+    {
+      "id": 391,
+      "Cohort": "Jun 2026",
+      "Group": "PCP Level 6 - June 2026"
+    },
+    {
+      "id": 392,
+      "Cohort": "Oct 2025",
+      "Group": "Stephen-Portfolio Management 2026"
+    },
+    {
+      "id": 398,
+      "Cohort": "Jun 2026",
+      "Group": "Ray | PMP – June 2026"
+    },
+    {
+      "id": 399,
+      "Cohort": "Feb 2026",
+      "Group": "Femi-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 401,
+      "Cohort": "Oct 2025",
+      "Group": "Steve-Earned Value Management(EVM)2026"
+    },
+    {
+      "id": 402,
+      "Cohort": "Feb 2026",
+      "Group": "Ray-Managing Successful Programmes (MSP) Jan 2026"
+    },
+    {
+      "id": 414,
+      "Cohort": "Jun 2026",
+      "Group": "MM Level 6 - June 2026"
+    },
+    {
+      "id": 416,
+      "Cohort": "Oct 2025",
+      "Group": "Femi-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 417,
+      "Cohort": "Oct 2025",
+      "Group": "Samar - Marketing Technology (MarTech) oct 25"
+    },
+    {
+      "id": 418,
+      "Cohort": "Feb 2026",
+      "Group": "Stephen-Portfolio Management 2026 Recorded sessions"
+    },
+    {
+      "id": 421,
+      "Cohort": "Feb 2026",
+      "Group": "G3 - Femi - Customer Journey Optimisation"
+    },
+    {
+      "id": 423,
+      "Cohort": "Feb 2026",
+      "Group": "Ray-Managing Successful Programmes (MSP) Jan 2026"
+    },
+    {
+      "id": 426,
+      "Cohort": "Jun 2026",
+      "Group": "G2-Juliane -Impact and Planning June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 427,
+      "Cohort": "Oct 2025",
+      "Group": "Stephen-Portfolio Management 2026"
+    },
+    {
+      "id": 428,
+      "Cohort": "Jun 2026",
+      "Group": "Keith | Strategy & Planning – June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 429,
+      "Cohort": "Oct 2025",
+      "Group": "Samar - Marketing Technology (MarTech) oct 25"
+    },
+    {
+      "id": 433,
+      "Cohort": "Feb 2026",
+      "Group": "Samar - Marketing Technology (MarTech) oct 25"
+    },
+    {
+      "id": 435,
+      "Cohort": "Oct 2025",
+      "Group": "Stephen-Portfolio Management 2026 Recorded sessions"
+    },
+    {
+      "id": 438,
+      "Cohort": "Jun 2026",
+      "Group": "Juliane – Impact and Planning June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 440,
+      "Cohort": "Jun 2026",
+      "Group": "G2-Juliane -Impact and Planning June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 442,
+      "Cohort": "Feb 2026",
+      "Group": "Femi-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 446,
+      "Cohort": "Oct 2025",
+      "Group": "G1 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 450,
+      "Cohort": "Jun 2026",
+      "Group": "Juliane – Impact and Planning June 2026"
+    },
+    {
+      "id": 454,
+      "Cohort": "Oct 2025",
+      "Group": "Femi-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 455,
+      "Cohort": "Jun 2026",
+      "Group": "Juliane – Impact and Planning June 2026"
+    },
+    {
+      "id": 456,
+      "Cohort": "Jun 2026",
+      "Group": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 458,
+      "Cohort": "Jun 2026",
+      "Group": "Ray | PMP – June 2026"
+    },
+    {
+      "id": 460,
+      "Cohort": "Oct 2025",
+      "Group": "G1 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 462,
+      "Cohort": "Jun 2025",
+      "Group": "Project Planning & Control (PPC) | Andrew"
+    },
+    {
+      "id": 466,
+      "Cohort": "Oct 2025",
+      "Group": "Stephen-Portfolio Management 2026 Recorded sessions"
+    },
+    {
+      "id": 467,
+      "Cohort": "Jun 2026",
+      "Group": "Ray | PMP – June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 468,
+      "Cohort": "Oct 2025",
+      "Group": "G1 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 469,
+      "Cohort": "Jun 2026",
+      "Group": "ME Level 4 - June 2026"
+    },
+    {
+      "id": 473,
+      "Cohort": "Jun 2026",
+      "Group": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 474,
+      "Cohort": "Oct 2024",
+      "Group": "Ray-Project Management Office (PMO)"
+    },
+    {
+      "id": 475,
+      "Cohort": "Feb 2026",
+      "Group": "Ray-Managing Successful Programmes (MSP) Jan 2026"
+    },
+    {
+      "id": 478,
+      "Cohort": "Oct 2025",
+      "Group": "Stephen-Portfolio Management 2026 Recorded sessions"
+    },
+    {
+      "id": 479,
+      "Cohort": "Jun 2026",
+      "Group": "Keith | Strategy & Planning – June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 480,
+      "Cohort": "Oct 2025",
+      "Group": "Samar - Marketing Technology (MarTech) oct 25"
+    },
+    {
+      "id": 481,
+      "Cohort": "Oct 2025",
+      "Group": "G1 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 484,
+      "Cohort": "Oct 2025",
+      "Group": "G1 Keith-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 485,
+      "Cohort": "Oct 2025",
+      "Group": "Samar - Marketing Technology (MarTech) oct 25"
+    },
+    {
+      "id": 487,
+      "Cohort": "Oct 2025",
+      "Group": "Femi-Commercial Intelligence-Oct 25"
+    },
+    {
+      "id": 489,
+      "Cohort": "Jun 2026",
+      "Group": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 492,
+      "Cohort": "Oct 2025",
+      "Group": "Steve-Earned Value Management(EVM)2026 Recorded Sessions"
+    },
+    {
+      "id": 493,
+      "Cohort": "Jun 2026",
+      "Group": "G2-Juliane -Impact and Planning June 2026(Recorded Sessions)"
+    },
+    {
+      "id": 494,
+      "Cohort": "Oct 2025",
+      "Group": "Samar - Marketing Technology (MarTech) oct 25"
+    }
+  ],
+  "module_updates": [],
+  "eligible_learner_count": 365,
+  "eligible_enrolment_count": 359
+}

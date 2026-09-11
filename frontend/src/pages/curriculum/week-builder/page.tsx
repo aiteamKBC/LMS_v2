@@ -414,9 +414,14 @@ function CreateTemplateModal({ onClose, onCreated }: { onClose: () => void; onCr
   // the editor locks. Naming the week is the one thing that cannot be deferred,
   // so it is the one thing asked. A template is pointed at a module when it is
   // actually placed.
+  // Created free, never paid. "Paid" means *scoped* -- tied to a programme,
+  // module and group -- and this dialog no longer asks for any of that, so
+  // calling the result paid claimed a scope it does not have. Free is what an
+  // unscoped week actually is, and the server clears the scope columns to match
+  // instead of leaving them half-set.
   const handleCreate = () => {
     if (!canCreate) return;
-    const base = createEmptyWeekTemplate('paid');
+    const base = createEmptyWeekTemplate('free');
     base.title = title.trim();
     onCreated(base);
   };
