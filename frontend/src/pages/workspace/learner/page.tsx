@@ -488,7 +488,7 @@ export default function LearnerOverview() {
   const otjCaption = isRealMode
     ? usesCombinedProgress
       ? unifiedLearning.summary
-        ? `Across ${unifiedLearning.summary.subjectCount} subjects`
+        ? `Across ${stations.length} programme modules`
         : unifiedLearning.error ? 'Recorded time unavailable' : 'Loading recorded time...'
       : (otj.targetHours > 0 ? `Target ${formatHoursMinutes(otj.targetHours)}${otj.status ? ` · ${otj.status}` : ''}` : `${otj.activities} ${otj.activities === 1 ? 'activity' : 'activities'} logged`)
     : `${formatHoursMinutes(p.otjhCompleted)} / ${formatHoursMinutes(p.otjhTarget)} planned`;
