@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { Panel } from '@/components/ui/Panel';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { PageSkeleton } from '@/components/feature/Skeletons';
+import { MonthReportSkeleton } from './RecordSkeletons';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { Modal } from '@/pages/users/components/Modal';
 import { inputClass } from '@/pages/users/components/ui';
@@ -16,10 +16,12 @@ import { completeMonth, getMonth, getSignoffs, getSummary, reopenMonth, saveSign
 import { displayDate, monthLabel, monthStatus, nextOutstanding, previousMonthSignature } from './report';
 import styles from './report.module.css';
 import design from './design.module.css';
+import journal from './journal.module.css';
 import { RecordBadge } from './RecordDesign';
+import { JournalDownloads } from './JournalDownloads';
 
-const btnPrimary = design.primaryButton;
-const btnSecondary = design.secondaryButton;
+const btnPrimary = journal.primaryButton;
+const btnSecondary = journal.secondaryButton;
 
 export function MonthReport({ month, aptemId }: { month: string; aptemId?: number }) {
   const { auth } = useAuth();
@@ -73,9 +75,9 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
   const error = query.error || summary.error;
   if (error && (!query.data || !summary.data)) return <Panel><EmptyState variant="error" title="Unable to load the previous record" description={error.message}
     action={<button className={btnSecondary} onClick={() => { summary.retryStart(); refresh(); }}>Try again</button>} /></Panel>;
-  if (summary.isPending || summary.starting) return <PageSkeleton />;
+  if (summary.isPending || summary.starting) return <MonthReportSkeleton />;
   if (!summary.data?.is_legacy || !summary.data.total_months) return <EmptyState title="No previous activity months are available" description="Please contact your coach." />;
-  if (query.isPending) return <PageSkeleton />;
+  if (query.isPending) return <MonthReportSkeleton />;
   if (!query.data) return null;
   const data = query.data;
   const busy = signing.isPending || completion.isPending;
@@ -94,40 +96,45 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
     : 'The learner’s signature completes this month. Coach signatures can be added separately.';
   if (data.student_signature) completionHint = 'Your learner signature is saved for this month.';
   if (readOnly) completionHint = 'Viewing only. The learner completes this record from their own account.';
-  return <div className={design.reportPage}>
+  return <div className={`${design.reportPage} ${journal.page}`}>
     {message && <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-800">{message}</div>}
     {error && <div role="alert" className="flex flex-wrap items-center gap-3 text-[13px] text-foreground-600">Updates are temporarily unavailable. Your draft is still here.
       <button className={btnSecondary} onClick={() => { summary.retryStart(); refresh(); }}>Try again</button></div>}
-    <nav className={design.reportNav} aria-label="Monthly report navigation">
-      <button className={btnSecondary} disabled={!previous || busy} onClick={() => navigate(`${base}/${previous.month}`)} aria-label="Previous month"><AppIcon className="ri-arrow-left-s-line" />Previous</button>
-      <select aria-label="Report month" className={inputClass} value={month} disabled={busy} onChange={event => navigate(`${base}/${event.target.value}`)}>
-        {months.map(item => <option key={item.month} value={item.month}>{monthLabel(item.month)} · {monthStatus(item)}</option>)}
-      </select>
-      <button className={btnSecondary} disabled={!next || busy} onClick={() => navigate(`${base}/${next.month}`)} aria-label="Next month">Next<AppIcon className="ri-arrow-right-s-line" /></button>
-      <Link to={aptemId === undefined ? base : `/old-otjh/coach/${aptemId}`} className={btnSecondary}><AppIcon className="ri-layout-grid-line" />All months</Link>
+    <nav className={`${journal.card} ${journal.filters}`} aria-label="Monthly report navigation">
+      <div className={journal.filterField}><span id="journal-learner-label" className={journal.label}>Learner</span>
+        <div className={journal.learnerField} aria-labelledby="journal-learner-label"><AppIcon className="ri-user-line" /><span>{summary.data.learner?.name || '—'}</span></div></div>
+      <div className={journal.filterField}><label htmlFor="journal-report-month" className={journal.label}>Report month</label>
+        <div className={journal.monthControl}>
+          <select id="journal-report-month" className={journal.monthSelect} value={month} disabled={busy} onChange={event => navigate(`${base}/${event.target.value}`)}>
+            {months.map(item => <option key={item.month} value={item.month}>{monthLabel(item.month)} · {monthStatus(item)}</option>)}
+          </select>
+          <button className={btnSecondary} disabled={!previous || busy} onClick={() => navigate(`${base}/${previous.month}`)} aria-label="Previous month" title="Previous month"><AppIcon className="ri-arrow-left-s-line" /></button>
+          <button className={btnSecondary} disabled={!next || busy} onClick={() => navigate(`${base}/${next.month}`)} aria-label="Next month" title="Next month"><AppIcon className="ri-arrow-right-s-line" /></button>
+          <Link to={aptemId === undefined ? base : `/old-otjh/coach/${aptemId}`} className={btnSecondary} title="View all months"><AppIcon className="ri-layout-grid-line" />All months</Link>
+        </div>
+      </div>
     </nav>
-    {!readOnly && <div className={design.bulkActions}>
-      <p>{unsigned.length ? 'One signature for all months in this previous learning record.' : 'Your signature is saved for all months.'}</p>
-      <button className={btnPrimary} disabled={busy || !unsigned.length} onClick={() => setBulkOpen(true)}><AppIcon className="ri-edit-line" />Sign all months</button>
-    </div>}
     {bulkOpen && <BulkSignDialog summary={summary.data} aptemId={aptemId} onClose={() => setBulkOpen(false)} onSaved={result => {
       client.setQueryData(['old-otjh', auth.account?.id, 'summary', aptemId ?? 'me'], result.summary);
       setBulkOpen(false); draftDigest.current = null; setCaptureVersion(value => value + 1);
       setMessage(result.summary.can_access_lms ? 'All months are complete. Your signature is saved and LMS access is open.' : 'Your signature is saved on all months. The learner can now complete their record.');
       refresh();
     }} />}
-    <div className={design.reportOverview}><LearnerInformation summary={summary.data} data={data} /><MonthlyHours data={data} /></div>
-    <p className={design.syncNote} role="status"><AppIcon className={live.isError ? 'ri-wifi-off-line' : 'ri-refresh-line'} />
-      {live.isError ? 'Signature updates are temporarily delayed. Retrying automatically.' : 'Signatures update automatically while you review. Each person signs from their own account.'}</p>
+    <LearnerInformation summary={summary.data} data={data} actions={
+      <JournalDownloads summary={summary.data} month={month} aptemId={aptemId} disabled={busy} />
+    } />
+    <MonthlyHours data={data} />
     <ActivityLog data={data} aptemId={aptemId} />
-    <section className={`${design.card} overflow-hidden`} aria-label="Monthly sign-off"><div className={design.sectionHeading}><div><h2 className="font-heading">Report sign-off</h2>
-      <p>Your learner and coach signatures for this month’s record.</p></div><span className={design.iconTile}><AppIcon className="ri-edit-line" /></span></div>
-      <div className={design.sectionBody}><div className={styles.reportTableWrap}>
+    <section className={`${journal.card} ${journal.signoff}`} aria-label="Monthly sign-off"><div className={journal.sectionHeading}><div><h2 className="font-heading">Report sign-off</h2>
+      <p>Your learner and coach signatures for this month’s record.</p></div>
+      {!readOnly && <button className={btnPrimary} disabled={busy || !unsigned.length} onClick={() => setBulkOpen(true)}><AppIcon className="ri-edit-line" />Sign all months</button>}
+      </div>
+      <div className={journal.signoffBody}><div className={styles.reportTableWrap}>
       <table className={styles.signTable} aria-label="Report sign-off"><thead><tr>{['Role', 'Signature', 'Print name', 'Date', 'Status'].map(label => <th scope="col" key={label}>{label}</th>)}</tr></thead>
         <tbody>{signatureRows.map(row => <tr key={row.role}>
-          <td data-label="Role"><span className="text-[11px] font-semibold uppercase tracking-wider">{row.role}</span>{row.own && <span className="mt-1 block text-[11px] text-primary-600">(you)</span>}</td>
+          <td data-label="Role"><span className="text-[11px] font-semibold uppercase tracking-wider">{row.role}</span>{row.own && <span className={journal.ownLabel}>(you)</span>}</td>
           <td className={styles.signatureCell} data-label="Signature">
-            {row.signature && <img src={row.signature.url} alt={`${row.role} signature`} className={design.signatureImage} />}
+            {row.signature && <img src={row.signature.url} alt={`${row.role} signature`} className={`${design.signatureImage} ${journal.signatureImage}`} />}
             {row.own && canSign ? <SignatureCapture key={captureVersion} name={auth.account?.displayName || auth.user?.fullName || ''} busy={busy}
               dialogRole={student ? 'learner' : 'coach'} hasSavedSignature={Boolean(row.signature)} saveError={signing.error?.message}
               importSignature={reusableSignature}
@@ -141,7 +148,10 @@ export function MonthReport({ month, aptemId }: { month: string; aptemId?: numbe
           <td data-label="Date"><span className="whitespace-nowrap text-[12px]">{displayDate(row.signature?.signed_at)}</span></td>
           <td data-label="Status"><RecordBadge tone={row.signature ? 'positive' : 'pending'}><AppIcon className={row.signature ? 'ri-checkbox-circle-line' : 'ri-time-line'} />{row.signature ? 'Signed' : 'Awaiting signature'}</RecordBadge></td>
         </tr>)}</tbody></table></div></div>
-      <div className={`${design.signFooter} space-y-3`}>
+      <div className={`${design.signFooter} ${journal.signoffFooter} space-y-3`}>
+        {!readOnly && <p className={journal.signingNote}>{unsigned.length ? 'One signature for all months in this previous learning record.' : 'Your signature is saved for all months.'}</p>}
+        <p className={design.syncNote} role="status"><AppIcon className={live.isError ? 'ri-wifi-off-line' : 'ri-refresh-line'} />
+          {live.isError ? 'Signature updates are temporarily delayed. Retrying automatically.' : 'Signatures update automatically while you review. Each person signs from their own account.'}</p>
         {data.status === 'complete' ? <div className="flex items-start gap-3 text-emerald-700"><AppIcon className="ri-checkbox-circle-line text-xl" />
           <div><p className="text-[13px] font-semibold">This month has been reviewed, signed and completed.</p><p className="mt-1 text-[12px]">Saved signatures are read-only. The coach can still add their signature. You can view activities and documents.</p></div></div>
           : <><p role="status" className="text-[13px] text-foreground-600">{completionHint}</p>

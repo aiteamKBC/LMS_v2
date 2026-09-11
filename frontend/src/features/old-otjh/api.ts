@@ -122,7 +122,7 @@ const post = <T>(path: string, body: object) => request<T>(path, {
 export const getSummary = (aptemId?: number) => request<Summary>(aptemId === undefined
   ? '/old-otjh/me/summary/' : `/last-audit/manual/summary${query(aptemId)}`);
 export const startReview = (aptemId?: number) => post<Summary>(`/old-otjh/start/${query(aptemId)}`, {});
-export const getMonth = (month: string, aptemId?: number) => request<MonthDetail>(`/last-audit/manual/rows${query(aptemId, month)}`);
+export const getMonth = (month: string, aptemId?: number, signal?: AbortSignal) => request<MonthDetail>(`/last-audit/manual/rows${query(aptemId, month)}`, { signal });
 export const getActivityContent = (month: string, rowId: number, aptemId?: number) =>
   request<ActivityContent>(`/last-audit/manual/rows${query(aptemId, month)}&activity_id=${rowId}`);
 export const getContentReview = (month: string, aptemId?: number) => request<ContentReview>(`/old-otjh/content-check/${query(aptemId, month)}`);

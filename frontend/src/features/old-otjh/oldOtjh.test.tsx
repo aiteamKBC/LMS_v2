@@ -11,7 +11,6 @@ const signedIn = { id: 1, role: 'learner' as 'learner' | 'staff', access: 'learn
   hasLegacyRecord: true, displayName: 'Test student', email: 'student@example.org' };
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: signedIn, user: { fullName: 'Test student' } }, isInitialized: true }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
-vi.mock('@/components/feature/Skeletons', () => ({ PageSkeleton: () => <div role="status">Loading record</div> }));
 vi.mock('./SignatureCapture', () => ({ SignatureCapture: ({ busy }: { busy: boolean }) => <fieldset disabled={busy}><legend>Signature capture</legend></fieldset> }));
 vi.mock('./api', async importOriginal => ({ ...await importOriginal<typeof import('./api')>(),
   getSummary: vi.fn(), getMonth: vi.fn(), getActivityContent: vi.fn(), getContentReview: vi.fn(), startReview: vi.fn(), completeMonth: vi.fn() }));
@@ -267,14 +266,22 @@ describe('previous learning portal', () => {
   });
 
   it('keeps protected documents inside one activity row and separates acceptance from completion', async () => {
-    vi.mocked(getMonth).mockResolvedValue({ ...month, rows: [{ ...month.rows[0], category: 'assignment', source_ref: 'ev:14', ksb_codes: ['K1', 'S6'],
-      documents: [{ id: 3, display_name: 'Evidence.pdf', content_type: 'application/pdf', url: '/audit_api/old-otjh/documents/3/?aptem_id=42' }] }] });
+    vi.mocked(getMonth).mockResolvedValue({ ...month, row_count: 2, rows: [
+      { ...month.rows[0], category: 'assignment', source_ref: 'asg:77098:evidence:41641', ksb_codes: ['B2', 'K5', 'S2'],
+        documents: [{ id: 3, display_name: 'Evidence.pdf', content_type: 'application/pdf', url: '/audit_api/old-otjh/documents/3/?aptem_id=42' }] },
+      { ...month.rows[0], id: 5, category: 'reading+quiz', title: 'Apprentice Charter Agreement', accepted: false,
+        source_ref: 'la:101477:126339', ksb_codes: ['B5', 'B8', 'K1', 'K5', 'S6'] },
+    ] });
     page('/old-otjh/months/2026-08');
-    const table = await screen.findByRole('table', { name: 'Assignments log' });
+    const table = await screen.findByRole('table', { name: 'Monthly activity log' });
     expect(within(table).getAllByRole('heading', { name: 'Original learning activity' })).toHaveLength(1);
-    expect(screen.getByRole('heading', { name: 'Assignments' })).toBeInTheDocument();
+    expect(within(table).getByRole('rowgroup', { name: 'Assignments' })).toBeInTheDocument();
     expect(within(table).getByRole('button', { name: 'Open Evidence.pdf' })).toBeEnabled();
-    expect(within(table).getByText('K1')).toBeInTheDocument();
+    const assignment = within(table).getByRole('rowgroup', { name: 'Assignments' });
+    for (const code of ['B2', 'K5', 'S2']) expect(within(assignment).getByText(code)).toBeInTheDocument();
+    const activity = within(table).getByRole('rowgroup', { name: 'Activities' });
+    for (const code of ['B5', 'B8', 'K1', 'K5', 'S6']) expect(within(activity).getByText(code)).toBeInTheDocument();
+    expect(within(activity).getByText('Not accepted')).toBeInTheDocument();
     expect(within(table).queryByText('Completed')).not.toBeInTheDocument();
   });
 
@@ -307,10 +314,14 @@ describe('previous learning portal', () => {
     page('/old-otjh/months/2026-08');
     await screen.findByRole('heading', { name: 'Recorded attendance' });
     expect(screen.getAllByRole('table').map(table => table.getAttribute('aria-label'))).toEqual([
-      'Attendance log', 'Monthly activity log', 'Assignments log', 'Report sign-off',
+      'Monthly activity log', 'Report sign-off',
     ]);
-    const activities = screen.getByRole('table', { name: 'Monthly activity log' });
-    expect(within(activities).getAllByRole('heading').map(heading => heading.textContent)).toEqual(['First activity', 'Second activity']);
+    const activityLog = screen.getByRole('table', { name: 'Monthly activity log' });
+    expect(within(activityLog).getAllByRole('rowgroup').map(group => group.getAttribute('aria-label')).filter(Boolean)).toEqual([
+      'Attendance', 'Activities', 'Assignments',
+    ]);
+    const activities = within(activityLog).getByRole('rowgroup', { name: 'Activities' });
+    expect(within(activities).getAllByRole('heading').slice(1).map(heading => heading.textContent)).toEqual(['First activity', 'Second activity']);
     for (const title of ['Recorded attendance', 'First activity', 'Second activity', 'Submitted assignment']) {
       expect(screen.getAllByRole('heading', { name: title })).toHaveLength(1);
     }

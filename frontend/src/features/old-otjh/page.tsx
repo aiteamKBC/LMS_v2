@@ -5,7 +5,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { coachNavItems } from '@/mocks/navigation';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { PageSkeleton } from '@/components/feature/Skeletons';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { Panel } from '@/components/ui/Panel';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -13,12 +13,14 @@ import { inputClass } from '@/pages/users/components/ui';
 import { useRecordSummary } from './useRecordSummary';
 import { TransitionDialog } from './TransitionDialog';
 import { MonthReport } from './MonthReport';
+import { MonthListSkeleton } from './RecordSkeletons';
 import { BulkSignDialog } from './BulkSignDialog';
 import { MonitoringDashboard } from './MonitoringDashboard';
 import { monthLabel, hours, duration, nextOutstanding } from './report';
 import { getLearners, refreshMonths, type Summary } from './api';
 import { MonthBadge, RecordBadge, RecordProgress, SignatureChip } from './RecordDesign';
 import styles from './design.module.css';
+import journal from './journal.module.css';
 
 const btnPrimary = styles.primaryButton;
 const btnSecondary = styles.secondaryButton;
@@ -45,7 +47,7 @@ function Shell({ children }: { children: ReactNode }) {
           { id: 'previous-records-list', label: 'Learning records', href: '/old-otjh/coach', icon: 'ri-history-line' },
           ...(auth.account?.access === 'super-admin' ? [{ id: 'record-monitor', label: 'Record monitoring', href: '/old-otjh/monitor', icon: 'ri-dashboard-line' }] : []),
         ],
-      } : item)}><PageContainer className={`${styles.scope} ${styles.page}`}>{children}</PageContainer></WorkspaceShell>;
+      } : item)}><PageContainer className={`${styles.scope} ${styles.page} ${month ? journal.canvas : ''}`}>{children}</PageContainer></WorkspaceShell>;
 }
 
 function ErrorState({ error, retry }: { error: Error; retry: () => void }) {
@@ -151,7 +153,7 @@ function MonthList({ aptemId }: { aptemId?: number }) {
   const [bulkMessage, setBulkMessage] = useState('');
   const refresh = useMutation({ mutationFn: () => refreshMonths(aptemId!, reason),
     onSuccess: () => { setReason(''); void client.invalidateQueries({ queryKey: ['old-otjh'] }); } });
-  if (query.isPending || query.starting) return <PageSkeleton />;
+  if (query.isPending || query.starting) return <MonthListSkeleton />;
   if (query.error) return <ErrorState error={query.error} retry={query.retryStart} />;
   if (!query.data?.is_legacy) return <EmptyState title="No previous record review is required" />;
   const base = aptemId === undefined ? '/old-otjh/months' : `/old-otjh/coach/${aptemId}/months`;
@@ -265,7 +267,8 @@ function CoachList() {
     </div>
   );
 
-  if (query.isPending) return <><h1 className="text-2xl font-heading font-semibold">Previous learning records</h1>{searchField}<PageSkeleton /></>;
+  if (query.isPending) return <><h1 className="text-2xl font-heading font-semibold">Previous learning records</h1>{searchField}
+    <Panel><div role="status" aria-label="Loading learner records"><RowsSkeleton rows={5} avatar={false} /></div></Panel></>;
   if (query.error) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
   return <><h1 className="text-2xl font-heading font-semibold">Previous learning records</h1>
     {searchField}
