@@ -15,22 +15,15 @@ function finiteNumber(value: unknown): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
-/**
- * Detect a learner-entered Time spent value. New records carry the `:input`
- * provenance marker; older records are recognised when the claimed duration
- * is materially larger than the server-capped session duration.
- */
+/** Detect a learner-entered Time spent value without treating imported audit data as input. */
 function manualClaimedSeconds(input: OtjhContributionInput): number | null {
   const claimed = finiteNumber(input.claimedSeconds);
   if (claimed == null || claimed < 0) return null;
   const verified = finiteNumber(input.verifiedSeconds);
   const source = String(input.timeTrackingSource || '').toLowerCase();
   const explicitlyManual = source.endsWith(':input') || source.includes('manual_input');
-  // MBA imports keep their raw source duration in claimedSeconds for the
-  // audit trail. verifiedSeconds is the bounded duration eligible for OTJH.
-  const importedSourceDuration = source.startsWith('mba_import_');
-  const inferredLegacyManual = !importedSourceDuration && verified != null && claimed > verified + 2;
-  return explicitlyManual || inferredLegacyManual ? claimed : null;
+  const inferredManual = !source.includes('import') && verified != null && claimed > verified + 2;
+  return explicitlyManual || inferredManual ? claimed : null;
 }
 
 /** The value one attempt contributes, following the learner-input precedence. */

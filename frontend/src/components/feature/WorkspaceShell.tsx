@@ -1,13 +1,14 @@
 import { useState, type CSSProperties, type ReactNode, useEffect } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
-import { Sidebar, SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH, type SidebarNavItem } from './Sidebar';
+import { Sidebar, SidebarIcon, SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH, SIDEBAR_CONTENT_GAP, type SidebarNavItem } from './Sidebar';
 import { CoachViewAsBar } from './CoachViewAsBar';
 import { Header } from './Header';
+import { AppIcon } from './AppIcon';
 import { GlobalSearch } from './GlobalSearch';
 import { useAuth } from '@/hooks/useAuth';
 import { useLearnerNavGate } from '@/hooks/useLearnerNavGate';
 import { ArrowLeft } from 'lucide-react';
-import { isLearnerFlowAccount } from '@/lib/learnerFlowAccess';
+import design from './WorkspaceDesign.module.css';
 
 interface WorkspaceShellProps {
   children: ReactNode;
@@ -42,11 +43,10 @@ const ROUTE_HISTORY_KEY = 'lmsRouteHistory';
 const SIDEBAR_PINNED_KEY = 'kbc_sidebar_pinned';
 
 /**
- * Whether the sidebar is pinned open.
+ * Whether the sidebar's secondary navigation is open.
  *
  * Held here rather than inside the sidebar because the shell has to reserve the
- * matching width — a pinned sidebar pushes the content across, while the hover
- * preview only floats above it.
+ * matching width, including the outer inset and content gap.
  */
 function readPinnedPreference() {
   try {
@@ -169,11 +169,13 @@ export function WorkspaceShell({
   // A learner who is still onboarding, or who has finished enrolment but is not
   // yet being taught, gets a reduced sidebar — most of the workspace needs a
   // running training plan. Applied here so every learner page inherits it.
-  const { auth } = useAuth();
-  const signedInEmail = auth.account?.email || auth.user?.email;
-  const hideFocusedLearnerSidebar = role === 'learner' && isLearnerFlowAccount(signedInEmail);
-  const navItems = useLearnerNavGate(filterLearnerNavigation ? role : '', navItemsProp, signedInEmail);
+  const { auth, isAdmin } = useAuth();
   const location = useLocation();
+  // Keep the approved admin page styling in the shared directory, but let the
+  // selected workspace supply its own menu, labels and breadcrumbs.
+  const isAdminDirectory = isAdmin && /^\/(?:users|employers)(?:\/|$)/.test(location.pathname);
+  const chromeRole = isAdminDirectory ? 'admin' : role;
+  const navItems = useLearnerNavGate(filterLearnerNavigation ? role : '', navItemsProp);
   const navigate = useNavigate();
   const [searchOpen, setSearchOpen] = useState(false);
   const [previousRoute, setPreviousRoute] = useState('');
@@ -188,7 +190,7 @@ export function WorkspaceShell({
     } catch { /* Ignore unavailable browser storage. */ }
   };
 
-  const displayName = userName || auth.user?.fullName || 'User';
+  const displayName = (isAdminDirectory ? auth.account?.displayName || auth.user?.fullName : userName) || auth.user?.fullName || 'User';
   const displayRole = userRole || auth.roles[0]?.name || roleLabel;
   const defaultWorkspaceLabel = workspaceLabel || roleLabel + ' Workspace';
 
@@ -217,6 +219,10 @@ export function WorkspaceShell({
     setMobileSidebarOpen(prev => !prev);
   };
 
+  // Reuse the breadcrumb's resolved destination for the header's visual icon.
+  const headerNavItem = navItems.flatMap(item => [item, ...(item.children ?? [])])
+    .find(item => item.href === [...breadcrumbs].reverse().find(crumb => crumb.isLink)?.href);
+
   const fallbackRoute = backFallbackHref || breadcrumbs.find(crumb => crumb.isLink && crumb.href && crumb.href !== `${location.pathname}${location.search}`)?.href || '/';
   const hasPreviousEntry = typeof window.history.state?.idx === 'number' && window.history.state.idx > 0;
   const canGoBack = hasPreviousEntry || fallbackRoute !== `${location.pathname}${location.search}${location.hash}`;
@@ -230,48 +236,46 @@ export function WorkspaceShell({
 
   return (
     <div
-      className="dashboard-theme workspace-shell flex h-screen overflow-hidden"
-      data-workspace-role={role}
+      className={`dashboard-theme workspace-shell flex h-screen overflow-hidden ${design.shell}`}
+      data-workspace-role={chromeRole}
       // The offset itself is applied under a `lg` media query in index.css —
       // below that breakpoint the sidebar is an off-canvas drawer and must
       // reserve nothing.
-      style={{ '--kbc-sidebar-width': `${hideFocusedLearnerSidebar ? 0 : sidebarPinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH}px` } as CSSProperties}
+      style={{ '--kbc-sidebar-width': `${(sidebarPinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH) + SIDEBAR_CONTENT_GAP}px` } as CSSProperties}
     >
-      {!hideFocusedLearnerSidebar && (
-        <Sidebar
-          role={role}
-          roleLabel={roleLabel}
-          navItems={navItems}
-          userName={displayName}
-          userRole={displayRole}
-          pinned={sidebarPinned}
-          onPinChange={handlePinChange}
-          mobileOpen={mobileSidebarOpen}
-          onCloseMobile={() => setMobileSidebarOpen(false)}
-        />
-      )}
-      {/* Reserve exactly the sidebar's own width — the two numbers come from the
-          same constants, so the content can never sit under the rail. The hover
-          preview is deliberately not reserved: it floats above the page. */}
+      <Sidebar
+        role={role}
+        roleLabel={roleLabel}
+        navItems={navItems}
+        userName={displayName}
+        userRole={displayRole}
+        pinned={sidebarPinned}
+        onPinChange={handlePinChange}
+        mobileOpen={mobileSidebarOpen}
+        onCloseMobile={() => setMobileSidebarOpen(false)}
+      />
+      {/* Reserve the shared sidebar width and gutters for every workspace. */}
       <div
-        className="workspace-content flex-1 flex flex-col min-w-0 transition-[margin] duration-300 ease-out"
-        style={{ marginLeft: hideFocusedLearnerSidebar ? 0 : `var(--kbc-sidebar-offset, 0px)` }}
+        className="workspace-content flex-1 flex flex-col min-w-0 transition-[margin] duration-300 ease-out motion-reduce:transition-none"
+        style={{ marginLeft: 'var(--kbc-sidebar-offset, 0px)' }}
       >
         {!hidePageChrome && (
           <Header
             pageTitle={pageTitle}
+            pageIcon={headerNavItem ? <SidebarIcon id={headerNavItem.id} label={headerNavItem.label} sourceIcon={headerNavItem.icon} className="h-5 w-5" /> : undefined}
             pageSubtitle={pageSubtitle}
             onOpenSearch={() => setSearchOpen(true)}
             userName={displayName}
-            onToggleMobileSidebar={hideFocusedLearnerSidebar ? undefined : handleToggleMobileSidebar}
+            onToggleMobileSidebar={handleToggleMobileSidebar}
             mobileSidebarOpen={mobileSidebarOpen}
-            role={role}
+            role={chromeRole}
+            workspaceLabel={roleLabel}
           />
         )}
 
         {/* Breadcrumbs */}
         {!hidePageChrome && (showBackButton || (!hideBreadcrumbs && breadcrumbs.length > 0)) && (
-          <div className={`workspace-breadcrumbs flex ${showBackButton ? 'min-h-12 gap-3 py-1.5' : 'h-8'} shrink-0 items-center overflow-hidden border-b border-background-300/40 bg-background-200 px-3 md:px-5`}>
+          <div className={`workspace-breadcrumbs mx-2 flex ${showBackButton ? 'min-h-12 gap-3 py-1.5' : 'h-8'} shrink-0 items-center overflow-hidden rounded-xl border-b border-background-300/40 bg-background-200 px-3 md:px-5 lg:ml-0 lg:mr-3`}>
             {showBackButton && <button type="button" onClick={handleReturnToPreviousWindow} disabled={!canGoBack}
               className="kbc-workspace-back" aria-label="Back to previous page"
               title={!canGoBack ? 'You are on the first page' : previousRoute ? 'Back to the previous page' : 'Back'}>
@@ -323,7 +327,7 @@ export function WorkspaceShell({
             change (router/index.ts keys the boundary by pathname), so a
             transition owned by this component could never run. It used to hold
             an opacity-0 state behind a 120ms timer that nothing ever set. */}
-        <main className="workspace-main flex-1 overflow-y-auto">
+        <main className="workspace-main min-h-0 flex-1 overflow-y-auto !bg-none">
           {/* An administrator reading a coach's workspace: shown on every coach
               page, since the sidebar reaches most of them without passing the
               dashboard that chose the coach. */}

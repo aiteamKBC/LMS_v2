@@ -3,6 +3,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
 import { type CurriculumModule } from '@/lib/curriculumApi';
 import { loadCurriculumScope } from './weekTemplateData';
+import { Check, Plus } from 'lucide-react';
 import {
   copyComponentToWeek,
   loadModuleStructure,
@@ -235,7 +236,7 @@ function PlacementGap({ index, active, onPick }: { index: number; active: boolea
       onClick={() => onPick(index)}
       className={`flex h-6 w-full items-center justify-center rounded-md border border-dashed text-[10px] font-bold uppercase tracking-wide transition-smooth ${active ? 'border-primary-400 bg-primary-50 text-primary-700' : 'border-transparent text-transparent hover:border-primary-200 hover:text-primary-500'}`}
     >
-      {active ? 'Insert here ✓' : '+ Insert here'}
+      {active ? <><Check aria-hidden="true" className="mr-1 h-3 w-3" />Insert here</> : <><Plus aria-hidden="true" className="mr-1 h-3 w-3" />Insert here</>}
     </button>
   );
 }

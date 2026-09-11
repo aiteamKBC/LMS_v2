@@ -4,11 +4,9 @@ Separate from the mixed attendance/audit feed so pagination cannot silently
 drop modules and attendance/assignment hours cannot inflate activity totals.
 """
 
-from html import unescape
-
 from audit_api.last_audit_ledger_views import _activity_payload, _dict_rows
 from audit_api.last_audit_ledger_views import _json_list
-from .subject_dates import activity_schedule
+from .subject_dates import activity_schedule, apply_section_placement
 
 
 CURRICULUM_SCHEDULE_SQL = '''
@@ -58,8 +56,10 @@ def read_curriculum_schedules(cursor, group_ids):
             continue
         section = {
             'section_id': row.get('builder_week_id') or row.get('section_id'),
+            'source_section_id': row.get('section_id'),
             'section_title': unescape(str((row.get('builder_week_title') if row.get('builder_week_id') else row.get('section_title')) or '')),
             'section_source': 'builder_section_title' if row.get('builder_week_id') else 'section_title',
+            'exported_section_title': unescape(str(row.get('section_title') or '')),
             'original_created_at': row.get('original_created_at'),
         }
         matches = candidates.setdefault(key, [])
@@ -88,6 +88,7 @@ def apply_curriculum_schedules(items, schedules):
             section_title=context.get('section_title'), section_source=context['section_source'],
         ))
         item['section_title'] = context.get('section_title') or ''
+        apply_section_placement(item, item['group_id'], context.get('source_section_id'))
     return items
 
 
@@ -200,6 +201,34 @@ def summarize_activities(items):
         "actual_total": round(sum(item["actual"] for item in mapped), 4) if mapped else None,
         "planned_total": round(sum(item["planned"] for item in planned), 4) if planned else None,
         "activities": items,
+    }
+
+
+def read_audit_hour_totals(cursor, aptem_id):
+    """Return the exact whole-programme figures shown in Audit learner search.
+
+    TP Planned is Aptem's programme plan. LMS Actual is the accepted Actual
+    total from the employee-arranged monthly ledger. Keeping this query beside
+    the historical activity reader lets the learner workspace quote the same
+    sources without exposing the audit cohort endpoint to the browser.
+    """
+    cursor.execute('''
+        SELECT l.planned_hours_total,
+               COALESCE((
+                   SELECT SUM(m.actual_hours) FILTER (WHERE m.accepted)
+                   FROM "structured_manual_activities"."manual_learner_activities" m
+                   WHERE m.aptem_id = l.aptem_id AND m.deleted_at IS NULL
+               ), 0) AS accepted_actual_total
+        FROM "Last_audit".learners l
+        WHERE l.aptem_id = %s
+        LIMIT 1
+    ''', [aptem_id])
+    row = cursor.fetchone()
+    if row is None:
+        return {'audit_tp_planned': None, 'audit_lms_actual': None}
+    return {
+        'audit_tp_planned': round(float(row[0]), 2) if row[0] is not None else None,
+        'audit_lms_actual': round(float(row[1]), 2) if row[1] is not None else None,
     }
 
 

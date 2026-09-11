@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { ArrowLeft, ArrowRight, FileText, Plus, Search, UserRound } from "lucide-react";
+import { ArrowLeft, ArrowRight, FileText, Flag, Plus, Search, UserRound } from "lucide-react";
 import { ActivityTableHeader, InlineActivityCreateRow, InlineActivityRow } from "@/features/audit/learner-log-pro-copy/components/InlineActivityRow";
 import { Button } from "@/features/audit/learner-log-pro-copy/components/ui/button";
 import {
@@ -389,12 +389,12 @@ function SearchPage() {
                           {(learner.flags ?? []).filter(
                             (flag) => !["withdrawn", "lms_not_matched", "hours_not_mapped"].includes(flag),
                           ).map((flag) => (
-                            <span key={flag} className={`rounded-full px-2.5 py-1 text-xs font-semibold ${flagChipClass(flag)}`}>⚑ {flagLabel(flag)}</span>
+                            <span key={flag} className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${flagChipClass(flag)}`}><Flag aria-hidden="true" className="h-3 w-3" />{flagLabel(flag)}</span>
                           ))}
                           {learner.otjh?.month_flagged && learner.otjh.month ? (
-                            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${otjhChipClass(learner.otjh.month.status)}`}>⚑ OTJH: {otjhLabel(learner.otjh.month.status)}</span>
+                            <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${otjhChipClass(learner.otjh.month.status)}`}><Flag aria-hidden="true" className="h-3 w-3" />OTJH: {otjhLabel(learner.otjh.month.status)}</span>
                           ) : (learner.otjh?.flagged_count ?? 0) > 0 ? (
-                            <span className="rounded-full bg-warning/20 px-2.5 py-1 text-xs font-semibold text-foreground ring-1 ring-warning/40">⚑ {learner.otjh.flagged_count} OTJH flag{learner.otjh.flagged_count === 1 ? "" : "s"}</span>
+                            <span className="inline-flex items-center gap-1 rounded-full bg-warning/20 px-2.5 py-1 text-xs font-semibold text-foreground ring-1 ring-warning/40"><Flag aria-hidden="true" className="h-3 w-3" />{learner.otjh.flagged_count} OTJH flag{learner.otjh.flagged_count === 1 ? "" : "s"}</span>
                           ) : null}
                         </div>
                       </TableCell>

@@ -3,6 +3,7 @@ import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-route
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { coachNavItems } from '@/mocks/navigation';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { PageSkeleton } from '@/components/feature/Skeletons';
 import { Panel } from '@/components/ui/Panel';
@@ -37,11 +38,14 @@ function Shell({ children }: { children: ReactNode }) {
       { id: 'previous-record', label: 'Previous learning record', href: '/old-otjh/months', icon: 'ri-history-line' },
     ] : monitor ? [
       { id: 'record-monitor', label: 'Record monitoring', href: '/old-otjh/monitor', icon: 'ri-dashboard-line' },
-    ] : [
-      { id: 'coach-overview', label: 'Coach workspace', href: '/workspace/coach', icon: 'ri-dashboard-line' },
-      { id: 'previous-records', label: 'Previous learning records', href: '/old-otjh/coach', icon: 'ri-history-line' },
-      ...(auth.account?.access === 'super-admin' ? [{ id: 'record-monitor', label: 'Record monitoring', href: '/old-otjh/monitor', icon: 'ri-dashboard-line' }] : []),
-    ]}><PageContainer className={`${styles.scope} ${styles.page}`}>{children}</PageContainer></WorkspaceShell>;
+    ] : coachNavItems.map(item => item.id === 'coach-previous-records' ? {
+        ...item,
+        href: '',
+        children: [
+          { id: 'previous-records-list', label: 'Learning records', href: '/old-otjh/coach', icon: 'ri-history-line' },
+          ...(auth.account?.access === 'super-admin' ? [{ id: 'record-monitor', label: 'Record monitoring', href: '/old-otjh/monitor', icon: 'ri-dashboard-line' }] : []),
+        ],
+      } : item)}><PageContainer className={`${styles.scope} ${styles.page}`}>{children}</PageContainer></WorkspaceShell>;
 }
 
 function ErrorState({ error, retry }: { error: Error; retry: () => void }) {

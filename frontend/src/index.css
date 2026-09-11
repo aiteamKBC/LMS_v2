@@ -3138,8 +3138,7 @@ table tbody td:last-child {
    Width is reserved only from `lg` up, where the sidebar is a fixed rail.
    Below that it is an off-canvas drawer and must reserve nothing — the bug
    the previous stylesheet had, which pushed phone content 88px to the right.
-   The hover preview is deliberately not reserved: it floats above the page
-   rather than reflowing it. Pinning is what widens the reservation.
+   Opening secondary navigation widens the reservation in every workspace.
    ========================================================================== */
 .workspace-shell {
   --kbc-sidebar-offset: 0px;
@@ -3147,7 +3146,7 @@ table tbody td:last-child {
 
 @media (min-width: 1024px) {
   .workspace-shell {
-    --kbc-sidebar-offset: var(--kbc-sidebar-width, 92px);
+    --kbc-sidebar-offset: var(--kbc-sidebar-width, 112px);
   }
 }
 
@@ -4221,6 +4220,17 @@ table tbody td:last-child {
 
 .admin-cool-table tbody .text-foreground-300 {
   color: oklch(var(--foreground-400)) !important;
+}
+
+/* Recent access events follows the workspace chrome and uses the shared table
+   row treatment. */
+.dashboard-theme .workspace-main .admin-cool-table.recent-access-events-table thead th {
+  background: var(--kbc-chrome-color) !important;
+  color: var(--action-primary-foreground) !important;
+}
+
+[data-theme="dark"] .dashboard-theme .workspace-main .admin-cool-table.recent-access-events-table thead th {
+  background: linear-gradient(180deg, #2c287f 0%, #32268e 48%, #2c2382 100%) !important;
 }
 
 .super-admin-figure {
@@ -5446,6 +5456,28 @@ table tbody td:last-child {
   --color-warning: #B7791F;
   --color-danger: #C53030;
   --color-info: var(--kbc-primary);
+
+  /* Resource-type icon tokens. Content types use the KBC purple family,
+     except quizzes, which use the established brand gold. Status colours
+     remain separate and are not used by these normal resource states. */
+  --resource-reading-icon: #5B21B6;
+  --resource-reading-bg: #F3EEFF;
+  --resource-reading-border: #E4DAFA;
+  --resource-video-icon: #8B5CF6;
+  --resource-video-bg: #F5F0FF;
+  --resource-video-border: #E5D8FF;
+  --resource-podcast-icon: #6D28D9;
+  --resource-podcast-bg: #EEE8FF;
+  --resource-podcast-border: #DDD2FA;
+  --resource-quiz-icon: #B27715;
+  --resource-quiz-bg: #FFF3D6;
+  --resource-quiz-border: #F2D998;
+  --resource-assignment-icon: #4B168C;
+  --resource-assignment-bg: #EEE8F8;
+  --resource-assignment-border: #D9C9EC;
+  --resource-document-icon: #5B21B6;
+  --resource-document-bg: #F7F5FF;
+  --resource-document-border: #E9E4F0;
   --kbc-control-height: 2.5rem;
   --kbc-radius-card: 0.875rem;
   --kbc-radius-control: 0.625rem;
@@ -5456,6 +5488,21 @@ table tbody td:last-child {
      the Super Admin dashboard hero. All page heroes consume this token. */
   --kbc-hero-gradient: linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 28%, oklch(var(--primary-100)) 62%, oklch(var(--background-50)) 100%);
 }
+
+/* Shared resource icon classes keep content-type colour decisions in one
+   place while preserving each row's existing markup and dimensions. */
+.resource-icon-reading-bg { background-color: var(--resource-reading-bg); }
+.resource-icon-reading { color: var(--resource-reading-icon); }
+.resource-icon-video-bg { background-color: var(--resource-video-bg); }
+.resource-icon-video { color: var(--resource-video-icon); }
+.resource-icon-podcast-bg { background-color: var(--resource-podcast-bg); }
+.resource-icon-podcast { color: var(--resource-podcast-icon); }
+.resource-icon-quiz-bg { background-color: var(--resource-quiz-bg); }
+.resource-icon-quiz { color: var(--resource-quiz-icon); }
+.resource-icon-assignment-bg { background-color: var(--resource-assignment-bg); }
+.resource-icon-assignment { color: var(--resource-assignment-icon); }
+.resource-icon-document-bg { background-color: var(--resource-document-bg); }
+.resource-icon-document { color: var(--resource-document-icon); }
 
 html {
   background: var(--kbc-app-bg);
@@ -5793,11 +5840,17 @@ html[data-theme="light"][data-accessibility="monochrome"] {
 .dashboard-theme .workspace-main .admin-cool-table thead th {
   height: 2.75rem;
   border-bottom: 1px solid var(--kbc-border) !important;
-  background: var(--kbc-purple-wash) !important;
-  color: var(--kbc-table-header-text) !important;
+  background: var(--kbc-chrome-color) !important;
+  color: var(--action-primary-foreground) !important;
+  text-align: center;
   font-size: 0.68rem;
   font-weight: 700;
   letter-spacing: 0.055em;
+}
+
+[data-theme="dark"] .dashboard-theme .workspace-main table thead th,
+[data-theme="dark"] .dashboard-theme .workspace-main .admin-cool-table thead th {
+  background: linear-gradient(180deg, #2c287f 0%, #32268e 48%, #2c2382 100%) !important;
 }
 
 .dashboard-theme .workspace-main table tbody tr,
@@ -5811,11 +5864,32 @@ html[data-theme="light"][data-accessibility="monochrome"] {
   box-shadow: inset 3px 0 0 rgb(139 92 246 / 0.55);
 }
 
+.dashboard-theme .workspace-main table tbody tr:nth-child(odd) {
+  background: var(--kbc-surface) !important;
+}
+
+.dashboard-theme .workspace-main table tbody tr:nth-child(even) {
+  background: var(--kbc-purple-wash) !important;
+}
+
+.dashboard-theme .workspace-main table tbody tr > td {
+  background: inherit !important;
+}
+
+.dashboard-theme .workspace-main table tbody tr:hover > td {
+  background: var(--kbc-purple-wash) !important;
+}
+
 .dashboard-theme .workspace-main table tbody td {
   height: 3.15rem;
   border-bottom: 1px solid var(--kbc-table-border) !important;
   color: var(--kbc-table-text);
-  font-size: 0.78rem;
+  text-align: center;
+  font-size: 0.875rem;
+}
+
+.dashboard-theme .workspace-main table tbody td > .justify-end {
+  justify-content: center;
 }
 
 .dashboard-theme .workspace-main .overflow-x-auto:has(> table) {
@@ -6255,52 +6329,51 @@ html[data-theme="light"][data-accessibility="monochrome"] {
   color-scheme: dark;
   background: var(--theme-app-bg);
 
-  /* Reference dark theme: deep navy surfaces with an indigo-violet chrome.
-     Keep these as named tokens so every existing utility inherits the same
-     visual language when the user switches the account menu to dark mode. */
-  --theme-app-bg: #10203A;
-  --theme-page-bg: #142B4A;
-  --theme-surface: #1D3B63;
-  --theme-surface-secondary: #244972;
-  --theme-surface-elevated: #2E5884;
-  --theme-input: #173653;
-  --theme-text-primary: #F4F7FF;
-  --theme-text-secondary: #D2DFF1;
-  --theme-text-muted: #A5B9D5;
-  --theme-border: rgb(126 169 225 / 0.34);
-  --theme-border-strong: rgb(157 194 242 / 0.56);
-  --theme-hover: #35618F;
-  --theme-backdrop: rgb(2 10 28 / 0.78);
+  /* High Contrast KBC dark theme. Neutral surfaces dominate the interface;
+     purple remains reserved for brand and interaction states. */
+  --theme-app-bg: #000000;
+  --theme-page-bg: #0A0A0F;
+  --theme-surface: #121218;
+  --theme-surface-secondary: #1A1A22;
+  --theme-surface-elevated: #1A1A22;
+  --theme-input: #0A0A0F;
+  --theme-text-primary: #FFFFFF;
+  --theme-text-secondary: #B8B8C7;
+  --theme-text-muted: #B8B8C7;
+  --theme-border: #2A2A36;
+  --theme-border-strong: #2A2A36;
+  --theme-hover: #1A1A22;
+  --theme-backdrop: rgb(0 0 0 / 0.78);
 
   /* Tailwind's existing background scale is used for surfaces throughout the
      application. The low values are dark surfaces; the higher values remain
      useful for borders and contrast utilities. */
-  --background-50: 0.22 0.045 255;
-  --background-100: 0.26 0.052 255;
-  --background-200: 0.17 0.038 255;
-  --background-300: 0.33 0.055 255;
-  --background-400: 0.45 0.055 255;
-  --background-500: 0.56 0.05 255;
-  --background-600: 0.67 0.04 255;
-  --background-700: 0.76 0.03 255;
-  --background-800: 0.84 0.025 255;
-  --background-900: 0.91 0.018 255;
-  --background-950: 0.12 0.035 255;
+  --background-50: 0.12 0.012 285;
+  --background-100: 0.15 0.014 285;
+  --background-200: 0.18 0.016 285;
+  --background-300: 0.23 0.018 285;
+  --background-400: 0.32 0.018 285;
+  --background-500: 0.44 0.016 285;
+  --background-600: 0.58 0.012 285;
+  --background-700: 0.70 0.010 285;
+  --background-800: 0.80 0.008 285;
+  --background-900: 0.90 0.005 285;
+  --background-950: 0.02 0.006 285;
 
   /* Foreground values support readable text in existing text-* utilities.
      Dark foreground backgrounds are corrected below where those utilities
      are used as controls, tooltips, or modal backdrops. */
-  --foreground-50: 0.34 0.025 255;
-  --foreground-100: 0.42 0.028 255;
-  --foreground-200: 0.53 0.03 255;
-  --foreground-300: 0.64 0.03 255;
-  --foreground-400: 0.74 0.026 255;
-  --foreground-500: 0.81 0.022 255;
-  --foreground-600: 0.87 0.018 255;
-  --foreground-700: 0.91 0.014 255;
-  --foreground-800: 0.95 0.01 255;
-  --foreground-900: 0.975 0.006 255;
-  --foreground-950: 0.99 0.003 255;
+  --foreground-50: 0.74 0.012 285;
+  --foreground-100: 0.78 0.012 285;
+  --foreground-200: 0.82 0.010 285;
+  --foreground-300: 0.86 0.009 285;
+  --foreground-400: 0.90 0.007 285;
+  --foreground-500: 0.93 0.006 285;
+  --foreground-600: 0.95 0.005 285;
+  --foreground-700: 0.97 0.004 285;
+  --foreground-800: 0.985 0.003 285;
+  --foreground-900: 0.995 0.002 285;
+  --foreground-950: 1 0 0;
 
   /* Purple stays the brand accent while its lightest fills become dark
      translucent washes rather than large lavender blocks. */
@@ -6365,24 +6438,50 @@ html[data-theme="light"][data-accessibility="monochrome"] {
   --kbc-app-bg: var(--theme-app-bg);
   --kbc-canvas: var(--theme-page-bg);
   --kbc-page-bg: var(--theme-page-bg);
-  --kbc-table-header-text: #DCE9FF;
-  --kbc-table-text: #F4F7FF;
+  --kbc-primary-deep: #4B168C;
+  --kbc-primary: #5B21B6;
+  --kbc-primary-secondary: #6D28D9;
+  --kbc-primary-accent: #8B5CF6;
+  --kbc-brand-gold: #B27715;
+  --kbc-table-header-text: #FFFFFF;
+  --kbc-table-text: #FFFFFF;
   --kbc-table-border: var(--theme-border);
   --kbc-surface: var(--theme-surface);
   --kbc-border: var(--theme-border);
   --kbc-text: var(--theme-text-primary);
   --kbc-muted: var(--theme-text-secondary);
-  --kbc-purple-soft: rgb(139 92 246 / 0.18);
-  --kbc-purple-wash: rgb(139 92 246 / 0.11);
-  --kbc-chrome-color: #29247F;
+  --kbc-purple-soft: #211834;
+  --kbc-purple-wash: #181321;
+  --kbc-chrome-color: var(--theme-page-bg);
   --kbc-hero-gradient: linear-gradient(112deg, #29237C 0%, #3A27A5 42%, #5A32E8 73%, #273A9A 100%);
   --kbc-shadow-card: 0 1px 2px rgb(0 0 0 / 0.22), 0 14px 28px -20px rgb(0 0 0 / 0.65);
   --kbc-shadow-popover: 0 22px 48px -22px rgb(0 0 0 / 0.78), 0 5px 14px -8px rgb(0 0 0 / 0.5);
 
-  --action-primary: #7C3AED;
-  --action-primary-hover: #8B5CF6;
-  --action-primary-active: #6D28D9;
-  --action-primary-focus: rgb(167 139 250 / 0.38);
+  --action-primary: #5B21B6;
+  --action-primary-hover: #6D28D9;
+  --action-primary-active: #4B168C;
+  --action-primary-focus: rgb(139 92 246 / 0.5);
+
+  /* Dark equivalents keep the resource icon system distinguishable without
+     placing pale light-mode fills on dark surfaces. */
+  --resource-reading-icon: #C4B5FD;
+  --resource-reading-bg: #211834;
+  --resource-reading-border: #3B2A5C;
+  --resource-video-icon: #A78BFA;
+  --resource-video-bg: #24183B;
+  --resource-video-border: #493477;
+  --resource-podcast-icon: #B39AFB;
+  --resource-podcast-bg: #251A42;
+  --resource-podcast-border: #4A3677;
+  --resource-quiz-icon: #F2C66D;
+  --resource-quiz-bg: #332611;
+  --resource-quiz-border: #6B4B1A;
+  --resource-assignment-icon: #C4B5FD;
+  --resource-assignment-bg: #251A33;
+  --resource-assignment-border: #49305F;
+  --resource-document-icon: #C4B5FD;
+  --resource-document-bg: #1A1A22;
+  --resource-document-border: #2A2A36;
 }
 
 [data-theme="dark"] html,
@@ -7767,4 +7866,289 @@ html[data-theme="light"][data-accessibility="monochrome"] {
   [class*="bg-slate-100/"]
 ) {
   background: var(--theme-surface-secondary) !important;
+}
+
+/* ========================================================================== *
+   High Contrast dark-mode finish
+
+   The compatibility rules above support older screens. These final shared
+   primitives keep the visible workspace hierarchy consistent when a legacy
+   selector has stronger specificity: black app chrome, a near-black canvas,
+   charcoal surfaces, and purple only for interaction states.
+   ========================================================================== */
+
+[data-theme="dark"] .dashboard-theme.workspace-shell {
+  background: var(--theme-app-bg) !important;
+}
+
+[data-theme="dark"] .dashboard-theme .workspace-content,
+[data-theme="dark"] .dashboard-theme .workspace-main,
+[data-theme="dark"] .dashboard-theme .workspace-breadcrumbs {
+  background: var(--theme-page-bg) !important;
+  color: var(--theme-text-primary);
+}
+
+[data-theme="dark"] .dashboard-theme :is(.kbc-sidebar-panel, .kbc-sidebar-nav, .kbc-sidebar-header, .kbc-workspace-topbar) {
+  background: var(--theme-page-bg) !important;
+  border-color: var(--theme-border) !important;
+}
+
+[data-theme="dark"] .dashboard-theme .kbc-sidebar-row {
+  background: transparent !important;
+  border-color: transparent !important;
+  color: var(--theme-text-secondary) !important;
+  box-shadow: none !important;
+}
+
+[data-theme="dark"] .dashboard-theme .kbc-sidebar-row:hover {
+  background: var(--theme-surface) !important;
+  border-color: var(--theme-border) !important;
+  color: var(--theme-text-primary) !important;
+}
+
+[data-theme="dark"] .dashboard-theme .kbc-sidebar-row.bg-primary-50,
+[data-theme="dark"] .dashboard-theme .kbc-sidebar-row[aria-current="page"] {
+  background: var(--kbc-purple-soft) !important;
+  border-color: var(--theme-border) !important;
+  color: var(--theme-text-primary) !important;
+  box-shadow: inset 3px 0 0 var(--kbc-primary), 0 6px 16px -14px rgb(0 0 0 / 0.8) !important;
+}
+
+[data-theme="dark"] .dashboard-theme .kbc-sidebar-icon-well {
+  background: transparent !important;
+  color: var(--kbc-primary-accent) !important;
+  box-shadow: none !important;
+}
+
+[data-theme="dark"] .dashboard-theme .kbc-sidebar-flyout,
+[data-theme="dark"] .dashboard-theme [role="menu"],
+[data-theme="dark"] .dashboard-theme [role="listbox"],
+[data-theme="dark"] .dashboard-theme [role="dialog"],
+[data-theme="dark"] .dashboard-theme [aria-modal="true"] {
+  background: var(--theme-surface-elevated) !important;
+  border-color: var(--theme-border) !important;
+  color: var(--theme-text-primary);
+}
+
+[data-theme="dark"] .dashboard-theme .workspace-main :is(
+  .ui-panel,
+  .ui-metric-card,
+  .ui-filter-toolbar,
+  .ui-data-table,
+  .ui-action-row,
+  .card-premium,
+  .coach-metric-card,
+  .super-admin-figure,
+  .workspace-hero-metric,
+  .admin-hero-metric
+) {
+  background: var(--theme-surface) !important;
+  background-image: none !important;
+  border-color: var(--theme-border) !important;
+  color: var(--theme-text-primary) !important;
+  box-shadow: var(--kbc-shadow-card) !important;
+}
+
+[data-theme="dark"] .dashboard-theme .workspace-main :is(
+  .ui-panel:hover,
+  .ui-metric-card:hover,
+  .ui-filter-toolbar:hover,
+  .ui-data-table:hover,
+  .ui-action-row:hover,
+  .card-premium:hover,
+  .coach-metric-card:hover
+) {
+  background: var(--theme-surface-elevated) !important;
+  border-color: var(--theme-border) !important;
+  box-shadow: var(--kbc-shadow-card) !important;
+}
+
+[data-theme="dark"] .dashboard-theme .workspace-main :is(
+  [class~="bg-background-50"],
+  [class~="bg-white"]
+) {
+  background-color: var(--theme-surface) !important;
+}
+
+[data-theme="dark"] .dashboard-theme .workspace-main :is(
+  [class~="bg-background-100"],
+  [class~="bg-background-200"],
+  [class*="bg-background-100/"],
+  [class*="bg-background-200/"]
+) {
+  background-color: var(--theme-surface-elevated) !important;
+}
+
+[data-theme="dark"] .dashboard-theme .workspace-main :is(
+  [class~="border-foreground-100"],
+  [class~="border-foreground-200"],
+  [class~="border-background-100"],
+  [class~="border-background-200"],
+  [class~="border-background-300"]
+) {
+  border-color: var(--theme-border) !important;
+}
+
+[data-theme="dark"] .dashboard-theme .workspace-main :is(input, textarea, select) {
+  background: var(--theme-input) !important;
+  border-color: var(--theme-border) !important;
+  color: var(--theme-text-primary) !important;
+}
+
+[data-theme="dark"] .dashboard-theme .workspace-main :is(input, textarea, select)::placeholder {
+  color: var(--theme-text-muted) !important;
+}
+
+[data-theme="dark"] .dashboard-theme .workspace-main :is(
+  [class~="text-foreground-300"],
+  [class~="text-foreground-400"],
+  [class~="text-foreground-500"],
+  [class~="text-foreground-600"]
+) {
+  color: var(--theme-text-secondary) !important;
+}
+
+[data-theme="dark"] .dashboard-theme .workspace-main :is(
+  [class~="text-foreground-700"],
+  [class~="text-foreground-800"],
+  [class~="text-foreground-900"],
+  [class~="text-foreground-950"]
+) {
+  color: var(--theme-text-primary) !important;
+}
+
+[data-theme="dark"] .dashboard-theme .workspace-main table {
+  background: var(--theme-surface) !important;
+  border-color: var(--theme-border) !important;
+  box-shadow: none !important;
+}
+
+[data-theme="dark"] .dashboard-theme .workspace-main table thead th {
+  background: var(--theme-surface-elevated) !important;
+  border-color: var(--theme-border) !important;
+  color: var(--theme-text-primary) !important;
+}
+
+[data-theme="dark"] .dashboard-theme .workspace-main table tbody tr,
+[data-theme="dark"] .dashboard-theme .workspace-main table tbody tr:nth-child(even) {
+  background: var(--theme-surface) !important;
+}
+
+[data-theme="dark"] .dashboard-theme .workspace-main table tbody tr:hover {
+  background: var(--theme-surface-elevated) !important;
+  box-shadow: none !important;
+}
+
+[data-theme="dark"] .dashboard-theme .workspace-main table tbody td {
+  border-color: var(--theme-border) !important;
+  color: var(--theme-text-primary) !important;
+}
+
+[data-theme="dark"] :is(button, a)[class~="bg-primary-500"],
+[data-theme="dark"] :is(button, a)[class~="bg-primary-600"],
+[data-theme="dark"] :is(button, a)[class~="bg-primary-700"],
+[data-theme="dark"] :is(button, a).primary-action {
+  background: var(--kbc-primary) !important;
+  color: #FFFFFF !important;
+}
+
+[data-theme="dark"] :is(button, a)[class~="bg-primary-500"]:hover,
+[data-theme="dark"] :is(button, a)[class~="bg-primary-600"]:hover,
+[data-theme="dark"] :is(button, a)[class~="bg-primary-700"]:hover,
+[data-theme="dark"] :is(button, a).primary-action:hover {
+  background: var(--kbc-primary-secondary) !important;
+}
+
+[data-theme="dark"] :is(button, a)[class~="bg-primary-500"]:active,
+[data-theme="dark"] :is(button, a)[class~="bg-primary-600"]:active,
+[data-theme="dark"] :is(button, a)[class~="bg-primary-700"]:active,
+[data-theme="dark"] :is(button, a).primary-action:active {
+  background: var(--kbc-primary-deep) !important;
+}
+
+[data-theme="dark"] .dashboard-theme .workspace-main .learner-resource-menu__panel {
+  background: var(--theme-surface-elevated) !important;
+  border-color: var(--theme-border) !important;
+  color: var(--theme-text-primary) !important;
+  box-shadow: var(--kbc-shadow-popover) !important;
+}
+
+[data-theme="dark"] .dashboard-theme .workspace-main .curriculum-library-hero .workspace-hero-metric__icon {
+  background: var(--kbc-purple-soft) !important;
+  border-color: var(--theme-border) !important;
+  color: var(--resource-reading-icon) !important;
+}
+
+[data-theme="dark"] :is([role="menu"], [role="listbox"], [role="dialog"], [aria-modal="true"]) {
+  background: var(--theme-surface-elevated) !important;
+  border-color: var(--theme-border) !important;
+  color: var(--theme-text-primary);
+}
+
+/* Site-wide table treatment. Keep every table consistent with the shared
+   workspace tables, including tables rendered outside WorkspaceShell. */
+body table {
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  border: 1px solid var(--kbc-border) !important;
+  border-radius: var(--kbc-radius-card) !important;
+  background: var(--kbc-surface) !important;
+  box-shadow: var(--kbc-shadow-card) !important;
+}
+
+body table thead th {
+  height: 2.75rem;
+  border-bottom: 1px solid var(--kbc-border) !important;
+  background: var(--kbc-chrome-color) !important;
+  color: var(--action-primary-foreground) !important;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.055em;
+}
+
+body table tbody tr {
+  background: var(--kbc-surface) !important;
+  transition: background-color 180ms ease, box-shadow 180ms ease;
+}
+
+body table tbody tr:nth-child(even) {
+  background: var(--kbc-purple-wash) !important;
+}
+
+body table tbody tr > td {
+  background: inherit !important;
+  border-bottom: 1px solid var(--kbc-table-border) !important;
+  color: var(--kbc-table-text);
+}
+
+body table tbody tr:hover {
+  background: var(--kbc-purple-wash) !important;
+  box-shadow: inset 3px 0 0 rgb(139 92 246 / 0.55);
+}
+
+body table tbody tr:hover > td {
+  background: inherit !important;
+}
+
+[data-theme="dark"] body table thead th {
+  background: linear-gradient(180deg, #2c287f 0%, #32268e 48%, #2c2382 100%) !important;
+}
+
+/* Keep the Super Admin dashboard's access table explicitly on row striping;
+   its legacy admin-table wrapper has older colour rules. */
+body .dashboard-theme .workspace-main table.recent-access-events-table tbody tr:nth-child(odd) {
+  background: var(--kbc-surface) !important;
+}
+
+body .dashboard-theme .workspace-main table.recent-access-events-table tbody tr:nth-child(even) {
+  background: var(--kbc-purple-wash) !important;
+}
+
+body .dashboard-theme .workspace-main table.recent-access-events-table tbody tr > td {
+  background: inherit !important;
+}
+
+body .dashboard-theme .workspace-main table.recent-access-events-table tbody tr:hover,
+body .dashboard-theme .workspace-main table.recent-access-events-table tbody tr:hover > td {
+  background: var(--kbc-purple-wash) !important;
 }

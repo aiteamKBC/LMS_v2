@@ -15,7 +15,7 @@ import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature
 // what the learner will (see UploadedDeckPreview).
 import { resolveDocEmbed } from '@/lib/docEmbed';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
-import { type CurriculumGroup, type CurriculumModule, type CurriculumProgramme } from '@/lib/curriculumApi';
+import { type CurriculumGroup } from '@/lib/curriculumApi';
 import {
   createEmptyComponent,
   createEmptyWeekTemplate,
@@ -400,137 +400,54 @@ function EmptyCatalogue({ onNew, hasAny }: { onNew: () => void; hasAny: boolean 
 // Create flow
 // ---------------------------------------------------------------------------
 function CreateTemplateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (template: WeekTemplate) => void }) {
-  const [courseType, setCourseType] = useState<WeekTemplateCourseType>('paid');
   const [title, setTitle] = useState('');
-  const [programmes, setProgrammes] = useState<CurriculumProgramme[]>([]);
-  const [groups, setGroups] = useState<CurriculumGroup[]>([]);
-  const [modules, setModules] = useState<CurriculumModule[]>([]);
-  const [scopeLoading, setScopeLoading] = useState(false);
-  const [programmeId, setProgrammeId] = useState('');
-  const [groupId, setGroupId] = useState('');
-  const [moduleId, setModuleId] = useState('');
+  // Focused on open: the dialog asks one thing, so the caret should already be
+  // where the answer goes rather than costing a click.
+  const titleRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { titleRef.current?.focus(); }, []);
 
-  useEffect(() => {
-    if (courseType !== 'paid' || programmes.length) return;
-    let active = true;
-    setScopeLoading(true);
-    loadCurriculumScope()
-      .then(scope => {
-        if (!active) return;
-        setProgrammes(scope.programmes);
-        setGroups(scope.groups);
-        setModules(scope.modules);
-      })
-      .catch(() => { /* selectors stay empty; surfaced on confirm */ })
-      .finally(() => { if (active) setScopeLoading(false); });
-    return () => { active = false; };
-  }, [courseType, programmes.length]);
+  const canCreate = title.trim().length > 0;
 
-  const programme = programmes.find(p => p.id === programmeId);
-  const idMatchesProgramme = useCallback((value?: string) => {
-    if (!programme) return false;
-    return value === programme.id || value === programme.sourceId || value === programme.name;
-  }, [programme]);
-
-  const programmeGroups = useMemo(() => {
-    if (!programme) return [] as CurriculumGroup[];
-    const scoped = groups.filter(group => idMatchesProgramme(group.programmeId) || group.programme === programme.name);
-    return scoped.length ? scoped : groups;
-  }, [groups, programme, idMatchesProgramme]);
-
-  const group = groups.find(g => g.id === groupId);
-  const groupModules = useMemo(() => {
-    if (!programme) return [] as CurriculumModule[];
-    const scoped = modules.filter(module => {
-      const inProgramme = idMatchesProgramme(module.programmeId) || module.programme === programme.name;
-      const inGroup = !group || module.groupId === group.id || module.group === group.name;
-      return inProgramme && inGroup;
-    });
-    return scoped.length ? scoped : modules.filter(module => idMatchesProgramme(module.programmeId) || module.programme === programme.name);
-  }, [modules, programme, group, idMatchesProgramme]);
-
-  const paidReady = Boolean(programmeId && groupId && moduleId);
-  const canCreate = title.trim().length > 0 && (courseType === 'free' || paidReady);
-
+  // Programme, group and module used to be chosen here, before a single
+  // component existed. They are not needed to start: the template library
+  // lists everything regardless of scope, and scope only decides which group
+  // the editor locks. Naming the week is the one thing that cannot be deferred,
+  // so it is the one thing asked. A template is pointed at a module when it is
+  // actually placed.
   const handleCreate = () => {
-    const base = createEmptyWeekTemplate(courseType);
+    if (!canCreate) return;
+    const base = createEmptyWeekTemplate('paid');
     base.title = title.trim();
-    if (courseType === 'paid') {
-      const selectedModule = modules.find(m => (m.moduleCatalogueId || m.id) === moduleId);
-      base.programmeId = programme?.id || '';
-      base.programmeName = programme?.name || '';
-      base.groupId = group?.id || '';
-      base.groupName = group?.name || '';
-      base.moduleCatalogueId = selectedModule ? (selectedModule.moduleCatalogueId || selectedModule.id) : moduleId;
-    }
     onCreated(base);
   };
 
   return (
     <ModalShell title="New week template" onClose={onClose}>
-      <div className="space-y-6">
+      <div className="space-y-5">
         <div>
-          <StepLabel index="1" text="Choose a course type" />
-          <div className="mt-3 grid grid-cols-2 gap-3">
-            {(['paid', 'free'] as const).map(value => {
-              const course = COURSE[value];
-              const active = courseType === value;
-              return (
-                <button key={value} onClick={() => setCourseType(value)} className={`relative text-left p-4 rounded-2xl border-2 transition-all ${active ? `${course.ring} ${course.soft} ring-2 border-transparent` : 'border-background-200 bg-background-50 hover:border-background-300'}`}>
-                  <span className={`grid place-items-center w-9 h-9 rounded-xl ${active ? course.bar + ' text-white' : 'bg-background-100 text-foreground-500'} transition-colors`}><AppIcon className={`${course.icon} text-lg`}></AppIcon></span>
-                  <p className="mt-2.5 text-[13px] font-bold text-foreground-900">{course.label}</p>
-                  <p className="text-[11px] text-foreground-500 leading-snug mt-0.5">{value === 'paid' ? 'Tied to a programme, module & group' : 'Standalone — no scope required'}</p>
-                  {active && <AppIcon className={`ri-checkbox-circle-fill absolute top-3 right-3 text-lg ${course.text}`}></AppIcon>}
-                </button>
-              );
-            })}
-          </div>
+          <label htmlFor="week-template-title" className="text-[12px] font-bold text-foreground-800">
+            Name the week
+          </label>
+          <input
+            id="week-template-title"
+            ref={titleRef}
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleCreate(); }}
+            placeholder="e.g. Week 1 — Foundations of communication"
+            className="mt-2 w-full rounded-xl border border-background-200 bg-background-50 px-4 py-2.5 text-[13px] outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+          />
+          <p className="mt-2 text-[11px] text-foreground-400 leading-snug">
+            You can rename it, and point it at a programme or module, at any time while building.
+          </p>
         </div>
 
-        {courseType === 'paid' && (
-          <div>
-            <StepLabel index="2" text="Point it at a programme" hint={scopeLoading ? 'Loading…' : undefined} />
-            <div className="mt-3 space-y-2.5">
-              <ScopeSelect icon="ri-booklet-line" value={programmeId} placeholder="Select programme" onChange={value => { setProgrammeId(value); setGroupId(''); setModuleId(''); }} options={programmes.map(p => ({ value: p.id, label: p.name }))} />
-              <ScopeSelect icon="ri-group-2-line" value={groupId} placeholder="Select group" disabled={!programmeId} onChange={value => { setGroupId(value); setModuleId(''); }} options={programmeGroups.map(g => ({ value: g.id, label: g.name }))} />
-              <ScopeSelect icon="ri-stack-line" value={moduleId} placeholder="Select module" disabled={!programmeId} onChange={setModuleId} options={groupModules.map(m => ({ value: m.moduleCatalogueId || m.id, label: m.name }))} />
-            </div>
-          </div>
-        )}
-
-        <div>
-          <StepLabel index={courseType === 'paid' ? '3' : '2'} text="Name the week" />
-          <input value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Week 1 — Foundations of communication" className="mt-3 w-full rounded-xl border border-background-200 bg-background-50 px-4 py-2.5 text-[13px]" />
-        </div>
-
-        <div className="flex items-center justify-end gap-2 pt-1">
+        <div className="flex items-center justify-end gap-2">
           <button onClick={onClose} className="px-4 py-2 rounded-full text-[12px] font-semibold text-foreground-500 hover:text-foreground-800 transition-smooth">Cancel</button>
           <button onClick={handleCreate} disabled={!canCreate} className="primary-action inline-flex items-center gap-2 px-5 py-2 rounded-full bg-primary-600 text-background-50 text-[12px] font-bold hover:bg-primary-700 transition-smooth disabled:opacity-30">Start building <AppIcon className="ri-arrow-right-line"></AppIcon></button>
         </div>
       </div>
     </ModalShell>
-  );
-}
-
-function StepLabel({ index, text, hint }: { index: string; text: string; hint?: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="grid place-items-center w-5 h-5 rounded-full bg-primary-600 text-background-50 text-[10px] font-bold tabular-nums">{index}</span>
-      <span className="text-[12px] font-bold text-foreground-800">{text}</span>
-      {hint && <span className="text-[10px] text-foreground-400">· {hint}</span>}
-    </div>
-  );
-}
-
-function ScopeSelect({ icon, value, placeholder, options, onChange, disabled }: { icon: string; value: string; placeholder: string; options: { value: string; label: string }[]; onChange: (value: string) => void; disabled?: boolean }) {
-  return (
-    <div className={`flex items-center gap-2 rounded-xl border border-background-200 bg-background-50 px-3 ${disabled ? 'opacity-50' : ''}`}>
-      <AppIcon className={`${icon} text-foreground-400`}></AppIcon>
-      <select value={value} disabled={disabled} onChange={e => onChange(e.target.value)} className="flex-1 bg-transparent py-2.5 text-[12px] outline-none">
-        <option value="">{placeholder}</option>
-        {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-      </select>
-    </div>
   );
 }
 

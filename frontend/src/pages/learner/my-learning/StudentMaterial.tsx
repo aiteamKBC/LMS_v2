@@ -18,22 +18,23 @@ function Html({ value }: { value: string }) {
   </div>;
 }
 
-export function Media({ value, kind, title, canEmbed = true, onEnded }: {
-  value: string; kind: string; title: string; canEmbed?: boolean; onEnded?: () => void;
+export function Media({ value, kind, title, fileName, canEmbed = true, onEnded }: {
+  value: string; kind: string; title: string; fileName?: string; canEmbed?: boolean; onEnded?: () => void;
 }) {
   let url: URL;
   try { url = new URL(value, window.location.origin); } catch { return <p>Material link is unavailable.</p>; }
   if (!['https:', 'http:'].includes(url.protocol)) return <p>Material link is unavailable.</p>;
-  const legacyId = url.pathname.match(/\/_legacy_files\/([0-9]{1,20})\//)?.[1];
-  const fileUrl = legacyId ? `/learner_api/media/legacy-attachment/${legacyId}/` : url.href;
+  const fileUrl = url.href;
   const original = <a href={fileUrl} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary-700 underline">Open material in a new tab</a>;
   if (!canEmbed) return <div className="rounded-xl border bg-background-100 p-4"><p className="mb-2 text-sm">Open this material in a new tab to view it.</p>{original}</div>;
+  if (kind === 'video') return <section className="space-y-2"><div className="relative aspect-video overflow-hidden rounded-xl bg-black"><VideoPlayer parsed={parseVideoUrl(url.href)} title={title} onEnded={onEnded} /></div>{original}</section>;
+  if (kind === 'pdf') return <section className="space-y-2"><Suspense fallback={<p role="status">Loading file preview…</p>}><AttachmentPreview url={fileUrl} title={title} fileName={fileName || 'document.pdf'} /></Suspense>{original}</section>;
   if (kind === 'video') return <section className="space-y-2"><div className="relative aspect-video overflow-hidden rounded-xl bg-black"><VideoPlayer parsed={legacyId ? { kind: 'file', src: fileUrl } : parseVideoUrl(url.href)} title={title} onEnded={onEnded} /></div>{original}</section>;
   if (kind === 'audio') {
     const drive = url.href.match(/drive\.google\.com\/(?:file\/d\/|(?:open|uc)\?[^#]*id=)([\w-]{10,})/);
     return <section className="space-y-2"><audio controls src={drive ? `/learner_api/media/google-drive/${drive[1]}/` : fileUrl} onEnded={onEnded} className="w-full" />{original}</section>;
   }
-  if (legacyId || (url.origin === window.location.origin && /\.(docx|xlsx?|csv|txt|md|rtf|pdf|pptx|ppsx|pptm|ppsm)$/i.test(url.pathname))) return <section className="space-y-2"><Suspense fallback={<p role="status">Loading file preview…</p>}><AttachmentPreview url={url.href} title={title} /></Suspense>{original}</section>;
+  if (url.origin === window.location.origin && /\.(docx|xlsx?|csv|txt|md|rtf|pdf|pptx|ppsx|pptm|ppsm)$/i.test(url.pathname)) return <section className="space-y-2"><Suspense fallback={<p role="status">Loading file preview…</p>}><AttachmentPreview url={url.href} title={title} /></Suspense>{original}</section>;
   let src = url.href;
   if (url.hostname === 'drive.google.com') src = src.replace(/\/view(?:\?.*)?$/, '/preview');
   else if (/\.(pdf|pptx|ppsx|pptm|docx?|xlsx?)$/i.test(url.pathname) || /docs\.google\.com/.test(url.hostname)) {
@@ -135,7 +136,7 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
       {result && <p role="status" className={`rounded-xl p-3 text-sm font-semibold ${savedResult?.completed ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{result}</p>}
     </section>
     {!data.available && <p>No material is available for this activity yet.</p>}
-    {data.media.map((item, index) => <Media key={`${index}:${item.url}`} value={item.url} kind={item.kind} title={item.title} canEmbed={item.can_embed} onEnded={() => setConfirmed(true)} />)}
+    {data.media.map((item, index) => <Media key={`${index}:${item.url}`} value={item.url} kind={item.kind} title={item.title} fileName={item.file_name} canEmbed={item.can_embed} onEnded={() => setConfirmed(true)} />)}
     {data.reading_html && <Html value={data.reading_html} />}
     {data.unavailable_attachments?.map((name, index) => <p key={index} className="text-sm text-amber-800">Attachment unavailable: {name}</p>)}
     {quiz && <section className="space-y-4" aria-label="Activity quiz">

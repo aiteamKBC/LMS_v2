@@ -39,6 +39,7 @@ from learner_api.progress_rules import (
     progress_counts_as_achieved,
 )
 from learner_api.models import LearnerTrainingPlanModule
+from learner_api.constants import PROGRAMME_STATUS_CHOICES
 
 from . import pptx_slides
 from . import schema_gate
@@ -24683,6 +24684,13 @@ def reset_schema_ready_flags():
     # The notification ledger keeps its own latch, in its own module, for the
     # same reason as the ones above.
     tutor_notifications._TABLE_READY = False
+    # Review templates likewise -- reviews.py is a sibling module with its own
+    # latch, deferred-imported here to avoid a module-load-time circular import
+    # (reviews.py imports this module).
+    from . import reviews as _reviews
+    _reviews._REVIEW_TABLES_READY = False
+    from . import review_schedule as _review_schedule
+    _review_schedule._REVIEW_SCHEDULE_TABLES_READY = False
     _TABLE_COLUMNS_CACHE.clear()
     _TABLE_EXISTS_CACHE.clear()
     schema_gate.reset_verification_cache()
@@ -24833,21 +24841,30 @@ def week_template_number(value, default=0):
 
 def week_template_scope_fields(payload, course_type):
     # Paid templates keep their programme/module/group scope; free templates
-    # clear it. Empty string (not None) so update_rows actually clears columns
-    # when a template switches paid -> free.
+    # clear it.
+    #
+    # An absent id is NULL, never ''. programme_id and group_id carry foreign
+    # keys to curriculum.programmes/groups, and '' is not a key any row holds --
+    # so an unscoped insert is rejected outright. The constraints are NOT
+    # VALIDATED, which is why the legacy '' rows written before they existed are
+    # still sitting there unbothered; new rows are checked normally. NULL is
+    # what "no scope" has to mean, and the columns are all nullable.
+    #
+    # The names beside them are free text with no constraint, so '' is fine and
+    # keeps update_rows clearing them when a template loses its scope.
     if course_type == 'free':
         return {
-            'programme_id': '',
+            'programme_id': None,
             'programme_name': '',
-            'module_catalogue_id': '',
-            'group_id': '',
+            'module_catalogue_id': None,
+            'group_id': None,
             'group_name': '',
         }
     return {
-        'programme_id': clean_str(payload.get('programmeId')),
+        'programme_id': clean_str(payload.get('programmeId')) or None,
         'programme_name': clean_str(payload.get('programmeName')),
-        'module_catalogue_id': clean_str(payload.get('moduleCatalogueId')),
-        'group_id': clean_str(payload.get('groupId')),
+        'module_catalogue_id': clean_str(payload.get('moduleCatalogueId')) or None,
+        'group_id': clean_str(payload.get('groupId')) or None,
         'group_name': clean_str(payload.get('groupName')),
     }
 
@@ -25022,10 +25039,13 @@ def curriculum_week_template_collection(request):
         return json_error('courseType must be "paid" or "free".', fields=['courseType'])
     if not clean_str(payload.get('title')):
         return json_error('Missing required fields.', fields=['title'])
-    if course_type == 'paid':
-        missing = [field for field in ('programmeId', 'moduleCatalogueId', 'groupId') if not clean_str(payload.get(field))]
-        if missing:
-            return json_error('A paid week template needs a programme, module and group.', fields=missing)
+    # Scope is optional. A week template used to be required to name a
+    # programme, module and group up front, which forced that decision before
+    # the author had written anything -- and it is not a decision the template
+    # needs: the library lists every template regardless, and scope only drives
+    # the group lock in the editor. Templates that carry it keep it; one saved
+    # without it is a perfectly good template that has not been pointed at a
+    # module yet.
 
     components = payload.get('components') if isinstance(payload.get('components'), list) else []
     total_otjh, points, component_count = week_template_component_metrics(components)

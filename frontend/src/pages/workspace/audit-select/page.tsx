@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { BrandLockup } from '@/components/BrandLockup';
+import { AuditWorkspaceShell } from '@/features/audit/AuditWorkspaceShell';
 
 // AUDIT entry point: the portal's AUDIT card lands here so the user picks
 // which of the two independent audit systems to open.
@@ -61,7 +62,8 @@ export default function AuditSelectPage() {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen bg-background-200 flex flex-col">
+    <AuditWorkspaceShell homePath="/workspace/audit" title="Audit systems">
+    <div className="min-h-full bg-background-200 flex flex-col">
       <header className="border-b border-foreground-200 bg-background-50">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
           <BrandLockup size="compact" />
@@ -75,7 +77,7 @@ export default function AuditSelectPage() {
         </div>
       </header>
 
-      <main className="flex-1 flex items-center justify-center px-6 py-16">
+      <div className="flex-1 flex items-center justify-center px-6 py-16">
         <div className="w-full max-w-3xl">
           <div className="text-center mb-10">
             <span className="inline-flex items-center gap-1.5 rounded-full border border-primary-300/50 bg-primary-100 px-3 py-1 text-[11px] font-semibold text-primary-700 mb-4">
@@ -116,7 +118,8 @@ export default function AuditSelectPage() {
             })}
           </div>
         </div>
-      </main>
+      </div>
     </div>
+    </AuditWorkspaceShell>
   );
 }

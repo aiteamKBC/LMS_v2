@@ -30,7 +30,7 @@ vi.mock('@/hooks/useAuth', () => ({
 vi.mock('@/hooks/useTheme', () => ({ useTheme: () => ({ theme: 'light', toggle: vi.fn() }) }));
 
 async function openProfileMenu() {
-  render(<MemoryRouter><Header /></MemoryRouter>);
+  render(<MemoryRouter><Header pageTitle="Workspace" onOpenSearch={() => {}} /></MemoryRouter>);
   // The menu is behind the avatar button; the item does not exist until opened.
   const triggers = screen.getAllByRole('button');
   for (const trigger of triggers) {

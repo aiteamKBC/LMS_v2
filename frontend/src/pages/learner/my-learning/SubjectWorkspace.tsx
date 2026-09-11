@@ -11,6 +11,14 @@ export type Subject = { id: string; title: string; source: 'legacy' | 'current';
 type BuilderSubject = { id: string; title: string };
 type ActivitySource = { module_id: string; group_id: number; activity_id: number };
 export type CoverMetadata = { covers: Record<string, string>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject>; activity_sources?: Record<string, ActivitySource> };
+export type UnifiedLearningSummary = {
+  subjects: Subject[];
+  subjectCount: number;
+  activityCount: number;
+  completedActivityCount: number;
+  completedSubjectCount: number;
+  percent: number;
+};
 
 function subjectRefs(data: StudentActivityResponse | null, real: LearnerDetail | null) {
   return [...new Set([
@@ -53,17 +61,28 @@ function scheduleForDate(value?: string | null): Schedule {
   return { date, month: date.slice(0, 7), week_start, week_end: day.toISOString().slice(0, 10) };
 }
 
+function normaliseSubjectTitle(value?: string | null): string {
+  return (value || '')
+    .replace(/&amp;/gi, '&')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLocaleLowerCase();
+}
+
 export function groupSubjectActivities(activities: SubjectEntry[]) {
   const months = new Map<string, Map<string, SubjectEntry[]>>();
   for (const activity of activities) {
-    const month = activity.schedule.month || activity.schedule.date?.slice(0, 7) || 'undated';
-    const week = activity.schedule.week_start || activity.week || 'undated';
+    const introduction = activity.schedule.date_source === 'introduction';
+    const extra = activity.schedule.date_source === 'extra_activity';
+    const month = introduction ? 'introduction' : extra ? 'extra' : activity.schedule.month || activity.schedule.date?.slice(0, 7) || 'undated';
+    const week = extra ? activity.legacy?.section_title || activity.week || 'Additional activities' : activity.schedule.week_start || activity.week || 'undated';
     if (!months.has(month)) months.set(month, new Map());
     const weeks = months.get(month)!;
     if (!weeks.has(week)) weeks.set(week, []);
     weeks.get(week)!.push(activity);
   }
-  return [...months].sort(([a], [b]) => a === 'undated' ? 1 : b === 'undated' ? -1 : a.localeCompare(b)).map(([month, weeks]) => ({
+  const rank = (month: string) => month === 'introduction' ? -1 : month === 'extra' ? 2 : month === 'undated' ? 1 : 0;
+  return [...months].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b)).map(([month, weeks]) => ({
     month, weeks: [...weeks].sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true })).map(([week, items]) => ({
       week, activities: [...items].sort((a, b) => (a.schedule.date || '').localeCompare(b.schedule.date || '') || a.position - b.position || a.title.localeCompare(b.title)),
     })),
@@ -81,13 +100,36 @@ export function subjectsFrom(data: StudentActivityResponse | null, real: Learner
     subjects.set(key, subject);
   }
   const legacyByBuilder = new Map<string, string[]>();
+  const legacyByTitle = new Map<string, string[]>();
   for (const subject of subjects.values()) {
     const builder = builderSubjects[subject.id];
     if (builder) legacyByBuilder.set(builder.id, [...(legacyByBuilder.get(builder.id) || []), subject.id]);
+    const title = normaliseSubjectTitle(subject.title);
+    if (title) legacyByTitle.set(title, [...(legacyByTitle.get(title) || []), subject.id]);
+  }
+  const currentTitlesById = new Map<string, Set<string>>();
+  const currentIdsByTitle = new Map<string, Set<string>>();
+  const registerCurrentTitle = (moduleId: string, title?: string | null) => {
+    const normalised = normaliseSubjectTitle(title);
+    if (!moduleId || !normalised) return;
+    if (!currentTitlesById.has(moduleId)) currentTitlesById.set(moduleId, new Set());
+    currentTitlesById.get(moduleId)!.add(normalised);
+    if (!currentIdsByTitle.has(normalised)) currentIdsByTitle.set(normalised, new Set());
+    currentIdsByTitle.get(normalised)!.add(moduleId);
+  };
+  for (const subject of currentSubjects) registerCurrentTitle(subject.id, subject.title);
+  for (const item of real?.components || []) {
+    if (item.moduleId) registerCurrentTitle(item.moduleId, item.module);
   }
   const currentKey = (moduleId: string) => {
     const matches = legacyByBuilder.get(moduleId);
-    return matches?.length === 1 ? matches[0] : `current:${moduleId}`;
+    if (matches?.length === 1) return matches[0];
+    const titleMatches = new Set<string>();
+    for (const title of currentTitlesById.get(moduleId) || []) {
+      if (currentIdsByTitle.get(title)?.size !== 1) continue;
+      for (const legacyKey of legacyByTitle.get(title) || []) titleMatches.add(legacyKey);
+    }
+    return titleMatches.size === 1 ? [...titleMatches][0] : `current:${moduleId}`;
   };
   const completed = completedComponentIds(real);
   for (const subject of currentSubjects) {
@@ -124,10 +166,103 @@ export function subjectsFrom(data: StudentActivityResponse | null, real: Learner
   }
   const nativeTitles = new Set([...currentSubjects.map((subject) => subject.title), ...(real?.components || []).map((item) => item.module)]);
   for (const title of real?.modules || []) {
-    if (!nativeTitles.has(title)) subjects.set(`unlinked:${title}`, { id: `unlinked:${title}`, title, source: 'current', activities: [] });
+    if (nativeTitles.has(title)) continue;
+    const titleMatches = legacyByTitle.get(normaliseSubjectTitle(title));
+    if (titleMatches?.length !== 1) subjects.set(`unlinked:${title}`, { id: `unlinked:${title}`, title, source: 'current', activities: [] });
   }
   return [...subjects.values()].map((subject) => ({ ...subject, title: builderSubjects[subject.id]?.title || subject.title }))
     .sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
+}
+
+/** One roll-up for imported history and all later current-platform progress.
+ * Exact source links merge the two representations first. A unique title match
+ * also merges the subject card when older imports have no source link. */
+export function buildUnifiedLearningSummary(
+  data: StudentActivityResponse | null,
+  real: LearnerDetail | null,
+  metadata?: CoverMetadata | null,
+): UnifiedLearningSummary {
+  const subjects = subjectsFrom(data, real, metadata);
+  const activityCount = subjects.reduce((sum, subject) => sum + subject.activities.length, 0);
+  const completedActivityCount = subjects.reduce(
+    (sum, subject) => sum + subject.activities.filter((entry) => entry.completed).length,
+    0,
+  );
+  const completedSubjectCount = subjects.filter(
+    (subject) => subject.activities.length > 0 && subject.activities.every((entry) => entry.completed),
+  ).length;
+  return {
+    subjects,
+    subjectCount: subjects.length,
+    activityCount,
+    completedActivityCount,
+    completedSubjectCount,
+    percent: activityCount ? Math.round(completedActivityCount / activityCount * 10000) / 100 : 0,
+  };
+}
+
+export function useUnifiedLearningSummary(
+  real: LearnerDetail | null,
+  kind?: LearnerKind,
+  learnerId?: string,
+  enabled = true,
+) {
+  const identity = `${kind}:${learnerId}`;
+  const needsHistory = !!real?.studentActivityAvailable;
+  const [state, setState] = useState<{
+    identity: string;
+    retry: number;
+    data: StudentActivityResponse | null;
+    error: string;
+  } | null>(null);
+  const [retry, setRetry] = useState(0);
+
+  useEffect(() => {
+    if (!enabled || !kind || !learnerId || !needsHistory) return;
+    const controller = new AbortController();
+    setState(null);
+    void fetchStudentActivity(kind, learnerId, controller.signal)
+      .then((data) => {
+        if (!controller.signal.aborted) setState({ identity, retry, data, error: '' });
+      })
+      .catch((failure) => {
+        if (!controller.signal.aborted) setState({
+          identity,
+          retry,
+          data: null,
+          error: failure instanceof Error ? failure.message : 'Could not load progress.',
+        });
+      });
+    return () => controller.abort();
+  }, [enabled, kind, learnerId, needsHistory, identity, retry]);
+
+  const current = state?.identity === identity && state.retry === retry ? state : null;
+  const data = needsHistory ? current?.data || null : null;
+  const metadataEnabled = enabled && !!learnerId && (!needsHistory || !!data);
+  const { metadata, error: metadataError, retry: retryMetadata } = useSubjectMetadata(
+    data,
+    real,
+    kind,
+    learnerId,
+    metadataEnabled,
+  );
+  const loading = enabled && !!learnerId && (
+    (needsHistory && !current) || (!current?.error && metadataEnabled && !metadata)
+  );
+  const summary = !enabled || loading || current?.error || metadataError
+    ? null
+    : buildUnifiedLearningSummary(data, real, metadata);
+  return {
+    data,
+    metadata,
+    summary,
+    loading,
+    error: current?.error || metadataError,
+    retry: () => {
+      setRetry((value) => value + 1);
+      retryMetadata();
+    },
+  };
 }
 
 function Progress({ done, total, label = 'Subject progress', showFormula = false, compact = false }: {
@@ -170,27 +305,12 @@ function ActivityGroup({ title, label = title, activities, level, children }: {
 }
 
 export function SubjectOverview({ real, kind, learnerId, onOpen }: { real: LearnerDetail | null; kind?: LearnerKind; learnerId?: string; onOpen: () => void }) {
-  const [data, setData] = useState<StudentActivityResponse | null>(null);
-  const [error, setError] = useState('');
-  const [retry, setRetry] = useState(0);
-  useEffect(() => {
-    if (!kind || !learnerId || !real?.studentActivityAvailable) return;
-    const controller = new AbortController();
-    setData(null); setError('');
-    void fetchStudentActivity(kind, learnerId, controller.signal).then((payload) => { if (!controller.signal.aborted) setData(payload); })
-      .catch((failure) => { if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'Could not load progress.'); });
-    return () => controller.abort();
-  }, [kind, learnerId, real?.studentActivityAvailable, retry]);
-  const { metadata, error: metadataError, retry: retryMetadata } = useSubjectMetadata(data, real, kind, learnerId, !real?.studentActivityAvailable || !!data);
-  const subjects = subjectsFrom(data, real, metadata);
-  const waitingForLinks = !!learnerId && !!data?.activities.length && !!real?.components?.length && !metadata;
-  const total = subjects.reduce((sum, subject) => sum + subject.activities.length, 0);
-  const done = subjects.reduce((sum, subject) => sum + subject.activities.filter((entry) => entry.completed).length, 0);
+  const { summary, loading, error, retry } = useUnifiedLearningSummary(real, kind, learnerId);
   return <section aria-label="Subject learning progress" className="space-y-4 rounded-2xl border border-foreground-200 bg-white p-5">
     <h2 className="text-sm font-bold text-foreground-900">Overall subject progress</h2>
-    {error || metadataError ? <p role="alert" className="text-sm">{error || metadataError} <button onClick={() => { setRetry((value) => value + 1); retryMetadata(); }} className="font-semibold text-primary-700 underline">Try again</button></p>
-      : (real?.studentActivityAvailable && !data) || waitingForLinks ? <p role="status" className="text-sm text-foreground-500">Loading progress…</p>
-        : <><Progress done={done} total={total} /><p className="text-xs text-foreground-500">Across {subjects.length} subjects</p></>}
+    {error ? <p role="alert" className="text-sm">{error} <button onClick={retry} className="font-semibold text-primary-700 underline">Try again</button></p>
+      : loading || !summary ? <p role="status" className="text-sm text-foreground-500">Loading progress…</p>
+        : <><Progress done={summary.completedActivityCount} total={summary.activityCount} /><p className="text-xs text-foreground-500">Across {summary.subjectCount} subjects</p></>}
     <button onClick={onOpen} className="flex items-center gap-2 text-sm font-semibold text-primary-700">Open your subjects<ChevronRight size={16} /></button>
   </section>;
 }
@@ -287,6 +407,9 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const data = displayed?.data || null;
   const real = displayed?.real || null;
   const metadata = displayed?.metadata;
+  const recordedOtjh = data?.audit_lms_actual ?? data?.recorded_otjh_total ?? data?.actual_total ?? null;
+  const plannedOtjh = data?.audit_tp_planned ?? data?.planned_total ?? null;
+  const hasProgrammeOtjh = data?.audit_lms_actual != null || data?.audit_tp_planned != null;
   const [savedProgress, setSavedProgress] = useState<{ identity: string; activities: Record<number, SubjectAttemptResult> }>({ identity, activities: {} });
   const updatedData = useMemo(() => {
     if (!data || savedProgress.identity !== identity) return data;
@@ -306,7 +429,8 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     });
     onProgress?.();
   };
-  const subjects = useMemo(() => subjectsFrom(updatedData, real, metadata), [updatedData, real, metadata]);
+  const summary = useMemo(() => buildUnifiedLearningSummary(updatedData, real, metadata), [updatedData, real, metadata]);
+  const subjects = summary.subjects;
   const covers = { ...data?.covers, ...metadata?.covers };
   const term = search.trim().toLocaleLowerCase();
   const active = subjects.find((subject) => subject.id === selected);
@@ -314,8 +438,8 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const visibleActivities = active ? active.activities.filter((entry) => !term || active.title.toLocaleLowerCase().includes(term) || entry.title.toLocaleLowerCase().includes(term)) : [];
   const visibleActivityIds = new Set(visibleActivities.map((entry) => entry.id));
   const groups = groupSubjectActivities(active?.activities || []).filter(({ weeks }) => weeks.some(({ activities }) => activities.some((entry) => visibleActivityIds.has(entry.id))));
-  const total = subjects.reduce((sum, subject) => sum + subject.activities.length, 0);
-  const done = subjects.reduce((sum, subject) => sum + subject.activities.filter((entry) => entry.completed).length, 0);
+  const total = summary.activityCount;
+  const done = summary.completedActivityCount;
   if (!displayed && (error || imageError)) return <div role="alert" className="rounded-2xl border bg-white p-6"><p className="font-semibold">Could not load your subjects</p><p className="mt-2 text-sm text-foreground-500">{error || imageError}</p><button onClick={error ? onRetry : retryMetadata} className="mt-4 rounded-lg border px-4 py-2 text-sm font-semibold">Try again</button></div>;
   if (!displayed) return <div role="status" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">{[0, 1, 2, 3, 4].map((key) => <div key={key} className="h-72 motion-safe:animate-pulse rounded-2xl bg-foreground-100" />)}<span className="sr-only">Loading subjects</span></div>;
   return <section className="space-y-5" aria-label="Your subjects" aria-busy={!ready && !error && !imageError}>
@@ -327,16 +451,17 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     {!active ? <>
       <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-foreground-500"><span><strong className="text-foreground-900">{subjects.length}</strong> subjects</span><span><strong className="text-foreground-900">{total}</strong> activities</span><span><strong className="text-foreground-900">{done}</strong> completed</span></div>
       {visible.length ? <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">{visible.map((subject) => <SubjectCard key={subject.id} subject={subject} cover={covers[subject.id]} onOpen={() => setSelected(subject.id)} />)}</div> : <div className="rounded-2xl border border-dashed p-10 text-center text-sm text-foreground-500">{subjects.length ? 'No subjects or activities match your search.' : 'Your subjects will appear here when they are assigned.'}</div>}
-      {data && <div className="flex flex-wrap gap-6 rounded-xl bg-background-100 px-4 py-3 text-xs"><div><span className="block text-foreground-500">Recorded OTJH</span><strong>{data.actual_total == null ? 'Unavailable' : formatHoursMinutes(data.actual_total)}</strong></div><div><span className="block text-foreground-500">Planned OTJH</span><strong>{data.planned_total == null ? 'Unavailable' : formatHoursMinutes(data.planned_total)}</strong></div></div>}
+      {data && <><div className="flex flex-wrap gap-6 rounded-xl bg-background-100 px-4 py-3 text-xs"><div><span className="block text-foreground-500">Recorded OTJH</span><strong>{recordedOtjh == null ? 'Unavailable' : formatHoursMinutes(recordedOtjh)}</strong></div><div><span className="block text-foreground-500">Planned OTJH</span><strong>{plannedOtjh == null ? 'Unavailable' : formatHoursMinutes(plannedOtjh)}</strong></div></div>{hasProgrammeOtjh && <p className="text-[12px] text-foreground-500">Programme totals use TP Planned and accepted LMS Actual. Activity-level hours below only cover mapped historical activities.</p>}</>}
     </> : <>
       <button onClick={() => setSelected(null)} className="flex items-center gap-1.5 text-sm font-semibold text-primary-700"><ChevronLeft size={17} />All subjects</button>
       <div className="relative overflow-hidden rounded-2xl border bg-white"><Cover title={active.title} url={covers[active.id]} large /><div className="p-5"><Progress done={active.activities.filter((entry) => entry.completed).length} total={active.activities.length} showFormula /></div></div>
       {groups.map(({ month, weeks }) => {
-        const monthTitle = month === 'undated' ? 'Undated activities' : new Date(`${month}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+        const monthTitle = month === 'introduction' ? 'Introduction' : month === 'extra' ? 'Extra activities' : month === 'undated' ? 'Undated activities' : new Date(`${month}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
         return <ActivityGroup key={`${active.id}:${month}`} title={monthTitle} activities={weeks.flatMap(({ activities }) => activities)} level={3}>
           <div className="space-y-3 p-3 pt-0">{weeks.map(({ week, activities }, index) => {
             const visibleEntries = activities.filter((entry) => visibleActivityIds.has(entry.id));
             if (!visibleEntries.length) return null;
+            if (month === 'introduction') return visibleEntries.map((entry) => <ActivityRow key={entry.id} entry={entry} kind={kind} learnerId={learnerId} onProgress={(result) => { if (entry.legacy) recordProgress(entry.legacy.source_activity_id, result); }} />);
             const weekTitle = week === 'undated' ? 'Activities awaiting a date' : /^\d{4}-/.test(week) ? `Week ${index + 1} · ${week} – ${activities[0].schedule.week_end || ''}` : week;
             return <ActivityGroup key={week} title={weekTitle} label={`${monthTitle}, ${weekTitle}`} activities={activities} level={4}>
               {visibleEntries.map((entry) => <ActivityRow key={entry.id} entry={entry} kind={kind} learnerId={learnerId} onProgress={(result) => { if (entry.legacy) recordProgress(entry.legacy.source_activity_id, result); }} />)}

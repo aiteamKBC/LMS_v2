@@ -94,6 +94,11 @@ MAX_FILE_CHARS = 20_000
 #: without inviting an essay.
 MAX_OUTPUT_TOKENS = 4_000
 
+#: Ceiling on a coach-supplied marking prompt. The authored files are a few
+#: thousand characters, so this is generous; it exists so a paste accident
+#: cannot turn one click into an enormous request.
+MAX_PROMPT_CHARS = 30_000
+
 #: Extensions we can read as text. Images are listed for the model as context
 #: ("a screenshot was provided") but their content is not read.
 TEXT_EXTRACTORS = {".pdf", ".docx", ".txt", ".md"}
@@ -611,7 +616,7 @@ def _render_prompt(document, values):
     return N8N_PLACEHOLDER.sub(substitute, document)
 
 
-def build_messages(submission, evidence_text, ksb_text, epa_text=""):
+def build_messages(submission, evidence_text, ksb_text, epa_text="", document=None):
     """The system and user messages for the marking call.
 
     The prompt document holds both halves, marked "(System Message)" and
@@ -622,7 +627,10 @@ def build_messages(submission, evidence_text, ksb_text, epa_text=""):
     policy in full, and the evidence separately, which is the arrangement the
     policy assumes.
     """
-    document = load_prompt_document()
+    # ``document`` overrides the authored file for this one call: the coach can
+    # edit the policy in the marking page and generate against their edit. It is
+    # never written back -- see coach_marking_ai_prompt.
+    document = load_prompt_document() if document is None else document
     learner_name = _s(submission.get("learner"))
     rendered = _render_prompt(document, {
         "student_name": learner_name,
@@ -690,8 +698,12 @@ def _openai_client():
     return OpenAI(api_key=settings.OPENAI_API_KEY)
 
 
-def generate_marking_feedback(submission):
+def generate_marking_feedback(submission, prompt=None):
     """Draft feedback for one submission. Returns ``(text, meta)``.
+
+    ``prompt`` replaces the authored marking policy for this call only. The
+    evidence, KSB list and EPA plan still travel in the user message, so an
+    edited prompt is marked against the same inputs.
 
     Raises RuntimeError with a coach-readable message when the draft cannot be
     produced, so the caller can turn it into one clear error rather than a
@@ -710,9 +722,17 @@ def generate_marking_feedback(submission):
     # KSBs this component was authored to evidence.
     ksb_text, ksb_count = load_component_ksbs(submission.get("activityId"))
     epa_text, epa_file = load_epa_plan(submission.get("programme"))
-    system, user = build_messages(submission, evidence_text, ksb_text, epa_text)
-    if not system.strip():
+    # Checked before assembling, not after: build_messages always appends this
+    # deployment's operating notes, so the assembled system message is never
+    # empty and testing it caught nothing. Without this, a missing
+    # AI_marking_prompt.MD produced a confident-looking draft governed by
+    # nothing but those notes -- no marking criteria, no grading standard --
+    # which is worse than a refusal because it is indistinguishable from a real
+    # one. A coach-supplied prompt is its own policy, so it needs no file.
+    if prompt is None and not load_prompt_document().strip():
         raise RuntimeError("The marking prompt could not be loaded on the server.")
+
+    system, user = build_messages(submission, evidence_text, ksb_text, epa_text, document=prompt)
 
     client = _openai_client()
     if client is None:
@@ -737,6 +757,7 @@ def generate_marking_feedback(submission):
 
     return text, {
         "model": settings.OPENAI_MODEL,
+        "promptSource": "custom" if prompt is not None else "default",
         "ksbCount": ksb_count,
         "epaFile": epa_file,
         "evidenceFiles": [
@@ -748,6 +769,121 @@ def generate_marking_feedback(submission):
         ],
         "evidenceChars": len(evidence_text),
     }
+
+
+def _load_scoped_submission(request, submission_id):
+    """One submission from this coach's own caseload. Returns ``(submission, error)``.
+
+    Scoped exactly as the read endpoint is: the submission text is the
+    learner's personal writing, and generating a draft -- or reading the prompt
+    that would mark it -- is still a read of it. Matching on ``enrolment_id``
+    rather than the profile pk for the reason given in ``coach_marking_queue``:
+    the two are disjoint.
+
+    Shared by the prompt and draft endpoints so they cannot drift apart on who
+    is allowed to see whose work.
+    """
+    from django.db.models.functions import Lower, Trim
+
+    from learner_api.models import LearnerProfile
+
+    from .views import (
+        MARKING_QUEUE_COLUMNS,
+        normalize_email,
+        serialize_marking_submission,
+    )
+
+    owner_email = authenticated_coach_email(request)
+    allowed_learner_ids = [
+        str(learner_id)
+        for learner_id in (
+            LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
+            .filter(coach_email_key=normalize_email(owner_email))
+            .values_list("enrolment_id", flat=True)
+        )
+        if learner_id is not None
+    ]
+    if not allowed_learner_ids:
+        return None, _error("That submission could not be found.", 404, "not_found")
+
+    try:
+        with connections["enrolment"].cursor() as cur:
+            cur.execute(
+                f"""
+                select {MARKING_QUEUE_COLUMNS}
+                  from "Learner".learning_reflection_submissions
+                 where id = %s and learner_id = any(%s)
+                """,
+                [str(submission_id), allowed_learner_ids],
+            )
+            columns = [column[0] for column in cur.description]
+            value = cur.fetchone()
+    except DatabaseError as exc:
+        logger.exception("Could not load the submission for AI marking.")
+        return None, _error(f"Database error: {exc}", 502, "database_error")
+    if not value:
+        return None, _error("That submission could not be found.", 404, "not_found")
+
+    return serialize_marking_submission(dict(zip(columns, value))), None
+
+
+def _is_assignment(submission):
+    """Which marking policy applies. Decided server-side, from one list.
+
+    An assignment is a work product assessed against the EPA plan; a reflection
+    is a short piece of writing about one activity, and they have separate
+    prompts because they are separate jobs. Keeping the test here rather than in
+    the client stops the two from disagreeing about which prompt a submission is
+    marked with.
+    """
+    from .views import ASSIGNMENT_ACTIVITY_TYPES
+
+    return _s(submission.get("activityType")).lower() in ASSIGNMENT_ACTIVITY_TYPES
+
+
+def _prompt_for(submission):
+    """The authored policy that would mark this submission, and its filename."""
+    if _is_assignment(submission):
+        return load_prompt_document(PROMPT_PATH), PROMPT_PATH.name, "assignment"
+    return (
+        load_prompt_document(REFLECTION_PROMPT_PATH),
+        REFLECTION_PROMPT_PATH.name,
+        "reflection",
+    )
+
+
+@coach_access_required
+@read_only_view
+def coach_marking_ai_prompt(request, submission_id):
+    """GET /coach_api/coach/marking-queue/<id>/ai-prompt
+
+    The marking policy this submission would be assessed under, so the coach can
+    read it and edit it before generating. Which of the two applies is resolved
+    here rather than in the client, from the same list the generator uses.
+
+    The *authored document* is returned, not the assembled system message: the
+    latter has the learner's evidence, KSB list and EPA plan interpolated into
+    it, and handing that back for editing would let a stale copy of the evidence
+    be sent as policy. The evidence always travels separately, in the user
+    message, so an edited prompt is still marked against this learner's work.
+    """
+    submission, error = _load_scoped_submission(request, submission_id)
+    if error is not None:
+        return error
+
+    document, filename, kind = _prompt_for(submission)
+    # A missing or unreadable file is reported rather than refused: the coach can
+    # still write a prompt of their own and generate with it, which is more use
+    # than an error that blocks the panel entirely. ``available`` tells the page
+    # which of those two situations it is in.
+    available = bool(document.strip())
+    return JsonResponse({
+        "kind": kind,
+        "prompt": document if available else "",
+        "file": filename,
+        "available": available,
+        "maxChars": MAX_PROMPT_CHARS,
+    })
 
 
 @csrf_exempt
@@ -782,58 +918,47 @@ def coach_marking_ai_feedback(request, submission_id):
             "AI marking is not configured on this server.", 503, "openai_not_configured",
         )
 
-    # Scoped to this coach's own caseload, exactly as the read endpoint is: the
-    # submission text is the learner's personal writing, and generating a draft
-    # is still a read of it. Matching on enrolment_id rather than the profile
-    # pk for the reason given in coach_marking_queue -- the two are disjoint.
-    owner_email = authenticated_coach_email(request)
-    allowed_learner_ids = [
-        str(learner_id)
-        for learner_id in (
-            LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
-            .filter(coach_email_key=normalize_email(owner_email))
-            .values_list("enrolment_id", flat=True)
+    submission, error = _load_scoped_submission(request, submission_id)
+    if error is not None:
+        return error
+
+    # An optional prompt in the body replaces the authored policy for this call
+    # only. Nothing is written to the .MD files: an edit there would silently
+    # change marking for every coach on the platform, which is a curriculum
+    # decision rather than something one review should be able to do.
+    # The body is optional: the button posts nothing at all when the coach has
+    # not edited the prompt, so a missing or blank body means "use the authored
+    # file" rather than a malformed request.
+    body = (request.body or b"").strip()
+    if body:
+        try:
+            payload = json.loads(body)
+        except (TypeError, ValueError, UnicodeDecodeError):
+            return _error("The request body was not valid JSON.", 400, "invalid_json")
+    else:
+        payload = {}
+    prompt = _s(payload.get("prompt")) if isinstance(payload, dict) else ""
+    if len(prompt) > MAX_PROMPT_CHARS:
+        return _error(
+            f"The prompt is too long ({len(prompt):,} characters). "
+            f"The limit is {MAX_PROMPT_CHARS:,}.",
+            400,
+            "prompt_too_long",
         )
-        if learner_id is not None
-    ]
-    if not allowed_learner_ids:
-        return _error("That submission could not be found.", 404, "not_found")
+    # Empty means "use the authored file", so a cleared box cannot accidentally
+    # send an empty policy to the model.
+    prompt = prompt or None
 
-    try:
-        with connections["enrolment"].cursor() as cur:
-            cur.execute(
-                f"""
-                select {MARKING_QUEUE_COLUMNS}
-                  from "Learner".learning_reflection_submissions
-                 where id = %s and learner_id = any(%s)
-                """,
-                [str(submission_id), allowed_learner_ids],
-            )
-            columns = [column[0] for column in cur.description]
-            value = cur.fetchone()
-    except DatabaseError as exc:
-        logger.exception("Could not load the submission for AI marking.")
-        return _error(f"Database error: {exc}", 502, "database_error")
-    if not value:
-        return _error("That submission could not be found.", 404, "not_found")
-
-    submission = serialize_marking_submission(dict(zip(columns, value)))
-
-    # Which policy applies depends on what is being marked. An assignment is a
-    # work product assessed against the EPA plan; a reflection is a short piece
-    # of writing about one activity. They have separate prompts because they are
-    # separate jobs -- see coach_api.ai_reflection.
+    # Which policy applies depends on what is being marked -- resolved by
+    # _is_assignment, from the same list the prompt endpoint uses, so the text
+    # the coach was shown is the text that marks their submission.
     from .ai_reflection import generate_reflection_feedback
-    from .views import ASSIGNMENT_ACTIVITY_TYPES
 
-    is_assignment = (
-        _s(submission.get("activityType")).lower() in ASSIGNMENT_ACTIVITY_TYPES
-    )
     try:
-        if is_assignment:
-            text, meta = generate_marking_feedback(submission)
+        if _is_assignment(submission):
+            text, meta = generate_marking_feedback(submission, prompt=prompt)
         else:
-            text, meta = generate_reflection_feedback(submission)
+            text, meta = generate_reflection_feedback(submission, prompt=prompt)
     except RuntimeError as exc:
         return _error(str(exc), 502, "ai_generation_failed")
 

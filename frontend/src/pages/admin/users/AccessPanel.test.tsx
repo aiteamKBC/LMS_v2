@@ -96,3 +96,51 @@ describe('AccessPanel landing page', () => {
     expect(screen.queryAllByRole('radio')).toHaveLength(0);
   });
 });
+
+describe('AccessPanel reports what it saved', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('hands back every grant, not just the landing page', async () => {
+    // The caller patches its row from this, and the panel seeds its ticks from
+    // that row next time it opens. Reporting only the primary left the row
+    // claiming a single grant, so a second access saved correctly on the
+    // server and then looked as though it had been dropped.
+    const saved = vi.fn();
+    render(
+      <AccessPanel
+        account={account({ access: 'coach', accesses: ['coach'] })}
+        isSelf={false}
+        onClose={() => {}}
+        onSaved={saved}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('checkbox', { name: /curriculum access/i }));
+    await userEvent.click(screen.getByRole('button', { name: /save access/i }));
+
+    expect(saved).toHaveBeenCalledTimes(1);
+    const [primary, accesses] = saved.mock.calls[0];
+    expect(primary).toBe('coach');
+    expect([...(accesses as string[])].sort()).toEqual(['coach', 'curriculum']);
+  });
+
+  it('sends the whole set to the server', async () => {
+    const { updateStaffUser } = await import('@/api/staffUsers');
+    render(
+      <AccessPanel
+        account={account({ access: 'coach', accesses: ['coach'] })}
+        isSelf={false}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('checkbox', { name: /curriculum access/i }));
+    await userEvent.click(screen.getByRole('button', { name: /save access/i }));
+
+    expect(updateStaffUser).toHaveBeenCalledTimes(1);
+    const [, patch] = (updateStaffUser as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect([...patch.accesses].sort()).toEqual(['coach', 'curriculum']);
+    expect(patch.access).toBe('coach');
+  });
+});

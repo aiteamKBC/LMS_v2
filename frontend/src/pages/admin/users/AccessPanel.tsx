@@ -40,7 +40,12 @@ export function AccessPanel({
   /** True when this is the signed-in administrator's own account. */
   isSelf: boolean;
   onClose: () => void;
-  onSaved: (access: string) => void;
+  /** Both halves of what was saved: the landing page, and the full set held.
+   *  The set matters as much as the primary — the caller patches its row with
+   *  it, and reopening this panel seeds the ticks from it. Reporting only the
+   *  primary left the row's `accesses` stale, so a second grant saved fine and
+   *  then appeared to have been dropped. */
+  onSaved: (access: string, accesses: string[]) => void;
 }) {
   // The grants held, and which of them is the landing page. Seeded from the
   // account's own set, falling back to its primary for a row saved before
@@ -97,7 +102,9 @@ export function AccessPanel({
         access: primary,
         accesses: granted,
       });
-      onSaved(primary);
+      // The server derives the stored set the same way: super-admin is held
+      // alone, everything else keeps the ticks as sent.
+      onSaved(primary, granted);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not change the access.');
@@ -112,12 +119,12 @@ export function AccessPanel({
       onClick={onClose}
     >
       <div
-        className="bg-background-50 rounded-2xl border border-background-200 max-w-xl w-full shadow-2xl max-h-[90vh] overflow-y-auto"
+        className="bg-[var(--kbc-surface)] rounded-2xl border border-background-200 max-w-xl w-full shadow-2xl max-h-[90vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
         <div className="px-6 pt-6 pb-4 border-b border-foreground-200/60 flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary-100 flex items-center justify-center shrink-0">
+          <div className="w-10 h-10 rounded-xl bg-primary-100/60 flex items-center justify-center shrink-0 !bg-none shadow-md shadow-primary-900/10 ring-1 ring-inset ring-primary-200/60">
             <span className="text-primary-700 text-[13px] font-semibold">
               {(account.displayName || account.email).charAt(0).toUpperCase()}
             </span>
