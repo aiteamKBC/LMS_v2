@@ -3395,6 +3395,25 @@ function TypeSpecificFields({
     }
   };
 
+  // Mirror of handleResourceUpload: clears exactly the keys an upload writes so
+  // an author can drop a wrongly attached file without uploading a replacement.
+  const handleResourceRemove = (componentType: 'podcast' | 'powerpoint' | 'reading') => {
+    setUploadError('');
+    onSettingChange('uploadedFileName', '');
+    onSettingChange('uploadedFileUrl', '');
+    onSettingChange('uploadedFileSize', 0);
+    onSettingChange('uploadedFileContentType', '');
+    onSettingChange('uploadSource', '');
+    if (componentType === 'podcast') {
+      onSettingChange('podcastUrl', '');
+    } else if (componentType === 'powerpoint') {
+      onSettingChange('fileName', '');
+      onSettingChange('presentationUrl', '');
+    } else if (componentType === 'reading') {
+      onSettingChange('resourceUrl', '');
+    }
+  };
+
   if (component.type === 'live-session') {
     const groupOptions = liveSessionGroupOptions(module);
     const selectedGroupKeys = getStringArray('selectedGroupKeys');
@@ -3598,6 +3617,7 @@ function TypeSpecificFields({
           uploading={uploadingResource}
           error={uploadError}
           onUpload={file => handleResourceUpload(file, 'podcast')}
+          onRemove={() => handleResourceRemove('podcast')}
         />
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <NumberInput label="Duration in minutes" value={getNumber('durationMinutes')} min={0} step={1} onChange={value => onSettingChange('durationMinutes', value)} />
@@ -3630,6 +3650,7 @@ function TypeSpecificFields({
             uploading={uploadingResource}
             error={uploadError}
             onUpload={file => handleResourceUpload(file, 'reading')}
+            onRemove={() => handleResourceRemove('reading')}
           />
         )}
         <RichTextDraft label="Short description of the component" value={getString('shortDescription')} onChange={value => onSettingChange('shortDescription', value)} rows={5} compact />
@@ -3651,6 +3672,7 @@ function TypeSpecificFields({
           uploading={uploadingResource}
           error={uploadError}
           onUpload={file => handleResourceUpload(file, 'powerpoint')}
+          onRemove={() => handleResourceRemove('powerpoint')}
         />
       </EditorBlock>
     );
@@ -5861,6 +5883,7 @@ function ComponentResourceUpload({
   uploading,
   error,
   onUpload,
+  onRemove,
 }: {
   label: string;
   accept: string;
@@ -5870,8 +5893,17 @@ function ComponentResourceUpload({
   uploading: boolean;
   error: string;
   onUpload: (file: File) => void | Promise<void>;
+  // Clears the stored file without replacing it, for a file attached by mistake.
+  onRemove?: () => void;
 }) {
   const inputId = useMemo(() => `component-upload-${Math.random().toString(36).slice(2)}`, []);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const hasFile = Boolean(uploadedUrl || uploadedName);
+
+  // Don't leave a prompt open against a file that is already gone or replaced.
+  useEffect(() => {
+    if (!hasFile) setConfirmRemove(false);
+  }, [hasFile]);
   return (
     <div className="rounded-xl border border-background-200 bg-background-50 p-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -5881,12 +5913,20 @@ function ComponentResourceUpload({
             {uploadedName ? uploadedName : 'No file uploaded yet'}
             {uploadedSize > 0 && <span className="ml-2 text-foreground-400">{formatFileSize(uploadedSize)}</span>}
           </p>
-          {uploadedUrl && (
-            <a href={uploadedUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:text-primary-800">
-              <AppIcon className="ri-external-link-line"></AppIcon>
-              Open uploaded file
-            </a>
-          )}
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+            {uploadedUrl && (
+              <a href={uploadedUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:text-primary-800">
+                <AppIcon className="ri-external-link-line"></AppIcon>
+                Open uploaded file
+              </a>
+            )}
+            {onRemove && hasFile && !confirmRemove && (
+              <button type="button" disabled={uploading} onClick={() => setConfirmRemove(true)} className="inline-flex items-center gap-1 text-[11px] font-bold text-red-600 hover:text-red-700 disabled:opacity-50">
+                <AppIcon className="ri-delete-bin-line"></AppIcon>
+                Remove file
+              </button>
+            )}
+          </div>
         </div>
         <div className="shrink-0">
           <input
@@ -5911,6 +5951,23 @@ function ComponentResourceUpload({
         <AppIcon className="ri-information-line shrink-0"></AppIcon>
         Maximum file size: {COMPONENT_UPLOAD_MAX_LABEL}.
       </p>
+      {onRemove && confirmRemove && (
+        <div className="mt-2 flex flex-col gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="flex min-w-0 items-start gap-1.5 text-[11px] font-semibold text-red-700">
+            <AppIcon className="ri-error-warning-line mt-0.5 shrink-0"></AppIcon>
+            <span>Remove this file from the component? The component keeps its other details and you can upload a new file later.</span>
+          </p>
+          <div className="flex shrink-0 items-center gap-2">
+            <button type="button" onClick={() => setConfirmRemove(false)} className="inline-flex h-8 items-center justify-center rounded-md border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 hover:bg-background-100">
+              Cancel
+            </button>
+            <button type="button" onClick={() => { setConfirmRemove(false); onRemove(); }} className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-red-600 px-3 text-[11px] font-bold text-white hover:bg-red-700">
+              <AppIcon className="ri-delete-bin-line !text-white"></AppIcon>
+              Remove file
+            </button>
+          </div>
+        </div>
+      )}
       {error && <p className="mt-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">{error}</p>}
     </div>
   );

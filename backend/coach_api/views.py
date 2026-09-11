@@ -69,6 +69,9 @@ from learner_api.calendar_connections import (
 )
 from learner_api.learner_detail import refresh_learner_otjh_snapshot
 from learner_api.progress_rules import progress_record_counts_as_achieved
+from audit_api.last_audit_ledger_views import _connection as audit_connection
+from learner_api.student_activity_access import student_activity_available
+from learner_api.student_activity_data import read_audit_hour_totals_bulk
 from learner_api.teams_attendance import fetch_verified_teams_attendance_rows
 from curriculum_api.views import (
     actual_cohort_identity,
@@ -1390,6 +1393,28 @@ def find_learner_absence_relation(connection) -> str | None:
     return find_existing_relation(connection, LEARNER_ABSENCE_RELATION_CANDIDATES)
 
 
+def attach_caseload_source_rows(rows) -> None:
+    """Attach each profile's enrolment/commercial source row as `_caseload_source`.
+
+    The source row carries identity the LearnerProfile mirror does not -- the
+    schedule fields, and the `aptem_id` that bridges to the audit mirror. The
+    lookup is two batched queries for the whole caseload, not one per learner.
+    """
+    if not rows:
+        return
+    commercial_rows, enrolment_rows = fetch_source_schedule_rows(rows)
+    for row in rows:
+        setattr(
+            row,
+            "_caseload_source",
+            resolve_caseload_source_row(
+                row,
+                commercial_rows=commercial_rows,
+                enrolment_rows=enrolment_rows,
+            ),
+        )
+
+
 def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | SimpleNamespace]:
     requested_owner = normalize_email(owner_email)
     learner_alias = get_learner_db_alias()
@@ -1418,17 +1443,7 @@ def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | S
         for row in queryset
         if clean_text(row.username)
     ]
-    commercial_rows, enrolment_rows = fetch_source_schedule_rows(rows)
-    for row in rows:
-        setattr(
-            row,
-            "_caseload_source",
-            resolve_caseload_source_row(
-                row,
-                commercial_rows=commercial_rows,
-                enrolment_rows=enrolment_rows,
-            ),
-        )
+    attach_caseload_source_rows(rows)
     return rows
 
 
@@ -1738,6 +1753,86 @@ def learner_activity_feed_entries(row: LearnerProfile | SimpleNamespace, *, newe
     if callable(activity_reader):
         return [entry for entry in activity_reader(newest_first=newest_first) if isinstance(entry, dict)]
     return [entry for entry in list_or_empty(getattr(row, "activity_feed", [])) if isinstance(entry, dict)]
+
+
+def caseload_audit_hour_totals(rows) -> dict[int, dict]:
+    """Whole-programme OTJ hours for a caseload, keyed by LearnerProfile id.
+
+    The coach surfaces used to quote `Learner.learners.completed_hours`, which
+    only counts time reflected against the LMS training plan. The learner's own
+    workspace shows the Audit figures instead (TP Planned from
+    "Last_audit".learners, LMS Actual from the accepted manual ledger), so a
+    coach and their learner were reading two different numbers for the same
+    thing. This pulls the learner-page figures for the whole caseload in one
+    query so both sides agree.
+
+    `aptem_id` is not on LearnerProfile; it comes off the enrolment source row
+    already attached as `_caseload_source` by fetch_caseload_learner_profiles.
+    Learners with no Aptem link, or with no row in the audit mirror, are absent
+    from the result and keep their existing figures.
+    """
+    aptem_by_profile: dict[int, int] = {}
+    for row in rows or []:
+        profile_id = getattr(row, "id", None)
+        source_row = getattr(row, "_caseload_source", None)
+        raw = getattr(source_row, "aptem_id", None) if source_row is not None else None
+        if profile_id is None or not student_activity_available(raw):
+            continue
+        aptem_by_profile[int(profile_id)] = int(str(raw).strip())
+    if not aptem_by_profile:
+        return {}
+    try:
+        with audit_connection().cursor() as cursor:
+            totals = read_audit_hour_totals_bulk(cursor, aptem_by_profile.values())
+    except DatabaseError as exc:
+        # The caseload must still render on its stored figures if the audit
+        # mirror is unreachable -- this is a display upgrade, not a dependency.
+        logger.warning("Could not read audit OTJ totals for caseload: %s", exc)
+        return {}
+    return {
+        profile_id: totals[aptem_id]
+        for profile_id, aptem_id in aptem_by_profile.items()
+        if aptem_id in totals
+    }
+
+
+def apply_audit_hour_totals(payload: dict, totals: dict | None) -> dict:
+    """Overlay the Audit OTJ figures on one serialized caseload learner.
+
+    Mirrors the learner workspace's own precedence (workspace/learner/page.tsx):
+    the Audit pair replaces completed/planned when present, and the
+    cumulative-to-date `otjhTarget` is rescaled by the same ratio so a card
+    showing "x% - completed / target" stays internally consistent. A missing
+    half of the pair leaves that half untouched.
+    """
+    if not totals:
+        return payload
+    planned = totals.get("audit_tp_planned")
+    actual = totals.get("audit_lms_actual")
+    if actual is not None:
+        payload["otjhCompleted"] = actual
+    if planned is not None:
+        previous_planned = to_number(payload.get("otjhPlanned"))
+        previous_target = to_number(payload.get("otjhTarget"))
+        # otjhTarget paces the programme plan to the current week, so carry that
+        # pacing over to the audit plan rather than dropping back to the whole
+        # programme total, which would read as "behind" for everyone.
+        #
+        # The serializers floor otjhTarget at 1 (`max(..., 1)`), so a stored 1
+        # against a larger plan is that placeholder rather than a real to-date
+        # figure -- rescaling it would invent a target. Those learners fall back
+        # to the whole audit plan, the same denominator their own workspace uses.
+        ratio = previous_target / previous_planned if previous_planned > 0 else 0
+        paced = previous_target > 1 and 0 < ratio <= 1
+        payload["otjhTarget"] = max(round(planned * ratio, 2), 1) if paced else planned
+        payload["otjhPlanned"] = planned
+    # `overallProgress` is the OTJH-against-target percentage the cards print
+    # beside the hours ratio, so it has to be recomputed off the overlaid pair
+    # or the two would disagree on the same card.
+    payload["overallProgress"] = percentage(payload["otjhCompleted"], payload["otjhTarget"])
+    payload["overallProgressAvailable"] = True
+    payload["otjhSource"] = "audit"
+    return payload
 
 
 def serialize_caseload_learner(
@@ -7680,7 +7775,15 @@ def coach_attendance_details(request):
 
     try:
         caseload_rows = fetch_attendance_caseload_rows(owner_email)
-        learners = [serialize_attendance_source_learner(row) for row in caseload_rows]
+        attach_caseload_source_rows(caseload_rows)
+        detail_audit_totals = caseload_audit_hour_totals(caseload_rows)
+        learners = [
+            apply_audit_hour_totals(
+                serialize_attendance_source_learner(row),
+                detail_audit_totals.get(int(row.id)),
+            )
+            for row in caseload_rows
+        ]
         learner = next(
             (
                 item for item in learners
@@ -7878,7 +7981,12 @@ def coach_dashboard(request):
     def load_dashboard_learners():
         try:
             rows = fetch_caseload_dashboard_profiles(owner_email)
-            return [serialize_caseload_dashboard_learner(row) for row in rows]
+            attach_caseload_source_rows(rows)
+            learners = [serialize_caseload_dashboard_learner(row) for row in rows]
+            audit_totals = caseload_audit_hour_totals(rows)
+            for row, learner in zip(rows, learners):
+                apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
+            return learners
         finally:
             close_old_connections()
 
@@ -8084,6 +8192,7 @@ def coach_caseload(request):
     try:
         if summary_only:
             rows = fetch_caseload_dashboard_profiles(owner_email)
+            attach_caseload_source_rows(rows)
             learners = [serialize_caseload_dashboard_learner(row) for row in rows]
         else:
             rows = fetch_caseload_learner_profiles(owner_email)
@@ -8091,6 +8200,12 @@ def coach_caseload(request):
                 serialize_caseload_learner(row, refresh_live_snapshots=refresh_live_snapshots)
                 for row in rows
             ]
+        # Quote the same whole-programme OTJ figures the learner sees on their
+        # own workspace, rather than the training-plan reflection totals.
+        audit_totals = caseload_audit_hour_totals(rows)
+        if audit_totals:
+            for row, learner in zip(rows, learners):
+                apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
     except Exception:
         logger.exception("coach_caseload_load_failed coach_account_id=%s", owner_email)
         return coach_error(
@@ -8166,9 +8281,17 @@ def coach_attendance(request):
 
     try:
         caseload_rows = fetch_attendance_caseload_rows(owner_email)
+        attach_caseload_source_rows(caseload_rows)
+        attendance_audit_totals = caseload_audit_hour_totals(caseload_rows)
         caseload_learners = [
             learner
-            for learner in [serialize_attendance_source_learner(row) for row in caseload_rows]
+            for learner in [
+                apply_audit_hour_totals(
+                    serialize_attendance_source_learner(row),
+                    attendance_audit_totals.get(int(row.id)),
+                )
+                for row in caseload_rows
+            ]
             if should_include_in_attendance_page(learner)
         ]
         active_learners = [

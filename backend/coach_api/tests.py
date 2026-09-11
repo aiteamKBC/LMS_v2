@@ -5,6 +5,7 @@ from inspect import unwrap
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from django.db import DatabaseError
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
@@ -28,6 +29,8 @@ from coach_api.views import (
     completed_ksb_codes,
     curriculum_monthly_target_hours,
     curriculum_monthly_target_hours_weeks,
+    apply_audit_hour_totals,
+    caseload_audit_hour_totals,
     fetch_caseload_learner_profiles,
     fetch_evidence_file_queue,
     fetch_source_schedule_rows,
@@ -44,6 +47,114 @@ def call_coach_view(view, request):
     """Unit-test view logic below the integration-tested auth boundary."""
     request.coach_email = "coach@example.com"
     return unwrap(view)(request)
+
+
+class AuditHourOverlayTests(SimpleTestCase):
+    """The coach caseload must quote the same OTJ hours the learner's own
+    workspace shows -- Audit TP Planned / LMS Actual -- instead of the
+    training-plan reflection totals, which read as 0h for most learners."""
+
+    base = {
+        "otjhCompleted": 0.0,
+        "otjhTarget": 1,
+        "otjhPlanned": 8.6,
+        "overallProgress": 0,
+        "overallProgressAvailable": True,
+    }
+
+    def test_audit_pair_replaces_the_reflection_totals(self):
+        overlaid = apply_audit_hour_totals(
+            dict(self.base),
+            {"audit_tp_planned": 353.0, "audit_lms_actual": 178.45},
+        )
+
+        self.assertEqual(overlaid["otjhCompleted"], 178.45)
+        self.assertEqual(overlaid["otjhPlanned"], 353.0)
+        self.assertEqual(overlaid["otjhSource"], "audit")
+
+    def test_placeholder_target_falls_back_to_the_whole_audit_plan(self):
+        """otjhTarget is floored at 1 when no week pacing was computed. That
+        floor is not a ratio, so rescaling by it would invent a target."""
+        overlaid = apply_audit_hour_totals(
+            dict(self.base),
+            {"audit_tp_planned": 353.0, "audit_lms_actual": 178.45},
+        )
+
+        self.assertEqual(overlaid["otjhTarget"], 353.0)
+        self.assertEqual(overlaid["overallProgress"], 51)
+
+    def test_real_week_pacing_is_carried_over_to_the_audit_plan(self):
+        paced = dict(self.base, otjhTarget=4.3, otjhPlanned=8.6)
+
+        overlaid = apply_audit_hour_totals(
+            paced, {"audit_tp_planned": 353.0, "audit_lms_actual": 100.0}
+        )
+
+        self.assertEqual(overlaid["otjhTarget"], 176.5)
+
+    def test_percentage_is_recomputed_so_the_card_agrees_with_itself(self):
+        overlaid = apply_audit_hour_totals(
+            dict(self.base, otjhTarget=8.6),
+            {"audit_tp_planned": 353.0, "audit_lms_actual": 304.97},
+        )
+
+        self.assertEqual(overlaid["overallProgress"], 86)
+        self.assertTrue(overlaid["overallProgressAvailable"])
+
+    def test_a_missing_planned_figure_leaves_the_target_alone(self):
+        overlaid = apply_audit_hour_totals(
+            dict(self.base), {"audit_tp_planned": None, "audit_lms_actual": 12.5}
+        )
+
+        self.assertEqual(overlaid["otjhCompleted"], 12.5)
+        self.assertEqual(overlaid["otjhTarget"], 1)
+        self.assertEqual(overlaid["otjhPlanned"], 8.6)
+
+    def test_a_zero_stored_plan_does_not_divide_by_zero(self):
+        overlaid = apply_audit_hour_totals(
+            dict(self.base, otjhPlanned=0),
+            {"audit_tp_planned": 353.0, "audit_lms_actual": 50.0},
+        )
+
+        self.assertEqual(overlaid["otjhTarget"], 353.0)
+
+    def test_learners_without_audit_figures_keep_their_own(self):
+        self.assertEqual(apply_audit_hour_totals(dict(self.base), None), self.base)
+        self.assertEqual(apply_audit_hour_totals(dict(self.base), {}), self.base)
+
+    @patch("coach_api.views.read_audit_hour_totals_bulk")
+    @patch("coach_api.views.audit_connection")
+    def test_totals_are_keyed_by_profile_id_via_the_enrolment_aptem_id(
+        self, connection, read_bulk
+    ):
+        read_bulk.return_value = {4321: {"audit_tp_planned": 353.0, "audit_lms_actual": 178.45}}
+        linked = SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))
+        # No Aptem link, and a source row that was never resolved.
+        unlinked = SimpleNamespace(id=8, _caseload_source=SimpleNamespace(aptem_id=None))
+        sourceless = SimpleNamespace(id=9, _caseload_source=None)
+
+        totals = caseload_audit_hour_totals([linked, unlinked, sourceless])
+
+        self.assertEqual(totals, {7: {"audit_tp_planned": 353.0, "audit_lms_actual": 178.45}})
+        self.assertEqual(list(read_bulk.call_args.args[1]), [4321])
+
+    @patch("coach_api.views.audit_connection")
+    def test_an_unreachable_audit_mirror_leaves_the_caseload_renderable(self, connection):
+        connection.side_effect = DatabaseError("audit mirror down")
+        linked = SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))
+
+        self.assertEqual(caseload_audit_hour_totals([linked]), {})
+
+    def test_no_query_runs_for_a_caseload_with_no_aptem_links(self):
+        with patch("coach_api.views.audit_connection") as connection:
+            self.assertEqual(caseload_audit_hour_totals([]), {})
+            self.assertEqual(
+                caseload_audit_hour_totals(
+                    [SimpleNamespace(id=8, _caseload_source=SimpleNamespace(aptem_id=""))]
+                ),
+                {},
+            )
+        connection.assert_not_called()
 
 
 class SourceProfileIdentityTests(SimpleTestCase):
