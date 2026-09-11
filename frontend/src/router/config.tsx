@@ -193,6 +193,8 @@ const MySchedulePage = lazyRoute(() => import("../pages/learner/clubs/events/sch
 const NotFound = lazyRoute(() => import("../pages/NotFound"));
 const PaymentsPage = lazyRoute(() => import("../pages/finance/payments/page"));
 const PointsRulesPage = lazyRoute(() => import("../pages/engagement/points-rules/page"));
+// Reached only through /learner/otjh and /learner/ksbs, which open it on the
+// matching tab. The combined /learner/progress entry point was removed.
 const ProgressPage = lazyRoute(() => import("../pages/learner/progress/page"));
 const EvidencePage = lazyRoute(() => import("../pages/learner/evidence/page"));
 const ProgrammeDetailPage = lazyRoute(() => import("../pages/curriculum/programme-detail/page"));
@@ -530,14 +532,6 @@ const routes: RouteObject[] = [
   {
     path: "/learner/report-absence",
     element: <ReportAbsencePage />,
-  },
-  {
-    path: "/learner/progress",
-    element: <ProgressPage />,
-  },
-  {
-    path: "/learner/progress/:kind/:id",
-    element: <ProgressPage />,
   },
   {
     path: "/learner/otjh",

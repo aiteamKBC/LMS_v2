@@ -29,12 +29,6 @@ export const learnerNavItems: SidebarNavItem[] = [
   // Evidence — the learner's own submissions and where each one is in review.
   { id: 'learner-evidence', label: 'Evidence', icon: 'ri-folder-upload-line', href: '/learner/evidence', badge: 7 },
 
-  // OTJH & KSBs progress — what those submissions add up to: off-the-job hours
-  // and KSB coverage, as Overview/OTJ Hours/KSBs tabs on one page. Labeled
-  // distinctly from the "My Progress" group below (Monthly
-  // Cycle/Coaching/Reviews) so the two aren't confused.
-  { id: 'learner-progress', label: 'OTJH & KSBs progress', icon: 'ri-bar-chart-2-line', href: '/learner/progress' },
-
   // Attendance — single item; reporting an absence is an action inside the page.
   { id: 'learner-attendance', label: 'Attendance', icon: 'ri-calendar-check-line', href: '/learner/attendance' },
 

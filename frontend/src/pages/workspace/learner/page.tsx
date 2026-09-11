@@ -1311,9 +1311,11 @@ function LearningWeekStrip({ completedDates = [] }: { completedDates?: string[] 
 type StationTone = 'done' | 'current' | 'upcoming';
 
 /** A node with an SVG progress ring — the fill shows how far through the module the learner is. */
-function JourneyNode({ icon, label, sub, tone, pct, selected = false, onClick }: {
+function JourneyNode({ icon, label, title, sub, tone, pct, selected = false, onClick }: {
   icon: string;
   label: string;
+  /** Full module name, for the hover tooltip when the label is clamped. */
+  title?: string;
   sub?: string;
   tone: StationTone;
   pct?: number;
@@ -1339,7 +1341,10 @@ function JourneyNode({ icon, label, sub, tone, pct, selected = false, onClick }:
           <AppIcon className={`${icon} text-base`} />
         </span>
       </div>
-      <span className={`text-[11px] leading-tight ${t.label}`}>{label}</span>
+      <span
+        title={title}
+        className={`text-[11px] leading-tight ${t.label} line-clamp-2 break-words`}
+      >{label}</span>
       {sub ? <span className="text-[10px] text-foreground-400 leading-none tabular-nums">{sub}</span> : null}
     </>
   );
@@ -1350,12 +1355,12 @@ function JourneyNode({ icon, label, sub, tone, pct, selected = false, onClick }:
       onClick={onClick}
       aria-label={`Select ${label}`}
       aria-pressed={selected}
-      className={`group flex w-[76px] shrink-0 cursor-pointer flex-col items-center gap-1.5 rounded-xl py-1 text-center transition-all duration-200 hover:-translate-y-1 hover:bg-primary-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 ${selected ? 'bg-primary-50 ring-2 ring-primary-300 ring-offset-2' : ''}`}
+      className={`group flex w-[104px] shrink-0 cursor-pointer flex-col items-center gap-1.5 rounded-xl px-1 py-1 text-center transition-all duration-200 hover:-translate-y-1 hover:bg-primary-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 ${selected ? 'bg-primary-50 ring-2 ring-primary-300 ring-offset-2' : ''}`}
     >
       {content}
     </button>
   ) : (
-    <div className="flex w-[76px] shrink-0 flex-col items-center gap-1.5 py-1 text-center">
+    <div className="flex w-[104px] shrink-0 flex-col items-center gap-1.5 px-1 py-1 text-center">
       {content}
     </div>
   );
@@ -1475,16 +1480,34 @@ function MiniJourney({
   const allDone = currentIndex === -1 && stations.length > 0;
   return (
     <div>
-      {/* Overall progress banner */}
+      {/* Overall progress banner.
+          Two different measures used to sit under one "Overall progress"
+          heading: this figure counts whole MODULES finished (13/34 = 38%),
+          while every node on the track below shows how much of that module's
+          CONTENT is done. A module at 99% counts as zero here, so the headline
+          looked wrong beside a row of green nodes. Both are worth showing —
+          they answer different questions — so each is now labelled for what it
+          actually measures. */}
       <div className="rounded-xl bg-primary-50/60 border border-primary-100/60 p-3 mb-4">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-primary-600">Overall progress</span>
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-primary-600">Modules completed</span>
           <span className="text-[15px] font-heading font-bold text-foreground-900 tabular-nums">
             {progressPercent == null ? EMPTY_VALUE : `${progressPercent}%`}
           </span>
         </div>
         <ProgressBar percent={progressPercent} height="h-2" />
         <p className="text-[11px] text-foreground-500 mt-1.5">{progressCaption}</p>
+
+        <div className="mt-3 border-t border-primary-100/70 pt-2.5">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-primary-600">Content completed</span>
+            <span className="text-[15px] font-heading font-bold text-foreground-900 tabular-nums">{overallPct}%</span>
+          </div>
+          <ProgressBar percent={overallPct} height="h-2" />
+          <p className="text-[11px] text-foreground-500 mt-1.5">
+            Across every activity in your {stations.length} assigned module{stations.length === 1 ? '' : 's'}
+          </p>
+        </div>
       </div>
 
       {certificateStatus?.template ? (
@@ -1537,9 +1560,15 @@ function MiniJourney({
           {stations.map((s) => (
             <Fragment key={s.index}>
               <JourneyConnector filled={s.status === 'completed'} />
+              {/* The module's own name, not "Module 7". A learner reading the
+                  track wants to recognise what they studied; a position in an
+                  ordering they never see tells them nothing, and made every
+                  learner's journey look identical. The full title is on hover
+                  for the ones the node has to truncate. */}
               <JourneyNode
                 icon={s.status === 'completed' ? 'ri-check-line' : s.status === 'current' ? 'ri-flag-2-fill' : 'ri-lock-2-line'}
-                label={`Module ${s.index + 1}`}
+                label={s.module.module || `Module ${s.index + 1}`}
+                title={s.module.module || undefined}
                 sub={s.pct == null ? '—' : `${s.pct}%`}
                 tone={stationTone(s)}
                 pct={s.pct ?? 0}
