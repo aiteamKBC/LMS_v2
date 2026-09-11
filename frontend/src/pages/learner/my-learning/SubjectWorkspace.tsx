@@ -61,17 +61,28 @@ function scheduleForDate(value?: string | null): Schedule {
   return { date, month: date.slice(0, 7), week_start, week_end: day.toISOString().slice(0, 10) };
 }
 
+function normaliseSubjectTitle(value?: string | null): string {
+  return (value || '')
+    .replace(/&amp;/gi, '&')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLocaleLowerCase();
+}
+
 export function groupSubjectActivities(activities: SubjectEntry[]) {
   const months = new Map<string, Map<string, SubjectEntry[]>>();
   for (const activity of activities) {
-    const month = activity.schedule.month || activity.schedule.date?.slice(0, 7) || 'undated';
-    const week = activity.schedule.week_start || activity.week || 'undated';
+    const introduction = activity.schedule.date_source === 'introduction';
+    const extra = activity.schedule.date_source === 'extra_activity';
+    const month = introduction ? 'introduction' : extra ? 'extra' : activity.schedule.month || activity.schedule.date?.slice(0, 7) || 'undated';
+    const week = extra ? activity.legacy?.section_title || activity.week || 'Additional activities' : activity.schedule.week_start || activity.week || 'undated';
     if (!months.has(month)) months.set(month, new Map());
     const weeks = months.get(month)!;
     if (!weeks.has(week)) weeks.set(week, []);
     weeks.get(week)!.push(activity);
   }
-  return [...months].sort(([a], [b]) => a === 'undated' ? 1 : b === 'undated' ? -1 : a.localeCompare(b)).map(([month, weeks]) => ({
+  const rank = (month: string) => month === 'introduction' ? -1 : month === 'extra' ? 2 : month === 'undated' ? 1 : 0;
+  return [...months].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b)).map(([month, weeks]) => ({
     month, weeks: [...weeks].sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true })).map(([week, items]) => ({
       week, activities: [...items].sort((a, b) => (a.schedule.date || '').localeCompare(b.schedule.date || '') || a.position - b.position || a.title.localeCompare(b.title)),
     })),
@@ -89,13 +100,36 @@ export function subjectsFrom(data: StudentActivityResponse | null, real: Learner
     subjects.set(key, subject);
   }
   const legacyByBuilder = new Map<string, string[]>();
+  const legacyByTitle = new Map<string, string[]>();
   for (const subject of subjects.values()) {
     const builder = builderSubjects[subject.id];
     if (builder) legacyByBuilder.set(builder.id, [...(legacyByBuilder.get(builder.id) || []), subject.id]);
+    const title = normaliseSubjectTitle(subject.title);
+    if (title) legacyByTitle.set(title, [...(legacyByTitle.get(title) || []), subject.id]);
+  }
+  const currentTitlesById = new Map<string, Set<string>>();
+  const currentIdsByTitle = new Map<string, Set<string>>();
+  const registerCurrentTitle = (moduleId: string, title?: string | null) => {
+    const normalised = normaliseSubjectTitle(title);
+    if (!moduleId || !normalised) return;
+    if (!currentTitlesById.has(moduleId)) currentTitlesById.set(moduleId, new Set());
+    currentTitlesById.get(moduleId)!.add(normalised);
+    if (!currentIdsByTitle.has(normalised)) currentIdsByTitle.set(normalised, new Set());
+    currentIdsByTitle.get(normalised)!.add(moduleId);
+  };
+  for (const subject of currentSubjects) registerCurrentTitle(subject.id, subject.title);
+  for (const item of real?.components || []) {
+    if (item.moduleId) registerCurrentTitle(item.moduleId, item.module);
   }
   const currentKey = (moduleId: string) => {
     const matches = legacyByBuilder.get(moduleId);
-    return matches?.length === 1 ? matches[0] : `current:${moduleId}`;
+    if (matches?.length === 1) return matches[0];
+    const titleMatches = new Set<string>();
+    for (const title of currentTitlesById.get(moduleId) || []) {
+      if (currentIdsByTitle.get(title)?.size !== 1) continue;
+      for (const legacyKey of legacyByTitle.get(title) || []) titleMatches.add(legacyKey);
+    }
+    return titleMatches.size === 1 ? [...titleMatches][0] : `current:${moduleId}`;
   };
   const completed = completedComponentIds(real);
   for (const subject of currentSubjects) {
@@ -132,15 +166,17 @@ export function subjectsFrom(data: StudentActivityResponse | null, real: Learner
   }
   const nativeTitles = new Set([...currentSubjects.map((subject) => subject.title), ...(real?.components || []).map((item) => item.module)]);
   for (const title of real?.modules || []) {
-    if (!nativeTitles.has(title)) subjects.set(`unlinked:${title}`, { id: `unlinked:${title}`, title, source: 'current', activities: [] });
+    if (nativeTitles.has(title)) continue;
+    const titleMatches = legacyByTitle.get(normaliseSubjectTitle(title));
+    if (titleMatches?.length !== 1) subjects.set(`unlinked:${title}`, { id: `unlinked:${title}`, title, source: 'current', activities: [] });
   }
   return [...subjects.values()].map((subject) => ({ ...subject, title: builderSubjects[subject.id]?.title || subject.title }))
     .sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
 }
 
 /** One roll-up for imported history and all later current-platform progress.
- * Exact source links merge the two representations before totals are
- * calculated, so the same activity can never be counted twice. */
+ * Exact source links merge the two representations first. A unique title match
+ * also merges the subject card when older imports have no source link. */
 export function buildUnifiedLearningSummary(
   data: StudentActivityResponse | null,
   real: LearnerDetail | null,
@@ -420,11 +456,12 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
       <button onClick={() => setSelected(null)} className="flex items-center gap-1.5 text-sm font-semibold text-primary-700"><ChevronLeft size={17} />All subjects</button>
       <div className="relative overflow-hidden rounded-2xl border bg-white"><Cover title={active.title} url={covers[active.id]} large /><div className="p-5"><Progress done={active.activities.filter((entry) => entry.completed).length} total={active.activities.length} showFormula /></div></div>
       {groups.map(({ month, weeks }) => {
-        const monthTitle = month === 'undated' ? 'Undated activities' : new Date(`${month}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+        const monthTitle = month === 'introduction' ? 'Introduction' : month === 'extra' ? 'Extra activities' : month === 'undated' ? 'Undated activities' : new Date(`${month}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
         return <ActivityGroup key={`${active.id}:${month}`} title={monthTitle} activities={weeks.flatMap(({ activities }) => activities)} level={3}>
           <div className="space-y-3 p-3 pt-0">{weeks.map(({ week, activities }, index) => {
             const visibleEntries = activities.filter((entry) => visibleActivityIds.has(entry.id));
             if (!visibleEntries.length) return null;
+            if (month === 'introduction') return visibleEntries.map((entry) => <ActivityRow key={entry.id} entry={entry} kind={kind} learnerId={learnerId} onProgress={(result) => { if (entry.legacy) recordProgress(entry.legacy.source_activity_id, result); }} />);
             const weekTitle = week === 'undated' ? 'Activities awaiting a date' : /^\d{4}-/.test(week) ? `Week ${index + 1} · ${week} – ${activities[0].schedule.week_end || ''}` : week;
             return <ActivityGroup key={week} title={weekTitle} label={`${monthTitle}, ${weekTitle}`} activities={activities} level={4}>
               {visibleEntries.map((entry) => <ActivityRow key={entry.id} entry={entry} kind={kind} learnerId={learnerId} onProgress={(result) => { if (entry.legacy) recordProgress(entry.legacy.source_activity_id, result); }} />)}

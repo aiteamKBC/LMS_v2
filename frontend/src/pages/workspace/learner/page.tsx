@@ -380,7 +380,7 @@ export default function LearnerOverview() {
 
   /* ── Real learner's training-plan journey, grouped module -> week -> components ── */
   const journey = useMemo(() => (isRealMode ? buildLearnerJourney(real) : []), [isRealMode, real]);
-  const { stations, overallPct, currentIndex, currentWeek: currentWeekLabel } = useMemo(() => buildStations(journey, real), [journey, real]);
+  const { stations, currentIndex, currentWeek: currentWeekLabel } = useMemo(() => buildStations(journey, real), [journey, real]);
   const learnerSelectionKey = `${kind ?? ''}:${id ?? ''}`;
   const [moduleSelection, setModuleSelection] = useState<{ learnerKey: string; index: number } | null>(null);
   const selectedModuleIndex = moduleSelection?.learnerKey === learnerSelectionKey ? moduleSelection.index : null;
@@ -451,24 +451,16 @@ export default function LearnerOverview() {
   }, [real]);
 
   /* ── Compact progress cards ── */
-  const planActivitiesDone = stations.reduce((total, station) => total + station.trackableDone, 0);
-  const planActivitiesTotal = stations.reduce((total, station) => total + station.trackableTotal, 0);
+  const completedModules = stations.filter((station) => station.status === 'completed').length;
+  const moduleProgressPercent = stations.length ? Math.round((completedModules / stations.length) * 100) : null;
 
   const usesCombinedProgress = isRealMode && !!real?.studentActivityAvailable;
-  const programmeProgressPercent = isRealMode
-    ? usesCombinedProgress
-      ? unifiedLearning.summary ? Math.round(unifiedLearning.summary.percent) : null
-      : stations.length ? overallPct : null
-    : p.overallProgress;
+  const programmeProgressPercent = isRealMode ? moduleProgressPercent : p.overallProgress;
   const programmeProgressValue = programmeProgressPercent == null ? EMPTY_VALUE : `${programmeProgressPercent}%`;
   const programmeProgressCaption = isRealMode
-    ? usesCombinedProgress
-      ? unifiedLearning.summary
-        ? `${unifiedLearning.summary.completedActivityCount}/${unifiedLearning.summary.activityCount} activities complete`
-        : unifiedLearning.error ? 'Combined progress unavailable' : 'Loading combined progress...'
-      : planActivitiesTotal > 0
-        ? `${planActivitiesDone}/${planActivitiesTotal} activities complete`
-        : (stations.length ? 'No trackable activities yet' : 'No training plan yet')
+    ? stations.length
+      ? `${completedModules}/${stations.length} modules complete`
+      : 'No training plan yet'
     : `${p.currentWeek ? `Week ${p.currentWeek} · ` : ''}${p.currentModule}`;
 
   const attendancePercent = isRealMode ? (attendance ? attendance.attendanceRate : null) : p.attendanceRate;

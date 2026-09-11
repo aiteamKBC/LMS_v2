@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import certificates, monthly_assignment, legacy_assignments
+from . import certificates, monthly_assignment, legacy_assignments, review_history
 from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
 
 urlpatterns = [
@@ -99,6 +99,7 @@ urlpatterns = [
     path("certificates/<str:kind>/<int:pk>/", certificates.learner_certificate_status, name="learner-certificate-status"),
     path("certificates/<str:kind>/<int:pk>/issue/", certificates.issue_learner_certificate, name="learner-certificate-issue"),
     path("kbc-lms/all-students-schema/", lms_schema.all_students_schema, name="kbc-lms-all-students-schema"),
+    path('student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/files/<int:attachment_id>/', student_activity.subject_file, name='subject-file'),
     path("media/google-drive/<str:file_id>/", media_proxy.google_drive_media, name="google-drive-media"),
     path("attendance/<str:kind>/<int:learner_id>/", attendance.learner_attendance, name="learner-attendance"),
     path("learners/<int:pk>/coach/", views.learner_coach, name="learner-coach"),
@@ -139,6 +140,7 @@ urlpatterns = [
     path("reflection/assignment/presentation/", monthly_assignment.export_presentation, name="monthly-assignment-presentation"),
     # learner calendar (coaching sessions from Coach.coach_calendar_event)
     path("calendar/<str:kind>/<int:pk>/", calendar.learner_calendar, name="learner-calendar"),
+    path("review-history/<str:kind>/<int:pk>/", review_history.learner_review_history, name="learner-review-history"),
     path("calendar/<str:kind>/<int:pk>/book/", calendar.learner_calendar_book, name="learner-calendar-book"),
     path("calendar/<str:kind>/<int:pk>/reschedule/", calendar.learner_calendar_reschedule, name="learner-calendar-reschedule"),
     path("calendar/<str:kind>/<int:pk>/cancel/", calendar.learner_calendar_cancel, name="learner-calendar-cancel"),

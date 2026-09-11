@@ -19,6 +19,8 @@ from .active_users import completed_hours_value_from_progress
 from .models import LearnerProfile
 from .student_activity_data import read_audit_hour_totals, read_student_activity, read_student_material
 from .student_activity_access import student_activity_available
+from .student_activity_data import summarize_activities, read_curriculum_schedules, apply_curriculum_schedules
+from . import subject_store, subject_source
 from .student_activity_data import summarize_activities
 from . import subject_store
 from .subject_content import (ContentUnavailable, material_schema, build_material, public_quiz, as_list)
@@ -112,6 +114,11 @@ def _error(message, status):
     return JsonResponse({"error": message}, status=status)
 
 
+def _live_subjects(source, aptem_id):
+    with _connection().cursor() as cursor:
+        return subject_source.read_learner(cursor, aptem_id, getattr(source, 'email', ''))
+
+
 @require_GET
 @learner_self_or_staff(kwarg="pk")
 def student_activity(request, kind, pk):
@@ -156,19 +163,29 @@ def student_activity(request, kind, pk):
                     payload.update(read_audit_hour_totals(cursor, aptem_id))
     except DatabaseError:
         return _error("Could not read Last_audit activities. Please try again.", 503)
-    if payload is None or is_excluded_learner(aptem_id, payload["learner_name"]):
+    material_request = request.GET.get('activity_id') is not None
+    if (payload is None and not material_request) or is_excluded_learner(aptem_id, (payload or {}).get('learner_name', '')):
         return _error("No audit activity record is linked to this learner.", 404)
-    audit_email = payload.pop('_identity_email', '') or payload.get('_source', {}).get('learner_email', '')
+    audit_email = (payload or {}).pop('_identity_email', '') or (payload or {}).get('_source', {}).get('learner_email', '')
     if not _emails_match(getattr(source, 'email', ''), audit_email):
         return _error('The previous learning identity could not be verified.', 404)
-    if '_source' in payload:
-        return _material_response(request, pk, aptem_id, payload)
+    try:
+        live = _live_subjects(source, aptem_id)
+    except DatabaseError:
+        live = None
+    if material_request:
+        payload = subject_source.material(live, group_id, activity_id, payload, (payload or {}).get('learner_name', ''))
+        if payload is None:
+            return _error('Activity not found.', 404)
+        return _material_response(request, pk, aptem_id, payload, kind=kind, group_id=group_id)
+    schedules = {}
     try:
         saved = subject_store.state(pk, aptem_id)
         direct_progress = _direct_progress_records(pk)
         direct_otjh = _direct_progress_otjh(direct_progress)
     except DatabaseError:
-        return _error('Could not load your subject progress. Please try again.', 503)
+        return _error('Could not load your subject progress and dates. Please try again.', 503)
+    payload = subject_source.overlay_subjects(payload, live, schedules)
     payload.update(summarize_activities(subject_store.overlay_progress(payload['activities'], saved['progress'])))
     payload['module_count'] = len(payload.get('subjects') or []) or payload['module_count']
     payload['recorded_otjh_total'] = combined_recorded_otjh(
@@ -206,12 +223,41 @@ def _definition_for(stored):
         schema = material_schema(stored['_source']['activity_id'])
     except ContentUnavailable:
         schema = None
+    row = stored['_source']
+    quiz_id = row.get('quiz_id')
+    if quiz_id and str(((schema or {}).get('quiz') or {}).get('quiz_id') or '') != str(quiz_id):
+        # The source material endpoint omits a reading's linked quiz. Resolve it
+        # separately for the player while retaining one Reading+Quiz activity.
+        try:
+            linked_quiz = (material_schema(quiz_id) or {}).get('quiz')
+        except ContentUnavailable:
+            linked_quiz = None
+        schema = {**(schema or {}), 'quiz': linked_quiz or {
+            'quiz_id': quiz_id, 'quiz_body': row.get('quiz_body'),
+            'questions': as_list(row.get('quiz_questions')),
+            'passing_score': row.get('quiz_passing_score'),
+            'maximum_score': row.get('quiz_maximum_score'),
+        }}
+    def archive_url(reference):
+        path = _legacy_attachment_upload_path(reference)
+        return '/curriculum_api/curriculum/uploads/' + path if path else ''
+    return build_material(stored, schema, attachment_resolver=archive_url)
     return build_material(stored, schema)
 
 
-def _material_response(request, pk, aptem_id, stored):
+def _local_pdf_urls(definition, kind, pk, group_id, activity_id):
+    if not kind or group_id is None:
+        return definition
+    return {**definition, 'media': [
+        {**item, 'url': f'/learner_api/student-activity/{kind}/{pk}/{group_id}/{activity_id}/files/{item["attachment_id"]}/'}
+        if item.get('kind') == 'pdf' and item.get('attachment_id') else item
+        for item in definition.get('media', [])
+    ]}
+
+
+def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=None):
     row = stored['_source']
-    definition = _definition_for(stored)
+    definition = _local_pdf_urls(_definition_for(stored), kind, pk, group_id, row['activity_id'])
     try:
         saved = subject_store.state(pk, aptem_id, row['activity_id'])
     except DatabaseError:
@@ -251,11 +297,38 @@ def _owned_material(kind, pk, group_id, activity_id):
     aptem_id = int(str(source.aptem_id).strip())
     with _connection().cursor() as cursor:
         stored = read_student_material(cursor, aptem_id, group_id, activity_id, include_source=True)
-    if stored is None or is_excluded_learner(aptem_id, stored['learner_name']):
+    if is_excluded_learner(aptem_id, (stored or {}).get('learner_name', '')):
         raise LookupError('Activity not found.')
-    if not _emails_match(getattr(source, 'email', ''), stored['_source'].get('learner_email', '')):
+    if not _emails_match(getattr(source, 'email', ''), (stored or {}).get('_source', {}).get('learner_email', '')):
         raise LookupError('The previous learning identity could not be verified.')
+    try:
+        live = _live_subjects(source, aptem_id)
+    except DatabaseError:
+        live = None
+    stored = subject_source.material(live, group_id, activity_id, stored, (stored or {}).get('learner_name', ''))
+    if stored is None:
+        raise LookupError('Activity not found.')
     return aptem_id, stored
+
+
+@require_GET
+@learner_self_or_staff(kwarg='pk')
+def subject_file(request, kind, pk, group_id, activity_id, attachment_id):
+    from .subject_files import stream_pdf
+    try:
+        _aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
+        # Resolve the original attachment even if a later import adds an Azure
+        # copy. Already-issued file URLs must remain valid after that import.
+        definition = build_material(stored, material_schema(activity_id))
+        item = next((item for item in definition['media'] if item.get('kind') == 'pdf'
+                     and str(item.get('attachment_id')) == str(attachment_id)), None)
+        if item is None:
+            return _error('File not found for this activity.', 404)
+        return stream_pdf(request, item['url'])
+    except LookupError:
+        return _error('Activity not found.', 404)
+    except (DatabaseError, ContentUnavailable):
+        return _error('Could not load this file. Please try again.', 503)
 
 
 @require_POST
@@ -269,7 +342,8 @@ def start_subject_attempt(request, kind, pk, group_id, activity_id):
         if not definition['available']:
             return _error('No activity content is available yet.', 409)
         attempt_id = subject_store.start(pk, aptem_id, group_id, activity_id, definition)
-        return _private({'attempt_id': attempt_id, 'definition': {**definition, 'quiz': public_quiz(definition['quiz'])}}, 201)
+        public = _local_pdf_urls(definition, kind, pk, group_id, activity_id)
+        return _private({'attempt_id': attempt_id, 'definition': {**public, 'quiz': public_quiz(definition['quiz'])}}, 201)
     except LookupError as error:
         return _error(str(error), 404)
     except (ContentUnavailable, subject_store.StoreUnavailable) as error:

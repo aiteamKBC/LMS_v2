@@ -78,6 +78,7 @@ import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { resolveDocEmbed } from '@/lib/docEmbed';
 import { type KsbMapping } from '../module-builder/moduleAuthoringData';
 import { SessionsTree } from './SessionsTree';
+import { ReviewsTab } from './reviews/ReviewsTab';
 
 // ============================================================
 // Types — Full Programme Hierarchy
@@ -2118,7 +2119,7 @@ function EnrolledLearnersPanel({
  * chrome, and every one of them now has exactly one home.
  */
 
-type Tab = 'overview' | 'cohorts' | 'groups' | 'modules' | 'sessions' | 'coverage' | 'achievement' | 'quality';
+type Tab = 'overview' | 'cohorts' | 'groups' | 'modules' | 'sessions' | 'coverage' | 'achievement' | 'quality' | 'reviews';
 
 // Actions now carries the "Groups" jump plus Edit and Archive, so the fixed
 // 120px column that fit "Groups" alone is widened to a minmax that keeps room
@@ -2178,6 +2179,7 @@ const TAB_LABELS: Record<Tab, string> = {
   coverage: 'KSB Coverage',
   achievement: 'Achievement KSBs',
   quality: 'Quality',
+  reviews: 'Reviews ID',
 };
 
 const LEGACY_TAB_MAP: Record<string, Tab> = {
@@ -3385,6 +3387,7 @@ export default function ProgrammeDetailPage() {
     { key: 'coverage', label: TAB_LABELS.coverage, icon: 'ri-node-tree', count: missingKsbCount || undefined },
     { key: 'achievement', label: TAB_LABELS.achievement, icon: 'ri-medal-line' },
     { key: 'quality', label: TAB_LABELS.quality, icon: 'ri-shield-check-line' },
+    { key: 'reviews', label: TAB_LABELS.reviews, icon: 'ri-clipboard-line' },
   ];
 
   return (
@@ -4650,6 +4653,10 @@ export default function ProgrammeDetailPage() {
               </div>
             </div>
           </div>
+        )}
+
+        {tab === 'reviews' && (
+          <ReviewsTab programmeId={PROGRAMME.id} programmeName={PROGRAMME.name} />
         )}
       </div>
 
