@@ -40,7 +40,12 @@ export function AccessPanel({
   /** True when this is the signed-in administrator's own account. */
   isSelf: boolean;
   onClose: () => void;
-  onSaved: (access: string) => void;
+  /** Both halves of what was saved: the landing page, and the full set held.
+   *  The set matters as much as the primary — the caller patches its row with
+   *  it, and reopening this panel seeds the ticks from it. Reporting only the
+   *  primary left the row's `accesses` stale, so a second grant saved fine and
+   *  then appeared to have been dropped. */
+  onSaved: (access: string, accesses: string[]) => void;
 }) {
   // The grants held, and which of them is the landing page. Seeded from the
   // account's own set, falling back to its primary for a row saved before
@@ -97,7 +102,9 @@ export function AccessPanel({
         access: primary,
         accesses: granted,
       });
-      onSaved(primary);
+      // The server derives the stored set the same way: super-admin is held
+      // alone, everything else keeps the ticks as sent.
+      onSaved(primary, granted);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not change the access.');

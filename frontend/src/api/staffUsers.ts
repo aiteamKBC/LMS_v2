@@ -105,6 +105,18 @@ export function accessLabel(access: string | null | undefined): string {
   return ACCESS_OPTIONS.find((o) => o.id === access)?.label || 'No access set';
 }
 
+/** The grant's name without the word "access".
+ *
+ * Every label ends in "access", which reads fine on its own but turns a row
+ * holding three into "Curriculum access Coach access Enrolment access" — the
+ * only word repeated is the one carrying no information. Used where the column
+ * heading already says Access; `accessLabel` stays for places that stand alone. */
+export function accessShortLabel(access: string | null | undefined): string {
+  const label = ACCESS_OPTIONS.find((o) => o.id === access)?.label;
+  if (!label) return 'None';
+  return label.replace(/\s*access$/i, '');
+}
+
 export interface CreateStaffUserInput {
   username: string;
   email: string;

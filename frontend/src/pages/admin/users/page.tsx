@@ -15,7 +15,7 @@ import { useSearchParams, Link } from 'react-router-dom';
 import { AdminPage, DataPanel, Pager, SourceNote, StatusBadge } from '../_shared/AdminPage';
 import { useAdminData } from '../_shared/useAdminData';
 import { accountAction, fetchAccounts, type AccountStatus, type PlatformAccount } from '@/api/platformAdmin';
-import { accessLabel, fetchStaffUser, type StaffUserRow } from '@/api/staffUsers';
+import { accessLabel, accessShortLabel, fetchStaffUser, type StaffUserRow } from '@/api/staffUsers';
 import { useAuth } from '@/hooks/useAuth';
 import { EditStaffModal } from '@/pages/users/components/EditStaffModal';
 import { AccessPanel } from './AccessPanel';
@@ -290,13 +290,32 @@ export default function AdminAccountsPage() {
                           Set by employer record
                         </span>
                       ) : account.access ? (
+                        // The workspace they sign in to, named; anything else
+                        // they hold as a count. Listing every grant in full
+                        // wrapped the cell onto three lines and repeated the
+                        // word "access" three times — the extra grants are
+                        // worth knowing about, but they are not what this
+                        // column is for. The names are a hover away, and the
+                        // panel behind the click shows them properly.
                         <button
                           onClick={() => setEditingAccess(account)}
-                          className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary-50 text-primary-700 border border-primary-200/50 whitespace-nowrap cursor-pointer hover:bg-primary-100 hover:border-primary-300"
-                          title="Change this account's access"
+                          className="inline-flex items-center gap-1 text-left cursor-pointer group whitespace-nowrap"
+                          title={
+                            (account.accesses?.length ?? 0) > 1
+                              ? `Signs in to ${accessLabel(account.access)}. Also holds `
+                                + `${account.accesses!.filter(v => v !== account.access).map(accessLabel).join(', ')}.`
+                              : `${accessLabel(account.access)}. Click to change.`
+                          }
                         >
-                          {accessLabel(account.access)}
-                          <AppIcon className="ri-pencil-line ml-1 text-[9px] opacity-60"></AppIcon>
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-primary-50 text-primary-700 border-primary-200/50 group-hover:bg-primary-100 group-hover:border-primary-300">
+                            {accessShortLabel(account.access)}
+                          </span>
+                          {(account.accesses?.length ?? 0) > 1 && (
+                            <span className="text-[10px] font-semibold text-foreground-400 group-hover:text-foreground-600">
+                              +{account.accesses!.length - 1}
+                            </span>
+                          )}
+                          <AppIcon className="ri-pencil-line text-[9px] opacity-0 group-hover:opacity-60 transition-opacity"></AppIcon>
                         </button>
                       ) : (
                         <button
@@ -374,12 +393,16 @@ export default function AdminAccountsPage() {
           account={editingAccess}
           isSelf={auth.account?.id === editingAccess.id}
           onClose={() => setEditingAccess(null)}
-          onSaved={(access) =>
+          onSaved={(access, accesses) =>
             // Patch the row in place so the new grant shows without a refetch.
+            // Both fields, not just the primary: this panel seeds its ticks
+            // from `accesses` when it reopens, so patching only `access` left
+            // the row claiming one grant and a second access looked like it
+            // had not saved — it had, on the server.
             setData(prev => prev && ({
               ...prev,
               results: prev.results.map(r =>
-                r.id === editingAccess.id ? { ...r, access } : r),
+                r.id === editingAccess.id ? { ...r, access, accesses } : r),
             }))
           }
         />
