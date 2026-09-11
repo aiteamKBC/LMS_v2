@@ -57,23 +57,30 @@ export function OverviewTab({
   real,
   realLoading,
   recordedOtjhTotal,
+  auditOtjhActual,
+  auditOtjhPlanned,
   subjectCount,
   onNavigateTab,
 }: {
   real: LearnerDetail | null;
   realLoading: boolean;
   recordedOtjhTotal?: number | null;
+  auditOtjhActual?: number | null;
+  auditOtjhPlanned?: number | null;
   subjectCount?: number | null;
   onNavigateTab: (tab: ProgressTabKey) => void;
 }) {
   const navigate = useNavigate();
   const loading = realLoading;
 
-  const usesCombinedSubjects = recordedOtjhTotal != null;
-  const completedHours = usesCombinedSubjects ? recordedOtjhTotal : parseHours(real?.completedHours);
-  const targetHours = usesCombinedSubjects ? 0 : parseHours(real?.targetHours);
+  const usesAuditTotals = auditOtjhActual != null || auditOtjhPlanned != null;
+  const usesCombinedSubjects = !usesAuditTotals && recordedOtjhTotal != null;
+  const completedHours = usesAuditTotals ? (auditOtjhActual ?? 0) : usesCombinedSubjects ? (recordedOtjhTotal ?? 0) : parseHours(real?.completedHours);
+  const targetHours = usesAuditTotals ? (auditOtjhPlanned ?? 0) : usesCombinedSubjects ? 0 : parseHours(real?.targetHours);
   const otjhPct = targetHours > 0 ? Math.min(100, Math.round((completedHours / targetHours) * 100)) : null;
-  const otjhStatus = usesCombinedSubjects ? null : real?.otjhStatus || null;
+  const otjhStatus = usesAuditTotals
+    ? (targetHours > 0 && completedHours < targetHours ? 'Needs attention' : 'On track')
+    : usesCombinedSubjects ? null : real?.otjhStatus || null;
   const otjhAtRisk = /at risk|attention/i.test(otjhStatus || '');
   const otjhBehind = Math.max(0, targetHours - completedHours);
 
@@ -98,6 +105,7 @@ export function OverviewTab({
     },
   ];
   const attentionItems = candidateItems.filter((item): item is AttentionItem => item !== false);
+  const hasKsbData = ksbTotal > 0;
 
   if (loading) {
     return <Panel><RowsSkeleton rows={4} /></Panel>;
@@ -111,7 +119,9 @@ export function OverviewTab({
           icon="ri-calendar-check-line" label="OTJ Hours" tone={otjhStatus ? (otjhAtRisk ? 'caution' : 'positive') : 'brand'} accent="green"
           value={formatHoursMinutes(completedHours)}
           percent={otjhPct}
-          caption={usesCombinedSubjects
+          caption={usesAuditTotals
+            ? `Target ${formatHoursMinutes(targetHours)}`
+            : usesCombinedSubjects
             ? `Across ${subjectCount || 0} subjects`
             : targetHours > 0
               ? `Target ${formatHoursMinutes(targetHours)}${otjhStatus ? ` · ${otjhStatus}` : ''}`
@@ -147,8 +157,8 @@ export function OverviewTab({
               size="sm"
               variant="empty"
               icon="ri-checkbox-circle-line"
-              title="You're all caught up"
-              description="Hours and KSBs both look on track."
+              title={hasKsbData ? "You're all caught up" : 'No KSBs defined yet'}
+              description={hasKsbData ? 'Hours and KSBs both look on track.' : 'Your programme has not defined any KSBs yet.'}
             />
           ) : (
             attentionItems.map((item, i) => (

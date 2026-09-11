@@ -71,6 +71,8 @@ export default function ProgressPage() {
             real={real}
             realLoading={combinedLoading}
             recordedOtjhTotal={combinedLearning.data?.recorded_otjh_total}
+            auditOtjhActual={combinedLearning.data?.audit_lms_actual}
+            auditOtjhPlanned={combinedLearning.data?.audit_tp_planned}
             subjectCount={combinedLearning.summary?.subjectCount ?? combinedLearning.data?.module_count}
             onNavigateTab={setActiveTab}
           />
