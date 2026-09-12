@@ -309,6 +309,7 @@ INSTALLED_APPS = [
     'curriculum_api',
     'engagement_api',
     'enrolment_api',
+    'progress_reviews_api',
     'chat',
     # Platform authentication (auth schema on the Neon enrolment database).
     # Its tables are unmanaged and created by `manage.py apply_login_tables`.
@@ -777,6 +778,12 @@ AZURE_ENROLMENT_DOCS_CONTAINER = (
     os.environ.get("AZURE_ENROLMENT_DOCS_CONTAINER")
     or os.environ.get("AZURE_Enrolment_Docs_CONTAINER")
     or "enrolment-docs"
+)
+
+# Generated Progress Review PPTX decks — see progress_reviews_api/storage.py.
+# Platform-generated like the enrolment documents above: no quarantine/scan step.
+AZURE_PROGRESS_REVIEW_CONTAINER = (
+    os.environ.get("AZURE_PROGRESS_REVIEW_CONTAINER") or "progress-review-decks"
 )
 
 # --- Platform authentication (the `login` app) -------------------------------
