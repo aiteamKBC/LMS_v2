@@ -294,6 +294,9 @@ export function ModuleFormDrawer({
   // The inputs `plan` was fetched for. A plan whose key no longer matches the
   // form is stale, and the locally projected end date is used instead of it.
   const [planFor, setPlanFor] = useState('');
+  // The record the plan in state belongs to, so re-seeding the same one does not
+  // throw it away. See the seed effect below.
+  const seededPlanKey = useRef('');
   // True while the debounced session-plan preview is in flight. It no longer
   // holds the save back: the end date is projected locally the moment the weeks
   // or the start date move, so a save can never carry the previous value's date.
@@ -348,11 +351,25 @@ export function ModuleFormDrawer({
   }, [module?.deliveryUsages, ownGroupId]);
 
   useEffect(() => {
-    if (!allowSeed(open, cleanText(module?.id) || 'new-module')) return;
+    const recordKey = cleanText(module?.id) || 'new-module';
+    if (!allowSeed(open, recordKey)) return;
     setError(null);
     setSaving(false);
-    setPlan(null);
-    setPlanFor('');
+    // Only when the drawer is being pointed at a DIFFERENT record.
+    //
+    // The plan is derived from the fields seeded below, not one of them, and
+    // this effect re-runs whenever `module`, `groups` or `cohorts` arrive as new
+    // objects -- which the list behind now does on its own, when the reader
+    // returns to the tab and when the epoch poll notices somebody's write. A
+    // re-seed of the SAME module puts identical values back, so the plan effect
+    // below sees no dependency move and never refetches: clearing it here left
+    // "Choose a group delivery day and start date" sitting where a plan had been
+    // a moment earlier, with nothing able to bring it back.
+    if (seededPlanKey.current !== recordKey) {
+      seededPlanKey.current = recordKey;
+      setPlan(null);
+      setPlanFor('');
+    }
     setTutorConflictGroup(null);
     attachedThisSession.current = new Set();
     overrideGroupIds.current = new Set();
