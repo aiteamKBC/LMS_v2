@@ -39,7 +39,7 @@ function MockMonthlyCyclePage() {
       pageTitle="Monthly Cycle" pageSubtitle="Your apprenticeship monthly rhythm — June 2026"
       userName={p.fullName} userRole={`${p.programme} Apprentice`}
     >
-      <div className="p-6 space-y-6">
+      <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
         {/* ── Monthly Readiness Score (dynamic per month) ── */}
         <MonthlyReadinessHero month={activeMonth} />
 

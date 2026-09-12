@@ -593,7 +593,7 @@ export function Sidebar({
             )}
             <nav aria-label={`${roleLabel} primary navigation`} className="mt-7 min-h-0 w-full flex-1 space-y-4 overflow-y-auto px-5 [scrollbar-width:none]">
               {filteredNavItems.map(item => (
-                <div key={item.id} onMouseEnter={() => setPreviewId(item.id)} onFocus={() => setPreviewId(item.id)}>
+                <div key={item.id} onMouseEnter={() => { if (hasChildren(item)) setPreviewId(item.id); }} onFocus={() => { if (hasChildren(item)) setPreviewId(item.id); }}>
                 {hasChildren(item) ? (
                   <ExpandedGroup
                     item={item}
@@ -604,7 +604,12 @@ export function Sidebar({
                     presentation="rail"
                   />
                 ) : (
-                  <ExpandedLink item={item} isActive={isActive} onNavigate={() => { openPreview(item.id); onCloseMobile(); }} presentation="rail" />
+                  <ExpandedLink item={item} isActive={isActive} onNavigate={() => {
+                    setPreviewId(null);
+                    handleMouseLeave();
+                    onPinChange?.(false);
+                    onCloseMobile();
+                  }} presentation="rail" />
                 )}
                 </div>
               ))}

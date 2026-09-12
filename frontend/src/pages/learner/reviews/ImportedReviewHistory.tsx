@@ -13,6 +13,7 @@ interface ImportedReviewHistoryProps {
   kind: LearnerKind;
   learnerId: string;
   category: ReviewHistoryCategory;
+  hideHeader?: boolean;
 }
 
 const monthOptions = [
@@ -124,7 +125,7 @@ function ReviewSection({ section, open, onToggle }: { section: ImportedReviewSec
   );
 }
 
-export function ImportedReviewHistory({ kind, learnerId, category }: ImportedReviewHistoryProps) {
+export function ImportedReviewHistory({ kind, learnerId, category, hideHeader = false }: ImportedReviewHistoryProps) {
   const [reviews, setReviews] = useState<ImportedReview[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -182,13 +183,13 @@ export function ImportedReviewHistory({ kind, learnerId, category }: ImportedRev
 
   return (
     <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-[0_8px_30px_rgba(27,12,52,0.06)]">
-      <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+      {!hideHeader && <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <div className="flex items-center gap-3">
           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-secondary-50 text-secondary-700"><AppIcon className="ri-history-line" /></span>
           <div><h2 className="text-base font-bold text-foreground-900">{title}</h2><p className="mt-0.5 text-xs text-foreground-500">Previous Aptem records. Select a review to see every imported section here.</p></div>
         </div>
         <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-background-300 bg-background-100 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wide text-foreground-500"><AppIcon className="ri-lock-line" />Read only</span>
-      </div>
+      </div>}
 
       {loading ? <div className="p-5"><RowsSkeleton rows={4} /></div> : error ? (
         <div className="m-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}</div>
@@ -203,30 +204,27 @@ export function ImportedReviewHistory({ kind, learnerId, category }: ImportedRev
             <label><span className="sr-only">Filter by month</span><select value={month} onChange={(event) => setMonth(event.target.value)} className="h-10 w-full rounded-xl border border-background-300 bg-white px-3 text-xs font-semibold text-foreground-700 outline-none focus:border-primary-400"><option value="all">All months</option>{monthOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           </div>
 
-          <div className="grid min-h-[280px] lg:grid-cols-[minmax(300px,390px)_minmax(0,1fr)]">
-            <div className="max-h-[680px] overflow-y-auto border-b border-background-200 lg:border-b-0 lg:border-r">
-              <div className="flex items-center justify-between border-b border-background-200 px-4 py-2.5 text-[10px] font-bold uppercase tracking-wide text-foreground-400"><span>Records</span><span>{filtered.length} of {reviews.length}</span></div>
-              {filtered.length === 0 ? <p className="p-6 text-center text-sm text-foreground-500">No reviews match these filters.</p> : filtered.map((review) => {
-                const date = reviewDate(review);
-                const active = selectedId === review.id;
-                return (
-                  <button key={review.id} type="button" onClick={() => selectReview(review)} className={`flex w-full items-start gap-3 border-b border-background-200 p-4 text-left transition ${active ? 'bg-primary-50 ring-1 ring-inset ring-primary-200' : 'hover:bg-background-100'}`}>
-                    <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${active ? 'bg-primary-600 text-white' : 'bg-primary-50 text-primary-700'}`}><AppIcon className={category === 'monthly-coaching' ? 'ri-user-voice-line' : 'ri-file-chart-line'} /></span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs font-bold text-foreground-900">{review.name}</span>
-                      <span className="mt-1 block truncate text-[10px] text-foreground-500">{review.type}{review.reviewerName ? ` · ${review.reviewerName}` : ''}</span>
-                      <span className="mt-2 flex flex-wrap items-center gap-2"><span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold ${statusStyle(review.status)}`}>{statusLabel(review.status)}</span><span className="text-[10px] text-foreground-400">{formatDate(date)}{review.plannedTime ? ` · ${review.plannedTime}` : ''}</span></span>
-                    </span>
-                    <AppIcon className={`ri-arrow-right-s-line mt-2 text-foreground-400 transition-transform ${active ? 'rotate-90 text-primary-700' : ''}`} />
-                  </button>
-                );
-              })}
-            </div>
-
+          {!selected && <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-left">
+              <thead className="border-b border-background-200 bg-primary-50/60 text-[10px] font-bold uppercase tracking-wide text-foreground-500">
+                <tr><th className="px-5 py-3">Review</th><th className="px-5 py-3">Type</th><th className="px-5 py-3">Reviewer</th><th className="px-5 py-3">Planned date</th><th className="px-5 py-3">Status</th><th className="px-5 py-3 text-right">Details</th></tr>
+              </thead>
+              <tbody className="divide-y divide-background-200">
+                {filtered.length === 0 && <tr><td colSpan={6} className="p-6 text-center text-sm text-foreground-500">No reviews match these filters.</td></tr>}
+                {filtered.map((review) => <tr key={review.id} className="hover:bg-primary-50/30">
+                  <td className="px-5 py-4 text-xs font-bold text-foreground-900">{review.name}</td>
+                  <td className="px-5 py-4 text-xs text-foreground-600">{review.type}</td>
+                  <td className="px-5 py-4 text-xs text-foreground-600">{review.reviewerName || '-'}</td>
+                  <td className="px-5 py-4 text-xs text-foreground-600">{formatDate(reviewDate(review))}{review.plannedTime ? ` · ${review.plannedTime}` : ''}</td>
+                  <td className="px-5 py-4"><span className={`rounded-full border px-2 py-1 text-[10px] font-bold ${statusStyle(review.status)}`}>{statusLabel(review.status)}</span></td>
+                  <td className="px-5 py-4 text-right"><button type="button" aria-label={`View ${review.name}`} onClick={() => selectReview(review)} className="rounded-lg bg-primary-50 px-3 py-2 text-xs font-bold text-primary-700 hover:bg-primary-100">View</button></td>
+                </tr>)}
+              </tbody>
+            </table>
+          </div>}
+          {selected && <div>
+            {selected && <button type="button" onClick={() => { setSelectedId(''); setOpenSections([]); }} className="mb-3 rounded-lg border border-background-300 bg-white px-3 py-2 text-xs font-bold text-primary-700 hover:bg-primary-50">← Back to reviews</button>}
             <div className="min-w-0 bg-background-100/25 p-4 sm:p-5">
-              {!selected ? (
-                <div className="flex h-full min-h-56 flex-col items-center justify-center text-center"><span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-50 text-xl text-primary-700"><AppIcon className="ri-cursor-line" /></span><p className="mt-3 text-sm font-bold text-foreground-800">Select a review</p><p className="mt-1 max-w-sm text-xs leading-5 text-foreground-500">Its imported fields, answers and tables will open in this panel without leaving the page.</p></div>
-              ) : (
                 <div className="space-y-4">
                   <div className="rounded-2xl border border-primary-100 bg-white p-4 shadow-sm">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-wide text-primary-600">Imported review</p><h3 className="mt-1 text-lg font-bold text-foreground-900">{selected.name}</h3><p className="mt-1 text-xs text-foreground-500">{selected.type}</p></div><span className={`w-fit rounded-full border px-3 py-1 text-[10px] font-bold ${statusStyle(selected.status)}`}>{statusLabel(selected.status)}</span></div>
@@ -238,9 +236,8 @@ export function ImportedReviewHistory({ kind, learnerId, category }: ImportedRev
                     return <ReviewSection key={section.id} section={section} open={openSections.includes(sectionId)} onToggle={() => setOpenSections((current) => current.includes(sectionId) ? current.filter((value) => value !== sectionId) : [...current, sectionId])} />;
                   }) : <div className="rounded-xl border border-dashed border-background-300 bg-white p-6 text-center text-sm text-foreground-500">This review has a summary only; no section details were imported.</div>}
                 </div>
-              )}
             </div>
-          </div>
+          </div>}
         </>
       )}
     </section>

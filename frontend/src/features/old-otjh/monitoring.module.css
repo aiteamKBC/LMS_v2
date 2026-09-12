@@ -61,7 +61,6 @@
 .table th { padding: 14px 16px; background: var(--record-soft); color: var(--record-deep); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
 .table td { padding: 18px 16px; vertical-align: middle; border-bottom: 1px solid var(--record-border); }
 :global(.dashboard-theme .workspace-main) .dashboard .table thead th { background: var(--record-soft); color: var(--record-deep); }
-.table tbody tr:hover { background: var(--record-surface); }
 .table td:first-child { max-width: 280px; min-width: 210px; }
 .table td:nth-child(3) { min-width: 170px; }
 .table td:nth-child(3) > div { margin: 9px 0; }

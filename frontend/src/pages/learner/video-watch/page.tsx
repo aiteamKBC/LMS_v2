@@ -94,23 +94,23 @@ function completionTimeFor(component: JourneyComponent, detail: LearnerDetail | 
 
 function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange: (seconds: number | null) => void; initialSeconds?: number | null }) {
   const partsFromSeconds = (seconds: number | null) => {
-    if (seconds == null || seconds <= 0) return { hours: '', minutes: '', seconds: '' };
-    const [hours, minutes, secondsPart] = formatClock(seconds).split(':');
-    return { hours, minutes, seconds: secondsPart };
+    if (seconds == null || seconds <= 0) return { hours: '', minutes: '' };
+    const [hours, minutes] = formatClock(seconds).split(':');
+    return { hours, minutes };
   };
   const [parts, setParts] = useState(() => partsFromSeconds(initialSeconds));
 
   useEffect(() => {
     setParts(current => (
-      current.hours || current.minutes || current.seconds
+      current.hours || current.minutes
         ? current
         : partsFromSeconds(initialSeconds)
     ));
   }, [initialSeconds]);
 
   const totalSeconds = (next: typeof parts): number | null => {
-    if (!next.hours && !next.minutes && !next.seconds) return null;
-    return (Number(next.hours) || 0) * 3600 + (Number(next.minutes) || 0) * 60 + (Number(next.seconds) || 0);
+    if (!next.hours && !next.minutes) return null;
+    return (Number(next.hours) || 0) * 3600 + (Number(next.minutes) || 0) * 60;
   };
 
   const updatePart = (part: keyof typeof parts, rawValue: string) => {
@@ -123,21 +123,20 @@ function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange:
   const normalise = () => {
     const total = totalSeconds(parts);
     if (total == null) return;
-    const [hours, minutes, seconds] = formatClock(total).split(':');
-    setParts({ hours, minutes, seconds });
+    const [hours, minutes] = formatClock(total).split(':');
+    setParts({ hours, minutes });
     onChange(total);
   };
 
   const fields: { key: keyof typeof parts; label: string; ariaLabel: string }[] = [
     { key: 'hours', label: 'hour', ariaLabel: 'Hours spent' },
     { key: 'minutes', label: 'min', ariaLabel: 'Minutes spent' },
-    { key: 'seconds', label: 'sec', ariaLabel: 'Seconds spent' },
   ];
 
   return (
     <div
       className="inline-flex items-center gap-2 rounded-xl border border-background-300 bg-white px-3 py-1.5 text-foreground-700 shadow-sm transition-colors focus-within:border-primary-300 focus-within:ring-2 focus-within:ring-primary-100"
-      title="Enter time spent in hours, minutes and seconds"
+      title="Enter time spent in hours and minutes"
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) normalise();
       }}
@@ -158,7 +157,7 @@ function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange:
                   if (event.key === 'Enter') event.currentTarget.blur();
                   if (event.key === 'Escape') {
                     event.preventDefault();
-                    const empty = { hours: '', minutes: '', seconds: '' };
+                    const empty = { hours: '', minutes: '' };
                     setParts(empty);
                     onChange(null);
                   }
@@ -620,6 +619,19 @@ export default function ComponentViewPage() {
     }
   };
 
+  const outsideWorkingHoursDeclaration = componentAccess.outsideWorkingHours ? (
+    <label className="flex min-w-0 cursor-pointer items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold leading-5 text-amber-950">
+      <input
+        type="checkbox"
+        checked={outsideWorkingHoursConfirmed}
+        onChange={event => setOutsideWorkingHoursConfirmed(event.target.checked)}
+        className="mt-0.5 h-4 w-4 shrink-0 accent-amber-700"
+      />
+      <span>I confirm that I completed this activity outside UK working hours.</span>
+    </label>
+  ) : null;
+  const showDeclarationInBanner = isAssignment || phase === 'reflect';
+
   return (
     <WorkspaceShell
       role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel}
@@ -628,7 +640,7 @@ export default function ComponentViewPage() {
       userName="Learner" userRole="Learner"
       hideBreadcrumbs
     >
-      <div className="p-3 md:p-6 max-w-6xl mx-auto">
+      <div className="mx-auto page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
         <button
           onClick={() => navigate(backHref)}
           className="mb-5 inline-flex items-center gap-2 rounded-xl border border-background-300 bg-white px-4 py-2.5 text-[13px] font-semibold text-foreground-700 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary-200 hover:text-primary-700 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 cursor-pointer"
@@ -649,17 +661,11 @@ export default function ComponentViewPage() {
                 <p className="text-sm font-bold">You are accessing this component outside UK working hours</p>
                 <p className="mt-1 text-xs leading-5 text-amber-900/80">
                   Working hours are Monday to Friday, 07:00-19:00 UK time. The current UK time is {componentAccess.currentTimeLabel}.
-                  Your activity time will continue to be calculated automatically. Confirm the declaration below before completing this component.
+                  Your activity time will continue to be calculated automatically. {showDeclarationInBanner
+                    ? 'Confirm the declaration below before completing this component.'
+                    : 'Confirm the declaration next to Finish before completing this component.'}
                 </p>
-                <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-xl border border-amber-200 bg-white/75 px-3 py-2.5 text-xs font-semibold leading-5 text-amber-950">
-                  <input
-                    type="checkbox"
-                    checked={outsideWorkingHoursConfirmed}
-                    onChange={event => setOutsideWorkingHoursConfirmed(event.target.checked)}
-                    className="mt-0.5 h-4 w-4 shrink-0 accent-amber-700"
-                  />
-                  <span>I confirm that I completed this activity outside UK working hours.</span>
-                </label>
+                {showDeclarationInBanner && <div className="mt-3">{outsideWorkingHoursDeclaration}</div>}
               </div>
             </div>
           </div>
@@ -746,7 +752,7 @@ export default function ComponentViewPage() {
                   </div>
                 </div>
 
-                {!isAssignment && <div className="flex items-center gap-3 shrink-0">
+                {!isAssignment && <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-3">
                   {!usesManualTimeOnly && (
                     <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-mono text-sm font-semibold tabular-nums bg-background-100 text-foreground-700" title="Time on this activity">
                       <AppIcon className="ri-timer-line" /> {formatClock(elapsedSeconds)}
@@ -828,27 +834,32 @@ export default function ComponentViewPage() {
                       </label>
                     )
                   )}
-                  <button
-                    onClick={finishConsuming}
-                    disabled={(!!criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed)}
-                    title={
-                      criteria && !criteria.met
-                        ? 'Complete the criteria below before finishing.'
-                        : manualTimeMissing
-                          ? 'Enter the time spent before finishing.'
-                          : componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed
-                            ? 'Confirm the out-of-hours declaration before finishing.'
-                          : undefined
-                    }
-                    className={`inline-flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-xl transition-colors ${
-                      (criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed)
-                        ? 'bg-background-200 text-foreground-400 cursor-not-allowed'
-                        : 'bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer'
-                    }`}
-                  >
-                    <AppIcon className={(criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed) ? 'ri-lock-line' : 'ri-check-line'} />
-                    Finish
-                  </button>
+                  <div className="flex min-w-0 max-w-full items-center gap-3">
+                    {outsideWorkingHoursDeclaration && (
+                      <div className="min-w-0 max-w-xs">{outsideWorkingHoursDeclaration}</div>
+                    )}
+                    <button
+                      onClick={finishConsuming}
+                      disabled={(!!criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed)}
+                      title={
+                        criteria && !criteria.met
+                          ? 'Complete the criteria below before finishing.'
+                          : manualTimeMissing
+                            ? 'Enter the time spent before finishing.'
+                            : componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed
+                              ? 'Confirm the out-of-hours declaration before finishing.'
+                            : undefined
+                      }
+                      className={`inline-flex shrink-0 items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-xl transition-colors ${
+                        (criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed)
+                          ? 'bg-background-200 text-foreground-400 cursor-not-allowed'
+                          : 'bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer'
+                      }`}
+                    >
+                      <AppIcon className={(criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed) ? 'ri-lock-line' : 'ri-check-line'} />
+                      Finish
+                    </button>
+                  </div>
                 </div>}
               </div>
 

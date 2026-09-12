@@ -175,19 +175,19 @@ export function MockKsbBody({ showHero = true }: { showHero?: boolean }) {
           ═══════════════════════════════════════════════════ */}
       {showHero && (
       <SectionReveal delay={0}>
-        <div className="learner-super-admin-hero relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <div className="learner-super-admin-hero relative rounded-2xl overflow-hidden workspace-page-hero" >
+          <div className="absolute inset-0 pointer-events-none overflow-hidden hidden">
             <div className="absolute animate-liquid-blob-1 opacity-20" style={{ width: '55%', height: '28%', left: '-8%', top: '-8%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.25) 0%, transparent 70%)', filter: 'blur(55px)' }} />
             <div className="absolute animate-liquid-blob-2 opacity-12" style={{ width: '65%', height: '32%', right: '-12%', top: '12%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.18) 0%, transparent 70%)', filter: 'blur(50px)' }} />
           </div>
-          <div className="relative p-6 md:p-8 flex flex-col lg:flex-row items-start lg:items-center gap-6 lg:gap-10">
+          <div className="relative p-6 md:p-6 flex flex-col lg:flex-row items-start lg:items-center gap-6 lg:gap-10">
             <div className="flex items-center gap-4 shrink-0">
-              <span className="w-14 h-14 rounded-2xl bg-white/15 backdrop-blur-sm flex items-center justify-center">
-                <AppIcon className="ri-bar-chart-box-line text-white text-2xl"></AppIcon>
+              <span className="w-14 h-14 rounded-2xl bg-primary-100/60 backdrop-blur-sm flex items-center justify-center">
+                <AppIcon className="ri-bar-chart-box-line text-primary-800 text-2xl"></AppIcon>
               </span>
               <div>
-                <h2 className="text-xl font-heading font-bold text-white">KSB Progress</h2>
-                <p className="text-sm text-white/50">Knowledge, Skills & Behaviours</p>
+                <h2 className="text-xl font-heading font-bold text-primary-800">KSB Progress</h2>
+                <p className="text-sm text-foreground-500">Knowledge, Skills & Behaviours</p>
               </div>
             </div>
             <div className="lg:ml-auto flex items-center gap-6">
@@ -195,25 +195,25 @@ export function MockKsbBody({ showHero = true }: { showHero?: boolean }) {
                 <div className="relative">
                   <DonutRing pct={totalPct} size={60} stroke={5} color={heroColor} trackClass="text-white/10" />
                   <div className="absolute inset-0 flex items-center justify-center">
-                    <span className="text-sm font-bold text-white">{totalPct}%</span>
+                    <span className="text-sm font-bold text-primary-800">{totalPct}%</span>
                   </div>
                 </div>
                 <div>
-                  <p className="text-xs text-white/40">Validated</p>
-                  <p className="text-base font-heading font-bold text-white">{validated}<span className="text-sm font-normal text-white/30">/{KSB_RECORDS.length}</span></p>
+                  <p className="text-xs text-foreground-500">Validated</p>
+                  <p className="text-base font-heading font-bold text-primary-800">{validated}<span className="text-sm font-normal text-foreground-500">/{KSB_RECORDS.length}</span></p>
                 </div>
               </div>
-              <div className="w-px h-10 bg-white/10 hidden sm:block" />
+              <div className="w-px h-10 bg-primary-100/60 hidden sm:block" />
               <div className="flex items-center gap-4">
                 {categoryStats.map(cat => (
                   <div key={cat.type} className="flex flex-col items-center gap-1">
                     <div className="relative">
                       <DonutRing pct={cat.pct} size={40} stroke={4} color={cat.type === 'Knowledge' ? 'primary' : cat.type === 'Skill' ? 'accent' : 'secondary'} trackClass="text-white/10" />
                       <div className="absolute inset-0 flex items-center justify-center">
-                        <span className="text-[9px] font-bold text-white">{cat.pct}%</span>
+                        <span className="text-[9px] font-bold text-primary-800">{cat.pct}%</span>
                       </div>
                     </div>
-                    <span className="text-[9px] text-white/40 font-medium">{cat.type === 'Knowledge' ? 'K' : cat.type === 'Skill' ? 'S' : 'B'}</span>
+                    <span className="text-[9px] text-foreground-500 font-medium">{cat.type === 'Knowledge' ? 'K' : cat.type === 'Skill' ? 'S' : 'B'}</span>
                   </div>
                 ))}
               </div>

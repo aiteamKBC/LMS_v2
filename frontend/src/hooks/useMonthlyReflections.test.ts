@@ -1,0 +1,41 @@
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+import { emptyMonthlyAssignment } from '@/api/monthlyAssignment';
+import { useMonthlyReflections } from './useMonthlyReflections';
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+const context = { month: '2026-09', answer: 'My assignment answer', question: 'What did you learn?', learning: { learned: '', understood: '', skills: '' }, activities: [] };
+const draft = 'supported '.repeat(20).trim();
+it('fills only empty reflections and does not regenerate after saving', async () => {
+  const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ lmsReflection: draft, integratedReflection: draft }) });
+  vi.stubGlobal('fetch', fetch);
+  let data = emptyMonthlyAssignment([], context.month);
+  data.integratedReflection = 'My own reflection';
+  const apply = vi.fn(update => { data = update(data); });
+  const { rerender } = renderHook(() => useMonthlyReflections(true, '1', context, data, apply));
+  await waitFor(() => expect(apply).toHaveBeenCalled());
+  expect(data.lmsReflection).toBe(draft);
+  expect(data.integratedReflection).toBe('My own reflection');
+  rerender();
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+it('preserves typing during generation and ignores insufficient drafts', async () => {
+  let resolve!: (value: unknown) => void;
+  vi.stubGlobal('fetch', vi.fn(() => new Promise(r => { resolve = r; })));
+  let data = emptyMonthlyAssignment([], context.month);
+  const apply = vi.fn(update => { data = update(data); });
+  renderHook(() => useMonthlyReflections(true, '1', context, data, apply));
+  data.lmsReflection = 'Typed while waiting';
+  await act(async () => resolve({ ok: true, json: async () => ({ lmsReflection: draft, integratedReflection: 'Too short' }) }));
+  expect(data.lmsReflection).toBe('Typed while waiting');
+  expect(data.integratedReflection).toBe('');
+});
+it('does not generate when disabled and ignores results after leaving the step', async () => {
+  let resolve!: (value: unknown) => void;
+  const fetch = vi.fn(() => new Promise(r => { resolve = r; })); vi.stubGlobal('fetch', fetch);
+  const data = emptyMonthlyAssignment([], context.month), apply = vi.fn();
+  const { rerender } = renderHook(({ enabled }) => useMonthlyReflections(enabled, '1', context, data, apply), { initialProps: { enabled: false } });
+  expect(fetch).not.toHaveBeenCalled();
+  rerender({ enabled: true }); rerender({ enabled: false });
+  await act(async () => resolve({ ok: true, json: async () => ({ lmsReflection: draft, integratedReflection: draft }) }));
+  expect(apply).not.toHaveBeenCalled();
+});

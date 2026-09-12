@@ -1,22 +1,28 @@
+import { monthlyPresentation, slideIssue, fillEmptyPresentationSlides } from './monthlyPresentation';
+import { AssignmentCoachingBooking } from './AssignmentCoachingBooking';
+import { useImpactStatements } from '@/hooks/useImpactStatements';
+import { useMonthlyReflections } from '@/hooks/useMonthlyReflections';
+import { useAssignedKsbExplanations } from '@/hooks/useAssignedKsbExplanations';
 import { useEffect, useRef, useState, type ReactNode, type Dispatch, type SetStateAction } from 'react';
 import type { ComponentKsbMapping, LearnerKind, LearnerDetail } from '@/api/learnerDetail';
 import { fetchLearnerDetail } from '@/api/learnerDetail';
-import { fetchEvidence, type EvidenceRecord } from '@/api/evidence';
-import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { fetchEvidence, uploadEvidence, type EvidenceRecord } from '@/api/evidence';
 import { exportMonthlyPresentation, type MonthlyAssignment, type AssignmentQualityCheck } from '@/api/monthlyAssignment';
 import { proofreadLearningReflection, transcribeVoiceReflection } from '@/api/reflectionVoice';
 import type { LearningReflectionSubmissionInput } from '@/api/reflectionSubmission';
 import type { AssignmentAnswers } from './AssignmentSubmissionWizard';
-import { CheckCircle2, Circle } from 'lucide-react';
+import { CheckCircle2, Circle, Loader2, Info, AlertCircle } from 'lucide-react';
 import { startLiveDictation } from '@/utils/liveDictation';
+import { Modal } from '@/pages/users/components/Modal';
 
 const inputClass = 'mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50';
 const buttonClass = 'rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-blue-50 disabled:opacity-40';
 
 /** AI never silently replaces a learner's answer: suggestions require acceptance. */
-export function MonthlyAnswerField({ label, value, onChange, disabled, title, rows = 5, minimumWords = 0, onePointPerLine = false }: {
+export function MonthlyAnswerField({ label, value, onChange, disabled, title, rows = 5, minimumWords = 0, onePointPerLine = false, generation }: {
   label: string; value: string; onChange: (value: string) => void; disabled: boolean; title: string; rows?: number;
   minimumWords?: number; onePointPerLine?: boolean;
+  generation?: { enabled: boolean; busy: boolean; onGenerate: () => void };
 }) {
   const [busy, setBusy] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -91,14 +97,15 @@ export function MonthlyAnswerField({ label, value, onChange, disabled, title, ro
     } catch (e) { setError(e instanceof Error ? e.message : 'Microphone access failed.'); }
     finally { if (active.current) setBusy(false); }
   };
-  return <div>
-    <label className="block text-sm font-medium text-slate-900">{label}
+  return <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+    <label className="block text-sm font-semibold leading-6 text-slate-900">{label}
       <textarea className={inputClass} rows={rows} value={value} disabled={disabled || busy || recording} onChange={e => { setSuggestion(''); onChange(e.target.value); }} />
     </label>
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3 [&>button]:min-h-10">
       <button type="button" className={buttonClass} disabled={disabled || busy} onClick={() => void record()}>{recording ? 'Stop recording' : 'Record by voice'}</button>
       <button type="button" className={buttonClass} disabled={disabled || busy || recording || !value.trim()} onClick={() => void proofread()}>{busy ? 'Processing…' : 'AI proofread & improve'}</button>
-      <span className="ml-auto text-xs text-slate-500">{value.trim().split(/\s+/).filter(Boolean).length} words</span>
+      {generation && <button type="button" className="w-full rounded-xl bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 sm:w-auto" disabled={disabled || busy || recording || generation.busy || !generation.enabled} onClick={generation.onGenerate}>{generation.busy ? 'Generating?' : 'Generate learning statements'}</button>}
+      <span className="ml-auto whitespace-nowrap rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600">{value.trim().split(/\s+/).filter(Boolean).length} words</span>
     </div>
     {suggestion && <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm">
       <p className="mb-2 text-xs font-semibold">Suggestion: {suggestionWords} words{minimumWords > 0 ? ` / ${minimumWords} minimum` : ''}</p>
@@ -111,24 +118,44 @@ export function MonthlyAnswerField({ label, value, onChange, disabled, title, ro
   </div>;
 }
 
-export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer, kind, learnerId, title, plannedOtjh, mappings, evidenceFiles, evidenceUploader, timeControl, disabled, payload, checks, checking, onCheck, onSave, historical = false }: {
+export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer, kind, learnerId, title, plannedOtjh, mappings, evidenceFiles, evidenceUploader, timeControl, disabled, payload, checks, checking, onCheck, onSave, historical = false, question = '', activityId = '' }: {
   step: number; data: MonthlyAssignment; onChange: Dispatch<SetStateAction<MonthlyAssignment>>;
   answers: AssignmentAnswers; onAnswer: (key: keyof AssignmentAnswers, value: string) => void;
   kind: LearnerKind; learnerId: string; title: string; plannedOtjh: number | null;
   mappings: ComponentKsbMapping[]; evidenceFiles: EvidenceRecord[]; evidenceUploader: ReactNode; timeControl: ReactNode;
   disabled: boolean; payload: () => LearningReflectionSubmissionInput;
   checks: AssignmentQualityCheck[]; checking: boolean; onCheck: () => Promise<boolean>; onSave: () => Promise<boolean>;
-  historical?: boolean;
+  historical?: boolean; question?: string; activityId?: string;
 }) {
+  useEffect(() => {
+    if (step !== 7 || disabled || historical) return;
+    if (fillEmptyPresentationSlides(data, answers.whatYouLearned, answers.businessImpact) === data) return;
+    onChange(current => fillEmptyPresentationSlides(current, answers.whatYouLearned, answers.businessImpact));
+  }, [step, disabled, historical, data, answers.whatYouLearned, answers.businessImpact, onChange]);
+  const ksbGenerationStatus = useAssignedKsbExplanations(step === 2 && !disabled && !historical,
+    { learnerId, learnerKind: kind, activityId, question, answer: answers.assignmentAnswer, mappings }, data, onChange);
+  const impactGeneration = useImpactStatements(step === 4 && !disabled && !historical, learnerId, activityId, question,
+    answers.assignmentAnswer, answers.whatYouLearned, data, answers.businessImpact, onChange, value => onAnswer('businessImpact', value));
+  const actionGeneration = useImpactStatements(step === 5 && !disabled && !historical, learnerId, activityId, question,
+    answers.assignmentAnswer, answers.whatYouLearned, data, answers.businessImpact, onChange, value => onAnswer('businessImpact', value), 'action');
+  const presentationContext = `${kind}:${learnerId}:${activityId}:${data.month}`;
+  const presentationContextRef = useRef(presentationContext);
+  presentationContextRef.current = presentationContext;
   const [library, setLibrary] = useState<EvidenceRecord[]>([]);
+  const [activityDetails, setActivityDetails] = useState<{ title: string; date: string; text: string } | null>(null);
   const [showLibrary, setShowLibrary] = useState(false);
   const [detail, setDetail] = useState<LearnerDetail | null>(null);
-  const [events, setEvents] = useState<LearnerCalendarEvent[]>([]);
+  const monthlyReflectionStatus = useMonthlyReflections(step === 3 && !disabled && !historical && Boolean(detail), learnerId,
+    { month: data.month, question, answer: answers.assignmentAnswer,
+      learning: { learned: answers.whatYouLearned, understood: data.understood, skills: data.gainedSkills },
+      activities: (detail?.activityFeed || []).filter(a => a.at.slice(0, 7) === data.month).map(a => {
+        const records = a.kind === 'quiz' ? detail?.quizAttempts || [] : a.kind === 'video' ? detail?.videoProgress || [] : detail?.componentProgress || [];
+        const progress = records.find(p => p.submittedAt === a.at && (a.componentId ? p.componentId === a.componentId : a.kind === 'quiz' && 'quizId' in p && p.quizId === a.quizId));
+        return { title: a.title, date: a.at.slice(0, 10), reflection: progress?.feedback || '', ksbs: progress?.ksbs || [] };
+      }) }, data, onChange);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
-  const [bookingDate, setBookingDate] = useState('');
-  const [bookingTime, setBookingTime] = useState('09:00');
   const [linkUrl, setLinkUrl] = useState('');
   const [linkName, setLinkName] = useState('');
   const [ksbPickerOpen, setKsbPickerOpen] = useState(false);
@@ -146,16 +173,15 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
   };
   const patch = (value: Partial<MonthlyAssignment>) => onChange(current => ({ ...current, ...value }));
   const field = (key: keyof MonthlyAssignment, label: string, minimumWords = 0) => <MonthlyAnswerField label={label} title={title} value={String(data[key] || '')} onChange={value => patch({ [key]: value })} disabled={disabled || busy} minimumWords={minimumWords} />;
-  const check = (key: keyof MonthlyAssignment, label: string) => <label className="flex items-start gap-2 rounded-lg bg-slate-50 p-3 text-sm"><input type="checkbox" checked={data[key] === true} disabled={disabled || busy} onChange={e => patch({ [key]: e.target.checked })} className="mt-1" />{label}</label>;
+  const check = (key: keyof MonthlyAssignment, label: string) => <label className="flex min-h-14 cursor-pointer items-center gap-3 rounded-xl bg-slate-50 px-4 py-3"><input type="checkbox" checked={data[key] === true} disabled={disabled || busy} onChange={e => patch({ [key]: e.target.checked })} className="m-0 h-4 w-4 shrink-0 accent-blue-600 disabled:cursor-not-allowed" /><span className="min-w-0 text-sm font-medium leading-6 tracking-normal text-slate-800">{label}</span></label>;
   const monthEnd = /^\d{4}-\d{2}$/.test(data.month) ? new Date(Number(data.month.slice(0, 4)), Number(data.month.slice(5)), 0).getDate() : 0;
   const minBooking = `${data.month}-${String(monthEnd - 9).padStart(2, '0')}`;
-  const maxBooking = `${data.month}-${monthEnd}`;
-  const qualifyingEvents = events.filter(event => event.source === 'mcr' && ['scheduled', 'in-progress', 'completed', 'awaiting-signature'].includes(event.status) && (event.scheduledDate || '') >= minBooking && (event.scheduledDate || '') <= maxBooking);
+  const nextMonth = new Date(Number(data.month.slice(0, 4)), Number(data.month.slice(5)), 5);
+  const maxBooking = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-05`;
   useEffect(() => {
     let active = true;
     if (historical) return;
     if ([2, 3].includes(step)) fetchLearnerDetail(kind, learnerId).then(result => { if (active) setDetail(result); }).catch(e => { if (active) setError(e.message); });
-    if (step === 7) fetchLearnerCalendarEvents(kind, learnerId, { force: true }).then(result => { if (active) setEvents(result.events); }).catch(e => { if (active) setError(e.message); });
     return () => { active = false; };
   }, [step, kind, learnerId, historical]);
   const addFile = (file: EvidenceRecord) => {
@@ -167,29 +193,44 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
     catch (e) { setError(e instanceof Error ? e.message : 'Could not load the evidence library.'); }
     finally { setBusy(false); }
   };
-  const book = async () => {
-    if (bookingDate < minBooking || bookingDate > maxBooking) { setError('Choose a date in the last ten days of this submission month.'); return; }
+  const generate = async () => {
     setBusy(true); setError('');
     try {
-      if (!await onSave()) return;
-      const result = await bookLearnerCalendarSession(kind, learnerId, { sessionType: 'mcr', scheduledDate: bookingDate, scheduledTime: bookingTime, durationMinutes: 60, timezoneOffsetMinutes: new Date(`${bookingDate}T${bookingTime}`).getTimezoneOffset(), notes: `Monthly assignment: ${title}` });
-      setEvents(current => [...current.filter(event => event.eventKey !== result.event.eventKey), result.event]);
-      patch({ meetingKey: result.event.eventKey });
-      setNotice(result.warning ? `Booking saved. ${result.warning}` : 'Your coaching meeting has been booked.');
-    } catch (e) { setError(e instanceof Error ? e.message : 'Could not book. Your draft is still saved.'); }
+      const fresh = await fetchLearnerDetail(kind, learnerId, { force: true });
+      if (presentationContextRef.current !== presentationContext) return;
+      setDetail(fresh);
+      const element = document.createElement('div'); element.innerHTML = question;
+      const slides = monthlyPresentation(title, answers.assignmentAnswer, answers.whatYouLearned, answers.businessImpact, data, fresh, element.textContent || '');
+      patch({ slides, presentationReviewed: false, presentationToken: '' });
+      setNotice('Your full-month presentation is ready to review. The selected design and KBC logo will be applied when you export.');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not load monthly activities. Your existing slides are preserved.'); }
     finally { setBusy(false); }
   };
-  const generate = () => {
-    patch({ slides: [
-      { title: `${title} — ${data.month}`, body: answers.assignmentAnswer },
-      { title: 'Learning and understanding', body: `${answers.whatYouLearned}\n\n${data.understood}\n\n${data.gainedSkills}` },
-      { title: 'Evidence and KSBs', body: `${data.evidence.map(e => `${e.name} — answer points ${e.points}`).join('\n')}\n\n${data.claims.map(c => `${c.code}: ${c.explanation}`).join('\n')}` },
-      { title: 'Full-month reflection', body: `${data.lmsReflection}\n\n${data.extraActivities}\n\n${data.integratedReflection}` },
-      { title: 'Impact and employer benefit', body: `${data.careerImpact}\n\n${data.jobImpact}\n\n${data.employerImpact}\n\n${answers.businessImpact}` },
-      { title: 'Action plan and EPA', body: `${data.actionPlan}\n\n${data.epaPreparedness}` },
-    ], presentationReviewed: false, presentationToken: '' });
+  const [uploadingDesignName, setUploadingDesignName] = useState('');
+  const uploadDesign = async (file: File) => {
+    if (!file.name.toLowerCase().endsWith('.pptx') || file.size > 15 * 1024 * 1024) { setError('Choose a .pptx reference up to 15 MB. Save older .ppt files as .pptx first.'); return; }
+    setBusy(true); setError(''); setUploadingDesignName(file.name);
+    try {
+      const uploaded = await uploadEvidence(kind, learnerId, file, `presentation-reference-${activityId}`);
+      if (uploaded.status !== 'approved') throw new Error('This file has not passed the upload checks. Choose another reference.');
+      const response = await fetch(`/learner_api/reflection/assignment/presentation-design/?learnerId=${encodeURIComponent(learnerId)}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ learnerKind: kind, evidenceId: uploaded.id }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not read this design reference.');
+      if (presentationContextRef.current !== presentationContext) return;
+      patch({ presentationDesign: result.design, presentationReviewed: false, presentationToken: '' });
+      setNotice('Reference template saved. Its layouts, backgrounds and artwork will be used in your exported PowerPoint.');
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not read the design reference.'); }
+    finally { setBusy(false); setUploadingDesignName(''); }
   };
   const exportDeck = async () => {
+    const invalidIndex = data.slides.findIndex(slide => Boolean(slideIssue(slide)));
+    if (invalidIndex !== -1) {
+      setError(`Slide ${invalidIndex + 1}: ${slideIssue(data.slides[invalidIndex])}`);
+      const target = document.getElementById(`assignment-slide-${invalidIndex}`);
+      target?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+      target?.querySelector<HTMLTextAreaElement | HTMLInputElement>(!data.slides[invalidIndex].title?.trim() ? 'input' : 'textarea')?.focus({ preventScroll: true });
+      return;
+    }
     setBusy(true); setError('');
     try {
       if (!disabled && !await onSave()) return;
@@ -203,11 +244,13 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
     finally { setBusy(false); }
   };
   return <div className="space-y-5">
-    {step === 0 && <div className="grid gap-4 md:grid-cols-3">
+    {step === 0 && <section className="space-y-4 border-t border-slate-200 pt-6">
+      <div><h3 className="text-lg font-semibold text-slate-900">Your learning statements</h3><p className="mt-1 text-sm leading-6 text-slate-600">Review each statement and make it your own. Each field needs at least 20 words.</p></div>
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
       <MonthlyAnswerField title={title} label="I learned… (at least 20 words)" value={answers.whatYouLearned} disabled={disabled} onChange={value => onAnswer('whatYouLearned', value)} minimumWords={20} />
       {field('understood', 'I understood… (at least 20 words)', 20)}
       {field('gainedSkills', 'I gained skills in… (at least 20 words)', 20)}
-    </div>}
+    </div></section>}
     {step === 1 && <>
       <h3 className="text-lg font-semibold">Evidence & cross-referencing</h3>
       <p className="text-sm text-slate-600">Put each answer point on a separate line. Attach evidence. You can optionally link it to the numbered answer points below. Files remain securely stored in Azure.</p>
@@ -243,12 +286,49 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
         </article>)}
       </section>
     </>}
-    {step === 2 && <>
-      <h3 className="text-lg font-semibold">KSBs & hours claimed</h3>
-      <p className="text-sm text-slate-600">Planned hours: {plannedOtjh ?? 'Not set'}. Keep your actual time; there is no six-hour cap. Planned values are not changed by this claim.</p>
-      <fieldset disabled={disabled}>{timeControl}</fieldset>
-      {check('paidHours', 'This learning was completed during paid working hours.')}
-      {data.claims.map((claim, index) => <div key={claim.code} className="space-y-3 rounded-xl border border-slate-200 p-4"><div className="flex justify-between gap-2"><strong>{claim.code} <span className="text-xs font-normal">{mappings.find(m => m.code === claim.code)?.classification || ''}</span></strong><button type="button" disabled={disabled} className={buttonClass} onClick={() => patch({ claims: data.claims.filter((_, i) => i !== index), plannedReviewed: false })}>Remove claim</button></div><p className="text-xs text-slate-600">{mappings.find(m => m.code === claim.code)?.description || detail?.ksbs.find(k => k.code === claim.code)?.description}</p><label className="block text-sm">How did you apply this KSB? (at least 20 words)<textarea rows={4} className={inputClass} value={claim.explanation} disabled={disabled} onChange={e => patch({ claims: data.claims.map((c, i) => i === index ? { ...c, explanation: e.target.value } : c) })} /></label><p className="text-xs font-semibold">Supporting evidence</p>{data.evidence.map(e => <label className="mr-4 inline-flex items-center gap-2 text-sm" key={e.id}><input type="checkbox" disabled={disabled} checked={claim.evidenceIds.includes(e.id)} onChange={event => patch({ claims: data.claims.map((c, i) => i === index ? { ...c, evidenceIds: event.target.checked ? [...c.evidenceIds, e.id] : c.evidenceIds.filter(id => id !== e.id) } : c) })} />{e.name}</label>)}</div>)}
+    {step === 2 && <section className="mx-auto w-full max-w-6xl space-y-6">
+      <header><h3 className="text-xl font-semibold text-slate-900">KSBs & hours claimed</h3><p className="mt-2 text-sm leading-6 text-slate-600">Record your learning time, review each KSB explanation and select the evidence that supports it.</p></header>
+      <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:p-6" aria-label="Learning time">
+        <div className="flex flex-wrap items-center justify-between gap-3"><h4 className="font-semibold text-slate-900">Your learning time</h4><span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm">Planned: {plannedOtjh == null ? 'Not set' : `${plannedOtjh} hours`}</span></div>
+        <fieldset disabled={disabled}>{timeControl}</fieldset>
+        <p className="text-sm text-slate-600">Enter your actual time. There is no six-hour cap; your planned hours stay the same.</p>
+        {check('paidHours', 'This learning was completed during paid working hours.')}
+      </section>
+      <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 sm:p-5">
+        <h4 className="font-semibold text-blue-950">Review your KSB explanations</h4>
+        <p className="mt-2 text-sm leading-6 text-blue-900">Assigned KSBs are drafted from your answer and readable evidence. Review the drafts and complete any blank fields. Write your own explanation for KSBs you add yourself. Existing explanations are preserved.</p>
+        {ksbGenerationStatus && <p role="status" className="mt-3 border-t border-blue-200 pt-3 text-sm leading-6 text-blue-900">{ksbGenerationStatus}</p>}
+      </section>
+      <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-lg font-semibold text-slate-900">Your KSB claims</h4><span className="text-sm text-slate-600">{data.claims.length} claims</span></div>
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-2">
+      {data.claims.map((claim, index) => {
+        const mapping = mappings.find(m => m.code === claim.code);
+        const words = claim.explanation.trim().split(/\s+/).filter(Boolean).length;
+        return <article key={claim.code} className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <header className="space-y-3 border-b border-slate-200 bg-slate-50 p-4 sm:p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2"><strong className="rounded-lg bg-slate-900 px-3 py-1.5 text-sm text-white">{claim.code}</strong><span className="text-xs font-medium text-slate-600">{mapping ? 'Assignment KSB' : 'Added by you'}{mapping?.classification ? ` ? ${mapping.classification}` : ''}</span></div>
+              <button type="button" disabled={disabled} className="min-h-10 rounded-lg px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-40" onClick={() => patch({ claims: data.claims.filter((_, i) => i !== index), plannedReviewed: false })}>Remove claim</button>
+            </div>
+            <p className="break-words text-sm leading-6 text-slate-700">{mapping?.description || detail?.ksbs.find(k => k.code === claim.code)?.description}</p>
+          </header>
+          <div className="space-y-5 p-4 sm:p-5">
+            <div>
+              <label className="block text-sm font-semibold text-slate-900">How did you apply this KSB?
+                <textarea rows={5} className={`${inputClass} min-h-36 resize-y font-normal leading-6`} value={claim.explanation} disabled={disabled} placeholder="Describe what you did, how you applied this KSB and what you learned." onChange={e => patch({ claims: data.claims.map((c, i) => i === index ? { ...c, explanation: e.target.value } : c) })} />
+              </label>
+              <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs"><span className="text-slate-500">At least 20 words</span><span className={words >= 20 ? 'font-medium text-emerald-700' : 'font-medium text-amber-800'}>{words} words{words < 20 ? ' ? Needs more detail' : ''}</span></div>
+            </div>
+            <fieldset className="min-w-0 border-t border-slate-100 pt-4">
+              <legend className="pr-2 text-sm font-semibold text-slate-900">Supporting evidence</legend>
+              <p className="mb-3 text-xs leading-5 text-slate-500">Select the files or links that support this explanation.</p>
+              <div className="space-y-2">{data.evidence.map(e => <label className={`flex min-h-14 cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 text-sm ${claim.evidenceIds.includes(e.id) ? 'border-blue-200 bg-blue-50 text-blue-950' : 'border-slate-200 text-slate-700'}`} key={e.id}><input className="m-0 h-4 w-4 shrink-0 accent-blue-600 disabled:cursor-not-allowed" type="checkbox" disabled={disabled} checked={claim.evidenceIds.includes(e.id)} onChange={event => patch({ claims: data.claims.map((c, i) => i === index ? { ...c, evidenceIds: event.target.checked ? [...c.evidenceIds, e.id] : c.evidenceIds.filter(id => id !== e.id) } : c) })} /><span className="min-w-0 break-words text-sm font-medium leading-6 tracking-normal">{e.name}</span></label>)}</div>
+              {!data.evidence.length && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Add evidence in Step 2, then select it here.</p>}
+            </fieldset>
+          </div>
+        </article>;
+      })}
+      </div>
       <div className="flex flex-wrap gap-2">
         <button type="button" disabled={disabled} className={buttonClass} onClick={() => { setSelectedKsbs([]); setKsbSearch(''); setKsbPickerOpen(true); void loadProgrammeKsbs(); }}>Add programme KSBs</button>
         <button type="button" disabled={disabled} className={buttonClass} onClick={() => patch({ claims: mappings.map(m => data.claims.find(c => c.code === m.code) || { code: m.code, explanation: '', evidenceIds: [] }), plannedReviewed: false })}>Reset claims to planned KSBs</button>
@@ -262,7 +342,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
             {ksbLoading ? <p role="status">Loading programme KSBs?</p> : ksbLoadError ? <div role="alert"><p>{ksbLoadError}</p><button type="button" className={buttonClass} onClick={() => void loadProgrammeKsbs()}>Retry</button></div> : <div className="space-y-2">
               {programmeKsbs.filter(k => k.code.toUpperCase().startsWith(ksbCategory) && `${k.code} ${k.description}`.toLowerCase().includes(ksbSearch.toLowerCase())).map(k => {
                 const assigned = mappings.some(m => m.code === k.code) || data.claims.some(c => c.code === k.code);
-                return <label key={k.code} className={`flex items-start gap-3 rounded-xl border p-4 ${assigned ? 'border-slate-200 bg-slate-100 text-slate-500' : 'cursor-pointer border-primary-100 hover:bg-primary-50'}`}><input type="checkbox" disabled={disabled || assigned} checked={assigned || selectedKsbs.includes(k.code)} onChange={e => setSelectedKsbs(current => e.target.checked ? [...current, k.code] : current.filter(code => code !== k.code))} className="mt-1" /><span className="min-w-0 text-sm"><strong>{k.code}</strong>{assigned && <span className="ml-2 text-xs">Already assigned</span>}<span className="mt-1 block break-words">{k.description}</span></span></label>;
+                return <label key={k.code} className={`flex min-h-14 items-center gap-3 rounded-xl border p-4 ${assigned ? 'border-slate-200 bg-slate-100 text-slate-500' : 'cursor-pointer border-primary-100 hover:bg-primary-50'}`}><input type="checkbox" disabled={disabled || assigned} checked={assigned || selectedKsbs.includes(k.code)} onChange={e => setSelectedKsbs(current => e.target.checked ? [...current, k.code] : current.filter(code => code !== k.code))} className="m-0 h-4 w-4 shrink-0 accent-blue-600 disabled:cursor-not-allowed" /><span className={`min-w-0 text-sm font-medium leading-6 tracking-normal ${assigned ? 'text-slate-500' : 'text-slate-800'}`}><strong>{k.code}</strong>{assigned && <span className="ml-2 text-xs">Already assigned</span>}<span className="mt-1 block break-words">{k.description}</span></span></label>;
               })}
               {!programmeKsbs.some(k => k.code.toUpperCase().startsWith(ksbCategory) && `${k.code} ${k.description}`.toLowerCase().includes(ksbSearch.toLowerCase())) && <p className="text-sm text-slate-600">No programme KSBs match this category or search.</p>}
             </div>}
@@ -270,11 +350,15 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
           <footer className="flex shrink-0 items-center justify-between gap-3 border-t p-4"><span className="text-sm">{selectedKsbs.length} selected</span><button type="button" className={buttonClass} disabled={disabled || ksbLoading || Boolean(ksbLoadError) || !selectedKsbs.length} onClick={() => { onChange(current => ({ ...current, plannedReviewed: false, claims: [...current.claims, ...selectedKsbs.filter(code => !current.claims.some(c => c.code === code) && !mappings.some(m => m.code === code)).map(code => ({ code, explanation: '', evidenceIds: [] }))] })); setKsbPickerOpen(false); }}>Add selected KSBs</button></footer>
         </section>
       </div>}
+      <section className="space-y-3 rounded-2xl border border-slate-200 p-4 sm:p-6">
+      <h4 className="font-semibold text-slate-900">Confirm your learning</h4>
+      <p className="text-sm text-slate-600">Review these declarations before continuing.</p>
       {check('plannedReviewed', 'I have reviewed the planned hours and KSBs against my actual learning.')}
       {check('newKnowledge', 'This activity developed new knowledge.')}
       {check('newSkills', 'This activity developed new skills or behaviours.')}
       {check('sharingConsent', 'My employer accepts sharing this evidence, and it contains no confidential information.')}
-    </>}
+      </section>
+    </section>}
     {step === 3 && <>
       <h3 className="text-lg font-semibold">Full-month reflection — {data.month}</h3>
       <div className="overflow-x-auto rounded-xl border border-slate-200">
@@ -287,34 +371,90 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
               <td className="p-3">{a.title}</td><td className="p-3">{a.at.slice(0, 10)}</td><td className="p-3">{a.detail || a.action}</td>
               <td className="p-3">{progress?.ksbs?.join(', ') || 'Not recorded'}</td>
               <td className="p-3">{progress?.reportedTime || progress?.timeTaken || 'Not recorded'}<span className="block text-slate-500">{progress?.timeTrackingSource || ''}</span></td>
-              <td className="max-w-xs whitespace-pre-wrap p-3">{progress?.feedback || 'Not recorded'}</td>
+              <td className="w-72 max-w-xs p-3 text-left align-top">
+                {progress?.feedback?.trim() ? <div className="space-y-2">
+                  <p className="line-clamp-3 break-words text-sm leading-6 text-slate-700">{progress.feedback.replace(/\s+/g, ' ').trim().slice(0, 160)}{progress.feedback.replace(/\s+/g, ' ').trim().length > 160 ? '…' : ''}</p>
+                  <button type="button" className="min-h-10 rounded-lg px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600" aria-label={`Read more about ${a.title}`} onClick={() => setActivityDetails({ title: a.title, date: a.at.slice(0, 10), text: progress.feedback })}>Read more</button>
+                </div> : <span className="text-slate-500">Not recorded</span>}
+              </td>
             </tr>;
           })}</tbody>
         </table>
         {detail && !(detail.activityFeed || []).some(a => a.at.slice(0, 7) === data.month) && <p className="p-3 text-sm">No recorded activities for this month.</p>}
         {!detail && <p className="p-3 text-sm">Loading your recorded activities…</p>}
       </div>
+      {activityDetails && <Modal title="Learning and impact" onClose={() => setActivityDetails(null)} size="max-w-2xl">
+        <div className="mb-5 rounded-xl bg-slate-50 p-4">
+          <h3 className="break-words text-base font-semibold text-slate-900">{activityDetails.title}</h3>
+          <p className="mt-1 text-sm text-slate-600">Activity date: {activityDetails.date}</p>
+        </div>
+        <div className="whitespace-pre-wrap break-words text-sm leading-7 text-slate-800">{activityDetails.text}</div>
+      </Modal>}
+      <section className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
+        <h4 className="font-semibold">Your monthly reflection drafts</h4>
+        <p className="mt-1">These two reflections are drafted automatically from your assignment answer and this month's recorded activities. Review them before submitting. Your existing text is preserved.</p>
+        {monthlyReflectionStatus && <p role="status" className="mt-3 border-t border-blue-200 pt-3">{monthlyReflectionStatus}</p>}
+      </section>
       {field('lmsReflection', 'Reflect on your LMS activities and assignment (at least 20 words)')}
       {field('extraActivities', 'Additional activities outside the LMS (optional)')}
       {field('integratedReflection', 'How does the learning fit together? (at least 20 words)')}
     </>}
-    {step === 4 && <>{field('careerImpact', 'Impact on your career (at least 20 words)')}{field('jobImpact', 'Impact on your job performance (at least 20 words)')}{field('employerImpact', 'Impact on employer performance (at least 20 words)')}{check('employerBenefit', 'I can explain how my employer has benefited from this learning.')}<MonthlyAnswerField title={title} label="Measurable business outcomes (at least 20 words)" value={answers.businessImpact} onChange={value => onAnswer('businessImpact', value)} disabled={disabled} /></>}
-    {step === 5 && <>{field('actionPlan', 'Your action plan for next month (at least 20 words)')}{field('epaPreparedness', 'How has this prepared you for EPA? (at least 20 words)')}</>}
+    {step === 4 && <>
+      <section className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
+        <h3 className="font-semibold">Your impact drafts</h3>
+        <p className="mt-1">These fields are drafted from your assignment answer and learning reflections. Review and edit them to match your experience. Existing text is preserved; confirm the employer declaration yourself.</p>
+        {impactGeneration.status && <div role={impactGeneration.phase === 'error' ? 'alert' : 'status'} aria-live="polite" className={`mt-4 flex items-start gap-3 rounded-xl border p-4 ${impactGeneration.phase === 'error' ? 'border-red-200 bg-red-50 text-red-900' : impactGeneration.phase === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-blue-200 bg-white text-blue-900'}`}>
+          {impactGeneration.phase === 'loading' ? <Loader2 aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 animate-spin" /> : impactGeneration.phase === 'success' ? <CheckCircle2 aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" /> : impactGeneration.phase === 'error' ? <AlertCircle aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" /> : <Info aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" />}
+          <div className="min-w-0"><p className="font-semibold">{impactGeneration.phase === 'loading' ? 'Generating your impact drafts...' : impactGeneration.phase === 'success' ? 'Your drafts are ready' : impactGeneration.phase === 'error' ? 'Generation could not finish' : 'More details needed'}</p><p className="mt-1">{impactGeneration.status}</p></div>
+        </div>}
+      </section>
+      {field('careerImpact', 'Impact on your career (at least 20 words)')}{field('jobImpact', 'Impact on your job performance (at least 20 words)')}{field('employerImpact', 'Impact on employer performance (at least 20 words)')}{check('employerBenefit', 'I can explain how my employer has benefited from this learning.')}<MonthlyAnswerField title={title} label="Measurable business outcomes (at least 20 words)" value={answers.businessImpact} onChange={value => onAnswer('businessImpact', value)} disabled={disabled} minimumWords={20} /></>}
+    {step === 5 && <>
+      <section className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
+        <h3 className="font-semibold">Your action plan & EPA drafts</h3>
+        <p className="mt-1">These drafts use your assignment answer and reflections. Review the proposed actions and EPA preparation before submitting. Your existing text is preserved.</p>
+        {actionGeneration.status && <div role={actionGeneration.phase === 'error' ? 'alert' : 'status'} aria-live="polite" className={`mt-4 flex items-start gap-3 rounded-xl border p-4 ${actionGeneration.phase === 'error' ? 'border-red-200 bg-red-50 text-red-900' : actionGeneration.phase === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-blue-200 bg-white text-blue-900'}`}>
+          {actionGeneration.phase === 'loading' ? <Loader2 aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 animate-spin" /> : actionGeneration.phase === 'success' ? <CheckCircle2 aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" /> : actionGeneration.phase === 'error' ? <AlertCircle aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" /> : <Info aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" />}
+          <div className="min-w-0"><p className="font-semibold">{actionGeneration.phase === 'loading' ? 'Generating your action plan & EPA drafts...' : actionGeneration.phase === 'success' ? 'Your drafts are ready' : actionGeneration.phase === 'error' ? 'Generation could not finish' : 'More details needed'}</p><p className="mt-1">{actionGeneration.status}</p></div>
+        </div>}
+      </section>
+      {field('actionPlan', 'Your action plan for next month (at least 20 words)')}{field('epaPreparedness', 'How has this prepared you for EPA? (at least 20 words)')}</>}
     {step === 6 && <><h3 className="text-lg font-semibold">Submission quality checks</h3><p className="text-sm text-slate-600">All checks must be green before you can submit your assignment. Complete the coaching meeting booking and presentation in Step 8 (Coaching & presentation), then run the checks again.</p><button type="button" className={buttonClass} disabled={checking || disabled} onClick={() => void onCheck()}>{checking ? 'Checking…' : 'Run quality checks'}</button>{checks.map(c => <div key={c.key} className={`rounded-xl border p-3 text-sm ${c.passed ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>{c.passed ? <CheckCircle2 aria-hidden="true" className="mr-1 inline h-4 w-4 align-[-0.2em]" /> : <Circle aria-hidden="true" className="mr-1 inline h-4 w-4 align-[-0.2em]" />}{c.label}</div>)}</>}
     {step === 7 && <>
       <h3 className="text-lg font-semibold">Coaching & presentation</h3>
       <p className="text-sm text-slate-600">Book coaching between {minBooking} and {maxBooking}. You can finish both tasks here and keep the whole submission as a draft until ready.</p>
-      <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
-        <div className="flex items-start gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-bold text-primary-700">1</span><div><h4 className="text-base font-semibold text-slate-900">Arrange your coaching meeting</h4><p className="mt-1 text-sm text-slate-600">Choose an existing booking or book a new 60-minute meeting below.</p></div></div>
-      <label className="block text-sm font-medium text-slate-700">Use an existing coaching booking<select className={inputClass} value={data.meetingKey} disabled={disabled || busy} onChange={e => patch({ meetingKey: e.target.value })}><option value="">Select a booked meeting</option>{qualifyingEvents.map(event => <option key={event.eventKey} value={event.eventKey}>{event.scheduledDate} {event.scheduledTime} — {event.coachName}</option>)}</select></label>
-      <fieldset disabled={disabled || busy} className="rounded-xl border border-slate-200 bg-slate-50 p-4 sm:p-5"><legend className="px-2 text-sm font-semibold">Book with your assigned coach</legend><p className="text-xs text-slate-500">Times are in your browser's local timezone. The booking service checks calendar conflicts before reserving the meeting.</p><div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto] lg:items-end"><label className="min-w-0 text-sm font-medium">Date<input type="date" className={inputClass} min={minBooking} max={maxBooking} value={bookingDate} onChange={e => setBookingDate(e.target.value)} /></label><label className="min-w-0 text-sm font-medium">Time<input type="time" className={inputClass} value={bookingTime} onChange={e => setBookingTime(e.target.value)} /></label><button type="button" className={buttonClass} disabled={!bookingDate || !bookingTime} onClick={() => void book()}>{busy ? 'Please wait…' : 'Book 60-minute coaching meeting'}</button></div></fieldset>
-      </section>
+      <AssignmentCoachingBooking kind={kind} learnerId={learnerId} month={data.month} title={title} meetingKey={data.meetingKey} disabled={disabled || historical} onSave={onSave} onSelect={meetingKey => patch({ meetingKey })} />
       <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
         <div className="flex items-start gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-bold text-primary-700">2</span><div><h4 className="text-base font-semibold text-slate-900">Prepare your presentation</h4><p className="mt-1 text-sm text-slate-600">Generate slides from your answers, edit and review them, then export your PowerPoint.</p></div></div>
-      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap"><button type="button" className={buttonClass} disabled={disabled || busy} onClick={() => { if (!data.slides.length || window.confirm('Replace your edited slides with a fresh draft from your answers?')) generate(); }}>Generate presentation from my answers</button><button type="button" className={buttonClass} disabled={disabled || busy || data.slides.length >= 30} onClick={() => patch({ slides: [...data.slides, { title: '', body: '' }], presentationReviewed: false, presentationToken: '' })}>Add slide</button></div>
-      {!data.slides.length && <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-500">No slides yet. Generate a presentation from your answers or add your first slide.</p>}
+      <section className="space-y-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
+        <div>
+          <p className="text-sm font-semibold">PowerPoint design reference (optional)</p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <label className={`relative rounded-lg border border-slate-300 bg-white px-4 py-2.5 focus-within:ring-2 focus-within:ring-blue-500 ${disabled || busy ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-blue-50'}`}>
+              <span className="text-sm font-medium text-slate-800">{data.presentationDesign ? 'Change reference' : 'Choose reference'}</span>
+              <input type="file" aria-label="PowerPoint design reference" accept=".pptx" disabled={disabled || busy} className="sr-only" onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void uploadDesign(file); }} />
+            </label>
+            <span role="status" className="min-w-0 break-words text-sm text-slate-700">{uploadingDesignName ? `Reading ${uploadingDesignName}...` : data.presentationDesign ? `Selected: ${data.presentationDesign.name}` : 'No reference selected. The default KBC design will be used.'}</span>
+          </div>
+        </div>
+        <p className="text-sm leading-6 text-slate-600">Upload a .pptx up to 15 MB. The full reference is saved securely and reused with its masters, layouts, backgrounds and artwork. Its text is replaced with your monthly content and KBC branding is added. Choose a cover and content slide with room for text; charts, embedded media and animations are not reused.</p>
+        {data.presentationDesign && <div className="flex flex-wrap items-center gap-3 text-sm"><span className="h-5 w-5 rounded border" style={{ backgroundColor: `#${data.presentationDesign.accent}` }} /><span>{data.presentationDesign.name} ? {data.presentationDesign.font}</span><button type="button" disabled={disabled || busy} className={buttonClass} onClick={() => patch({ presentationDesign: undefined, presentationReviewed: false, presentationToken: '' })}>Use default KBC design</button></div>}
+        {data.presentationDesign && !data.presentationDesign.evidenceId && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">This older reference saved colours only. Upload the original PPTX again to use its full template.</p>}
+        {data.presentationDesign?.evidenceId && <div className="grid gap-3 sm:grid-cols-2">{(['coverSlide', 'contentSlide'] as const).map(key => <label key={key} className="block text-sm">{key === 'coverSlide' ? 'Reference cover slide' : 'Reference content slide'}<select className={inputClass} disabled={disabled || busy} value={data.presentationDesign?.[key] || 1} onChange={e => patch({ presentationDesign: { ...data.presentationDesign!, [key]: Number(e.target.value) }, presentationReviewed: false, presentationToken: '' })}>{Array.from({ length: data.presentationDesign?.slideCount || 1 }, (_, i) => <option key={i} value={i + 1}>Slide {i + 1}</option>)}</select></label>)}</div>}
+        {busy && <p role="status" className="flex items-center gap-2 text-sm"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />Preparing your presentation...</p>}
+      </section>
+      <div role="note" className="flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
+        <Info aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" />
+        <div>
+          <p className="font-semibold">Keep your slides up to date</p>
+          <p className="mt-1">Empty learning, reflection, impact and action-plan slides are filled automatically from your saved answers when you open this step. Slides that already contain text are preserved. Complete any missing answers in Steps 4?6. To rebuild the whole presentation from your latest answers, click Generate full-month presentation.</p>
+          <p className="mt-2 font-medium">Generating again replaces all current slides, including your manual slide edits. Review the updated slides before exporting.</p>
+        </div>
+      </div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap"><button type="button" className={buttonClass} disabled={disabled || busy} onClick={() => { if (!data.slides.length || window.confirm('Replace your edited slides with a fresh draft from your answers?')) generate(); }}>Generate full-month presentation</button><button type="button" className={buttonClass} disabled={disabled || busy || data.slides.length >= 200} onClick={() => patch({ slides: [...data.slides, { title: '', body: '' }], presentationReviewed: false, presentationToken: '' })}>Add slide</button></div>
+      {!data.slides.length && <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-500">No slides yet. Generate a presentation from your answers and monthly activities, or add your first slide.</p>}
       <div className="space-y-4">
-      {data.slides.map((slide, i) => <fieldset disabled={disabled || busy} key={i} className="rounded-xl border border-slate-200 bg-slate-50 p-4 sm:p-5"><legend className="px-2 text-sm">Slide {i + 1}</legend><label className="block text-xs">Title<input className={inputClass} value={slide.title} onChange={e => patch({ slides: data.slides.map((s, index) => index === i ? { ...s, title: e.target.value } : s), presentationReviewed: false, presentationToken: '' })} /></label><label className="block text-xs">Content<textarea className={inputClass} rows={5} value={slide.body} onChange={e => patch({ slides: data.slides.map((s, index) => index === i ? { ...s, body: e.target.value } : s), presentationReviewed: false, presentationToken: '' })} /></label><button type="button" className={buttonClass} onClick={() => patch({ slides: data.slides.filter((_, index) => index !== i), presentationReviewed: false, presentationToken: '' })}>Remove slide</button></fieldset>)}
+      {data.slides.map((slide, i) => <fieldset id={`assignment-slide-${i}`} disabled={disabled || busy} key={i} className={`rounded-xl border p-4 sm:p-5 ${slideIssue(slide) ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200 bg-slate-50'}`}><legend className="px-2 text-sm">Slide {i + 1}</legend>{slideIssue(slide) && <p className="mb-3 text-sm font-medium text-amber-900">{slideIssue(slide)}</p>}<label className="block text-xs">Title<input className={inputClass} value={slide.title} onChange={e => patch({ slides: data.slides.map((s, index) => index === i ? { ...s, title: e.target.value } : s), presentationReviewed: false, presentationToken: '' })} /></label><label className="block text-xs">Content<textarea className={inputClass} rows={5} value={slide.body} onChange={e => patch({ slides: data.slides.map((s, index) => index === i ? { ...s, body: e.target.value } : s), presentationReviewed: false, presentationToken: '' })} /></label><button type="button" className={buttonClass} onClick={() => { if (window.confirm(`Remove slide ${i + 1}${slide.title.trim() ? `: "${slide.title.trim()}"` : ''}? Its content will be deleted from this presentation.`)) patch({ slides: data.slides.filter((_, index) => index !== i), presentationReviewed: false, presentationToken: '' }); }}>Remove slide</button></fieldset>)}
       </div>
       <div className="space-y-4 border-t border-slate-200 pt-5">
       {check('presentationReviewed', 'I have reviewed the slides and they accurately represent my own work.')}
