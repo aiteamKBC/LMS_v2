@@ -90,16 +90,22 @@ def merged_activities(historical, native, progress, attempts, links):
 
 
 def summarise_plan(activities, assigned):
-    """Monthly cards need counts and dates, never lesson bodies or attempts."""
+    """Plan cards need counts, dates and mapped KSBs, never lesson bodies or attempts."""
     subjects = {}
     for row in activities:
         subject = subjects.setdefault(row['subject'], {
             'id': row['subject'], 'title': clean_text(row.get('module_title')) or 'Learning activities',
             'source': 'legacy' if row['subject'].startswith('legacy:') else 'current',
             'total': 0, 'completed': 0, 'dates': set(), 'moduleIds': set(), 'sessionTitles': [],
+            'activityCounts': {}, 'ksbCodes': set(), 'ksbMappingMissing': False,
         })
         subject['total'] += 1
         subject['completed'] += bool(row['completed'])
+        category = clean_text(row.get('type') or row.get('category')) or 'activity'
+        subject['activityCounts'][category] = subject['activityCounts'].get(category, 0) + 1
+        codes = point_codes(row.get('ksb_mappings')) if row.get('ksb_mappings') is not None else None
+        subject['ksbCodes'].update(codes or [])
+        subject['ksbMappingMissing'] |= codes is None
         if row.get('module_id'):
             subject['moduleIds'].add(row['module_id'])
         day = as_date(row.get('date'))
@@ -113,8 +119,10 @@ def summarise_plan(activities, assigned):
             subjects[f'current:{module_id}'] = {
                 'id': f'current:{module_id}', 'title': clean_text(title), 'source': 'current',
                 'total': 0, 'completed': 0, 'dates': set(), 'moduleIds': {module_id}, 'sessionTitles': [],
+                'activityCounts': {}, 'ksbCodes': set(), 'ksbMappingMissing': False,
             }
-    return [{**subject, 'dates': sorted(subject['dates']), 'moduleIds': sorted(subject['moduleIds'])}
+    return [{**subject, 'dates': sorted(subject['dates']), 'moduleIds': sorted(subject['moduleIds']),
+             'ksbCodes': sorted(subject['ksbCodes'])}
             for subject in sorted(subjects.values(), key=lambda item: (item['title'].casefold(), item['id']))]
 
 

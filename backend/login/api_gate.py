@@ -146,6 +146,9 @@ ANY = None
 #: ``/django_admin/`` and ``/media/`` are likewise absent: the admin has its own
 #: login, and media is served by the reverse proxy rather than routed here.
 RULES = (
+    # Learner pages subscribe to curriculum changes too. This endpoint returns
+    # only the shared counter for learners, never staff change paths.
+    ("/curriculum_api/curriculum/cache-epoch/", LEARNER_AND_STAFF),
     # Authored learner activities reference PDFs, decks, audio and other files
     # through this stable upload URL. Learners need the file itself after the
     # activity page has authorised and linked it; employers still do not.

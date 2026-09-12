@@ -41,14 +41,14 @@ describe('Previous evidence in the learner library', () => {
   it('groups months newest first and opens evidence within its component', () => {
     show({}, false);
     const library = within(screen.getByRole('region', { name: 'Evidence by month' }));
-    expect(library.getByRole('button', { name: 'September 2026', exact: true })).toHaveAttribute('aria-expanded', 'true');
-    expect(library.getByRole('button', { name: 'August 2026', exact: true })).toHaveAttribute('aria-expanded', 'false');
+    expect(library.getByRole('button', { name: 'September 2026' })).toHaveAttribute('aria-expanded', 'true');
+    expect(library.getByRole('button', { name: 'August 2026' })).toHaveAttribute('aria-expanded', 'false');
     expect(library.queryByRole('button', { name: `Open evidence: ${historical.name}` })).not.toBeInTheDocument();
-    fireEvent.click(library.getByRole('button', { name: 'August 2026', exact: true }));
+    fireEvent.click(library.getByRole('button', { name: 'August 2026' }));
     const month = within(library.getByRole('region', { name: 'August 2026 evidence' }));
     const component = within(month.getByRole('region', { name: 'Leadership component' }));
     expect(component.getByRole('button', { name: `Open evidence: ${historical.name}` })).toBeVisible();
-    fireEvent.click(component.getByRole('button', { name: 'Leadership', exact: true }));
+    fireEvent.click(component.getByRole('button', { name: 'Leadership' }));
     expect(component.queryByRole('button', { name: `Open evidence: ${historical.name}` })).not.toBeInTheDocument();
     fireEvent.click(library.getByRole('button', { name: 'Expand all months' }));
     expect(component.getByRole('button', { name: `Open evidence: ${historical.name}` })).toBeVisible();
@@ -83,7 +83,7 @@ describe('Previous evidence in the learner library', () => {
     expect(screen.getByRole('button', { name: `Open evidence: ${historical.name}` })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Open evidence: New evidence.pdf' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByText('Clear all filters'));
-    fireEvent.click(screen.getByRole('button', { name: 'Filters', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Filters' }));
     fireEvent.change(screen.getByLabelText('Source'), { target: { value: 'previous' } });
     expect(screen.getByText('Showing 2 of 3 items')).toBeVisible();
     fireEvent.change(screen.getByLabelText('Month'), { target: { value: '2026-07' } });

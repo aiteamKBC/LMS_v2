@@ -292,10 +292,10 @@ export function invalidateLearnerDetailCache(kind?: LearnerKind, id?: string): v
 }
 
 /** Share the expensive workspace payload between learner pages. */
-export function fetchLearnerDetail(kind: LearnerKind, id: string, options: { force?: boolean; componentId?: string } = {}): Promise<LearnerDetail> {
+export function fetchLearnerDetail(kind: LearnerKind, id: string, options: { force?: boolean; revalidate?: boolean; componentId?: string } = {}): Promise<LearnerDetail> {
   if (options.force) invalidateLearnerDetailCache(kind, id);
   if (options.componentId) return componentResource.read(JSON.stringify([kind, id, options.componentId]));
-  return detailResource.read(`${kind}:${id}`);
+  return detailResource.read(`${kind}:${id}`, { revalidate: options.revalidate });
 }
 
 export function peekLearnerSummary(kind: LearnerKind, id: string): LearnerSummary | undefined {

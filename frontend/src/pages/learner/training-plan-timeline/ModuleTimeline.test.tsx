@@ -18,6 +18,26 @@ function Harness({ rows = modules, onSelect = vi.fn() }: { rows?: typeof modules
 afterEach(cleanup);
 
 describe('Compact Gantt', () => {
+  it('keeps all four assigned modules visible across years and opens a future module schedule', () => {
+    const rows = modules.slice(0, 4).map((module, index) => ({ ...module,
+      title: ['Aya Modual', 'Marketing Impact and Planning', 'Social Media', 'Martech'][index],
+      start: ['2026-08-03', '2026-10-05', '2027-02-15', '2027-06-10'][index],
+      end: ['2026-10-23', '2027-02-11', '2027-05-20', '2027-09-23'][index],
+    }));
+    render(<Harness rows={rows} />);
+    expect(screen.getByText('4 assigned modules · 2 scheduled in 2026')).toBeVisible();
+    expect(screen.getAllByRole('progressbar')).toHaveLength(4);
+    for (const row of rows) expect(screen.getByRole('link', { name: row.title })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'View all modules' })).toHaveAttribute('href', '/learner/modules/commercial/125');
+    fireEvent.click(screen.getByRole('button', { name: 'Show Social Media schedule in 2027' }));
+    expect(screen.getByRole('combobox', { name: 'Timeline year' })).toHaveValue('2027');
+    expect(screen.getAllByRole('progressbar')).toHaveLength(4);
+    expect(within(screen.getByRole('complementary')).getByRole('heading', { name: 'Social Media' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Show Social Media overview' })).toBeVisible();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Timeline year' }), { target: { value: '2026' } });
+    expect(screen.getAllByRole('progressbar')).toHaveLength(4);
+  });
+
   it('keeps every module in the year when selecting another month', () => {
     render(<Harness />);
     expect(screen.getAllByRole('progressbar')).toHaveLength(36);

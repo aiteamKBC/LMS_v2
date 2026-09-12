@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, CalendarDays, CheckCircle2, LocateFixed, Maximize2, Minimize2 } from 'lucide-react';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
@@ -30,7 +30,7 @@ export function ModuleTimeline({ data, modules, kind, learnerId, today, selected
   const year = Number(selectedMonth.slice(0, 4));
   const sourceDates = [...Object.keys(data.months), ...data.actual.map(row => row.month), ...data.reviews.map(reviewDate), ...modules.flatMap(m => [m.start, m.end])];
   const years = timelineYears(sourceDates.map(date => date.length === 7 ? `${date}-01` : date), Number(today.slice(0, 4)), year);
-  const activeModules = modules.filter(module => !module.start || (module.start < `${year + 1}-01-01` && module.end >= `${year}-01-01`));
+  const scheduledInYear = modules.filter(module => barPosition(module.start, module.end, year));
   const currentModules = modules.filter(module => module.start && module.start <= today && module.end >= today && moduleStatus(module) !== 'Completed');
   const current = currentModules.find(module => module.id === selectedId) || currentModules[0];
   const inspected = modules.find(module => module.id === inspectedId);
@@ -39,6 +39,7 @@ export function ModuleTimeline({ data, modules, kind, learnerId, today, selected
     .sort((a, b) => reviewDate(a).localeCompare(reviewDate(b)));
   const reviewDays = [...new Set(reviews.map(reviewDate).filter(date => date.startsWith(String(year))))]
     .map(date => ({ date, items: reviews.filter(review => reviewDate(review) === date) }));
+  const chartHeight = 64 + (modules.length ? modules.length * 52 : 80) + (reviewDays.length ? 50 : 0) + 2;
   const subjectHref = (id: string) => `/learner/modules/${kind}/${learnerId}?subject=${encodeURIComponent(id)}`;
   const calendarHref = (event: string) => `/learner/calendar?kind=${encodeURIComponent(kind)}&learner=${encodeURIComponent(learnerId)}&event=${encodeURIComponent(event)}`;
   const reviewStatus = (review: typeof reviews[number]) => ({ completed: 'Completed', scheduled: review.invited === false ? 'Booking pending' : 'Booked', 'not-scheduled': reviewDate(review) < today ? 'Overdue' : 'Not booked', 'awaiting-signature': 'Awaiting signatures', 'in-progress': 'In progress' }[review.status] || 'Not booked');
@@ -94,8 +95,9 @@ export function ModuleTimeline({ data, modules, kind, learnerId, today, selected
   const timeline = <section ref={root} id="module-timeline" className={`${styles.root} ${layout.root} ${fullscreen ? layout.expanded : ''}`} aria-label="Module timeline"
     onKeyDown={event => { if (event.key === 'Escape' && inspected) { event.stopPropagation(); closeInspector(); } }}>
     <header className={layout.toolbar}>
-      <div className={layout.title}><h2>Module timeline</h2><span>{activeModules.length} modules · {year}</span></div>
+      <div className={layout.title}><h2>Module timeline</h2><span>{modules.length} assigned modules · {scheduledInYear.length} scheduled in {year}</span></div>
       <div className={layout.actions}>
+        {canOpenActivities && <Link to={`/learner/modules/${kind}/${learnerId}`}>View all modules<ArrowRight size={15} /></Link>}
         <label>Year<select aria-label="Timeline year" value={year} onChange={event => selectMonth(`${event.target.value}-${selectedMonth.slice(5)}`)}>{years.map(value => <option key={value}>{value}</option>)}</select></label>
         <button type="button" onClick={goToday}>Today</button>
         <button type="button" onClick={goCurrent}><LocateFixed size={15} />Current module</button>
@@ -104,7 +106,7 @@ export function ModuleTimeline({ data, modules, kind, learnerId, today, selected
     </header>
     {notice && <p role="status" className={layout.notice}>{notice}</p>}
     <div className={layout.caption}><div className={layout.legend}><span><i className={layout.inProgress} />In progress</span><span><i className={layout.completed} />Completed</span><span><i className={layout.notStarted} />Not started</span><span><i className={layout.todayKey} />Today</span></div><p>Select a bar to view module details.</p></div>
-    <div className={`${layout.body} ${inspected ? layout.withInspector : ''}`}>
+    <div className={`${layout.body} ${inspected ? layout.withInspector : ''}`} style={{ '--timeline-content-height': `${chartHeight}px` } as CSSProperties}>
       <div ref={plot} className={layout.plot} tabIndex={0} aria-label="Scroll module timeline">
         <div className={layout.grid}>
           <div className={layout.chartHeader} data-timeline-header><div className={layout.moduleHeading}>Modules<span>Progress</span></div><div className={layout.months}>{monthNames.map((name, index) => {
@@ -112,7 +114,7 @@ export function ModuleTimeline({ data, modules, kind, learnerId, today, selected
             return <button type="button" key={key} className={key === selectedMonth ? layout.selectedMonth : ''} onClick={() => selectMonth(key)}
               aria-label={`${monthLabel(key)}${data.months[key]?.topics[0] ? ` — ${data.months[key].topics[0]}` : ''}`} aria-pressed={key === selectedMonth} title={data.months[key]?.topics.join(' · ')}><strong>{name}</strong><span>{data.months[key]?.topics[0] || ''}</span></button>;
           })}</div></div>
-          {activeModules.map(module => {
+          {modules.map(module => {
             const position = barPosition(module.start, module.end, year);
             const status = moduleStatus(module);
             const tone = status === 'Completed' ? layout.completed : status === 'In progress' ? layout.inProgress : layout.notStarted;
@@ -124,12 +126,16 @@ export function ModuleTimeline({ data, modules, kind, learnerId, today, selected
                   onClick={event => inspect(module, event.currentTarget)} aria-label={`Show ${module.title} overview`} aria-pressed={module.id === inspectedId} data-inspected={module.id === selectedId}
                   title={`${module.title} · ${dateLabel(module.start)} – ${dateLabel(module.end)} · ${status} · ${module.progress}% completed`}>
                   <span className={layout.barFill} style={{ width: `${module.progress}%` }} /><span className={layout.barCaption}>{dateLabel(module.start)} – {dateLabel(module.end)}</span>{status === 'Completed' && <CheckCircle2 size={12} />}
+                </button> : module.start && module.end ? <button type="button" className={layout.noDates}
+                  onClick={event => { onMonthChange(module.start.slice(0, 7)); inspect(module, event.currentTarget); }}
+                  aria-label={`Show ${module.title} schedule in ${module.start.slice(0, 4)}`}>
+                  {dateLabel(module.start)} – {dateLabel(module.end)} · View {module.start.slice(0, 4)}<ArrowRight size={12} />
                 </button> : <button type="button" className={layout.noDates} onClick={event => inspect(module, event.currentTarget)} aria-label={`Show ${module.title} overview`} data-inspected={module.id === selectedId}>Dates to be confirmed<ArrowRight size={12} /></button>}
                 {Number(today.slice(0, 4)) === year && <span className={layout.todayLine} style={{ left: `${barPosition(today, today, year)?.left || 0}%` }} />}
               </div>
             </div>;
           })}
-          {!activeModules.length && <p className={layout.empty}>No modules are scheduled for this year.</p>}
+          {!modules.length && <p className={layout.empty}>Your modules will appear here when they are assigned.</p>}
           {!!reviewDays.length && <div className={layout.reviewRow}><div className={layout.reviewLabel}><CalendarDays size={15} /><strong>Coaching reviews</strong><span>{reviewDays.reduce((sum, day) => sum + day.items.length, 0)}</span></div><div className={layout.track}>
             {monthNames.map((_, index) => <span key={index} className={layout.monthCell} />)}
             {reviewDays.map(day => <Link key={day.date} className={layout.reviewMarker} to={calendarHref(day.items[0].eventKey)} style={{ left: `clamp(14px, ${barPosition(day.date, day.date, year)?.left || 0}%, calc(100% - 14px))` }}

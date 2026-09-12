@@ -445,7 +445,9 @@ class SubjectBuilderCoverTests(SimpleTestCase):
             [('legacy:42', '/media/curriculum_components/old.webp')],
             [('MOD-1', 'Renamed subject')],
             [('MOD-1', 'Renamed subject', '')],
-            [('COMP-1', 'Lesson', '2026-08-22', 'Lecture 06/03/26')],
+            [('MOD-1', None, 1, '', '', '', None)],
+            [('WEEK-1', 'MOD-1', 'Lecture 06/03/26')],
+            [('COMP-1', 'MOD-1', 'WEEK-1', 'Lesson', 'reading', {})],
         ]
         with patch('learner_api.student_activity.connections') as connections, \
              patch('learner_api.student_activity.subject_store.ready', return_value=True), \

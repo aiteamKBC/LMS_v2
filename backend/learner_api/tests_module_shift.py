@@ -207,6 +207,9 @@ class ModuleShiftWriteTests(SimpleTestCase):
     through delivery whose plan holds a since-retired module can still be moved.
     """
 
+    def setUp(self):
+        self.enterContext(patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='admin')))
+
     def _shift(self, learner, body, preset=()):
         request = RequestFactory().patch(
             "/learner_api/module-shift/62/",

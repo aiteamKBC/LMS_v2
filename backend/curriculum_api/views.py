@@ -4485,7 +4485,10 @@ def unique_prefixed_id(prefix, value='', existing_values=None):
     values = existing_values() if callable(existing_values) else existing_values
     existing = {clean_str(item) for item in (values or []) if clean_str(item)}
     while True:
-        candidate = f'{prefix}-{datetime.utcnow().strftime("%Y%m%d%H%M%S%f")}'
+        # Multiple unsaved siblings are minted before the bulk insert. Windows
+        # clock resolution can give them the same microsecond timestamp, and
+        # existing_values cannot contain rows that have not been inserted yet.
+        candidate = f'{prefix}-{datetime.utcnow().strftime("%Y%m%d%H%M%S%f")}{uuid.uuid4().hex[:12].upper()}'
         if candidate not in existing:
             return candidate
 
@@ -4493,7 +4496,7 @@ def unique_prefixed_id(prefix, value='', existing_values=None):
 def unique_timestamp_prefixed_id(prefix, existing_values=None):
     existing = {clean_str(value) for value in (existing_values or []) if clean_str(value)}
     while True:
-        candidate = f'{prefix}-{datetime.utcnow().strftime("%Y%m%d%H%M%S%f")}'
+        candidate = f'{prefix}-{datetime.utcnow().strftime("%Y%m%d%H%M%S%f")}{uuid.uuid4().hex[:12].upper()}'
         if candidate not in existing:
             return candidate
 
@@ -8647,7 +8650,7 @@ def cohort_selected_holidays_by_cohort(cohort_ids):
         return {}
     clause, params = curriculum_in_clause('cohort_id', wanted)
     try:
-        rows = authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE, clause, params)
+        rows = authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE, clause, params, ensure_tables=False)
     except (Exception, AssertionError):
         logger.debug('Unable to read cohort holidays for %s.', ', '.join(wanted), exc_info=True)
         return {}
@@ -14953,14 +14956,15 @@ def curriculum_live_session_occurrences(request):
     return JsonResponse({'series': series_payload, 'occurrences': occurrences_payload})
 
 
-def apply_module_session_plan_to_weeks(module, group_row, weeks):
+def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=None):
     """Stamp the module's planned session date/day/time onto its weeks in place.
 
     Shared by the single-module and batched structure readers so the two cannot
     drift: the batched one lacked this entirely, which silently dropped
     sessionDate/sessionDay/sessionStartTime/sessionDurationMinutes from every
-    week it returned. Pure computation over rows the caller already holds --
-    it issues no queries of its own.
+    week it returned. With ``holidays`` supplied it issues no queries;
+    otherwise it reads the cohort's selected holidays through the shared
+    session planner.
 
     A week consumes one planned date per DELIVERY DAY, not one per live-session
     component it happens to hold: a Mon+Fri module spends two of its dates on
@@ -14991,6 +14995,7 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks):
     session_plan = module_session_plan_for_count(
         module,
         max(planned_count, sum(week_slot_counts)),
+        holidays=holidays,
     ).get('sessions') or []
     session_start_time, _session_end_time, session_duration = module_session_clock(module, group_row)
     session_index = 0
@@ -17442,7 +17447,8 @@ def curriculum_cache_epoch(request):
     """
     return JsonResponse({
         'epoch': shared_curriculum_epoch(),
-        'changes': recent_curriculum_changes(),
+        'changes': [] if getattr(getattr(request, 'login_account', None), 'role', None) == 'learner'
+        else recent_curriculum_changes(),
     })
 
 
@@ -19218,7 +19224,8 @@ def curriculum_component_detail(request, component_id):
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
-    current = next((item for item in component_builder_rows() if item['id'] == component_id), None)
+    module_id = clean_str(existing[0].get('module_catalogue_id'))
+    current = next((item for item in component_builder_rows([module_id] if module_id else None) if item['id'] == component_id), None)
     merged = {
         **(current or component_builder_response(existing[0])),
         **payload,

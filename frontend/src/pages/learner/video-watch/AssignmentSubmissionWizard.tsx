@@ -317,9 +317,12 @@ export function AssignmentSubmissionWizard({
   }, [locked, draftSaved, savingDraft]);
 
   const runChecks = async (): Promise<boolean> => {
-    setChecking(true); setSaveError('');
+    setChecking(true); setChecks([]); setSaveError('');
     try {
       const result = await checkMonthlyAssignment(payload('draft'));
+      if (!Array.isArray(result) || result.length !== 13 || result.some(check => !check || typeof check.passed !== 'boolean')) {
+        throw new Error('Could not verify all submission requirements. Please run the checks again.');
+      }
       setChecks(result);
       return result.every(check => check.passed);
     } catch (e) { setSaveError(e instanceof Error ? e.message : 'Could not check your submission.'); return false; }

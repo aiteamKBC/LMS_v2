@@ -39,6 +39,7 @@ import { ActivitySidebar } from './ActivitySidebar';
 import { isNavigableComponent } from './weekPreview';
 import { componentRoute } from './componentRoute';
 import { AssignmentSubmissionWizard, type AssignmentAnswers } from './AssignmentSubmissionWizard';
+import { useSavedAssignmentAccess } from './useSavedAssignmentAccess';
 import { resolveDocEmbed } from '@/lib/docEmbed';
 import { normalizeReadingHtml } from '@/lib/readingHtml';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
@@ -326,7 +327,9 @@ export default function ComponentViewPage() {
   const isLiveSession = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session';
   const isAssignment = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'assignment';
   const noun = componentNoun(component?.type);
-  const openable = component ? isOpenableComponent(component) : false;
+  const contentOpenable = component ? isOpenableComponent(component) : false;
+  const savedAssignment = useSavedAssignmentAccess(kind, id, componentId, isAssignment && !contentOpenable && canUseComponent);
+  const openable = contentOpenable || savedAssignment.status === 'available';
 
   // Approved evidence uploaded for this component. Owned here (not inside the
   // uploader) because the completion gate depends on it.
@@ -681,6 +684,13 @@ export default function ComponentViewPage() {
           <ReadOnlyLearnerNotice what="complete their own training-plan activities" onBack={() => navigate(backHref)} />
         ) : !componentAccess.open ? (
           <ComponentAccessNotice onBack={() => navigate(backHref)} />
+        ) : !openable && savedAssignment.status === 'checking' ? (
+          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
+        ) : !openable && savedAssignment.status === 'error' ? (
+          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6">
+            <p role="alert" className="text-sm text-red-700">Could not load your saved assignment.</p>
+            <button type="button" onClick={savedAssignment.retry} className="mt-3 text-sm underline">Retry saved assignment</button>
+          </div>
         ) : !openable ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="This component can't be completed here yet." /></div>
         ) : isVideo && !parsed ? (

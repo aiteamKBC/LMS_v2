@@ -55,7 +55,15 @@ export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], dat
     const activityCount = summary?.total ?? activities.length;
     const groupId = subject.id.startsWith('legacy:') ? subject.id.slice(7) : '';
     const actual = data.actual.filter(row => groupId && row.groupId === groupId);
-    return { ...subject, activities, activityCount, moduleId, detail, sessions, dates, start, end,
+    const activityCounts = summary?.activityCounts || activities.reduce<Record<string, number>>((counts, activity) => {
+      counts[activity.category] = (counts[activity.category] || 0) + 1;
+      return counts;
+    }, {});
+    const ksbCodes = summary?.ksbCodes || [...new Set(activities.flatMap(activity =>
+      (activity.native?.ksbMappings || []).map(mapping => mapping.code).filter(Boolean)))].sort();
+    return { ...subject, activities, activityCount, activityCounts, ksbCodes,
+      ksbMappingMissing: summary ? summary.ksbMappingMissing : activities.some(activity => !activity.native?.ksbMappings),
+      moduleId, detail, sessions, dates, start, end,
       weeks: new Set(dates.map(weekKey)).size, done, progress: percent(done, activityCount),
       actual: actual.length ? actual.reduce((sum, row) => sum + row.hours, 0) : null };
   });

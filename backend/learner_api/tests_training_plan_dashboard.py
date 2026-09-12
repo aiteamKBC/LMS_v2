@@ -7,7 +7,7 @@ import json
 import pymupdf as fitz
 from django.test import SimpleTestCase, RequestFactory
 from .training_plan_contract import parse_contract, read_verified_extract, contract_extract_metadata, read_contract, verified_planned_hours
-from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session, read_dashboard
+from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session, read_dashboard, assigned_group_coach
 
 
 def contract_pdf(total=30, review_on_same_page=False, joined_provider=False, split_header=False, split_total=False):
@@ -45,6 +45,45 @@ def contract_pdf(total=30, review_on_same_page=False, joined_provider=False, spl
 
 
 class TrainingPlanDashboardTests(SimpleTestCase):
+    def test_coach_fallback_uses_only_the_current_programme_cohort_and_group(self):
+        source = SimpleNamespace(programme=' Marketing Level 4 ', cohort='October 2026', group='G1')
+        current = {'programme_name': 'Marketing Level 4', 'cohort_name': 'October 2026', 'group_name': 'g1', 'coach_name': 'Omar'}
+        old = {**current, 'cohort_name': 'Final Cohort', 'group_name': 'Aya Group', 'coach_name': 'Test Coach'}
+        self.assertEqual(assigned_group_coach(source, [old, current, current]), 'Omar')
+        self.assertEqual(assigned_group_coach(source, [old]), '')
+        self.assertEqual(assigned_group_coach(source, [current, {**current, 'coach_name': 'Another coach'}]), '')
+        self.assertEqual(assigned_group_coach(SimpleNamespace(), [current]), '')
+
+    def test_module_overview_keeps_authored_plan_and_outcomes_without_inventing_booked_sessions(self):
+        source = SimpleNamespace(pk=125, aptem_id=None, email='learner@example.com',
+                                 programme='Marketing Level 4', cohort='October 2026', group='G1')
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value.fetchall.return_value = [('M1',)]
+        module = {'id': 'M1', 'title': '<b>Marketing</b>', 'description': 'Learn &amp; apply',
+                  'start_date': date(2026, 10, 5), 'end_date': date(2027, 2, 11), 'weeks_number': 16,
+                  'total_otjh': '140.00', 'sessions_number': 16, 'session_week_day': 'Thursday',
+                  'session_start_time': '09:00', 'session_end_time': '11:00', 'coach_name': 'Group coach',
+                  'programme_name': 'Marketing Level 4', 'cohort_name': 'October 2026', 'group_name': 'G1'}
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {'current:M1': {'id': 'M1'}})), \
+             patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], [
+                 {'module_catalogue_id': 'M1', 'learning_outcomes': '["<b>Plan a campaign</b>", ""]'},
+                 {'module_catalogue_id': 'M1', 'learning_outcomes': ['Plan a campaign', 'Measure results', None]},
+             ], []]), \
+             patch('learner_api.calendar.coaching_events_for_learner', return_value=[]):
+            profiles.objects.filter.return_value.first.return_value = None
+            result = read_dashboard(source, section='overview')
+        detail = result['modules'][0]
+        self.assertEqual((detail['title'], detail['description']), ('Marketing', 'Learn & apply'))
+        self.assertEqual((detail['total_otjh'], detail['sessions_number'], detail['weeks_number']), (140, 16, 16))
+        self.assertEqual(detail['learning_outcomes'], ['Plan a campaign', 'Measure results'])
+        self.assertEqual(detail['session_start_time'], '09:00')
+        self.assertEqual(detail['coach_name'], 'Group coach')
+        self.assertEqual(detail['end_date'], '2027-02-11')
+        self.assertEqual(result['sessions'], [])
+        self.assertEqual(result['coach'], {'name': 'Group coach', 'bookingUrl': None})
+
     def test_overview_reads_current_calendar_targets_and_stored_booking_changes(self):
         from coach_api.models import CoachCalendarEvent
 
@@ -72,6 +111,7 @@ class TrainingPlanDashboardTests(SimpleTestCase):
             self.assertEqual(target[0]['targetDate'], '2026-09-25')
             self.assertEqual(target[0]['status'], 'not-scheduled')
             self.assertIsNone(target[0]['scheduledDate'])
+            self.assertIsNone(target[0]['meetingLink'])
 
             # Unsaved fixture only: exercise the actual calendar serializer and
             # generated/stored merge without making any database changes.
@@ -89,9 +129,13 @@ class TrainingPlanDashboardTests(SimpleTestCase):
             booking.scheduled_time = time(10, 30)
             booking.owner_name = 'New Coach'
             booking.graph_event_id = 'invitation-synced'
+            booking.meeting_link = 'https://teams.microsoft.com/l/meetup-join/review-23'
             moved = current()[0]
             self.assertEqual((moved['scheduledDate'], moved['scheduledTime'], moved['coachName'], moved['invited']),
                              ('2026-09-20', '10:30', 'New Coach', True))
+            self.assertEqual(moved['meetingLink'], booking.meeting_link)
+            booking.meeting_link = 'javascript:alert(1)'
+            self.assertIsNone(current()[0]['meetingLink'])
 
             for status in ('cancelled', 'completed'):
                 booking.status = status
