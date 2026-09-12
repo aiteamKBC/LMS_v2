@@ -72,8 +72,8 @@ import { useAuth } from '@/hooks/useAuth';
 // ============================================================================
 // Workspace navigation.
 //
-// Learners use a stable menu of direct page links, with labels expanded only
-// by the menu button. Other workspaces use an icon rail and secondary panel.
+// Learners use a stable menu with related pages grouped in the same panel.
+// Other workspaces use an icon rail and secondary panel.
 // Each role supplies permission-filtered destinations, also used on mobile.
 //
 // Presentation lives here in Tailwind classes keyed to the theme tokens —
@@ -312,12 +312,6 @@ export function Sidebar({
       .filter(item => Boolean(item.href || item.children?.length));
   }, [navItems, canSeeNavItem]);
 
-  // Learner destinations stay in one menu. Filter group permissions before
-  // promoting their pages to direct links in the desktop rail and mobile drawer.
-  const navigationItems = role === 'learner'
-    ? filteredNavItems.flatMap(item => item.children?.length ? item.children : item)
-    : filteredNavItems;
-
   const queryMatchedHref = useMemo(() => {
     const current = `${location.pathname}${location.search}`;
     const items = filteredNavItems.flatMap(item => [item, ...(item.children ?? [])]);
@@ -469,7 +463,7 @@ export function Sidebar({
       {/* Navigation */}
       <nav aria-label={`${roleLabel} navigation`} className={`kbc-sidebar-nav flex-1 overflow-y-auto overflow-x-hidden py-2.5 ${variant === 'rail' ? 'px-1.5' : 'px-2'}`}>
         <div className={variant === 'rail' ? 'space-y-1' : 'space-y-0.5'}>
-          {navigationItems.map(item => (
+          {filteredNavItems.map(item => (
             <div key={item.id}>
               {variant === 'rail' ? (
                 hasChildren(item) ? (
@@ -539,8 +533,27 @@ export function Sidebar({
             aria-label={`${roleLabel} primary navigation`}
             className={`min-h-0 flex-1 overflow-y-auto pb-6 [scrollbar-width:thin] ${pinned ? 'space-y-1 px-3' : 'mt-7 space-y-4 px-5'}`}
           >
-            {navigationItems.map(item => (
-              <ExpandedLink key={item.id} item={item} isActive={isActive} onNavigate={onCloseMobile} presentation={pinned ? 'row' : 'rail'} />
+            {filteredNavItems.map(item => (
+              hasChildren(item) ? (
+                <ExpandedGroup
+                  key={item.id}
+                  item={item}
+                  isActive={isActive}
+                  isExpanded={pinned && expandedGroups.has(item.id)}
+                  onToggle={() => {
+                    if (!pinned) {
+                      onPinChange?.(true);
+                      setExpandedGroups(previous => new Set(previous).add(item.id));
+                    } else {
+                      toggleGroup(item.id);
+                    }
+                  }}
+                  onNavigate={onCloseMobile}
+                  presentation={pinned ? 'row' : 'rail'}
+                />
+              ) : (
+                <ExpandedLink key={item.id} item={item} isActive={isActive} onNavigate={onCloseMobile} presentation={pinned ? 'row' : 'rail'} />
+              )
             ))}
           </nav>
         </aside>
@@ -820,7 +833,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, prese
   isExpanded: boolean;
   onToggle: () => void;
   onNavigate?: () => void;
-  presentation?: 'rail' | 'tiles';
+  presentation?: 'rail' | 'row' | 'tiles';
 }) {
   const anyChildActive = item.children?.some(child => isActive(child.href, child.matchPaths)) ?? false;
 
@@ -837,11 +850,13 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, prese
         title={presentation === 'rail' ? item.label : undefined}
         className={presentation === 'rail'
           ? `relative flex h-12 w-12 cursor-pointer items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 ${anyChildActive ? 'bg-brand-accent text-white shadow-sm' : 'bg-white/10 text-white/75 hover:bg-white/20 hover:text-white'}`
+          : presentation === 'row'
+          ? `relative flex min-h-12 w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/80 ${anyChildActive ? 'bg-brand-accent text-white shadow-sm' : 'bg-white/10 text-white/75 hover:bg-white/20 hover:text-white'}`
           : `${ROW_BASE} ${anyChildActive && !isExpanded ? ROW_ACTIVE : ROW_IDLE} w-full cursor-pointer gap-2.5 px-2.5 py-2 text-[13px]`}
       >
         {anyChildActive && !isExpanded && <span className={presentation ? 'hidden' : 'contents'}><ActiveMarker /></span>}
-        <span className={presentation === 'rail' ? 'flex h-5 w-5 items-center justify-center' : 'kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center'}>
-          <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} className={presentation === 'rail' ? 'h-5 w-5' : undefined} />
+        <span className={presentation ? 'flex h-5 w-5 shrink-0 items-center justify-center' : 'kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center'}>
+          <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} className={presentation ? 'h-5 w-5' : undefined} />
         </span>
         <span className={presentation === 'rail' ? 'sr-only' : 'min-w-0 flex-1 truncate text-left'}>{item.label}</span>
         <span className={presentation === 'rail' ? 'sr-only' : 'flex shrink-0 items-center gap-1.5'}>
@@ -855,8 +870,11 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, prese
       )}
 
       {presentation !== 'rail' && isExpanded && item.children && (
-        <div className={presentation === 'tiles' ? 'grid grid-cols-1 gap-2' : 'ml-[19px] mt-0.5 space-y-0.5 border-l border-foreground-100 pl-2'}>
+        <div className={presentation === 'tiles' ? 'grid grid-cols-1 gap-2' : presentation === 'row' ? 'ml-3 mt-1 space-y-1 border-l border-white/15 pl-3' : 'ml-[19px] mt-0.5 space-y-0.5 border-l border-foreground-100 pl-2'}>
           {item.children.map(child => {
+            if (presentation === 'row') {
+              return <ExpandedLink key={child.id} item={child} isActive={isActive} onNavigate={onNavigate} presentation="row" />;
+            }
             const childActive = isActive(child.href, child.matchPaths);
             if (presentation === 'tiles') {
               return <SecondaryNavCard key={child.id} item={child} active={childActive} onNavigate={onNavigate} />;

@@ -55,9 +55,12 @@ beforeEach(() => {
   sessionStorage.clear();
 });
 
-it('keeps learner destinations fixed and opens their pages without adding sidebar cards', () => {
+it('groups learner progress pages in the same menu while keeping direct destinations fixed', () => {
   const { sidebar, rail, panel } = showWorkspace('learner', '/learner/clubs/events');
-  const destinations = within(rail).getAllByRole('link').map(link => link.getAttribute('href'));
+  expect(within(rail).getByRole('button', { name: 'My Progress' })).toHaveAttribute('aria-expanded', 'false');
+  for (const name of ['Monthly Logs', 'Monthly Coaching Meeting', 'Progress Review']) {
+    expect(within(rail).queryByRole('link', { name })).not.toBeInTheDocument();
+  }
   expect(within(rail).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page');
   for (const name of ['Readiness', 'Community', 'Help']) {
     expect(within(rail).queryByRole('button', { name })).not.toBeInTheDocument();
@@ -67,9 +70,10 @@ it('keeps learner destinations fixed and opens their pages without adding sideba
   fireEvent.mouseEnter(within(rail).getByRole('link', { name: 'Dashboard' }));
   fireEvent.focus(within(rail).getByRole('link', { name: 'Dashboard' }));
   expect(sidebar.style.width).toBe('88px');
-  fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));
+  fireEvent.click(within(rail).getByRole('button', { name: 'My Progress' }));
   expect(within(sidebar).getAllByRole('link', { name: 'Dashboard' })).toHaveLength(1);
-  expect(within(rail).queryByRole('button', { name: 'My Progress' })).not.toBeInTheDocument();
+  expect(within(rail).getByRole('button', { name: 'My Progress' })).toHaveAttribute('aria-expanded', 'true');
+  const destinations = within(rail).getAllByRole('link').map(link => link.getAttribute('href'));
   for (const name of ['Monthly Logs', 'Monthly Coaching Meeting', 'Progress Review', 'Dashboard']) {
     const link = within(rail).getByRole('link', { name });
     fireEvent.mouseEnter(link);
@@ -82,6 +86,10 @@ it('keeps learner destinations fixed and opens their pages without adding sideba
   }
   fireEvent.mouseLeave(sidebar, { relatedTarget: document.body });
   expect(sidebar.style.width).toBe('338px');
+  fireEvent.click(within(rail).getByRole('button', { name: 'My Progress' }));
+  expect(within(rail).getByRole('button', { name: 'My Progress' })).toHaveAttribute('aria-expanded', 'false');
+  expect(within(rail).queryByRole('link', { name: 'Monthly Logs' })).not.toBeInTheDocument();
+  expect(within(rail).getByRole('link', { name: 'Dashboard' })).toBeVisible();
 });
 
 it.each(['/users', '/users/42', '/users/42/wizard/introduction', '/employers/8', '/employers/8/learner/commercial/42'])(

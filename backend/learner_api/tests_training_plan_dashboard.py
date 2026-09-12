@@ -6,7 +6,7 @@ from hashlib import sha256
 import json
 import pymupdf as fitz
 from django.test import SimpleTestCase, RequestFactory
-from .training_plan_contract import parse_contract, read_verified_extract, contract_extract_metadata, read_contract
+from .training_plan_contract import parse_contract, read_verified_extract, contract_extract_metadata, read_contract, verified_planned_hours
 from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session, read_dashboard
 
 
@@ -225,6 +225,37 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         self.assertIs(selected_contract([placeholder, {**document,'date':date-timedelta(days=1)}]),placeholder)
         self.assertIs(selected_contract([placeholder, document, {**document,'id':791}]),placeholder)
 
+    def test_renamed_duplicate_keeps_its_original_document_identity(self):
+        date = datetime(2026, 8, 13, 11, 12, tzinfo=timezone.utc)
+        placeholder = {'id': 6330, 'date': date, 'original_name': 'TrainingPlan-v1.pdf',
+                       'document_name': 'TrainingPlan-v1.pdf', 'azure_path': None}
+        document = {'id': 5540, 'date': date, 'original_name': 'TrainingPlan-v1.pdf',
+                    'document_name': 'Training Plan', 'azure_path': 'az://existing.pdf'}
+        self.assertIs(selected_contract([placeholder, document]), document)
+        self.assertIs(selected_contract([placeholder, {**document, 'original_name': 'TrainingPlan-v2.pdf'}]), placeholder)
+
+    def test_centred_hours_and_shifted_total_remain_in_the_otj_column(self):
+        with fitz.open(stream=contract_pdf(), filetype='pdf') as document:
+            page = document[0]
+            for text in ('10', '20', '30'):
+                for rect in page.search_for(text):
+                    if rect.x0 > 480:
+                        page.add_redact_annot(rect)
+            page.apply_redactions()
+            for y, value in [(145, '10'), (180, '20'), (226, '30')]:
+                page.insert_text((480, y), value, fontsize=9)
+                page.insert_text((450, y), '5', fontsize=9)  # unrelated EM hours
+            self.assertEqual(verified_planned_hours(document.tobytes()), 30)
+
+    def test_total_value_can_touch_its_units(self):
+        with fitz.open(stream=contract_pdf(), filetype='pdf') as document:
+            page = document[0]
+            page.add_redact_annot(fitz.Rect(370, 200, 530, 230))
+            page.apply_redactions()
+            page.insert_text((375, 218), 'Total OTJ', fontsize=9)
+            page.insert_text((478, 218), '(hr)30', fontsize=9)
+            self.assertEqual(verified_planned_hours(document.tobytes()), 30)
+
     def test_reads_topics_and_contract_total_without_adding_the_total_row(self):
         result = parse_contract(contract_pdf(),30)
         self.assertEqual(result['2026-09']['planned'],30)
@@ -233,6 +264,22 @@ class TrainingPlanDashboardTests(SimpleTestCase):
 
     def test_rejects_an_extract_that_disagrees_with_the_pdf_total(self):
         self.assertIsNone(parse_contract(contract_pdf(31)))
+
+    def test_planned_hours_come_from_the_verified_table_not_ilr_or_minimums(self):
+        with fitz.open(stream=contract_pdf(), filetype='pdf') as document:
+            document[0].insert_text((65, 75), 'ILR Planned Hours: 576', fontsize=9)
+            document[0].insert_text((65, 330), 'Published minimum off-the-job training: 557', fontsize=9)
+            data = document.tobytes()
+        self.assertEqual(verified_planned_hours(data), 30)
+        self.assertIsNone(verified_planned_hours(contract_pdf(total=31)))
+
+    def test_verified_zero_is_preserved(self):
+        metadata = self.reviewed_extract(printed_total=0, activities=[{
+            'date': '2026-09-14', 'title': 'Prior learning', 'method': 'Assignment', 'hours': 0,
+        }])
+        with patch('learner_api.training_plan_contract.parse_contract', return_value=None):
+            self.assertEqual(verified_planned_hours(b'reviewed PDF', metadata), 0)
+            self.assertIsNone(verified_planned_hours(b'changed PDF', metadata))
 
     def test_uses_verified_pdf_total_when_database_extraction_is_stale(self):
         self.assertEqual(parse_contract(contract_pdf(),29)['2026-09']['planned'],30)

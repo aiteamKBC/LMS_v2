@@ -53,6 +53,7 @@ it.each([
   // These links must already exist before ever visiting Dashboard.
   expect(sidebar().getByRole('link', { name: /^My Learning/ })).toBeVisible();
   expect(sidebar().getByRole('link', { name: 'Attendance' })).toBeVisible();
+  fireEvent.click(sidebar().getByRole('button', { name: 'My Progress' }));
   expect(sidebar().getByRole('link', { name: 'Monthly Logs' })).toBeVisible();
   expect(sidebar().queryByRole('link', { name: 'Evidence' })).toBeNull();
   const initialDestinations = destinations();

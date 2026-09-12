@@ -85,6 +85,15 @@ describe('OTJ hours activity log', () => {
     expect(screen.getByText('1172.34 h')).toBeTruthy();
     expect(screen.getByText('867.00 h')).toBeTruthy();
     expect(screen.queryByText('1171.34 h')).toBeNull();
+    expect(screen.getByText('planned hours from the current training plan')).toBeTruthy();
+  });
+  it('explains missing contract hours without borrowing a previous Audit total', () => {
+    render(<OtjhBody real={detail()} loading={false} showHero={false}
+      metrics={{ ...metrics, otjh: { ...metrics.otjh, planned: null } }}
+      activityData={{ activities: [], audit_tp_planned: 576 } as unknown as StudentActivityResponse} />);
+    expect(screen.getByText('planned training hours are not available')).toBeTruthy();
+    expect(screen.queryByText('576.00 h')).toBeNull();
+    expect(screen.queryByText('0.00 h')).toBeNull();
   });
   it('shows old and new KSB point totals instead of an empty native-only percentage', () => {
     render(<KsbProgressBody real={detail()} loading={false} showHero={false} metric={metrics.ksb} />);
