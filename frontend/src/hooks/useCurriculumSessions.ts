@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fetchCurriculumSessions, type CurriculumSession } from '@/lib/curriculumApi';
+import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 
 export function useCurriculumSessions({ autoLoad = true }: { autoLoad?: boolean } = {}) {
   const [sessions, setSessions] = useState<CurriculumSession[]>([]);
   const [loading, setLoading] = useState(autoLoad);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(() => {
+  // `silent` keeps the sessions already on screen while a background re-read
+  // runs, rather than dropping the reader back to skeletons every tab switch.
+  const load = useCallback((options: { silent?: boolean } = {}) => {
     const controller = new AbortController();
     let mounted = true;
 
-    setLoading(true);
-    fetchCurriculumSessions(controller.signal)
+    if (!options.silent) setLoading(true);
+    fetchCurriculumSessions(controller.signal, { revalidate: options.silent })
       .then(result => {
         if (!mounted) return;
         setSessions(result);
@@ -22,7 +25,7 @@ export function useCurriculumSessions({ autoLoad = true }: { autoLoad?: boolean 
         setError(err instanceof Error ? err.message : 'Unable to load curriculum sessions');
       })
       .finally(() => {
-        if (mounted) setLoading(false);
+        if (mounted && !options.silent) setLoading(false);
       });
 
     return () => {
@@ -38,6 +41,8 @@ export function useCurriculumSessions({ autoLoad = true }: { autoLoad?: boolean 
     }
     return load();
   }, [autoLoad, load]);
+
+  useLiveRefresh(() => { load({ silent: true }); }, { enabled: autoLoad });
 
   return { sessions, loading, error, reload: () => load() };
 }

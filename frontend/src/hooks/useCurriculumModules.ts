@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchCurriculumModules, type CurriculumModule } from '@/lib/curriculumApi';
+import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 
 type LoadOptions = {
   silent?: boolean;
@@ -75,6 +76,13 @@ export function useCurriculumModules({ autoLoad = true, skipCache = false, reval
     if (!autoLoad) return;
     return load();
   }, [autoLoad, load]);
+
+  // Modules are authored from the builder, the workspace and the wizard, so a
+  // list left open goes stale the moment anyone else saves. `revalidate` reads
+  // past this tab's cache without forcing the backend rebuild.
+  useLiveRefresh(() => {
+    void reload({ silent: true, revalidate: true, skipCache: false });
+  }, { enabled: autoLoad });
 
   return { modules, loading, error, reload };
 }

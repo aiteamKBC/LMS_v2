@@ -1,3 +1,5 @@
+import { publishCrossTabWrite, subscribeCrossTabWrites } from '@/lib/crossTabWrites';
+
 export type CurriculumStatus = 'active' | 'draft' | 'archived' | 'published' | 'planned' | 'completed' | string;
 
 /**
@@ -1919,6 +1921,20 @@ function isReadOnlyPost(method: string, path: string): boolean {
 
 export function clearCurriculumGetCache() {
   multiTierCache.clear();
+  clearPreviewReads();
+}
+
+/**
+ * Throw away the preview answers.
+ *
+ * These are the only cached reads not held by `multiTierCache`, so every
+ * invalidation path has to say so twice or one of them keeps serving pre-write
+ * answers. The one that matters is tutor availability: it exists to stop a save
+ * being refused for a clash, and an answer cached from before somebody else took
+ * the slot tells the reader the tutor is free right up until the 409 says
+ * otherwise.
+ */
+function clearPreviewReads(): void {
   completedReads.clear();
   inFlightReads.clear();
 }
@@ -1945,6 +1961,342 @@ export function fetchCurriculumJson<T>(path: string, init?: CurriculumRequestIni
   return fetchJson<T>(path, init);
 }
 
+// Drops the cache entries a write to `path` makes wrong. Called both for this
+// tab's own mutations and for a mutation another tab broadcast, so the two tabs
+// throw away exactly the same entries.
+function applyMutationInvalidation(path: string): void {
+  // Every branch below drops these too. A preview is computed from the same
+  // rows a write just changed -- where these sessions land, which tutors are
+  // free -- and there is no path pattern that separates the ones a given write
+  // spoils from the ones it does not. They cost one small POST to rebuild and
+  // live 30s, so throwing the lot away is both correct and cheap.
+  clearPreviewReads();
+  // For mutations, invalidate cache selectively based on the endpoint
+  if (path.includes('/programmes/tree/')) {
+    // Tree save: invalidate all programme trees and related data
+    multiTierCache.invalidateByPattern(/\/overview\//);
+    multiTierCache.invalidateByPattern(/\/programmes\/.*\/detail\//);
+    multiTierCache.invalidateByEntity('programme');
+    multiTierCache.invalidateByEntity('cohort');
+    multiTierCache.invalidateByEntity('group');
+    multiTierCache.invalidateByEntity('module');
+  } else if (path.includes('/programmes/')) {
+    multiTierCache.invalidateByPattern(/\/overview\//);
+    multiTierCache.invalidateByEntity('programme');
+    multiTierCache.invalidateByEntity('cohort');
+    multiTierCache.invalidateByEntity('group');
+    multiTierCache.invalidateByEntity('module');
+  } else if (path.includes('/cohorts/') || path.includes('/groups/') || path.includes('/modules/')) {
+    // The overview payload carries programmes, cohorts, groups AND modules in
+    // one document, and a programme's detail tree carries the same structure.
+    // Neither is tagged with an entity type, so an entity-scoped invalidation
+    // left both in place: creating a group refreshed the page you were on (that
+    // reload asks for fresh data explicitly) but the next page you opened read
+    // the pre-write overview out of cache and showed no new group until a full
+    // browser refresh threw the cache away.
+    multiTierCache.invalidateByPattern(/\/overview\//);
+    multiTierCache.invalidateByPattern(/\/programmes\/.*\/detail\//);
+    multiTierCache.invalidateByEntity('cohort');
+    multiTierCache.invalidateByEntity('group');
+    multiTierCache.invalidateByEntity('module');
+  } else if (path.includes('/ksb-')) {
+    multiTierCache.invalidateByEntity('ksb');
+  } else {
+    // Fallback: clear all caches for unknown mutations
+    multiTierCache.clear();
+  }
+}
+
+const CURRICULUM_WRITE_SCOPE = 'curriculum';
+
+// A page that wants to re-read when somebody else writes. Only remote writes
+// reach these listeners: the tab that saved already refreshes itself on the
+// save path, and firing here too would double every post-save read.
+const remoteWriteListeners = new Set<(path: string) => void>();
+
+/**
+ * The path a listener is given when the write was made outside this browser and
+ * only the epoch poll knows about it. There is no path to report -- the counter
+ * says that something changed, not what -- so a listener that filters on paths
+ * must let this one through.
+ */
+export const UNKNOWN_WRITE_PATH = '*';
+
+export function subscribeCurriculumRemoteWrites(listener: (path: string) => void): () => void {
+  remoteWriteListeners.add(listener);
+  startEpochPolling();
+  return () => {
+    remoteWriteListeners.delete(listener);
+    if (!remoteWriteListeners.size) stopEpochPolling();
+  };
+}
+
+function notifyRemoteWrite(path: string): void {
+  remoteWriteListeners.forEach(listener => {
+    try { listener(path); } catch { /* one bad listener must not stop the rest */ }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Noticing a write made on somebody else's machine.
+//
+// BroadcastChannel reaches the other tabs of this browser and no further, so a
+// colleague saving in another country changes nothing here: the only trigger
+// left is the reader coming back to the tab, and a tab that is simply left in
+// the foreground never fires it. Both screens then sit there quietly stale.
+//
+// So the server is asked, on a timer, for the one number that moves on every
+// write -- the same counter invalidate_curriculum_cache() bumps. It is a Redis
+// read with no database behind it, which is what makes polling it affordable at
+// all; a real payload could not be asked for this often.
+//
+// One timer for the whole tab, however many hooks are subscribed, and only
+// while the tab is visible: a backgrounded tab re-reads when it is looked at
+// again, and polling it in the meantime buys nothing.
+// ---------------------------------------------------------------------------
+
+const EPOCH_PATH = '/curriculum/cache-epoch/';
+const EPOCH_POLL_INTERVAL_MS = 25_000;
+// The endpoint ships with the backend, and the frontend can be deployed ahead of
+// it. Rather than call a missing URL every 25 seconds for the life of the tab,
+// give up after a few failures and leave the return-to-tab refresh to cover it.
+const EPOCH_POLL_MAX_FAILURES = 3;
+// A hung read would otherwise leave the in-flight guard set for good and stop
+// the tab polling for the rest of its life.
+const EPOCH_READ_TIMEOUT_MS = 10_000;
+
+let epochPollTimer: ReturnType<typeof setInterval> | null = null;
+let epochVisibilityBound = false;
+let lastSeenEpoch: number | null = null;
+let epochFailures = 0;
+let epochPollingAbandoned = false;
+let epochReadInFlight = false;
+let quietResyncPending = false;
+
+function isDocumentVisible(): boolean {
+  return typeof document === 'undefined'
+    || typeof document.visibilityState !== 'string'
+    || document.visibilityState === 'visible';
+}
+
+/**
+ * `missing` separates the two ways this can fail, because only one of them is a
+ * reason to stop asking. A 404 means the backend does not have the endpoint --
+ * the frontend was deployed ahead of it -- and no amount of retrying will
+ * conjure it up. A dropped connection or a 502 means the server is restarting,
+ * which is exactly when a tab must keep its place and carry on afterwards.
+ */
+type EpochRead = { epoch: number | null; missing: boolean; changes: EpochChange[] };
+
+/**
+ * One entry from the server's log of what moved the counter: the path that was
+ * written, and the span of epochs `(lo, hi]` that write accounts for.
+ *
+ * Advisory. The counter is the fact; this is how a client avoids having to treat
+ * every write in the estate as "reload everything". An old backend sends none,
+ * a busy one may have dropped the oldest, and both cases have the same answer --
+ * see `changedPathsSince`.
+ */
+type EpochChange = { path: string; lo: number; hi: number };
+
+function parseEpochChanges(value: unknown): EpochChange[] {
+  if (!Array.isArray(value)) return [];
+  const parsed: EpochChange[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue;
+    const { path, lo, hi } = entry as { path?: unknown; lo?: unknown; hi?: unknown };
+    if (typeof path !== 'string') continue;
+    const low = Number(lo);
+    const high = Number(hi);
+    if (!Number.isFinite(low) || !Number.isFinite(high) || high <= low) continue;
+    parsed.push({ path, lo: low, hi: high });
+  }
+  return parsed;
+}
+
+/**
+ * The paths written between `previous` and `current`, or null when the log does
+ * not account for all of it.
+ *
+ * Null is the important half. The log is written without a lock, so a busy
+ * moment can drop an entry, and an entry that never arrives looks exactly like
+ * an epoch nobody wrote in. Refreshing only the paths that *are* named would
+ * then quietly skip the one that went missing, which is the stale screen this
+ * whole mechanism exists to prevent. So every epoch in the span has to be
+ * spoken for; one gap and the caller falls back to refreshing the lot.
+ */
+function changedPathsSince(previous: number, current: number, changes: EpochChange[]): string[] | null {
+  if (!changes.length) return null;
+  const paths = new Set<string>();
+  for (let epoch = previous + 1; epoch <= current; epoch += 1) {
+    const owner = changes.find(change => change.lo < epoch && epoch <= change.hi);
+    if (!owner) return null;
+    paths.add(owner.path);
+  }
+  return [...paths];
+}
+
+async function readCurriculumEpoch(): Promise<EpochRead> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), EPOCH_READ_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${API_BASE_URL}${EPOCH_PATH}`, {
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      // 404/405/501: this build of the backend does not serve the counter.
+      return {
+        epoch: null,
+        missing: response.status === 404 || response.status === 405 || response.status === 501,
+        changes: [],
+      };
+    }
+    const payload = await response.json() as { epoch?: unknown; changes?: unknown };
+    const epoch = Number(payload?.epoch);
+    // A 200 that is not a number is a proxy or a login page answering in the
+    // endpoint's place, which is the deployment gap again rather than a blip.
+    return Number.isFinite(epoch)
+      ? { epoch, missing: false, changes: parseEpochChanges(payload?.changes) }
+      : { epoch: null, missing: true, changes: [] };
+  } catch {
+    return { epoch: null, missing: false, changes: [] };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * @param quiet Record where the counter has got to without telling anybody --
+ *   used when the caller knows a refresh is already happening, so that the poll
+ *   does not ask for the same data a second time.
+ */
+async function pollEpoch(quiet = false): Promise<void> {
+  if (epochPollingAbandoned || !isDocumentVisible()) return;
+  if (epochReadInFlight) {
+    // A quiet caller must not simply be dropped. Its whole job is to record the
+    // counter our own write moved, and losing it makes the next tick read that
+    // write back as though a stranger had made it.
+    if (quiet) quietResyncPending = true;
+    return;
+  }
+  epochReadInFlight = true;
+  try {
+    const read = await readCurriculumEpoch();
+    if (read.epoch === null) {
+      // A server that is merely down does not count towards giving up: it comes
+      // back, and a tab left open across a deploy should still be live after it.
+      if (!read.missing) return;
+      epochFailures += 1;
+      if (epochFailures >= EPOCH_POLL_MAX_FAILURES) {
+        epochPollingAbandoned = true;
+        stopEpochPolling();
+      }
+      return;
+    }
+    epochFailures = 0;
+    const previous = lastSeenEpoch;
+    lastSeenEpoch = read.epoch;
+    // The first read establishes where the counter is; there is nothing to
+    // compare it against yet, and treating it as a change would refresh every
+    // page the moment it mounted.
+    if (quiet || previous === null || previous === read.epoch) return;
+    // Somebody wrote. Every GET this tab has in flight was started before we
+    // knew that, so no skipCache caller may reuse one.
+    mutationEpoch += 1;
+    // The counter moving backwards means the server's cache was restarted under
+    // us; nothing about our own entries can be trusted against a fresh count.
+    const written = read.epoch > previous
+      ? changedPathsSince(previous, read.epoch, read.changes)
+      : null;
+    if (written) {
+      // The server said what was written, so throw away that and no more. This
+      // is the same invalidation the writing tab applied, arriving by a longer
+      // road.
+      written.forEach(path => {
+        applyMutationInvalidation(path);
+        notifyRemoteWrite(path);
+      });
+      return;
+    }
+    // No usable account of what changed -- an older backend, or a log that has
+    // moved on past us. Guessing which pages are safe to leave alone is exactly
+    // how a stale screen happens, so everything goes.
+    multiTierCache.clear();
+    clearPreviewReads();
+    notifyRemoteWrite(UNKNOWN_WRITE_PATH);
+  } finally {
+    epochReadInFlight = false;
+    if (quietResyncPending) {
+      quietResyncPending = false;
+      void pollEpoch(true);
+    }
+  }
+}
+
+function startEpochPolling(): void {
+  if (epochPollingAbandoned || typeof window === 'undefined') return;
+  if (!epochVisibilityBound && typeof document !== 'undefined') {
+    epochVisibilityBound = true;
+    document.addEventListener('visibilitychange', () => {
+      if (!remoteWriteListeners.size) return;
+      // Coming back to the tab already triggers a re-read of its own, so this
+      // only catches the counter up. Without it the next tick would see the
+      // jump that happened while the tab was hidden and read everything twice.
+      if (isDocumentVisible()) void pollEpoch(true);
+    });
+  }
+  if (epochPollTimer) return;
+  epochPollTimer = setInterval(() => { void pollEpoch(); }, EPOCH_POLL_INTERVAL_MS);
+  // Establish the starting value straight away rather than 25s from now.
+  void pollEpoch(true);
+}
+
+function stopEpochPolling(): void {
+  if (!epochPollTimer) return;
+  clearInterval(epochPollTimer);
+  epochPollTimer = null;
+}
+
+/**
+ * Catch the counter up after a write this browser already knows about, without
+ * refreshing anything for it.
+ *
+ * Our own save moves the server counter too, so without this the tab would poll,
+ * see the jump it caused itself, and re-read everything a second time. The delay
+ * lets the write commit -- the epoch is bumped on_commit -- before the value is
+ * recorded. Nothing is missed by staying quiet: the refresh that follows a save
+ * reads current server state, which includes anything a colleague committed in
+ * the same moment.
+ */
+function scheduleQuietEpochResync(): void {
+  if (epochPollingAbandoned || typeof window === 'undefined') return;
+  if (!remoteWriteListeners.size) return;
+  window.setTimeout(() => { void pollEpoch(true); }, 1_500);
+}
+
+/** Test seam: forgets the counter and stops the timer. */
+export function resetCurriculumEpochPolling(): void {
+  stopEpochPolling();
+  lastSeenEpoch = null;
+  epochFailures = 0;
+  epochPollingAbandoned = false;
+  epochReadInFlight = false;
+  quietResyncPending = false;
+}
+
+subscribeCrossTabWrites(write => {
+  if (write.scope !== CURRICULUM_WRITE_SCOPE) return;
+  // The write landed in another tab, so every GET this tab has in flight was
+  // started before it. Bump the epoch for the same reason the local branch does.
+  mutationEpoch += 1;
+  applyMutationInvalidation(write.path);
+  notifyRemoteWrite(write.path);
+  // This browser has already dealt with the write, so the poll must not treat
+  // the counter moving as news.
+  scheduleQuietEpochResync();
+});
+
 async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise<T> {
   const method = (init?.method || 'GET').toUpperCase();
   // A preview read, answered before the mutation branch below can treat it as a
@@ -1964,10 +2316,16 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
       completedReads.delete(key);
     }
     const existingRead = inFlightReads.get(key) as Promise<T> | undefined;
+    // The epoch this question was asked in. Clearing the cache cannot reach a
+    // request that is already on its way, so a preview in flight when a write
+    // lands would otherwise come back afterwards and install a pre-write answer
+    // as though it were current -- the same trap the GET path tags for.
+    const askedAt = mutationEpoch;
     const readPending = existingRead || fetchJsonUncached<T>(
       path,
       init?.signal ? { ...init, signal: undefined } : init,
     ).then(value => {
+      if (askedAt !== mutationEpoch) return value;
       if (completedReads.size >= READ_POST_MAX_ENTRIES) {
         const oldest = completedReads.keys().next();
         if (!oldest.done) completedReads.delete(oldest.value);
@@ -1988,40 +2346,14 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
     // Any GET started before this point predates the write, so skipCache callers
     // must not reuse it.
     mutationEpoch += 1;
-    // For mutations, invalidate cache selectively based on the endpoint
-    if (path.includes('/programmes/tree/')) {
-      // Tree save: invalidate all programme trees and related data
-      multiTierCache.invalidateByPattern(/\/overview\//);
-      multiTierCache.invalidateByPattern(/\/programmes\/.*\/detail\//);
-      multiTierCache.invalidateByEntity('programme');
-      multiTierCache.invalidateByEntity('cohort');
-      multiTierCache.invalidateByEntity('group');
-      multiTierCache.invalidateByEntity('module');
-    } else if (path.includes('/programmes/')) {
-      multiTierCache.invalidateByPattern(/\/overview\//);
-      multiTierCache.invalidateByEntity('programme');
-      multiTierCache.invalidateByEntity('cohort');
-      multiTierCache.invalidateByEntity('group');
-      multiTierCache.invalidateByEntity('module');
-    } else if (path.includes('/cohorts/') || path.includes('/groups/') || path.includes('/modules/')) {
-      // The overview payload carries programmes, cohorts, groups AND modules in
-      // one document, and a programme's detail tree carries the same structure.
-      // Neither is tagged with an entity type, so an entity-scoped invalidation
-      // left both in place: creating a group refreshed the page you were on (that
-      // reload asks for fresh data explicitly) but the next page you opened read
-      // the pre-write overview out of cache and showed no new group until a full
-      // browser refresh threw the cache away.
-      multiTierCache.invalidateByPattern(/\/overview\//);
-      multiTierCache.invalidateByPattern(/\/programmes\/.*\/detail\//);
-      multiTierCache.invalidateByEntity('cohort');
-      multiTierCache.invalidateByEntity('group');
-      multiTierCache.invalidateByEntity('module');
-    } else if (path.includes('/ksb-')) {
-      multiTierCache.invalidateByEntity('ksb');
-    } else {
-      // Fallback: clear all caches for unknown mutations
-      multiTierCache.clear();
-    }
+    applyMutationInvalidation(path);
+    // The other tabs of this browser hold their own copy of these caches and
+    // cannot see the call that just happened, so they kept serving pre-write
+    // rows until their TTL lapsed. Tell them what was written.
+    publishCrossTabWrite(CURRICULUM_WRITE_SCOPE, path);
+    // Our own write moves the server's counter as well; record it quietly so the
+    // epoch poll does not read everything back a second time for our own save.
+    scheduleQuietEpochResync();
     return fetchJsonUncached<T>(path, init);
   }
 
@@ -2093,7 +2425,67 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
   return settleWithCallerAbort(pending, init?.signal);
 }
 
+/**
+ * How many further attempts a failed request is worth, and the wait before the
+ * first of them. Two is sized for the thing this exists for -- a worker being
+ * replaced under a deploy, unavailable for a moment and then not -- and stops
+ * well short of turning a backend that is genuinely down into a burst of load.
+ */
+const RETRY_ATTEMPTS = 2;
+const RETRY_BASE_DELAY_MS = 300;
+
+/**
+ * Whether this request can be sent a second time without changing the outcome.
+ *
+ * A retry is only ever correct when the server cannot tell one delivery from
+ * two. Reads qualify by definition. Writes do not, and not for a theoretical
+ * reason: a 502 from the proxy is returned just as readily *after* the write
+ * committed as before it, so a retried POST creates the record twice and a
+ * retried PATCH re-applies an edit over whatever landed in between. Making
+ * those safe needs an idempotency key the backend honours, which is a contract
+ * between the two sides rather than something this file can decide alone.
+ *
+ * The preview POSTs are the exception, and only because they are reads wearing
+ * a POST so the question fits in a body.
+ */
+function isRetryableRequest(method: string, path: string): boolean {
+  return method === 'GET' || method === 'HEAD' || isReadOnlyPost(method, path);
+}
+
+function retryDelay(attempt: number): Promise<void> {
+  // Jittered, so a page that lost six parallel reads to one restart does not
+  // send all six back at the same instant.
+  const wait = RETRY_BASE_DELAY_MS * (2 ** attempt) + Math.floor(Math.random() * 100);
+  return new Promise(resolve => { setTimeout(resolve, wait); });
+}
+
+/**
+ * One network call, with a retry for the failures that are worth one.
+ *
+ * Without this a single 502 -- which is what a deploy looks like from a browser
+ * -- blanked whichever page happened to be reading at that second, and the only
+ * cure was the manual refresh this whole area exists to stop people needing.
+ * `isRetryableError` decides what counts: 408/429/5xx and network failures yes,
+ * every 4xx and any caller abort no.
+ */
 async function fetchJsonUncached<T>(path: string, init?: CurriculumRequestInit): Promise<T> {
+  const method = (init?.method || 'GET').toUpperCase();
+  if (!isRetryableRequest(method, path)) return fetchJsonOnce<T>(path, init);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await fetchJsonOnce<T>(path, init);
+    } catch (error) {
+      // A caller's own abort never reaches here -- `fetchJson` strips the signal
+      // before this point and settles the caller separately -- and a timeout
+      // arrives as its own message that `isRetryableError` declines, so a slow
+      // endpoint cannot have its budget spent three times over.
+      if (attempt >= RETRY_ATTEMPTS || !isRetryableError(error)) throw error;
+      await retryDelay(attempt);
+    }
+  }
+}
+
+async function fetchJsonOnce<T>(path: string, init?: CurriculumRequestInit): Promise<T> {
   const timeoutController = init?.timeoutMs ? new AbortController() : null;
   const timeout = timeoutController && init?.timeoutMs
     ? window.setTimeout(() => timeoutController.abort(), init.timeoutMs)
@@ -2197,14 +2589,14 @@ export function fetchCurriculumModules(signal?: AbortSignal, options: {
   return fetchCollection<CurriculumModule>(`/curriculum/modules/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate });
 }
 
-export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[]; page?: number; pageSize?: number; skipCache?: boolean } = {}): Promise<CurriculumComponent[]> {
+export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[]; page?: number; pageSize?: number; skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumComponent[]> {
   const query = new URLSearchParams();
   const moduleCatalogueIds = (options.moduleCatalogueIds || []).filter(Boolean);
   if (moduleCatalogueIds.length) query.set('module_catalogue_ids', moduleCatalogueIds.join(','));
   if (options.page) query.set('page', String(options.page));
   if (options.pageSize) query.set('page_size', String(options.pageSize));
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchCollection<CurriculumComponent>(`/curriculum/components/${suffix}`, { signal, skipCache: options.skipCache });
+  return fetchCollection<CurriculumComponent>(`/curriculum/components/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate });
 }
 
 /**
@@ -2474,7 +2866,7 @@ export function deleteCurriculumKsbFramework(id: string) {
 
 export function fetchCurriculumTeamsMeetingSummaries(
   signal?: AbortSignal,
-  options: { moduleCatalogueIds?: string[]; occurrenceDates?: boolean; skipCache?: boolean } = {},
+  options: { moduleCatalogueIds?: string[]; occurrenceDates?: boolean; skipCache?: boolean; revalidate?: boolean } = {},
 ): Promise<CurriculumTeamsMeetingSummary[]> {
   const ids = (options.moduleCatalogueIds || []).filter(Boolean);
   const query = new URLSearchParams();
@@ -2485,7 +2877,7 @@ export function fetchCurriculumTeamsMeetingSummaries(
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchCollection<CurriculumTeamsMeetingSummary>(
     `/curriculum/teams-meetings/summary/${suffix}`,
-    { signal, skipCache: options.skipCache },
+    { signal, skipCache: options.skipCache, revalidate: options.revalidate },
   );
 }
 
@@ -2545,13 +2937,15 @@ export function liveSessionArtifactPreviewUrl(liveSessionId: string, artifactId:
 
 export function fetchCurriculumSessions(
   signal?: AbortSignal,
-  options: { skipCache?: boolean } = {},
+  options: { skipCache?: boolean; revalidate?: boolean } = {},
 ): Promise<CurriculumSession[]> {
   // Sessions live in the 45s "dynamic" cache tier, so a caller that has just
   // scheduled a module (or opens straight after) can otherwise read a stale
   // snapshot that predates its session dates. skipCache lets those callers read
-  // the current plan instead of waiting out the TTL.
-  return fetchCollection<CurriculumSession>('/curriculum/sessions/', { signal, skipCache: options.skipCache });
+  // the current plan instead of waiting out the TTL. `revalidate` is for the
+  // background re-read after somebody else's write: past this tab's cache, but
+  // answered from the server's.
+  return fetchCollection<CurriculumSession>('/curriculum/sessions/', { signal, skipCache: options.skipCache, revalidate: options.revalidate });
 }
 
 // 30s, not 15s: a forced rebuild of the curriculum payload takes ~13s, so a 15s
@@ -2564,19 +2958,19 @@ export function fetchCurriculumCoaches(signal?: AbortSignal, options: { skipCach
   return fetchCollection<CurriculumStaffProfile>('/curriculum/coaches/', { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: 30000 });
 }
 
-export function fetchCurriculumHolidays(signal?: AbortSignal, options: { skipCache?: boolean } = {}): Promise<CurriculumHoliday[]> {
-  return fetchCollection<CurriculumHoliday>('/curriculum/holidays/', { signal, skipCache: options.skipCache });
+export function fetchCurriculumHolidays(signal?: AbortSignal, options: { skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumHoliday[]> {
+  return fetchCollection<CurriculumHoliday>('/curriculum/holidays/', { signal, skipCache: options.skipCache, revalidate: options.revalidate });
 }
 
-export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact?: boolean; skipCache?: boolean; timeoutMs?: number } = {}): Promise<CurriculumOverview> {
-  return fetchJson<CurriculumOverview>(`/curriculum/overview/${options.compact ? '?compact=true' : ''}`, { signal, skipCache: options.skipCache, timeoutMs: options.timeoutMs });
+export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact?: boolean; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number } = {}): Promise<CurriculumOverview> {
+  return fetchJson<CurriculumOverview>(`/curriculum/overview/${options.compact ? '?compact=true' : ''}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs });
 }
 
-export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal, options: { visibility?: 'all' | 'operational'; skipCache?: boolean } = {}): Promise<CurriculumProgrammeDetail> {
+export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal, options: { visibility?: 'all' | 'operational'; skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumProgrammeDetail> {
   const query = new URLSearchParams();
   if (options.visibility === 'all') query.set('visibility', 'all');
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchJson<CurriculumProgrammeDetail>(`/curriculum/programmes/${encodeURIComponent(id)}/detail/${suffix}`, { signal, skipCache: options.skipCache });
+  return fetchJson<CurriculumProgrammeDetail>(`/curriculum/programmes/${encodeURIComponent(id)}/detail/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate });
 }
 
 export { fetchCurriculumOverview as fetchCurriculumOverviewBundle };

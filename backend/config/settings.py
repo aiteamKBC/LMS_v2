@@ -346,6 +346,10 @@ MIDDLEWARE = [
     # account, and it clears the thread-local on the way out -- worker threads
     # are reused, and a leaked actor would credit one person's save to another.
     'curriculum_api.versioning.ActorMiddleware',
+    # Notes which curriculum path moved the shared cache epoch, so a polling tab
+    # can refresh the collection that changed instead of all of them. Reads the
+    # epoch either side of the view, so it has to wrap it.
+    'curriculum_api.middleware.CurriculumChangeLogMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     # Turns a missing Curriculum table into a 503 naming the absent relations,

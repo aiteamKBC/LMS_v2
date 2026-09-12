@@ -15,6 +15,7 @@ import {
 import {
   formatCalendarDateTime,
   liveSessionNamesByNumber,
+  moduleWeekSessionSlots,
   loadModuleStructure,
   loadTeamsMeetingArtifacts,
   teamsMeetingArtifactPreviewUrl,
@@ -530,19 +531,23 @@ export default function ModuleWorkspacePage() {
   const totalOtjh = structure?.totalOtjh ?? 0;
 
   // A week's date is the first date it consumes, and a week can consume more
-  // than one: a group delivering Mon+Thu runs two live sessions of the same
-  // week, so week 2 starts on session 3 rather than session 2. The walk is the
-  // one `liveSessionNamesByNumber` does -- live components take the flat plan in
-  // week-then-display order, and a content-only week still takes one date -- so
-  // pairing week number with session number reads a week onto the wrong day the
-  // moment a group delivers more than once a week.
+  // than one: a group delivering Mon+Thu runs two sessions of the same week, so
+  // week 2 starts on session 3 rather than session 2. Pairing week number with
+  // session number reads a week onto the wrong day the moment a group delivers
+  // more than once a week.
+  //
+  // How many dates each week takes is `moduleWeekSessionSlots` -- the delivery
+  // days a week runs on, whether or not a live session has been authored for
+  // each of them. Counting the week's live components instead made a week that
+  // is one live session short consume one date rather than two, and every week
+  // below it slid a day early.
   const planSessionDates = (plan?.sessions || []).map(session => session.date);
+  const weekSlotCounts = moduleWeekSessionSlots(structure, planSessionDates.length);
   const weekDateByNumber = new Map<number, string>();
   let planDateCursor = 0;
-  weekStructure.forEach(week => {
-    const liveComponents = (week.components || []).filter(component => component.type === 'live-session');
+  weekStructure.forEach((week, weekIndex) => {
     weekDateByNumber.set(week.weekNumber, planSessionDates[planDateCursor] || '');
-    planDateCursor += Math.max(1, liveComponents.length);
+    planDateCursor += weekSlotCounts[weekIndex] || 1;
   });
   const weekMonthGroups: Array<{ key: string; label: string; weeks: typeof weekStructure }> = [];
   weekStructure.forEach(week => {
