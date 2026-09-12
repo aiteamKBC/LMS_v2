@@ -188,6 +188,32 @@ export interface CoachMeetingAttendanceSummary {
   extraCount?: number;
 }
 
+export interface CoachMeetingSummaryAction {
+  title: string;
+  owner?: string;
+  dueDate?: string;
+  status?: string;
+}
+
+export interface CoachMeetingSummaryPayload {
+  title: string;
+  overview: string;
+  keyPoints: string[];
+  actions: CoachMeetingSummaryAction[];
+  nextSteps: string[];
+  support: string[];
+}
+
+export interface CoachMeetingSummary {
+  summary: CoachMeetingSummaryPayload;
+  status: 'ready' | 'edited' | 'failed' | string;
+  generatedAt?: string | null;
+  editedAt?: string | null;
+  editedBy?: string;
+  model?: string;
+  error?: string;
+}
+
 export interface CoachMeetingArtifactsResponse {
   event?: {
     eventKey: string;
@@ -199,6 +225,7 @@ export interface CoachMeetingArtifactsResponse {
   };
   attendance?: CoachMeetingAttendanceSummary;
   artifacts: CoachMeetingArtifact[];
+  meetingSummary?: CoachMeetingSummary | null;
   errors?: string[];
   partial?: boolean;
   storage?: {
@@ -314,6 +341,21 @@ export function coachMeetingArtifactContentUrl(
 ): string {
   const base = `/coach_api/coach/timetable/events/${encodeURIComponent(eventKey)}/artifacts/${encodeURIComponent(artifactType)}/${encodeURIComponent(artifactId)}/content`;
   return withCoachViewAs(options.preview ? `${base}?preview=1` : base);
+}
+
+export async function updateCoachMeetingSummary(
+  eventKey: string,
+  summary: CoachMeetingSummaryPayload,
+): Promise<{ meetingSummary: CoachMeetingSummary | null }> {
+  const response = await coachFetch(
+    `/coach_api/coach/timetable/events/${encodeURIComponent(eventKey)}/summary`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ summary }),
+    },
+  );
+  return readJsonResponse<{ meetingSummary: CoachMeetingSummary | null }>(response);
 }
 
 export async function scheduleCoachCalendarEvent(event: CoachCalendarEvent, form: ScheduleFormState) {
