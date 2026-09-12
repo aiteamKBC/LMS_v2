@@ -144,6 +144,22 @@ export function tutorConflictMessage(error: unknown): string | null {
   return isTutorConflictError(error) ? error.data.error : null;
 }
 
+/**
+ * The backend's own sentence for any refused write, or `fallback`.
+ *
+ * Same reasoning as `tutorConflictMessage` above, generalised: every handler
+ * answers a refusal with `{ error: '...' }` saying what to do about it, and
+ * `CurriculumApiError.message` buries that inside "Curriculum API returned 409
+ * for /path: …". A dialog should show the sentence, not the diagnostic.
+ */
+export function curriculumErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof CurriculumApiError && error.data && typeof error.data === 'object') {
+    const message = (error.data as { error?: unknown }).error;
+    if (typeof message === 'string' && message.trim()) return message;
+  }
+  return fallback;
+}
+
 export interface CurriculumProgramme {
   id: string;
   sourceId: string;
@@ -2056,9 +2072,15 @@ function notifyRemoteWrite(path: string): void {
 // ---------------------------------------------------------------------------
 
 const EPOCH_PATH = '/curriculum/cache-epoch/';
-const EPOCH_POLL_INTERVAL_MS = 25_000;
+// 10s rather than the 25s this shipped with. A reader watching a list
+// somebody else is editing waits half the interval on average, so this is
+// ~5s instead of ~12s. What it costs is one authenticated request per open
+// tab: two Redis GETs here, plus the single indexed LoginSession lookup
+// every request pays. The last_seen_at write is throttled to 5 minutes
+// (login/sessions.py), so polling faster adds reads, never writes.
+const EPOCH_POLL_INTERVAL_MS = 10_000;
 // The endpoint ships with the backend, and the frontend can be deployed ahead of
-// it. Rather than call a missing URL every 25 seconds for the life of the tab,
+// it. Rather than call a missing URL every few seconds for the life of the tab,
 // give up after a few failures and leave the return-to-tab refresh to cover it.
 const EPOCH_POLL_MAX_FAILURES = 3;
 // A hung read would otherwise leave the in-flight guard set for good and stop
@@ -3265,6 +3287,136 @@ export function updateCurriculumGroup(id: string, input: CurriculumGroupInput) {
 
 export function archiveCurriculumGroup(id: string) {
   return deleteJson(`/curriculum/groups/${encodeURIComponent(id)}/`);
+}
+
+// ============================================================================
+// The cohort/group archive.
+//
+// `archiveCurriculumCohort`/`archiveCurriculumGroup` above soft-delete: the row
+// keeps its place in the database and only leaves the active lists. These are
+// the two things that were missing on the other side of that — reading what is
+// archived, and either putting one back or removing it for good — and they
+// mirror the programme archive (`restoreCurriculumProgramme` /
+// `permanentlyDeleteCurriculumProgramme`) call for call.
+// ============================================================================
+
+/** How a record came to be archived, as the archive list reports it. */
+export interface CurriculumArchiveStamp {
+  /** When the archive happened, ISO. */
+  archivedAt: string;
+  /**
+   * The write handler that archived it — 'cohort-delete', 'group-delete',
+   * 'programme-delete'. Never a person: no authoring table records who.
+   */
+  archivedBy: string;
+  /**
+   * The parent whose own archive took this row down, when that is what
+   * happened. Restoring that parent is what brings this record back.
+   */
+  archivedViaParent: string;
+}
+
+export interface CurriculumArchivedCohort extends CurriculumArchiveStamp {
+  id: string;
+  name: string;
+  programme: string;
+  programmeId: string;
+  startDate: string;
+  endDate: string;
+  practicalEndDate: string;
+  apprenticeshipEndDate: string;
+  epaMonths: number | null;
+  durationMonths: number;
+  color: string;
+  status: 'archived';
+  /** Archived groups under it — what a restore returns and a delete removes. */
+  groups: number;
+  /** Live learners still placed here. Any at all blocks a permanent delete. */
+  learners: number;
+}
+
+export interface CurriculumArchivedGroup extends CurriculumArchiveStamp {
+  id: string;
+  name: string;
+  cohortId: string;
+  cohort: string;
+  programmeId: string;
+  programme: string;
+  coach: string;
+  weekDays: string;
+  startTime: string;
+  endTime: string;
+  schedule: string;
+  color: string;
+  status: 'archived';
+  learners: number;
+  /**
+   * Its cohort is archived too, so this group has nothing to come back to. The
+   * restore endpoint refuses it and says to restore the cohort instead, which
+   * brings back every group archived with it.
+   */
+  cohortArchived: boolean;
+}
+
+/**
+ * `revalidate` on both reads below: the archive is opened in order to act on it,
+ * and the very next thing the reader does is restore or delete something, so a
+ * cached list would keep showing the row that was just dealt with. Not
+ * `skipCache` — these two endpoints read the tables directly rather than through
+ * the cached overview payload, so there is no server-side build to force.
+ */
+export function fetchArchivedCurriculumCohorts(signal?: AbortSignal): Promise<CurriculumArchivedCohort[]> {
+  return fetchCollection<CurriculumArchivedCohort>('/curriculum/cohorts/archived/', { signal, revalidate: true });
+}
+
+export function fetchArchivedCurriculumGroups(signal?: AbortSignal): Promise<CurriculumArchivedGroup[]> {
+  return fetchCollection<CurriculumArchivedGroup>('/curriculum/groups/archived/', { signal, revalidate: true });
+}
+
+export type CurriculumRestoreResult = {
+  restored: boolean;
+  id: string;
+  /** Only the cohort restore reports one: the groups it brought back with it. */
+  details?: { groups?: number };
+  message?: string;
+};
+
+/**
+ * Restoring a cohort brings back the groups its own archive took down; a group
+ * archived on its own keeps its own state, exactly as a programme restore works.
+ *
+ * Refused with 409 when the parent is still archived — restore that instead —
+ * and the refusal carries the sentence to show.
+ */
+export function restoreCurriculumCohort(id: string) {
+  return postJson<CurriculumRestoreResult>(`/curriculum/cohorts/${encodeURIComponent(id)}/restore/`, {});
+}
+
+export function restoreCurriculumGroup(id: string) {
+  return postJson<CurriculumRestoreResult>(`/curriculum/groups/${encodeURIComponent(id)}/restore/`, {});
+}
+
+export type CurriculumPermanentDeleteResult = {
+  deleted: boolean;
+  permanent: boolean;
+  id: string;
+  /** Rows the delete removed, keyed by table. */
+  removed?: Record<string, number>;
+  message?: string;
+};
+
+/**
+ * Only an already-archived record can be removed for good, and only while
+ * nothing live still depends on it: learners placed in it, or — for a cohort —
+ * a group that is not archived. Either refusal comes back as a 409 naming what
+ * to clear first. Module content is never deleted with the delivery record.
+ */
+export function permanentlyDeleteCurriculumCohort(id: string) {
+  return deleteJson<CurriculumPermanentDeleteResult>(`/curriculum/cohorts/${encodeURIComponent(id)}/?permanent=true`);
+}
+
+export function permanentlyDeleteCurriculumGroup(id: string) {
+  return deleteJson<CurriculumPermanentDeleteResult>(`/curriculum/groups/${encodeURIComponent(id)}/?permanent=true`);
 }
 
 export function fetchFreeProgrammeModules(programmeId: string, signal?: AbortSignal): Promise<FreeProgrammeModule[]> {

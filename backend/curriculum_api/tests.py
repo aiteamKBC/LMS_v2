@@ -1489,15 +1489,21 @@ class CurriculumTeamsMeetingTests(TestCase):
     @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
     def test_structure_payload_dates_every_week_from_the_module_plan(self, _holidays):
         # The weeks are a timetable, not just a running count: each one carries
-        # the day it actually runs, holiday shifts included, so a reader can see
-        # that this module spills into the new year.
+        # the day it actually runs.
+        #
+        # A closure does not move the week. Christmas shuts the rooms on the
+        # Saturdays of 19 and 26 December, so the live sessions those weeks hold
+        # run in January -- but the reading, the assignment and everything else
+        # in them is not held in a room and stays on the week it was authored
+        # into. The weeks therefore run straight through Christmas, six Saturdays
+        # from the twelfth, and it is the SESSIONS that spill into the new year.
         self._module_with_six_saturday_weeks()
 
         payload = views.get_authoring_structure_payload('MOD-WEEKS')
 
         self.assertEqual(
             [week['sessionDate'] for week in payload['weekStructure']],
-            ['2026-12-12', '2027-01-02', '2027-01-09', '2027-01-16', '2027-01-23', '2027-01-30'],
+            ['2026-12-12', '2026-12-19', '2026-12-26', '2027-01-02', '2027-01-09', '2027-01-16'],
         )
         self.assertEqual(payload['weekStructure'][0]['sessionDay'], 'Saturday')
         self.assertEqual(payload['weekStructure'][0]['sessionStartTime'], '09:00')
