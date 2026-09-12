@@ -129,6 +129,35 @@ def get_pptx_file_for_run(run_id):
         return {"container": row[0], "blob_name": row[1], "original_filename": row[2]}
 
 
+def get_latest_run_for_period(learner_id, review_date):
+    """The most recent run for this exact (learner, review_date) pair, or None.
+
+    Deliberately scoped to one exact review_date, not "this learner's latest
+    run overall" — a learner has one run per 12-week review, and a lookup that
+    ignored the date would risk handing a coach review 2's deck while they're
+    looking at review 1's card. Cheap on purpose (no snapshot/pack join): this
+    backs a per-card "does a deck already exist" check that may run once per
+    visible review card, not just once per generate click.
+    """
+    ensure_progress_review_tables()
+    with _conn().cursor() as cur:
+        cur.execute(
+            '''
+            select id, generation_status, generated_at, created_at
+              from "Learner"."progress_review_runs"
+             where learner_id = %s and review_date = %s
+             order by created_at desc
+             limit 1
+            ''',
+            [learner_id, review_date],
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        columns = [c[0] for c in cur.description]
+        return dict(zip(columns, row))
+
+
 def list_runs_for_learner(learner_id, limit=20):
     ensure_progress_review_tables()
     with _conn().cursor() as cur:

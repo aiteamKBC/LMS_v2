@@ -238,6 +238,29 @@ def pack(request, learner_id):
     return JsonResponse(pack_data)
 
 
+@learner_self_or_staff(kwarg="learner_id")
+def latest_run(request, learner_id):
+    """Does a PPTX already exist for this exact review? Backs a review card's
+    "Create slides" vs "Slides"/"View slides" button state, and the same
+    check when the modal opens — scoped to one review_date so a learner's
+    review 2 card can never show review 1's (or vice versa)."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    review_date = _parse_date_param(request.GET.get("review_date"))
+    if review_date is None:
+        return _error("review_date is required (YYYY-MM-DD).", 400)
+
+    row = runs.get_latest_run_for_period(learner_id, review_date)
+    if not row:
+        return JsonResponse({"exists": False})
+    return JsonResponse({
+        "exists": True,
+        "reviewId": row["id"],
+        "generationStatus": row["generation_status"],
+        "generatedAt": row["generated_at"].isoformat() if row["generated_at"] else None,
+    })
+
+
 @csrf_exempt
 @staff_only()
 def generate(request, learner_id):

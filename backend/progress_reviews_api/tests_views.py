@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import date
+from datetime import date, datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from django.test import Client, SimpleTestCase, override_settings
@@ -175,6 +175,38 @@ class EndpointTests(SimpleTestCase):
         mock_runs.get_run.return_value = None
         response = self.client.get("/api/progress-reviews/does-not-exist/download/")
         self.assertEqual(response.status_code, 404)
+
+    def test_latest_run_endpoint_requires_a_review_date(self):
+        response = self.client.get("/api/progress-reviews/42/runs/latest/")
+        self.assertEqual(response.status_code, 400)
+
+    @patch("progress_reviews_api.views.runs")
+    def test_latest_run_endpoint_reports_no_existing_deck(self, mock_runs):
+        mock_runs.get_latest_run_for_period.return_value = None
+        response = self.client.get("/api/progress-reviews/42/runs/latest/?review_date=2026-10-26")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content), {"exists": False})
+        mock_runs.get_latest_run_for_period.assert_called_once_with(42, date(2026, 10, 26))
+
+    @patch("progress_reviews_api.views.runs")
+    def test_latest_run_endpoint_reports_an_existing_deck(self, mock_runs):
+        mock_runs.get_latest_run_for_period.return_value = {
+            "id": "run-1", "generation_status": "completed",
+            "generated_at": datetime(2026, 10, 26, 9, 0, tzinfo=timezone.utc), "created_at": None,
+        }
+        response = self.client.get("/api/progress-reviews/42/runs/latest/?review_date=2026-10-26")
+        body = json.loads(response.content)
+        self.assertEqual(body["exists"], True)
+        self.assertEqual(body["reviewId"], "run-1")
+        self.assertEqual(body["generationStatus"], "completed")
+
+    @patch("progress_reviews_api.views.runs")
+    def test_latest_run_endpoint_scopes_strictly_to_the_requested_review_date(self, mock_runs):
+        """Regression guard: a learner's second review must never show as
+        already generated just because their first review's deck exists."""
+        mock_runs.get_latest_run_for_period.return_value = None
+        self.client.get("/api/progress-reviews/42/runs/latest/?review_date=2027-01-18")
+        mock_runs.get_latest_run_for_period.assert_called_once_with(42, date(2027, 1, 18))
 
     @patch("progress_reviews_api.views._generate_for_learner")
     def test_bulk_generate_isolates_one_learner_failure_from_the_rest(self, mock_generate):

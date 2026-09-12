@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   bulkGenerateProgressReviews,
   fetchActiveLearners,
+  fetchLatestRun,
   fetchProgressReviewDownloadUrl,
   fetchReviewPack,
   fetchReviewPeriods,
@@ -93,6 +94,16 @@ describe('progressReviews api client', () => {
 
     expect(fetch).toHaveBeenCalledWith('/api/progress-reviews/run-1/download/', expect.anything());
     expect(url).toBe('https://example.blob.core.windows.net/x.pptx?sig=1');
+  });
+
+  it('checks for an existing deck scoped to one exact review date', async () => {
+    const fetch = vi.fn().mockResolvedValue(response({ exists: true, reviewId: 'run-1', generationStatus: 'completed' }));
+    vi.stubGlobal('fetch', fetch);
+
+    const result = await fetchLatestRun(42, '2026-10-26');
+
+    expect(fetch).toHaveBeenCalledWith('/api/progress-reviews/42/runs/latest/?review_date=2026-10-26', expect.anything());
+    expect(result).toEqual({ exists: true, reviewId: 'run-1', generationStatus: 'completed' });
   });
 
   it('throws a clear error when the network request itself fails', async () => {

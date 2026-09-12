@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchEvidence, type EvidenceRecord } from '@/api/evidence';
-import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerQuizAttempt } from '@/api/learnerDetail';
+import { type EvidenceRecord } from '@/api/evidence';
+import { type LearnerDetail, type LearnerKind, type LearnerQuizAttempt } from '@/api/learnerDetail';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { CardSkeleton } from '@/components/feature/Skeletons';
@@ -29,6 +29,7 @@ import {
   eventDisplayDate,
   eventIdentity,
   eventPeriodLabel,
+  eventTargetDate,
   fetchCoachCalendarEvents,
   formatDateLabel,
   formatTimeLabel,
@@ -48,12 +49,13 @@ import {
   sortEvents,
   statusLabel,
 } from '../shared/calendarEvents';
-import ProgressReviewSlidesModal, {
+import {
   type ProgressReviewSlide,
   type ProgressReviewSlideListItem,
   type ProgressReviewSlidesDeck,
 } from './components/ProgressReviewSlidesModal';
-import ProgressReviewGeneratePanel from './components/ProgressReviewGeneratePanel';
+import ProgressReviewPptxModal from './components/ProgressReviewPptxModal';
+import { bulkGenerateProgressReviews, fetchLatestRun } from '@/api/progressReviews';
 import {
   buildKsbProgress,
   completedComponentIds,
@@ -135,10 +137,6 @@ function displayValue(value?: string | number | null) {
 function cleanOptionalText(value?: string | number | null) {
   if (value === null || value === undefined) return '';
   return String(value).trim();
-}
-
-function isLearnerKind(value?: string | null): value is LearnerKind {
-  return value === 'commercial' || value === 'apprenticeship';
 }
 
 function reviewHasLearnerReference(review: CoachCalendarEvent) {
@@ -282,66 +280,6 @@ function trainingPlanContextLabel(details?: EvidenceRecord['trainingPlanDetails'
     displayValue(details?.componentTitle),
   ].filter(value => value !== '--');
   return parts.length ? parts.join(' / ') : '--';
-}
-
-async function fetchAnyLearnerDetail(id: string) {
-  const [commercial, apprenticeship] = await Promise.allSettled([
-    fetchLearnerDetail('commercial', id),
-    fetchLearnerDetail('apprenticeship', id),
-  ]);
-
-  if (commercial.status === 'fulfilled') {
-    return { kind: 'commercial' as const, detail: commercial.value };
-  }
-
-  if (apprenticeship.status === 'fulfilled') {
-    return { kind: 'apprenticeship' as const, detail: apprenticeship.value };
-  }
-
-  const commercialMessage = commercial.status === 'rejected' && commercial.reason instanceof Error
-    ? commercial.reason.message
-    : null;
-  const apprenticeshipMessage = apprenticeship.status === 'rejected' && apprenticeship.reason instanceof Error
-    ? apprenticeship.reason.message
-    : null;
-  const non404 = [commercialMessage, apprenticeshipMessage].find(message => message && !message.includes('404'));
-
-  throw new Error(non404 || commercialMessage || apprenticeshipMessage || 'Could not load learner detail.');
-}
-
-async function fetchReviewLearnerDetail(event: CoachCalendarEvent) {
-  const profileId = cleanOptionalText(event.learnerId);
-  const detailId = cleanOptionalText(event.enrolmentId);
-  const preferredKind = isLearnerKind(event.learnerType) ? event.learnerType : null;
-
-  if (preferredKind && detailId) {
-    try {
-      return {
-        kind: preferredKind,
-        detail: await fetchLearnerDetail(preferredKind, detailId),
-        detailId,
-      };
-    } catch (preferredError) {
-      try {
-        const { kind, detail } = await fetchAnyLearnerDetail(detailId);
-        return { kind, detail, detailId };
-      } catch {
-        throw preferredError;
-      }
-    }
-  }
-
-  if (detailId) {
-    const { kind, detail } = await fetchAnyLearnerDetail(detailId);
-    return { kind, detail, detailId };
-  }
-
-  if (profileId) {
-    const { kind, detail } = await fetchAnyLearnerDetail(profileId);
-    return { kind, detail, detailId: profileId };
-  }
-
-  throw new Error('This review is missing its learner id, so slides cannot be generated yet.');
 }
 
 function buildReviewActivities(detail: LearnerDetail): ProgressReviewActivity[] {
@@ -1021,8 +959,9 @@ export default function CoachProgressReviews() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [completionEvent, setCompletionEvent] = useState<CoachCalendarEvent | null>(null);
-  const [slidesBusyEventId, setSlidesBusyEventId] = useState<string | null>(null);
-  const [slidesDeck, setSlidesDeck] = useState<ProgressReviewSlidesDeck | null>(null);
+  const [pptxModalReview, setPptxModalReview] = useState<CoachCalendarEvent | null>(null);
+  const [generatedReviewKeys, setGeneratedReviewKeys] = useState<Set<string>>(new Set());
+  const [bulkGenerating, setBulkGenerating] = useState(false);
 
   useEffect(() => {
     if (!coach.isInitialized) return;
@@ -1097,6 +1036,39 @@ export default function CoachProgressReviews() {
     (activePage - 1) * REVIEWS_PER_PAGE,
     activePage * REVIEWS_PER_PAGE,
   );
+
+  const visibleReviewsKey = paginatedReviews
+    .filter((review) => reviewHasLearnerReference(review) && eventTargetDate(review))
+    .map((review) => `${eventIdentity(review)}:${eventTargetDate(review)}`)
+    .join('|');
+
+  useEffect(() => {
+    if (!visibleReviewsKey) return;
+    let cancelled = false;
+    const candidates = paginatedReviews.filter((review) => reviewHasLearnerReference(review) && eventTargetDate(review));
+
+    Promise.all(candidates.map(async (review) => {
+      const learnerId = review.learnerId || review.enrolmentId || '';
+      try {
+        const result = await fetchLatestRun(learnerId, eventTargetDate(review));
+        return result.exists && result.generationStatus === 'completed' ? eventIdentity(review) : null;
+      } catch {
+        return null;
+      }
+    })).then((keys) => {
+      if (cancelled) return;
+      const found = keys.filter((key): key is string => Boolean(key));
+      if (!found.length) return;
+      setGeneratedReviewKeys((prev) => {
+        const next = new Set(prev);
+        found.forEach((key) => next.add(key));
+        return next;
+      });
+    });
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleReviewsKey]);
 
   const changeTab = (nextTab: ReviewTab) => {
     setTab(nextTab);
@@ -1186,36 +1158,43 @@ export default function CoachProgressReviews() {
     setCompletionEvent(event);
   };
 
-  const handleCreateSlides = async (event: CoachCalendarEvent) => {
-    const reviewId = eventIdentity(event);
-    if (!reviewHasLearnerReference(event)) {
-      setActionError('This review is missing its learner id, so slides cannot be generated yet.');
+  const handleCreateSlides = (event: CoachCalendarEvent) => {
+    if (!reviewHasLearnerReference(event) || !eventTargetDate(event)) {
+      setActionError('This review is missing its learner id or review date, so slides cannot be generated yet.');
       setActionNotice(null);
-      setExpanded(reviewId);
+      setExpanded(eventIdentity(event));
       return;
     }
-
-    setSlidesBusyEventId(reviewId);
     setActionError(null);
     setActionNotice(null);
+    setPptxModalReview(event);
+  };
+
+  const markReviewSlidesGenerated = (event: CoachCalendarEvent) => {
+    setGeneratedReviewKeys((prev) => {
+      const next = new Set(prev);
+      next.add(eventIdentity(event));
+      return next;
+    });
+  };
+
+  const handleBulkGenerateSlides = async () => {
+    const count = events.filter((event) => reviewHasLearnerReference(event) && eventTargetDate(event)).length;
+    if (!count) return;
+    if (!window.confirm(`Generate Progress Review PPTX decks for ${count} review(s) with a learner and review date? This may take a while.`)) return;
+    setBulkGenerating(true);
     try {
-      const { kind, detail, detailId } = await fetchReviewLearnerDetail(event);
-      const evidenceLearnerId = detailId || cleanOptionalText(detail.id) || cleanOptionalText(event.learnerId);
-      let evidence: EvidenceRecord[] = [];
-      try {
-        evidence = await fetchEvidence(kind, evidenceLearnerId);
-      } catch (evidenceError) {
-        console.error(evidenceError);
-        setActionNotice('Slides were created, but evidence records could not be loaded. The deck uses learner progress data only.');
+      const data = await bulkGenerateProgressReviews({});
+      const failed = data.results.filter((row) => row.generationStatus === 'failed').length;
+      if (failed) {
+        setActionError(`Bulk generation finished with ${failed} of ${data.results.length} failure(s).`);
+      } else {
+        setActionNotice(`Bulk generation complete — ${data.results.length} deck(s) generated.`);
       }
-      setSlidesDeck(buildProgressReviewSlidesDeck(event, ownerName, kind, detail, evidence));
-      setExpanded(reviewId);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Unable to generate slides for this learner right now.');
-      setActionNotice(null);
-      setExpanded(reviewId);
+      setActionError(err instanceof Error ? err.message : 'Unable to run bulk generation.');
     } finally {
-      setSlidesBusyEventId(null);
+      setBulkGenerating(false);
     }
   };
 
@@ -1256,21 +1235,32 @@ export default function CoachProgressReviews() {
           description={`Schedule, run and complete learner progress reviews for ${ownerName}'s active learners.`}
           icon="ri-file-chart-line"
           actions={(
-            <button
-              type="button"
-              onClick={() => changeTab(overdue > 0 ? 'overdue' : 'this-month')}
-              className={cn(
-                'inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-[12px] font-semibold transition',
-                overdue > 0
-                  ? 'border-red-200 bg-red-50 text-red-700 hover:border-red-300'
-                  : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300',
-              )}
-            >
-              <AppIcon className={overdue > 0 ? 'ri-alarm-warning-line' : 'ri-checkbox-circle-line'}></AppIcon>
-              {overdue > 0
-                ? `${overdue} overdue review${overdue === 1 ? '' : 's'}`
-                : 'Everything is on track'}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleBulkGenerateSlides}
+                disabled={bulkGenerating}
+                className="inline-flex h-9 items-center gap-2 rounded-lg border border-foreground-200 bg-white px-3 text-[12px] font-semibold text-foreground-700 transition hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <AppIcon className={bulkGenerating ? 'ri-loader-4-line animate-spin' : 'ri-stack-line'}></AppIcon>
+                {bulkGenerating ? 'Generating slides…' : 'Bulk generate slides'}
+              </button>
+              <button
+                type="button"
+                onClick={() => changeTab(overdue > 0 ? 'overdue' : 'this-month')}
+                className={cn(
+                  'inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-[12px] font-semibold transition',
+                  overdue > 0
+                    ? 'border-red-200 bg-red-50 text-red-700 hover:border-red-300'
+                    : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300',
+                )}
+              >
+                <AppIcon className={overdue > 0 ? 'ri-alarm-warning-line' : 'ri-checkbox-circle-line'}></AppIcon>
+                {overdue > 0
+                  ? `${overdue} overdue review${overdue === 1 ? '' : 's'}`
+                  : 'Everything is on track'}
+              </button>
+            </div>
           )}
         />
 
@@ -1279,8 +1269,6 @@ export default function CoachProgressReviews() {
             {error}
           </div>
         ) : null}
-
-        <ProgressReviewGeneratePanel />
 
         <Panel padding="none">
           <div className="border-b border-foreground-100 p-4">
@@ -1325,7 +1313,7 @@ export default function CoachProgressReviews() {
             {!loading && paginatedReviews.map(review => {
               const isOpen = expanded === eventIdentity(review);
               const isBusy = busyEventId === eventIdentity(review);
-              const isSlidesBusy = slidesBusyEventId === eventIdentity(review);
+              const hasSlides = generatedReviewKeys.has(eventIdentity(review));
               const joinAvailable = canJoinMeeting(review);
               return (
                 <CalendarEventRow
@@ -1347,10 +1335,10 @@ export default function CoachProgressReviews() {
                         <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" disabled={isBusy} onClick={() => { handleJoin(review); }} />
                       ) : null}
                       <RowAction
-                        label={isSlidesBusy ? 'Creating slides' : 'Create slides'}
-                        icon={isSlidesBusy ? 'ri-loader-4-line animate-spin' : 'ri-slideshow-line'}
-                        disabled={isSlidesBusy || !reviewHasLearnerReference(review)}
-                        onClick={() => { void handleCreateSlides(review); }}
+                        label={hasSlides ? 'View slides' : 'Create slides'}
+                        icon={hasSlides ? 'ri-slideshow-2-line' : 'ri-slideshow-line'}
+                        disabled={!reviewHasLearnerReference(review)}
+                        onClick={() => { handleCreateSlides(review); }}
                       />
                       <RowAction
                         label={needsScheduling(review) ? 'Schedule' : 'Manage'}
@@ -1406,10 +1394,10 @@ export default function CoachProgressReviews() {
                             <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" onClick={() => { handleJoin(review); }} disabled={isBusy} />
                           ) : null}
                           <RowAction
-                            label={isSlidesBusy ? 'Creating slides' : 'Create slides'}
-                            icon={isSlidesBusy ? 'ri-loader-4-line animate-spin' : 'ri-slideshow-line'}
-                            disabled={isSlidesBusy || !reviewHasLearnerReference(review)}
-                            onClick={() => { void handleCreateSlides(review); }}
+                            label={hasSlides ? 'View slides' : 'Create slides'}
+                            icon={hasSlides ? 'ri-slideshow-2-line' : 'ri-slideshow-line'}
+                            disabled={!reviewHasLearnerReference(review)}
+                            onClick={() => { handleCreateSlides(review); }}
                           />
                           <RowAction
                             label={review.status === 'scheduled' || review.status === 'in-progress' ? 'Reschedule' : 'Schedule'}
@@ -1472,10 +1460,11 @@ export default function CoachProgressReviews() {
             onSubmit={handleCompleteReview}
           />
         ) : null}
-        <ProgressReviewSlidesModal
-          open={Boolean(slidesDeck)}
-          deck={slidesDeck}
-          onClose={() => setSlidesDeck(null)}
+        <ProgressReviewPptxModal
+          open={Boolean(pptxModalReview)}
+          review={pptxModalReview}
+          onClose={() => setPptxModalReview(null)}
+          onGenerated={markReviewSlidesGenerated}
         />
       </PageContainer>
     </WorkspaceShell>

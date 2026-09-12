@@ -58,6 +58,13 @@ export interface ProgressReviewGenerateResult {
   downloadUrl: string;
 }
 
+export interface ProgressReviewLatestRun {
+  exists: boolean;
+  reviewId?: string;
+  generationStatus?: 'pending' | 'running' | 'completed' | 'failed';
+  generatedAt?: string | null;
+}
+
 export interface ProgressReviewBulkResult {
   results: Array<
     | ProgressReviewGenerateResult
@@ -103,6 +110,14 @@ export async function fetchReviewPeriods(learnerId: number | string): Promise<Pr
 export async function fetchReviewPack(learnerId: number | string, reviewDate?: string): Promise<ProgressReviewPack> {
   const qs = reviewDate ? `?review_date=${encodeURIComponent(reviewDate)}` : '';
   return request<ProgressReviewPack>(`/${learnerId}/pack/${qs}`);
+}
+
+/** Cheap existence check for one exact review — never a general "does this
+ * learner have any deck", so a review card can never show another review's
+ * generated state. Backs both the card button label and the modal's initial
+ * state (skip straight to Download/Regenerate when one already exists). */
+export async function fetchLatestRun(learnerId: number | string, reviewDate: string): Promise<ProgressReviewLatestRun> {
+  return request<ProgressReviewLatestRun>(`/${learnerId}/runs/latest/?review_date=${encodeURIComponent(reviewDate)}`);
 }
 
 export async function generateProgressReview(
