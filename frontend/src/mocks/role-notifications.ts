@@ -16,7 +16,7 @@ export const roleNotifications: Record<string, RoleNotification[]> = {
     { id: 3, text: 'Employer signed your progress review Q2', time: '3 hours ago', unread: false, type: 'review', category: 'Review', link: '/learner/progress-reviews' },
     { id: 4, text: 'New module available: Data Analysis Fundamentals', time: 'Yesterday', unread: false, type: 'module', category: 'Module', link: '/learner/modules' },
     { id: 5, text: 'Your evidence submission EV-1245 has been validated by your tutor', time: '2 days ago', unread: false, type: 'evidence', category: 'Evidence', link: '/learner/evidence' },
-    { id: 6, text: 'Coaching meeting confirmed for 19 June at 14:00 with Med Maher', time: '2 days ago', unread: true, type: 'meeting', category: 'Meeting', link: '/learner/monthly-coaching' },
+    { id: 6, text: 'Coaching meeting confirmed for 19 June at 14:00 with Med Maher', time: '2 days ago', unread: true, type: 'meeting', category: 'Meeting', link: '/learner/calendar' },
     { id: 7, text: 'Gateway readiness review due this month — your KSBs are at 88%', time: '3 days ago', unread: false, type: 'gateway', category: 'Gateway', link: '/learner/gateway' },
     { id: 8, text: 'Congratulations! You earned the "Evidence Pro" badge', time: '4 days ago', unread: false, type: 'reward', category: 'Rewards', link: '/learner/rewards' },
     { id: 9, text: 'OTJH reminder: You are 26 hours behind your monthly target', time: '5 days ago', unread: false, type: 'otjh', category: 'OTJH', link: '/learner/otjh' },

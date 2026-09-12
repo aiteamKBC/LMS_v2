@@ -11,6 +11,7 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
 import { ImportedReviewHistory } from '@/pages/learner/reviews/ImportedReviewHistory';
+import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
 import {
   activityTimeLabel,
   learningKsbCodes,
@@ -150,6 +151,7 @@ function useMonthlyCoachingData() {
   const myLearner = useMyLearner();
   const [learner, setLearner] = useState<LearnerDetail | null>(null);
   const [sessions, setSessions] = useState<LearnerCalendarEvent[]>([]);
+  const [reviews, setReviews] = useState<ImportedReview[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -160,36 +162,38 @@ function useMonthlyCoachingData() {
     Promise.all([
       fetchLearnerDetail(myLearner.kind, myLearner.id),
       fetchLearnerCalendarEvents(myLearner.kind, myLearner.id),
+      fetchReviewHistory(myLearner.kind, myLearner.id, 'monthly-coaching'),
     ])
-      .then(([detail, calendar]) => {
+      .then(([detail, calendar, history]) => {
         if (cancelled) return;
         setLearner(detail);
         setSessions(calendar.events.filter((event) => event.source === 'mcr').sort((a, b) => a.sequence - b.sequence));
+        setReviews(history.reviews);
       })
       .catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : 'Could not load monthly coaching sessions.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [myLearner.kind, myLearner.id]);
 
-  return { learner, sessions, loading, error };
+  return { learner, sessions, reviews, loading, error };
 }
 
 export function MonthlyCoachingListPage() {
   const myLearner = useMyLearner();
-  const { learner, sessions, loading, error } = useMonthlyCoachingData();
+  const { learner, sessions, reviews, loading, error } = useMonthlyCoachingData();
   const [page, setPage] = useState(1);
   const pageSize = 10;
   const totalPages = Math.max(1, Math.ceil(sessions.length / pageSize));
   const visibleSessions = sessions.slice((page - 1) * pageSize, page * pageSize);
-  const completedCount = sessions.filter((session) => session.status === 'completed').length;
-  const scheduledCount = sessions.filter((session) => ['scheduled', 'in-progress'].includes(session.status)).length;
-  const cancelledCount = sessions.filter((session) => session.status === 'cancelled').length;
+  const completedCount = reviews.filter((review) => review.status.toLowerCase() === 'completed').length;
+  const scheduledCount = reviews.filter((review) => ['scheduled', 'in-progress'].includes(review.status.toLowerCase())).length;
+  const notScheduledCount = reviews.filter((review) => ['not-scheduled', 'not scheduled', 'not_scheduled'].includes(review.status.toLowerCase())).length;
   const coachName = sessions.find((session) => session.coachName)?.coachName || 'Your coach';
   const summaryMetrics = [
-    { label: 'Total', value: sessions.length, icon: 'ri-stack-line', tone: 'brand' as const, iconClassName: 'bg-violet-100 text-violet-700' },
+    { label: 'Total', value: reviews.length, icon: 'ri-stack-line', tone: 'brand' as const, iconClassName: 'bg-violet-100 text-violet-700' },
     { label: 'Scheduled', value: scheduledCount, icon: 'ri-calendar-check-line', tone: 'info' as const, iconClassName: 'bg-blue-100 text-blue-700' },
     { label: 'Completed', value: completedCount, icon: 'ri-checkbox-circle-line', tone: 'positive' as const, iconClassName: 'bg-emerald-100 text-emerald-700' },
-    { label: 'Cancelled', value: cancelledCount, icon: 'ri-close-circle-line', tone: 'neutral' as const, iconClassName: 'bg-rose-100 text-rose-700' },
+    { label: 'Not Scheduled', value: notScheduledCount, icon: 'ri-time-line', tone: 'neutral' as const, iconClassName: 'bg-amber-100 text-amber-700' },
   ];
 
   return (
@@ -210,7 +214,7 @@ export function MonthlyCoachingListPage() {
           </div>
         </section>
 
-        <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-[0_8px_30px_rgba(27,12,52,0.06)]">
+        <section className="hidden">
           <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
             <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><AppIcon className="ri-calendar-event-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Monthly Coaching Meetings</h2><p className="mt-0.5 text-xs text-foreground-500">Open a meeting to review its 30-day learning summary.</p></div></div>
             <Link to="/learner/calendar" className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />Open calendar</Link>
@@ -283,7 +287,7 @@ export function MonthlyCoachingListPage() {
             </>
           )}
         </section>
-        <ImportedReviewHistory kind={myLearner.kind} learnerId={myLearner.id} category="monthly-coaching" />
+        <ImportedReviewHistory kind={myLearner.kind} learnerId={myLearner.id} category="monthly-coaching" hideHeader />
       </main>
     </WorkspaceShell>
   );

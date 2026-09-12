@@ -212,8 +212,10 @@ function ProgressReviewsList() {
         setLearner(detail);
         setReviews(calendar.events.filter((event) => event.source === 'progress-review').sort((a, b) => a.sequence - b.sequence));
       })
-      .catch((reason: unknown) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : 'Could not load progress reviews.');
+      .catch(() => {
+        // The visible list is loaded from the reviews table below; calendar
+        // failures must not block that database-backed content.
+        if (!cancelled) setError('');
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -261,7 +263,7 @@ function ProgressReviewsList() {
           </div>
         </section>
 
-        <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-[0_8px_30px_rgba(27,12,52,0.06)]">
+        <section className="hidden">
           <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
             <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><AppIcon className="ri-file-list-3-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Progress Review sessions</h2><p className="mt-0.5 text-xs text-foreground-500">Check each review status and open the full Progress Review record.</p></div></div>
             <Link to={`/learner/calendar?kind=${myLearner.kind}&learner=${myLearner.id}`} className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />Open calendar</Link>
@@ -343,7 +345,7 @@ function ProgressReviewsList() {
             </>
           )}
         </section>
-        <ImportedReviewHistory kind={myLearner.kind} learnerId={myLearner.id} category="progress-review" />
+        <ImportedReviewHistory kind={myLearner.kind} learnerId={myLearner.id} category="progress-review" hideHeader />
       </main>
     </WorkspaceShell>
   );

@@ -161,8 +161,7 @@ const LearnerReviewFormPage = lazyRoute(() => import("../pages/learner/onboardin
 const LearnerOverview = lazyRoute(() => import("../pages/workspace/learner/page"));
 const LearnerProfilePage = lazyRoute(() => import("../pages/learner/profile/page"));
 const MISDashboard = lazyRoute(() => import("../pages/workspace/mis/page"));
-// These two modules export both a detail page (default) and a list page (named),
-// so the named half needs remapping onto `default` for lazy() to accept it.
+// These two exports live in the same module; map the named list export for lazy routing.
 const MonthlyCoachingPage = lazyRoute(() => import("../pages/learner/monthly-coaching/page"));
 const MonthlyCoachingListPage = lazyRoute(() => import("../pages/learner/monthly-coaching/page").then(m => ({ default: m.MonthlyCoachingListPage })));
 const ProgressReviewsPage = lazyRoute(() => import("../pages/learner/progress-reviews/page"));
@@ -618,14 +617,8 @@ const routes: RouteObject[] = [
     path: "/learner/monthly-cycle/:kind/:id",
     element: <MonthlyLogsPage />,
   },
-  {
-    path: "/learner/monthly-coaching",
-    element: <MonthlyCoachingListPage />,
-  },
-  {
-    path: "/learner/monthly-coaching/:sessionId",
-    element: <MonthlyCoachingPage />,
-  },
+  { path: "/learner/monthly-coaching", element: <MonthlyCoachingListPage /> },
+  { path: "/learner/monthly-coaching/:sessionId", element: <MonthlyCoachingPage /> },
   {
     path: "/learner/progress-reviews",
     element: <ProgressReviewsListPage />,
