@@ -311,6 +311,7 @@ INSTALLED_APPS = [
     'curriculum_api',
     'engagement_api',
     'enrolment_api',
+    'progress_reviews_api',
     'chat',
     # Platform authentication (auth schema on the Neon enrolment database).
     # Its tables are unmanaged and created by `manage.py apply_login_tables`.
@@ -348,6 +349,10 @@ MIDDLEWARE = [
     # account, and it clears the thread-local on the way out -- worker threads
     # are reused, and a leaked actor would credit one person's save to another.
     'curriculum_api.versioning.ActorMiddleware',
+    # Notes which curriculum path moved the shared cache epoch, so a polling tab
+    # can refresh the collection that changed instead of all of them. Reads the
+    # epoch either side of the view, so it has to wrap it.
+    'curriculum_api.middleware.CurriculumChangeLogMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     # Turns a missing Curriculum table into a 503 naming the absent relations,
@@ -779,6 +784,12 @@ AZURE_ENROLMENT_DOCS_CONTAINER = (
     os.environ.get("AZURE_ENROLMENT_DOCS_CONTAINER")
     or os.environ.get("AZURE_Enrolment_Docs_CONTAINER")
     or "enrolment-docs"
+)
+
+# Generated Progress Review PPTX decks — see progress_reviews_api/storage.py.
+# Platform-generated like the enrolment documents above: no quarantine/scan step.
+AZURE_PROGRESS_REVIEW_CONTAINER = (
+    os.environ.get("AZURE_PROGRESS_REVIEW_CONTAINER") or "progress-review-decks"
 )
 
 # --- Platform authentication (the `login` app) -------------------------------

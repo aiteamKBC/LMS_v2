@@ -17,7 +17,9 @@ from coach_api.views import (
     build_monthly_activity_learner,
     coach_caseload,
     coach_dashboard,
+    coach_meeting_artifact_content_response,
     coach_meeting_expected_attendees,
+    coach_meeting_transcript_text,
     coach_monthly_activity,
     coach_timetable_event_artifacts,
     coach_timetable_book_event,
@@ -814,6 +816,23 @@ class CoachMeetingArtifactTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
 
+    def test_transcript_vtt_is_normalised_to_readable_text(self):
+        self.assertEqual(
+            coach_meeting_transcript_text(
+                """WEBVTT
+
+1
+00:00:01.000 --> 00:00:03.000
+<v Coach>Welcome to the review.</v>
+
+2
+00:00:04.000 --> 00:00:06.000
+Learner progress looks strong.
+"""
+            ),
+            "Welcome to the review.\nLearner progress looks strong.",
+        )
+
     def test_artifacts_endpoint_returns_transcript_and_recording(self):
         record = CoachCalendarEvent(
             event_key="mcr:42:1:2026-09-01",
@@ -860,6 +879,13 @@ class CoachMeetingArtifactTests(SimpleTestCase):
         with patch("coach_api.views.coach_meeting_artifact_record", return_value=record), \
              patch("coach_api.views.has_graph_credentials", return_value=True), \
              patch("coach_api.views.coach_meeting_graph_target", return_value=("users/coach/onlineMeetings/meeting-1", None)), \
+             patch("coach_api.views.fetch_coach_meeting_transcript_content", return_value={
+                 "transcript_vtt": "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nHello learner.",
+                 "transcript_text": "Hello learner.",
+                 "transcript_content_type": "text/vtt",
+                 "transcript_fetched_at": "2026-09-01T10:31:00+00:00",
+                 "transcript_fetch_error": "",
+             }) as fetch_transcript, \
              patch("coach_api.views.microsoft_graph_request", side_effect=graph_response):
             response = unwrap(coach_timetable_event_artifacts)(request, record.event_key)
 
@@ -869,6 +895,9 @@ class CoachMeetingArtifactTests(SimpleTestCase):
             [(item["artifact_type"], item["id"]) for item in payload["artifacts"]],
             [("transcript", "transcript-1"), ("recording", "recording-1")],
         )
+        self.assertNotIn("transcript_text", payload["artifacts"][0])
+        self.assertNotIn("transcript_vtt", payload["artifacts"][0])
+        fetch_transcript.assert_called_once_with("users/coach/onlineMeetings/meeting-1", "transcript-1")
         self.assertEqual(payload["attendance"]["reportCount"], 1)
         self.assertEqual(payload["attendance"]["attendedCount"], 1)
         self.assertEqual(payload["attendance"]["expectedCount"], 2)
@@ -880,6 +909,34 @@ class CoachMeetingArtifactTests(SimpleTestCase):
             [(item["role"], item["email"]) for item in payload["attendance"]["expectedAttendees"]],
             [("coach", "coach@example.com"), ("learner", "learner@example.com")],
         )
+
+    def test_transcript_content_prefers_stored_database_copy(self):
+        record = CoachCalendarEvent(
+            event_key="mcr:42:1:2026-09-01",
+            owner_email="coach@example.com",
+            event_type="mcr",
+        )
+        request = self.factory.get(
+            "/coach_api/coach/timetable/events/mcr:42:1:2026-09-01/artifacts/transcript/transcript-1/content?preview=1"
+        )
+
+        with patch("coach_api.views.stored_coach_meeting_transcript", return_value={
+            "transcript_vtt": "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nStored transcript.",
+            "transcript_content_type": "text/vtt",
+        }) as stored, \
+             patch("coach_api.views.has_graph_credentials", return_value=False):
+            response = coach_meeting_artifact_content_response(
+                request,
+                record,
+                record.event_key,
+                "transcript",
+                "transcript-1",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content.decode(), "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nStored transcript.")
+        self.assertIn("inline", response["Content-Disposition"])
+        stored.assert_called_once_with(record, "transcript-1")
 
     def test_progress_review_expected_attendees_include_employer(self):
         record = CoachCalendarEvent(

@@ -118,7 +118,12 @@ describe('Curriculum API Caching', () => {
   describe('Error Handling', () => {
     it('should not cache failed requests', async () => {
       const error = new Error('API error');
-      mockFetch.mockRejectedValueOnce(error);
+      // Three responses for one call: a transient failure is retried twice
+      // before the caller ever hears about it.
+      mockFetch
+        .mockRejectedValueOnce(error)
+        .mockRejectedValueOnce(error)
+        .mockRejectedValueOnce(error);
 
       let caught: Error | null = null;
       try {
@@ -138,7 +143,8 @@ describe('Curriculum API Caching', () => {
 
       const result = await fetchCurriculumProgrammes();
       expect(result).toEqual([]);
-      expect(mockFetch).toHaveBeenCalledTimes(2); // First failed, second succeeded
+      // Three attempts at the failure, then one that succeeded.
+      expect(mockFetch).toHaveBeenCalledTimes(4);
     });
 
     it('should not cache aborted requests', async () => {

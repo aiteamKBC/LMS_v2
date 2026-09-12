@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import hashlib
 from html import escape
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -4921,7 +4922,10 @@ COACH_MEETING_ARTIFACT_ENDPOINTS = {
 COACH_MEETING_ARTIFACTS_RELATION = '"Coach".coach_meeting_artifacts'
 COACH_MEETING_ATTENDANCE_REPORTS_RELATION = '"Coach".coach_meeting_attendance_reports'
 COACH_MEETING_ATTENDANCE_RELATION = '"Coach".coach_meeting_attendance'
+COACH_MEETING_SUMMARIES_RELATION = '"Coach".coach_meeting_summaries'
 COACH_MEETING_ATTENDANCE_STATUSES = {"attended", "absent", "pending", "extra"}
+COACH_MEETING_SUMMARY_TYPES = {"mcr", "progress-review"}
+COACH_MEETING_SUMMARY_MODEL = getattr(settings, "OPENAI_MEETING_SUMMARY_MODEL", "") or getattr(settings, "OPENAI_MODEL", "gpt-4o-mini")
 
 
 def graph_datetime_iso(value) -> str:
@@ -4929,6 +4933,124 @@ def graph_datetime_iso(value) -> str:
     if parsed:
         return parsed.isoformat()
     return clean_text(value)
+
+
+def parse_jsonish(value, fallback):
+    if value in (None, ""):
+        return fallback
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def default_meeting_summary_payload(event_type: str = "") -> dict:
+    label = "Progress Review" if clean_text(event_type).lower() == "progress-review" else "Monthly Coaching"
+    return {
+        "title": f"{label} Recap",
+        "overview": "",
+        "keyPoints": [],
+        "actions": [],
+        "nextSteps": [],
+        "support": [],
+    }
+
+
+def compact_text(value, limit=280) -> str:
+    text = " ".join(clean_text(value).split())
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 1, 0)].rstrip() + "..."
+
+
+def normalized_summary_list(value, *, limit=5, item_limit=180) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    items = []
+    for item in value:
+        text = compact_text(item, item_limit)
+        if text and text not in items:
+            items.append(text)
+        if len(items) >= limit:
+            break
+    return items
+
+
+def normalize_meeting_summary_action(value) -> dict | None:
+    if isinstance(value, str):
+        title = compact_text(value, 180)
+        return {"title": title, "owner": "Learner", "dueDate": "", "status": "To do"} if title else None
+    if not isinstance(value, dict):
+        return None
+    title = compact_text(value.get("title") or value.get("action") or value.get("task"), 180)
+    if not title:
+        return None
+    owner = compact_text(value.get("owner") or value.get("responsible") or "Learner", 60)
+    status = compact_text(value.get("status") or "To do", 40)
+    due_date = compact_text(value.get("dueDate") or value.get("due") or "", 40)
+    return {
+        "title": title,
+        "owner": owner or "Learner",
+        "dueDate": due_date,
+        "status": status or "To do",
+    }
+
+
+def normalize_meeting_summary_payload(payload, event_type: str = "") -> dict:
+    base = default_meeting_summary_payload(event_type)
+    if not isinstance(payload, dict):
+        return base
+    title = compact_text(payload.get("title"), 100) or base["title"]
+    overview = compact_text(payload.get("overview") or payload.get("summary"), 500)
+    actions = []
+    for item in payload.get("actions") or payload.get("agreedActions") or []:
+        action = normalize_meeting_summary_action(item)
+        if action:
+            actions.append(action)
+        if len(actions) >= 6:
+            break
+    return {
+        "title": title,
+        "overview": overview,
+        "keyPoints": normalized_summary_list(payload.get("keyPoints") or payload.get("discussionPoints"), limit=6),
+        "actions": actions,
+        "nextSteps": normalized_summary_list(payload.get("nextSteps"), limit=5),
+        "support": normalized_summary_list(payload.get("support") or payload.get("supportNeeded"), limit=4),
+    }
+
+
+def meeting_summary_plain_text(summary: dict) -> str:
+    parts = []
+    title = clean_text(summary.get("title"))
+    overview = clean_text(summary.get("overview"))
+    if title:
+        parts.append(title)
+    if overview:
+        parts.append(overview)
+    for heading, key in (
+        ("Key points", "keyPoints"),
+        ("Actions", "actions"),
+        ("Next steps", "nextSteps"),
+        ("Support", "support"),
+    ):
+        values = summary.get(key) or []
+        if not values:
+            continue
+        parts.append(heading)
+        for item in values:
+            if isinstance(item, dict):
+                text = clean_text(item.get("title"))
+                owner = clean_text(item.get("owner"))
+                due = clean_text(item.get("dueDate"))
+                if owner or due:
+                    text = f"{text} ({', '.join(part for part in [owner, due] if part)})"
+            else:
+                text = clean_text(item)
+            if text:
+                parts.append(f"- {text}")
+    return "\n".join(parts)
 
 
 def coach_meeting_artifact_record(owner_email: str, event_key: str) -> CoachCalendarEvent | None:
@@ -4989,6 +5111,20 @@ def serialize_coach_meeting_artifact(artifact_type: str, artifact: dict) -> dict
         "created_datetime": graph_datetime_iso(artifact.get("createdDateTime")),
         "end_datetime": graph_datetime_iso(artifact.get("endDateTime")),
         "metadata": artifact,
+    }
+
+
+def public_coach_meeting_artifact(artifact: dict) -> dict:
+    return {
+        key: value
+        for key, value in artifact.items()
+        if key not in {
+            "transcript_vtt",
+            "transcript_text",
+            "transcript_content_type",
+            "transcript_fetched_at",
+            "transcript_fetch_error",
+        }
     }
 
 
@@ -5266,6 +5402,69 @@ def coach_meeting_snapshot_datetime(value):
     return parse_graph_datetime(value) if value else None
 
 
+def coach_meeting_transcript_text(vtt_content: str) -> str:
+    """Return a readable transcript body from Graph's WebVTT payload."""
+    lines = []
+    for raw_line in clean_text(vtt_content).splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        upper = line.upper()
+        if upper.startswith("WEBVTT") or upper.startswith("NOTE"):
+            continue
+        if "-->" in line or line.isdigit():
+            continue
+        line = re.sub(r"<[^>]+>", "", line).strip()
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def fetch_coach_meeting_transcript_content(base: str, artifact_id: str) -> dict:
+    graph_settings = get_graph_settings()
+    path = (
+        f"{base}/transcripts/"
+        f"{urllib_parse.quote(clean_text(artifact_id), safe='')}/content"
+    )
+    url = f'{graph_settings["base_url"].rstrip("/")}/{path}'
+    request_headers = {
+        "Authorization": f"Bearer {microsoft_graph_token()}",
+        "Accept": "text/vtt",
+    }
+    graph_request = urllib_request.Request(url, headers=request_headers, method="GET")
+    try:
+        graph_response = urllib_request.urlopen(graph_request, timeout=45)
+        content_type = graph_response.headers.get("Content-Type") or "text/vtt"
+        content = graph_response.read()
+        graph_response.close()
+    except urllib_error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")
+        logger.warning("Unable to fetch coach Teams transcript content: %s %s", exc.code, detail)
+        return {
+            "transcript_vtt": "",
+            "transcript_text": "",
+            "transcript_content_type": "",
+            "transcript_fetch_error": f"Microsoft Graph returned {exc.code} for transcript content.",
+        }
+    except urllib_error.URLError as exc:
+        logger.warning("Unable to fetch coach Teams transcript content: %s", exc)
+        return {
+            "transcript_vtt": "",
+            "transcript_text": "",
+            "transcript_content_type": "",
+            "transcript_fetch_error": "Microsoft Graph could not return the transcript content.",
+        }
+
+    transcript_vtt = content.decode("utf-8", errors="replace")
+    return {
+        "transcript_vtt": transcript_vtt,
+        "transcript_text": coach_meeting_transcript_text(transcript_vtt),
+        "transcript_content_type": clean_text(content_type),
+        "transcript_fetched_at": timezone.now().isoformat(),
+        "transcript_fetch_error": "",
+    }
+
+
 def coach_meeting_snapshot_tables_ready(database: str) -> bool:
     try:
         connection = connections[database]
@@ -5282,6 +5481,316 @@ def coach_meeting_snapshot_tables_ready(database: str) -> bool:
         return bool(result and all(result))
     except Exception:
         return False
+
+
+def coach_meeting_artifact_transcript_columns_ready(database: str) -> bool:
+    try:
+        connection = connections[database]
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select count(*)
+                from information_schema.columns
+                where table_schema = 'Coach'
+                  and table_name = 'coach_meeting_artifacts'
+                  and column_name in (
+                    'transcript_vtt',
+                    'transcript_text',
+                    'transcript_content_type',
+                    'transcript_fetched_at',
+                    'transcript_fetch_error'
+                  )
+                """
+            )
+            result = cursor.fetchone()
+        return bool(result and result[0] == 5)
+    except Exception:
+        return False
+
+
+def coach_meeting_summaries_table_ready(database: str) -> bool:
+    try:
+        connection = connections[database]
+        with connection.cursor() as cursor:
+            cursor.execute("select to_regclass(%s)", [COACH_MEETING_SUMMARIES_RELATION])
+            result = cursor.fetchone()
+        return bool(result and result[0])
+    except Exception:
+        return False
+
+
+def stored_coach_meeting_summary(record: CoachCalendarEvent) -> dict | None:
+    database = router.db_for_read(CoachCalendarEvent) or "default"
+    if not coach_meeting_summaries_table_ready(database):
+        return None
+    try:
+        with connections[database].cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT current_summary, status, generated_at, edited_at, edited_by, model, error
+                FROM {COACH_MEETING_SUMMARIES_RELATION}
+                WHERE event_key = %s
+                LIMIT 1
+                """,
+                [record.event_key],
+            )
+            row = cursor.fetchone()
+    except Exception:
+        logger.exception("Unable to read coach meeting summary for event_key=%s", record.event_key)
+        return None
+    if not row:
+        return None
+    summary = parse_jsonish(row[0], {})
+    return {
+        "summary": normalize_meeting_summary_payload(summary, record.event_type),
+        "status": clean_text(row[1]) or "ready",
+        "generatedAt": row[2].isoformat() if row[2] else None,
+        "editedAt": row[3].isoformat() if row[3] else None,
+        "editedBy": clean_text(row[4]),
+        "model": clean_text(row[5]),
+        "error": clean_text(row[6]),
+    }
+
+
+def stored_coach_meeting_transcript(record: CoachCalendarEvent, artifact_id: str) -> dict | None:
+    database = router.db_for_read(CoachCalendarEvent) or "default"
+    if (
+        not coach_meeting_snapshot_tables_ready(database)
+        or not coach_meeting_artifact_transcript_columns_ready(database)
+    ):
+        return None
+    try:
+        with connections[database].cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT transcript_vtt, transcript_content_type
+                FROM {COACH_MEETING_ARTIFACTS_RELATION}
+                WHERE event_key = %s
+                  AND artifact_type = 'transcript'
+                  AND graph_artifact_id = %s
+                  AND transcript_vtt <> ''
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """,
+                [record.event_key, clean_text(artifact_id)],
+            )
+            row = cursor.fetchone()
+    except Exception:
+        logger.exception("Unable to read stored coach Teams transcript for event_key=%s", record.event_key)
+        return None
+    if not row:
+        return None
+    return {
+        "transcript_vtt": row[0],
+        "transcript_content_type": row[1] or "text/vtt",
+    }
+
+
+def stored_coach_meeting_transcript_for_summary(record: CoachCalendarEvent) -> dict | None:
+    database = router.db_for_read(CoachCalendarEvent) or "default"
+    if (
+        not coach_meeting_snapshot_tables_ready(database)
+        or not coach_meeting_artifact_transcript_columns_ready(database)
+    ):
+        return None
+    try:
+        with connections[database].cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT graph_artifact_id, transcript_text
+                FROM {COACH_MEETING_ARTIFACTS_RELATION}
+                WHERE event_key = %s
+                  AND artifact_type = 'transcript'
+                  AND transcript_text <> ''
+                ORDER BY COALESCE(end_datetime, created_datetime) DESC NULLS LAST, updated_at DESC
+                LIMIT 1
+                """,
+                [record.event_key],
+            )
+            row = cursor.fetchone()
+    except Exception:
+        logger.exception("Unable to read stored coach Teams transcript text for event_key=%s", record.event_key)
+        return None
+    if not row or not clean_text(row[1]):
+        return None
+    return {"artifactId": clean_text(row[0]), "text": clean_text(row[1])}
+
+
+def openai_meeting_summary(record: CoachCalendarEvent, transcript_text: str) -> tuple[dict, str]:
+    if not getattr(settings, "OPENAI_API_KEY", ""):
+        raise RuntimeError("OPENAI_API_KEY is not configured.")
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise RuntimeError("The OpenAI client library is not installed on the server.") from exc
+
+    source = clean_text(record.event_type).lower()
+    meeting_label = "Progress Review" if source == "progress-review" else "Monthly Coaching Meeting"
+    system = (
+        "You create concise learner-facing meeting recaps for a UK learning platform. "
+        "Use a professional, supportive tone. Do not expose raw transcript wording, private speculation, "
+        "sensitive personal information, or unverified accusations. Keep the recap factual and action-oriented. "
+        "Return only valid JSON with keys: title, overview, keyPoints, actions, nextSteps, support. "
+        "actions must be an array of objects with title, owner, dueDate, status."
+    )
+    user = (
+        f"Meeting type: {meeting_label}\n"
+        f"Learner: {clean_text(record.learner_name) or 'Learner'}\n"
+        f"Coach: {clean_text(record.owner_name) or 'Coach'}\n\n"
+        "Create a learner-visible recap from this transcript. "
+        "Overview: 1-2 short sentences. Key points: 3-5 bullets. "
+        "Actions: only agreed actions, with owner and dueDate if stated. "
+        "Next steps: 2-4 clear steps. Support: include only if support needs were discussed.\n\n"
+        f"Transcript:\n{transcript_text[:18000]}"
+    )
+    client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    response = client.chat.completions.create(
+        model=COACH_MEETING_SUMMARY_MODEL,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        response_format={"type": "json_object"},
+        max_completion_tokens=1200,
+    )
+    content = clean_text(response.choices[0].message.content if response.choices else "")
+    if not content:
+        raise RuntimeError("The AI service returned an empty meeting summary.")
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("The AI service returned an invalid meeting summary.") from exc
+    return normalize_meeting_summary_payload(payload, source), COACH_MEETING_SUMMARY_MODEL
+
+
+def ensure_coach_meeting_summary(record: CoachCalendarEvent) -> dict | None:
+    if clean_text(record.event_type).lower() not in COACH_MEETING_SUMMARY_TYPES:
+        return None
+    database = router.db_for_write(CoachCalendarEvent) or "default"
+    if not coach_meeting_summaries_table_ready(database):
+        return None
+
+    transcript = stored_coach_meeting_transcript_for_summary(record)
+    if not transcript:
+        return stored_coach_meeting_summary(record)
+    transcript_hash = hashlib.sha256(transcript["text"].encode("utf-8")).hexdigest()
+
+    try:
+        with connections[database].cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT transcript_hash, status, current_summary
+                FROM {COACH_MEETING_SUMMARIES_RELATION}
+                WHERE event_key = %s
+                LIMIT 1
+                """,
+                [record.event_key],
+            )
+            existing = cursor.fetchone()
+    except Exception:
+        logger.exception("Unable to inspect coach meeting summary for event_key=%s", record.event_key)
+        return None
+
+    if existing and clean_text(existing[0]) == transcript_hash:
+        return stored_coach_meeting_summary(record)
+    if existing and clean_text(existing[1]) == "edited":
+        return stored_coach_meeting_summary(record)
+
+    now = timezone.now()
+    try:
+        summary, model = openai_meeting_summary(record, transcript["text"])
+        status = "ready"
+        error = ""
+    except Exception as exc:  # noqa: BLE001 - stored as a user-visible sync state
+        logger.exception("Unable to generate coach meeting summary for event_key=%s", record.event_key)
+        fallback = existing[2] if existing else {}
+        summary = normalize_meeting_summary_payload(fallback, record.event_type)
+        model = COACH_MEETING_SUMMARY_MODEL
+        status = "failed"
+        error = clean_text(exc)
+
+    try:
+        with transaction.atomic(using=database), connections[database].cursor() as cursor:
+            cursor.execute(
+                f"""
+                INSERT INTO {COACH_MEETING_SUMMARIES_RELATION} AS summary_target (
+                    calendar_event_id,
+                    event_key,
+                    owner_email,
+                    graph_event_id,
+                    event_type,
+                    learner_id,
+                    learner_name,
+                    transcript_artifact_id,
+                    transcript_hash,
+                    ai_summary,
+                    current_summary,
+                    summary_text,
+                    model,
+                    status,
+                    generated_at,
+                    error,
+                    updated_at
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s::jsonb, %s::jsonb, %s, %s, %s, %s, %s, %s
+                )
+                ON CONFLICT (event_key)
+                DO UPDATE SET
+                    calendar_event_id = EXCLUDED.calendar_event_id,
+                    owner_email = EXCLUDED.owner_email,
+                    graph_event_id = EXCLUDED.graph_event_id,
+                    event_type = EXCLUDED.event_type,
+                    learner_id = EXCLUDED.learner_id,
+                    learner_name = EXCLUDED.learner_name,
+                    transcript_artifact_id = EXCLUDED.transcript_artifact_id,
+                    transcript_hash = EXCLUDED.transcript_hash,
+                    ai_summary = EXCLUDED.ai_summary,
+                    current_summary = CASE
+                        WHEN summary_target.status = 'edited'
+                        THEN summary_target.current_summary
+                        ELSE EXCLUDED.current_summary
+                    END,
+                    summary_text = CASE
+                        WHEN summary_target.status = 'edited'
+                        THEN summary_target.summary_text
+                        ELSE EXCLUDED.summary_text
+                    END,
+                    model = EXCLUDED.model,
+                    status = CASE
+                        WHEN summary_target.status = 'edited'
+                        THEN summary_target.status
+                        ELSE EXCLUDED.status
+                    END,
+                    generated_at = EXCLUDED.generated_at,
+                    error = EXCLUDED.error,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                [
+                    getattr(record, "id", None),
+                    record.event_key,
+                    clean_email(record.owner_email),
+                    clean_text(record.graph_event_id),
+                    clean_text(record.event_type).lower(),
+                    getattr(record, "learner_id", None),
+                    clean_text(record.learner_name),
+                    transcript["artifactId"],
+                    transcript_hash,
+                    coach_meeting_snapshot_json(summary, {}),
+                    coach_meeting_snapshot_json(summary, {}),
+                    meeting_summary_plain_text(summary),
+                    model,
+                    status,
+                    now,
+                    error,
+                    now,
+                ],
+            )
+    except Exception:
+        logger.exception("Unable to persist coach meeting summary for event_key=%s", record.event_key)
+        return None
+    return stored_coach_meeting_summary(record)
 
 
 def coach_attendance_participant_key(row: dict, index: int) -> str:
@@ -5331,6 +5840,7 @@ def persist_coach_meeting_snapshots(
     learner_id = getattr(record, "learner_id", None)
     learner_name = clean_text(record.learner_name)
     learner_email = clean_email(record.learner_email)
+    transcript_columns_ready = coach_meeting_artifact_transcript_columns_ready(database)
 
     try:
         with transaction.atomic(using=database), connections[database].cursor() as cursor:
@@ -5339,6 +5849,33 @@ def persist_coach_meeting_snapshots(
                 graph_artifact_id = clean_text(artifact.get("graph_artifact_id") or artifact.get("id"))
                 if artifact_type not in COACH_MEETING_ARTIFACT_ENDPOINTS or not graph_artifact_id:
                     continue
+                transcript_columns = ""
+                transcript_placeholders = ""
+                transcript_update = ""
+                transcript_values = []
+                if transcript_columns_ready:
+                    transcript_columns = """
+                        transcript_vtt,
+                        transcript_text,
+                        transcript_content_type,
+                        transcript_fetched_at,
+                        transcript_fetch_error,
+                    """
+                    transcript_placeholders = "%s, %s, %s, %s, %s,"
+                    transcript_update = """
+                        transcript_vtt = EXCLUDED.transcript_vtt,
+                        transcript_text = EXCLUDED.transcript_text,
+                        transcript_content_type = EXCLUDED.transcript_content_type,
+                        transcript_fetched_at = EXCLUDED.transcript_fetched_at,
+                        transcript_fetch_error = EXCLUDED.transcript_fetch_error,
+                    """
+                    transcript_values = [
+                        clean_text(artifact.get("transcript_vtt")),
+                        clean_text(artifact.get("transcript_text")),
+                        clean_text(artifact.get("transcript_content_type")),
+                        coach_meeting_snapshot_datetime(artifact.get("transcript_fetched_at")),
+                        clean_text(artifact.get("transcript_fetch_error")),
+                    ]
                 cursor.execute(
                     f"""
                     INSERT INTO {COACH_MEETING_ARTIFACTS_RELATION} (
@@ -5353,12 +5890,15 @@ def persist_coach_meeting_snapshots(
                         content_correlation_id,
                         created_datetime,
                         end_datetime,
+                        {transcript_columns}
                         metadata,
                         last_seen_at,
                         updated_at
                     )
                     VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        {transcript_placeholders}
+                        %s::jsonb, %s, %s
                     )
                     ON CONFLICT (event_key, artifact_type, graph_artifact_id)
                     DO UPDATE SET
@@ -5370,6 +5910,7 @@ def persist_coach_meeting_snapshots(
                         content_correlation_id = EXCLUDED.content_correlation_id,
                         created_datetime = EXCLUDED.created_datetime,
                         end_datetime = EXCLUDED.end_datetime,
+                        {transcript_update}
                         metadata = EXCLUDED.metadata,
                         last_seen_at = EXCLUDED.last_seen_at,
                         updated_at = EXCLUDED.updated_at
@@ -5386,6 +5927,7 @@ def persist_coach_meeting_snapshots(
                         clean_text(artifact.get("content_correlation_id")),
                         coach_meeting_snapshot_datetime(artifact.get("created_datetime")),
                         coach_meeting_snapshot_datetime(artifact.get("end_datetime")),
+                        *transcript_values,
                         coach_meeting_snapshot_json(artifact.get("metadata"), {}),
                         synced_at,
                         synced_at,
@@ -5633,7 +6175,16 @@ def fetch_coach_meeting_graph_snapshot(record: CoachCalendarEvent) -> tuple[dict
             continue
         for artifact in response.get("value") or []:
             if isinstance(artifact, dict) and clean_text(artifact.get("id")):
-                artifacts.append(serialize_coach_meeting_artifact(artifact_type, artifact))
+                serialized_artifact = serialize_coach_meeting_artifact(artifact_type, artifact)
+                if artifact_type == "transcript":
+                    transcript_content = fetch_coach_meeting_transcript_content(
+                        base,
+                        serialized_artifact["graph_artifact_id"],
+                    )
+                    serialized_artifact.update(transcript_content)
+                    if transcript_content.get("transcript_fetch_error"):
+                        errors.append(transcript_content["transcript_fetch_error"])
+                artifacts.append(serialized_artifact)
 
     expected_attendees = coach_meeting_expected_attendees(record)
     attendance_records = [
@@ -5685,6 +6236,7 @@ def coach_timetable_event_artifacts(request, event_key):
         attendance_reports=snapshot["attendanceReports"],
         attendance_tracker=snapshot["attendanceTracker"],
     )
+    meeting_summary = ensure_coach_meeting_summary(record)
 
     return JsonResponse(
         {
@@ -5697,7 +6249,8 @@ def coach_timetable_event_artifacts(request, event_key):
                 "scheduledTime": format_time_value(record.scheduled_time),
             },
             "attendance": snapshot["attendance"],
-            "artifacts": snapshot["artifacts"],
+            "artifacts": [public_coach_meeting_artifact(artifact) for artifact in snapshot["artifacts"]],
+            "meetingSummary": meeting_summary,
             "errors": snapshot["errors"],
             "partial": snapshot["partial"],
             "storage": storage_status,
@@ -5712,6 +6265,22 @@ def coach_meeting_artifact_content_response(request, record, event_key, artifact
     endpoint = COACH_MEETING_ARTIFACT_ENDPOINTS.get(artifact_type)
     if not endpoint:
         return JsonResponse({"detail": "Unsupported meeting artifact."}, status=400)
+
+    safe_event_key = re.sub(r"[^A-Za-z0-9._-]+", "-", clean_text(event_key)).strip("-")[:120] or "coach-meeting"
+    filename = f"{safe_event_key}-{artifact_type}.{'vtt' if artifact_type == 'transcript' else 'mp4'}"
+    as_attachment = clean_text(request.GET.get("preview")).lower() not in {"1", "true", "yes"}
+    disposition = "attachment" if as_attachment else "inline"
+
+    if artifact_type == "transcript":
+        stored_transcript = stored_coach_meeting_transcript(record, artifact_id)
+        if stored_transcript:
+            response = HttpResponse(
+                stored_transcript["transcript_vtt"],
+                content_type=stored_transcript["transcript_content_type"] or "text/vtt",
+            )
+            response["Content-Disposition"] = f'{disposition}; filename="{filename}"'
+            return response
+
     if not has_graph_credentials():
         return JsonResponse({"detail": "Microsoft Graph credentials are not configured."}, status=503)
 
@@ -5769,10 +6338,6 @@ def coach_meeting_artifact_content_response(request, record, event_key, artifact
     content_type = graph_response.headers.get("Content-Type") or (
         "text/vtt" if artifact_type == "transcript" else "video/mp4"
     )
-    safe_event_key = re.sub(r"[^A-Za-z0-9._-]+", "-", clean_text(event_key)).strip("-")[:120] or "coach-meeting"
-    filename = f"{safe_event_key}-{artifact_type}.{'vtt' if artifact_type == 'transcript' else 'mp4'}"
-    as_attachment = clean_text(request.GET.get("preview")).lower() not in {"1", "true", "yes"}
-    disposition = "attachment" if as_attachment else "inline"
     if artifact_type == "recording":
         response = StreamingHttpResponse(
             iter(lambda: graph_response.read(65536), b""),
@@ -5804,6 +6369,86 @@ def coach_timetable_event_artifact_content(request, event_key, artifact_type, ar
     if not record:
         return JsonResponse({"detail": "Calendar event not found for this coach."}, status=404)
     return coach_meeting_artifact_content_response(request, record, event_key, artifact_type, artifact_id)
+
+
+@coach_access_required
+def coach_timetable_event_summary(request, event_key):
+    if request.method not in {"GET", "PATCH"}:
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    owner_email = authenticated_coach_email(request)
+    record = coach_meeting_artifact_record(owner_email, event_key)
+    if not record:
+        return JsonResponse({"detail": "Calendar event not found for this coach."}, status=404)
+    if request.method == "GET":
+        return JsonResponse({"meetingSummary": ensure_coach_meeting_summary(record)})
+
+    database = router.db_for_write(CoachCalendarEvent) or "default"
+    if not coach_meeting_summaries_table_ready(database):
+        return JsonResponse({"detail": "Meeting summary storage is not configured."}, status=503)
+    try:
+        payload = parse_json_object(request)
+    except ValidationError as exc:
+        return validation_error_response(exc)
+    summary = normalize_meeting_summary_payload(payload.get("summary"), record.event_type)
+    now = timezone.now()
+    editor = clean_text(getattr(request, "coach_email", "")) or clean_text(owner_email)
+    try:
+        with transaction.atomic(using=database), connections[database].cursor() as cursor:
+            cursor.execute(
+                f"""
+                UPDATE {COACH_MEETING_SUMMARIES_RELATION}
+                SET current_summary = %s::jsonb,
+                    summary_text = %s,
+                    status = 'edited',
+                    edited_at = %s,
+                    edited_by = %s,
+                    updated_at = %s
+                WHERE event_key = %s
+                  AND lower(owner_email) = lower(%s)
+                """,
+                [
+                    coach_meeting_snapshot_json(summary, {}),
+                    meeting_summary_plain_text(summary),
+                    now,
+                    editor,
+                    now,
+                    record.event_key,
+                    owner_email,
+                ],
+            )
+            updated = cursor.rowcount
+        if not updated:
+            ensure_coach_meeting_summary(record)
+            with transaction.atomic(using=database), connections[database].cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    UPDATE {COACH_MEETING_SUMMARIES_RELATION}
+                    SET current_summary = %s::jsonb,
+                        summary_text = %s,
+                        status = 'edited',
+                        edited_at = %s,
+                        edited_by = %s,
+                        updated_at = %s
+                    WHERE event_key = %s
+                      AND lower(owner_email) = lower(%s)
+                    """,
+                    [
+                        coach_meeting_snapshot_json(summary, {}),
+                        meeting_summary_plain_text(summary),
+                        now,
+                        editor,
+                        now,
+                        record.event_key,
+                        owner_email,
+                    ],
+                )
+                updated = cursor.rowcount
+        if not updated:
+            return JsonResponse({"detail": "Meeting summary has not been generated yet."}, status=409)
+    except Exception:
+        logger.exception("Unable to update coach meeting summary for event_key=%s", record.event_key)
+        return JsonResponse({"detail": "Unable to save meeting summary."}, status=502)
+    return JsonResponse({"meetingSummary": stored_coach_meeting_summary(record)})
 
 
 def cancel_reserved_calendar_event(record: CoachCalendarEvent) -> tuple[CoachCalendarEvent, str]:

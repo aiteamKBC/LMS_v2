@@ -438,7 +438,7 @@ def learner_calendar_event_artifacts(request, kind, pk, event_key):
     record = _learner_calendar_record(kind, pk, event_key)
     if not record:
         return _error("Calendar event not found for this learner.", 404)
-    from coach_api.views import fetch_coach_meeting_graph_snapshot, persist_coach_meeting_snapshots
+    from coach_api.views import fetch_coach_meeting_graph_snapshot, persist_coach_meeting_snapshots, ensure_coach_meeting_summary
     snapshot, error_payload, status_code = fetch_coach_meeting_graph_snapshot(record)
     if error_payload:
         return JsonResponse(error_payload, status=status_code)
@@ -448,8 +448,9 @@ def learner_calendar_event_artifacts(request, kind, pk, event_key):
         attendance_reports=snapshot["attendanceReports"],
         attendance_tracker=snapshot["attendanceTracker"],
     )
-    # Own MCM transcripts are available alongside recordings; other meeting
-    # types retain their existing recording-only access.
+    meeting_summary = ensure_coach_meeting_summary(record)
+    # Learners may watch the formal meeting recording, but transcripts remain
+    # staff-only because they can contain sensitive discussion notes.
     learner_artifacts = [
         artifact for artifact in snapshot["artifacts"]
         if _s(artifact.get("artifact_type")).lower() in (
@@ -459,6 +460,7 @@ def learner_calendar_event_artifacts(request, kind, pk, event_key):
     return JsonResponse({
         "artifacts": learner_artifacts,
         "attendance": snapshot["attendance"],
+        "meetingSummary": meeting_summary,
         "errors": snapshot["errors"],
         "partial": snapshot["partial"],
         "storage": storage,

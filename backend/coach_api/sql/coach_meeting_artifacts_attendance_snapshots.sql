@@ -16,6 +16,11 @@ CREATE TABLE IF NOT EXISTS "Coach".coach_meeting_artifacts (
     content_correlation_id text NOT NULL DEFAULT '',
     created_datetime timestamptz,
     end_datetime timestamptz,
+    transcript_vtt text NOT NULL DEFAULT '',
+    transcript_text text NOT NULL DEFAULT '',
+    transcript_content_type varchar(100) NOT NULL DEFAULT '',
+    transcript_fetched_at timestamptz,
+    transcript_fetch_error text NOT NULL DEFAULT '',
     metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
     last_seen_at timestamptz NOT NULL DEFAULT now(),
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -29,6 +34,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS coach_meeting_artifacts_event_artifact_uniq
 
 CREATE INDEX IF NOT EXISTS coach_meeting_artifacts_owner_event_idx
     ON "Coach".coach_meeting_artifacts (owner_email, event_key);
+
+ALTER TABLE "Coach".coach_meeting_artifacts
+    ADD COLUMN IF NOT EXISTS transcript_vtt text NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS transcript_text text NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS transcript_content_type varchar(100) NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS transcript_fetched_at timestamptz,
+    ADD COLUMN IF NOT EXISTS transcript_fetch_error text NOT NULL DEFAULT '';
+
+CREATE INDEX IF NOT EXISTS coach_meeting_artifacts_transcript_search_idx
+    ON "Coach".coach_meeting_artifacts
+    USING gin (to_tsvector('english', transcript_text))
+    WHERE artifact_type = 'transcript' AND transcript_text <> '';
 
 
 CREATE TABLE IF NOT EXISTS "Coach".coach_meeting_attendance_reports (
@@ -104,3 +121,39 @@ CREATE INDEX IF NOT EXISTS coach_meeting_attendance_learner_idx
 CREATE INDEX IF NOT EXISTS coach_meeting_attendance_status_idx
     ON "Coach".coach_meeting_attendance (status, expected)
     WHERE is_current;
+
+
+CREATE TABLE IF NOT EXISTS "Coach".coach_meeting_summaries (
+    id bigserial PRIMARY KEY,
+    calendar_event_id bigint REFERENCES "Coach".coach_calendar_event(id) ON DELETE CASCADE,
+    event_key text NOT NULL,
+    owner_email text NOT NULL,
+    graph_event_id text NOT NULL DEFAULT '',
+    event_type varchar(32) NOT NULL DEFAULT '',
+    learner_id bigint,
+    learner_name text NOT NULL DEFAULT '',
+    transcript_artifact_id text NOT NULL DEFAULT '',
+    transcript_hash varchar(64) NOT NULL DEFAULT '',
+    ai_summary jsonb NOT NULL DEFAULT '{}'::jsonb,
+    current_summary jsonb NOT NULL DEFAULT '{}'::jsonb,
+    summary_text text NOT NULL DEFAULT '',
+    model varchar(120) NOT NULL DEFAULT '',
+    status varchar(24) NOT NULL DEFAULT 'ready',
+    generated_at timestamptz,
+    edited_at timestamptz,
+    edited_by text NOT NULL DEFAULT '',
+    error text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT coach_meeting_summary_status_valid
+        CHECK (status IN ('ready', 'edited', 'failed'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS coach_meeting_summaries_event_uniq
+    ON "Coach".coach_meeting_summaries (event_key);
+
+CREATE INDEX IF NOT EXISTS coach_meeting_summaries_owner_event_idx
+    ON "Coach".coach_meeting_summaries (owner_email, event_key);
+
+CREATE INDEX IF NOT EXISTS coach_meeting_summaries_learner_idx
+    ON "Coach".coach_meeting_summaries (learner_id, event_type);
