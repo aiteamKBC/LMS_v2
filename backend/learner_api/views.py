@@ -21,6 +21,7 @@ import json
 import logging
 
 from django.db import DatabaseError, transaction
+from django.db.models import BooleanField, Case, Q, Value, When
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -709,11 +710,30 @@ def enrolment_users(request):
                 qs = qs.exclude(learner_type="commercial")
             elif wanted == "commercial":
                 qs = qs.filter(learner_type="commercial")
-            learners = list(qs.order_by("id"))
-            # A date can arrive without any signing action, so make normal
-            # enrolment reads a safe, idempotent backstop for the daily sweep.
-            for learner in learners:
-                advance_learner(learner)
+            # The enrolment table contains many large JSON/text columns. The
+            # directory only needs this small projection; selecting every
+            # column for all learners made the request exceed PostgreSQL's
+            # statement timeout before the rows could be rendered.
+            learners = list(qs.only(
+                "id", "uuid", "username", "type", "email", "group", "status",
+                "programme_status", "programme",
+                "cohort", "learner_type", "organization",
+            ).annotate(
+                _has_learning_plan=Case(
+                    When(
+                        Q(learning_plan__isnull=False) | Q(training_plan__isnull=False),
+                        then=Value(True),
+                    ),
+                    default=Value(False),
+                    output_field=BooleanField(),
+                ),
+            ).order_by("id"))
+            # Keep this collection read bounded: advancing every learner here
+            # performs up to four compliance-document queries per row and can
+            # exceed the database statement timeout on a directory-sized list.
+            # Progression still runs on document/signature and learner updates,
+            # and the scheduled ``advance_learner_statuses`` sweep handles
+            # date-driven transitions between reads.
             rows = [to_list_row(u) for u in learners]
             # Whether each person already has a sign-in account, so the
             # directory can offer "Send invitation" only where it applies.
