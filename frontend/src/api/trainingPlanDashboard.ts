@@ -1,6 +1,7 @@
 import type { LearnerKind } from './learnerDetail';
 import type { LearnerCalendarEvent } from './learnerCalendar';
 import { subjectRequest } from './studentActivity';
+import { readLearnerJson } from './learnerRead';
 
 export type PlanMonth = { label: string; topics: string[]; planned: number | null; source: string;
   activities?: { date: string; title: string; method: string; hours: number }[]; weeklyTarget?: number | null };
@@ -22,7 +23,8 @@ export type TrainingPlanDashboard = {
 };
 
 export function fetchTrainingPlanDashboard(kind: LearnerKind, id: string, signal?: AbortSignal) {
-  return subjectRequest<TrainingPlanDashboard>(`/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=overview`, { signal });
+  // Share the same in-flight schedule read as This week / Upcoming on Dashboard.
+  return readLearnerJson<TrainingPlanDashboard>(`/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=overview`, { signal, ttlMs: 30_000, revalidate: true });
 }
 
 export type TrainingPlanContract = Pick<TrainingPlanDashboard, 'months' | 'contractStatus'>;

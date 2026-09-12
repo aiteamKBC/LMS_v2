@@ -252,6 +252,10 @@ export default function LearnerCaseFile() {
               </div>
 
               <div className="flex shrink-0 flex-wrap items-center gap-2">
+                {data?.detail?.id && <button type="button" onClick={() => navigate(`/coach/monthly-logs/${data.detail!.id}`)}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/30 bg-white/10 px-3 text-[12px] font-semibold text-white transition hover:bg-white/20">
+                  <AppIcon className="ri-file-list-3-line" /> Monthly Logs
+                </button>}
                 <button
                   type="button"
                   onClick={() => navigate('/coach/timetable')}

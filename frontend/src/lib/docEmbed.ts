@@ -99,6 +99,14 @@ export function resolveDocEmbed(url: string, origin = window.location.origin): D
   if (DECK_RE.test(pathname) && fileOrigin === new URL(origin).origin) {
     return { mode: 'deck', src: absolute };
   }
+  // This authenticated route supplies Office with a temporary read URL. Office
+  // cannot fetch a learner's session-protected upload URL directly.
+  if (fileOrigin === new URL(origin).origin && pathname.startsWith('/curriculum_api/curriculum/uploads/')
+      && /\.(docx?|docm|xlsx?|ppt)$/i.test(pathname)) {
+    const preview = new URL(absolute);
+    preview.searchParams.set('preview', '1');
+    return { mode: 'native', src: preview.href };
+  }
   // A PDF somewhere else: the browser's own viewer is all we have, and it
   // works from any origin unlike the Office viewer.
   if (PDF_RE.test(pathname)) return { mode: 'native', src: absolute };

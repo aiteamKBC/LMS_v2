@@ -59,8 +59,8 @@ describe('previous learning portal', () => {
     expect(screen.getByRole('group', { name: 'Signature capture' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Sign all months' })).toBeEnabled();
   });
-  it('lands legacy accounts on the two-card portal', async () => {
-    expect(homeRouteFor(signedIn)).toBe('/old-otjh');
+  it('keeps the two-card portal reachable while Dashboard is the learner home', async () => {
+    expect(homeRouteFor(signedIn)).toBe('/workspace/learner');
     page();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Open LMS' })).toBeEnabled());
     expect(screen.getByRole('link', { name: 'Review previous record' })).toHaveAttribute('href', '/old-otjh/months');
@@ -101,6 +101,8 @@ describe('previous learning portal', () => {
     page('/old-otjh/months');
     expect(await screen.findByRole('link', { name: 'Continue to new LMS' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign all months' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('link', { name: 'Continue to new LMS' }));
+    expect(await screen.findByText('New LMS content')).toBeInTheDocument();
   });
   it('displays source activities and notes without edit controls', async () => {
     page('/old-otjh/months/2026-08');
@@ -225,13 +227,14 @@ describe('previous learning portal', () => {
     vi.mocked(getSummary).mockResolvedValue({ ...initial, months: [], total_months: 0, completed_months: 0 });
     page('/old-otjh/months'); expect(await screen.findByText('No previous activity months are available')).toBeInTheDocument();
   });
-  it('blocks a manually typed LMS route until complete', async () => {
+  it.each([false, true])('checks previous monthly signatures on Dashboard entry (complete: %s)', async complete => {
+    vi.mocked(getSummary).mockResolvedValue({ ...initial, can_access_lms: complete });
     render(<OldOtjhProvider><MemoryRouter initialEntries={['/workspace/learner']}><Routes>
       <Route path="/workspace/learner" element={<OldOtjhGate><div>New LMS content</div></OldOtjhGate>} />
       <Route path="/old-otjh" element={<div>Choose a workspace</div>} />
     </Routes></MemoryRouter></OldOtjhProvider>);
-    expect(await screen.findByText('Choose a workspace')).toBeInTheDocument();
-    expect(screen.queryByText('New LMS content')).not.toBeInTheDocument();
+    expect(await screen.findByText(complete ? 'New LMS content' : 'Choose a workspace')).toBeInTheDocument();
+    expect(screen.queryByText(complete ? 'Choose a workspace' : 'New LMS content')).not.toBeInTheDocument();
   });
   it('refetches on a new visit instead of serving a stored activity copy', async () => {
     const first = page('/old-otjh/months/2026-08');

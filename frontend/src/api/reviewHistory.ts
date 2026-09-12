@@ -1,3 +1,4 @@
+import { readLearnerJson } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
 
 export type ReviewHistoryCategory = 'monthly-coaching' | 'progress-review';
@@ -60,19 +61,8 @@ export async function fetchReviewHistory(
   signal?: AbortSignal,
 ): Promise<ReviewHistoryResponse> {
   const params = new URLSearchParams({ category });
-  const response = await fetch(
+  return readLearnerJson<ReviewHistoryResponse>(
     `/learner_api/review-history/${kind}/${encodeURIComponent(learnerId)}/?${params}`,
-    { credentials: 'include', cache: 'no-store', signal },
+    { signal, ttlMs: 30_000 },
   );
-  const text = await response.text();
-  let data: unknown;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    throw new Error(`Unexpected response (${response.status}).`);
-  }
-  if (!response.ok) {
-    throw new Error((data as { error?: string } | null)?.error || 'Could not load imported reviews.');
-  }
-  return data as ReviewHistoryResponse;
 }

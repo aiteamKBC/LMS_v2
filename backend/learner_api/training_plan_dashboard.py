@@ -119,7 +119,8 @@ def read_dashboard(source, section=None):
             if len(candidates) > 1 or (candidates and (not email or email != str(candidates[0]['learner_email'] or '').strip().casefold())):
                 raise LookupError('The training plan is not linked to this learner.')
             historical = candidates[0] if candidates else None
-            contract = find_contract(cur, aptem_id)
+            if section != 'overview':
+                contract = find_contract(cur, aptem_id)
         if section == 'contract':
             return contract_plan(source, contract)
         if aptem_id:

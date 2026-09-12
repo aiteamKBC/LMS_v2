@@ -199,6 +199,10 @@ def _enabled():
 
 def rule_for(path):
     """The ``(prefix, roles)`` governing ``path``, or None if it is not gated."""
+    # Email approval authenticates with an expiring, single-use signed request.
+    # Exact path only: the learner's attendance APIs still require a session.
+    if path == '/learner_api/attendance-mode/review/':
+        return None
     from old_otjh.gate import is_transition_path
     if is_transition_path(path):
         return '/audit_api/', LEARNER_AND_STAFF

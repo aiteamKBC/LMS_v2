@@ -66,6 +66,7 @@ export class AuthError extends Error {
 }
 
 const BASE = '/login_api';
+const SESSION_TIMEOUT_MS = 15_000;
 
 // Concurrent GETs of the same path share one request. React StrictMode runs
 // every effect twice in development, so the session lookup on mount left two
@@ -89,11 +90,17 @@ function request<T>(path: string, init?: globalThis.RequestInit): Promise<T> {
 }
 
 async function send<T>(path: string, init?: globalThis.RequestInit): Promise<T> {
+  // Every protected route waits for /me/. Bound both the headers and body so
+  // a stalled connection cannot leave the whole app on its loading skeleton.
+  const controller = path === '/me/' ? new AbortController() : null;
+  const timeout = controller ? setTimeout(() => controller.abort(), SESSION_TIMEOUT_MS) : undefined;
   let res: Response;
+  let text: string;
   try {
     res = await fetch(`${BASE}${path}`, {
       credentials: 'include',
       ...init,
+      ...(controller ? { signal: controller.signal } : {}),
       headers: {
         'Content-Type': 'application/json',
         // Required by the backend — see the module comment.
@@ -101,15 +108,20 @@ async function send<T>(path: string, init?: globalThis.RequestInit): Promise<T> 
         ...(init?.headers || {}),
       },
     });
+    text = await res.text();
   } catch {
+    if (controller?.signal.aborted) {
+      throw new AuthError('Your session took too long to load. Please try again.', 0, 'timeout');
+    }
     throw new AuthError(
       'Could not reach the server. Is the backend running on port 8000?',
       0,
       'network',
     );
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 
-  const text = await res.text();
   let data: Record<string, unknown> = {};
   if (text) {
     try {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchLearnerCalendarEvents, invalidateLearnerCalendarCache, bookLearnerCalendarSession } from '../learnerCalendar';
-const response=(data:unknown)=>({ok:true,status:200,text:async()=>JSON.stringify(data)}) as Response;
+const response=(data:unknown)=>({ok:true,status:200,text:async()=>JSON.stringify(data),json:async()=>data}) as Response;
 const before={events:[{eventKey:'review-1',status:'not-scheduled'}]},after={events:[{eventKey:'review-1',status:'scheduled'}]};
 beforeEach(()=>invalidateLearnerCalendarCache());
 afterEach(()=>{invalidateLearnerCalendarCache();vi.unstubAllGlobals();});

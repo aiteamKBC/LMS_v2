@@ -38,9 +38,10 @@ interface EvidencePreview {
 
 export interface AbsenceReportFormProps {
   /** Preselect the missed session that matches this date + title, once loaded. */
-  preselectMatch?: { dateIso: string; title: string } | null;
+  preselectMatch?: { id?: string; dateIso: string; title: string } | null;
   /** Called once a report has been saved, in addition to the inline confirmation. */
   onSubmitted?: (report: LearnerAbsenceReport) => void;
+  onCancel?: () => void;
   /** Renders the supporting "What happens next" + safeguarding callout. Off by default for compact (drawer) use. */
   showGuidance?: boolean;
   /** Renders the "Previous reports" list. Defaults to true. */
@@ -50,6 +51,7 @@ export interface AbsenceReportFormProps {
 export default function AbsenceReportForm({
   preselectMatch = null,
   onSubmitted,
+  onCancel,
   showGuidance = false,
   showHistory = true,
 }: AbsenceReportFormProps) {
@@ -82,16 +84,15 @@ export default function AbsenceReportForm({
   const availableSessions = useMemo(() => {
     const reportedSessions = new Set(
       reports
-        .filter((report) => !['declined', 'rejected'].includes(report.status.trim().toLowerCase()))
-        .map((report) => `${report.sessionDate}|${report.sessionTitle.trim().toLowerCase()}`),
+        .map((report) => report.attendanceId || `${report.sessionDate}|${report.sessionTitle.trim().toLowerCase()}`),
     );
     return missedSessions.filter(
-      (session) => !reportedSessions.has(`${session.dateIso}|${session.title.trim().toLowerCase()}`),
+      (session) => !reportedSessions.has(session.reportId || `${session.dateIso}|${session.title.trim().toLowerCase()}`),
     );
   }, [missedSessions, reports]);
   const hasReason = Boolean(reasonType && (reasonType !== 'other' || otherReason.trim()));
   const canUploadEvidence = Boolean(sessionId && hasReason);
-  const canSubmit = Boolean(sessionId && hasReason && (explanation.trim() || file));
+  const canSubmit = Boolean(sessionId && hasReason);
   const resolvedCount = reports.filter((report) => report.status !== 'Pending').length;
 
   useEffect(() => {
@@ -114,7 +115,7 @@ export default function AbsenceReportForm({
   useEffect(() => {
     if (didPreselect || reportsLoading || !preselectMatch) return;
     const match = missedSessions.find(
-      (session) => session.dateIso === preselectMatch.dateIso
+      (session) => preselectMatch.id ? session.id === preselectMatch.id : session.dateIso === preselectMatch.dateIso
         && session.title.trim().toLowerCase() === preselectMatch.title.trim().toLowerCase(),
     );
     if (match) setSessionId(match.id);
@@ -235,7 +236,7 @@ export default function AbsenceReportForm({
           <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-600">Report submitted</p>
           <h2 className="mb-2 text-[16px] font-semibold text-foreground-900">Thanks for letting us know</h2>
           <p className="mx-auto mb-5 max-w-lg text-[13px] leading-6 text-foreground-500">
-            Your report for <strong className="text-foreground-800">{submittedReport?.sessionTitle}</strong> has been saved and sent to your coach and tutor for review.
+            Your report for <strong className="text-foreground-800">{submittedReport?.sessionTitle}</strong> has been saved for your coach to review.
           </p>
           <div className="mx-auto mb-5 grid max-w-xl gap-3 rounded-xl bg-background-100/70 p-4 text-left sm:grid-cols-2">
             <div><p className="text-[10px] uppercase tracking-wide text-foreground-400">Reference</p><p className="text-[13px] font-semibold text-foreground-800">{submittedReport?.reference}</p></div>
@@ -253,10 +254,10 @@ export default function AbsenceReportForm({
             <SectionHeader title="Absence details" description="Fields marked with * are required" icon="ri-edit-box-line" />
 
             <div>
-              <label htmlFor="missed-session" className="mb-2 block text-[13px] font-semibold text-foreground-700">Missed session *</label>
+              <label htmlFor="missed-session" className="mb-2 block text-[13px] font-semibold text-foreground-700">Lecture *</label>
               <select id="missed-session" value={sessionId} onChange={(event) => setSessionId(event.target.value)} required disabled={reportsLoading || availableSessions.length === 0} className="w-full rounded-xl border border-foreground-200 bg-background-50 px-3.5 py-3 text-[13px] text-foreground-800 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-400">
-                <option value="">{reportsLoading ? 'Loading missed sessions...' : availableSessions.length === 0 ? 'All missed sessions have been reported' : 'Choose the session you missed'}</option>
-                {availableSessions.map((session) => <option key={session.id} value={session.id}>{displayDate(session.dateIso)} - {session.title}</option>)}
+                <option value="">{reportsLoading ? 'Loading lectures...' : availableSessions.length === 0 ? 'No unreported absent or upcoming lectures' : 'Choose an absent or upcoming lecture'}</option>
+                {availableSessions.map((session) => <option key={session.id} value={session.id}>{displayDate(session.dateIso)} - {session.title}{session.status === 'upcoming' ? ' (Upcoming)' : ''}</option>)}
               </select>
               {selectedSession && (
                 <div className="mt-3 grid gap-2 rounded-xl border border-primary-100 bg-primary-50/60 p-3 sm:grid-cols-3">
@@ -302,11 +303,10 @@ export default function AbsenceReportForm({
 
             <div>
               <div className="mb-2 flex items-center justify-between gap-3">
-                <label htmlFor="absence-explanation" className="text-[13px] font-semibold text-foreground-700">Written explanation</label>
+                <label htmlFor="absence-explanation" className="text-[13px] font-semibold text-foreground-700">Additional information (optional)</label>
                 <span className="text-[11px] text-foreground-400">{explanation.length}/600</span>
               </div>
-              <textarea id="absence-explanation" value={explanation} onChange={(event) => setExplanation(event.target.value)} maxLength={600} rows={4} required={!file} placeholder="Tell your coach what happened and anything they should know..." className="w-full resize-none rounded-xl border border-foreground-200 bg-background-50 px-3.5 py-3 text-[13px] leading-6 text-foreground-800 outline-none transition placeholder:text-foreground-300 focus:border-primary-400 focus:ring-2 focus:ring-primary-100" />
-              <p className="mt-1.5 text-[11px] text-foreground-400">Add an explanation or attach evidence below. You can provide both.</p>
+              <textarea id="absence-explanation" value={explanation} onChange={(event) => setExplanation(event.target.value)} maxLength={600} rows={4} placeholder="Add any details your coach should know..." className="w-full resize-none rounded-xl border border-foreground-200 bg-background-50 px-3.5 py-3 text-[13px] leading-6 text-foreground-800 outline-none transition placeholder:text-foreground-300 focus:border-primary-400 focus:ring-2 focus:ring-primary-100" />
             </div>
 
             <div>
@@ -350,6 +350,7 @@ export default function AbsenceReportForm({
             </label>
 
             <div className="flex flex-col-reverse gap-3 border-t border-foreground-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
+              {onCancel && <button type="button" onClick={onCancel} className="rounded-lg border border-foreground-200 px-4 py-2 text-sm font-semibold">Cancel</button>}
               <p className="flex items-center gap-1.5 text-[11px] text-foreground-400"><AppIcon className="ri-shield-check-line text-emerald-500" />Your information is only shared with the relevant support team.</p>
               <button type="submit" disabled={!canSubmit || submitting} className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary-600 px-5 py-3 text-[13px] font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-40">
                 {submitting ? <><AppIcon className="ri-loader-4-line animate-spin" /> Saving report...</> : <>Submit absence report <AppIcon className="ri-arrow-right-line" /></>}

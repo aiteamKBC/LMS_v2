@@ -1,14 +1,14 @@
-import { Fragment, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { EmptyState } from '@/components/ui/EmptyState';
-import type { Activity, MonthDetail, Summary } from './api';
+import type { Activity, ActivityContent, JournalSummary, MonthDetail } from './api';
 import { displayDate, duration, groupActivities, hours, monthLabel } from './report';
 import styles from './report.module.css';
 import journal from './journal.module.css';
 import { MonthBadge, RecordBadge } from './RecordDesign';
 import { ActivityExpansion } from './ActivityExpansion';
 
-export function LearnerInformation({ summary, data, actions }: { summary: Summary; data: MonthDetail; actions?: ReactNode }) {
+export function LearnerInformation({ summary, data, actions }: { summary: JournalSummary; data: MonthDetail; actions?: ReactNode }) {
   const fields = [
     { label: 'Learner', value: summary.learner?.name, dateLabel: 'Start date', date: data.profile?.start_date },
     { label: 'Programme', value: summary.learner?.programme, dateLabel: 'First evidence', date: data.profile?.first_evidence_date },
@@ -68,18 +68,33 @@ function ActivityDescription({ row, expanded, onOpen }: { row: Activity; expande
   </div>;
 }
 
-export function ActivityLog({ data, aptemId }: { data: MonthDetail; aptemId?: number }) {
-  const [expanded, setExpanded] = useState<{ rowId: number; documentId?: number } | null>(null);
+export function ActivityLog({ data, aptemId, loadContent, contentScope, initialSourceRef }: { data: MonthDetail; aptemId?: number;
+  loadContent?: (rowId: number) => Promise<ActivityContent>; contentScope?: string; initialSourceRef?: string }) {
+  const matches = initialSourceRef ? data.rows.filter(row => row.source_ref === initialSourceRef) : [];
+  const focusedRowId = matches.length === 1 ? matches[0].id : null;
+  const [expanded, setExpanded] = useState<{ rowId: number; documentId?: number } | null>(() => focusedRowId == null ? null : { rowId: focusedRowId });
   const trigger = useRef<HTMLElement | null>(null);
+  const section = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (focusedRowId == null) return;
+    setExpanded({ rowId: focusedRowId });
+    const button = section.current?.querySelector<HTMLButtonElement>(`button[aria-controls="activity-content-${focusedRowId}"]`);
+    trigger.current = button ?? null;
+    button?.focus({ preventScroll: true });
+    button?.closest('tr')?.scrollIntoView?.({ block: 'start' });
+  }, [focusedRowId]);
   const open = (rowId: number, documentId?: number) => {
     trigger.current = document.activeElement as HTMLElement;
     setExpanded(previous => previous?.rowId === rowId && documentId === undefined ? null : { rowId, documentId });
   };
   const close = () => { setExpanded(null); trigger.current?.focus({ preventScroll: true }); };
   const total = data.total_actual_hours == null ? null : duration(data.total_actual_hours);
-  return <section className={`${journal.card} ${journal.activityLog}`} aria-label="Activity log">
+  return <section ref={section} className={`${journal.card} ${journal.activityLog}`} aria-label="Activity log">
     <div className={journal.sectionHeading}><div><h2 className="font-heading">Activity Log</h2><p>Activities recorded on this month’s report</p></div>
       <RecordBadge>{data.rows.length} {data.rows.length === 1 ? 'activity' : 'activities'}</RecordBadge></div>
+    {initialSourceRef && matches.length !== 1 && <p role="status" className="px-5 py-4 text-sm text-foreground-600">
+      {matches.length ? 'More than one record is linked to this activity. Please select the correct record below.' : 'This activity is not recorded in this month’s log.'}
+    </p>}
     {data.rows.length === 0 ? <EmptyState title="No activities are available for this month" description="Please contact your coach." /> : <>
       <div className={journal.tableCaption}><span>Monthly Activity Log</span></div>
       <div className={styles.activityTableWrap}><table className={styles.activityTable} aria-label="Monthly activity log">
@@ -89,7 +104,7 @@ export function ActivityLog({ data, aptemId }: { data: MonthDetail; aptemId?: nu
             <h3>{group.label === 'Activities' ? 'LMS activities' : group.label} <span>({group.activities.length})</span></h3>
             {group.label === 'Assignments' && <span className={styles.groupNote}>One row per assignment · submissions, assessment documents and hours</span>}
           </th></tr>
-          {group.activities.map(row => <Fragment key={row.id}><tr className={styles.activityRow}>
+          {group.activities.map(row => <Fragment key={row.id}><tr className={styles.activityRow} style={{ scrollMarginTop: '6rem' }}>
             <td data-label="Date"><span className="whitespace-nowrap font-mono text-[11px]">{displayDate(row.activity_date)}</span></td>
             <td data-label="Category"><span className="text-[12px] text-foreground-600">{row.category}</span></td>
             <td className={styles.activityCell}><ActivityDescription row={row} expanded={expanded?.rowId === row.id} onOpen={documentId => open(row.id, documentId)} /></td>
@@ -98,7 +113,7 @@ export function ActivityLog({ data, aptemId }: { data: MonthDetail; aptemId?: nu
               <span className={`mt-1 block text-[10px] ${row.accepted ? 'text-emerald-700' : 'text-foreground-500'}`}>{row.accepted ? 'Accepted' : 'Not accepted'}</span></td>
             <td data-label="KSB scope"><div className="flex flex-wrap gap-1">{row.ksb_codes?.length ? row.ksb_codes.map(code => <span key={code} className={styles.ksbBadge} data-kind={code.charAt(0).toUpperCase()}>{code}</span>) : <span className="text-foreground-400">—</span>}</div></td>
           </tr>{expanded?.rowId === row.id && <tr className={styles.expansionRow}><td colSpan={6} id={`activity-content-${row.id}`}>
-            <ActivityExpansion key={`${row.id}-${expanded.documentId ?? 'content'}`} row={row} month={data.month} aptemId={aptemId} initialDocumentId={expanded.documentId} onClose={close} />
+            <ActivityExpansion key={`${row.id}-${expanded.documentId ?? 'content'}`} row={row} month={data.month} aptemId={aptemId} initialDocumentId={expanded.documentId} onClose={close} loadContent={loadContent} contentScope={contentScope} />
           </td></tr>}</Fragment>)}
         </tbody>)}
       </table></div></>}

@@ -9,9 +9,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
 
-const fetchLearnerDetail = vi.fn();
+const fetchLearnerSummary = vi.fn();
 vi.mock('@/api/learnerDetail', () => ({
-  fetchLearnerDetail: (...args: unknown[]) => fetchLearnerDetail(...args),
+  fetchLearnerSummary: (...args: unknown[]) => fetchLearnerSummary(...args),
 }));
 
 const getRememberedLearner = vi.fn();
@@ -23,12 +23,11 @@ import { useLearnerNavGate, syncLearnerStatus } from '../useLearnerNavGate';
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
 
 const FULL_NAV: SidebarNavItem[] = [
-  { id: 'learner-overview', label: 'Overview', icon: 'ri-home-line', href: '/workspace/learner' },
+  { id: 'learner-overview', label: 'Dashboard', icon: 'ri-home-line', href: '/workspace/learner' },
   { id: 'learner-onboarding', label: 'My Enrolment', icon: 'ri-file-user-line', href: '/learner/onboarding' },
   { id: 'learner-compliance-documents', label: 'Compliance documents', icon: 'ri-file-line', href: '/learner/compliance-documents' },
   { id: 'learner-attendance', label: 'Attendance', icon: 'ri-calendar-line', href: '/learner/attendance' },
   { id: 'learner-my-learning', label: 'My Learning', icon: 'ri-book-open-line', href: '/learner/my-learning' },
-  { id: 'learner-training-plan-view', label: 'Training plan', icon: 'ri-calendar-todo-line', href: '/learner/training-plan-timeline' },
   {
     id: 'learner-group-monthly',
     label: 'My Progress',
@@ -46,31 +45,31 @@ beforeEach(() => {
   // The module-level cache survives between tests in a file, so each test uses
   // its own learner id rather than trying to reach in and clear it.
   getRememberedLearner.mockReturnValue({ kind: 'commercial', id: '1' });
-  fetchLearnerDetail.mockResolvedValue({ programmeStatus: 'Onboarding' });
+  fetchLearnerSummary.mockResolvedValue({ programmeStatus: 'Onboarding' });
 });
 
 describe('useLearnerNavGate', () => {
   it('offers previous learning to migrated Delivery learners while retaining the programme menu restrictions', async () => {
     getRememberedLearner.mockReturnValue({ kind: 'commercial', id: 'migrated-delivery' });
-    fetchLearnerDetail.mockResolvedValue({ programmeStatus: 'Delivery', studentActivityAvailable: true });
+    fetchLearnerSummary.mockResolvedValue({ programmeStatus: 'Delivery', studentActivityAvailable: true });
     const first = renderHook(() => useLearnerNavGate('learner', FULL_NAV));
-    await waitFor(() => expect(first.result.current.map((i) => i.id)).toEqual(['learner-overview', 'learner-my-learning', 'learner-training-plan-view']));
+    await waitFor(() => expect(first.result.current.map((i) => i.id)).toEqual(['learner-overview', 'learner-my-learning']));
     first.unmount();
     sessionStorage.setItem('learner_kind:migrated-delivery', 'commercial');
-    fetchLearnerDetail.mockClear();
+    fetchLearnerSummary.mockClear();
     const cached = renderHook(() => useLearnerNavGate('learner', FULL_NAV));
-    expect(cached.result.current.map((i) => i.id)).toEqual(['learner-overview', 'learner-my-learning', 'learner-training-plan-view']);
-    expect(fetchLearnerDetail).not.toHaveBeenCalled();
+    expect(cached.result.current.map((i) => i.id)).toEqual(['learner-overview', 'learner-my-learning']);
+    expect(fetchLearnerSummary).not.toHaveBeenCalled();
   });
 
   it('refreshes an older Delivery cache that did not record previous-learning availability', async () => {
     getRememberedLearner.mockReturnValue({ kind: 'commercial', id: 'old-delivery-cache' });
     sessionStorage.setItem('learner_status:commercial:old-delivery-cache', 'Delivery');
     sessionStorage.setItem('learner_kind:old-delivery-cache', 'commercial');
-    fetchLearnerDetail.mockResolvedValue({ programmeStatus: 'Delivery', studentActivityAvailable: true });
+    fetchLearnerSummary.mockResolvedValue({ programmeStatus: 'Delivery', studentActivityAvailable: true });
     const { result } = renderHook(() => useLearnerNavGate('learner', FULL_NAV));
-    await waitFor(() => expect(result.current.map((i) => i.id)).toEqual(['learner-overview', 'learner-my-learning', 'learner-training-plan-view']));
-    expect(fetchLearnerDetail).toHaveBeenCalledOnce();
+    await waitFor(() => expect(result.current.map((i) => i.id)).toEqual(['learner-overview', 'learner-my-learning']));
+    expect(fetchLearnerSummary).toHaveBeenCalledOnce();
   });
 
   it('shows no menu at all rather than the wrong one while the status loads', () => {
@@ -98,18 +97,18 @@ describe('useLearnerNavGate', () => {
     // A reload empties the module cache; sessionStorage is what survives it.
     sessionStorage.setItem('learner_status:commercial:reloaded', 'Onboarding');
     sessionStorage.setItem('learner_kind:reloaded', 'commercial');
-    fetchLearnerDetail.mockClear();
+    fetchLearnerSummary.mockClear();
 
     const { result } = renderHook(() => useLearnerNavGate('learner', FULL_NAV));
 
     // Synchronously correct — no full-nav frame, and no refetch.
     expect(result.current.map((i) => i.id)).toEqual(['learner-overview']);
-    expect(fetchLearnerDetail).not.toHaveBeenCalled();
+    expect(fetchLearnerSummary).not.toHaveBeenCalled();
   });
 
   it('falls back to the full nav when the status cannot be fetched', async () => {
     getRememberedLearner.mockReturnValue({ kind: 'commercial', id: 'unreachable' });
-    fetchLearnerDetail.mockRejectedValue(new Error('network down'));
+    fetchLearnerSummary.mockRejectedValue(new Error('network down'));
     const { result } = renderHook(() => useLearnerNavGate('learner', FULL_NAV));
 
     await waitFor(() => expect(result.current).toEqual(
@@ -124,12 +123,12 @@ describe('useLearnerNavGate', () => {
     const { result } = renderHook(() => useLearnerNavGate('coach', FULL_NAV));
 
     expect(result.current).toBe(FULL_NAV);
-    expect(fetchLearnerDetail).not.toHaveBeenCalled();
+    expect(fetchLearnerSummary).not.toHaveBeenCalled();
   });
 
   it('gives a learner in delivery their reduced menu, not the full one', async () => {
     getRememberedLearner.mockReturnValue({ kind: 'apprenticeship', id: 'delivery-1' });
-    fetchLearnerDetail.mockResolvedValue({ programmeStatus: 'Delivery' });
+    fetchLearnerSummary.mockResolvedValue({ programmeStatus: 'Delivery' });
     const { result } = renderHook(() => useLearnerNavGate('learner', FULL_NAV));
 
     await waitFor(() => expect(result.current.map((i) => i.id)).toEqual([
@@ -141,7 +140,7 @@ describe('useLearnerNavGate', () => {
 
   it('gives a learner being taught the full menu', async () => {
     getRememberedLearner.mockReturnValue({ kind: 'apprenticeship', id: 'active-1' });
-    fetchLearnerDetail.mockResolvedValue({ programmeStatus: 'Active' });
+    fetchLearnerSummary.mockResolvedValue({ programmeStatus: 'Active' });
     const { result } = renderHook(() => useLearnerNavGate('learner', FULL_NAV));
 
     await waitFor(() => expect(result.current).toEqual(FULL_NAV));
@@ -149,7 +148,7 @@ describe('useLearnerNavGate', () => {
 
   it('leaves a learner whose enrolment has not started with only their overview', async () => {
     getRememberedLearner.mockReturnValue({ kind: 'apprenticeship', id: 'fresh-1' });
-    fetchLearnerDetail.mockResolvedValue({ programmeStatus: 'Fresh user' });
+    fetchLearnerSummary.mockResolvedValue({ programmeStatus: 'Fresh user' });
     const { result } = renderHook(() => useLearnerNavGate('learner', FULL_NAV));
 
     await waitFor(() => expect(result.current.map((i) => i.id)).toEqual(['learner-overview']));
@@ -160,7 +159,7 @@ describe('useLearnerNavGate', () => {
     // 'Fresh user' would keep the one-item menu — and the waiting page — until
     // they opened a new browser session.
     getRememberedLearner.mockReturnValue({ kind: 'apprenticeship', id: 'promoted-1' });
-    fetchLearnerDetail.mockResolvedValue({ programmeStatus: 'Fresh user' });
+    fetchLearnerSummary.mockResolvedValue({ programmeStatus: 'Fresh user' });
     const { result } = renderHook(() => useLearnerNavGate('learner', FULL_NAV));
 
     await waitFor(() => expect(result.current.map((i) => i.id)).toEqual(['learner-overview']));
@@ -177,7 +176,7 @@ describe('useLearnerNavGate', () => {
     // someone out of their own workspace is the worse error, so an unknown
     // status must keep the full menu.
     getRememberedLearner.mockReturnValue({ kind: 'apprenticeship', id: 'failed-lookup-1' });
-    fetchLearnerDetail.mockRejectedValue(new Error('network down'));
+    fetchLearnerSummary.mockRejectedValue(new Error('network down'));
     const { result } = renderHook(() => useLearnerNavGate('learner', FULL_NAV));
 
     await waitFor(() => expect(result.current).toEqual(FULL_NAV));

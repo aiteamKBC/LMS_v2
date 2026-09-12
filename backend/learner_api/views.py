@@ -41,6 +41,7 @@ from .active_users import (
     sync_active_user,
 )
 from .identity import learner_profile_for_source
+from .directory import learner_directory_queryset
 from .learner_progression import ACTIVE_STATUS, advance_learner
 from login.services import sync_account
 
@@ -703,18 +704,10 @@ def enrolment_users(request):
                 f"Invalid learnerType: {wanted!r}. Allowed: {', '.join(LEARNER_TYPE_CHOICES)}", 400
             )
         try:
-            qs = EnrolmentUser.all_learners.all()
-            if wanted == "apprenticeship":
-                # Rows predating the merge have a NULL type and are apprenticeship.
-                qs = qs.exclude(learner_type="commercial")
-            elif wanted == "commercial":
-                qs = qs.filter(learner_type="commercial")
-            learners = list(qs.order_by("id"))
-            # A date can arrive without any signing action, so make normal
-            # enrolment reads a safe, idempotent backstop for the daily sweep.
-            for learner in learners:
-                advance_learner(learner)
-            rows = [to_list_row(u) for u in learners]
+            # Loading the directory must not load everyone's plans or run
+            # hundreds of status checks/writes. Individual record reads,
+            # signing actions and the daily sweep already handle progression.
+            rows = [to_list_row(u) for u in learner_directory_queryset(wanted)]
             # Whether each person already has a sign-in account, so the
             # directory can offer "Send invitation" only where it applies.
             # Batched deliberately: asking per row would be one query per

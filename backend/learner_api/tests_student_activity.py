@@ -18,10 +18,43 @@ from learner_api.student_activity_data import (
 )
 from learner_api.subject_dates import activity_schedule
 from learner_api.student_activity_access import student_activity_available
-from learner_api.subject_content import build_material, grade_quiz
+from learner_api.subject_content import ContentUnavailable, build_material, grade_quiz
 
 
 class StudentActivityTests(SimpleTestCase):
+    @patch('login.permissions._auth_gate_enabled', return_value=True)
+    @patch('login.permissions.authenticate_request')
+    def test_material_request_resolves_iframe_attachments_without_a_server_error(self, authenticate, _gate):
+        account = SimpleNamespace(role='learner', subject_id=132)
+        authenticate.return_value = account
+        model = MagicMock()
+        model.all_learners.only.return_value.get.return_value = SimpleNamespace(aptem_id='4176', email='')
+        url = 'https://kentbusinesscollege.org/wp-json/kbc-lms/v1/material/10/embed?attachment_id=9'
+        stored = {'title': 'Podcast', 'learner_name': 'Anna', 'audio_url': url,
+                  '_source': {'activity_id': 10}}
+        schema = {'component_type': 'lesson', 'content_type': 'podcast', 'iframe_url': url,
+                  'source': {'attachments': [{'attachment_id': 9, 'content_type': 'audio'}]}}
+        for live in (True, False):
+            for archive in ('_legacy_files/9/podcast.mp3', ''):
+                with self.subTest(live=live, archive=archive), \
+                     patch('learner_api.student_activity.SOURCE_MODELS', {'commercial': model}), \
+                     patch('learner_api.student_activity._connection'), \
+                     patch('learner_api.student_activity.read_student_material', return_value=stored), \
+                     patch('learner_api.student_activity.authenticate_request', return_value=account), \
+                     patch('learner_api.student_activity.material_schema', return_value=schema,
+                           side_effect=None if live else ContentUnavailable('Source unavailable')), \
+                     patch('learner_api.media_proxy._legacy_attachment_upload_path', return_value=archive) as resolve:
+                    response = student_activity(self.factory.get('/', {'group_id': 1, 'activity_id': 10}),
+                                                kind='commercial', pk=132)
+                    self.assertEqual(response.status_code, 200)
+                    payload = json.loads(response.content)
+                    self.assertTrue(payload['available'])
+                    self.assertEqual(payload['media'][0]['url'],
+                                     '/curriculum_api/curriculum/uploads/' + archive if archive else url)
+                    if not archive:
+                        self.assertEqual(payload['media'][0]['kind'], 'embed')
+                    resolve.assert_called_once_with('9')
+
     def test_fractional_pass_mark_is_checked_before_display_rounding(self):
         definition = {'quiz': {'ready': True, 'passing_percent': 1 / 3 * 100,
             'questions': [{'id': str(index), 'type': 'single_choice', 'solution_ids': ['a'],
@@ -159,6 +192,7 @@ class StudentActivityTests(SimpleTestCase):
 
     def setUp(self):
         self.factory = RequestFactory()
+        self.enterContext(patch('learner_api.student_activity._activity_sources', return_value={}))
         live_patch = patch('learner_api.student_activity._live_subjects', return_value=None)
         live_patch.start()
         self.addCleanup(live_patch.stop)
@@ -226,7 +260,7 @@ class StudentActivityTests(SimpleTestCase):
                     completed=False, hours_mapped=False, planned_hours_mapped=False, actual=0, planned=0,
                     quiz_score=None, quiz_maximum_score=None, **activity_schedule('Workshop', '2026-05-14'))
         payload = {'learner_name': 'Anna', **summarize_activities([item])}
-        saved = {'ready': True, 'covers': {}, 'history': [], 'progress': [{'activity_id': 10, 'completed': True, 'best_percent': 90, 'attempt_count': 1}]}
+        saved = {'ready': True, 'covers': {}, 'history': [], 'progress': [{'group_id': 1, 'activity_id': 10, 'completed': True, 'best_percent': 90, 'attempt_count': 1}]}
         with patch('learner_api.student_activity.SOURCE_MODELS', {'commercial': model}), \
              patch('learner_api.student_activity._connection'), \
              patch('learner_api.student_activity.read_student_activity', return_value=payload), \
@@ -332,27 +366,12 @@ class SubjectScheduleTests(SimpleTestCase):
             self.assertTrue(schedule['date_needs_review'])
 
 class SubjectBuilderCoverTests(SimpleTestCase):
-    def test_component_lineage_requires_an_unambiguous_original_id(self):
-        from .student_activity import _current_activity_sources
+    def test_historical_cards_do_not_request_current_builder_metadata(self):
+        # The current cards now use explicit current: IDs. Historical activity
+        # lineage is no longer part of the cover response or a builder lookup.
         cursor = MagicMock()
-        cursor.fetchall.return_value = [
-            ('COMP-1', 'MOD-1', 42, '10'),
-            ('COMP-1', 'MOD-1', 42, '10'),
-            ('COMP-2', 'MOD-1', 42, '11'),
-            ('COMP-2', 'MOD-1', 42, '12'),
-            ('COMP-3', 'MOD-1', 42, None),
-        ]
-        self.assertEqual(_current_activity_sources(cursor, ['MOD-1']), {
-            'COMP-1': {'module_id': 'MOD-1', 'group_id': 42, 'activity_id': 10},
-        })
-        sql, params = cursor.execute.call_args.args
-        self.assertEqual(params, [['MOD-1']])
-        self.assertIn("material->>'component_id' AS component_id", sql)
-        self.assertIn('c.id=e.component_id', sql)
-        self.assertIn('c.module_catalogue_id=e.module_catalogue_id', sql)
-        self.assertIn('c.deleted_at IS NULL', sql)
-        cursor.reset_mock()
-        self.assertEqual(_current_activity_sources(cursor, []), {})
+        self.assertEqual(_builder_subject_metadata(cursor, ['legacy:42', 'legacy:99']), ({}, {}))
+        self.assertEqual(_builder_subject_metadata(cursor, []), ({}, {}))
         cursor.execute.assert_not_called()
 
     @patch('login.permissions.authenticate_request')

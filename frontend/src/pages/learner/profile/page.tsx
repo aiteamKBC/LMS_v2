@@ -1,19 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { formatHoursMinutes } from '@/lib/format';
 import { roleNavMap } from '@/mocks/navigation';
-import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
+import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
+import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { LearnerProfilePhoto } from '@/components/feature/LearnerProfilePhoto';
 
 const learnerNav = roleNavMap.learner;
-
-function initials(name: string) {
-  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || '–';
-}
 
 function numberValue(value?: string) {
   const parsed = Number.parseFloat(value || '0');
@@ -23,12 +21,10 @@ function numberValue(value?: string) {
 export default function LearnerProfilePage() {
   const navigate = useNavigate();
   const myLearner = useMyLearner();
-  const [learner, setLearner] = useState<LearnerDetail | null>(null);
+  const { real: learner, loading, loadError: error, refresh } = useLearnerDetailParam(myLearner.kind, myLearner.id);
   const [attendance, setAttendance] = useState<LearnerAttendance | null>(null);
-  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [attendanceLoading, setAttendanceLoading] = useState(true);
+  const [attendanceError, setAttendanceError] = useState(false);
 
   // Still enrolling? The wizard is the only thing this learner can act on. The
   // profile body is held back while the redirect is in flight, so an onboarding
@@ -37,11 +33,11 @@ export default function LearnerProfilePage() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true); setError('');
-    Promise.all([fetchLearnerDetail(myLearner.kind, myLearner.id), fetchLearnerAttendance(myLearner.kind, myLearner.id)])
-      .then(([detail, attendanceRecord]) => { if (!cancelled) { setLearner(detail); setAttendance(attendanceRecord); } })
-      .catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : 'Could not load this learner.'); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+    setAttendance(null); setAttendanceLoading(true); setAttendanceError(false);
+    fetchLearnerAttendance(myLearner.kind, myLearner.id)
+      .then(record => { if (!cancelled) setAttendance(record); })
+      .catch(() => { if (!cancelled) setAttendanceError(true); })
+      .finally(() => { if (!cancelled) setAttendanceLoading(false); });
     return () => { cancelled = true; };
   }, [myLearner.id, myLearner.kind]);
 
@@ -49,14 +45,6 @@ export default function LearnerProfilePage() {
   const plannedHours = numberValue(learner?.plannedHours) || learner?.totalExpectedOtjh || 0;
   const otjProgress = plannedHours ? Math.min(Math.round((completedHours / plannedHours) * 100), 100) : 0;
   const completedActivities = (learner?.activityFeed || []).length;
-
-  function uploadPhoto(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setPhotoUrl(String(reader.result));
-    reader.readAsDataURL(file);
-  }
 
   if (redirectingToOnboarding) {
     return (
@@ -69,17 +57,13 @@ export default function LearnerProfilePage() {
   return (
     <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel} pageTitle={learner?.name || 'Profile'} pageSubtitle="Learner profile" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Apprentice` : 'Apprentice'}>
       <main className="w-full space-y-5 p-4 md:p-6">
-        <button type="button" onClick={() => navigate(-1)} className="inline-flex items-center gap-2 text-xs font-semibold text-foreground-500 transition hover:text-primary-700"><span className="flex h-8 w-8 items-center justify-center rounded-xl bg-white shadow-sm"><AppIcon className="ri-arrow-left-line"></AppIcon></span>Back to overview</button>
+        <button type="button" onClick={() => navigate(`/workspace/learner/${myLearner.kind}/${myLearner.id}`)} className="inline-flex items-center gap-2 text-xs font-semibold text-foreground-500 transition hover:text-primary-700"><span className="flex h-8 w-8 items-center justify-center rounded-xl bg-white shadow-sm"><AppIcon className="ri-arrow-left-line"></AppIcon></span>Back to Dashboard</button>
 
-        {loading ? <Loading /> : error ? <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2"></AppIcon>{error}</div> : learner && <>
+        {loading ? <Loading /> : error ? <LearnerLoadError error={error} onRetry={refresh} /> : learner && <>
         <section className="learner-super-admin-hero relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#17032d] via-[#33105e] to-[#6a2ca0] p-6 text-white shadow-[0_18px_50px_rgba(39,12,73,0.18)] md:p-7">
             <div className="pointer-events-none absolute -right-20 -top-32 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>
             <div className="relative flex flex-col gap-5 md:flex-row md:items-center">
-              <button type="button" onClick={() => fileInputRef.current?.click()} className="group relative h-20 w-20 shrink-0 overflow-hidden rounded-2xl bg-amber-400 text-2xl font-bold text-primary-950 ring-2 ring-white/15">
-                {photoUrl ? <img src={photoUrl} alt="" className="h-full w-full object-cover" /> : initials(learner.name)}
-                <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition group-hover:opacity-100"><AppIcon className="ri-camera-line text-base text-white"></AppIcon></span>
-              </button>
-              <input ref={fileInputRef} type="file" accept=".jpg,.jpeg,.png,.webp" onChange={uploadPhoto} className="hidden" />
+              <LearnerProfilePhoto kind={myLearner.kind} learnerId={myLearner.id} name={learner.name} />
               <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-bold text-white">{learner.name}</h1><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ring-inset ${learner.isActive ? 'bg-emerald-400/15 text-emerald-200 ring-emerald-300/20' : 'bg-white/10 text-white/60 ring-white/10'}`}>{learner.isActive ? 'Active learner' : learner.programmeStatus || 'Inactive'}</span></div><p className="mt-2 text-sm text-white/60">{learner.programme || 'Programme not set'}{learner.employer ? ` · ${learner.employer}` : ''}</p><div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-white/45"><span><AppIcon className="ri-mail-line mr-1.5"></AppIcon>{learner.email || 'Email not set'}</span><span><AppIcon className="ri-phone-line mr-1.5"></AppIcon>{learner.phone || 'Phone not set'}</span><span><AppIcon className="ri-id-card-line mr-1.5"></AppIcon>{myLearner.kind} #{learner.id}</span></div></div>
               <button onClick={() => window.print()} className="inline-flex h-10 items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 text-xs font-semibold text-white transition hover:bg-white/15"><AppIcon className="ri-printer-line"></AppIcon>Print profile</button>
             </div>
@@ -110,8 +94,8 @@ export default function LearnerProfilePage() {
             <ProfileSection icon="ri-building-line" title="Workplace & support">
               <DetailRow label="Employer" value={learner.employer} />
               <DetailRow label="Line manager" value={learner.lineManager} />
-              <DetailRow label="Attendance risk" value={attendance?.risk ? attendance.risk[0].toUpperCase() + attendance.risk.slice(1) : 'No record'} />
-              <DetailRow label="Last attendance session" value={attendance?.lastSessionDate ? new Date(attendance.lastSessionDate).toLocaleDateString('en-GB') : 'Not recorded'} />
+              <DetailRow label="Attendance risk" value={attendanceLoading ? 'Loading attendance…' : attendanceError ? 'Temporarily unavailable' : attendance?.risk ? attendance.risk[0].toUpperCase() + attendance.risk.slice(1) : 'No record'} />
+              <DetailRow label="Last attendance session" value={attendanceLoading ? 'Loading attendance…' : attendanceError ? 'Temporarily unavailable' : attendance?.lastSessionDate ? new Date(attendance.lastSessionDate).toLocaleDateString('en-GB') : 'Not recorded'} />
             </ProfileSection>
             <ProfileSection icon="ri-route-line" title="Learning plan">
               <DetailRow label="Assigned modules" value={String(learner.modules.length)} />

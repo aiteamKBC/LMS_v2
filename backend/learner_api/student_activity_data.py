@@ -4,9 +4,35 @@ Separate from the mixed attendance/audit feed so pagination cannot silently
 drop modules and attendance/assignment hours cannot inflate activity totals.
 """
 
+from html import unescape
+
 from audit_api.last_audit_ledger_views import _activity_payload, _dict_rows
 from audit_api.last_audit_ledger_views import _json_list
 from .subject_dates import activity_schedule, apply_section_placement
+
+
+def read_activity_sources(cursor, group_ids, module_ids):
+    """Exact exported component lineage, limited to this learner's courses/plan."""
+    if not group_ids or not module_ids:
+        return {}
+    cursor.execute('''WITH exports AS (
+        SELECT course_id,CASE WHEN jsonb_typeof(curriculum)='string'
+            THEN (curriculum #>> '{}')::jsonb ELSE curriculum END AS payload
+        FROM "MBA".course_curriculum WHERE course_id=ANY(%s))
+        SELECT c.id,c.module_catalogue_id,e.course_id,material->>'source_component_id'
+        FROM exports e CROSS JOIN LATERAL jsonb_array_elements(payload->'sections') section
+        CROSS JOIN LATERAL jsonb_array_elements(section->'materials') material
+        JOIN curriculum.components c ON c.id=material->>'component_id'
+        WHERE c.module_catalogue_id=ANY(%s)
+          AND (c.deleted_at IS NULL OR c.deleted_via_parent IS NOT NULL)''',
+                   [sorted(set(group_ids)), sorted(set(module_ids))])
+    candidates = {}
+    for component, module, group, activity in cursor.fetchall():
+        if not activity or not str(activity).isdigit():
+            continue
+        candidates.setdefault(component, set()).add((module, int(group), int(activity)))
+    return {component: {'module_id': value[0], 'group_id': value[1], 'activity_id': value[2]}
+            for component, values in candidates.items() if len(values) == 1 for value in values}
 
 
 CURRICULUM_SCHEDULE_SQL = '''

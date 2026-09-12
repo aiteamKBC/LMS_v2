@@ -16,16 +16,22 @@ interface RouteErrorBoundaryProps {
   // Optional so the boundary can be built with createElement(Component, props,
   // children) from `router/index.ts`, which passes children positionally.
   children?: ReactNode;
+  resetKey?: string;
 }
 
 interface RouteErrorBoundaryState {
   error: Error | null;
+  resetKey?: string;
 }
 
 export class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, RouteErrorBoundaryState> {
-  state: RouteErrorBoundaryState = { error: null };
+  state: RouteErrorBoundaryState = { error: null, resetKey: this.props.resetKey };
 
-  static getDerivedStateFromError(error: Error): RouteErrorBoundaryState {
+  static getDerivedStateFromProps(props: RouteErrorBoundaryProps, state: RouteErrorBoundaryState) {
+    return props.resetKey !== state.resetKey ? { error: null, resetKey: props.resetKey } : null;
+  }
+
+  static getDerivedStateFromError(error: Error): Partial<RouteErrorBoundaryState> {
     return { error };
   }
 

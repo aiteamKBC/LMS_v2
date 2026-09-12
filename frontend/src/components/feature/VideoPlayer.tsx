@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 /* ═══════════════════════════════════════════════════════
    VIDEO PLAYER — renders the right player for a URL and
@@ -15,6 +15,7 @@ export interface ParsedVideo {
   kind: PlaybackKind;
   youTubeId?: string;
   src: string;                 // embed src (vimeo) or file url
+  fallbackSrc?: string;        // provider preview when viewing is allowed but downloading is not
 }
 
 /** Classify a provider URL and extract the id/src needed to play it. */
@@ -37,7 +38,12 @@ export function parseVideoUrl(url: string): ParsedVideo {
     clean.match(/drive\.google\.com\/file\/d\/([\w-]{10,})/) ||
     clean.match(/drive\.google\.com\/open\?id=([\w-]{10,})/) ||
     clean.match(/drive\.google\.com\/uc\?[^#]*id=([\w-]{10,})/);
-  if (drive) return { kind: 'file', src: `/learner_api/media/google-drive/${drive[1]}/` };
+  if (drive) {
+    const preview = new URL(`https://drive.google.com/file/d/${drive[1]}/preview`);
+    const resourceKey = new URL(clean, 'https://drive.google.com').searchParams.get('resourcekey');
+    if (resourceKey) preview.searchParams.set('resourcekey', resourceKey);
+    return { kind: 'file', src: `/learner_api/media/google-drive/${drive[1]}/`, fallbackSrc: preview.href };
+  }
   // Unknown — best-effort iframe, treated like vimeo (no progress events).
   return { kind: 'vimeo', src: clean };
 }
@@ -87,6 +93,8 @@ export function VideoPlayer({
   onUnsupported?: () => void;                // no progress events available (Vimeo/unknown)
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const [failedSource, setFailedSource] = useState<string | null>(null);
+  const useProviderPreview = parsed.kind === 'file' && failedSource === parsed.src && !!parsed.fallbackSrc;
   const cbRef = useRef({ onDuration, onProgress, onPlayingChange, onEnded, onUnsupported });
   cbRef.current = { onDuration, onProgress, onPlayingChange, onEnded, onUnsupported };
 
@@ -139,14 +147,14 @@ export function VideoPlayer({
 
   // ── Vimeo / unknown: plain iframe, no progress events ──
   useEffect(() => {
-    if (parsed.kind === 'vimeo') cbRef.current.onUnsupported?.();
-  }, [parsed.kind]);
+    if (parsed.kind === 'vimeo' || useProviderPreview) cbRef.current.onUnsupported?.();
+  }, [parsed.kind, useProviderPreview]);
 
   if (parsed.kind === 'youtube') {
     return <div ref={mountRef} className="absolute inset-0 w-full h-full [&>div]:w-full [&>div]:h-full" />;
   }
 
-  if (parsed.kind === 'file') {
+  if (parsed.kind === 'file' && !useProviderPreview) {
     return (
       <video
         src={parsed.src}
@@ -158,6 +166,7 @@ export function VideoPlayer({
         onPlay={() => onPlayingChange?.(true)}
         onPause={() => onPlayingChange?.(false)}
         onEnded={() => { onPlayingChange?.(false); onEnded?.(); }}
+        onError={() => { onPlayingChange?.(false); setFailedSource(parsed.src); }}
       >
         Your browser does not support the video tag.
       </video>
@@ -167,7 +176,7 @@ export function VideoPlayer({
   // Vimeo / unknown — plain embed (progress tracked via onUnsupported fallback).
   return (
     <iframe
-      src={parsed.src}
+      src={useProviderPreview ? parsed.fallbackSrc : parsed.src}
       title={title}
       className="absolute inset-0 w-full h-full"
       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
+import { fetchLearnerSummary, type LearnerSummary } from '@/api/learnerDetail';
 import {
   cancelEventBooking,
   createEventBooking,
@@ -103,7 +103,7 @@ function AmbassadorCard({ name, clubs }: { name: string; clubs: EngagementClub[]
 
 export default function ClubsPage() {
   const myLearner = useMyLearner();
-  const [learner, setLearner] = useState<LearnerDetail | null>(null);
+  const [learner, setLearner] = useState<LearnerSummary | null>(null);
   const [clubs, setClubs] = useState<EngagementClub[]>([]);
   const [events, setEvents] = useState<EngagementEvent[]>([]);
   const [bookings, setBookings] = useState<EventBooking[]>([]);
@@ -117,7 +117,7 @@ export default function ClubsPage() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setError('');
-    Promise.all([fetchLearnerDetail(myLearner.kind, myLearner.id), fetchClubs(), fetchEvents(), fetchEventBookings(myLearner.id)])
+    Promise.all([fetchLearnerSummary(myLearner.kind, myLearner.id), fetchClubs(), fetchEvents(), fetchEventBookings(myLearner.id)])
       .then(([detail, clubRows, eventRows, bookingRows]) => { if (!cancelled) { setLearner(detail); setClubs(clubRows); setEvents(eventRows); setBookings(bookingRows); } })
       .catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : 'Could not load community data.'); })
       .finally(() => { if (!cancelled) setLoading(false); });

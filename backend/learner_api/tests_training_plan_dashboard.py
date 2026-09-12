@@ -1,6 +1,6 @@
 """Contract extraction and access controls without a test database."""
 from types import SimpleNamespace
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, time, timezone, timedelta
 from unittest.mock import patch, MagicMock
 from hashlib import sha256
 import json
@@ -45,6 +45,76 @@ def contract_pdf(total=30, review_on_same_page=False, joined_provider=False, spl
 
 
 class TrainingPlanDashboardTests(SimpleTestCase):
+    def test_overview_reads_current_calendar_targets_and_stored_booking_changes(self):
+        from coach_api.models import CoachCalendarEvent
+
+        source = SimpleNamespace(pk=125, aptem_id=None, email='learner@example.com',
+                                 start_date='2024-11-04', end_date='2026-11-03')
+        profile = SimpleNamespace(id=272, lifecycle_status='active', email=source.email,
+                                  start_date=None, end_date=None, coach_name='Assigned Coach', coach_email='coach@example.com')
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value.fetchall.return_value = []
+        records = []
+        event_key = 'mcr:272:23:2026-09-25'
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
+             patch('learner_api.calendar.CoachCalendarEvent.objects.filter') as stored:
+            profiles.objects.filter.return_value.first.return_value = profile
+            stored.return_value.order_by.return_value = records
+
+            def current():
+                return [event for event in read_dashboard(source, section='overview')['reviews']
+                        if event['eventKey'] == event_key]
+
+            target = current()
+            self.assertEqual(len(target), 1)
+            self.assertEqual(target[0]['targetDate'], '2026-09-25')
+            self.assertEqual(target[0]['status'], 'not-scheduled')
+            self.assertIsNone(target[0]['scheduledDate'])
+
+            # Unsaved fixture only: exercise the actual calendar serializer and
+            # generated/stored merge without making any database changes.
+            booking = CoachCalendarEvent(event_key=event_key, event_type='mcr', learner_id=272,
+                                         learner_email=source.email, sequence=23, target_date=date(2026, 9, 25),
+                                         scheduled_date=date(2026, 9, 28), scheduled_time=time(14),
+                                         status='scheduled', owner_name='Assigned Coach')
+            records.append(booking)
+            booked = current()
+            self.assertEqual(len(booked), 1)
+            self.assertEqual(booked[0]['scheduledDate'], '2026-09-28')
+            self.assertFalse(booked[0]['invited'])
+
+            booking.scheduled_date = date(2026, 9, 20)
+            booking.scheduled_time = time(10, 30)
+            booking.owner_name = 'New Coach'
+            booking.graph_event_id = 'invitation-synced'
+            moved = current()[0]
+            self.assertEqual((moved['scheduledDate'], moved['scheduledTime'], moved['coachName'], moved['invited']),
+                             ('2026-09-20', '10:30', 'New Coach', True))
+
+            for status in ('cancelled', 'completed'):
+                booking.status = status
+                booking.scheduled_date = None
+                booking.scheduled_time = None
+                result = current()
+                self.assertEqual(len(result), 1)
+                self.assertEqual(result[0]['status'], status)
+                # The stored inactive row must suppress its generated target;
+                # Upcoming filters it rather than showing a duplicate To book.
+
+            # Unbooked targets also track changes to the source programme window.
+            records.clear()
+            source.start_date = '2024-11-05'
+            source.end_date = '2026-09-30'
+            profile.coach_name = 'Replacement Coach'
+            reviews = read_dashboard(source, section='overview')['reviews']
+            monthly = [event for event in reviews if event['source'] == 'mcr']
+            self.assertEqual(monthly[-1]['sequence'], 23)
+            self.assertEqual(monthly[-1]['targetDate'], '2026-09-26')
+            self.assertEqual(monthly[-1]['coachName'], 'Replacement Coach')
+            self.assertNotIn(event_key, [event['eventKey'] for event in reviews])
+
     def test_overview_does_not_download_or_parse_contract(self):
         source = SimpleNamespace(pk=125, aptem_id='92', email='learner@example.com')
         connection = MagicMock()

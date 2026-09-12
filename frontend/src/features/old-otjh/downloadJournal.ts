@@ -1,4 +1,4 @@
-import { getMonth, type MonthDetail, type Summary } from './api';
+import { getMonth, type MonthDetail, type JournalSummary } from './api';
 import { monthLabel } from './report';
 import type { JournalPdfAssets, PdfImage } from './journalPdf';
 
@@ -15,8 +15,9 @@ async function loadImage(url: string, signal?: AbortSignal): Promise<PdfImage> {
   return { data, format: png ? 'PNG' : 'JPEG' };
 }
 
-export async function downloadJournal({ summary, months, aptemId, signal, onProgress }: {
-  summary: Summary; months: string[]; aptemId?: number; signal?: AbortSignal;
+export async function downloadJournal({ summary, months, aptemId, signal, onProgress, loadMonth }: {
+  summary: JournalSummary; months: string[]; aptemId?: number; signal?: AbortSignal;
+  loadMonth?: (month: string, signal?: AbortSignal) => Promise<MonthDetail>;
   onProgress?: (message: string) => void;
 }) {
   if (!summary.learner || !months.length) throw new Error('No learner reports are available to download.');
@@ -30,7 +31,7 @@ export async function downloadJournal({ summary, months, aptemId, signal, onProg
     signal?.throwIfAborted();
     onProgress?.(`Preparing reports ${index + 1}-${Math.min(index + 3, selected.length)} of ${selected.length}…`);
     const batch = await Promise.all(selected.slice(index, index + 3).map(async month => {
-      const report = await getMonth(month, aptemId, signal);
+      const report = await (loadMonth ? loadMonth(month, signal) : getMonth(month, aptemId, signal));
       if (report.month !== month) throw new Error(`Could not load ${monthLabel(month)}. Please try again.`);
       return report;
     }));

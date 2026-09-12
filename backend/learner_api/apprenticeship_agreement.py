@@ -134,15 +134,23 @@ def _to_date(value):
 
 
 def _group_dates(learner):
-    """The group's delivery window; the learner's own dates are the fallback.
+    """Recorded learner dates, with read-only fallback to their assigned cohort.
 
-    The curriculum.groups table no longer carries a delivery window (the
-    start_date/end_date columns were removed), so the learner's own dates are now
-    the only source. Kept as a function returning (start, end, source) so callers
-    and the snapshot's `datesFrom` field are unchanged, and so a group window can
-    be reinstated here alone if the schema grows one back.
+    Imported learners can have a complete placement without copied date fields.
+    An explicit learner date always wins (it may differ from the cohort date).
     """
-    return _to_date(learner.start_date), _to_date(learner.end_date), "learner"
+    start = _to_date(getattr(learner, "start_date", None))
+    end = _to_date(getattr(learner, "end_date", None))
+    programme = _s(getattr(learner, "programme", ""))
+    cohort = _s(getattr(learner, "cohort", ""))
+    if (start is None or end is None) and programme and cohort:
+        from .active_users import cohort_dates
+
+        cohort_start, cohort_end = cohort_dates(programme, cohort)
+        if (start is None and cohort_start) or (end is None and cohort_end):
+            origin = "cohort" if start is None and end is None else "learner/cohort"
+            return start or cohort_start, end or cohort_end, origin
+    return start, end, "learner"
 
 
 def _weeks_between(start, end):

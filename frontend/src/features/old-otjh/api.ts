@@ -1,4 +1,5 @@
 import type { QuizAttempt } from '@/features/audit/learner-log-pro-manual/lib/api';
+import { LearnerReadError, readLearnerJson, invalidateLearnerReads } from '@/api/learnerRead';
 
 export type Signature = { signed_at: string; signer_name: string; url: string };
 export type SignatureCaptureMethod = 'draw' | 'upload' | 'import';
@@ -49,6 +50,11 @@ export type Activity = {
 };
 export type MonthDetail = MonthState & { rows: Activity[]; snapshot_digest: string;
   profile?: { start_date: string | null; planned_end_date: string | null; first_evidence_date: string | null } };
+/** Presentation data shared by retained and current monthly journals. */
+export type JournalSummary = {
+  learner?: { id: number; aptem_id?: number | null; name: string; programme: string; coach_name: string };
+  months: MonthState[];
+};
 export type ActivityContent = { id: number; parts: { id: number; title: string; category: string;
   content_type?: string | null;
   url: string | null; html: string | null; quiz: { state: string; attempt: QuizAttempt | null; answers_available?: boolean;
@@ -83,6 +89,14 @@ export async function request<T>(path: string, init: globalThis.RequestInit = {}
     headers.set('X-CSRFToken', token.csrfToken);
   }
   headers.set('X-Requested-With', 'XMLHttpRequest');
+  if (!init.method || init.method === 'GET') {
+    try {
+      return await readLearnerJson<T>(`${BASE}${path}`, { ...init, headers });
+    } catch (error) {
+      if (error instanceof LearnerReadError) throw new RecordError(error.message, error.status, error.code);
+      throw error;
+    }
+  }
   let response: Response;
   try {
     response = await fetch(`${BASE}${path}`, { ...init, headers, credentials: 'include', cache: 'no-store' });
@@ -93,6 +107,7 @@ export async function request<T>(path: string, init: globalThis.RequestInit = {}
   if (!response.ok || body === null) {
     throw new RecordError(body?.error || 'Previous learning records are temporarily unavailable.', response.status, body?.code);
   }
+  invalidateLearnerReads();
   return body as T;
 }
 

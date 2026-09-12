@@ -28,9 +28,11 @@ from login.permissions import learner_self_or_staff
 
 from .active_users import completed_hours_from_progress, fmt_hours, hydrate_source_training_plan, target_by_elapsed_time, week_by_elapsed_time
 from .identity import learner_profile_for_source
+from .aptem_status import programme_status
 from .learner_progression import access_gate, advance_learner
 from .mappers import _s, get_training_plan, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
+from .student_activity_access import student_activity_available
 
 logger = logging.getLogger(__name__)
 
@@ -185,14 +187,15 @@ IFRAME_SRC_RE = re.compile(r"<iframe[^>]+src=[\"']([^\"']+)[\"']", re.IGNORECASE
 
 
 def _active_profile_for_source(source, source_pk):
-    """Resolve the active mirror after enrolment tables were consolidated.
+    """Resolve the saved profile, including learners awaiting an invitation.
 
     ``Created_users`` and ``Learner.learners`` have independent primary-key
     sequences, so their ids are no longer guaranteed to match.  Email is the
     shared learner identity; the id lookup remains only as a compatibility
     fallback for older records that do not have an email.
     """
-    profile = learner_profile_for_source(source, source_pk, active_only=True)
+    # Saved progress/KSBs remain visible to authorised viewers before activation.
+    profile = learner_profile_for_source(source, source_pk)
     if profile is None:
         return None
 
@@ -367,8 +370,6 @@ def _otjh_by_legacy_title(components):
                 "SELECT id, module_catalogue_id, title, week_number FROM curriculum.weeks "
                 "WHERE module_catalogue_id = ANY(%s) "
                 "ORDER BY module_catalogue_id, week_number, display_order",
-                "SELECT id, module_catalogue_id, title FROM curriculum.weeks "
-                "WHERE module_catalogue_id = ANY(%s)",
                 [list(module_ids.values())],
             )
             weeks_by_title = {}   # (cat_id, title)       -> week_id
@@ -385,9 +386,6 @@ def _otjh_by_legacy_title(components):
                 "WHERE week_id = ANY(%s) "
                 "ORDER BY week_id, display_order",
                 [list(set(weeks_by_title.values()))],
-                "SELECT week_id, type, title, expected_otjh FROM curriculum.components "
-                "WHERE week_id = ANY(%s)",
-                [list(set(week_ids.values()))],
             )
             # Per week: exact display-title -> otjh, and ordered otjh-lists per humanised type.
             otjh_by_exact = {}                 # (week_id, display_title) -> otjh
@@ -1267,7 +1265,7 @@ def _apply_cohort_schedule(detail, source):
     detail.update(_cohort_schedule(getattr(source, "cohort", ""), getattr(source, "programme", "")))
 
 
-def _resolve_from_master(modules, weeks, components, assigned_modules=None):
+def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, compact=False):
     """Rebuild the module -> week -> component tree LIVE from the master
     authoring tables (curriculum.modules/weeks/components) so coach edits in the
     Module Builder show up immediately for already-enrolled learners.
@@ -1327,8 +1325,23 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None):
             )
             master_weeks = cur.fetchall()  # [(week_id, module_id, title, week_number, display_order)]
 
+            settings_sql = (
+                "CASE WHEN jsonb_typeof(settings_json::jsonb) = 'object' "
+                "THEN settings_json::jsonb - 'lessonContent' - 'speakerNotes' "
+                "ELSE settings_json::jsonb END"
+            )
+            if compact:
+                # List pages need to know whether a reading can be opened,
+                # not download every lesson's HTML. The runner reads its one
+                # lesson separately, still scoped to this learner's modules.
+                settings_sql = (
+                    f"({settings_sql} - 'readingContent') || jsonb_build_object("
+                    "'_readingContentAvailable', coalesce(regexp_replace("
+                    "settings_json->>'readingContent', '<[^>]*>|&nbsp;|\\s', '', 'g'), '') <> '')"
+                )
             cur.execute(
-                "SELECT id, week_id, module_catalogue_id, type, title, description, settings_json, "
+                "SELECT id, week_id, module_catalogue_id, type, title, description, "
+                f"{settings_sql} AS settings_json, "
                 "live_sessions_link, display_order, ksb_mappings, reflection_required, \"Reflection_Question\", "
                 "tutor_validation_required "
                 "FROM curriculum.components WHERE module_catalogue_id = ANY(%s) "
@@ -1529,6 +1542,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None):
             "videoUrl": video_url,
             "audioUrl": audio_url,
             "contentHtml": content_html,
+            **({"hasReadingContent": bool(settings.get("_readingContentAvailable"))} if compact else {}),
             "fileName": file_name,
             "downloadAllowed": download_allowed,
             "reflectionPrompt": reflection_prompt,
@@ -1596,6 +1610,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None):
                     "videoUrl": comp["videoUrl"],
                     "audioUrl": comp["audioUrl"],
                     "contentHtml": comp["contentHtml"],
+                    **({"hasReadingContent": comp["hasReadingContent"]} if compact else {}),
                     "fileName": comp["fileName"],
                     "downloadAllowed": comp["downloadAllowed"],
                     "reflectionPrompt": comp["reflectionPrompt"],
@@ -1656,7 +1671,7 @@ def _annotate_otjh(components):
     return components, round(total, 2)
 
 
-def build_learner_detail(source, pk):
+def build_learner_detail(source, pk, *, compact=False):
     """The learner's full workspace payload for one already-loaded source row.
 
     Split out of the view so other callers can serve the same shape behind their
@@ -1677,11 +1692,8 @@ def build_learner_detail(source, pk):
         try:
             from .active_users import refresh_learner_ksb_snapshot
 
-            refresh_learner_ksb_snapshot(learner_profile, source)
-            learner_profile = LearnerProfile.objects.filter(
-                id=learner_profile.id,
-                lifecycle_status="active",
-            ).first()
+            if refresh_learner_ksb_snapshot(learner_profile, source):
+                learner_profile = _active_profile_for_source(source, pk)
         except DatabaseError as exc:
             logger.warning("Could not refresh learner KSB snapshot for %s: %s", pk, exc)
 
@@ -1695,6 +1707,7 @@ def build_learner_detail(source, pk):
     detail["modules"], detail["week"], detail["components"] = _resolve_from_master(
         detail["modules"], detail["week"], detail["components"],
         assigned_modules=get_training_plan(source),
+        **({"compact": True} if compact else {}),
     )
     detail["components"] = _apply_programme_assignment_template(
         detail["components"], getattr(source, "programme", "")
@@ -1711,7 +1724,40 @@ def build_learner_detail(source, pk):
         except DatabaseError as exc:
             logger.warning("Could not persist hours columns for learner %s: %s", pk, exc)
 
+    if compact:
+        # Nullable optional fields dominate the JSON for large plans. Omission
+        # has the same meaning to consumers; keep false, zero and empty strings.
+        detail["components"] = [
+            {key: value for key, value in component.items()
+             if value is not None or key in {"module", "week", "component", "expectedOtjh"}}
+            for component in detail["components"]
+        ]
     return detail
+
+
+def _reading_content(source, component_id):
+    """Read one lesson without rebuilding the learner's progress graph.
+
+    Match the module/week visibility used by _resolve_from_master; an arbitrary
+    component id must never grant access to unassigned or deleted content.
+    """
+    module_ids = list(dict.fromkeys(
+        _s(module.get("moduleId")) for module in get_training_plan(source)
+        if isinstance(module, dict) and _s(module.get("moduleId"))
+    ))
+    if not module_ids or not component_id:
+        return None
+    with connections["enrolment"].cursor() as cursor:
+        cursor.execute('''SELECT c.id, c.settings_json->>'readingContent'
+            FROM curriculum.components c
+            JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
+            JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=m.module_catalogue_id
+            WHERE c.id=%s AND c.module_catalogue_id=ANY(%s)
+              AND (c.deleted_at IS NULL OR c.deleted_via_parent IS NOT NULL)
+              AND (m.deleted_at IS NULL OR m.deleted_via_parent IS NOT NULL)
+              AND (w.deleted_at IS NULL OR w.deleted_via_parent IS NOT NULL)''', [component_id, module_ids])
+        row = cursor.fetchone()
+    return {"componentId": row[0], "contentHtml": _s(row[1]) or None} if row else None
 
 
 @learner_self_or_staff(kwarg="pk")
@@ -1733,6 +1779,64 @@ def learner_detail(request, kind, pk):
         return _error(f"Database error: {exc}", 502)
 
     try:
-        return JsonResponse(build_learner_detail(source, pk))
+        if request.GET.get("content") == "reading":
+            reading = _reading_content(source, request.GET.get("component_id"))
+            if reading is None:
+                return _error("Activity not found in this learner's plan.", 404)
+            response = JsonResponse(reading)
+            response['Cache-Control'] = 'private, no-store'
+            return response
+        options = {"compact": True} if request.GET.get("content") == "summary" else {}
+        return JsonResponse(build_learner_detail(source, pk, **options))
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
+
+
+@learner_self_or_staff(kwarg="pk")
+def learner_summary(request, kind, pk):
+    """Return the small identity projection used by lightweight learner pages.
+
+    Attendance and similar pages need the learner's heading only. They must not
+    pay for the full training-plan/progress graph that ``learner_detail`` builds.
+    """
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+
+    model = SOURCE_MODELS.get(kind)
+    if model is None:
+        return _error(f"Unknown kind: {kind!r}. Expected 'commercial' or 'apprenticeship'.", 404)
+
+    try:
+        source = model.all_learners.only(
+            "id", "username", "email", "phone_number", "programme",
+            "programme_status", "cohort", "group", "employer", "employer_id",
+            "learner_type", "aptem_id", "start_date", "end_date",
+            "practical_period_end_date", "apprenticeship_end_date",
+        ).get(pk=pk)
+        resolved_status = programme_status(source)
+    except model.DoesNotExist:
+        return _error("Learner not found.", 404)
+    except DatabaseError as exc:
+        return _error(f"Database error: {exc}", 502)
+
+    from .apprenticeship_agreement import _group_dates
+
+    start, end, _ = _group_dates(source)
+    return JsonResponse({
+        "id": str(source.id),
+        "name": _s(source.username),
+        "email": _s(source.email),
+        "phone": _s(source.phone_number),
+        "programme": _s(source.programme),
+        "programmeStatus": resolved_status,
+        "cohort": _s(source.cohort),
+        "group": _s(source.group),
+        "employer": _s(source.employer),
+        "employerId": source.employer_id,
+        "learnerType": _s(getattr(source, "learner_type", "")) or "apprenticeship",
+        "isActive": resolved_status.casefold() == "active",
+        "programmeStartDate": _iso_date(start),
+        "programmeEndDate": _iso_date(source.end_date or source.practical_period_end_date or source.apprenticeship_end_date or end),
+        "accessGate": access_gate(source),
+        "studentActivityAvailable": student_activity_available(getattr(source, "aptem_id", None)),
+    })

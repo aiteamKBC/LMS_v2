@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
+import { fetchLearnerSummary, type LearnerSummary } from '@/api/learnerDetail';
 import { fetchFlashCardDecks, type FlashCardDeck } from '@/api/engagement';
 import { FlashCardGame } from '@/pages/engagement/flash-cards/FlashCardGame';
 import { useMyLearner } from '@/hooks/useMyLearner';
@@ -18,7 +18,7 @@ const learnerNav = roleNavMap.learner;
 // in the meantime.
 export default function LearnerFlashCardsPage() {
   const myLearner = useMyLearner();
-  const [learner, setLearner] = useState<LearnerDetail | null>(null);
+  const [learner, setLearner] = useState<LearnerSummary | null>(null);
   const [decks, setDecks] = useState<FlashCardDeck[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -28,7 +28,7 @@ export default function LearnerFlashCardsPage() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    Promise.all([fetchLearnerDetail(myLearner.kind, myLearner.id), fetchFlashCardDecks()])
+    Promise.all([fetchLearnerSummary(myLearner.kind, myLearner.id), fetchFlashCardDecks()])
       .then(([detail, deckRows]) => {
         if (cancelled) return;
         setLearner(detail);

@@ -17,6 +17,7 @@ export interface JourneyComponent {
   videoUrl?: string | null;
   audioUrl?: string | null;
   contentHtml?: string | null;
+  hasReadingContent?: boolean;
   fileName?: string | null;
   downloadAllowed?: boolean;
   reflectionPrompt?: string | null;
@@ -347,7 +348,7 @@ export function hasComponentContent(c: JourneyComponent): boolean {
   const hasDescription = hasText(c.description);
   if (type === 'video') return hasUrl(c.videoUrl);
   if (type === 'podcast' || type === 'audio') return hasUrl(c.audioUrl) || hasUrl(c.resourceUrl) || hasDescription;
-  if (type === 'reading') return hasText(c.contentHtml) || hasUrl(c.resourceUrl) || hasUrl(c.audioUrl) || hasDescription;
+  if (type === 'reading') return c.hasReadingContent === true || hasText(c.contentHtml) || hasUrl(c.resourceUrl) || hasUrl(c.audioUrl) || hasDescription;
   if (type === 'powerpoint' || type === 'presentation' || type === 'slides') return hasUrl(c.resourceUrl) || hasDescription;
   // A reflection's content *is* the reflection form the runner always renders,
   // so it stays openable even with nothing authored around it. (The API now
@@ -361,6 +362,7 @@ export function hasComponentContent(c: JourneyComponent): boolean {
     || hasText(c.reflectionPrompt)
     || hasText(c.reflectionQuestion)
     || hasText(c.contentHtml)
+    || c.hasReadingContent === true
     || hasUrl(c.audioUrl)
     // An assignment carries no description column — its brief is the only text
     // it has, so a brief-only assignment is still something to consume.
@@ -616,6 +618,7 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             assignmentBrief: c.assignmentBrief, assignmentBriefHtml: c.assignmentBriefHtml,
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName,
+            hasReadingContent: c.hasReadingContent,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt,
             reflectionRequired: c.reflectionRequired,
             tutorValidationRequired: c.tutorValidationRequired,

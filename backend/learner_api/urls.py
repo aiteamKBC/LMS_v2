@@ -1,9 +1,26 @@
 from django.urls import path
+from . import monthly_logs
+from .dashboard_metrics import learner_metrics
+from .overview_week import overview_week
+from .profile_photo import learner_profile_photo
+from .attendance_lectures import attendance_lectures
+from .attendance_mode import attendance_mode, review_attendance_mode
 
 from . import certificates, monthly_assignment, legacy_assignments, review_history
+from . import historical_evidence
 from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
 
 urlpatterns = [
+    path('monthly-logs/learners/', monthly_logs.learners, name='monthly-log-learners'),
+    path('monthly-logs/<int:learner_id>/', monthly_logs.summary, name='monthly-log-summary'),
+    path('monthly-logs/<int:learner_id>/documents/<uuid:file_id>/', monthly_logs.document, name='monthly-log-document'),
+    path('monthly-logs/<int:learner_id>/<str:month>/', monthly_logs.detail, name='monthly-log-detail'),
+    path('monthly-logs/<int:learner_id>/<str:month>/sign/', monthly_logs.sign, name='monthly-log-sign'),
+    path('monthly-logs/<int:learner_id>/<str:month>/activities/<int:row_id>/', monthly_logs.content, name='monthly-log-content'),
+    path('attendance/<str:kind>/<int:learner_id>/lectures/', attendance_lectures, name='attendance-lectures'),
+    path('attendance/<str:kind>/<int:learner_id>/mode/', attendance_mode, name='attendance-mode'),
+    path('attendance-mode/review/', review_attendance_mode, name='attendance-mode-review'),
+    path('profile-photo/<str:kind>/<int:pk>/', learner_profile_photo, name='learner-profile-photo'),
     path("tutor-learners/", views.tutor_learners, name="tutor-learners"),
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
     path("enrolment-users/options/", views.enrolment_user_options, name="enrolment-user-options"),
@@ -87,6 +104,9 @@ urlpatterns = [
     ),
     path("employers/<int:pk>/", employers.employer_detail, name="employer-detail"),
     path("learner-detail/<str:kind>/<int:pk>/", learner_detail.learner_detail, name="learner-detail"),
+    path("learner-summary/<str:kind>/<int:pk>/", learner_detail.learner_summary, name="learner-summary"),
+    path("metrics/<str:kind>/<int:pk>/", learner_metrics, name="learner-metrics"),
+    path("overview-week/<str:kind>/<int:pk>/", overview_week, name="learner-overview-week"),
     path("student-activity/<str:kind>/<int:pk>/", student_activity.student_activity, name="student-activity"),
     path("student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/attempts/", student_activity.start_subject_attempt, name="subject-attempt-start"),
     path("student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/attempts/<uuid:attempt_id>/", student_activity.submit_subject_attempt, name="subject-attempt-submit"),
@@ -167,6 +187,9 @@ urlpatterns = [
     # learner evidence uploads (Azure Blob Storage backed)
     path("evidence/<str:kind>/<int:pk>/upload/", evidence.upload_evidence, name="evidence-upload"),
     path("evidence/<str:kind>/<int:pk>/", evidence.list_evidence, name="evidence-list"),
+    path("evidence/<str:kind>/<int:pk>/historical/", historical_evidence.list_historical_evidence, name="historical-evidence-list"),
+    path("evidence/<str:kind>/<int:pk>/historical/<str:source>/<str:source_id>/", historical_evidence.historical_evidence_detail, name="historical-evidence-detail"),
+    path("evidence/<str:kind>/<int:pk>/historical/<str:source>/<str:source_id>/open/", historical_evidence.open_historical_document, name="historical-evidence-open"),
     path("evidence/<str:kind>/<int:pk>/<uuid:file_id>/download/", evidence.download_evidence, name="evidence-download"),
     path("evidence/<str:kind>/<int:pk>/<uuid:file_id>/", evidence.delete_evidence, name="evidence-delete"),
 ]

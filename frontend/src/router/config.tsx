@@ -3,6 +3,7 @@ import { Navigate } from "react-router-dom";
 import { CHAT_ENABLED } from "@/lib/featureFlags";
 import { RequireAuth } from "@/components/feature/RequireAuth";
 import { lazyRoute } from "./lazyRoute";
+import { LearnerDashboardRedirect } from "./LearnerDashboardRedirect";
 
 // Route components are code-split: each page becomes its own chunk, fetched on
 // first navigation instead of shipping in the entry bundle. router/index.ts
@@ -56,7 +57,7 @@ const CoachKsbImpact = lazyRoute(() => import("../pages/coach/ksb-impact/page"))
 const CoachMarkingQueue = lazyRoute(() => import("../pages/coach/marking-queue/page"));
 const CoachMarkingReviewPage = lazyRoute(() => import("../pages/coach/marking-review/page"));
 const CoachMeetings = lazyRoute(() => import("../pages/coach/meetings/page"));
-const CoachMonthlyCycle = lazyRoute(() => import("../pages/coach/monthly-cycle/page"));
+const MonthlyLogsPage = lazyRoute(() => import("../features/monthly-logs/page"));
 const CoachOtjhReports = lazyRoute(() => import("../pages/coach/otjh-reports/page"));
 const CoachMonthlyReports = lazyRoute(() => import("../pages/coach/monthly-reports/page"));
 const CoachProgressReviews = lazyRoute(() => import("../pages/coach/progress-reviews/page"));
@@ -184,11 +185,9 @@ const MisTimetablesPage = lazyRoute(() => import("../pages/mis/timetables/page")
 const MisTutorAssignmentPage = lazyRoute(() => import("../pages/mis/tutor-assignment/page"));
 const ModuleBuilder = lazyRoute(() => import("../pages/curriculum/module-builder/page"));
 const ModulesPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
-const MonthlyCyclePage = lazyRoute(() => import("../pages/learner/monthly-cycle/page"));
 const MonthlySubmissionPage = lazyRoute(() => import("../pages/learner/monthly-submission/page"));
 const HistoricalAssignmentPage = lazyRoute(() => import("../pages/learner/monthly-submission/HistoricalAssignmentPage"));
 const MyLearningPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
-const TrainingPlanTimelinePage = lazyRoute(() => import("../pages/learner/training-plan-timeline/page"));
 const MySchedulePage = lazyRoute(() => import("../pages/learner/clubs/events/schedule/page"));
 const NotFound = lazyRoute(() => import("../pages/NotFound"));
 const PaymentsPage = lazyRoute(() => import("../pages/finance/payments/page"));
@@ -352,6 +351,10 @@ const routes: RouteObject[] = [
     element: <LearnerOnboardingPage />,
   },
   {
+    path: "/learner",
+    element: <Navigate to="/workspace/learner" replace />,
+  },
+  {
     path: "/workspace/learner",
     element: <LearnerOverview />,
   },
@@ -478,15 +481,13 @@ const routes: RouteObject[] = [
     element: <LearnerLearningPlanModulesPage />,
   },
   {
-    // The learner's Aptem training plan, month-by-month accordion. Distinct
-    // from "/learner/training-plan" below, which is a legacy alias onto the
-    // My Learning "Modules" tab.
+    // Training plan details now live on the dashboard. Preserve old bookmarks.
     path: "/learner/training-plan-timeline",
-    element: <TrainingPlanTimelinePage />,
+    element: <LearnerDashboardRedirect />,
   },
   {
     path: "/learner/training-plan-timeline/:kind/:id",
-    element: <TrainingPlanTimelinePage />,
+    element: <LearnerDashboardRedirect />,
   },
   {
     path: "/learner/training-plan",
@@ -566,8 +567,36 @@ const routes: RouteObject[] = [
     element: <QuizzesPage />,
   },
   {
+    path: "/learner/monthly-logs",
+    element: <MonthlyLogsPage />,
+  },
+  {
+    path: "/learner/monthly-logs/:month",
+    element: <MonthlyLogsPage />,
+  },
+  {
+    path: "/learner/monthly-logs/:kind/:id",
+    element: <MonthlyLogsPage />,
+  },
+  {
+    path: "/learner/monthly-logs/:kind/:id/:month",
+    element: <MonthlyLogsPage />,
+  },
+  {
+    path: "/coach/monthly-logs",
+    element: <MonthlyLogsPage />,
+  },
+  {
+    path: "/coach/monthly-logs/:learnerId",
+    element: <MonthlyLogsPage />,
+  },
+  {
+    path: "/coach/monthly-logs/:learnerId/:month",
+    element: <MonthlyLogsPage />,
+  },
+  {
     path: "/learner/monthly-cycle",
-    element: <MonthlyCyclePage />,
+    element: <MonthlyLogsPage />,
   },
   {
     path: "/learner/monthly-submission",
@@ -587,7 +616,7 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/monthly-cycle/:kind/:id",
-    element: <MonthlyCyclePage />,
+    element: <MonthlyLogsPage />,
   },
   {
     path: "/learner/monthly-coaching",
@@ -753,7 +782,7 @@ const routes: RouteObject[] = [
   },
   {
     path: "/coach/monthly-cycle",
-    element: <CoachMonthlyCycle />,
+    element: <MonthlyLogsPage />,
   },
   {
     path: "/coach/progress-reviews",

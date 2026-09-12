@@ -2,18 +2,19 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { inputClass } from '@/pages/users/components/ui';
-import { getActivityContent, type Activity } from './api';
+import { getActivityContent, type Activity, type ActivityContent } from './api';
 import { ProtectedFilePreview, QuizPreview, SourcePreview } from './ContentPreview';
 import styles from './design.module.css';
 
 const btnSecondary = styles.secondaryButton;
 
-export function ActivityExpansion({ row, month, aptemId, initialDocumentId, onClose }: {
+export function ActivityExpansion({ row, month, aptemId, initialDocumentId, onClose, loadContent, contentScope }: {
   row: Activity; month: string; aptemId?: number; initialDocumentId?: number; onClose: () => void;
+  loadContent?: (rowId: number) => Promise<ActivityContent>; contentScope?: string;
 }) {
   const { auth } = useAuth();
-  const query = useQuery({ queryKey: ['old-otjh', auth.account?.id, 'activity-content', aptemId ?? 'me', month, row.id],
-    queryFn: () => getActivityContent(month, row.id, aptemId), refetchInterval: 7000 });
+  const query = useQuery({ queryKey: ['old-otjh', auth.account?.id, 'activity-content', contentScope ?? aptemId ?? 'me', month, row.id],
+    queryFn: () => loadContent ? loadContent(row.id) : getActivityContent(month, row.id, aptemId), refetchInterval: 7000 });
   const [selection, setSelection] = useState(initialDocumentId ? `doc-${initialDocumentId}` : '');
   const [quizSelection, setQuizSelection] = useState<number | null>(null);
   const [fileSelection, setFileSelection] = useState<number | null>(null);

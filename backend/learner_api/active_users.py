@@ -820,6 +820,16 @@ def hydrate_source_training_plan(source):
     making every new Active learner immediately able to open their activities.
     """
     plan = get_training_plan(source)
+    # Once a selected module has its week tree, the expensive curriculum
+    # expansion has already happened. Re-running it on every learner-detail
+    # request made navigation wait on a full module/week/component join even
+    # when nothing had changed. Plan writes still pass through this function
+    # with the compact module selection and are expanded as before.
+    if isinstance(plan, list) and plan and all(
+        isinstance(module, dict) and isinstance(module.get("weeks"), list)
+        for module in plan
+    ):
+        return plan
     hydrated = hydrate_training_plan(plan)
     if hydrated == plan:
         return hydrated
@@ -1840,11 +1850,10 @@ def mirror_placement_to_enrolment(profile):
 
 def sync_active_user(source):
     """Upsert one permanent learner and refresh authored plan/KSB child rows."""
+    from .apprenticeship_agreement import _group_dates
+
     status = _s(getattr(source, "programme_status", ""))
-    start_date, end_date = cohort_dates(
-        getattr(source, "programme", None),
-        getattr(source, "cohort", None),
-    )
+    start_date, end_date, _ = _group_dates(source)
     defaults = {
         "full_name": _s(getattr(source, "username", ""))
         or _s(getattr(source, "email", ""))

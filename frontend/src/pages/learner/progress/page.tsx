@@ -4,6 +4,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
+import { usePrefetchStudentActivity } from '@/hooks/usePrefetchStudentActivity';
 import { OtjhBody } from '@/components/feature/RealOtjhView';
 import { KsbProgressBody } from '@/components/feature/RealKsbView';
 import { PageContainer } from '@/components/ui/PageContainer';
@@ -12,6 +13,8 @@ import { OverviewTab, type ProgressTabKey } from './components/OverviewTab';
 import { MockOtjhBody } from './components/MockOtjhBody';
 import { MockKsbBody } from './components/MockKsbBody';
 import { useUnifiedLearningSummary } from '@/pages/learner/my-learning/SubjectWorkspace';
+import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
+import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
 
 const learnerNav = roleNavMap.learner;
 
@@ -33,7 +36,9 @@ export default function ProgressPage() {
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
   const [searchParams] = useSearchParams();
   const { kind, id } = useResolvedLearner(urlKind, urlId);
-  const { isRealMode, real, loading: realLoading } = useLearnerDetailParam(kind, id);
+  usePrefetchStudentActivity(kind, id);
+  const { isRealMode, real, loading: realLoading, loadError, refresh } = useLearnerDetailParam(kind, id);
+  const metrics = useLearnerMetrics(kind, id, isRealMode);
   const combinedLearning = useUnifiedLearningSummary(
     real,
     kind,
@@ -64,12 +69,14 @@ export default function ProgressPage() {
       userName={real?.name || 'Learner'} userRole={`${real?.programme || 'Apprenticeship'} Apprentice`}
     >
       <PageContainer>
+        {(loadError || combinedLearning.error || metrics.error) && <LearnerLoadError error={loadError || combinedLearning.error || metrics.error || ''} onRetry={() => { refresh(); combinedLearning.retry(); metrics.refresh(); }} />}
         <PageTabs items={tabs} value={activeTab} onChange={(v) => setActiveTab(v as ProgressTabKey)} label="Progress section" />
 
         {activeTab === 'overview' && (
           <OverviewTab
             real={real}
-            realLoading={combinedLoading}
+            realLoading={realLoading || metrics.loading}
+            metrics={metrics.data}
             recordedOtjhTotal={combinedLearning.data?.recorded_otjh_total}
             auditOtjhActual={combinedLearning.data?.audit_lms_actual}
             auditOtjhPlanned={combinedLearning.data?.audit_tp_planned}
@@ -85,6 +92,7 @@ export default function ProgressPage() {
                 loading={combinedLoading}
                 showHero={false}
                 activityData={combinedLearning.data}
+                metrics={metrics.data}
                 subjectCount={combinedLearning.summary?.subjectCount ?? combinedLearning.data?.module_count}
               />
             : <MockOtjhBody showHero={false} />
@@ -92,7 +100,7 @@ export default function ProgressPage() {
 
         {activeTab === 'ksbs' && (
           isRealMode
-            ? <KsbProgressBody real={real} loading={realLoading} showHero={false} />
+            ? <KsbProgressBody real={real} loading={realLoading || metrics.loading} showHero={false} metric={metrics.data?.ksb ?? null} />
             : <MockKsbBody showHero={false} />
         )}
       </PageContainer>

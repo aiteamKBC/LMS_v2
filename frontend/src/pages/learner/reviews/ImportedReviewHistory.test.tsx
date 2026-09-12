@@ -2,16 +2,19 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ImportedReviewHistory } from './ImportedReviewHistory';
+import { clearAllCachedResources } from '@/api/cachedRequest';
 
 function reply(body: unknown): Response {
   return {
     ok: true,
     status: 200,
+    json: async () => body,
     text: async () => JSON.stringify(body),
   } as Response;
 }
 
 beforeEach(() => {
+  clearAllCachedResources();
   vi.stubGlobal('AppIcon', ({ className }: { className?: string }) => <i className={className} />);
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(reply({
     learnerId: 272,
@@ -35,7 +38,7 @@ beforeEach(() => {
   })));
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { clearAllCachedResources(); vi.unstubAllGlobals(); });
 
 describe('ImportedReviewHistory', () => {
   it('opens the imported review sections inside the list page', async () => {

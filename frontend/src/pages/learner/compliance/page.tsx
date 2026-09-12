@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { useToast } from '@/hooks/useToast';
+import { useAuth } from '@/hooks/useAuth';
+import { invalidateLearnerDetailCache } from '@/api/learnerDetail';
 import { formatHoursMinutes } from '@/lib/format';
 import {
   fetchAgreement,
@@ -64,6 +67,8 @@ export default function LearnerCompliancePage() {
   const { kind, id } = useMyLearner();
   const isCommercial = kind === 'commercial';
   const toast = useToast();
+  const navigate = useNavigate();
+  const { auth } = useAuth();
 
   const [agreementData, setAgreementData] = useState<AgreementResponse | null>(null);
   const [ilrData, setIlrData] = useState<IlrResponse | null>(null);
@@ -91,6 +96,7 @@ export default function LearnerCompliancePage() {
       setIlrData(ilr);
       setPlanData(plan);
       setWrittenData(written);
+      return { agreement, ilr, plan, written };
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load your compliance documents.');
     } finally {
@@ -199,7 +205,15 @@ export default function LearnerCompliancePage() {
       else if (kind === 'written') await signWrittenAgreement(id, 'learner', name, mark);
       else await signIlrDocument(id, 'learner', name, mark);
       toast.success('Signed', `Your ${otherParty} still needs to sign this document.`);
-      await load();
+      invalidateLearnerDetailCache('apprenticeship', id);
+      const documents = await load();
+      if (auth.account?.role === 'learner' && documents
+        && documents.agreement.agreement?.signatures.apprentice.signed
+        && documents.ilr.document?.signatures.learner.signed
+        && documents.plan.document?.signatures.apprentice.signed
+        && documents.written.document?.signatures.learner.signed) {
+        navigate('/workspace/learner', { replace: true });
+      }
     } catch (err) {
       toast.error('Could not sign', err instanceof Error ? err.message : 'Please try again.');
     } finally {

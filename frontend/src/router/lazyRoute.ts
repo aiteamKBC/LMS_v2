@@ -112,7 +112,12 @@ type Loader<T> = () => Promise<{ default: T }>;
  * the moment a chunk is known to have arrived.
  */
 export function lazyRoute<T extends ComponentType<never>>(loader: Loader<T>) {
-  return lazy(() => loader()
+  let pending: Promise<{ default: T }> | undefined;
+  const preload = () => {
+    if (!pending) pending = loader().catch(error => { pending = undefined; throw error; });
+    return pending;
+  };
+  const component = lazy(() => preload()
     .then((loaded) => {
       // Here, and nowhere earlier: the chunk is now in hand. Clearing before
       // the load — which is what an effect on the router did, since the route
@@ -129,4 +134,7 @@ export function lazyRoute<T extends ComponentType<never>>(loader: Loader<T>) {
       }
       throw error;
     }));
+  // Hover/focus can prepare a chunk without mounting the page or starting its
+  // API requests. A failed speculative load never reloads the current page.
+  return Object.assign(component, { preload });
 }

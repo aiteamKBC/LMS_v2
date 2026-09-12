@@ -1,3 +1,4 @@
+import { readLearnerJson } from './learnerRead';
 // ============================================================================
 // Written Agreement API client
 //
@@ -65,7 +66,7 @@ async function readJson<T>(res: Response): Promise<T> {
 export async function fetchWrittenAgreement(
   learnerId: string | number,
 ): Promise<WrittenAgreementResponse> {
-  return readJson(await fetch(`${BASE}/${learnerId}/`, { credentials: 'include' }));
+  return readLearnerJson(`${BASE}/${learnerId}/`);
 }
 
 /** Issue the agreement, freezing the current content onto a new row. */

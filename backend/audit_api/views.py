@@ -2194,23 +2194,6 @@ def _learner_match_test_filter_sql():
     """
 
 
-def _learner_summary_columns(columns):
-    wanted = [
-        "id",
-        _first_column(columns, LEARNER_ID_COLUMNS),
-        _first_column(columns, NAME_COLUMNS),
-        _first_column(columns, ("program_name", "Programme", "programme", "ProgramName")),
-        _first_column(columns, ("evidence_count", "EvidenceCount")),
-        _first_column(columns, ("fetched_at", "FetchedAt")),
-        _first_column(columns, ("latest_evidence_date", "LatestEvidenceDate", "latestEvidenceDate")),
-    ]
-    selected = []
-    for column in wanted:
-        if column and column in columns and column not in selected:
-            selected.append(column)
-    return selected or columns[:1]
-
-
 def learner_audit_list(request):
     if request.method != "GET":
         return _error("Method not allowed.", 405)

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
@@ -6,6 +6,7 @@ import type { LearnerDetail } from '@/api/learnerDetail';
 import { componentTypeMeta, type KsbProgress, type KsbStatus } from '@/utils/learnerJourney';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { useKsbProgress } from '@/hooks/useKsbProgress';
+import type { ProgressMetric } from '@/api/learnerMetrics';
 
 const learnerNav = roleNavMap.learner;
 
@@ -85,11 +86,13 @@ export function KsbProgressBody({
   loading,
   showHero = true,
   audience = 'learner',
+  metric,
 }: {
   real: LearnerDetail | null;
   loading: boolean;
   showHero?: boolean;
   audience?: 'learner' | 'observer';
+  metric?: ProgressMetric | null;
 }) {
   const isObserver = audience === 'observer';
   const [filter, setFilter] = useState<Filter>('all');
@@ -134,6 +137,20 @@ export function KsbProgressBody({
     });
   }, [progress, visible]);
 
+  if (metric === null) return loading ? <RowsSkeleton rows={4} /> : <p>KSB details are unavailable. Please try again.</p>;
+  if (metric) return <section className="rounded-2xl border border-foreground-200 bg-white p-5" aria-label="Programme KSB points">
+          <h2 className="font-semibold">Programme KSB Progress</h2>
+          <p className="mt-2 text-2xl font-bold">{metric.percent == null ? '—' : `${metric.percent}%`}</p>
+          <p className="mt-1 text-sm text-foreground-500">{metric.total == null
+            ? 'Previous KSB details are not available yet.'
+            : `${metric.completed} of ${metric.total} points achieved across all components`}</p>
+          {!!metric.codes?.length && <div className="mt-5 overflow-x-auto"><table className="w-full text-left text-sm">
+            <thead><tr className="border-b text-foreground-500"><th className="py-3">KSB</th><th>Points achieved</th><th>Total points</th><th>Progress</th></tr></thead>
+            <tbody>{metric.codes.map(item => <tr key={item.code} className="border-b border-foreground-100">
+              <td className="py-3 font-semibold">{item.code}</td><td>{item.completed}</td><td>{item.total}</td><td>{item.percent}%</td>
+            </tr>)}</tbody>
+          </table></div>}
+        </section>;
   return (
     <div className={showHero ? 'p-3 md:p-6 space-y-5 md:space-y-6' : 'space-y-4 md:space-y-5'}>
         {/* Hero */}

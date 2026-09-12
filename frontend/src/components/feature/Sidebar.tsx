@@ -72,9 +72,9 @@ import { useAuth } from '@/hooks/useAuth';
 // ============================================================================
 // Workspace navigation.
 //
-// Every workspace uses the same desktop icon rail and secondary panel. The
-// current role supplies its own permission-filtered destinations. On mobile,
-// those destinations appear as full rows in an off-canvas drawer.
+// Learners use a stable menu of direct page links, with labels expanded only
+// by the menu button. Other workspaces use an icon rail and secondary panel.
+// Each role supplies permission-filtered destinations, also used on mobile.
 //
 // Presentation lives here in Tailwind classes keyed to the theme tokens —
 // there is deliberately no accompanying stylesheet. The `kbc-sb-*` class names
@@ -120,7 +120,7 @@ interface SidebarProps {
   navItems: SidebarNavItem[];
   userName?: string;
   userRole?: string;
-  /** Secondary panel visibility; the shell reserves its expanded width. */
+  /** Expanded navigation; the shell reserves its width. */
   pinned?: boolean;
   onPinChange?: (pinned: boolean) => void;
   mobileOpen: boolean;
@@ -136,6 +136,8 @@ interface SidebarProps {
 function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   const key = `${id} ${label} ${sourceIcon}`.toLowerCase();
 
+  if (id === 'learner-onboarding') return Users;
+  if (id === 'learner-compliance-documents') return ShieldCheck;
   if (/clipboard/.test(sourceIcon.toLowerCase())) return ClipboardList;
   if (/dashboard|overview|\bhome\b/.test(key)) return LayoutDashboard;
   // Curriculum workspace groups get distinct icons so the sidebar is scannable.
@@ -310,6 +312,12 @@ export function Sidebar({
       .filter(item => Boolean(item.href || item.children?.length));
   }, [navItems, canSeeNavItem]);
 
+  // Learner destinations stay in one menu. Filter group permissions before
+  // promoting their pages to direct links in the desktop rail and mobile drawer.
+  const navigationItems = role === 'learner'
+    ? filteredNavItems.flatMap(item => item.children?.length ? item.children : item)
+    : filteredNavItems;
+
   const queryMatchedHref = useMemo(() => {
     const current = `${location.pathname}${location.search}`;
     const items = filteredNavItems.flatMap(item => [item, ...(item.children ?? [])]);
@@ -461,7 +469,7 @@ export function Sidebar({
       {/* Navigation */}
       <nav aria-label={`${roleLabel} navigation`} className={`kbc-sidebar-nav flex-1 overflow-y-auto overflow-x-hidden py-2.5 ${variant === 'rail' ? 'px-1.5' : 'px-2'}`}>
         <div className={variant === 'rail' ? 'space-y-1' : 'space-y-0.5'}>
-          {filteredNavItems.map(item => (
+          {navigationItems.map(item => (
             <div key={item.id}>
               {variant === 'rail' ? (
                 hasChildren(item) ? (
@@ -498,6 +506,45 @@ export function Sidebar({
 
   return (
     <>
+      {role === 'learner' ? (
+        <aside
+          aria-label={`${roleLabel} sidebar`}
+          data-workspace-role={role}
+          className="fixed bottom-3 left-3 top-3 z-40 hidden flex-col overflow-hidden rounded-[24px] bg-brand-deep shadow-sm transition-[width] duration-300 ease-in-out motion-reduce:transition-none lg:flex"
+          style={{ width: pinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH }}
+        >
+          <div className={`flex shrink-0 items-center ${pinned ? 'gap-3 px-5 py-5' : 'flex-col pt-5'}`}>
+            <img
+              src="https://jokdxsdbxorzciulkdyl.supabase.co/storage/v1/object/public/images/16480272afc94729b2911a62d1bbf85d.webp"
+              alt="KENT logo"
+              className="h-10 w-10 shrink-0 rounded-xl object-contain"
+            />
+            {pinned && <span className="min-w-0 flex-1 truncate font-heading text-lg font-bold text-white">{roleLabel}</span>}
+            {onPinChange && (
+              <button
+                type="button"
+                onClick={() => onPinChange(!pinned)}
+                aria-label={pinned ? 'Collapse navigation' : 'Expand navigation'}
+                aria-expanded={pinned}
+                aria-controls={`${role}-primary-navigation`}
+                title={pinned ? 'Collapse navigation' : 'Expand navigation'}
+                className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-white/90 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/80 ${pinned ? '' : 'mt-5'}`}
+              >
+                <Menu className="h-6 w-6" aria-hidden="true" />
+              </button>
+            )}
+          </div>
+          <nav
+            id={`${role}-primary-navigation`}
+            aria-label={`${roleLabel} primary navigation`}
+            className={`min-h-0 flex-1 overflow-y-auto pb-6 [scrollbar-width:thin] ${pinned ? 'space-y-1 px-3' : 'mt-7 space-y-4 px-5'}`}
+          >
+            {navigationItems.map(item => (
+              <ExpandedLink key={item.id} item={item} isActive={isActive} onNavigate={onCloseMobile} presentation={pinned ? 'row' : 'rail'} />
+            ))}
+          </nav>
+        </aside>
+      ) : (
       <aside
           aria-label={`${roleLabel} sidebar`}
           className="fixed bottom-3 left-3 top-3 z-40 hidden overflow-hidden rounded-[24px] shadow-sm transition-[width] duration-300 ease-in-out motion-reduce:transition-none lg:flex"
@@ -579,6 +626,7 @@ export function Sidebar({
             </nav>
           </div>
         </aside>
+      )}
 
       {/* Mobile overlay */}
       {mobileOpen && (
@@ -694,27 +742,64 @@ function RailGroup({ item, isActive, isDropdownOpen, onOpen, onClose }: {
    and the mobile drawer
    ═══════════════════════════════════════════════════════ */
 
+/** Full-width cards keep longer destinations readable in the narrow panel. */
+function SecondaryNavCard({ item, active, onNavigate }: {
+  item: SidebarNavItem;
+  active: boolean;
+  onNavigate?: () => void;
+}) {
+  const hasStatus = Boolean(item.comingSoon || item.tag || item.statusDot || item.badge);
+
+  return (
+    <Link
+      to={item.href ?? '#'}
+      aria-current={active ? 'page' : undefined}
+      onClick={onNavigate}
+      className={`group flex min-h-[68px] w-full min-w-0 items-center gap-2.5 rounded-2xl border px-2.5 py-3 text-left transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/80 motion-reduce:!transition-none ${active ? 'border-white/90 bg-white/95 text-brand shadow-sm' : 'border-white/10 bg-white/5 text-white/90 hover:border-white/25 hover:bg-white/10 hover:text-white'}`}
+    >
+      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors ${active ? 'bg-brand text-white' : 'bg-white/10 text-white/90 group-hover:bg-white/15 group-hover:text-white'}`}>
+        <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block break-words text-[13px] font-semibold leading-[1.4]">{item.label}</span>
+        {hasStatus && (
+          <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
+            {item.statusDot && <StatusDot color={item.statusDot} />}
+            {item.badge ? <NavBadge count={item.badge} /> : null}
+          </span>
+        )}
+      </span>
+      <ChevronRight size={14} strokeWidth={1.8} className={`shrink-0 ${active ? 'text-brand' : 'text-white/40 group-hover:text-white/80'}`} aria-hidden="true" />
+    </Link>
+  );
+}
+
 function ExpandedLink({ item, isActive, onNavigate, compact, presentation }: {
   item: SidebarNavItem;
   isActive: (href?: string, matchPaths?: string[]) => boolean;
   onNavigate?: () => void;
   compact?: boolean;
-  presentation?: 'rail' | 'tile';
+  presentation?: 'rail' | 'row' | 'tile';
 }) {
   const active = isActive(item.href, item.matchPaths);
+  if (presentation === 'tile') {
+    return <SecondaryNavCard item={item} active={active} onNavigate={onNavigate} />;
+  }
+
   return (
     <Link
       to={item.href ?? '#'}
       aria-current={active ? 'page' : undefined}
       onClick={onNavigate}
       title={presentation === 'rail' ? item.label : undefined}
-      className={presentation === 'rail' ? `relative flex h-12 w-12 items-center justify-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 ${active ? 'bg-brand-accent text-white shadow-sm' : 'bg-white/10 text-white/75 hover:bg-white/20 hover:text-white'}` : presentation === 'tile' ? 'group flex w-full flex-col items-center gap-3 rounded-xl px-3 py-4 text-center text-sm font-semibold text-white/90 transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80' : `${ROW_BASE} ${active ? ROW_ACTIVE : ROW_IDLE} gap-2.5 px-2.5 ${compact ? 'py-1.5 text-[12px]' : 'py-2 text-[13px]'}`}
+      className={presentation ? `relative flex items-center rounded-xl transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/80 ${presentation === 'rail' ? 'h-12 w-12 justify-center' : 'min-h-12 w-full gap-3 px-3 py-2 text-[13px] font-medium'} ${active ? 'bg-brand-accent text-white shadow-sm' : 'bg-white/10 text-white/75 hover:bg-white/20 hover:text-white'}` : `${ROW_BASE} ${active ? ROW_ACTIVE : ROW_IDLE} gap-2.5 px-2.5 ${compact ? 'py-1.5 text-[12px]' : 'py-2 text-[13px]'}`}
     >
       {active && <span className={presentation ? 'hidden' : 'contents'}><ActiveMarker /></span>}
-      <span className={presentation === 'rail' ? 'flex h-5 w-5 items-center justify-center' : presentation === 'tile' ? `flex h-12 w-12 items-center justify-center rounded-xl ${active ? 'bg-white text-brand' : 'bg-white/15 text-white group-hover:bg-white/25'}` : 'kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center'}>
+      <span className={presentation ? 'flex h-5 w-5 shrink-0 items-center justify-center' : 'kbc-sidebar-icon-well flex h-5 w-5 shrink-0 items-center justify-center'}>
         <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={compact ? 16 : 18} className={presentation ? 'h-5 w-5' : undefined} />
       </span>
-      <span className={presentation === 'rail' ? 'sr-only' : presentation === 'tile' ? 'w-full break-words' : 'min-w-0 flex-1 truncate'}>{item.label}</span>
+      <span className={presentation === 'rail' ? 'sr-only' : 'min-w-0 flex-1 truncate'}>{item.label}</span>
       <span className={presentation === 'rail' ? 'absolute -right-1 -top-1 flex items-center gap-1' : 'flex shrink-0 items-center gap-1.5'}>
         {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
         {item.statusDot && <StatusDot color={item.statusDot} />}
@@ -742,7 +827,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, prese
   return (
     <div>
       {presentation === 'tiles' ? (
-        <p className="mb-5 flex w-full items-center justify-center rounded-xl border border-white/30 bg-white/15 px-3 py-2 text-center text-[13px] font-bold leading-snug text-white shadow-sm">{item.label}</p>
+        <p className="mb-3 border-b border-white/10 px-1 pb-3 text-[14px] font-semibold leading-snug tracking-wide text-white">{item.label}</p>
       ) : (
       <button
         type="button"
@@ -770,21 +855,25 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, prese
       )}
 
       {presentation !== 'rail' && isExpanded && item.children && (
-        <div className={presentation === 'tiles' ? 'grid grid-cols-2 gap-x-3 gap-y-5' : 'ml-[19px] mt-0.5 space-y-0.5 border-l border-foreground-100 pl-2'}>
+        <div className={presentation === 'tiles' ? 'grid grid-cols-1 gap-2' : 'ml-[19px] mt-0.5 space-y-0.5 border-l border-foreground-100 pl-2'}>
           {item.children.map(child => {
             const childActive = isActive(child.href, child.matchPaths);
+            if (presentation === 'tiles') {
+              return <SecondaryNavCard key={child.id} item={child} active={childActive} onNavigate={onNavigate} />;
+            }
+
             return (
               <Link
                 key={child.id}
                 to={child.href ?? '#'}
                 aria-current={childActive ? 'page' : undefined}
                 onClick={onNavigate}
-                className={presentation === 'tiles' ? `group flex min-w-0 flex-col items-center gap-2.5 rounded-xl px-1 py-1 text-center text-xs leading-snug transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 ${childActive ? 'font-semibold text-white' : 'text-white/75 hover:text-white'}` : `${ROW_BASE} ${childActive ? ROW_ACTIVE : ROW_IDLE} gap-2 px-2.5 py-1.5 text-[12.5px]`}
+                className={`${ROW_BASE} ${childActive ? ROW_ACTIVE : ROW_IDLE} gap-2 px-2.5 py-1.5 text-[12.5px]`}
               >
-                <span className={presentation === 'tiles' ? `flex h-12 w-12 shrink-0 items-center justify-center rounded-xl transition-colors ${childActive ? 'bg-white text-brand shadow-sm' : 'bg-white/15 text-white/90 group-hover:bg-white/25'}` : 'kbc-sidebar-icon-well kbc-sidebar-child-icon-well flex h-4 w-4 shrink-0 items-center justify-center'}>
-                  <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={15} className={presentation === 'tiles' ? 'h-5 w-5' : undefined} />
+                <span className="kbc-sidebar-icon-well kbc-sidebar-child-icon-well flex h-4 w-4 shrink-0 items-center justify-center">
+                  <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={15} />
                 </span>
-                <span className={presentation === 'tiles' ? 'w-full break-words' : 'min-w-0 flex-1 truncate'}>{child.label}</span>
+                <span className="min-w-0 flex-1 truncate">{child.label}</span>
                 <span className="flex shrink-0 items-center gap-1.5">
                   {child.comingSoon ? <SoonBadge /> : child.tag ? <NavTag label={child.tag} /> : null}
                   {child.statusDot && <StatusDot color={child.statusDot} />}

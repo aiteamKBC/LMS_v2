@@ -4,6 +4,7 @@ import { RouteErrorBoundary } from "@/components/feature/RouteErrorBoundary";
 import { PageSkeleton } from "@/components/feature/Skeletons";
 import { useAuth } from "@/hooks/useAuth";
 import routes from "./config";
+import { installLearnerRoutePreloading } from './preload';
 import { OldOtjhProvider } from '@/features/old-otjh/hooks';
 
 let navigateResolver: (navigate: ReturnType<typeof useNavigate>) => void;
@@ -24,7 +25,9 @@ export const navigatePromise = new Promise<NavigateFunction>((resolve) => {
 // and rebuilt it, which reads as a page flash on every navigation. PageSkeleton
 // holds the shape instead: rail, breadcrumb, header, content.
 function RouteLoadingFallback() {
-  return createElement(PageSkeleton);
+  const { pathname } = useLocation();
+  const learnerRoute = pathname === '/learner' || pathname.startsWith('/learner/') || pathname.startsWith('/workspace/learner');
+  return createElement(PageSkeleton, { workspaceRole: learnerRoute ? 'learner' : undefined });
 }
 
 export function AppRoutes() {
@@ -32,6 +35,7 @@ export function AppRoutes() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { auth } = useAuth();
+  useEffect(() => installLearnerRoutePreloading(routes), []);
 
   useEffect(() => {
     window.REACT_APP_NAVIGATE = navigate;
@@ -44,11 +48,12 @@ export function AppRoutes() {
   // reflection and results continue to work. A copied/bookmarked URL to any
   // other learner page returns to Materials instead of exposing the normal
   // learner workspace.
-  // Keyed by pathname so the boundary resets on navigation: a crashed page must
-  // not survive a Back or a link click as a permanent error screen.
+  // Reset only the error on navigation. A pathname key remounted Suspense and
+  // the access gate on every click, discarding the current page while its next
+  // chunk loads and making navigation look like a fresh application startup.
   return createElement(OldOtjhProvider, {
     key: auth.account?.id ?? 'signed-out',
-    children: createElement(RouteErrorBoundary, { key: pathname },
+    children: createElement(RouteErrorBoundary, { resetKey: pathname },
       createElement(Suspense, { fallback: createElement(RouteLoadingFallback) }, element)),
   });
 }

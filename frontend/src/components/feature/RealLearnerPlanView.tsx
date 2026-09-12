@@ -414,21 +414,24 @@ function WeekCard({ week, module, kind, learnerId, completedIds, marking, compac
  * their assignment was finished while it still sat in a queue.
  */
 function verdictBadge(status: string | undefined, completed?: boolean) {
+  const accepted = { label: 'Accepted', icon: 'ri-checkbox-circle-line', tone: 'bg-emerald-100 text-emerald-700', row: 'bg-emerald-50/50 border-emerald-200', iconBg: 'bg-emerald-100', iconFg: 'ri-checkbox-circle-line text-emerald-700', title: 'text-emerald-950' };
+  const rejected = { label: 'Rejected', icon: 'ri-close-circle-line', tone: 'bg-red-100 text-red-700', row: 'bg-red-50/50 border-red-200', iconBg: 'bg-red-100', iconFg: 'ri-close-circle-line text-red-700', title: 'text-red-950' };
+  const pending = { label: 'Pending coach review', icon: 'ri-time-line', tone: 'bg-amber-100 text-amber-700', row: 'bg-amber-50/50 border-amber-200', iconBg: 'bg-amber-100', iconFg: 'ri-time-line text-amber-700', title: 'text-amber-950' };
   switch (status) {
     case 'accepted':
     case 'partial':
-      return { label: 'Accepted', icon: 'ri-checkbox-circle-line', tone: 'bg-emerald-100 text-emerald-700' };
+      return accepted;
     case 'referred':
     case 'rejected':
-      return { label: 'Rejected', icon: 'ri-close-circle-line', tone: 'bg-red-100 text-red-700' };
+      return rejected;
     case 'submitted_for_tutor_review':
     case 'escalated':
-      return { label: 'Pending coach review', icon: 'ri-time-line', tone: 'bg-amber-100 text-amber-700' };
+      return pending;
     default:
       // Finished but not yet in a queue — a submission that has not landed, or
       // one written before this flow existed.
       return completed
-        ? { label: 'Pending coach review', icon: 'ri-time-line', tone: 'bg-amber-100 text-amber-700' }
+        ? pending
         : null;
   }
 }

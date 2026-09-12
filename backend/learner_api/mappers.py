@@ -9,6 +9,7 @@ And two inbound helpers:
   * validate_choices -> enforces the canonical option lists
 """
 from .student_activity_access import student_activity_available
+from .aptem_status import programme_status
 from .constants import (
     ACCESS_CHOICES,
     ACCESS_SUPER_ADMIN,
@@ -71,6 +72,11 @@ def _maybe_json(value):
 def to_list_row(u):
     status = _s(u.status)
     utype = _s(u.type) or "User"
+    has_plan = getattr(u, "_directory_has_learning_plan", None)
+    if has_plan is None:
+        # Create/update responses still pass a fully loaded learner. Directory
+        # reads supply the boolean without fetching either deferred JSON field.
+        has_plan = bool(u.learning_plan) or bool(u.training_plan)
     return {
         "id": str(u.id),
         # Permanent identifier, stable across the enrolment/active phases.
@@ -90,8 +96,8 @@ def to_list_row(u):
         "learningPlan": True,
         # Whether a plan has actually been saved, so the users table can offer
         # "Add" vs "Edit" without fetching every learner's plan.
-        "hasLearningPlan": bool(u.learning_plan) or bool(u.training_plan),
-        "programmeStatus": _s(u.programme_status),
+        "hasLearningPlan": has_plan,
+        "programmeStatus": programme_status(u),
         # The programme itself, not just its status — the directory shows both.
         # Staff and employer rows have no programme, so their mappers leave it
         # absent and the table renders a dash.
@@ -131,7 +137,7 @@ def to_edit_fields(u):
         "dob": _s(u.date_of_birth),
         "type": _s(u.type) or "User",
         "status": _s(u.status),
-        "programmeStatus": _s(u.programme_status),
+        "programmeStatus": programme_status(u),
         "programme": _s(u.programme),
         "cohort": _s(u.cohort),
         "group": _s(u.group),
@@ -297,7 +303,7 @@ def to_board(u):
             "type": "Delivery",
             "name": _s(u.programme),
             "cohort": _s(u.cohort),
-            "status": _s(u.programme_status) or DEFAULT_PROGRAMME_STATUS,
+            "status": programme_status(u) or DEFAULT_PROGRAMME_STATUS,
             # Cohort dates, matched from curriculum.cohort_authoring_details.
             # apprenticeship_end_date is the learner's own override and only
             # applies when it's set, so the cohort end date is the fallback.
@@ -684,7 +690,7 @@ def to_commercial_row(u):
         "organization": _s(u.organization),
         # The employer's record id, so the caller can fetch its full details.
         "employerId": u.employer_id,
-        "programmeStatus": _s(u.programme_status),
+        "programmeStatus": programme_status(u),
         "programme": _s(u.programme),
         "cohort": _s(u.cohort),
         "group": _s(u.group),
@@ -933,8 +939,8 @@ def _component_marking_statuses(source, learner_profile):
 
 def to_learner_detail(source, learner_profile):
     """Shape a CommercialUser/EnrolmentUser (+ its learner profile, if any)
-    for the learner workspace page. `learner_profile` is None when the learner
-    isn't currently active. The training plan itself comes straight from the
+    for the learner workspace page. A saved profile can exist before invitation
+    and activation. The training plan itself comes straight from the
     source record's structured plan column, so it's visible even for learners
     who aren't currently active; KSBs, progress, and activity feed are read
     from the normalized Learner.* tables exposed through LearnerProfile."""
@@ -972,13 +978,16 @@ def to_learner_detail(source, learner_profile):
             )
         except Exception:
             curriculum_ksbs = []
-    programme_start = getattr(source, "start_date", None)
+    from .apprenticeship_agreement import _group_dates
+
+    programme_start, cohort_end, _ = _group_dates(source)
     if hasattr(programme_start, "isoformat"):
         programme_start = programme_start.isoformat()
     programme_end = (
         getattr(source, "end_date", None)
         or getattr(source, "practical_period_end_date", None)
         or getattr(source, "apprenticeship_end_date", None)
+        or cohort_end
     )
     if hasattr(programme_end, "isoformat"):
         programme_end = programme_end.isoformat()
@@ -1001,7 +1010,7 @@ def to_learner_detail(source, learner_profile):
         # page, the other must fall back to the full workspace rather than lock
         # the learner out. Deciding it here, where that ambiguity does not
         # exist, is the only place it can be decided correctly.
-        "programmeStatus": _s(source.programme_status) or DEFAULT_PROGRAMME_STATUS,
+        "programmeStatus": programme_status(source) or DEFAULT_PROGRAMME_STATUS,
         "learnerType": _s(getattr(source, "learner_type", "")) or "apprenticeship",
         "programmeStartDate": _s(programme_start),
         "programmeEndDate": _s(programme_end),
@@ -1010,7 +1019,7 @@ def to_learner_detail(source, learner_profile):
         "employer": _s(getattr(source, "employer", "")),
         "employerId": getattr(source, "employer_id", None),
         "lineManager": _s(getattr(source, "line_manager", "")),
-        "isActive": learner_profile is not None,
+        "isActive": programme_status(source).casefold() == "active",
         "modules": modules,
         "week": week,
         "components": components,

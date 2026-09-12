@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
+import { fetchLearnerSummary, type LearnerSummary } from '@/api/learnerDetail';
 import {
   createVoucherClaim,
   fetchMyPoints,
@@ -55,7 +55,7 @@ function RewardCard({ reward, available, onClaim }: { reward: Reward; available:
 
 export default function LearnerRewardsPage() {
   const myLearner = useMyLearner();
-  const [learner, setLearner] = useState<LearnerDetail | null>(null);
+  const [learner, setLearner] = useState<LearnerSummary | null>(null);
   const [rewards, setRewards] = useState<Reward[]>([]);
   const [claims, setClaims] = useState<Claim[]>([]);
   const [recognitions, setRecognitions] = useState<Recognition[]>([]);
@@ -75,7 +75,7 @@ export default function LearnerRewardsPage() {
     let cancelled = false;
     setLoading(true);
     Promise.all([
-      fetchLearnerDetail(myLearner.kind, myLearner.id),
+      fetchLearnerSummary(myLearner.kind, myLearner.id),
       fetchRewards(), fetchVoucherClaims(myLearner.id),
       fetchRecognitions(myLearner.id), fetchPointsGrants(myLearner.id),
       fetchMyPoints(),

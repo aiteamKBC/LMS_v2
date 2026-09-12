@@ -34,23 +34,23 @@ def ready(cursor):
     return bool(row and row[0] and row[1])
 
 
-def state(enrolment_id, aptem_id, activity_id=None):
+def state(enrolment_id, aptem_id, activity_id=None, *, group_id=None):
     with connections[ALIAS].cursor() as cur:
         if not ready(cur):
             return {'ready': False, 'progress': [], 'history': [], 'covers': {}}
-        cur.execute(f'''SELECT activity_id, bool_or(completed) AS completed,
+        cur.execute(f'''SELECT group_id, activity_id, bool_or(completed) AS completed,
                                max(score_percent) AS best_percent,
                                count(*) AS attempt_count
                         FROM {ATTEMPTS} WHERE enrolment_id=%s AND aptem_id=%s
-                          AND submitted_at IS NOT NULL GROUP BY activity_id''', [enrolment_id, aptem_id])
+                          AND submitted_at IS NOT NULL GROUP BY group_id, activity_id''', [enrolment_id, aptem_id])
         progress = _rows(cur)
         history = []
-        if activity_id is not None:
+        if activity_id is not None and group_id is not None:
             cur.execute(f'''SELECT id, kind, answers, score_percent, passed, completed,
                                    reading_confirmed, started_at, submitted_at, definition
                             FROM {ATTEMPTS} WHERE enrolment_id=%s AND aptem_id=%s
-                              AND activity_id=%s AND submitted_at IS NOT NULL
-                            ORDER BY submitted_at DESC, id DESC''', [enrolment_id, aptem_id, activity_id])
+                              AND group_id=%s AND activity_id=%s AND submitted_at IS NOT NULL
+                            ORDER BY submitted_at DESC, id DESC''', [enrolment_id, aptem_id, group_id, activity_id])
             history = _rows(cur)
             for row in history:
                 row['answers'] = _json(row['answers'])
@@ -124,14 +124,16 @@ def save_cover(subject_ref, storage_path, account_id):
 
 
 def overlay_progress(items, progress):
-    by_id = {row['activity_id']: row for row in progress}
+    # An activity can be reused in several courses. Each placement has its own
+    # attempts, just as the original LMS keys results by learner/course/activity.
+    by_id = {(row['group_id'], row['activity_id']): row for row in progress if row.get('group_id') is not None}
     for item in items:
         old_completed = bool(item['completed'])
         maximum, score = item.get('quiz_maximum_score'), item.get('quiz_score')
         old_percent = float(score) / float(maximum) * 100 if score is not None and maximum and float(maximum) > 0 else None
         item['historical_completed'] = old_completed
         item['historical_score_percent'] = old_percent
-        new = by_id.get(item['source_activity_id'], {})
+        new = by_id.get((item['group_id'], item['source_activity_id']), {})
         new_percent = float(new['best_percent']) if new.get('best_percent') is not None else None
         values = [value for value in (old_percent, new_percent) if value is not None]
         item['best_score_percent'] = max(values) if values else None

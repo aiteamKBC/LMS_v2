@@ -30,6 +30,7 @@ from django.utils.dateparse import parse_date, parse_datetime
 
 from .constants import DELIVERY_PROGRAMME_STATUS
 from .mappers import _s
+from .aptem_status import programme_status
 from .models import (
     ApprenticeshipAgreement,
     EnrolmentUser,
@@ -44,15 +45,14 @@ READY_TO_ENROL_STATUS = "Ready to enrol"
 ACTIVE_STATUS = "Active"
 
 # Commercial learners do not use the funded apprenticeship compliance path.
-# These are the statuses that can safely be normalised from the programme start
-# date; manual/terminal statuses are left untouched.
+# Preparing data does not activate an account. Commercial learners also wait
+# for a successfully sent invitation. Active/terminal states are never demoted.
 COMMERCIAL_PRE_START_STATUSES = {
     "",
     "Fresh user",
     "Onboarding",
     DELIVERY_PROGRAMME_STATUS,
     READY_TO_ENROL_STATUS,
-    ACTIVE_STATUS,
 }
 
 # The four compliance documents a learner must have fully signed before they are
@@ -76,6 +76,17 @@ def _has_assigned_learning_plan(learner):
         getattr(learner, "learning_plan", None)
         or getattr(learner, "training_plan", None)
     )
+
+
+def _has_platform_invitation(learner):
+    """A provisioned account or a failed email is not a sent invitation."""
+    from login.models import Invitation
+
+    return Invitation.objects.filter(
+        account__subject_type="learner",
+        account__subject_id=learner.pk,
+        sent_at__isnull=False,
+    ).exists()
 
 
 def compliance_document_state(learner_kind, learner_id):
@@ -108,9 +119,8 @@ def compliance_documents_complete(learner_kind, learner_id):
 def _programme_start_date(learner):
     """The date the learner's programme starts.
 
-    The group's delivery window is what is actually taught, so it wins; the
-    learner's own Start_date (copied from the cohort at create time) is the
-    fallback. Same resolution the compliance documents print.
+    Keep an individual's recorded date; an assigned cohort supplies a missing
+    date. Same resolution the compliance documents print, without saving it.
     """
     try:
         from .apprenticeship_agreement import _group_dates
@@ -162,7 +172,7 @@ def access_gate(learner):
     """
     result = {"blocked": False, "reasons": [], "startDate": "", "outstandingDocuments": []}
     try:
-        status = _s(learner.programme_status)
+        status = programme_status(learner)
         kind = _learner_kind(learner)
         commercial = kind.casefold() == "commercial"
         waiting_statuses = (
@@ -195,6 +205,9 @@ def access_gate(learner):
         elif start > timezone.localdate():
             result["reasons"].append("start-date-future")
 
+        if commercial and not _has_platform_invitation(learner):
+            result["reasons"].append("invitation")
+
         result["blocked"] = bool(result["reasons"])
         return result
     except DatabaseError:
@@ -212,9 +225,12 @@ def advance_learner(learner):
     """
     try:
         changed = None
+        if programme_status(learner).casefold() == 'withdrawn':
+            return None
 
-        # Commercial delivery is date-driven. They have no ILR documents or
-        # onboarding reviews, so never make their activation depend on either.
+        # A saved plan and dates prepare delivery; sending the platform
+        # invitation is the explicit release step. Existing Active learners
+        # remain active even if imported dates or plans are incomplete.
         if _learner_kind(learner).casefold() == "commercial":
             current = _s(learner.programme_status)
             if current in COMMERCIAL_PRE_START_STATUSES:
@@ -223,6 +239,7 @@ def advance_learner(learner):
                     _has_assigned_learning_plan(learner)
                     and start is not None
                     and start <= timezone.localdate()
+                    and _has_platform_invitation(learner)
                 )
                 target = ACTIVE_STATUS if ready_to_start else DELIVERY_PROGRAMME_STATUS
                 if current != target:

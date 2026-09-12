@@ -10,6 +10,7 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { otjhContributionHours } from '@/utils/otjhContribution';
 import type { StudentActivityResponse } from '@/api/studentActivity';
+import type { LearnerMetrics } from '@/api/learnerMetrics';
 
 const learnerNav = roleNavMap.learner;
 
@@ -207,6 +208,7 @@ export function OtjhBody({
   audience = 'learner',
   activityData = null,
   subjectCount,
+  metrics,
 }: {
   real: LearnerDetail | null;
   loading: boolean;
@@ -215,18 +217,19 @@ export function OtjhBody({
   activityData?: StudentActivityResponse | null;
   /** Historical and current subjects from the unified learning summary. */
   subjectCount?: number | null;
+  metrics?: LearnerMetrics | null;
 }) {
   const isObserver = audience === 'observer';
   const who = isObserver ? (real?.name?.split(' ')[0] || 'This learner') : 'You';
   const usesCombinedSubjects = activityData?.recorded_otjh_total != null;
-  const usesAuditTotals = activityData?.audit_lms_actual != null || activityData?.audit_tp_planned != null;
+  const usesAuditTotals = !!metrics || activityData?.audit_lms_actual != null || activityData?.audit_tp_planned != null;
   const usesAuditSummary = usesAuditTotals || usesCombinedSubjects;
   const recordedSubjectCount = subjectCount ?? activityData?.module_count ?? 0;
-  const completed = activityData?.audit_lms_actual
+  const completed = metrics !== undefined ? metrics?.otjh.actual ?? 0 : activityData?.audit_lms_actual
     ?? activityData?.recorded_otjh_total
     ?? parseHours(real?.completedHours);
   const target = usesAuditSummary ? 0 : parseHours(real?.targetHours);
-  const planned = activityData?.audit_tp_planned
+  const planned = metrics !== undefined ? metrics?.otjh.planned ?? 0 : activityData?.audit_tp_planned
     ?? activityData?.planned_total
     ?? parseHours(real?.plannedHours ?? real?.totalExpectedOtjh);
   const progressHours = parseHours(real?.progressHours);
@@ -234,8 +237,8 @@ export function OtjhBody({
   const rag = RAG(status);
   const plannedPercent = planned > 0 ? Math.round((completed / planned) * 100) : 0;
   const plannedMappedCount = activityData?.planned_mapped_count || 0;
-  const completedDisplay = usesAuditTotals ? `${completed.toFixed(2)} h` : formatHoursMinutes(completed);
-  const plannedDisplay = usesAuditTotals ? `${planned.toFixed(2)} h` : formatHoursMinutes(planned);
+  const completedDisplay = metrics !== undefined && metrics?.otjh.actual == null ? '—' : usesAuditTotals ? `${completed.toFixed(2)} h` : formatHoursMinutes(completed);
+  const plannedDisplay = metrics !== undefined && metrics?.otjh.planned == null ? '—' : usesAuditTotals ? `${planned.toFixed(2)} h` : formatHoursMinutes(planned);
   const targetPercent = target > 0 ? Math.min(100, Math.round((completed / target) * 100)) : 0;
   const planWeek = trainingPlanWeekPosition(real);
   const targetWeekLabel = planWeek?.state === 'upcoming'
@@ -430,7 +433,7 @@ export function OtjhBody({
 
         {/* Stat strip */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 md:gap-4">
-          <StatCard icon="ri-flag-line" iconTint="bg-gradient-to-br from-[#d8c9ff] via-[#8b5cf6] to-[#5420a8] text-white shadow-sm shadow-primary-500/25" label={usesAuditTotals ? 'Actual' : 'Completed'} value={completedDisplay} sub={usesAuditTotals ? 'same total shown in Audit' : usesCombinedSubjects ? 'recorded across all subjects' : `${plannedPercent}% of plan`} />
+          <StatCard icon="ri-flag-line" iconTint="bg-gradient-to-br from-[#d8c9ff] via-[#8b5cf6] to-[#5420a8] text-white shadow-sm shadow-primary-500/25" label={usesAuditTotals ? 'Actual' : 'Completed'} value={completedDisplay} sub={metrics ? 'historical hours + new learning' : usesAuditTotals ? 'same total shown in Audit' : usesCombinedSubjects ? 'recorded across all subjects' : `${plannedPercent}% of plan`} />
           {usesAuditSummary
             ? <StatCard icon="ri-stack-line" iconTint="bg-gradient-to-br from-[#ddd6fe] via-[#a78bfa] to-[#6d28d9] text-white shadow-sm shadow-violet-500/25" label="Recorded scope" value={`${recordedSubjectCount} subjects`} sub="historical and current learning" />
             : <StatCard icon="ri-focus-3-line" iconTint="bg-gradient-to-br from-[#ddd6fe] via-[#a78bfa] to-[#6d28d9] text-white shadow-sm shadow-violet-500/25" label="Current target" value={formatHoursMinutes(target)} sub={targetWeekLabel} />}

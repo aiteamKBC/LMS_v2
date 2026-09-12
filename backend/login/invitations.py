@@ -126,6 +126,11 @@ def send_invitation(account, *, invited_by=None, ip=None, user_agent=None):
     invitation.send_error = None if sent else detail
     invitation.save(update_fields=["sent_at", "send_error"])
 
+    if sent and account.subject_type == "learner":
+        from learner_api.learner_progression import advance_learner_by_id
+
+        advance_learner_by_id(account.subject_id)
+
     record(
         EVENT_INVITE_SENT,
         email=account.email,

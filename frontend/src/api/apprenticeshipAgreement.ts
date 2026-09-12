@@ -1,3 +1,4 @@
+import { readLearnerJson } from './learnerRead';
 // ============================================================================
 // Apprenticeship Agreement API client
 //
@@ -81,7 +82,7 @@ async function readJson<T>(res: Response): Promise<T> {
 }
 
 export async function fetchAgreement(learnerId: string | number): Promise<AgreementResponse> {
-  return readJson(await fetch(`${BASE}/${learnerId}/`, { credentials: 'include' }));
+  return readLearnerJson(`${BASE}/${learnerId}/`);
 }
 
 /**
