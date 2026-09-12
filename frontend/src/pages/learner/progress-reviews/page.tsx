@@ -55,11 +55,10 @@ function progressReviewTitle(review?: LearnerCalendarEvent | null): string {
   return `Progress Review${month ? ` — ${month}` : ''}${review?.sequence ? ` #${review.sequence}` : ''}`;
 }
 
-function shouldShowLearnerMeetingRecording(review?: LearnerCalendarEvent | null): boolean {
+function shouldShowLearnerMeetingPanel(review?: LearnerCalendarEvent | null): boolean {
   return Boolean(
     review?.eventKey
     && review?.meetingLink
-    && ['completed', 'awaiting-signature'].includes(review.status),
   );
 }
 
@@ -544,7 +543,7 @@ export default function ProgressReviewsPage() {
                 </div>
 
                 <div className="space-y-5 p-5 sm:p-6">
-                  {shouldShowLearnerMeetingRecording(selected) ? (
+                  {shouldShowLearnerMeetingPanel(selected) ? (
                     <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
                   ) : null}
 

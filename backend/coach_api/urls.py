@@ -16,6 +16,7 @@ from .views import (
     coach_monthly_activity,
     coach_timetable_event_artifact_content,
     coach_timetable_event_artifacts,
+    coach_timetable_event_summary,
     coach_timetable_event_action,
     coach_timetable_book_event,
     coach_timetable_schedule_event,
@@ -48,4 +49,5 @@ urlpatterns = [
     path('coach/timetable/events/action', coach_timetable_event_action, name='coach-timetable-event-action'),
     path('coach/timetable/events/<str:event_key>/artifacts', coach_timetable_event_artifacts, name='coach-timetable-event-artifacts'),
     path('coach/timetable/events/<str:event_key>/artifacts/<str:artifact_type>/<str:artifact_id>/content', coach_timetable_event_artifact_content, name='coach-timetable-event-artifact-content'),
+    path('coach/timetable/events/<str:event_key>/summary', coach_timetable_event_summary, name='coach-timetable-event-summary'),
 ]

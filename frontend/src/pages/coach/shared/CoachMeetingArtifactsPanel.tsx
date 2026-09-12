@@ -4,10 +4,13 @@ import { cn } from '@/lib/cn';
 import {
   coachMeetingArtifactContentUrl,
   fetchCoachMeetingArtifacts,
+  updateCoachMeetingSummary,
   type CoachMeetingArtifact,
   type CoachMeetingAttendanceRecord,
   type CoachMeetingAttendanceSummary,
   type CoachMeetingAttendanceTrackerRow,
+  type CoachMeetingSummary,
+  type CoachMeetingSummaryPayload,
 } from './calendarEvents';
 
 interface CoachMeetingArtifactEvent {
@@ -23,7 +26,7 @@ interface CoachMeetingArtifactEvent {
 type ArtifactState =
   | { status: 'idle' }
   | { status: 'loading' }
-  | { status: 'ready'; artifacts: CoachMeetingArtifact[]; attendance: CoachMeetingAttendanceSummary | null; errors: string[] }
+  | { status: 'ready'; artifacts: CoachMeetingArtifact[]; attendance: CoachMeetingAttendanceSummary | null; meetingSummary: CoachMeetingSummary | null; errors: string[] }
   | { status: 'error'; message: string };
 
 type PreviewSelection = {
@@ -128,6 +131,314 @@ function actualRecordsAsTracker(records: CoachMeetingAttendanceRecord[]): CoachM
     actualRecordIds: record.id ? [record.id] : [],
     reportIds: record.reportId ? [record.reportId] : [],
   }));
+}
+
+function emptySummaryPayload(source?: string): CoachMeetingSummaryPayload {
+  return {
+    title: source === 'progress-review' ? 'Progress Review Recap' : 'Monthly Coaching Recap',
+    overview: '',
+    keyPoints: [],
+    actions: [],
+    nextSteps: [],
+    support: [],
+  };
+}
+
+function normalizeSummaryPayload(summary: CoachMeetingSummaryPayload | undefined, source?: string): CoachMeetingSummaryPayload {
+  const fallback = emptySummaryPayload(source);
+  return {
+    title: summary?.title || fallback.title,
+    overview: summary?.overview || '',
+    keyPoints: Array.isArray(summary?.keyPoints) ? summary!.keyPoints : [],
+    actions: Array.isArray(summary?.actions) ? summary!.actions : [],
+    nextSteps: Array.isArray(summary?.nextSteps) ? summary!.nextSteps : [],
+    support: Array.isArray(summary?.support) ? summary!.support : [],
+  };
+}
+
+function summaryDate(value?: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function SummaryListEditor({
+  label,
+  values,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  values: string[];
+  onChange: (values: string[]) => void;
+  placeholder: string;
+}) {
+  const rows = values.length ? values : [''];
+  return (
+    <div>
+      <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-foreground-500">{label}</p>
+      <div className="space-y-2">
+        {rows.map((value, index) => (
+          <div key={`${label}-${index}`} className="flex gap-2">
+            <input
+              value={value}
+              onChange={(event) => {
+                const next = [...rows];
+                next[index] = event.target.value;
+                onChange(next.filter((item, itemIndex) => item.trim() || itemIndex === next.length - 1));
+              }}
+              placeholder={placeholder}
+              className="min-w-0 flex-1 rounded-lg border border-background-300 bg-white px-3 py-2 text-[12px] font-medium text-foreground-800 outline-none focus:border-primary-400"
+            />
+            <button
+              type="button"
+              onClick={() => onChange(rows.filter((_, itemIndex) => itemIndex !== index))}
+              className="h-9 w-9 rounded-lg border border-background-300 bg-white text-foreground-500 hover:bg-background-100"
+              aria-label={`Remove ${label} item`}
+            >
+              <AppIcon className="ri-close-line"></AppIcon>
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={() => onChange([...rows, ''])}
+          className="inline-flex items-center gap-1 rounded-lg border border-primary-200 bg-primary-50 px-2.5 py-1.5 text-[12px] font-bold text-primary-700"
+        >
+          <AppIcon className="ri-add-line"></AppIcon>
+          Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function MeetingSummaryCard({
+  event,
+  meetingSummary,
+  canEdit,
+  onSave,
+}: {
+  event: CoachMeetingArtifactEvent;
+  meetingSummary: CoachMeetingSummary | null;
+  canEdit: boolean;
+  onSave?: (summary: CoachMeetingSummaryPayload) => Promise<CoachMeetingSummary | null>;
+}) {
+  const summary = normalizeSummaryPayload(meetingSummary?.summary, event.source);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<CoachMeetingSummaryPayload>(summary);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setDraft(summary);
+    setEditing(false);
+    setError('');
+  }, [meetingSummary?.generatedAt, meetingSummary?.editedAt, meetingSummary?.status, summary.title, summary.overview]);
+
+  if (!meetingSummary && !canEdit) return null;
+  if (!meetingSummary) {
+    return (
+      <div className="mt-3 rounded-xl border border-background-200 bg-background-50 p-3 text-[12px] text-foreground-500">
+        Meeting recap will appear here after the transcript has been processed.
+      </div>
+    );
+  }
+
+  const edited = meetingSummary.status === 'edited';
+  const timestamp = summaryDate(meetingSummary.editedAt || meetingSummary.generatedAt);
+  const save = async () => {
+    if (!onSave) return;
+    setSaving(true);
+    setError('');
+    try {
+      await onSave(draft);
+      setEditing(false);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Unable to save meeting recap.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const visibleSummary = editing ? draft : summary;
+
+  return (
+    <div className="mt-3 overflow-hidden rounded-xl border border-primary-100 bg-white shadow-sm">
+      <div className="border-b border-primary-100 bg-primary-50/70 px-4 py-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-primary-700">
+              <AppIcon className="ri-sparkling-2-line"></AppIcon>
+              Meeting recap
+            </p>
+            {editing ? (
+              <input
+                value={draft.title}
+                onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+                className="mt-1 w-full rounded-lg border border-primary-200 bg-white px-3 py-2 text-sm font-bold text-foreground-950 outline-none focus:border-primary-400"
+              />
+            ) : (
+              <h4 className="mt-1 text-sm font-bold text-foreground-950">{visibleSummary.title}</h4>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={cn(
+              'rounded-full px-2.5 py-1 text-[11px] font-bold',
+              edited ? 'bg-emerald-50 text-emerald-700' : 'bg-white text-primary-700',
+            )}>
+              {edited ? 'Coach edited' : 'AI generated'}
+            </span>
+            {timestamp ? <span className="text-[11px] font-semibold text-foreground-500">{timestamp}</span> : null}
+            {canEdit && !editing ? (
+              <button
+                type="button"
+                onClick={() => setEditing(true)}
+                className="inline-flex items-center gap-1 rounded-lg border border-primary-200 bg-white px-2.5 py-1.5 text-[12px] font-bold text-primary-700 hover:bg-primary-50"
+              >
+                <AppIcon className="ri-edit-line"></AppIcon>
+                Edit
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-4 p-4">
+        <div className="rounded-lg border border-background-200 bg-background-50 p-3">
+          <p className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-foreground-500">
+            <AppIcon className="ri-file-list-3-line text-primary-500"></AppIcon>
+            Overview
+          </p>
+          {editing ? (
+            <textarea
+              value={draft.overview}
+              onChange={(event) => setDraft({ ...draft, overview: event.target.value })}
+              rows={3}
+              className="w-full resize-none rounded-lg border border-background-300 bg-white px-3 py-2 text-[12px] leading-5 text-foreground-800 outline-none focus:border-primary-400"
+            />
+          ) : (
+            <p className="text-[13px] leading-6 text-foreground-700">{visibleSummary.overview || 'No overview is available yet.'}</p>
+          )}
+        </div>
+
+        {editing ? (
+          <div className="grid gap-4">
+            <SummaryListEditor label="Key points" values={draft.keyPoints} placeholder="Add a key discussion point" onChange={(keyPoints) => setDraft({ ...draft, keyPoints })} />
+            <SummaryListEditor label="Next steps" values={draft.nextSteps} placeholder="Add a next step" onChange={(nextSteps) => setDraft({ ...draft, nextSteps })} />
+            <SummaryListEditor label="Support" values={draft.support} placeholder="Add support note" onChange={(support) => setDraft({ ...draft, support })} />
+            <div>
+              <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-foreground-500">Agreed actions</p>
+              <div className="space-y-2">
+                {(draft.actions.length ? draft.actions : [{ title: '', owner: 'Learner', dueDate: '', status: 'To do' }]).map((action, index, rows) => (
+                  <div key={`action-${index}`} className="grid gap-2 rounded-lg border border-background-200 bg-background-50 p-2 md:grid-cols-[1fr_120px_110px_90px_auto]">
+                    <input value={action.title} onChange={(event) => {
+                      const next = [...rows];
+                      next[index] = { ...action, title: event.target.value };
+                      setDraft({ ...draft, actions: next });
+                    }} placeholder="Action" className="rounded-lg border border-background-300 bg-white px-3 py-2 text-[12px] font-medium outline-none focus:border-primary-400" />
+                    <input value={action.owner || ''} onChange={(event) => {
+                      const next = [...rows];
+                      next[index] = { ...action, owner: event.target.value };
+                      setDraft({ ...draft, actions: next });
+                    }} placeholder="Owner" className="rounded-lg border border-background-300 bg-white px-3 py-2 text-[12px] font-medium outline-none focus:border-primary-400" />
+                    <input value={action.dueDate || ''} onChange={(event) => {
+                      const next = [...rows];
+                      next[index] = { ...action, dueDate: event.target.value };
+                      setDraft({ ...draft, actions: next });
+                    }} placeholder="Due" className="rounded-lg border border-background-300 bg-white px-3 py-2 text-[12px] font-medium outline-none focus:border-primary-400" />
+                    <input value={action.status || ''} onChange={(event) => {
+                      const next = [...rows];
+                      next[index] = { ...action, status: event.target.value };
+                      setDraft({ ...draft, actions: next });
+                    }} placeholder="Status" className="rounded-lg border border-background-300 bg-white px-3 py-2 text-[12px] font-medium outline-none focus:border-primary-400" />
+                    <button type="button" onClick={() => setDraft({ ...draft, actions: rows.filter((_, itemIndex) => itemIndex !== index) })} className="h-9 w-9 rounded-lg border border-background-300 bg-white text-foreground-500 hover:bg-background-100" aria-label="Remove action">
+                      <AppIcon className="ri-close-line"></AppIcon>
+                    </button>
+                  </div>
+                ))}
+                <button type="button" onClick={() => setDraft({ ...draft, actions: [...draft.actions, { title: '', owner: 'Learner', dueDate: '', status: 'To do' }] })} className="inline-flex items-center gap-1 rounded-lg border border-primary-200 bg-primary-50 px-2.5 py-1.5 text-[12px] font-bold text-primary-700">
+                  <AppIcon className="ri-add-line"></AppIcon>
+                  Add action
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <>
+            {visibleSummary.keyPoints.length > 0 ? (
+              <div>
+                <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-foreground-500">Key discussion points</p>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {visibleSummary.keyPoints.map((point, index) => (
+                    <div key={`${point}-${index}`} className="flex gap-2 rounded-lg border border-background-200 bg-background-50 p-2.5">
+                      <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary-100 text-[11px] font-bold text-primary-700">{index + 1}</span>
+                      <p className="text-[12px] leading-5 text-foreground-700">{point}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {visibleSummary.actions.length > 0 ? (
+              <div>
+                <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-foreground-500">Agreed actions</p>
+                <div className="overflow-hidden rounded-lg border border-background-200">
+                  {visibleSummary.actions.map((action, index) => (
+                    <div key={`${action.title}-${index}`} className="grid gap-2 border-b border-background-100 bg-white p-3 last:border-b-0 md:grid-cols-[1fr_auto_auto]">
+                      <p className="text-[12px] font-semibold leading-5 text-foreground-800">{action.title}</p>
+                      <span className="rounded-full bg-primary-50 px-2 py-1 text-[11px] font-bold text-primary-700">{action.owner || 'Learner'}</span>
+                      <span className="rounded-full bg-background-100 px-2 py-1 text-[11px] font-bold text-foreground-600">{action.dueDate || action.status || 'To do'}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {visibleSummary.nextSteps.length > 0 ? (
+              <div>
+                <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-foreground-500">Next steps</p>
+                <div className="space-y-2">
+                  {visibleSummary.nextSteps.map((step, index) => (
+                    <div key={`${step}-${index}`} className="flex gap-2">
+                      <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-emerald-500"></span>
+                      <p className="text-[12px] leading-5 text-foreground-700">{step}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {visibleSummary.support.length > 0 ? (
+              <div className="rounded-lg border border-teal-100 bg-teal-50 p-3">
+                <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-teal-700">Support discussed</p>
+                <div className="space-y-1.5">
+                  {visibleSummary.support.map((item, index) => <p key={`${item}-${index}`} className="text-[12px] leading-5 text-teal-800">{item}</p>)}
+                </div>
+              </div>
+            ) : null}
+          </>
+        )}
+
+        {error ? <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-semibold text-red-700">{error}</p> : null}
+        {editing ? (
+          <div className="flex flex-wrap justify-end gap-2 border-t border-background-100 pt-3">
+            <button type="button" onClick={() => { setDraft(summary); setEditing(false); }} className="rounded-lg border border-background-300 bg-white px-3 py-2 text-[12px] font-bold text-foreground-700 hover:bg-background-100">Cancel</button>
+            <button type="button" onClick={save} disabled={saving} className="inline-flex items-center gap-1 rounded-lg bg-primary-600 px-3 py-2 text-[12px] font-bold text-white shadow-sm hover:bg-primary-700 disabled:opacity-60">
+              <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-save-3-line'}></AppIcon>
+              Save recap
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 function transcriptPreviewText(raw: string) {
@@ -282,6 +593,8 @@ export function CoachMeetingArtifactsPanel({
   contentUrl = coachMeetingArtifactContentUrl,
   showAttendance = true,
   visibleArtifactTypes = ['transcript', 'recording'],
+  canEditSummary = showAttendance,
+  saveSummary = updateCoachMeetingSummary,
 }: {
   event: CoachMeetingArtifactEvent;
   className?: string;
@@ -289,9 +602,12 @@ export function CoachMeetingArtifactsPanel({
   contentUrl?: typeof coachMeetingArtifactContentUrl;
   showAttendance?: boolean;
   visibleArtifactTypes?: string[];
+  canEditSummary?: boolean;
+  saveSummary?: typeof updateCoachMeetingSummary;
 }) {
   const eventKey = event.eventKey || '';
   const hasTeamsLink = Boolean(event.meetingLink || event.graphWebLink);
+  const supportsMeetingSummary = event.source === 'mcr' || event.source === 'progress-review';
   const [state, setState] = useState<ArtifactState>({ status: 'idle' });
   const [preview, setPreview] = useState<PreviewSelection | null>(null);
   const [transcriptPreview, setTranscriptPreview] = useState<TranscriptPreviewState>({ status: 'idle' });
@@ -310,6 +626,7 @@ export function CoachMeetingArtifactsPanel({
           status: 'ready',
           artifacts: result.artifacts || [],
           attendance: result.attendance || null,
+          meetingSummary: result.meetingSummary || null,
           errors: result.errors || [],
         });
       })
@@ -362,6 +679,7 @@ export function CoachMeetingArtifactsPanel({
 
   const artifacts = state.status === 'ready' ? state.artifacts : [];
   const attendance = state.status === 'ready' ? state.attendance : null;
+  const meetingSummary = state.status === 'ready' ? state.meetingSummary : null;
   const visibleArtifacts = artifacts.filter(artifact => visibleArtifactTypes.includes(artifact.artifact_type));
   const hasArtifacts = visibleArtifacts.length > 0;
 
@@ -392,6 +710,21 @@ export function CoachMeetingArtifactsPanel({
       ) : null}
 
       {state.status === 'ready' && showAttendance ? <AttendanceTracker attendance={attendance} /> : null}
+
+      {state.status === 'ready' && supportsMeetingSummary ? (
+        <MeetingSummaryCard
+          event={event}
+          meetingSummary={meetingSummary}
+          canEdit={Boolean(canEditSummary && eventKey && saveSummary)}
+          onSave={canEditSummary && saveSummary ? async (summary) => {
+            const result = await saveSummary(eventKey, summary);
+            setState((current) => current.status === 'ready'
+              ? { ...current, meetingSummary: result.meetingSummary || null }
+              : current);
+            return result.meetingSummary || null;
+          } : undefined}
+        />
+      ) : null}
 
       {state.status === 'ready' && !hasArtifacts ? (
         <div className="mt-3 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[12px] leading-5 text-foreground-500">
