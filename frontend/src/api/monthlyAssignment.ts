@@ -23,6 +23,7 @@ export interface MonthlyAssignment {
   epaPreparedness: string;
   meetingKey: string;
   slides: Array<{ title: string; body: string }>;
+  presentationDesign?: { name: string; accent: string; font: string; ratio: number; evidenceId?: string; slideCount?: number; coverSlide?: number; contentSlide?: number };
   presentationReviewed: boolean;
   presentationToken: string;
 }

@@ -4141,7 +4141,7 @@ def calendar_record_has_launch_url(record: CoachCalendarEvent) -> bool:
 
 TEAMS_SYNC_PERMISSION_MESSAGE = (
     "Teams calendar sync needs updated Microsoft permissions. "
-    "The event was saved locally only; reconnect Microsoft Calendar or ask an admin to refresh access."
+    "The event was saved locally only; ask your Microsoft 365 administrator to grant the booking application calendar access to the organiser mailbox."
 )
 TEAMS_SYNC_NOT_CONFIGURED_MESSAGE = "Teams calendar sync is not configured. The event was saved locally only."
 # A coach session is recorded and transcribed like a taught one: the recording is
@@ -4470,7 +4470,7 @@ def fetch_standalone_event_records(owner_email: str) -> list[CoachCalendarEvent]
     return normalize_calendar_records(
         list(
             CoachCalendarEvent.objects.filter(owner_email__iexact=owner_email)
-            .exclude(event_type__in=["mcr", "progress-review"])
+            .filter(~Q(event_type__in=["mcr", "progress-review"]) | Q(event_type="mcr", idempotency_key__startswith="learner-book:mcm:"))
             .order_by("scheduled_date", "target_date", "scheduled_time", "learner_name")
         )
     )

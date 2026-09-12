@@ -1,3 +1,6 @@
+from . import presentation_design
+from . import monthly_reflection_ai
+from . import ksb_generation
 from django.urls import path
 from . import monthly_logs
 from .dashboard_metrics import learner_metrics
@@ -144,6 +147,9 @@ urlpatterns = [
     # British-English voice reflection transcription, moderation and learning-scope check
     path("reflection/transcribe/", reflection_ai.transcribe_reflection, name="reflection-transcribe"),
     path("reflection/proofread/", reflection_ai.proofread_reflection, name="reflection-proofread"),
+    path("reflection/ksb-explanations/", ksb_generation.generate_ksb_explanations, name="ksb-explanations"),
+    path("reflection/monthly-reflections/", monthly_reflection_ai.generate_monthly_reflections, name="monthly-reflections"),
+    path("reflection/learning-statements/", reflection_ai.generate_learning_statements, name="learning-statements"),
     path("reflection/submissions/", reflection_submissions.create_reflection_submission, name="reflection-submission-create"),
     # The learner's end-of-month report: GET lists the months already submitted
     # (or one month with ?month=YYYY-MM), POST submits/updates a month.
@@ -157,6 +163,7 @@ urlpatterns = [
     path("monthly-reports/<str:kind>/<int:pk>/", monthly_reports.monthly_reports, name="learner-monthly-reports"),
     path("reflection/assignment/check/", monthly_assignment.check_assignment, name="monthly-assignment-check"),
     path("reflection/assignment/legacy-document/<int:evidence_id>/", legacy_assignments.open_legacy_assignment_document, name="legacy-assignment-document"),
+    path("reflection/assignment/presentation-design/", presentation_design.upload_design, name="presentation-design"),
     path("reflection/assignment/presentation/", monthly_assignment.export_presentation, name="monthly-assignment-presentation"),
     # learner calendar (coaching sessions from Coach.coach_calendar_event)
     path("calendar/<str:kind>/<int:pk>/", calendar.learner_calendar, name="learner-calendar"),

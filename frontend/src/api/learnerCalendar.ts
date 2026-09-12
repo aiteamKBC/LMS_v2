@@ -144,6 +144,7 @@ export function fetchOnboardingReviews(kind: LearnerKind, id: string): Promise<O
 }
 
 export interface BookSessionInput {
+  assignmentMonth?: string;
   sessionType: BookableSessionType;
   /** Required when booking a generated MCM/Progress Review slot. */
   eventKey?: string;

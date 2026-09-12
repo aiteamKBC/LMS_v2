@@ -105,8 +105,10 @@ def _friendly_sync_warning(warning):
     lowered = raw.lower()
     if "getaddrinfo" in lowered or "urlopen error" in lowered or "not configured" in lowered:
         detail = "the booking system could not reach Microsoft"
+    elif "permissions" in lowered or "accessdenied" in lowered or "access is denied" in lowered:
+        detail = "the booking application does not have permission to access the organiser calendar; your Microsoft 365 administrator needs to grant access"
     elif "errorinvaliduser" in lowered or "invalid" in lowered and "user" in lowered:
-        detail = "your enrolment officer's mailbox is not set up for calendar invites"
+        detail = "the organiser mailbox is not set up for calendar invites"
     else:
         detail = "Microsoft rejected the calendar invite"
     return (
@@ -446,11 +448,13 @@ def learner_calendar_event_artifacts(request, kind, pk, event_key):
         attendance_reports=snapshot["attendanceReports"],
         attendance_tracker=snapshot["attendanceTracker"],
     )
-    # Learners may watch the formal meeting recording, but transcripts remain
-    # staff-only because they can contain sensitive discussion notes.
+    # Own MCM transcripts are available alongside recordings; other meeting
+    # types retain their existing recording-only access.
     learner_artifacts = [
         artifact for artifact in snapshot["artifacts"]
-        if _s(artifact.get("artifact_type")).lower() == "recording"
+        if _s(artifact.get("artifact_type")).lower() in (
+            {"recording", "transcript"} if record.event_type == "mcr" else {"recording"}
+        )
     ]
     return JsonResponse({
         "artifacts": learner_artifacts,
@@ -468,7 +472,8 @@ def learner_calendar_event_artifact_content(request, kind, pk, event_key, artifa
     record = _learner_calendar_record(kind, pk, event_key)
     if not record:
         return _error("Calendar event not found for this learner.", 404)
-    if _s(artifact_type).lower() != "recording":
+    allowed_types = {"recording", "transcript"} if record.event_type == "mcr" else {"recording"}
+    if _s(artifact_type).lower() not in allowed_types:
         return _error("Only meeting recordings are available to learners.", 403)
     from coach_api.views import coach_meeting_artifact_content_response
     return coach_meeting_artifact_content_response(request, record, event_key, artifact_type, artifact_id)
@@ -739,7 +744,14 @@ def learner_calendar_book(request, kind, pk):
     requires_coach_approval = session_type in {"catch-up", "student-support"} and not is_onboarding_review
     calendar_learner_id = int(mirror.id) if mirror is not None and not is_onboarding_review else pk
 
-    if session_type in {"mcr", "progress-review"}:
+    assignment_month = _s(payload.get("assignmentMonth")) if session_type == "mcr" else ""
+    if assignment_month:
+        from .monthly_assignment import coaching_booking_bounds
+        window_start, window_end = coaching_booking_bounds(assignment_month)
+        if not window_start or not window_start <= scheduled_date <= window_end or duration_minutes != 60:
+            return _error("Book a 60-minute MCM from the last ten days of the submission month through the 5th of the following month.", 400)
+
+    if session_type in {"mcr", "progress-review"} and not (assignment_month and not _s(payload.get("eventKey"))):
         event_key = _s(payload.get("eventKey"))
         if not event_key:
             return _error(
@@ -856,7 +868,9 @@ def learner_calendar_book(request, kind, pk):
                 )
 
         supplied_key = _s(request.headers.get("Idempotency-Key"))
-        if supplied_key:
+        if assignment_month:
+            idempotency_key = f"learner-book:mcm:{kind}:{pk}:{assignment_month}"
+        elif supplied_key:
             idempotency_key = calendar_idempotency_key(request)
         else:
             # Backward-compatible deterministic identity for existing learner
@@ -947,6 +961,8 @@ def learner_calendar_book(request, kind, pk):
         record, warning, _attempted = synchronize_reserved_calendar_event(
             record.pk, build_booked_calendar_event(record)
         )
+    except CalendarSyncInProgress:
+        return _error("Calendar event synchronization is already in progress.", 409)
     except LearnerCalendarConflict as exc:
         return _error(str(exc), 409)
     except ValueError as exc:

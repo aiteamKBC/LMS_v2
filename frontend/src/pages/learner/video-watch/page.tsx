@@ -94,23 +94,23 @@ function completionTimeFor(component: JourneyComponent, detail: LearnerDetail | 
 
 function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange: (seconds: number | null) => void; initialSeconds?: number | null }) {
   const partsFromSeconds = (seconds: number | null) => {
-    if (seconds == null || seconds <= 0) return { hours: '', minutes: '', seconds: '' };
-    const [hours, minutes, secondsPart] = formatClock(seconds).split(':');
-    return { hours, minutes, seconds: secondsPart };
+    if (seconds == null || seconds <= 0) return { hours: '', minutes: '' };
+    const [hours, minutes] = formatClock(seconds).split(':');
+    return { hours, minutes };
   };
   const [parts, setParts] = useState(() => partsFromSeconds(initialSeconds));
 
   useEffect(() => {
     setParts(current => (
-      current.hours || current.minutes || current.seconds
+      current.hours || current.minutes
         ? current
         : partsFromSeconds(initialSeconds)
     ));
   }, [initialSeconds]);
 
   const totalSeconds = (next: typeof parts): number | null => {
-    if (!next.hours && !next.minutes && !next.seconds) return null;
-    return (Number(next.hours) || 0) * 3600 + (Number(next.minutes) || 0) * 60 + (Number(next.seconds) || 0);
+    if (!next.hours && !next.minutes) return null;
+    return (Number(next.hours) || 0) * 3600 + (Number(next.minutes) || 0) * 60;
   };
 
   const updatePart = (part: keyof typeof parts, rawValue: string) => {
@@ -123,21 +123,20 @@ function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange:
   const normalise = () => {
     const total = totalSeconds(parts);
     if (total == null) return;
-    const [hours, minutes, seconds] = formatClock(total).split(':');
-    setParts({ hours, minutes, seconds });
+    const [hours, minutes] = formatClock(total).split(':');
+    setParts({ hours, minutes });
     onChange(total);
   };
 
   const fields: { key: keyof typeof parts; label: string; ariaLabel: string }[] = [
     { key: 'hours', label: 'hour', ariaLabel: 'Hours spent' },
     { key: 'minutes', label: 'min', ariaLabel: 'Minutes spent' },
-    { key: 'seconds', label: 'sec', ariaLabel: 'Seconds spent' },
   ];
 
   return (
     <div
       className="inline-flex items-center gap-2 rounded-xl border border-background-300 bg-white px-3 py-1.5 text-foreground-700 shadow-sm transition-colors focus-within:border-primary-300 focus-within:ring-2 focus-within:ring-primary-100"
-      title="Enter time spent in hours, minutes and seconds"
+      title="Enter time spent in hours and minutes"
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) normalise();
       }}
@@ -158,7 +157,7 @@ function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange:
                   if (event.key === 'Enter') event.currentTarget.blur();
                   if (event.key === 'Escape') {
                     event.preventDefault();
-                    const empty = { hours: '', minutes: '', seconds: '' };
+                    const empty = { hours: '', minutes: '' };
                     setParts(empty);
                     onChange(null);
                   }
@@ -651,14 +650,14 @@ export default function ComponentViewPage() {
                   Working hours are Monday to Friday, 07:00-19:00 UK time. The current UK time is {componentAccess.currentTimeLabel}.
                   Your activity time will continue to be calculated automatically. Confirm the declaration below before completing this component.
                 </p>
-                <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-xl border border-amber-200 bg-white/75 px-3 py-2.5 text-xs font-semibold leading-5 text-amber-950">
+                <label className="mt-3 flex min-h-14 cursor-pointer items-center gap-3 rounded-xl border border-amber-200 bg-white/75 px-4 py-3">
                   <input
                     type="checkbox"
                     checked={outsideWorkingHoursConfirmed}
                     onChange={event => setOutsideWorkingHoursConfirmed(event.target.checked)}
-                    className="mt-0.5 h-4 w-4 shrink-0 accent-amber-700"
+                    className="m-0 h-4 w-4 shrink-0 accent-amber-700"
                   />
-                  <span>I confirm that I completed this activity outside UK working hours.</span>
+                  <span className="min-w-0 text-sm font-medium leading-6 tracking-normal text-amber-950">I confirm that I completed this activity outside UK working hours.</span>
                 </label>
               </div>
             </div>
