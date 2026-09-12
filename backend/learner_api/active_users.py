@@ -1579,6 +1579,9 @@ def _fetch_ksb_items_from_profile_source(profile_source_id):
     profile_source_id = _clean_ksb_profile_source_id(profile_source_id)
     if not profile_source_id:
         return []
+    if profile_source_id.lower().startswith("standard:"):
+        from curriculum_api.views import standard_required_ksbs
+        return _coerce_ksb_items(standard_required_ksbs(profile_source_id.split(":", 1)[1]))
     try:
         # Savepointed: see the note above _fetch_ksb_items_for_programme.
         with transaction.atomic(using="enrolment"), connections["enrolment"].cursor() as cursor:
@@ -1600,9 +1603,6 @@ def _fetch_ksb_items(programme, training_plan=None):
     programme_id = _resolve_programme_id(programme, training_plan=training_plan)
     if not programme and not programme_id:
         return []
-    items = _fetch_ksb_items_for_programme(programme_id, programme)
-    if items:
-        return items
     profile_source_id = _resolve_ksb_profile_source_id(
         programme_id=programme_id,
         programme=programme,
@@ -1612,6 +1612,9 @@ def _fetch_ksb_items(programme, training_plan=None):
         items = _fetch_ksb_items_from_profile_source(profile_source_id)
         if items:
             return items
+    items = _fetch_ksb_items_for_programme(programme_id, programme)
+    if items:
+        return items
     items = _fetch_ksb_items_from_plan_mappings(
         programme_id=programme_id,
         programme=programme,
