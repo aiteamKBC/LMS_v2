@@ -14,6 +14,20 @@ beforeEach(() => { fixture.routes.splice(0); });
 afterEach(() => vi.restoreAllMocks());
 
 describe('learner navigation through AppRoutes', () => {
+  it.each([
+    ['/learner/my-learning', 'Loading page'],
+    ['/old-otjh/months', 'Loading monthly records'],
+    ['/old-otjh/months/7', 'Loading monthly report'],
+  ])('preserves the destination shell while initially loading %s', (path, label) => {
+    const Pending = lazyRoute(() => new Promise<{ default: () => ReactNode }>(() => {}));
+    fixture.routes.push({ path, element: <Pending /> });
+    render(<MemoryRouter initialEntries={[path]}><AppRoutes /></MemoryRouter>);
+    expect(screen.getByLabelText(label)).toHaveAttribute('aria-busy', 'true');
+    if (path.startsWith('/learner/')) {
+      expect(screen.getByLabelText(label)).toHaveAttribute('data-workspace-role', 'learner');
+    }
+  });
+
   it('keeps the current page and access layout mounted while the next chunk loads', async () => {
     let finish!: (module: { default: () => ReactNode }) => void;
     const Next = lazyRoute(() => new Promise<{ default: () => ReactNode }>(resolve => { finish = resolve; }));

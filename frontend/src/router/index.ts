@@ -1,7 +1,7 @@
 import { Suspense, createElement, useEffect } from "react";
 import { useLocation, useNavigate, useRoutes, type NavigateFunction } from "react-router-dom";
 import { RouteErrorBoundary } from "@/components/feature/RouteErrorBoundary";
-import { PageSkeleton } from "@/components/feature/Skeletons";
+import { RouteLoadingSkeleton } from "@/components/feature/RouteLoadingSkeleton";
 import { useAuth } from "@/hooks/useAuth";
 import routes from "./config";
 import { installLearnerRoutePreloading } from './preload';
@@ -22,12 +22,10 @@ export const navigatePromise = new Promise<NavigateFunction>((resolve) => {
 // Every route in config.tsx is lazy(), so this is what the whole site shows
 // between a click and the page's chunk arriving. It used to be a pulsing dot
 // beside the words "Loading workspace" — honest, but it threw the layout away
-// and rebuilt it, which reads as a page flash on every navigation. PageSkeleton
-// holds the shape instead: rail, breadcrumb, header, content.
+// and rebuilt it, which reads as a page flash on every navigation.
+// RouteLoadingSkeleton preserves the shell for the destination route.
 function RouteLoadingFallback() {
-  const { pathname } = useLocation();
-  const learnerRoute = pathname === '/learner' || pathname.startsWith('/learner/') || pathname.startsWith('/workspace/learner');
-  return createElement(PageSkeleton, { workspaceRole: learnerRoute ? 'learner' : undefined });
+  return createElement(RouteLoadingSkeleton);
 }
 
 export function AppRoutes() {

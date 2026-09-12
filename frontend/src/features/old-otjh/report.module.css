@@ -78,6 +78,33 @@
 .document { font-size: 11px; }
 .modalIntro { animation: reveal 180ms ease-out; }
 @keyframes reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Keep report tables on the journal's navy palette when the workspace theme
+   applies its default purple table treatment. */
+:global(body.dashboard-theme .workspace-main) .activityLog table.activityTable > thead > tr > th,
+:global(body.dashboard-theme .workspace-main) .signoff table.signTable > thead > tr > th {
+  background: #a4adb7 !important;
+  color: #263f54 !important;
+}
+
+:global(body.dashboard-theme .workspace-main) .activityLog table.activityTable > tbody > .groupRow > th {
+  background: #eef0f1 !important;
+  color: #304a61 !important;
+}
+
+/* The theme wrapper is not always mounted on body (it can be a root div), so
+   keep a wrapper-agnostic rule as well. */
+:global(.dashboard-theme .workspace-main) table.activityTable thead th,
+:global(.dashboard-theme .workspace-main) table.signTable thead th {
+  background: #a4adb7 !important;
+  color: #263f54 !important;
+}
+
+:global(html body .dashboard-theme .workspace-main) table.activityTable thead th,
+:global(html body .dashboard-theme .workspace-main) table.signTable thead th {
+  background: #a4adb7 !important;
+  color: #263f54 !important;
+}
 @media (prefers-reduced-motion: reduce) { .modalIntro { animation: none; } }
 @media (max-width: 1023px) {
   /* The workspace's generic tables have a minimum width and fixed cell
