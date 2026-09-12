@@ -1,0 +1,33 @@
+[
+  {
+    "contract_id": 5236,
+    "learner_id": 3665,
+    "sha256": "c5187f6deb95b760b2062576703ed1503e2f2144587eaaf19afa50e634417221",
+    "planned_hours": "396.00",
+    "source": "reviewed-learning-plan-table",
+    "document_type": "docx",
+    "verification": "The Learning Plan total in the original DOCX XML and its rendered page 26 is 396. Numeric activity cells in tables 3-6 sum to 386. The continuation paragraph between tables 4 and 5 contains the remaining 10-hour activity dated 14/05/2026. The introductory activity has zero hours. No ILR or minimum-hours value was used.",
+    "table_cell_hours": [10, 8, 0, 10, 10, 8, 0, 10, 10, 8, 0, 10, 10, 8, 0, 10, 10, 8, 10, 10, 8, 10, 10, 8, 10, 8, 10, 10, 8, 10, 10, 8, 8, 10, 10, 10, 8, 8, 10, 8, 8, 10, 10, 8, 8, 10],
+    "continuation_activity_hours": 10,
+    "printed_total": 396
+  },
+  {
+    "contract_id": 6083,
+    "learner_id": 6310,
+    "sha256": "6366c18d1d09405ad12542696a6e4c7c302345053f7d093ff0c747d32a85d696",
+    "planned_hours": "839.00",
+    "source": "reviewed-learning-plan-table",
+    "document_type": "scanned-pdf",
+    "verification": "Visually reviewed all Learning Plan pages 8-14. The 95 activity rows sum to the printed OTJ Total (hr) of 839 on page 14. Empty optional Additional Job Activity cells carry no planned hours. The adjacent EM total of zero, ILR hours and minimum-hours section are excluded.",
+    "page_activity_hours": {
+      "8": [0, 5, 10, 13, 12, 10, 13],
+      "9": [12, 10, 13, 12, 10, 13, 12, 10, 13, 12, 10, 12, 13, 7, 13],
+      "10": [12, 12, 12, 13, 0, 10, 12, 13, 0, 10, 12, 13, 0],
+      "11": [5, 12, 13, 0, 10, 12, 13, 0, 10, 12, 13, 0, 12, 13, 13, 0, 7, 8],
+      "12": [10, 0, 2, 8, 10, 0, 10, 12, 13, 0, 12, 13, 13, 0, 5, 12, 13],
+      "13": [0, 5, 13, 12, 0, 12, 13, 12, 0, 10, 13, 12, 0, 10, 13, 12, 13],
+      "14": [0, 5, 13, 12, 0, 0, 7, 12]
+    },
+    "printed_total": 839
+  }
+]

@@ -290,12 +290,12 @@ export default function ComponentViewPage() {
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
-    fetchLearnerDetail(kind as LearnerKind, id)
+    fetchLearnerDetail(kind as LearnerKind, id, { componentId })
       .then((d) => { if (!cancelled) setDetail(d); })
       .catch((e) => { if (!cancelled) setLoadError(e instanceof Error ? e.message : 'Could not load component'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [kind, id]);
+  }, [kind, id, componentId]);
 
   // Keep completion state derived from the same progress records used by the
   // learner journey. This is also needed by the sidebar's done counts.
@@ -602,7 +602,7 @@ export default function ComponentViewPage() {
       setTimeSource(usesManualTimeOnly ? 'input' : 'timer');
       // A refresh failure after a committed completion must not invite the
       // learner to submit the same timing session again.
-      const refreshed = await fetchLearnerDetail(kind as LearnerKind, id).catch(error => {
+      const refreshed = await fetchLearnerDetail(kind as LearnerKind, id, { componentId }).catch(error => {
         if (!options.stayOnPage) throw error;
         return detail;
       });
@@ -1683,6 +1683,8 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
   );
 }
 
+type PdfHighlight = { x: number; y: number; width: number; height: number };
+
 function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotationKey, allowAnnotatedDownload }: {
   url: string;
   title: string;
@@ -2293,7 +2295,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
 
     return (
       <div className="overflow-hidden rounded-2xl border border-primary-200 bg-white shadow-sm">
-        <div className="bg-[linear-gradient(135deg,#5b21b6_0%,#6d28d9_55%,#2563eb_100%)] p-6 text-white">
+        <div className="bg-primary-500 p-6 text-white">
           <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-start gap-4">
               <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-white/15 ring-1 ring-white/20">

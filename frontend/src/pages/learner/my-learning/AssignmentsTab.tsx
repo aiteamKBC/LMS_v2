@@ -1,3 +1,4 @@
+import { readLearnerJson } from '@/api/learnerRead';
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Panel } from '@/components/ui/Panel';
@@ -34,10 +35,9 @@ export function AssignmentsTab({ kind, id }: { kind?: string; id?: string }) {
     const controller = new AbortController();
     setRows([]); setLoading(true); setError('');
     const query = new URLSearchParams({ learnerKind: kind, learnerId: id, view: 'assignments' });
-    fetch(`/learner_api/reflection/submissions/?${query}`, { signal: controller.signal })
-      .then(async response => {
-        const data = await response.json();
-        if (!response.ok || !Array.isArray(data.assignments)) throw new Error(data.error || 'Could not load assignments.');
+    readLearnerJson<{ assignments: Assignment[] }>(`/learner_api/reflection/submissions/?${query}`, { signal: controller.signal })
+      .then(data => {
+        if (!Array.isArray(data.assignments)) throw new Error('Could not load assignments.');
         if (!controller.signal.aborted) setRows(data.assignments);
       })
       .catch(err => { if (!controller.signal.aborted) setError(err instanceof Error ? err.message : 'Could not load assignments.'); })

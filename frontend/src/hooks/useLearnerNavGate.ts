@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
-import { fetchLearnerDetail } from '@/api/learnerDetail';
+import { fetchLearnerSummary } from '@/api/learnerDetail';
 import { getRememberedLearner, rememberLearner } from './useMyLearner';
-import { isDeliveryStatus, navItemsForStatus } from './useOnboardingRedirect';
+import { isDeliveryStatus, navItemsForLearnerKind, navItemsForStatus } from './useOnboardingRedirect';
 
 // ============================================================================
 // Restricts the learner sidebar to match their programme status.
@@ -90,7 +90,7 @@ export function syncLearnerStatus(
   listeners.forEach((notify) => notify());
 }
 
-export function useLearnerNavGate(role: string, navItems: SidebarNavItem[]): SidebarNavItem[] {
+export function useLearnerNavGate(role: string, navItems: SidebarNavItem[], reviewingLearner = false): SidebarNavItem[] {
   const learner = role === 'learner' ? getRememberedLearner() : null;
   const cacheKey = learner ? `${learner.kind}:${learner.id}` : '';
   const [status, setStatus] = useState<string | null>(
@@ -126,7 +126,7 @@ export function useLearnerNavGate(role: string, navItems: SidebarNavItem[]): Sid
       }
     }
     let cancelled = false;
-    fetchLearnerDetail(learner.kind, learner.id)
+    fetchLearnerSummary(learner.kind, learner.id)
       .then((detail) => {
         // A learner account used to be remembered as apprenticeship by default.
         // Trust the API's stored learner type and repair that stale browser
@@ -162,6 +162,10 @@ export function useLearnerNavGate(role: string, navItems: SidebarNavItem[]): Sid
 
   // Not a learner — the gate doesn't apply.
   if (!learner) return navItems;
+  // Staff can review programme pages at every stage from any learner page.
+  // Learner-type rules still apply: commercial enrolment would simply redirect
+  // back to Dashboard and must not appear as a second destination.
+  if (reviewingLearner) return navItemsForLearnerKind(navItems, learner.kind);
   // First visit of the session, status still in flight. An empty rail for that
   // moment is honest; showing the full menu would be showing the wrong one, and
   // an onboarding learner would see it visibly collapse once the status lands.

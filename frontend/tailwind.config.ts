@@ -1,3 +1,24 @@
+import defaultColors from 'tailwindcss/colors';
+
+// Learner pages use the journal palette, including legacy utility colours.
+// Fallbacks preserve Tailwind's exact colours in every other workspace.
+const learnerColorRoles = {
+  slate: 'neutral', gray: 'neutral', zinc: 'neutral', neutral: 'neutral', stone: 'neutral',
+  blue: 'navy', indigo: 'navy', sky: 'navy', cyan: 'navy',
+  purple: 'purple', violet: 'purple', fuchsia: 'purple', pink: 'purple',
+  green: 'success', emerald: 'success', teal: 'success', lime: 'success',
+  red: 'danger', rose: 'danger', orange: 'warning', amber: 'warning', yellow: 'warning',
+} as const;
+
+const learnerUtilityColors = Object.fromEntries(
+  Object.entries(learnerColorRoles).map(([family, role]) => [family, Object.fromEntries(
+    Object.entries(defaultColors[family as keyof typeof learnerColorRoles]).map(([shade, hex]) => {
+      const rgb = hex.slice(1).match(/.{2}/g)!.map(value => parseInt(value, 16)).join(' ');
+      return [shade, `rgb(var(--learner-${role}-${shade}, ${rgb}) / <alpha-value>)`];
+    }),
+  )]),
+);
+
 /** @type {import('tailwindcss').Config} */
 export default {
     content: [
@@ -7,6 +28,7 @@ export default {
     theme: {
       extend: {
         colors: {
+          ...learnerUtilityColors,
           background: {
             DEFAULT: 'oklch(var(--llp-background, var(--background-50)) / <alpha-value>)',
             50: 'oklch(var(--background-50) / <alpha-value>)',

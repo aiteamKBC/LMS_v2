@@ -1,3 +1,4 @@
+import { readLearnerJson } from './learnerRead';
 // ============================================================================
 // Individual Learner Record API client
 //
@@ -51,7 +52,7 @@ async function readJson<T>(res: Response): Promise<T> {
 }
 
 export async function fetchIlrDocument(learnerId: string | number): Promise<IlrResponse> {
-  return readJson(await fetch(`${BASE}/${learnerId}/`, { credentials: 'include' }));
+  return readLearnerJson(`${BASE}/${learnerId}/`);
 }
 
 /** Issue the ILR, freezing the current details and answers onto a new row. */

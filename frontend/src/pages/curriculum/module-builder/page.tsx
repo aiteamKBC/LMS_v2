@@ -315,6 +315,9 @@ export default function ModuleBuilder() {
   const [pendingComponentSelection, setPendingComponentSelection] = useState<{ weekId: string; componentId: string } | null>(null);
   const [reusePickerWeekId, setReusePickerWeekId] = useState<string | null>(null);
   const [weekTemplateImportOpen, setWeekTemplateImportOpen] = useState(false);
+  // Which week a picked template should be added to. Null means the picker was
+  // opened from the module header, where a template still becomes a new week.
+  const [weekTemplateTargetWeekId, setWeekTemplateTargetWeekId] = useState<string | null>(null);
   const [bulkTeamsMeetingOpen, setBulkTeamsMeetingOpen] = useState(false);
   const [ksbTarget, setKsbTarget] = useState<KsbTarget | null>(null);
   const [ksbMapModule, setKsbMapModule] = useState<ModuleBuilderListItem | null>(null);
@@ -1243,6 +1246,46 @@ export default function ModuleBuilder() {
     setWeekTemplateImportOpen(false);
   }, [updateWorkingModule]);
 
+  // Add a template's components to a week that already exists, keeping whatever
+  // is in it. Appended, not replaced: a template is a set of lessons to drop in
+  // beside the ones already authored, and picking one should never quietly
+  // discard a week's existing work.
+  //
+  // Every component is given a fresh id and rebound to this week, exactly as
+  // importing a template as a new week does -- reusing the template's own ids
+  // would make two modules claim the same component.
+  const addWeekTemplateToWeek = useCallback((weekId: string, template: WeekTemplate) => {
+    if (!workingModule) return;
+    const week = workingModule.weekStructure.find(item => item.id === weekId);
+    if (!week) return;
+    const copies = (template.components || []).map(component => ({
+      ...component,
+      id: makeAuthoringId('component'),
+      weekId: week.id,
+      ksbMappings: (component.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
+    }));
+    const lastComponent = copies.at(-1);
+    updateWorkingModule(module => ({
+      ...module,
+      weekStructure: module.weekStructure.map(item => {
+        if (item.id !== weekId) return item;
+        return {
+          ...item,
+          // The week keeps its own title and summary. Only the KSB mappings are
+          // merged, because those describe the components being added.
+          components: [...item.components, ...copies],
+          ksbMappings: [
+            ...(item.ksbMappings || []),
+            ...(template.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
+          ],
+        };
+      }),
+    }));
+    setWeekTemplateImportOpen(false);
+    setWeekTemplateTargetWeekId(null);
+    if (lastComponent) openAddedComponent(weekId, lastComponent.id);
+  }, [openAddedComponent, updateWorkingModule, workingModule]);
+
   // Copy components chosen from the reuse library into an existing week. The
   // copies land in client state and are persisted by the normal module save -
   // a per-component write would be undone by it, because saving re-upserts the
@@ -1810,6 +1853,7 @@ export default function ModuleBuilder() {
                     setLessonPickerWeekId(selectedWeek.id);
                   }}
                   onReuseComponents={() => setReusePickerWeekId(selectedWeek.id)}
+                  onAddFromTemplate={() => { setWeekTemplateTargetWeekId(selectedWeek.id); setWeekTemplateImportOpen(true); }}
                 />
               ) : (
                 <EmptyEditor onAddWeek={() => {
@@ -1920,8 +1964,23 @@ export default function ModuleBuilder() {
         {weekTemplateImportOpen && workingModule && (
           <WeekTemplateImportModal
             scope={{ programmeId: workingModule.programmeId, programmeName: workingModule.programmeName }}
-            onClose={() => setWeekTemplateImportOpen(false)}
-            onImport={importWeekTemplateAsNewWeek}
+            // Named so the dialog can say where the components will land, which
+            // is the whole difference between the two ways in.
+            targetWeekLabel={(() => {
+              if (!weekTemplateTargetWeekId) return '';
+              const week = workingModule.weekStructure.find(item => item.id === weekTemplateTargetWeekId);
+              return week ? weekPlacementLabel(week, ' — ') : '';
+            })()}
+            existingComponentCount={(() => {
+              if (!weekTemplateTargetWeekId) return 0;
+              const week = workingModule.weekStructure.find(item => item.id === weekTemplateTargetWeekId);
+              return week?.components.length ?? 0;
+            })()}
+            onClose={() => { setWeekTemplateImportOpen(false); setWeekTemplateTargetWeekId(null); }}
+            onImport={template => {
+              if (weekTemplateTargetWeekId) addWeekTemplateToWeek(weekTemplateTargetWeekId, template);
+              else importWeekTemplateAsNewWeek(template);
+            }}
           />
         )}
         {/* Bulk "Create all Teams meetings": the same create form a single live
@@ -3099,12 +3158,13 @@ function LoadingProgressBar({ tone = 'primary', complete }: { tone?: 'primary' |
 // different: it copies real authored components out of the library instead
 // of creating empty ones. The only saved-template control on this screen is
 // "From template" in the Course structure rail, which builds a whole new week.
-function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson, onReuseComponents }: {
+function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson, onReuseComponents, onAddFromTemplate }: {
   week: ModuleWeek;
   onChange: (updates: Partial<ModuleWeek>) => void;
   onOpenSessionKsbMapping?: () => void;
   onAddLesson: () => void;
   onReuseComponents: () => void;
+  onAddFromTemplate: () => void;
 }) {
   const totalOtjh = week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
 
@@ -3122,6 +3182,14 @@ function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson,
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          {/* Adds a template's components to THIS week, beside whatever is
+              already in it. The module header's own template button still
+              creates a whole new week — both ways in are useful, and which one
+              you get follows from where you pressed. */}
+          <button onClick={onAddFromTemplate} title="Add a saved week template's components to this week" className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100">
+            <AppIcon className="ri-layout-masonry-line"></AppIcon>
+            From template
+          </button>
           <button onClick={onReuseComponents} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100">
             <AppIcon className="ri-file-copy-line"></AppIcon>
             Reuse
@@ -3324,6 +3392,25 @@ function TypeSpecificFields({
       setUploadError(err instanceof Error ? err.message : 'Unable to upload file.');
     } finally {
       setUploadingResource(false);
+    }
+  };
+
+  // Mirror of handleResourceUpload: clears exactly the keys an upload writes so
+  // an author can drop a wrongly attached file without uploading a replacement.
+  const handleResourceRemove = (componentType: 'podcast' | 'powerpoint' | 'reading') => {
+    setUploadError('');
+    onSettingChange('uploadedFileName', '');
+    onSettingChange('uploadedFileUrl', '');
+    onSettingChange('uploadedFileSize', 0);
+    onSettingChange('uploadedFileContentType', '');
+    onSettingChange('uploadSource', '');
+    if (componentType === 'podcast') {
+      onSettingChange('podcastUrl', '');
+    } else if (componentType === 'powerpoint') {
+      onSettingChange('fileName', '');
+      onSettingChange('presentationUrl', '');
+    } else if (componentType === 'reading') {
+      onSettingChange('resourceUrl', '');
     }
   };
 
@@ -3530,6 +3617,7 @@ function TypeSpecificFields({
           uploading={uploadingResource}
           error={uploadError}
           onUpload={file => handleResourceUpload(file, 'podcast')}
+          onRemove={() => handleResourceRemove('podcast')}
         />
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <NumberInput label="Duration in minutes" value={getNumber('durationMinutes')} min={0} step={1} onChange={value => onSettingChange('durationMinutes', value)} />
@@ -3562,6 +3650,7 @@ function TypeSpecificFields({
             uploading={uploadingResource}
             error={uploadError}
             onUpload={file => handleResourceUpload(file, 'reading')}
+            onRemove={() => handleResourceRemove('reading')}
           />
         )}
         <RichTextDraft label="Short description of the component" value={getString('shortDescription')} onChange={value => onSettingChange('shortDescription', value)} rows={5} compact />
@@ -3583,6 +3672,7 @@ function TypeSpecificFields({
           uploading={uploadingResource}
           error={uploadError}
           onUpload={file => handleResourceUpload(file, 'powerpoint')}
+          onRemove={() => handleResourceRemove('powerpoint')}
         />
       </EditorBlock>
     );
@@ -4857,16 +4947,16 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
     }, 250);
   };
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="w-full max-w-2xl rounded-2xl bg-background-50 shadow-2xl overflow-hidden" onClick={event => event.stopPropagation()}>
-        <div className="px-5 py-4 bg-primary-950 text-white flex items-center justify-between">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 backdrop-blur-sm p-2 sm:p-4" onClick={onClose}>
+      <div className="flex max-h-[calc(100dvh-2rem)] w-full min-w-0 max-w-3xl flex-col rounded-2xl bg-background-50 shadow-2xl overflow-hidden" onClick={event => event.stopPropagation()}>
+        <div className="shrink-0 px-4 py-3 sm:px-5 bg-primary-950 text-white flex items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-heading font-bold text-white">Choose KSBs</h3>
             <p className="mt-0.5 text-[10px] text-white/65">Previously added KSBs stay visible and cannot be selected twice.</p>
           </div>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20"><AppIcon className="ri-close-line"></AppIcon></button>
+          <button onClick={onClose} aria-label="Close KSB chooser" className="w-8 h-8 shrink-0 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20"><AppIcon className="ri-close-line"></AppIcon></button>
         </div>
-        <div className="p-5 space-y-4">
+        <div className="min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-5 space-y-3">
           <div className="space-y-3">
             {!sourceLocked ? (
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
@@ -4905,7 +4995,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                       onClick={() => setKsbTypeFilter(category.value)}
                       className={`rounded-xl border px-2 py-2.5 text-left transition-smooth ${active ? category.activeClass : 'border-background-200 bg-background-100 text-foreground-700 hover:border-primary-200 hover:bg-background-50'}`}
                     >
-                      <span className="flex items-center gap-2">
+                      <span className="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-2">
                         <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg text-[12px] font-black ${active ? 'bg-white/20 text-white' : category.iconClass}`}>{category.code}</span>
                         <span className="min-w-0">
                           <span className="block truncate text-[10px] font-black sm:text-[11px]">{category.label}</span>
@@ -4930,7 +5020,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
               </div>
             </div>
           )}
-          <div className="max-h-96 overflow-y-auto space-y-2">
+          <div className="space-y-2">
             {filteredKsbOptions.map(option => {
               const tone = ksbVisualTone(option.code, option.type);
               const alreadyAdded = existingMappingByOptionId.has(option.id);
@@ -4997,7 +5087,8 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
             {resolvedSelectedSource && !sourceKsbOptions.length && <EmptyState text="No KSBs are available for this selection." />}
             {resolvedSelectedSource && Boolean(sourceKsbOptions.length) && !filteredKsbOptions.length && <EmptyState text="No KSBs match your search or filter." />}
           </div>
-          <div className="flex items-center justify-between gap-3 border-t border-background-200 pt-3">
+        </div>
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-background-200 bg-background-50 px-3 py-3 sm:px-5">
             <p className="text-[11px] font-semibold text-foreground-500">
               {existingMappingByOptionId.size ? `${existingMappingByOptionId.size} already added · ` : ''}
               {selectedItems.length} new selected
@@ -5006,21 +5097,25 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
               type="button"
               disabled={!selectedItems.length || addingKsbs}
               onClick={handleAddSelectedKsbs}
-              className="h-9 rounded-lg bg-primary-500 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-foreground-200 disabled:text-foreground-400"
+              className="h-9 shrink-0 rounded-lg bg-primary-500 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-foreground-200 disabled:text-foreground-400"
             >
               {addingKsbs ? 'Adding...' : 'Add KSBs'}
             </button>
           </div>
-        </div>
       </div>
     </div>
   );
 }
 
-function WeekTemplateImportModal({ scope, onClose, onImport }: {
+function WeekTemplateImportModal({ scope, onClose, onImport, targetWeekLabel = '', existingComponentCount = 0 }: {
   scope: { programmeId: string; programmeName: string };
   onClose: () => void;
   onImport: (template: WeekTemplate) => void;
+  /** Set when the picker was opened from a week, empty when opened from the
+   *  module header. The two do different things — add to this week, or create a
+   *  new one — so the dialog says which is about to happen. */
+  targetWeekLabel?: string;
+  existingComponentCount?: number;
 }) {
   const [templates, setTemplates] = useState<WeekTemplate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -5055,8 +5150,17 @@ function WeekTemplateImportModal({ scope, onClose, onImport }: {
       <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-4 border-b border-background-200 px-5 py-4">
           <div>
-            <h3 className="font-heading text-[15px] font-bold text-foreground-950">Add a week from a template</h3>
-            <p className="mt-0.5 text-[11px] text-foreground-500">Copies the template's components into a new week in this module.</p>
+            <h3 className="font-heading text-[15px] font-bold text-foreground-950">
+              {targetWeekLabel ? 'Add template components to this week' : 'Add a week from a template'}
+            </h3>
+            <p className="mt-0.5 text-[11px] text-foreground-500">
+              {targetWeekLabel
+                ? `Copies the template's components into ${targetWeekLabel}`
+                  + (existingComponentCount
+                    ? `, keeping the ${existingComponentCount} already there.`
+                    : '.')
+                : "Copies the template's components into a new week in this module."}
+            </p>
           </div>
           <button type="button" onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg bg-background-100 text-foreground-500 hover:bg-background-200"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
         </div>
@@ -5779,6 +5883,7 @@ function ComponentResourceUpload({
   uploading,
   error,
   onUpload,
+  onRemove,
 }: {
   label: string;
   accept: string;
@@ -5788,8 +5893,17 @@ function ComponentResourceUpload({
   uploading: boolean;
   error: string;
   onUpload: (file: File) => void | Promise<void>;
+  // Clears the stored file without replacing it, for a file attached by mistake.
+  onRemove?: () => void;
 }) {
   const inputId = useMemo(() => `component-upload-${Math.random().toString(36).slice(2)}`, []);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const hasFile = Boolean(uploadedUrl || uploadedName);
+
+  // Don't leave a prompt open against a file that is already gone or replaced.
+  useEffect(() => {
+    if (!hasFile) setConfirmRemove(false);
+  }, [hasFile]);
   return (
     <div className="rounded-xl border border-background-200 bg-background-50 p-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -5799,12 +5913,20 @@ function ComponentResourceUpload({
             {uploadedName ? uploadedName : 'No file uploaded yet'}
             {uploadedSize > 0 && <span className="ml-2 text-foreground-400">{formatFileSize(uploadedSize)}</span>}
           </p>
-          {uploadedUrl && (
-            <a href={uploadedUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:text-primary-800">
-              <AppIcon className="ri-external-link-line"></AppIcon>
-              Open uploaded file
-            </a>
-          )}
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+            {uploadedUrl && (
+              <a href={uploadedUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:text-primary-800">
+                <AppIcon className="ri-external-link-line"></AppIcon>
+                Open uploaded file
+              </a>
+            )}
+            {onRemove && hasFile && !confirmRemove && (
+              <button type="button" disabled={uploading} onClick={() => setConfirmRemove(true)} className="inline-flex items-center gap-1 text-[11px] font-bold text-red-600 hover:text-red-700 disabled:opacity-50">
+                <AppIcon className="ri-delete-bin-line"></AppIcon>
+                Remove file
+              </button>
+            )}
+          </div>
         </div>
         <div className="shrink-0">
           <input
@@ -5829,6 +5951,23 @@ function ComponentResourceUpload({
         <AppIcon className="ri-information-line shrink-0"></AppIcon>
         Maximum file size: {COMPONENT_UPLOAD_MAX_LABEL}.
       </p>
+      {onRemove && confirmRemove && (
+        <div className="mt-2 flex flex-col gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="flex min-w-0 items-start gap-1.5 text-[11px] font-semibold text-red-700">
+            <AppIcon className="ri-error-warning-line mt-0.5 shrink-0"></AppIcon>
+            <span>Remove this file from the component? The component keeps its other details and you can upload a new file later.</span>
+          </p>
+          <div className="flex shrink-0 items-center gap-2">
+            <button type="button" onClick={() => setConfirmRemove(false)} className="inline-flex h-8 items-center justify-center rounded-md border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 hover:bg-background-100">
+              Cancel
+            </button>
+            <button type="button" onClick={() => { setConfirmRemove(false); onRemove(); }} className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-red-600 px-3 text-[11px] font-bold text-white hover:bg-red-700">
+              <AppIcon className="ri-delete-bin-line !text-white"></AppIcon>
+              Remove file
+            </button>
+          </div>
+        </div>
+      )}
       {error && <p className="mt-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">{error}</p>}
     </div>
   );

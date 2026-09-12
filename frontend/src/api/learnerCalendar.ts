@@ -1,10 +1,11 @@
+import { createCachedResource } from './cachedRequest';
+import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
 import type { CoachMeetingArtifactsResponse } from '@/pages/coach/shared/calendarEvents';
 
 const BASE = '/learner_api/calendar';
-const CACHE_TTL_MS = 30_000;
-const calendarCache = new Map<string, { data: LearnerCalendarResponse; expiresAt: number }>();
-const calendarRequests = new Map<string, Promise<LearnerCalendarResponse>>();
+const calendarResource = createCachedResource<LearnerCalendarResponse>('learner-calendar', key =>
+  readLearnerJson(`${BASE}/${key.replace(':', '/')}/`));
 
 export interface LearnerCalendarEvent {
   id: string;
@@ -51,6 +52,7 @@ export interface BookingCalendarRules {
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  if (!init?.method || init.method.toUpperCase() === 'GET') return readLearnerJson<T>(url, init);
   let res: Response;
   try {
     res = await fetch(url, { ...init, headers: { 'Content-Type': 'application/json', ...init?.headers } });
@@ -72,32 +74,13 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export function invalidateLearnerCalendarCache(kind?: LearnerKind, id?: string): void {
-  if (kind && id) {
-    calendarCache.delete(`${kind}:${id}`);
-    calendarRequests.delete(`${kind}:${id}`);
-    return;
-  }
-  calendarCache.clear();
-  calendarRequests.clear();
+  calendarResource.invalidate(kind && id ? `${kind}:${id}` : undefined);
+  invalidateLearnerReads();
 }
 
 export function fetchLearnerCalendarEvents(kind: LearnerKind, id: string, options: { force?: boolean } = {}): Promise<LearnerCalendarResponse> {
-  const key = `${kind}:${id}`;
   if (options.force) invalidateLearnerCalendarCache(kind, id);
-  const cached = calendarCache.get(key);
-  if (!options.force && cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.data);
-
-  const pending = calendarRequests.get(key);
-  if (pending) return pending;
-
-  const promise = request<LearnerCalendarResponse>(`${BASE}/${kind}/${id}/`)
-    .then((data) => {
-      if (calendarRequests.get(key) === promise) calendarCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
-      return data;
-    })
-    .finally(() => { if (calendarRequests.get(key) === promise) calendarRequests.delete(key); });
-  calendarRequests.set(key, promise);
-  return promise;
+  return calendarResource.read(`${kind}:${id}`);
 }
 
 export function fetchLearnerMeetingArtifacts(kind: LearnerKind, learnerId: string, eventKey: string, signal?: AbortSignal): Promise<CoachMeetingArtifactsResponse> {
@@ -295,6 +278,7 @@ export interface CalendarBusySlot {
 }
 
 async function calendarConnectionRequest<T>(url: string, init?: Parameters<typeof fetch>[1]): Promise<T> {
+  if (!init?.method || init.method.toUpperCase() === 'GET') return readLearnerJson<T>(url, init);
   let response: Response;
   try {
     response = await fetch(url, { ...init, headers: { 'Content-Type': 'application/json', ...init?.headers } });

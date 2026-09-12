@@ -12,6 +12,7 @@ import { clearCoachViewAs, syncCoachViewAsAccount } from '@/lib/coachViewAs';
 import { clearTutorViewAs, syncTutorViewAsAccount } from '@/lib/tutorViewAs';
 import { installSessionExpiryHandler, resetSessionExpiryNotice } from '@/lib/sessionExpiry';
 import { useToastOptional } from '@/hooks/useToast';
+import { clearAllCachedResources } from '@/api/cachedRequest';
 
 // ============================================================
 // Types
@@ -37,6 +38,9 @@ export interface RbacContextValue {
   logout: () => void;
   /** False until the initial `/login_api/me/` call has settled. */
   isInitialized: boolean;
+  /** A failed lookup does not mean the session has ended. */
+  initializationError: string | null;
+  retryInitialization: () => void;
   /**
    * Enter a workspace as one of the mock demo accounts, with no server session.
    *
@@ -73,6 +77,7 @@ const AuthContext = createContext<RbacContextValue | null>(null);
 // ============================================================
 
 const AUTH_STORAGE_KEY = 'kbc_auth_email';
+let cachedIdentity: string | null = null;
 
 /**
  * Backend role -> RBAC role ids in `@/mocks/rbac`.
@@ -93,6 +98,9 @@ const ROLE_TO_RBAC_IDS: Record<Role, string[]> = {
 
 /** Build the local AuthState from a server account record. */
 function stateFromAccount(account: AuthUser): AuthState {
+  const identity = JSON.stringify([account.id, account.role, account.access, account.subjectType, account.subjectId, account.learnerType]);
+  if (identity !== cachedIdentity) clearAllCachedResources();
+  cachedIdentity = identity;
   // A learner's own pages (/workspace/learner and the paramless /learner/*
   // routes) resolve through the "remembered learner". Pin it to the account
   // that just signed in — otherwise a learner is shown whichever record was
@@ -193,6 +201,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // server. Routes must wait for this rather than briefly rendering as
   // signed-out and bouncing an authenticated user to /login.
   const [isInitialized, setIsInitialized] = useState(false);
+  const [initializationError, setInitializationError] = useState<string | null>(null);
+  const [initializationAttempt, setInitializationAttempt] = useState(0);
+  const retryInitialization = useCallback(() => {
+    setIsInitialized(false);
+    setInitializationError(null);
+    setInitializationAttempt(attempt => attempt + 1);
+  }, []);
 
   // Resolve the session cookie into an identity on mount.
   useEffect(() => {
@@ -200,17 +215,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void (async () => {
       try {
         const account = await apiMe();
-        if (!cancelled) setAuth(account ? stateFromAccount(account) : SIGNED_OUT);
+        if (!cancelled) {
+          if (!account) { clearAllCachedResources(); cachedIdentity = null; }
+          setAuth(account ? stateFromAccount(account) : SIGNED_OUT);
+          setInitializationError(null);
+        }
       } catch {
-        // A network/server failure is not proof of being signed out, but it is
-        // the only safe assumption to render on: protected data will 401 anyway.
-        if (!cancelled) setAuth(SIGNED_OUT);
+        // Keep protected content closed, but let the user retry the existing
+        // cookie instead of sending them to sign in during a server outage.
+        if (!cancelled) setInitializationError('We could not check your session. Check your connection and try again.');
       } finally {
         if (!cancelled) setIsInitialized(true);
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [initializationAttempt]);
 
   // A 401 from a gated API *suggests* the session this browser holds is gone —
   // expired, revoked, the account deactivated, or signed out elsewhere. Before
@@ -281,6 +300,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem(AUTH_STORAGE_KEY);
         clearCoachViewAs();
         clearTutorViewAs();
+        clearAllCachedResources();
+        cachedIdentity = null;
         setAuth(SIGNED_OUT);
         toast?.warning(
           'Your session has ended',
@@ -304,6 +325,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const handleStorage = (e: StorageEvent) => {
       if (e.key !== AUTH_STORAGE_KEY) return;
       if (e.newValue === null) {
+        clearAllCachedResources();
+        cachedIdentity = null;
         setAuth(SIGNED_OUT);
         return;
       }
@@ -321,6 +344,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Re-arm the expiry notice: this browser has a live session again.
     resetSessionExpiryNotice();
     setAuth(stateFromAccount(account));
+    setInitializationError(null);
+    setIsInitialized(true);
     localStorage.setItem(AUTH_STORAGE_KEY, account.email);
     return account;
   }, []);
@@ -345,6 +370,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    clearAllCachedResources();
+    cachedIdentity = null;
     void clearChatSession();
     // Revoke server-side first so the session dies even if this tab is closed
     // before navigation completes; the local state is cleared regardless.
@@ -484,6 +511,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     login,
     logout,
     isInitialized,
+    initializationError,
+    retryInitialization,
     previewAs,
     switchTenant,
     switchRole,
@@ -493,7 +522,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     getPermissionLevel,
     getPermissionScope,
     isAdmin: isAdminVal,
-  }), [auth, login, logout, isInitialized, previewAs, switchTenant, switchRole, hasPermission, canAccessRoute, canSeeNavItem, getPermissionLevel, getPermissionScope, isAdminVal]);
+  }), [auth, login, logout, isInitialized, initializationError, retryInitialization, previewAs, switchTenant, switchRole, hasPermission, canAccessRoute, canSeeNavItem, getPermissionLevel, getPermissionScope, isAdminVal]);
 
   return (
     <AuthContext.Provider value={value}>

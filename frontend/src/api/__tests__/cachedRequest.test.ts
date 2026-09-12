@@ -19,6 +19,32 @@ afterEach(() => {
 });
 
 describe('createCachedResource', () => {
+  it('revalidates a fresh snapshot once for concurrent background readers', async () => {
+    let finish!: (value: string) => void;
+    const fetcher = vi.fn().mockResolvedValueOnce('old').mockImplementationOnce(() => new Promise<string>(resolve => { finish = resolve; }));
+    const resource = createCachedResource('background-refresh', fetcher);
+    await resource.read('125');
+    const first = resource.read('125', { revalidate: true });
+    const second = resource.read('125', { revalidate: true });
+    expect(first).toBe(second);
+    expect(resource.peek('125')).toBe('old');
+    finish('changed');
+    expect(await first).toBe('changed');
+    expect(resource.peek('125')).toBe('changed');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['invalidate', 'prime', 'force'] as const)('keeps a pending old read from overwriting %s', async action => {
+    let finish!: (value: string) => void;
+    const fetcher = vi.fn().mockImplementationOnce(() => new Promise<string>(resolve => { finish = resolve; })).mockResolvedValue('new');
+    const resource = createCachedResource<string>('race', fetcher);
+    const stale = resource.read('1');
+    if (action === 'invalidate') resource.invalidate('1');
+    if (action === 'prime') resource.prime('1', 'new');
+    await resource.read('1', { force: action === 'force' });
+    finish('old'); await stale;
+    expect(resource.peek('1')).toBe('new');
+  });
   it('makes one request when the same key is asked for twice at once', async () => {
     // Exactly the StrictMode double-mount: both callers ask before either lands.
     const fetcher = vi.fn().mockResolvedValue({ value: 'board' });

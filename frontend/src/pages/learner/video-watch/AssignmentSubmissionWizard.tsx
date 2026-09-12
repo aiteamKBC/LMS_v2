@@ -134,8 +134,12 @@ export function AssignmentSubmissionWizard({
   lockedRef.current = locked;
   const evidenceNames = evidenceFiles.map(file => file.filename);
   const cleanQuestionHtml = useMemo(
-    () => questionHtml ? DOMPurify.sanitize(questionHtml) : '',
-    [questionHtml],
+    () => {
+      // Older briefs can contain rich text in the plain-text API field.
+      const html = questionHtml || (/<[a-zA-Z][^>]*>/.test(questionText || '') ? questionText : '');
+      return html ? DOMPurify.sanitize(html) : '';
+    },
+    [questionHtml, questionText],
   );
 
   const payload = (mode: 'draft' | 'submit'): LearningReflectionSubmissionInput => ({
@@ -469,7 +473,7 @@ export function AssignmentSubmissionWizard({
                   )}
                 </div>
               </div>
-              <MonthlyAnswerField title={title} label="Your answer (at least 120 words; one point per line)" value={answers.assignmentAnswer} onChange={value => setAnswer('assignmentAnswer', value)} disabled={readOnly || submittingRef.current} rows={10} />
+              <MonthlyAnswerField title={title} label="Your answer (at least 120 words; one point per line)" value={answers.assignmentAnswer} onChange={value => setAnswer('assignmentAnswer', value)} disabled={readOnly || submittingRef.current} rows={10} minimumWords={120} onePointPerLine />
             </div>
           )}
 

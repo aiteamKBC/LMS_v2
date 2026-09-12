@@ -69,6 +69,10 @@ from learner_api.calendar_connections import (
 )
 from learner_api.learner_detail import refresh_learner_otjh_snapshot
 from learner_api.progress_rules import progress_record_counts_as_achieved
+from audit_api.last_audit_ledger_views import _connection as audit_connection
+from learner_api.student_activity_access import student_activity_available
+from learner_api.student_activity_data import read_audit_hour_totals_bulk, read_evidenced_ksb_counts_bulk
+from learner_api.attendance import fetch_kbc_attendance_rates
 from learner_api.teams_attendance import fetch_verified_teams_attendance_rows
 from curriculum_api.views import (
     actual_cohort_identity,
@@ -1390,6 +1394,28 @@ def find_learner_absence_relation(connection) -> str | None:
     return find_existing_relation(connection, LEARNER_ABSENCE_RELATION_CANDIDATES)
 
 
+def attach_caseload_source_rows(rows) -> None:
+    """Attach each profile's enrolment/commercial source row as `_caseload_source`.
+
+    The source row carries identity the LearnerProfile mirror does not -- the
+    schedule fields, and the `aptem_id` that bridges to the audit mirror. The
+    lookup is two batched queries for the whole caseload, not one per learner.
+    """
+    if not rows:
+        return
+    commercial_rows, enrolment_rows = fetch_source_schedule_rows(rows)
+    for row in rows:
+        setattr(
+            row,
+            "_caseload_source",
+            resolve_caseload_source_row(
+                row,
+                commercial_rows=commercial_rows,
+                enrolment_rows=enrolment_rows,
+            ),
+        )
+
+
 def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | SimpleNamespace]:
     requested_owner = normalize_email(owner_email)
     learner_alias = get_learner_db_alias()
@@ -1418,17 +1444,7 @@ def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | S
         for row in queryset
         if clean_text(row.username)
     ]
-    commercial_rows, enrolment_rows = fetch_source_schedule_rows(rows)
-    for row in rows:
-        setattr(
-            row,
-            "_caseload_source",
-            resolve_caseload_source_row(
-                row,
-                commercial_rows=commercial_rows,
-                enrolment_rows=enrolment_rows,
-            ),
-        )
+    attach_caseload_source_rows(rows)
     return rows
 
 
@@ -1738,6 +1754,186 @@ def learner_activity_feed_entries(row: LearnerProfile | SimpleNamespace, *, newe
     if callable(activity_reader):
         return [entry for entry in activity_reader(newest_first=newest_first) if isinstance(entry, dict)]
     return [entry for entry in list_or_empty(getattr(row, "activity_feed", [])) if isinstance(entry, dict)]
+
+
+def fetch_caseload_aptem_ids(learners) -> dict[int, int]:
+    """LearnerProfile id -> Aptem id, loading only the columns that needs.
+
+    ``fetch_source_schedule_rows`` answers the same identity question but
+    selects whole ``Created_users`` rows -- a very wide table -- because its
+    callers go on to read schedule fields. The audit lookups only need the
+    Aptem bridge, so this deferred-column variant keeps the dashboard's first
+    paint from paying for columns nobody reads.
+    """
+    profile_ids_by_email = {
+        normalize_email(getattr(learner, "email", "")): int(learner.id)
+        for learner in learners or []
+        if getattr(learner, "id", None) is not None
+        and normalize_email(getattr(learner, "email", ""))
+    }
+    if not profile_ids_by_email:
+        return {}
+    try:
+        source_rows = (
+            EnrolmentUser.all_learners.annotate(source_email_key=Lower(Trim("email")))
+            .filter(source_email_key__in=profile_ids_by_email)
+            .values_list("email", "aptem_id")
+        )
+        pairs = list(source_rows)
+    except DatabaseError as exc:
+        logger.warning("Could not resolve caseload Aptem ids: %s", exc)
+        return {}
+
+    aptem_by_profile: dict[int, int] = {}
+    for email, aptem_id in pairs:
+        profile_id = profile_ids_by_email.get(normalize_email(email))
+        if profile_id is None or not student_activity_available(aptem_id):
+            continue
+        aptem_by_profile[profile_id] = int(str(aptem_id).strip())
+    return aptem_by_profile
+
+
+def caseload_aptem_ids(rows) -> dict[int, int]:
+    """Map LearnerProfile id -> Aptem id for a caseload.
+
+    `aptem_id` is not on LearnerProfile; it comes off the enrolment/commercial
+    source row attached as `_caseload_source`. Learners with no Aptem link are
+    absent from the result, and their callers keep their existing figures.
+    """
+    aptem_by_profile: dict[int, int] = {}
+    unresolved = []
+    for row in rows or []:
+        profile_id = getattr(row, "id", None)
+        if profile_id is None:
+            continue
+        source_row = getattr(row, "_caseload_source", None)
+        if source_row is None:
+            # No source row attached (the dashboard path): resolve it below
+            # with the lean query rather than loading whole enrolment rows.
+            unresolved.append(row)
+            continue
+        raw = getattr(source_row, "aptem_id", None)
+        if not student_activity_available(raw):
+            continue
+        aptem_by_profile[int(profile_id)] = int(str(raw).strip())
+    if unresolved:
+        aptem_by_profile.update(fetch_caseload_aptem_ids(unresolved))
+    return aptem_by_profile
+
+
+def caseload_evidenced_ksb_counts(rows) -> dict[int, int]:
+    """Evidenced KSB counts for a caseload, keyed by LearnerProfile id.
+
+    The coach surfaces recompute KSB progress per learner from the curriculum
+    profile and every progress entry -- about a quarter-second each, which a
+    40-learner caseload cannot absorb, and which reads 0 for learners whose
+    evidence lives in the audit mirror rather than the LMS training plan. This
+    is the same audit KSB mapping the figure is drawn from there, in one query.
+    """
+    aptem_by_profile = caseload_aptem_ids(rows)
+    if not aptem_by_profile:
+        return {}
+    try:
+        with audit_connection().cursor() as cursor:
+            counts = read_evidenced_ksb_counts_bulk(cursor, aptem_by_profile.values())
+    except DatabaseError as exc:
+        # A display upgrade, not a dependency: the caseload still renders.
+        logger.warning("Could not read audit KSB counts for caseload: %s", exc)
+        return {}
+    return {
+        profile_id: counts[aptem_id]
+        for profile_id, aptem_id in aptem_by_profile.items()
+        if aptem_id in counts
+    }
+
+
+def caseload_audit_hour_totals(rows) -> dict[int, dict]:
+    """Whole-programme OTJ hours for a caseload, keyed by LearnerProfile id.
+
+    The coach surfaces used to quote `Learner.learners.completed_hours`, which
+    only counts time reflected against the LMS training plan. The learner's own
+    workspace shows the Audit figures instead (TP Planned from
+    "Last_audit".learners, LMS Actual from the accepted manual ledger), so a
+    coach and their learner were reading two different numbers for the same
+    thing. This pulls the learner-page figures for the whole caseload in one
+    query so both sides agree.
+
+    `aptem_id` is not on LearnerProfile; it comes off the enrolment source row
+    already attached as `_caseload_source` by fetch_caseload_learner_profiles.
+    Learners with no Aptem link, or with no row in the audit mirror, are absent
+    from the result and keep their existing figures.
+    """
+    aptem_by_profile = caseload_aptem_ids(rows)
+    if not aptem_by_profile:
+        return {}
+    try:
+        with audit_connection().cursor() as cursor:
+            totals = read_audit_hour_totals_bulk(cursor, aptem_by_profile.values())
+    except DatabaseError as exc:
+        # The caseload must still render on its stored figures if the audit
+        # mirror is unreachable -- this is a display upgrade, not a dependency.
+        logger.warning("Could not read audit OTJ totals for caseload: %s", exc)
+        return {}
+    return {
+        profile_id: totals[aptem_id]
+        for profile_id, aptem_id in aptem_by_profile.items()
+        if aptem_id in totals
+    }
+
+
+def apply_evidenced_ksb_count(payload: dict, evidenced: int | None) -> dict:
+    """Overlay the audit KSB count on one serialized caseload learner.
+
+    Sent as a count rather than a percentage, matching what the learner's own
+    workspace shows: the audit KSB mapping spans several standards and carries
+    no per-learner denominator, so a percentage here would be against the wrong
+    total. `ksbTarget` is left as the curriculum figure it already was.
+    """
+    if evidenced is None:
+        return payload
+    payload["ksbCompleted"] = evidenced
+    payload["ksbEvidencedCount"] = evidenced
+    payload["ksbSource"] = "audit"
+    return payload
+
+
+def apply_audit_hour_totals(payload: dict, totals: dict | None) -> dict:
+    """Overlay the Audit OTJ figures on one serialized caseload learner.
+
+    Mirrors the learner workspace's own precedence (workspace/learner/page.tsx):
+    the Audit pair replaces completed/planned when present, and the
+    cumulative-to-date `otjhTarget` is rescaled by the same ratio so a card
+    showing "x% - completed / target" stays internally consistent. A missing
+    half of the pair leaves that half untouched.
+    """
+    if not totals:
+        return payload
+    planned = totals.get("audit_tp_planned")
+    actual = totals.get("audit_lms_actual")
+    if actual is not None:
+        payload["otjhCompleted"] = actual
+    if planned is not None:
+        previous_planned = to_number(payload.get("otjhPlanned"))
+        previous_target = to_number(payload.get("otjhTarget"))
+        # otjhTarget paces the programme plan to the current week, so carry that
+        # pacing over to the audit plan rather than dropping back to the whole
+        # programme total, which would read as "behind" for everyone.
+        #
+        # The serializers floor otjhTarget at 1 (`max(..., 1)`), so a stored 1
+        # against a larger plan is that placeholder rather than a real to-date
+        # figure -- rescaling it would invent a target. Those learners fall back
+        # to the whole audit plan, the same denominator their own workspace uses.
+        ratio = previous_target / previous_planned if previous_planned > 0 else 0
+        paced = previous_target > 1 and 0 < ratio <= 1
+        payload["otjhTarget"] = max(round(planned * ratio, 2), 1) if paced else planned
+        payload["otjhPlanned"] = planned
+    # `overallProgress` is the OTJH-against-target percentage the cards print
+    # beside the hours ratio, so it has to be recomputed off the overlaid pair
+    # or the two would disagree on the same card.
+    payload["overallProgress"] = percentage(payload["otjhCompleted"], payload["otjhTarget"])
+    payload["overallProgressAvailable"] = True
+    payload["otjhSource"] = "audit"
+    return payload
 
 
 def serialize_caseload_learner(
@@ -7581,6 +7777,62 @@ def coach_timetable_event_action(request):
     return JsonResponse({"event": updated_event, "warning": warning})
 
 
+def dashboard_attendance_rows(rows, learners: list[dict]) -> list[dict]:
+    """Real attendance rates for the dashboard's caseload modal.
+
+    The dashboard used to send `attendance: {learners: []}` because its compact
+    cards do not show attendance -- but the caseload modal on the same page
+    does, so every learner there read "--".
+
+    This reads the KBC register keyed by Aptem id, which is the same source
+    the learner's own workspace quotes. The coach attendance page's verified
+    Teams projection is a different dataset that is empty for many learners,
+    so using it here would have shown a coach "--" next to a learner page
+    reading 95%. One batched query for the whole caseload, unlike the
+    per-learner KSB recomputation that keeps the rest of this payload lean.
+
+    The shape is only what `mergeAttendanceRates` on the client reads: the
+    identity to match on plus the rate and whether one was actually recorded.
+    """
+    if not learners:
+        return []
+    # Shared resolver: reads `_caseload_source` where the caller attached it,
+    # and falls back to the lean id-only query where it did not.
+    aptem_by_profile = {
+        profile_id: str(aptem_id)
+        for profile_id, aptem_id in caseload_aptem_ids(rows).items()
+    }
+    try:
+        rates = fetch_kbc_attendance_rates(aptem_by_profile.values())
+    except Exception as exc:
+        # Attendance is an enrichment here, not the reason the dashboard loads.
+        logger.warning("Could not load dashboard attendance metrics: %s", exc)
+        return []
+
+    payload = []
+    for learner in learners:
+        learner_id = to_int(learner.get("id"))
+        metrics = rates.get(aptem_by_profile.get(learner_id, "")) if learner_id else None
+        # A row with no register behind it carries nothing the client can
+        # use -- `mergeAttendanceRates` would read it as "no attendance"
+        # either way -- so it is left out rather than padding the payload.
+        if metrics is None:
+            continue
+        # .get, not indexing: this enriches whatever the serializer produced,
+        # and must never be the reason the whole dashboard 503s.
+        payload.append({
+            "id": learner.get("id"),
+            "learner": learner.get("name"),
+            "email": learner.get("email"),
+            "attendance": metrics["rate"],
+            "hasAttendance": True,
+            "sessions": metrics["sessions"],
+            "present": metrics["present"],
+            "absent": metrics["absent"],
+        })
+    return payload
+
+
 def serialize_attendance_learner(
     learner: dict,
     attendance_metrics: dict | None,
@@ -7680,7 +7932,19 @@ def coach_attendance_details(request):
 
     try:
         caseload_rows = fetch_attendance_caseload_rows(owner_email)
-        learners = [serialize_attendance_source_learner(row) for row in caseload_rows]
+        attach_caseload_source_rows(caseload_rows)
+        detail_audit_totals = caseload_audit_hour_totals(caseload_rows)
+        detail_ksb_counts = caseload_evidenced_ksb_counts(caseload_rows)
+        learners = [
+            apply_evidenced_ksb_count(
+                apply_audit_hour_totals(
+                    serialize_attendance_source_learner(row),
+                    detail_audit_totals.get(int(row.id)),
+                ),
+                detail_ksb_counts.get(int(row.id)),
+            )
+            for row in caseload_rows
+        ]
         learner = next(
             (
                 item for item in learners
@@ -7878,7 +8142,16 @@ def coach_dashboard(request):
     def load_dashboard_learners():
         try:
             rows = fetch_caseload_dashboard_profiles(owner_email)
-            return [serialize_caseload_dashboard_learner(row) for row in rows]
+            learners = [serialize_caseload_dashboard_learner(row) for row in rows]
+            audit_totals = caseload_audit_hour_totals(rows)
+            ksb_counts = caseload_evidenced_ksb_counts(rows)
+            for row, learner in zip(rows, learners):
+                apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
+                apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
+            # The profile rows carry the `_caseload_source` bridge to Aptem,
+            # which the attendance lookup below needs and the serialized
+            # payload does not expose.
+            return rows, learners
         finally:
             close_old_connections()
 
@@ -7925,9 +8198,16 @@ def coach_dashboard(request):
             learners_future = executor.submit(load_dashboard_learners)
             timetable_future = executor.submit(load_dashboard_timetable)
             groups_future = executor.submit(load_assigned_groups)
-            learners = learners_future.result()
+            dashboard_rows, learners = learners_future.result()
             timetable_payload = timetable_future.result()
             assigned_groups = groups_future.result()
+        # Depends on the learner list, so it follows the pool rather than
+        # joining it. One batched query, unlike the per-learner KSB work the
+        # dashboard still leaves to the caseload page.
+        try:
+            attendance_rows = dashboard_attendance_rows(dashboard_rows, learners)
+        finally:
+            close_old_connections()
         owner_name = coach_staff_display_name(owner_email) or next(
             (clean_text(learner.get("coachName")) for learner in learners if clean_text(learner.get("coachName"))),
             "Coach",
@@ -7949,9 +8229,10 @@ def coach_dashboard(request):
             },
             "learners": learners,
             "assignedGroups": assigned_groups,
-            # The compact dashboard cards do not render attendance or evidence.
-            # Their dedicated pages load those expensive datasets on demand.
-            "attendance": {"learners": []},
+            # Attendance is one batched query and the caseload modal on this
+            # page renders it, so it ships here. Evidence stays empty: its
+            # dedicated page loads that expensive dataset on demand.
+            "attendance": {"learners": attendance_rows},
             "timetable": {
                 "summary": timetable_payload.get("summary", {}),
                 "events": timetable_payload.get("events", []),
@@ -8091,6 +8372,13 @@ def coach_caseload(request):
                 serialize_caseload_learner(row, refresh_live_snapshots=refresh_live_snapshots)
                 for row in rows
             ]
+        # Quote the same whole-programme OTJ figures the learner sees on their
+        # own workspace, rather than the training-plan reflection totals.
+        audit_totals = caseload_audit_hour_totals(rows)
+        ksb_counts = caseload_evidenced_ksb_counts(rows)
+        for row, learner in zip(rows, learners):
+            apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
+            apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
     except Exception:
         logger.exception("coach_caseload_load_failed coach_account_id=%s", owner_email)
         return coach_error(
@@ -8166,9 +8454,21 @@ def coach_attendance(request):
 
     try:
         caseload_rows = fetch_attendance_caseload_rows(owner_email)
+        attach_caseload_source_rows(caseload_rows)
+        attendance_audit_totals = caseload_audit_hour_totals(caseload_rows)
+        attendance_ksb_counts = caseload_evidenced_ksb_counts(caseload_rows)
         caseload_learners = [
             learner
-            for learner in [serialize_attendance_source_learner(row) for row in caseload_rows]
+            for learner in [
+                apply_evidenced_ksb_count(
+                    apply_audit_hour_totals(
+                        serialize_attendance_source_learner(row),
+                        attendance_audit_totals.get(int(row.id)),
+                    ),
+                    attendance_ksb_counts.get(int(row.id)),
+                )
+                for row in caseload_rows
+            ]
             if should_include_in_attendance_page(learner)
         ]
         active_learners = [

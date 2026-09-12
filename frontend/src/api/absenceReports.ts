@@ -1,9 +1,11 @@
+import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
 
 const BASE = '/learner_api/absence-reports';
 
 export interface LearnerAbsenceReport {
   id: number;
+  attendanceId?: string;
   reference: string;
   sessionTitle: string;
   sessionDate: string;
@@ -24,6 +26,8 @@ export interface LearnerAbsenceReport {
 
 export interface MissedAttendanceSession {
   id: string;
+  reportId?: string;
+  status?: 'absent' | 'upcoming';
   sessionId: string;
   title: string;
   sessionType: string;
@@ -58,13 +62,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
 }
 
 export async function fetchAbsenceReports(kind: LearnerKind, learnerId: string): Promise<AbsenceReportData> {
-  let response: Response;
-  try {
-    response = await fetch(`${BASE}/${kind}/${learnerId}/`);
-  } catch {
-    throw new Error('Could not reach the server. Is the backend running on port 8000?');
-  }
-  return parseResponse<AbsenceReportData>(response);
+  return readLearnerJson<AbsenceReportData>(`${BASE}/${kind}/${learnerId}/`);
 }
 
 export async function submitAbsenceReport(
@@ -78,5 +76,7 @@ export async function submitAbsenceReport(
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
-  return parseResponse<LearnerAbsenceReport>(response);
+  const data = await parseResponse<LearnerAbsenceReport>(response);
+  invalidateLearnerReads();
+  return data;
 }

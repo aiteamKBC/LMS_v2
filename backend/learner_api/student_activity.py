@@ -17,12 +17,11 @@ from login.sessions import authenticate_request
 from .learner_detail import SOURCE_MODELS
 from .active_users import completed_hours_value_from_progress
 from .models import LearnerProfile
-from .student_activity_data import read_audit_hour_totals, read_student_activity, read_student_material
+from .student_activity_data import (read_audit_hour_totals, read_evidenced_ksb_counts_bulk,
+                                    read_student_activity, read_student_material)
 from .student_activity_access import student_activity_available
-from .student_activity_data import summarize_activities, read_curriculum_schedules, apply_curriculum_schedules
+from .student_activity_data import summarize_activities, read_curriculum_schedules, apply_curriculum_schedules, read_activity_sources
 from . import subject_store, subject_source
-from .student_activity_data import summarize_activities
-from . import subject_store
 from .subject_content import (ContentUnavailable, material_schema, build_material, public_quiz, as_list)
 from .subject_dates import activity_schedule
 
@@ -119,6 +118,12 @@ def _live_subjects(source, aptem_id):
         return subject_source.read_learner(cursor, aptem_id, getattr(source, 'email', ''))
 
 
+def _activity_sources(enrolment_id, group_ids):
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute(CURRENT_SUBJECTS_SQL, [enrolment_id])
+        return read_activity_sources(cursor, group_ids, [row[0] for row in cursor.fetchall()])
+
+
 @require_GET
 @learner_self_or_staff(kwarg="pk")
 def student_activity(request, kind, pk):
@@ -161,6 +166,11 @@ def student_activity(request, kind, pk):
                 payload = read_student_activity(cursor, aptem_id)
                 if payload is not None:
                     payload.update(read_audit_hour_totals(cursor, aptem_id))
+                    # Same audit mapping the coach caseload counts, so a coach
+                    # and their learner never read different KSB figures.
+                    payload['audit_ksb_evidenced'] = read_evidenced_ksb_counts_bulk(
+                        cursor, [aptem_id],
+                    ).get(aptem_id)
     except DatabaseError:
         return _error("Could not read Last_audit activities. Please try again.", 503)
     material_request = request.GET.get('activity_id') is not None
@@ -186,6 +196,11 @@ def student_activity(request, kind, pk):
     except DatabaseError:
         return _error('Could not load your subject progress and dates. Please try again.', 503)
     payload = subject_source.overlay_subjects(payload, live, schedules)
+    payload['source_status'] = 'live' if live is not None else 'historical'
+    try:
+        payload['activity_sources'] = _activity_sources(pk, [row['id'] for row in payload.get('subjects', [])])
+    except DatabaseError:
+        return _error('Could not verify the links between your current and previous activities. Please try again.', 503)
     payload.update(summarize_activities(subject_store.overlay_progress(payload['activities'], saved['progress'])))
     payload['module_count'] = len(payload.get('subjects') or []) or payload['module_count']
     payload['recorded_otjh_total'] = combined_recorded_otjh(
@@ -239,10 +254,16 @@ def _definition_for(stored):
             'maximum_score': row.get('quiz_maximum_score'),
         }}
     def archive_url(reference):
+        from .media_proxy import _legacy_attachment_upload_path
+
         path = _legacy_attachment_upload_path(reference)
         return '/curriculum_api/curriculum/uploads/' + path if path else ''
-    return build_material(stored, schema, attachment_resolver=archive_url)
-    return build_material(stored, schema)
+    definition = build_material(stored, schema, attachment_resolver=archive_url)
+    if row.get('quiz_definition_ambiguous') and definition.get('quiz'):
+        # The same reading is linked to different quizzes in the original LMS.
+        # Show its content/history, but do not grade a newly invented selection.
+        definition['quiz'].update(ready=False, message='The programme team needs to confirm which quiz belongs to this activity.')
+    return definition
 
 
 def _local_pdf_urls(definition, kind, pk, group_id, activity_id):
@@ -259,7 +280,7 @@ def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=Non
     row = stored['_source']
     definition = _local_pdf_urls(_definition_for(stored), kind, pk, group_id, row['activity_id'])
     try:
-        saved = subject_store.state(pk, aptem_id, row['activity_id'])
+        saved = subject_store.state(pk, aptem_id, row['activity_id'], group_id=group_id)
     except DatabaseError:
         return _error('Could not load your attempt history. Please try again.', 503)
     account = authenticate_request(request)

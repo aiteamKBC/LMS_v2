@@ -10,6 +10,7 @@ import { ActionRow, RowAction } from '@/components/ui/ActionRow';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
+import type { LearnerMetrics } from '@/api/learnerMetrics';
 
 export type ProgressTabKey = 'overview' | 'otjh' | 'ksbs';
 
@@ -30,9 +31,9 @@ function ProgressStat({
 }) {
   const style = toneStyle(tone);
   const accentClasses = {
-    purple: 'bg-gradient-to-br from-[#d8c9ff] via-[#8b5cf6] to-[#5420a8] text-white shadow-md shadow-primary-500/25',
-    green: 'bg-gradient-to-br from-[#b9f6db] via-[#34d399] to-[#059669] text-white shadow-md shadow-emerald-500/25',
-    orange: 'bg-gradient-to-br from-[#e2b45b] via-[#b27715] to-[#7a4e0a] text-white shadow-md shadow-[#b27715]/30',
+    purple: 'bg-gradient-to-br from-secondary-200 via-secondary-400 to-secondary-500 text-white shadow-md shadow-primary-500/25',
+    green: 'bg-gradient-to-br from-emerald-200 via-emerald-400 to-emerald-500 text-white shadow-md shadow-emerald-500/25',
+    orange: 'bg-gradient-to-br from-amber-300 via-amber-500 to-amber-700 text-white shadow-md shadow-amber-500/30',
   }[accent];
   return (
     <button
@@ -56,31 +57,41 @@ function ProgressStat({
 export function OverviewTab({
   real,
   realLoading,
+  metrics,
   recordedOtjhTotal,
+  auditOtjhActual,
+  auditOtjhPlanned,
   subjectCount,
   onNavigateTab,
 }: {
   real: LearnerDetail | null;
   realLoading: boolean;
+  metrics?: LearnerMetrics | null;
   recordedOtjhTotal?: number | null;
+  auditOtjhActual?: number | null;
+  auditOtjhPlanned?: number | null;
   subjectCount?: number | null;
   onNavigateTab: (tab: ProgressTabKey) => void;
 }) {
   const navigate = useNavigate();
   const loading = realLoading;
+  const hasMetrics = metrics !== undefined;
 
-  const usesCombinedSubjects = recordedOtjhTotal != null;
-  const completedHours = usesCombinedSubjects ? recordedOtjhTotal : parseHours(real?.completedHours);
-  const targetHours = usesCombinedSubjects ? 0 : parseHours(real?.targetHours);
+  const usesAuditTotals = auditOtjhActual != null || auditOtjhPlanned != null;
+  const usesCombinedSubjects = !usesAuditTotals && recordedOtjhTotal != null;
+  const completedHours = hasMetrics ? metrics?.otjh.actual ?? 0 : usesAuditTotals ? (auditOtjhActual ?? 0) : usesCombinedSubjects ? (recordedOtjhTotal ?? 0) : parseHours(real?.completedHours);
+  const targetHours = hasMetrics ? metrics?.otjh.planned ?? 0 : usesAuditTotals ? (auditOtjhPlanned ?? 0) : usesCombinedSubjects ? 0 : parseHours(real?.targetHours);
   const otjhPct = targetHours > 0 ? Math.min(100, Math.round((completedHours / targetHours) * 100)) : null;
-  const otjhStatus = usesCombinedSubjects ? null : real?.otjhStatus || null;
+  const otjhStatus = hasMetrics ? (metrics?.otjh.actual == null || metrics?.otjh.planned == null ? null : completedHours < targetHours ? 'Needs attention' : 'On track') : usesAuditTotals
+    ? (targetHours > 0 && completedHours < targetHours ? 'Needs attention' : 'On track')
+    : usesCombinedSubjects ? null : real?.otjhStatus || null;
   const otjhAtRisk = /at risk|attention/i.test(otjhStatus || '');
   const otjhBehind = Math.max(0, targetHours - completedHours);
 
   const ksbProgress = useKsbProgress(real);
   const ksbTotal = ksbProgress.length;
   const ksbComplete = ksbProgress.filter(k => k.status === 'complete').length;
-  const ksbNotStarted = ksbProgress.filter(k => k.status === 'not-started').length;
+  const ksbNotStarted = hasMetrics ? (metrics?.ksb.codes || []).filter(k => k.completed === 0).length : ksbProgress.filter(k => k.status === 'not-started').length;
   const ksbPct = ksbTotal > 0 ? Math.round((ksbComplete / ksbTotal) * 100) : null;
 
   const candidateItems: (AttentionItem | false)[] = [
@@ -98,6 +109,7 @@ export function OverviewTab({
     },
   ];
   const attentionItems = candidateItems.filter((item): item is AttentionItem => item !== false);
+  const hasKsbData = hasMetrics ? (metrics?.ksb.total || 0) > 0 : ksbTotal > 0;
 
   if (loading) {
     return <Panel><RowsSkeleton rows={4} /></Panel>;
@@ -109,9 +121,11 @@ export function OverviewTab({
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <ProgressStat
           icon="ri-calendar-check-line" label="OTJ Hours" tone={otjhStatus ? (otjhAtRisk ? 'caution' : 'positive') : 'brand'} accent="green"
-          value={formatHoursMinutes(completedHours)}
+          value={hasMetrics && metrics?.otjh.actual == null ? '—' : formatHoursMinutes(completedHours)}
           percent={otjhPct}
-          caption={usesCombinedSubjects
+          caption={hasMetrics ? metrics?.otjh.planned == null ? 'Training plan hours unavailable' : `TP Planned ${formatHoursMinutes(targetHours)}` : usesAuditTotals
+            ? `Target ${formatHoursMinutes(targetHours)}`
+            : usesCombinedSubjects
             ? `Across ${subjectCount || 0} subjects`
             : targetHours > 0
               ? `Target ${formatHoursMinutes(targetHours)}${otjhStatus ? ` · ${otjhStatus}` : ''}`
@@ -120,9 +134,9 @@ export function OverviewTab({
         />
         <ProgressStat
           icon="ri-time-line" label="KSB Progress" tone="brand" accent="orange"
-          value={ksbTotal ? `${ksbPct}%` : '—'}
-          percent={ksbPct}
-          caption={ksbTotal ? `${ksbComplete} of ${ksbTotal} fully evidenced` : 'No KSBs defined yet'}
+          value={hasMetrics ? metrics?.ksb.percent == null ? '—' : `${metrics.ksb.percent}%` : ksbTotal ? `${ksbPct}%` : '—'}
+          percent={hasMetrics ? metrics?.ksb.percent ?? null : ksbPct}
+          caption={hasMetrics ? metrics?.ksb.total == null ? 'KSB details unavailable' : `${metrics.ksb.completed} of ${metrics.ksb.total} points achieved` : ksbTotal ? `${ksbComplete} of ${ksbTotal} fully evidenced` : 'No KSBs defined yet'}
           onClick={() => onNavigateTab('ksbs')}
         />
       </div>
@@ -147,8 +161,8 @@ export function OverviewTab({
               size="sm"
               variant="empty"
               icon="ri-checkbox-circle-line"
-              title="You're all caught up"
-              description="Hours and KSBs both look on track."
+              title={hasKsbData ? "You're all caught up" : 'No KSBs defined yet'}
+              description={hasKsbData ? 'Hours and KSBs both look on track.' : 'Your programme has not defined any KSBs yet.'}
             />
           ) : (
             attentionItems.map((item, i) => (

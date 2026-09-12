@@ -164,10 +164,17 @@ def month_rows(learner, month):
         r.activity_date, r.activity_time, r.planned_hours, r.actual_hours, r.timestamp_label,
         r.completion_note, r.accepted, r.updated_at, g.group_name,
         {_duration_min_sql('a')} AS duration_minutes,
-        a.raw #> '{{live_lms_component,ksbs}}' AS component_ksbs
+        a.raw #> '{{live_lms_component,ksbs}}' AS component_ksbs,
+        jk.ksbs AS journal_ksbs, lk.ksbs AS learner_ksbs,
+        lk.source_preference AS ksb_source_preference, mk.ksbs AS material_ksbs
         FROM {ROWS} r
         LEFT JOIN "Last_audit".groups g ON g.group_id=r.group_id
         LEFT JOIN "Last_audit".activities a ON a.activity_id=r.activity_id
+        LEFT JOIN structured_manual_activities.learner_journal_row_ksbs jk
+          ON jk.row_id=r.id AND jk.aptem_id=r.aptem_id
+        LEFT JOIN structured_manual_activities.learner_activity_ksbs lk
+          ON lk.activity_id=r.activity_id AND lk.aptem_id=r.aptem_id
+        LEFT JOIN structured_manual_activities.activity_ksbs mk ON mk.activity_id=r.activity_id
         WHERE r.aptem_id=%s AND r.month=%s AND r.deleted_at IS NULL
         ORDER BY r.activity_date NULLS LAST, r.id''', [learner['aptem_id'], month])
     docs = query(f'''SELECT d.id, d.manual_activity_id, d.display_name,
@@ -196,8 +203,19 @@ def month_rows(learner, month):
     for row in rows:
         item = evidence.get((row.get('source_ref') or '')[3:], {}) if (row.get('source_ref') or '').startswith('ev:') else {}
         row['component_name'] = item.get('component_name')
-        row['ksb_codes'] = ksb_codes(item.get('ksb_codes') or row.pop('component_ksbs', None))
-        row.pop('component_ksbs', None)
+        # The journal's saved row mapping wins, followed by its selected
+        # learner/material mapping. An explicitly cleared mapping stays empty.
+        journal_ksbs = row.pop('journal_ksbs', None)
+        learner_ksbs = row.pop('learner_ksbs', None)
+        material_ksbs = row.pop('material_ksbs', None)
+        preference = row.pop('ksb_source_preference', None)
+        component_ksbs = row.pop('component_ksbs', None)
+        selected_ksbs = learner_ksbs if preference == 'learner' else material_ksbs
+        if journal_ksbs is not None:
+            selected_ksbs = journal_ksbs
+        if selected_ksbs is None:
+            selected_ksbs = item.get('ksb_codes') or component_ksbs
+        row['ksb_codes'] = ksb_codes(selected_ksbs)
         row['documents'] = [d for d in docs if d['manual_activity_id'] == row['id']]
         row['results'] = [r for r in results if r['activity_id'] == row['activity_id']
                           and (row['group_id'] is None or r['group_id'] == row['group_id'])]

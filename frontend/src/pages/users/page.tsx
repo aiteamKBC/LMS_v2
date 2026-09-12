@@ -446,12 +446,11 @@ export default function UsersListPage() {
     navigate(`/users/${row.id}${q(row)}`);
   };
 
-  // Open the learner's subjects directly, including restored learning for
-  // enrolments whose new programme is still at Delivery.
+  // Staff enter the same Dashboard that learners use as their home page.
   const openLearnerPage = (row: UserListRow) => {
     if (isNonLearner(row)) return;
     const kind = row.source === 'commercial' ? 'commercial' : 'apprenticeship';
-    navigate(`/learner/modules/${kind}/${row.id}`);
+    navigate(`/workspace/learner/${kind}/${row.id}`);
   };
 
   // Staff/admin rows have no profile page — editing their details in place is

@@ -1,0 +1,18 @@
+{
+  "committed_at_utc": "2026-09-11T12:08:32.707819+00:00",
+  "cohorts_permanently_deleted": 38,
+  "unused_archived_child_groups_permanently_deleted": 42,
+  "active_imported_cohorts_preserved": 22,
+  "active_imported_groups_preserved": 84,
+  "unchanged_fingerprints": {
+    "other_cohorts": "b37e341ac5f5b15fb265bf619cc1d12f",
+    "other_groups": "a040787be72b40bcab82f8c67e4fb1e4",
+    "learner_placements": "79bf4ec957ef42e0c51ba9d9ab41730c",
+    "enrolment_placements": "fdd44ba4482849c17ac8c3b6aafb886d",
+    "attached_modules": "59a2670d84244a5f090118de5b32e3ae"
+  },
+  "backup_file": "reports/aptem_empty_cohorts_before_delete_2026-09-11.json",
+  "executed_sql": "backend/sql/2026-09-11_delete_superseded_empty_cohorts.sql",
+  "post_commit_verified_at_utc": "2026-09-11T12:09:15.963075+00:00",
+  "remaining_deleted_target_rows": 0
+}

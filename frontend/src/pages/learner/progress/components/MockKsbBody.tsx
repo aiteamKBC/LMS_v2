@@ -670,10 +670,10 @@ export function MockKsbBody({ showHero = true }: { showHero?: boolean }) {
 function StatCard({ label, value, total, color, icon }: { label: string; value: number; total: number; color: string; icon: string }) {
   const pct = Math.round((value / total) * 100);
   const colorMap: Record<string, { iconBg: string; iconText: string; accent: string; bar: string }> = {
-    emerald: { iconBg: 'bg-gradient-to-br from-[#b9f6db] via-[#34d399] to-[#059669] shadow-sm shadow-emerald-500/25', iconText: 'text-white', accent: 'text-emerald-700', bar: 'bg-emerald-500' },
-    amber: { iconBg: 'bg-gradient-to-br from-[#f8dda0] via-[#d49a38] to-[#b27715] shadow-sm shadow-[#b27715]/25', iconText: 'text-white', accent: 'text-amber-700', bar: 'bg-amber-500' },
-    primary: { iconBg: 'bg-gradient-to-br from-[#d8c9ff] via-[#8b5cf6] to-[#5420a8] shadow-sm shadow-primary-500/25', iconText: 'text-white', accent: 'text-primary-700', bar: 'bg-primary-500' },
-    red: { iconBg: 'bg-gradient-to-br from-[#fecaca] via-[#f87171] to-[#dc2626] shadow-sm shadow-red-500/25', iconText: 'text-white', accent: 'text-red-700', bar: 'bg-red-500' },
+    emerald: { iconBg: 'bg-gradient-to-br from-emerald-200 via-emerald-400 to-emerald-500 shadow-sm shadow-emerald-500/25', iconText: 'text-white', accent: 'text-emerald-700', bar: 'bg-emerald-500' },
+    amber: { iconBg: 'bg-gradient-to-br from-amber-200 via-amber-400 to-amber-500 shadow-sm shadow-amber-500/25', iconText: 'text-white', accent: 'text-amber-700', bar: 'bg-amber-500' },
+    primary: { iconBg: 'bg-gradient-to-br from-secondary-200 via-secondary-400 to-secondary-500 shadow-sm shadow-primary-500/25', iconText: 'text-white', accent: 'text-primary-700', bar: 'bg-primary-500' },
+    red: { iconBg: 'bg-gradient-to-br from-red-200 via-red-400 to-red-500 shadow-sm shadow-red-500/25', iconText: 'text-white', accent: 'text-red-700', bar: 'bg-red-500' },
   };
   const c = colorMap[color] || colorMap.primary;
   return (

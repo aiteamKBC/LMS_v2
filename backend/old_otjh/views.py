@@ -151,8 +151,27 @@ def _coach_cohort(request):
     # these lists run to hundreds of records, so a client-side filter would
     # search only the 25 rows on screen and appear to find nothing.
     search = (request.GET.get('search') or '').strip()[:100]
+
+    # Reused rather than re-parsed: coach_api.auth already normalises the
+    # parameter and knows both spellings the console sends.
+    from coach_api.auth import _requested_view_as_email
+
+    email, is_admin = actor['email'], actor['role'] == 'admin'
+    # An admin with a coach's workspace open sees THAT coach's records, not the
+    # whole cohort. Without this the page read as "Viewing Radwa Samir's
+    # workspace" above a list of all 368 learners, which is both wrong and
+    # impossible to tell apart from a coach who really does hold everybody.
+    #
+    # The named coach only narrows what an admin may already see, so it cannot
+    # widen anyone's access: a coach stays pinned to their own email regardless
+    # of what the parameter says.
+    if is_admin:
+        view_as = _requested_view_as_email(request)
+        if view_as:
+            email, is_admin = view_as, False
+
     return JsonResponse(
-        repo.coach_learners(actor['email'], actor['role'] == 'admin', page, search=search)
+        repo.coach_learners(email, is_admin, page, search=search)
     )
 
 

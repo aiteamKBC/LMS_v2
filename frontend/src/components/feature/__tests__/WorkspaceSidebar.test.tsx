@@ -55,6 +55,43 @@ beforeEach(() => {
   sessionStorage.clear();
 });
 
+it('groups learner progress pages in the same menu while keeping direct destinations fixed', () => {
+  const { sidebar, rail, panel } = showWorkspace('learner', '/learner/clubs/events');
+  expect(within(rail).getByRole('button', { name: 'My Progress' })).toHaveAttribute('aria-expanded', 'false');
+  for (const name of ['Monthly Logs', 'Monthly Coaching Meeting', 'Progress Review']) {
+    expect(within(rail).queryByRole('link', { name })).not.toBeInTheDocument();
+  }
+  expect(within(rail).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page');
+  for (const name of ['Readiness', 'Community', 'Help']) {
+    expect(within(rail).queryByRole('button', { name })).not.toBeInTheDocument();
+  }
+  expect(within(rail).queryByRole('link', { name: /training plan/i })).not.toBeInTheDocument();
+  expect(panel).toBeNull();
+  fireEvent.mouseEnter(within(rail).getByRole('link', { name: 'Dashboard' }));
+  fireEvent.focus(within(rail).getByRole('link', { name: 'Dashboard' }));
+  expect(sidebar.style.width).toBe('88px');
+  fireEvent.click(within(rail).getByRole('button', { name: 'My Progress' }));
+  expect(within(sidebar).getAllByRole('link', { name: 'Dashboard' })).toHaveLength(1);
+  expect(within(rail).getByRole('button', { name: 'My Progress' })).toHaveAttribute('aria-expanded', 'true');
+  const destinations = within(rail).getAllByRole('link').map(link => link.getAttribute('href'));
+  for (const name of ['Monthly Logs', 'Monthly Coaching Meeting', 'Progress Review', 'Dashboard']) {
+    const link = within(rail).getByRole('link', { name });
+    fireEvent.mouseEnter(link);
+    fireEvent.focus(link);
+    fireEvent.click(link);
+    expect(screen.getByTestId('route')).toHaveTextContent(link.getAttribute('href')!);
+    expect(link).toHaveAttribute('aria-current', 'page');
+    expect(sidebar.style.width).toBe('338px');
+    expect(within(rail).getAllByRole('link').map(item => item.getAttribute('href'))).toEqual(destinations);
+  }
+  fireEvent.mouseLeave(sidebar, { relatedTarget: document.body });
+  expect(sidebar.style.width).toBe('338px');
+  fireEvent.click(within(rail).getByRole('button', { name: 'My Progress' }));
+  expect(within(rail).getByRole('button', { name: 'My Progress' })).toHaveAttribute('aria-expanded', 'false');
+  expect(within(rail).queryByRole('link', { name: 'Monthly Logs' })).not.toBeInTheDocument();
+  expect(within(rail).getByRole('link', { name: 'Dashboard' })).toBeVisible();
+});
+
 it.each(['/users', '/users/42', '/users/42/wizard/introduction', '/employers/8', '/employers/8/learner/commercial/42'])(
   'retains Enrolment navigation and the updated page styling for an admin on %s', path => {
     viewer.isAdmin = true;
@@ -116,22 +153,27 @@ it.each([
 });
 
 describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
-  it('opens and closes the same layout, reserving room for the panel', () => {
+  it('reserves the chosen navigation width and supports manual collapse', () => {
     const { sidebar, shell, panel } = showWorkspace(role);
     expect(sidebar.style.width).toBe('88px');
     expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('112px');
-    expect(panel).toHaveAttribute('inert');
+    if (role === 'learner') expect(panel).toBeNull();
+    else expect(panel).toHaveAttribute('inert');
 
     fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));
     expect(sidebar.style.width).toBe('338px');
     expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('362px');
-    expect(panel).not.toHaveAttribute('inert');
+    if (role !== 'learner') expect(panel).not.toHaveAttribute('inert');
     expect(localStorage.getItem('kbc_sidebar_pinned')).toBe('true');
 
     fireEvent.mouseLeave(sidebar, { relatedTarget: document.body });
+    if (role === 'learner') {
+      expect(sidebar.style.width).toBe('338px');
+      fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse navigation' }));
+    }
     expect(sidebar.style.width).toBe('88px');
     expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('112px');
-    expect(panel).toHaveAttribute('inert');
+    if (role !== 'learner') expect(panel).toHaveAttribute('inert');
   });
 
   it('keeps role-specific destinations, route highlighting and navigation', () => {
@@ -140,9 +182,9 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
     const destination = item.children?.[0] || item;
     const { sidebar, rail, panel } = showWorkspace(role, destination.href);
     fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));
-    const link = within(panel).getAllByRole('link').find(link => link.getAttribute('href') === destination.href)!;
+    const link = within(role === 'learner' ? rail : panel).getAllByRole('link').find(link => link.getAttribute('href') === destination.href)!;
     expect(link).toHaveAttribute('aria-current', 'page');
-    expect(within(rail).getAllByRole(item.children?.length ? 'button' : 'link')
+    expect(within(rail).getAllByRole(role !== 'learner' && item.children?.length ? 'button' : 'link')
       .some(item => item.hasAttribute('aria-current'))).toBe(true);
     fireEvent.click(link);
     expect(screen.getByTestId('route')).toHaveTextContent(destination.href!);

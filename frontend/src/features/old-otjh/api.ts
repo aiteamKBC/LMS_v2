@@ -1,4 +1,5 @@
 import type { QuizAttempt } from '@/features/audit/learner-log-pro-manual/lib/api';
+import { LearnerReadError, readLearnerJson, invalidateLearnerReads } from '@/api/learnerRead';
 
 export type Signature = { signed_at: string; signer_name: string; url: string };
 export type SignatureCaptureMethod = 'draw' | 'upload' | 'import';
@@ -49,6 +50,11 @@ export type Activity = {
 };
 export type MonthDetail = MonthState & { rows: Activity[]; snapshot_digest: string;
   profile?: { start_date: string | null; planned_end_date: string | null; first_evidence_date: string | null } };
+/** Presentation data shared by retained and current monthly journals. */
+export type JournalSummary = {
+  learner?: { id: number; aptem_id?: number | null; name: string; programme: string; coach_name: string };
+  months: MonthState[];
+};
 export type ActivityContent = { id: number; parts: { id: number; title: string; category: string;
   content_type?: string | null;
   url: string | null; html: string | null; quiz: { state: string; attempt: QuizAttempt | null; answers_available?: boolean;
@@ -60,6 +66,8 @@ export type ContentReview = { ready: boolean; snapshot_digest: string; issues: {
 export type LearnerList = { learners: { id: number; name: string; programme: string }[]; total: number; page: number; page_size: number };
 export type SigningReview = { month: string; ready: boolean; reason?: string | null; snapshot_digest?: string; issues?: ContentReview['issues'] };
 export type SignedMonths = { signed_months: string[]; skipped_months: string[]; completed_months: string[]; summary: Summary };
+
+import { coachViewAs } from '@/lib/coachViewAs';
 
 const BASE = '/audit_api';
 export const CONTACT_COACH = 'Please contact your coach to complete the review and signing of your previous learning record before entering the LMS.';
@@ -81,6 +89,14 @@ export async function request<T>(path: string, init: globalThis.RequestInit = {}
     headers.set('X-CSRFToken', token.csrfToken);
   }
   headers.set('X-Requested-With', 'XMLHttpRequest');
+  if (!init.method || init.method === 'GET') {
+    try {
+      return await readLearnerJson<T>(`${BASE}${path}`, { ...init, headers });
+    } catch (error) {
+      if (error instanceof LearnerReadError) throw new RecordError(error.message, error.status, error.code);
+      throw error;
+    }
+  }
   let response: Response;
   try {
     response = await fetch(`${BASE}${path}`, { ...init, headers, credentials: 'include', cache: 'no-store' });
@@ -91,14 +107,28 @@ export async function request<T>(path: string, init: globalThis.RequestInit = {}
   if (!response.ok || body === null) {
     throw new RecordError(body?.error || 'Previous learning records are temporarily unavailable.', response.status, body?.code);
   }
+  invalidateLearnerReads();
   return body as T;
 }
+
+/** The coach whose workspace an admin currently has open, if any.
+ *
+ * These routes scope on the signed-in account, so an administrator reached them
+ * as an administrator and saw the whole cohort -- under a banner naming one
+ * coach. Passing the selection lets the server narrow the caseload to that
+ * coach. It can only ever narrow: the server pins a coach to their own email
+ * and ignores the parameter (see old_otjh.views._coach_cohort). */
+const viewAsParams = (params: URLSearchParams) => {
+  const selection = coachViewAs();
+  if (selection) params.set('viewAsCoach', selection.email);
+  return params;
+};
 
 const query = (aptemId?: number, month?: string) => {
   const params = new URLSearchParams({ transition: '1' });
   if (aptemId !== undefined) params.set('aptem_id', String(aptemId));
   if (month) params.set('month', month);
-  return `?${params}`;
+  return `?${viewAsParams(params)}`;
 };
 const post = <T>(path: string, body: object) => request<T>(path, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -107,7 +137,7 @@ const post = <T>(path: string, body: object) => request<T>(path, {
 export const getSummary = (aptemId?: number) => request<Summary>(aptemId === undefined
   ? '/old-otjh/me/summary/' : `/last-audit/manual/summary${query(aptemId)}`);
 export const startReview = (aptemId?: number) => post<Summary>(`/old-otjh/start/${query(aptemId)}`, {});
-export const getMonth = (month: string, aptemId?: number) => request<MonthDetail>(`/last-audit/manual/rows${query(aptemId, month)}`);
+export const getMonth = (month: string, aptemId?: number, signal?: AbortSignal) => request<MonthDetail>(`/last-audit/manual/rows${query(aptemId, month)}`, { signal });
 export const getActivityContent = (month: string, rowId: number, aptemId?: number) =>
   request<ActivityContent>(`/last-audit/manual/rows${query(aptemId, month)}&activity_id=${rowId}`);
 export const getContentReview = (month: string, aptemId?: number) => request<ContentReview>(`/old-otjh/content-check/${query(aptemId, month)}`);
@@ -119,7 +149,7 @@ export const getLearners = (page: number, search = '') => {
   // it, so a coach with 42 records had to page through them to find somebody.
   const params = new URLSearchParams({ transition: '1', page: String(page) });
   if (search.trim()) params.set('search', search.trim());
-  return request<LearnerList>(`/last-audit/cohort/?${params}`);
+  return request<LearnerList>(`/last-audit/cohort/?${viewAsParams(params)}`);
 };
 export const completeMonth = (month: string) => post<MonthDetail>(`/last-audit/manual/finalization${query()}`, { month, action: 'complete' });
 export const reopenMonth = (month: string, aptemId: number, reason: string) => post<MonthDetail>(`/last-audit/manual/finalization${query(aptemId)}`, { month, action: 'reopen', reason });

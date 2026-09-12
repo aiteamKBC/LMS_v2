@@ -5,14 +5,14 @@ from datetime import date, time
 from uuid import uuid4
 
 from django.conf import settings
-from django.db import DatabaseError, transaction
+from django.db import DatabaseError, IntegrityError, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from coach_api.models import CoachAbsenceReport
 from login.permissions import learner_self_only
 
-from .attendance import fetch_kbc_attendance_rows
+from .attendance_lectures import lecture_register, session_key, report_id
 from .evidence_storage import (
     azure_configured,
     blob_url,
@@ -56,31 +56,26 @@ def _source_learner(kind, learner_id):
     model = {"commercial": CommercialUser, "apprenticeship": EnrolmentUser}.get(kind)
     if model is None:
         return None
-    return model.objects.filter(pk=learner_id).first()
+    return model.all_learners.filter(pk=learner_id).first()
 
 
-def _kbc_rows_for_learner(learner, learner_id):
-    learner_email = str(getattr(learner, "email", "") or "").strip()
-    learner_name = str(getattr(learner, "username", "") or "").strip() or learner_email
-    return fetch_kbc_attendance_rows(
-        aptem_id=getattr(learner, "aptem_id", None),
-        learner_id=learner_id,
-        learner_name=learner_name,
-        learner_email=learner_email,
-    )
+def _attendance_rows_for_learner(learner, learner_id):
+    return lecture_register(learner)
 
 
 def _fetch_missed_sessions(learner, learner_id):
-    """Return this learner's absent sessions from the live KBC register."""
+    """Both registers, including real upcoming occurrences, scoped to this learner."""
     rows = [
-        row for row in _kbc_rows_for_learner(learner, learner_id)
-        if str(row.get("attendance_status") or "").strip().lower() == "absent"
+        row for row in _attendance_rows_for_learner(learner, learner_id)
+        if str(row.get("attendance_status") or "").strip().lower() in {"absent", "upcoming"}
     ]
 
     return [
         {
-            "id": f"{row['session_id']}-{row['session_date'].isoformat()}",
-            "sessionId": str(row["session_id"]),
+            "id": f"{session_key(row)}-{row['session_date'].isoformat()}",
+            "sessionId": session_key(row),
+            "reportId": str(report_id(row)),
+            "status": row['attendance_status'],
             "title": row.get("session_title", "") or "",
             "sessionType": row.get("session_type", "") or "",
             "dateIso": row["session_date"].isoformat(),
@@ -109,19 +104,19 @@ def _resolve_absent_attendance(
     session_date,
     session_time,
 ):
-    del session_time  # KBC currently records dates, but not lesson start times.
+    del session_time  # Source identity/date/title, not a client-supplied time, authorises the report.
     expected_id = str(session_id or "").strip()
     expected_title = str(session_title or "").strip().casefold()
     matches = [
-        row for row in _kbc_rows_for_learner(learner, learner_id)
-        if str(row.get("attendance_status") or "").strip().lower() == "absent"
+        row for row in _attendance_rows_for_learner(learner, learner_id)
+        if str(row.get("attendance_status") or "").strip().lower() in {"absent", "upcoming"}
         and row.get("session_date") == session_date
         and str(row.get("session_title") or "").strip().casefold() == expected_title
-        and (not expected_id or str(row.get("session_id") or "") == expected_id)
+        and (not expected_id or session_key(row) == expected_id)
     ]
     if len(matches) != 1:
         return None
-    return _kbc_attendance_report_id(matches[0]["session_id"])
+    return report_id(matches[0])
 
 
 def _serialize(report):
@@ -134,7 +129,7 @@ def _serialize(report):
         evidence_url = resolve_read_url(report.evidence_image_url, allowed_containers)
     return {
         "id": report.id,
-        "attendanceId": report.attendance_id,
+        "attendanceId": str(report.attendance_id),
         "reference": f"AR-{report.id:04d}",
         "sessionTitle": report.session_title,
         "sessionDate": report.session_date.isoformat(),
@@ -177,11 +172,11 @@ def learner_absence_reports(request, kind, learner_id):
             missed_sessions = _fetch_missed_sessions(learner, learner_id)
         except Exception:
             logger.exception(
-                "Could not load KBC absence sessions for %s learner %s",
+                "Could not load absence sessions for %s learner %s",
                 kind,
                 learner_id,
             )
-            return _error("Could not load absence reports from KBC.", 502)
+            return _error("Could not load absence reports and sessions.", 502)
         return JsonResponse({
             "count": len(results),
             "results": results,
@@ -206,8 +201,8 @@ def learner_absence_reports(request, kind, learner_id):
         return _error("Choose a valid absence reason.")
     if reason_category == "other" and not other_reason:
         return _error("Please specify the other reason.")
-    if not evidence_text and upload is None:
-        return _error("Add a written explanation or supporting evidence.")
+    if len(evidence_text) > 600 or len(other_reason) > 120 or len(session_title) > 255:
+        return _error("Absence details are too long.")
 
     try:
         parsed_date = date.fromisoformat(session_date_text)
@@ -226,13 +221,13 @@ def learner_absence_reports(request, kind, learner_id):
         )
     except Exception:
         logger.exception(
-            "Could not validate KBC absence session for %s learner %s",
+            "Could not validate absence session for %s learner %s",
             kind,
             learner_id,
         )
-        return _error("Could not validate the missed session with KBC.", 502)
+        return _error("Could not validate the attendance session.", 502)
     if attendance_id is None:
-        return _error("Choose a valid missed attendance session.")
+        return _error("Choose a valid absent or upcoming session.")
     if CoachAbsenceReport.objects.filter(attendance_id=attendance_id).exists():
         return _error("An absence report already exists for this session.", 409)
 
@@ -302,10 +297,22 @@ def learner_absence_reports(request, kind, learner_id):
                 coach_note="",
                 attendance_rate=attendance_rate,
                 evidence_image_url=evidence_url,
-                evidence_kind="both" if upload and evidence_text else "file" if upload else "text",
+                evidence_kind="both" if upload and evidence_text else "file" if upload else "text" if evidence_text else "none",
                 evidence_text=evidence_text,
                 previous_absences=previous_absences,
             )
+    except IntegrityError:
+        # Another submission may have saved the same lecture after validation.
+        # The unique attendance_id still guarantees a single report.
+        if blob_name:
+            try:
+                delete_blob(quarantine_container, blob_name)
+            except Exception:
+                pass
+        if CoachAbsenceReport.objects.filter(attendance_id=attendance_id).exists():
+            return _error("An absence report already exists for this session.", 409)
+        logger.exception('Could not save absence report')
+        return _error('The absence report could not be saved. Please retry.', 502)
     except Exception:
         logger.exception(
             "Could not save absence report for %s learner %s attendance %s",

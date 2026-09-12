@@ -259,6 +259,10 @@ EVIDENCE_AUDIT_SERVICE_URL = os.environ.get(
 ).rstrip("/")
 OPENAI_TRANSCRIPTION_MODEL = os.environ.get("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe")
 OPENAI_REFLECTION_MODEL = os.environ.get("OPENAI_REFLECTION_MODEL", "gpt-4o-mini")
+PROOFREAD_PROVIDER = os.environ.get("PROOFREAD_PROVIDER", "openai").strip().lower()
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+OLLAMA_PROOFREAD_MODEL = os.environ.get("OLLAMA_PROOFREAD_MODEL", "qwen2.5:1.5b")
+OLLAMA_PROOFREAD_TIMEOUT = int(os.environ.get("OLLAMA_PROOFREAD_TIMEOUT", "120"))
 OPENAI_MODERATION_MODEL = os.environ.get("OPENAI_MODERATION_MODEL", "omni-moderation-latest")
 KBC_LMS_SCHEMA_URL = os.environ.get(
     "KBC_LMS_SCHEMA_URL",
@@ -748,6 +752,7 @@ AZURE_QUARANTINE_CONTAINER = os.environ.get("AZURE_QUARANTINE_CONTAINER", "evide
 AZURE_APPROVED_CONTAINER = os.environ.get("AZURE_APPROVED_CONTAINER", "evidence-approved")
 AZURE_REJECTED_CONTAINER = os.environ.get("AZURE_REJECTED_CONTAINER", "evidence-rejected")
 AZURE_SAS_TTL_MINUTES = int(os.environ.get("AZURE_SAS_TTL_MINUTES", "15"))
+AZURE_LEARNER_PHOTOS_CONTAINER = os.environ.get("AZURE_LEARNER_PHOTOS_CONTAINER") or "learner-photos"
 
 # Generated/signed enrolment paperwork (ILR and the other compliance documents)
 # — see enrolment_api/documents.py. Separate from the evidence containers: these

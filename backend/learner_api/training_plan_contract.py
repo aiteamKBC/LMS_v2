@@ -8,6 +8,27 @@ import json
 import re
 
 
+def selected_contract(candidates):
+    """Use an available duplicate of the same document version, never an older plan."""
+    if not candidates:
+        return None
+    selected = candidates[0]
+    if selected.get('azure_path') or not selected.get('date'):
+        return selected
+
+    def name(row):
+        # An auditor's display-name edit does not change the document version.
+        original = row.get('original_name') or row.get('document_name') or ''
+        return re.sub(r'\.pdf$', '', str(original).strip(), flags=re.I).casefold()
+
+    # Review-import placeholders can repeat an existing document but omit its
+    # Azure path. Their timestamps differ only by subsecond export precision.
+    same = [row for row in candidates[1:] if row.get('azure_path') and row.get('date')
+            and row['date'].replace(microsecond=0) == selected['date'].replace(microsecond=0)
+            and name(row) == name(selected)]
+    return same[0] if len(same) == 1 else selected
+
+
 def parse_contract(data, expected_total=None):
     import pymupdf as fitz
 
@@ -49,14 +70,18 @@ def parse_contract(data, expected_total=None):
                 # A PDF page break can separate the Total label from its value.
                 # The final hours-column number before Reviews is that total;
                 # preceding numbers may finish the previous activity row.
-                continuation = [w for w in words if w[0] >= hours_x
+                continuation = [w for w in words if w[2] >= hours_x
                                 and re.fullmatch(r'\d+(?:\.\d+)?', w[4])]
                 if continuation:
                     printed_total = Decimal(continuation[-1][4])
                     total_continues = False
             for marker in total_markers:
-                totals = [w[4] for w in words if abs(w[1] - marker[1]) < 3 and w[0] >= hours_x
-                          and re.fullmatch(r'\d+(?:\.\d+)?', w[4])]
+                # Edited PDFs may shift the value by one text line or join it
+                # to "(hr)". Use the right edge for centred numbers; the EM
+                # column stays to the left of the OTJ header.
+                totals = [match.group(1) for w in words
+                          if abs(w[1] - marker[1]) <= marker[3] - marker[1] and w[2] >= hours_x
+                          and (match := re.fullmatch(r'(?:\(hr\))?(\d+(?:\.\d+)?)', w[4]))]
                 if len(totals) == 1:
                     printed_total = Decimal(totals[0])
                     total_continues = False
@@ -79,7 +104,7 @@ def parse_contract(data, expected_total=None):
                           [dates[index + 1][1] - 1 if index + 1 < len(dates) else (stop_at or page.rect.height - 60)])
                 title = ' '.join(textpage.extractTextbox(fitz.Rect(0, top, method_x - 3, end)).split())
                 method = ' '.join(textpage.extractTextbox(fitz.Rect(method_x - 1, top, provider_x - 1, end)).split())
-                values = [w[4] for w in words if abs(w[1] - marker[1]) < 3 and w[0] >= hours_x
+                values = [w[4] for w in words if abs(w[1] - marker[1]) < 3 and w[2] >= hours_x
                           and re.fullmatch(r'\d+(?:\.\d+)?', w[4])]
                 if len(values) > 1 or not title:
                     return None
@@ -117,6 +142,20 @@ def group_contract_rows(rows):
                 if topic not in month['topics']:
                     month['topics'].append(topic)
     return dict(months)
+
+
+def verified_planned_hours(data, verified_extract=None):
+    """Return only a learning-table total verified against this exact PDF.
+
+    ILR hours and published minimums describe different figures. Neither is a
+    fallback for a missing or unreadable learning-plan table.
+    """
+    months = parse_contract(data) or read_verified_extract(data, verified_extract)
+    if months is None:
+        return None
+    total = sum((Decimal(str(row['hours'])) for month in months.values()
+                 for row in month['activities']), Decimal(0))
+    return total.quantize(Decimal('0.01'))
 
 
 def contract_extract_metadata(raw):

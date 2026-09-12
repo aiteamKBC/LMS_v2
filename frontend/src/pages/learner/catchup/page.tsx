@@ -64,7 +64,7 @@ export default function CatchUpPage() {
                   <svg width="88" height="88" viewBox="0 0 100 100" className="-rotate-90">
                     <circle cx="50" cy="50" r="42" fill="none" stroke="oklch(var(--primary-700) / 0.5)" strokeWidth="8" />
                     <circle cx="50" cy="50" r="42" fill="none"
-                      stroke={catchUpPct >= 75 ? 'oklch(var(--accent-400))' : catchUpPct >= 50 ? '#fbbf24' : '#f87171'}
+                      stroke={catchUpPct >= 75 ? 'oklch(var(--accent-400))' : catchUpPct >= 50 ? 'var(--learner-warning, #fbbf24)' : 'var(--learner-danger, #f87171)'}
                       strokeWidth="8" strokeLinecap="round"
                       strokeDasharray={donutCircumference} strokeDashoffset={donutOffset}
                       style={{ transition: 'stroke-dashoffset 1s ease-out' }}

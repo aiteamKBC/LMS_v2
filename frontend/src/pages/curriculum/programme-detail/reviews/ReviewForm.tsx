@@ -704,16 +704,6 @@ export function ReviewFormModal({ programmeId, review, onClose, onSaved }: {
                   </FormField>
                 </div>
               </div>
-              <div className="w-48">
-                <FormField
-                  label="First occurrence date"
-                  required
-                  error={errors.scheduleAnchorDate}
-                  hint="Future occurrences are calculated from this date. Changing it does not move any review occurrence that has already been skipped or resolved."
-                >
-                  <TextControl value={scheduleAnchorDate} onChange={setScheduleAnchorDate} type="date" />
-                </FormField>
-              </div>
             </div>
           )}
 

@@ -1,12 +1,12 @@
 """Contract extraction and access controls without a test database."""
 from types import SimpleNamespace
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, time, timezone, timedelta
 from unittest.mock import patch, MagicMock
 from hashlib import sha256
 import json
 import pymupdf as fitz
 from django.test import SimpleTestCase, RequestFactory
-from .training_plan_contract import parse_contract, read_verified_extract, contract_extract_metadata, read_contract
+from .training_plan_contract import parse_contract, read_verified_extract, contract_extract_metadata, read_contract, verified_planned_hours
 from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session, read_dashboard
 
 
@@ -45,6 +45,76 @@ def contract_pdf(total=30, review_on_same_page=False, joined_provider=False, spl
 
 
 class TrainingPlanDashboardTests(SimpleTestCase):
+    def test_overview_reads_current_calendar_targets_and_stored_booking_changes(self):
+        from coach_api.models import CoachCalendarEvent
+
+        source = SimpleNamespace(pk=125, aptem_id=None, email='learner@example.com',
+                                 start_date='2024-11-04', end_date='2026-11-03')
+        profile = SimpleNamespace(id=272, lifecycle_status='active', email=source.email,
+                                  start_date=None, end_date=None, coach_name='Assigned Coach', coach_email='coach@example.com')
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value.fetchall.return_value = []
+        records = []
+        event_key = 'mcr:272:23:2026-09-25'
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
+             patch('learner_api.calendar.CoachCalendarEvent.objects.filter') as stored:
+            profiles.objects.filter.return_value.first.return_value = profile
+            stored.return_value.order_by.return_value = records
+
+            def current():
+                return [event for event in read_dashboard(source, section='overview')['reviews']
+                        if event['eventKey'] == event_key]
+
+            target = current()
+            self.assertEqual(len(target), 1)
+            self.assertEqual(target[0]['targetDate'], '2026-09-25')
+            self.assertEqual(target[0]['status'], 'not-scheduled')
+            self.assertIsNone(target[0]['scheduledDate'])
+
+            # Unsaved fixture only: exercise the actual calendar serializer and
+            # generated/stored merge without making any database changes.
+            booking = CoachCalendarEvent(event_key=event_key, event_type='mcr', learner_id=272,
+                                         learner_email=source.email, sequence=23, target_date=date(2026, 9, 25),
+                                         scheduled_date=date(2026, 9, 28), scheduled_time=time(14),
+                                         status='scheduled', owner_name='Assigned Coach')
+            records.append(booking)
+            booked = current()
+            self.assertEqual(len(booked), 1)
+            self.assertEqual(booked[0]['scheduledDate'], '2026-09-28')
+            self.assertFalse(booked[0]['invited'])
+
+            booking.scheduled_date = date(2026, 9, 20)
+            booking.scheduled_time = time(10, 30)
+            booking.owner_name = 'New Coach'
+            booking.graph_event_id = 'invitation-synced'
+            moved = current()[0]
+            self.assertEqual((moved['scheduledDate'], moved['scheduledTime'], moved['coachName'], moved['invited']),
+                             ('2026-09-20', '10:30', 'New Coach', True))
+
+            for status in ('cancelled', 'completed'):
+                booking.status = status
+                booking.scheduled_date = None
+                booking.scheduled_time = None
+                result = current()
+                self.assertEqual(len(result), 1)
+                self.assertEqual(result[0]['status'], status)
+                # The stored inactive row must suppress its generated target;
+                # Upcoming filters it rather than showing a duplicate To book.
+
+            # Unbooked targets also track changes to the source programme window.
+            records.clear()
+            source.start_date = '2024-11-05'
+            source.end_date = '2026-09-30'
+            profile.coach_name = 'Replacement Coach'
+            reviews = read_dashboard(source, section='overview')['reviews']
+            monthly = [event for event in reviews if event['source'] == 'mcr']
+            self.assertEqual(monthly[-1]['sequence'], 23)
+            self.assertEqual(monthly[-1]['targetDate'], '2026-09-26')
+            self.assertEqual(monthly[-1]['coachName'], 'Replacement Coach')
+            self.assertNotIn(event_key, [event['eventKey'] for event in reviews])
+
     def test_overview_does_not_download_or_parse_contract(self):
         source = SimpleNamespace(pk=125, aptem_id='92', email='learner@example.com')
         connection = MagicMock()
@@ -155,6 +225,37 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         self.assertIs(selected_contract([placeholder, {**document,'date':date-timedelta(days=1)}]),placeholder)
         self.assertIs(selected_contract([placeholder, document, {**document,'id':791}]),placeholder)
 
+    def test_renamed_duplicate_keeps_its_original_document_identity(self):
+        date = datetime(2026, 8, 13, 11, 12, tzinfo=timezone.utc)
+        placeholder = {'id': 6330, 'date': date, 'original_name': 'TrainingPlan-v1.pdf',
+                       'document_name': 'TrainingPlan-v1.pdf', 'azure_path': None}
+        document = {'id': 5540, 'date': date, 'original_name': 'TrainingPlan-v1.pdf',
+                    'document_name': 'Training Plan', 'azure_path': 'az://existing.pdf'}
+        self.assertIs(selected_contract([placeholder, document]), document)
+        self.assertIs(selected_contract([placeholder, {**document, 'original_name': 'TrainingPlan-v2.pdf'}]), placeholder)
+
+    def test_centred_hours_and_shifted_total_remain_in_the_otj_column(self):
+        with fitz.open(stream=contract_pdf(), filetype='pdf') as document:
+            page = document[0]
+            for text in ('10', '20', '30'):
+                for rect in page.search_for(text):
+                    if rect.x0 > 480:
+                        page.add_redact_annot(rect)
+            page.apply_redactions()
+            for y, value in [(145, '10'), (180, '20'), (226, '30')]:
+                page.insert_text((480, y), value, fontsize=9)
+                page.insert_text((450, y), '5', fontsize=9)  # unrelated EM hours
+            self.assertEqual(verified_planned_hours(document.tobytes()), 30)
+
+    def test_total_value_can_touch_its_units(self):
+        with fitz.open(stream=contract_pdf(), filetype='pdf') as document:
+            page = document[0]
+            page.add_redact_annot(fitz.Rect(370, 200, 530, 230))
+            page.apply_redactions()
+            page.insert_text((375, 218), 'Total OTJ', fontsize=9)
+            page.insert_text((478, 218), '(hr)30', fontsize=9)
+            self.assertEqual(verified_planned_hours(document.tobytes()), 30)
+
     def test_reads_topics_and_contract_total_without_adding_the_total_row(self):
         result = parse_contract(contract_pdf(),30)
         self.assertEqual(result['2026-09']['planned'],30)
@@ -163,6 +264,22 @@ class TrainingPlanDashboardTests(SimpleTestCase):
 
     def test_rejects_an_extract_that_disagrees_with_the_pdf_total(self):
         self.assertIsNone(parse_contract(contract_pdf(31)))
+
+    def test_planned_hours_come_from_the_verified_table_not_ilr_or_minimums(self):
+        with fitz.open(stream=contract_pdf(), filetype='pdf') as document:
+            document[0].insert_text((65, 75), 'ILR Planned Hours: 576', fontsize=9)
+            document[0].insert_text((65, 330), 'Published minimum off-the-job training: 557', fontsize=9)
+            data = document.tobytes()
+        self.assertEqual(verified_planned_hours(data), 30)
+        self.assertIsNone(verified_planned_hours(contract_pdf(total=31)))
+
+    def test_verified_zero_is_preserved(self):
+        metadata = self.reviewed_extract(printed_total=0, activities=[{
+            'date': '2026-09-14', 'title': 'Prior learning', 'method': 'Assignment', 'hours': 0,
+        }])
+        with patch('learner_api.training_plan_contract.parse_contract', return_value=None):
+            self.assertEqual(verified_planned_hours(b'reviewed PDF', metadata), 0)
+            self.assertIsNone(verified_planned_hours(b'changed PDF', metadata))
 
     def test_uses_verified_pdf_total_when_database_extraction_is_stale(self):
         self.assertEqual(parse_contract(contract_pdf(),29)['2026-09']['planned'],30)

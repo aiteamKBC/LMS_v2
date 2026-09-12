@@ -1,3 +1,4 @@
+import { readLearnerJson } from './learnerRead';
 // ============================================================================
 // delivery API client
 // Talks to the Django backend at /learner_api (proxied to :8000 by Vite in dev).
@@ -63,6 +64,7 @@ export interface CommercialProgrammeInput {
 }
 
 async function request<T>(url: string, init?: Parameters<typeof fetch>[1]): Promise<T> {
+  if (!init?.method || init.method.toUpperCase() === 'GET') return readLearnerJson<T>(url, { ...init, headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', ...init?.headers } });
   let res: Response;
   try {
     res = await fetch(url, {

@@ -17,6 +17,8 @@ import {
   statusLabel as calendarStatusLabel,
   type CoachCalendarEvent,
 } from '@/pages/coach/shared/calendarEvents';
+import { fetchStudentActivity } from '@/api/studentActivity';
+import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
 import { buildLearnerJourney, type JourneyModule } from '@/utils/learnerJourney';
 import { coachFetch } from '@/lib/coachFetch';
 
@@ -219,6 +221,7 @@ export interface CoachLearnerCaseFileData {
   otjhTarget: number | null;
   otjhPlanned: number | null;
   ksbProgress: number | null;
+  ksbEvidencedCount: number | null;
   evidenceCount: number | null;
   startDate: string;
   gatewayReviewDate: string;
@@ -293,6 +296,8 @@ export function useCoachLearnerCaseFileData(args: {
       const directDetailPromise = directEnrolmentId
         ? fetchAnyLearnerDetail(directEnrolmentId, args.kind ?? undefined)
         : null;
+      let auditHours: { planned: number | null; actual: number | null; ksbEvidenced: number | null } | null = null;
+      let liveAttendance: LearnerAttendance | null = null;
 
       let detail: LearnerDetail | null = null;
       let resolvedKind: LearnerKind | null = null;
@@ -303,6 +308,10 @@ export function useCoachLearnerCaseFileData(args: {
           const detailResult = await directDetailPromise;
           detail = detailResult.detail;
           resolvedKind = detailResult.kind;
+          [auditHours, liveAttendance] = await Promise.all([
+            fetchAuditHours(resolvedKind, directEnrolmentId),
+            fetchCaseFileAttendance(resolvedKind, directEnrolmentId),
+          ]);
 
           // Show the useful learner view as soon as its focused detail arrives.
           // Coach metrics continue enriching it in the background.
@@ -315,6 +324,8 @@ export function useCoachLearnerCaseFileData(args: {
             detail,
             caseload: [],
             timetableEvents: [],
+            auditHours,
+            liveAttendance,
           });
           if (!cancelled && initialData) {
             setData(initialData);
@@ -362,6 +373,15 @@ export function useCoachLearnerCaseFileData(args: {
         }
       }
 
+      if (!auditHours || !liveAttendance) {
+        const [hours, attendanceRecord] = await Promise.all([
+          auditHours ? Promise.resolve(auditHours) : fetchAuditHours(resolvedKind, resolvedEnrolmentId),
+          liveAttendance ? Promise.resolve(liveAttendance) : fetchCaseFileAttendance(resolvedKind, resolvedEnrolmentId),
+        ]);
+        auditHours = hours;
+        liveAttendance = attendanceRecord;
+      }
+
       if (cancelled) {
         return;
       }
@@ -375,6 +395,8 @@ export function useCoachLearnerCaseFileData(args: {
         detail,
         caseload,
         timetableEvents,
+        auditHours,
+        liveAttendance,
       });
 
       if (!finalData) {
@@ -585,6 +607,38 @@ async function fetchCoachMarkingQueue(learnerId?: string, learnerName?: string) 
 async function fetchCoachTimetable() {
   const data = await fetchCoachCalendarEvents(undefined);
   return data.events || [];
+}
+
+/** The whole-programme OTJ hours the learner sees on their own workspace:
+ *  TP Planned from the audit mirror, LMS Actual from the accepted ledger.
+ *  The coach case file has to quote these same figures rather than
+ *  learner-detail's training-plan reflection totals, which read as 0h.
+ *  Returns null whenever the learner has no audit record -- the caller then
+ *  keeps whatever it already had. */
+async function fetchAuditHours(kind: LearnerKind | null, enrolmentId: string | null) {
+  if (!kind || !enrolmentId) return null;
+  try {
+    const activity = await fetchStudentActivity(kind, enrolmentId);
+    const planned = activity?.audit_tp_planned ?? null;
+    const actual = activity?.audit_lms_actual ?? null;
+    const ksbEvidenced = activity?.audit_ksb_evidenced ?? null;
+    if (planned == null && actual == null && ksbEvidenced == null) return null;
+    return { planned, actual, ksbEvidenced };
+  } catch {
+    // A learner with no Aptem link 404s here. That is not a case-file error.
+    return null;
+  }
+}
+
+/** The learner's own attendance register, read through the same endpoint their
+ *  workspace uses so a coach and their learner never see different rates. */
+async function fetchCaseFileAttendance(kind: LearnerKind | null, enrolmentId: string | null) {
+  if (!kind || !enrolmentId) return null;
+  try {
+    return await fetchLearnerAttendance(kind, enrolmentId);
+  } catch {
+    return null;
+  }
 }
 
 async function fetchAnyLearnerDetail(id: string, kind?: LearnerKind) {
@@ -874,6 +928,8 @@ function buildCaseFileData(args: {
   detail: LearnerDetail | null;
   caseload: CoachCaseloadLearner[];
   timetableEvents: CoachCalendarEvent[];
+  auditHours?: { planned: number | null; actual: number | null; ksbEvidenced: number | null } | null;
+  liveAttendance?: LearnerAttendance | null;
 }): CoachLearnerCaseFileData | null {
   const displayName = args.detail?.name || args.snapshot?.name || args.attendance?.learner || args.evidence?.learner || '';
   if (!displayName) {
@@ -918,9 +974,22 @@ function buildCaseFileData(args: {
   };
   const progressReviews = buildReviewMeetingItems(reviewEventContext, args.timetableEvents, 'progress-review');
   const monthlyCoachMeetings = buildReviewMeetingItems(reviewEventContext, args.timetableEvents, 'mcr');
-  const detailCompletedHours = parseHoursValue(args.detail?.completedHours);
-  const detailTargetHours = parseHoursValue(args.detail?.targetHours);
-  const detailPlannedHours = parseHoursValue(args.detail?.plannedHours) ?? (args.detail?.totalExpectedOtjh || null);
+  // The audit pair wins over learner-detail's training-plan reflection totals,
+  // so the coach reads the same OTJ hours the learner sees on their own
+  // workspace. `targetHours` paces the plan to the current week, so it is
+  // rescaled by that same proportion rather than left against the old plan.
+  const auditActual = args.auditHours?.actual ?? null;
+  const auditPlanned = args.auditHours?.planned ?? null;
+  const rawDetailTarget = parseHoursValue(args.detail?.targetHours);
+  const rawDetailPlanned = parseHoursValue(args.detail?.plannedHours) ?? (args.detail?.totalExpectedOtjh || null);
+  const detailCompletedHours = auditActual ?? parseHoursValue(args.detail?.completedHours);
+  const pacing = rawDetailTarget != null && rawDetailPlanned ? rawDetailTarget / rawDetailPlanned : null;
+  const detailTargetHours = auditPlanned != null
+    ? (pacing != null && pacing > 0 && pacing <= 1
+        ? Math.round(auditPlanned * pacing * 100) / 100
+        : auditPlanned)
+    : rawDetailTarget;
+  const detailPlannedHours = auditPlanned ?? rawDetailPlanned;
 
   return {
     learnerId: args.learnerId,
@@ -944,11 +1013,16 @@ function buildCaseFileData(args: {
     employerEmail: args.snapshot?.employerEmail || '',
     employerPhone: args.snapshot?.employerPhone || '',
     overallProgress: args.snapshot?.overallProgress ?? args.attendance?.overallProgress ?? null,
-    attendanceRate: args.attendance?.attendance ?? null,
+    attendanceRate: args.liveAttendance?.attendanceRate ?? args.attendance?.attendance ?? null,
     otjhCompleted: detailCompletedHours ?? args.snapshot?.otjhCompleted ?? args.attendance?.otjhCompleted ?? null,
     otjhTarget: detailTargetHours ?? args.snapshot?.otjhTarget ?? args.attendance?.otjhTarget ?? null,
     otjhPlanned: detailPlannedHours ?? args.snapshot?.otjhPlanned ?? null,
     ksbProgress: args.snapshot?.ksbProgress ?? args.attendance?.ksbProgress ?? null,
+    // Distinct KSB codes evidenced in the audit mapping -- a count, as the
+    // learner's own workspace shows it. The mapping spans several standards
+    // and carries no per-learner denominator, so there is no percentage to
+    // derive; `ksbProgress` above stays the curriculum figure.
+    ksbEvidencedCount: args.auditHours?.ksbEvidenced ?? null,
     evidenceCount: args.snapshot?.evidenceCount ?? args.evidence?.totalEvidence ?? null,
     startDate: args.snapshot?.startDate || formatDisplayDate(args.detail?.quizAttempts[0]?.startedAt) || '--',
     gatewayReviewDate: args.snapshot?.gatewayReviewDate || '--',

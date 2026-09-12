@@ -1,3 +1,4 @@
+import { readLearnerJson } from './learnerRead';
 import type { CertificateTemplate } from './platformAdmin';
 
 export interface LearnerCertificateEligibility {
@@ -59,13 +60,11 @@ async function readJson<T>(response: Response): Promise<T> {
 }
 
 export async function fetchLearnerCertificateTemplate(kind: string, id: number | string) {
-  const response = await fetch(`/learner_api/certificates/${kind}/${id}/template/`, { credentials: 'include' });
-  return readJson<{ configured: boolean; template: CertificateTemplate | null }>(response);
+  return readLearnerJson<{ configured: boolean; template: CertificateTemplate | null }>(`/learner_api/certificates/${kind}/${id}/template/`);
 }
 
 export async function fetchLearnerCertificateStatus(kind: string, id: number | string) {
-  const response = await fetch(`/learner_api/certificates/${kind}/${id}/`, { credentials: 'include' });
-  return readJson<LearnerCertificateStatus>(response);
+  return readLearnerJson<LearnerCertificateStatus>(`/learner_api/certificates/${kind}/${id}/`);
 }
 
 export async function issueLearnerCertificate(kind: string, id: number | string) {

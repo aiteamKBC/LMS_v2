@@ -1,0 +1,352 @@
+[
+  {
+    "programme_name": "Associate Project Manager Level 4 (Onboarding Stage)",
+    "source_rows": 5,
+    "learner_matches": 0,
+    "enrolment_matches": 0,
+    "cohort_from_name": null,
+    "cohort_start_from_name": null,
+    "issue": "intake_not_in_programme_name",
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Associate Project Manager Level 4 - Feb 2026",
+    "source_rows": 5,
+    "learner_matches": 5,
+    "enrolment_matches": 5,
+    "cohort_from_name": "Feb 2026",
+    "cohort_start_from_name": "2026-02-01",
+    "issue": null,
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Associate Project Manager Level 4 - June 2026",
+    "source_rows": 1,
+    "learner_matches": 1,
+    "enrolment_matches": 1,
+    "cohort_from_name": "Jun 2026",
+    "cohort_start_from_name": "2026-06-01",
+    "issue": null,
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Associate Project Manager Level 4 - Oct 2026",
+    "source_rows": 5,
+    "learner_matches": 0,
+    "enrolment_matches": 0,
+    "cohort_from_name": "Oct 2026",
+    "cohort_start_from_name": "2026-10-01",
+    "issue": null,
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "August 2025 - Lv6 Project Controls Professional",
+    "source_rows": 1,
+    "learner_matches": 1,
+    "enrolment_matches": 1,
+    "cohort_from_name": "Aug 2025",
+    "cohort_start_from_name": "2025-08-01",
+    "issue": null,
+    "outside_feb_jun_oct": true
+  },
+  {
+    "programme_name": "July 2025- Level 4 Marketing Executive",
+    "source_rows": 4,
+    "learner_matches": 2,
+    "enrolment_matches": 2,
+    "cohort_from_name": "Jul 2025",
+    "cohort_start_from_name": "2025-07-01",
+    "issue": null,
+    "outside_feb_jun_oct": true
+  },
+  {
+    "programme_name": "July 2025- Level 6 Marketing Manager",
+    "source_rows": 2,
+    "learner_matches": 2,
+    "enrolment_matches": 1,
+    "cohort_from_name": "Jul 2025",
+    "cohort_start_from_name": "2025-07-01",
+    "issue": null,
+    "outside_feb_jun_oct": true
+  },
+  {
+    "programme_name": "Level 4 Associate Project Manager Oct.25",
+    "source_rows": 1,
+    "learner_matches": 1,
+    "enrolment_matches": 1,
+    "cohort_from_name": "Oct 2025",
+    "cohort_start_from_name": "2025-10-01",
+    "issue": null,
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Level 4 Market Research Executive",
+    "source_rows": 7,
+    "learner_matches": 1,
+    "enrolment_matches": 1,
+    "cohort_from_name": null,
+    "cohort_start_from_name": null,
+    "issue": "intake_not_in_programme_name",
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Level 4 Marketing Executive",
+    "source_rows": 11,
+    "learner_matches": 1,
+    "enrolment_matches": 0,
+    "cohort_from_name": null,
+    "cohort_start_from_name": null,
+    "issue": "intake_not_in_programme_name",
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Level 4 Marketing Executive - May 25",
+    "source_rows": 65,
+    "learner_matches": 6,
+    "enrolment_matches": 5,
+    "cohort_from_name": "May 2025",
+    "cohort_start_from_name": "2025-05-01",
+    "issue": null,
+    "outside_feb_jun_oct": true
+  },
+  {
+    "programme_name": "Level 6 Marketing Manager - May 25",
+    "source_rows": 15,
+    "learner_matches": 14,
+    "enrolment_matches": 14,
+    "cohort_from_name": "May 2025",
+    "cohort_start_from_name": "2025-05-01",
+    "issue": null,
+    "outside_feb_jun_oct": true
+  },
+  {
+    "programme_name": "Level 6 Project Controls Professional",
+    "source_rows": 4,
+    "learner_matches": 4,
+    "enrolment_matches": 4,
+    "cohort_from_name": null,
+    "cohort_start_from_name": null,
+    "issue": "intake_not_in_programme_name",
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Level 6 Project Controls Professional Oct.25",
+    "source_rows": 18,
+    "learner_matches": 18,
+    "enrolment_matches": 18,
+    "cohort_from_name": "Oct 2025",
+    "cohort_start_from_name": "2025-10-01",
+    "issue": null,
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Level 6 Project Controls Professional PCP - May 25",
+    "source_rows": 29,
+    "learner_matches": 27,
+    "enrolment_matches": 25,
+    "cohort_from_name": "May 2025",
+    "cohort_start_from_name": "2025-05-01",
+    "issue": null,
+    "outside_feb_jun_oct": true
+  },
+  {
+    "programme_name": "Marketing Executive Level 4 (Onboarding Stage)",
+    "source_rows": 21,
+    "learner_matches": 1,
+    "enrolment_matches": 1,
+    "cohort_from_name": null,
+    "cohort_start_from_name": null,
+    "issue": "intake_not_in_programme_name",
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Marketing Executive Level 4 - Feb 2026",
+    "source_rows": 32,
+    "learner_matches": 32,
+    "enrolment_matches": 32,
+    "cohort_from_name": "Feb 2026",
+    "cohort_start_from_name": "2026-02-01",
+    "issue": null,
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Marketing Executive Level 4 - June 2026",
+    "source_rows": 35,
+    "learner_matches": 35,
+    "enrolment_matches": 35,
+    "cohort_from_name": "Jun 2026",
+    "cohort_start_from_name": "2026-06-01",
+    "issue": null,
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Marketing Executive Level 4 - Oct 2026",
+    "source_rows": 11,
+    "learner_matches": 0,
+    "enrolment_matches": 0,
+    "cohort_from_name": "Oct 2026",
+    "cohort_start_from_name": "2026-10-01",
+    "issue": null,
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Marketing Executive Level 4 Onboarding v1.1",
+    "source_rows": 1,
+    "learner_matches": 0,
+    "enrolment_matches": 0,
+    "cohort_from_name": null,
+    "cohort_start_from_name": null,
+    "issue": "intake_not_in_programme_name",
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Marketing Manager Level 6 (Onboarding Stage)",
+    "source_rows": 21,
+    "learner_matches": 0,
+    "enrolment_matches": 0,
+    "cohort_from_name": null,
+    "cohort_start_from_name": null,
+    "issue": "intake_not_in_programme_name",
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Marketing Manager Level 6 - Feb 2026",
+    "source_rows": 44,
+    "learner_matches": 43,
+    "enrolment_matches": 43,
+    "cohort_from_name": "Feb 2026",
+    "cohort_start_from_name": "2026-02-01",
+    "issue": null,
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Marketing Manager Level 6 - June 2026",
+    "source_rows": 34,
+    "learner_matches": 33,
+    "enrolment_matches": 33,
+    "cohort_from_name": "Jun 2026",
+    "cohort_start_from_name": "2026-06-01",
+    "issue": null,
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Marketing Manager Level 6 - Oct 2026",
+    "source_rows": 13,
+    "learner_matches": 0,
+    "enrolment_matches": 0,
+    "cohort_from_name": "Oct 2026",
+    "cohort_start_from_name": "2026-10-01",
+    "issue": null,
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Marketing Manager Level 6 Onboarding v1.1",
+    "source_rows": 6,
+    "learner_matches": 0,
+    "enrolment_matches": 0,
+    "cohort_from_name": null,
+    "cohort_start_from_name": null,
+    "issue": "intake_not_in_programme_name",
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "NEW Level 6 Project Controls Professional PCP July 25",
+    "source_rows": 18,
+    "learner_matches": 16,
+    "enrolment_matches": 16,
+    "cohort_from_name": "Jul 2025",
+    "cohort_start_from_name": "2025-07-01",
+    "issue": null,
+    "outside_feb_jun_oct": true
+  },
+  {
+    "programme_name": "New Level 6 Marketing Manager Oct.25",
+    "source_rows": 39,
+    "learner_matches": 39,
+    "enrolment_matches": 39,
+    "cohort_from_name": "Oct 2025",
+    "cohort_start_from_name": "2025-10-01",
+    "issue": null,
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Oct 2025 Level 4 Marketing Executive",
+    "source_rows": 19,
+    "learner_matches": 19,
+    "enrolment_matches": 19,
+    "cohort_from_name": "Oct 2025",
+    "cohort_start_from_name": "2025-10-01",
+    "issue": null,
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Project Control Professional Level 6 - Al Fanar",
+    "source_rows": 19,
+    "learner_matches": 0,
+    "enrolment_matches": 0,
+    "cohort_from_name": null,
+    "cohort_start_from_name": null,
+    "issue": "intake_not_in_programme_name",
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Project Controls Professional Level 6 (Onboarding Stage)",
+    "source_rows": 21,
+    "learner_matches": 0,
+    "enrolment_matches": 0,
+    "cohort_from_name": null,
+    "cohort_start_from_name": null,
+    "issue": "intake_not_in_programme_name",
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Project Controls Professional Level 6 - Feb 2026",
+    "source_rows": 40,
+    "learner_matches": 38,
+    "enrolment_matches": 38,
+    "cohort_from_name": "Feb 2026",
+    "cohort_start_from_name": "2026-02-01",
+    "issue": null,
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Project Controls Professional Level 6 - June 2026",
+    "source_rows": 27,
+    "learner_matches": 26,
+    "enrolment_matches": 26,
+    "cohort_from_name": "Jun 2026",
+    "cohort_start_from_name": "2026-06-01",
+    "issue": null,
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Project Controls Professional Level 6 - Oct 2026",
+    "source_rows": 12,
+    "learner_matches": 1,
+    "enrolment_matches": 0,
+    "cohort_from_name": "Oct 2026",
+    "cohort_start_from_name": "2026-10-01",
+    "issue": null,
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": "Project Controls Professional Level 6 Onboarding v1.1",
+    "source_rows": 4,
+    "learner_matches": 0,
+    "enrolment_matches": 0,
+    "cohort_from_name": null,
+    "cohort_start_from_name": null,
+    "issue": "intake_not_in_programme_name",
+    "outside_feb_jun_oct": false
+  },
+  {
+    "programme_name": null,
+    "source_rows": 85,
+    "learner_matches": 7,
+    "enrolment_matches": 7,
+    "cohort_from_name": null,
+    "cohort_start_from_name": null,
+    "issue": "missing_programme_name",
+    "outside_feb_jun_oct": false
+  }
+]

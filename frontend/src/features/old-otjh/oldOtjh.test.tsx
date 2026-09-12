@@ -11,7 +11,6 @@ const signedIn = { id: 1, role: 'learner' as 'learner' | 'staff', access: 'learn
   hasLegacyRecord: true, displayName: 'Test student', email: 'student@example.org' };
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: signedIn, user: { fullName: 'Test student' } }, isInitialized: true }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div> }));
-vi.mock('@/components/feature/Skeletons', () => ({ PageSkeleton: () => <div role="status">Loading record</div> }));
 vi.mock('./SignatureCapture', () => ({ SignatureCapture: ({ busy }: { busy: boolean }) => <fieldset disabled={busy}><legend>Signature capture</legend></fieldset> }));
 vi.mock('./api', async importOriginal => ({ ...await importOriginal<typeof import('./api')>(),
   getSummary: vi.fn(), getMonth: vi.fn(), getActivityContent: vi.fn(), getContentReview: vi.fn(), startReview: vi.fn(), completeMonth: vi.fn() }));
@@ -60,8 +59,8 @@ describe('previous learning portal', () => {
     expect(screen.getByRole('group', { name: 'Signature capture' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Sign all months' })).toBeEnabled();
   });
-  it('lands legacy accounts on the two-card portal', async () => {
-    expect(homeRouteFor(signedIn)).toBe('/old-otjh');
+  it('keeps the two-card portal reachable while Dashboard is the learner home', async () => {
+    expect(homeRouteFor(signedIn)).toBe('/workspace/learner');
     page();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Open LMS' })).toBeEnabled());
     expect(screen.getByRole('link', { name: 'Review previous record' })).toHaveAttribute('href', '/old-otjh/months');
@@ -75,6 +74,20 @@ describe('previous learning portal', () => {
     expect(dialog).toHaveTextContent('Test coach');
     expect(screen.queryByText('New LMS content')).not.toBeInTheDocument();
   });
+  it.each([0, 1, 2])('shows the actual signing status for %i signed months without granting LMS access', async signedCount => {
+    const signature = { url: '/signature.png', signer_name: 'Test student', signed_at: '2026-09-12' };
+    vi.mocked(getSummary).mockResolvedValue({ ...initial, months: initial.months.map((item, index) => ({
+      ...item, student_signature: index < signedCount ? signature : null,
+    })) });
+    page();
+    expect(await screen.findByText(signedCount === 2 ? 'All months signed' : 'Signatures pending')).toBeInTheDocument();
+    expect(screen.queryByText(signedCount === 2 ? 'Signatures pending' : 'All months signed')).not.toBeInTheDocument();
+    expect(screen.getByText('Review in progress')).toBeInTheDocument();
+    expect(screen.getByText('LMS access pending')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open LMS' }));
+    expect(await screen.findByRole('dialog', { name: 'Your next chapter is nearly ready' })).toBeInTheDocument();
+    expect(screen.queryByText('New LMS content')).not.toBeInTheDocument();
+  });
   it('opens LMS directly after all reviews and signatures are complete', async () => {
     vi.mocked(getSummary).mockResolvedValue({ ...initial, can_access_lms: true, state: 'completed', completed_months: 2 });
     page(); await waitFor(() => expect(screen.getByRole('button', { name: 'Open LMS' })).toBeEnabled());
@@ -85,7 +98,8 @@ describe('previous learning portal', () => {
     page('/old-otjh/months');
     expect(await screen.findByText('August 2026')).toBeInTheDocument();
     expect(screen.getAllByText('Awaiting signature').length).toBeGreaterThan(0);
-    expect(screen.getByText('Complete')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Complete' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'July 2026' }).closest('section')).toHaveTextContent('Complete');
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
     expect(screen.queryByRole('link', { name: 'Continue to new LMS' })).not.toBeInTheDocument();
   });
@@ -96,12 +110,27 @@ describe('previous learning portal', () => {
     expect(within(dialog).getByRole('group', { name: 'Signature capture' })).toBeEnabled();
     expect(dialog).toHaveTextContent('Your signature completes all months');
   });
+  it('keeps the new month filters and direct review links available to learners', async () => {
+    page('/old-otjh/months');
+    await screen.findByRole('heading', { name: 'August 2026' });
+    fireEvent.click(screen.getByRole('button', { name: 'Complete' }));
+    expect(screen.getByRole('heading', { name: 'July 2026' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'August 2026' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Needs signature' }));
+    expect(screen.queryByRole('heading', { name: 'July 2026' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Review month' })).toHaveAttribute('href', '/old-otjh/months/2026-08');
+    fireEvent.click(screen.getByRole('button', { name: 'All months' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search month' }), { target: { value: 'July' } });
+    expect(screen.getByRole('link', { name: 'Review month' })).toHaveAttribute('href', '/old-otjh/months/2026-07');
+  });
   it('shows Continue only when the server grants access', async () => {
     vi.mocked(getSummary).mockResolvedValue({ ...initial, can_access_lms: true, state: 'completed', completed_months: 2,
       months: initial.months.map(item => ({ ...item, status: 'complete' })) });
     page('/old-otjh/months');
     expect(await screen.findByRole('link', { name: 'Continue to new LMS' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign all months' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('link', { name: 'Continue to new LMS' }));
+    expect(await screen.findByText('New LMS content')).toBeInTheDocument();
   });
   it('displays source activities and notes without edit controls', async () => {
     page('/old-otjh/months/2026-08');
@@ -216,7 +245,7 @@ describe('previous learning portal', () => {
     vi.mocked(getSummary).mockRejectedValue(new Error('Please contact support.'));
     page(); expect(await screen.findByText('Please contact support.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'LMS' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Open your LMS' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Review previous record' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open LMS' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Please contact support.');
@@ -226,13 +255,14 @@ describe('previous learning portal', () => {
     vi.mocked(getSummary).mockResolvedValue({ ...initial, months: [], total_months: 0, completed_months: 0 });
     page('/old-otjh/months'); expect(await screen.findByText('No previous activity months are available')).toBeInTheDocument();
   });
-  it('blocks a manually typed LMS route until complete', async () => {
+  it.each([false, true])('checks previous monthly signatures on Dashboard entry (complete: %s)', async complete => {
+    vi.mocked(getSummary).mockResolvedValue({ ...initial, can_access_lms: complete });
     render(<OldOtjhProvider><MemoryRouter initialEntries={['/workspace/learner']}><Routes>
       <Route path="/workspace/learner" element={<OldOtjhGate><div>New LMS content</div></OldOtjhGate>} />
       <Route path="/old-otjh" element={<div>Choose a workspace</div>} />
     </Routes></MemoryRouter></OldOtjhProvider>);
-    expect(await screen.findByText('Choose a workspace')).toBeInTheDocument();
-    expect(screen.queryByText('New LMS content')).not.toBeInTheDocument();
+    expect(await screen.findByText(complete ? 'New LMS content' : 'Choose a workspace')).toBeInTheDocument();
+    expect(screen.queryByText(complete ? 'Choose a workspace' : 'New LMS content')).not.toBeInTheDocument();
   });
   it('refetches on a new visit instead of serving a stored activity copy', async () => {
     const first = page('/old-otjh/months/2026-08');
@@ -267,14 +297,22 @@ describe('previous learning portal', () => {
   });
 
   it('keeps protected documents inside one activity row and separates acceptance from completion', async () => {
-    vi.mocked(getMonth).mockResolvedValue({ ...month, rows: [{ ...month.rows[0], category: 'assignment', source_ref: 'ev:14', ksb_codes: ['K1', 'S6'],
-      documents: [{ id: 3, display_name: 'Evidence.pdf', content_type: 'application/pdf', url: '/audit_api/old-otjh/documents/3/?aptem_id=42' }] }] });
+    vi.mocked(getMonth).mockResolvedValue({ ...month, row_count: 2, rows: [
+      { ...month.rows[0], category: 'assignment', source_ref: 'asg:77098:evidence:41641', ksb_codes: ['B2', 'K5', 'S2'],
+        documents: [{ id: 3, display_name: 'Evidence.pdf', content_type: 'application/pdf', url: '/audit_api/old-otjh/documents/3/?aptem_id=42' }] },
+      { ...month.rows[0], id: 5, category: 'reading+quiz', title: 'Apprentice Charter Agreement', accepted: false,
+        source_ref: 'la:101477:126339', ksb_codes: ['B5', 'B8', 'K1', 'K5', 'S6'] },
+    ] });
     page('/old-otjh/months/2026-08');
-    const table = await screen.findByRole('table', { name: 'Assignments log' });
+    const table = await screen.findByRole('table', { name: 'Monthly activity log' });
     expect(within(table).getAllByRole('heading', { name: 'Original learning activity' })).toHaveLength(1);
-    expect(screen.getByRole('heading', { name: 'Assignments' })).toBeInTheDocument();
+    expect(within(table).getByRole('rowgroup', { name: 'Assignments' })).toBeInTheDocument();
     expect(within(table).getByRole('button', { name: 'Open Evidence.pdf' })).toBeEnabled();
-    expect(within(table).getByText('K1')).toBeInTheDocument();
+    const assignment = within(table).getByRole('rowgroup', { name: 'Assignments' });
+    for (const code of ['B2', 'K5', 'S2']) expect(within(assignment).getByText(code)).toBeInTheDocument();
+    const activity = within(table).getByRole('rowgroup', { name: 'Activities' });
+    for (const code of ['B5', 'B8', 'K1', 'K5', 'S6']) expect(within(activity).getByText(code)).toBeInTheDocument();
+    expect(within(activity).getByText('Not accepted')).toBeInTheDocument();
     expect(within(table).queryByText('Completed')).not.toBeInTheDocument();
   });
 
@@ -307,10 +345,14 @@ describe('previous learning portal', () => {
     page('/old-otjh/months/2026-08');
     await screen.findByRole('heading', { name: 'Recorded attendance' });
     expect(screen.getAllByRole('table').map(table => table.getAttribute('aria-label'))).toEqual([
-      'Attendance log', 'Monthly activity log', 'Assignments log', 'Report sign-off',
+      'Monthly activity log', 'Report sign-off',
     ]);
-    const activities = screen.getByRole('table', { name: 'Monthly activity log' });
-    expect(within(activities).getAllByRole('heading').map(heading => heading.textContent)).toEqual(['First activity', 'Second activity']);
+    const activityLog = screen.getByRole('table', { name: 'Monthly activity log' });
+    expect(within(activityLog).getAllByRole('rowgroup').map(group => group.getAttribute('aria-label')).filter(Boolean)).toEqual([
+      'Attendance', 'Activities', 'Assignments',
+    ]);
+    const activities = within(activityLog).getByRole('rowgroup', { name: 'Activities' });
+    expect(within(activities).getAllByRole('heading').slice(1).map(heading => heading.textContent)).toEqual(['First activity', 'Second activity']);
     for (const title of ['Recorded attendance', 'First activity', 'Second activity', 'Submitted assignment']) {
       expect(screen.getAllByRole('heading', { name: title })).toHaveLength(1);
     }

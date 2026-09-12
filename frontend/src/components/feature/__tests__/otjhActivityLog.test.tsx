@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { OtjhBody } from '../RealOtjhView';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import type { StudentActivityResponse } from '@/api/studentActivity';
+import type { LearnerMetrics } from '@/api/learnerMetrics';
+import { KsbProgressBody } from '../RealKsbView';
 
 // ---------------------------------------------------------------------------
 // The activity log is what the "Completed" figure is made of, so it has to
@@ -71,6 +73,34 @@ function renderBody(overrides: Partial<LearnerDetail>) {
 }
 
 describe('OTJ hours activity log', () => {
+  const metrics: LearnerMetrics = { migrated: true,
+    programme: { completed: 2, total: 3, percent: 66.67, status: 'ready' },
+    otjh: { historical: 1171.34, new: 1, actual: 1172.34, planned: 867 },
+    ksb: { completed: 2, total: 3, percent: 66.67, status: 'ready',
+      codes: [{ code: 'K1', completed: 2, total: 3, percent: 66.67 }] },
+  };
+  it('shows the combined actual and contract plan even when the old activity response differs', () => {
+    render(<OtjhBody real={detail()} loading={false} showHero={false} metrics={metrics}
+      activityData={{ activities: [], audit_lms_actual: 1171.34, audit_tp_planned: 100 } as unknown as StudentActivityResponse} />);
+    expect(screen.getByText('1172.34 h')).toBeTruthy();
+    expect(screen.getByText('867.00 h')).toBeTruthy();
+    expect(screen.queryByText('1171.34 h')).toBeNull();
+    expect(screen.getByText('planned hours from the current training plan')).toBeTruthy();
+  });
+  it('explains missing contract hours without borrowing a previous Audit total', () => {
+    render(<OtjhBody real={detail()} loading={false} showHero={false}
+      metrics={{ ...metrics, otjh: { ...metrics.otjh, planned: null } }}
+      activityData={{ activities: [], audit_tp_planned: 576 } as unknown as StudentActivityResponse} />);
+    expect(screen.getByText('planned training hours are not available')).toBeTruthy();
+    expect(screen.queryByText('576.00 h')).toBeNull();
+    expect(screen.queryByText('0.00 h')).toBeNull();
+  });
+  it('shows old and new KSB point totals instead of an empty native-only percentage', () => {
+    render(<KsbProgressBody real={detail()} loading={false} showHero={false} metric={metrics.ksb} />);
+    expect(screen.getByText('2 of 3 points achieved across all components')).toBeTruthy();
+    expect(screen.getByRole('cell', { name: 'K1' })).toBeTruthy();
+    expect(screen.queryByText('Fully evidenced')).toBeNull();
+  });
   it('uses Audit totals in the summary while keeping the activity log traceable', () => {
     const activityData = {
       learner_name: 'Test Learner',

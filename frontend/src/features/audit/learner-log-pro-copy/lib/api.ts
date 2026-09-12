@@ -1472,7 +1472,13 @@ export async function uploadContract(learnerId: number, file: File) {
     const payload = (await response.json().catch(() => null)) as { error?: string } | null;
     throw new Error(payload?.error ?? `Could not upload document (${response.status})`);
   }
-  return response.json() as Promise<{ ok: boolean; contract_id: string; document_name: string }>;
+  return response.json() as Promise<{
+    ok: boolean;
+    contract_id: string;
+    document_name: string;
+    training_plan_planned_hours?: number | null;
+    training_plan_hours_status?: 'verified' | 'needs-review' | 'not-applicable';
+  }>;
 }
 
 export async function setContractArchived(contractId: string, archived: boolean) {

@@ -10,6 +10,20 @@ const second = { id: '132', name: 'Second learner', components: [{ componentId: 
 describe('learner View identity', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it('renders a cached learner on the first frame without a loading flash', async () => {
+    vi.spyOn(api, 'peekLearnerDetail').mockImplementation((_kind, id) => id === '125' ? first : undefined);
+    vi.spyOn(api, 'fetchLearnerDetail').mockResolvedValue(first);
+    const frames: { loading: boolean; learner: LearnerDetail | null }[] = [];
+    const { result } = renderHook(() => {
+      const state = useLearnerDetailParam('commercial', '125');
+      frames.push({ loading: state.loading, learner: state.real });
+      return state;
+    });
+    expect(frames[0]).toEqual({ loading: false, learner: first });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(frames.every(frame => !frame.loading && frame.learner === first)).toBe(true);
+  });
+
   it('refreshes module views when returning from Builder and coalesces browser focus events', async () => {
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
     const updated = { ...first, modules: ['New assignment'] };

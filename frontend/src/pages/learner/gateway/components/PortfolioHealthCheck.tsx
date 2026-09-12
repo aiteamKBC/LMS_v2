@@ -30,7 +30,7 @@ export function PortfolioHealthCheck() {
         <div className="relative w-20 h-20">
           <svg viewBox="0 0 36 36" className="w-20 h-20 -rotate-90">
             <circle cx="18" cy="18" r="15.5" fill="none" stroke="oklch(var(--background-200))" strokeWidth="3"></circle>
-            <circle cx="18" cy="18" r="15.5" fill="none" stroke={PORTFOLIO_HEALTH.score >= 80 ? '#10b981' : PORTFOLIO_HEALTH.score >= 60 ? '#f59e0b' : '#ef4444'} strokeWidth="3" strokeDasharray={`${PORTFOLIO_HEALTH.score} ${100 - PORTFOLIO_HEALTH.score}`} strokeLinecap="round"></circle>
+            <circle cx="18" cy="18" r="15.5" fill="none" stroke={PORTFOLIO_HEALTH.score >= 80 ? 'var(--learner-success, #10b981)' : PORTFOLIO_HEALTH.score >= 60 ? 'var(--learner-warning, #f59e0b)' : 'var(--learner-danger, #ef4444)'} strokeWidth="3" strokeDasharray={`${PORTFOLIO_HEALTH.score} ${100 - PORTFOLIO_HEALTH.score}`} strokeLinecap="round"></circle>
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center">
             <span className={`text-lg font-bold ${getScoreColor(PORTFOLIO_HEALTH.score)}`}>{PORTFOLIO_HEALTH.score}%</span>

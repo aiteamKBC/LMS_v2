@@ -1,0 +1,205 @@
+{
+  "records": 369,
+  "statuses": {
+    "Active": 3,
+    "Delivery": 366
+  },
+  "deliveryGateCounts": {
+    "invitation": 349,
+    "plan,invitation": 7,
+    "start-date-missing,invitation": 7,
+    "plan,start-date-missing,invitation": 2,
+    "start-date-future,invitation": 1
+  },
+  "exceptions": [
+    {
+      "id": 154,
+      "name": "Jack Martin",
+      "programme": "Associate Project Manager Level 4",
+      "cohort": "Feb 2026",
+      "group": "AI in Project Control 2026",
+      "reasons": [
+        "plan"
+      ],
+      "resolvedStartDate": "2026-02-01"
+    },
+    {
+      "id": 159,
+      "name": "JORDEN GUEST",
+      "programme": "Marketing Executive Level 4",
+      "cohort": null,
+      "group": null,
+      "reasons": [
+        "start-date-missing"
+      ],
+      "resolvedStartDate": ""
+    },
+    {
+      "id": 175,
+      "name": "Roy Blagg",
+      "programme": "Associate Project Manager Level 4",
+      "cohort": "Jun 2026",
+      "group": "Ray | PMP – June 2026",
+      "reasons": [
+        "plan"
+      ],
+      "resolvedStartDate": "2026-06-01"
+    },
+    {
+      "id": 194,
+      "name": "Adam Edmondson",
+      "programme": "Associate Project Manager Level 4",
+      "cohort": null,
+      "group": null,
+      "reasons": [
+        "plan",
+        "start-date-missing"
+      ],
+      "resolvedStartDate": ""
+    },
+    {
+      "id": 223,
+      "name": "Camila Leme Nelson",
+      "programme": "Associate Project Manager Level 4",
+      "cohort": "Feb 2026",
+      "group": "AI in Project Control 2026",
+      "reasons": [
+        "plan"
+      ],
+      "resolvedStartDate": "2026-02-01"
+    },
+    {
+      "id": 234,
+      "name": "Chloe Howell",
+      "programme": "Associate Project Manager Level 4",
+      "cohort": "Oct 2025",
+      "group": "PCP Level 6 - October 2025",
+      "reasons": [
+        "plan"
+      ],
+      "resolvedStartDate": "2025-10-01"
+    },
+    {
+      "id": 261,
+      "name": "Dillon Hodgkinson",
+      "programme": "Associate Project Manager Level 4",
+      "cohort": "Feb 2026",
+      "group": "AI in Project Control 2026",
+      "reasons": [
+        "plan"
+      ],
+      "resolvedStartDate": "2026-02-01"
+    },
+    {
+      "id": 268,
+      "name": "Eleanor Cross",
+      "programme": "Associate Project Manager Level 4",
+      "cohort": "Feb 2026",
+      "group": "AI in Project Control 2026",
+      "reasons": [
+        "plan"
+      ],
+      "resolvedStartDate": "2026-02-01"
+    },
+    {
+      "id": 275,
+      "name": "Ellis Smith",
+      "programme": "Marketing Manager Level 6",
+      "cohort": null,
+      "group": null,
+      "reasons": [
+        "start-date-missing"
+      ],
+      "resolvedStartDate": ""
+    },
+    {
+      "id": 304,
+      "name": "Hannah Killick",
+      "programme": "Marketing Executive Level 4",
+      "cohort": null,
+      "group": null,
+      "reasons": [
+        "start-date-missing"
+      ],
+      "resolvedStartDate": ""
+    },
+    {
+      "id": 336,
+      "name": "Janet Alderman",
+      "programme": "Associate Project Manager Level 4",
+      "cohort": "Feb 2026",
+      "group": "AI in Project Control 2026",
+      "reasons": [
+        "plan"
+      ],
+      "resolvedStartDate": "2026-02-01"
+    },
+    {
+      "id": 348,
+      "name": "Joshua Bowers",
+      "programme": "Project Controls Professional Level 6",
+      "cohort": "Oct 2026",
+      "group": "PCP Level 6 - June 2026",
+      "reasons": [
+        "start-date-future"
+      ],
+      "resolvedStartDate": "2026-10-01"
+    },
+    {
+      "id": 372,
+      "name": "Lauren Sinclair",
+      "programme": "Marketing Manager Level 6",
+      "cohort": null,
+      "group": null,
+      "reasons": [
+        "start-date-missing"
+      ],
+      "resolvedStartDate": ""
+    },
+    {
+      "id": 397,
+      "name": "Martha Pitcher",
+      "programme": "Associate Project Manager Level 4",
+      "cohort": null,
+      "group": null,
+      "reasons": [
+        "plan",
+        "start-date-missing"
+      ],
+      "resolvedStartDate": ""
+    },
+    {
+      "id": 431,
+      "name": "Philip Durham",
+      "programme": "Marketing Manager Level 6",
+      "cohort": null,
+      "group": null,
+      "reasons": [
+        "start-date-missing"
+      ],
+      "resolvedStartDate": ""
+    },
+    {
+      "id": 437,
+      "name": "Rania Mohamed",
+      "programme": "Marketing Executive Level 4",
+      "cohort": null,
+      "group": null,
+      "reasons": [
+        "start-date-missing"
+      ],
+      "resolvedStartDate": ""
+    },
+    {
+      "id": 465,
+      "name": "Sienna Parkinson",
+      "programme": "Marketing Manager Level 6",
+      "cohort": null,
+      "group": null,
+      "reasons": [
+        "start-date-missing"
+      ],
+      "resolvedStartDate": ""
+    }
+  ]
+}

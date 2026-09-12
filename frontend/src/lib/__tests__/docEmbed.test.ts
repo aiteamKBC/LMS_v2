@@ -30,15 +30,20 @@ describe('absoluteDocUrl', () => {
 });
 
 describe('resolveDocEmbed', () => {
-  it('sends a Word upload to the Office viewer as an absolute URL', () => {
-    // The original bug: a relative path became src=%2Fcurriculum_api%2F…,
-    // which is not something Microsoft's servers can fetch.
+  it('uses the authenticated upload preview for Office files on local and public origins', () => {
+    for (const origin of [PUBLIC, LOCAL]) {
+      for (const extension of ['doc', 'docx', 'docm', 'xls', 'xlsx', 'ppt']) {
+        expect(resolveDocEmbed(`/curriculum_api/curriculum/uploads/m/c/brief.${extension}`, origin))
+          .toEqual({ mode: 'native', src: `${origin}/curriculum_api/curriculum/uploads/m/c/brief.${extension}?preview=1` });
+      }
+    }
+  });
+
+  it('retains existing query parameters on the authenticated preview', () => {
     const embed = resolveDocEmbed('/curriculum_api/curriculum/uploads/m/c/brief.docx', PUBLIC);
-    expect(embed.mode).toBe('office');
-    expect(embed.mode === 'office' && embed.src).toBe(
-      'https://view.officeapps.live.com/op/embed.aspx?src='
-      + encodeURIComponent(`${PUBLIC}/curriculum_api/curriculum/uploads/m/c/brief.docx`),
-    );
+    expect(embed.mode).toBe('native');
+    expect(resolveDocEmbed('/curriculum_api/curriculum/uploads/m/c/brief.doc?version=2', PUBLIC))
+      .toEqual({ mode: 'native', src: `${PUBLIC}/curriculum_api/curriculum/uploads/m/c/brief.doc?version=2&preview=1` });
   });
 
   it.each(['http://127.0.0.1:8000', 'http://192.168.1.20', 'http://10.0.0.5', 'http://172.20.3.4', 'http://kbc-laptop', 'http://box.local'])(

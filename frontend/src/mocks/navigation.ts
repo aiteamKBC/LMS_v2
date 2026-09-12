@@ -2,11 +2,20 @@ import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import { CHAT_ENABLED } from '@/lib/featureFlags';
 
 // ============================================================================
-// LEARNER WORKSPACE — Grouped sidebar with 18 items across 8 groups
+// Learner tools reached from the dashboard, with the same permission IDs as
+// their former Community navigation entries. No sample counters or badges.
+export const learnerDashboardLinks: (SidebarNavItem & { href: string; description: string })[] = [
+  { id: 'learner-clubs', label: 'Clubs & meetings', icon: 'ri-team-line', href: '/learner/clubs', description: 'See your assigned clubs and their meeting details.' },
+  { id: 'learner-events', label: 'Events & bookings', icon: 'ri-calendar-event-line', href: '/learner/clubs/events', description: 'Explore events and manage your bookings.' },
+  { id: 'learner-rewards', label: 'Points & rewards', icon: 'ri-trophy-line', href: '/learner/rewards', description: 'View your earned points and available rewards.' },
+  { id: 'learner-flash-cards', label: 'Flash cards', icon: 'ri-flashlight-line', href: '/learner/flash-cards', description: 'Practise with published revision cards.' },
+];
+
+// LEARNER WORKSPACE — Core learning and progress navigation
 // ============================================================================
 export const learnerNavItems: SidebarNavItem[] = [
-  // Overview — standalone (not grouped)
-  { id: 'learner-overview', label: 'Overview', icon: 'ri-dashboard-line', href: '/workspace/learner' },
+  // Dashboard — the learner workspace's default page (not grouped).
+  { id: 'learner-overview', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/learner', matchPaths: learnerDashboardLinks.map(item => item.href) },
   // The learner's own enrolment wizard — relevant while onboarding, and stays
   // available afterwards as a record of what they submitted.
   { id: 'learner-onboarding', label: 'My Enrolment', icon: 'ri-file-user-line', href: '/learner/onboarding' },
@@ -15,25 +24,11 @@ export const learnerNavItems: SidebarNavItem[] = [
   // rest of DOC_TYPES as their generators land).
   { id: 'learner-compliance-documents', label: 'Compliance documents', icon: 'ri-shield-check-line', href: '/learner/compliance-documents' },
 
-  // My Learning — training plan, learning journey and quizzes merged into
-  // Overview/Modules/Quizzes tabs on one page.
-  { id: 'learner-my-learning', label: 'My Learning', icon: 'ri-book-open-line', href: '/learner/my-learning', matchPaths: ['/learner/learning-plan'], badge: 1 },
-
-  // Training plan — the learner's Aptem training plan, month by month. Its
-  // "View components" action drops into My Learning to actually work through it.
-  { id: 'learner-training-plan-view', label: 'Training plan', icon: 'ri-clipboard-line', href: '/learner/training-plan-timeline' },
-
   // Calendar
   { id: 'learner-calendar', label: 'Calendar', icon: 'ri-calendar-2-line', href: '/learner/calendar', statusDot: 'green' },
 
   // Evidence — the learner's own submissions and where each one is in review.
-  { id: 'learner-evidence', label: 'Evidence', icon: 'ri-folder-upload-line', href: '/learner/evidence', badge: 7 },
-
-  // OTJH & KSBs progress — what those submissions add up to: off-the-job hours
-  // and KSB coverage, as Overview/OTJ Hours/KSBs tabs on one page. Labeled
-  // distinctly from the "My Progress" group below (Monthly
-  // Cycle/Coaching/Reviews) so the two aren't confused.
-  { id: 'learner-progress', label: 'OTJH & KSBs progress', icon: 'ri-bar-chart-2-line', href: '/learner/progress' },
+  { id: 'learner-evidence', label: 'Evidence', icon: 'ri-folder-upload-line', href: '/learner/evidence' },
 
   // Attendance — single item; reporting an absence is an action inside the page.
   { id: 'learner-attendance', label: 'Attendance', icon: 'ri-calendar-check-line', href: '/learner/attendance' },
@@ -45,53 +40,21 @@ export const learnerNavItems: SidebarNavItem[] = [
     icon: 'ri-loop-left-line',
     href: '',
     children: [
-      { id: 'learner-monthly-cycle', label: 'Monthly Cycle', icon: 'ri-loop-left-line', href: '/learner/monthly-cycle' },
-      { id: 'learner-monthly-submission', label: 'Monthly submission', icon: 'ri-file-text-line', href: '/learner/monthly-submission' },
+      { id: 'learner-monthly-logs', label: 'Monthly Logs', icon: 'ri-file-list-3-line', href: '/learner/monthly-logs', matchPaths: ['/learner/monthly-cycle'] },
       { id: 'learner-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
       { id: 'learner-progress-reviews', label: 'Progress Review', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
     ],
   },
 
-  // Readiness
-  {
-    id: 'learner-group-readiness',
-    label: 'Readiness',
-    icon: 'ri-flag-line',
-    href: '',
-    children: [
-      { id: 'learner-gateway', label: 'Gateway Readiness', icon: 'ri-flag-line', href: '/learner/gateway' },
-    ],
-  },
+  // Community tools now live on the dashboard. Readiness and Help still use
+  // demonstration records, so they are not advertised in learner navigation.
 
-  // Community
-  {
-    id: 'learner-group-community',
-    label: 'Community',
-    icon: 'ri-team-line',
-    href: '',
-    children: [
-      { id: 'learner-clubs', label: 'Clubs', icon: 'ri-team-line', href: '/learner/clubs' },
-      { id: 'learner-events', label: 'Events', icon: 'ri-calendar-event-line', href: '/learner/clubs/events', statusDot: 'green' },
-      { id: 'learner-rewards', label: 'Rewards', icon: 'ri-trophy-line', href: '/learner/rewards', badge: 4 },
-      { id: 'learner-flash-cards', label: 'Flash Cards', icon: 'ri-flashlight-line', href: '/learner/flash-cards' },
-    ],
-  },
-
-  // Help
-  {
-    id: 'learner-group-help',
-    label: 'Help',
-    icon: 'ri-question-line',
-    href: '',
-    children: [
-      { id: 'learner-knowledge-base', label: 'Knowledge Base', icon: 'ri-book-read-line', href: '/learner/knowledge-base' },
-      { id: 'learner-support', label: 'Support', icon: 'ri-chat-1-line', href: '/learner/support' },
-    ],
-  },
-
-  // Keep the learner's database-backed coach conversation directly available
-  // as the final destination in the sidebar.
+  // The learner's database-backed coach conversation.
   { id: 'learner-messages', label: 'Messages', icon: 'ri-message-3-line', href: '/learner/messages' },
+
+  // My Learning — training plan, learning journey and quizzes merged into
+  // Overview/Modules/Quizzes tabs on one page.
+  { id: 'learner-my-learning', label: 'My Learning', icon: 'ri-book-open-line', href: '/learner/my-learning', matchPaths: ['/learner/learning-plan'], badge: 1 },
 ];
 
 // ============================================================================
@@ -134,7 +97,7 @@ export const coachNavItems: SidebarNavItem[] = [
       { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable' },
       { id: 'coach-meetings', label: 'Monthly Coaching Meeting', icon: 'ri-calendar-check-line', href: '/coach/meetings' },
       { id: 'coach-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/coach/progress-reviews' },
-      { id: 'coach-monthly-cycle', label: 'Monthly Cycle', icon: 'ri-loop-left-line', href: '/coach/monthly-cycle' },
+      { id: 'coach-monthly-logs', label: 'Monthly Logs', icon: 'ri-file-list-3-line', href: '/coach/monthly-logs', matchPaths: ['/coach/monthly-cycle'] },
     ],
   },
   {

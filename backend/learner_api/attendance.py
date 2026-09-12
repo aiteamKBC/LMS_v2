@@ -10,6 +10,8 @@ from django.http import JsonResponse
 from login.permissions import learner_self_or_staff
 
 from .learner_detail import SOURCE_MODELS
+from .student_activity_access import student_activity_available
+from .teams_attendance import fetch_verified_teams_attendance_rows
 
 
 DEFAULT_KBC_ATTENDANCE_DATABASE = 'AiTeamKBC'
@@ -136,6 +138,58 @@ def fetch_kbc_attendance_rows(*, aptem_id, learner_id, learner_name, learner_ema
             ]
 
 
+def fetch_kbc_attendance_rates(aptem_ids):
+    """Attendance rates for many learners in one query, keyed by Aptem id.
+
+    The per-learner reader above opens a connection and runs a query for each
+    learner, which a coach caseload cannot afford. The counting rules are kept
+    identical to ``_normalize_kbc_attendance_row`` + ``_summarize_attendance``:
+    ``Attendance`` is the signal (1 attended, 0 absent) and ``attendance_status``
+    only ever distinguishes 'late', which counts as attended in both the
+    numerator and the denominator. So a coach and their learner never read
+    different percentages for the same register.
+
+    Returns {aptem_id (str): {'sessions', 'present', 'absent', 'rate'}} with an
+    entry only for learners that actually have counted rows.
+    """
+    keys = sorted({str(value).strip() for value in (aptem_ids or []) if str(value or '').strip()})
+    if not keys:
+        return {}
+    dsn = _kbc_attendance_connection_string()
+    if not dsn:
+        raise RuntimeError('KBC attendance database is not configured.')
+
+    with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                '''
+                SELECT "ID"::text AS aptem_id,
+                       "Attendance" AS attended,
+                       count(*) AS row_count
+                FROM public.kbc_attendance
+                WHERE "ID"::text = ANY(%s)
+                  AND "Attendance" IN (0, 1)
+                  AND "date" IS NOT NULL
+                GROUP BY 1, 2
+                ''',
+                [keys],
+            )
+            rows = cursor.fetchall()
+
+    totals = {}
+    for row in rows:
+        bucket = totals.setdefault(row['aptem_id'], {'sessions': 0, 'present': 0, 'absent': 0})
+        count = int(row['row_count'] or 0)
+        bucket['sessions'] += count
+        if row['attended'] == 1:
+            bucket['present'] += count
+        else:
+            bucket['absent'] += count
+    for bucket in totals.values():
+        bucket['rate'] = round((bucket['present'] / bucket['sessions']) * 100) if bucket['sessions'] else 0
+    return totals
+
+
 def _summarize_attendance(rows):
     """Convert the KBC register's session-per-row data into the learner summary."""
     def status(row):
@@ -206,9 +260,35 @@ def _summarize_attendance(rows):
         'consecutiveMissed': consecutive_missed,
         'updatedAt': updated_at.isoformat() if updated_at else None,
         'attendanceRate': attendance_rate,
-        'source': 'kbc-attendance',
+        'source': 'combined' if len({row.get('source', 'kbc-attendance') for row in rows}) > 1
+                  else rows[0].get('source', 'kbc-attendance'),
         'sessionHistory': session_history,
     }
+
+
+def combined_attendance_rows(source):
+    """Refresh KBC on every server read and merge actual Teams occurrences."""
+    rows = []
+    if student_activity_available(getattr(source, 'aptem_id', None)):
+        rows = [{**row, 'source': 'kbc-attendance'} for row in fetch_kbc_attendance_rows(
+            aptem_id=source.aptem_id, learner_id=source.id,
+            learner_name=getattr(source, 'username', '') or '', learner_email=source.email or '',
+        )]
+    # The shared Teams reader groups reconnects by occurrence and email and
+    # excludes sessions without a finished attendance report. IDs here refer
+    # to LearnerProfile, so use the verified email and check enrolment linkage.
+    teams = fetch_verified_teams_attendance_rows(learner_emails=[source.email]) if source.email else []
+    for row in teams:
+        if str(row.get('enrolment_id')) != str(source.id):
+            continue
+        rows.append({**row, 'learner_id': source.id, 'source': 'microsoft-teams'})
+    unique = {}
+    for row in rows:
+        key = (row['source'], str(row.get('occurrence_id') or row.get('session_id')), row['session_date'])
+        previous = unique.get(key)
+        if previous is None or row['attendance_status'] in {'present', 'late'}:
+            unique[key] = row
+    return list(unique.values())
 
 
 @learner_self_or_staff(kwarg="learner_id")
@@ -229,13 +309,8 @@ def learner_attendance(request, kind, learner_id):
         return _error(f'Database error: {exc}', 502)
 
     try:
-        rows = fetch_kbc_attendance_rows(
-            aptem_id=getattr(source, 'aptem_id', None),
-            learner_id=source.id,
-            learner_name=getattr(source, 'username', '') or '',
-            learner_email=getattr(source, 'email', '') or '',
-        )
+        rows = combined_attendance_rows(source)
     except Exception:
-        return _error('Unable to load attendance from KBC.', 502)
+        return _error('Unable to load attendance. Please try again.', 502)
 
     return JsonResponse({'attendance': _summarize_attendance(rows)})

@@ -414,9 +414,14 @@ function CreateTemplateModal({ onClose, onCreated }: { onClose: () => void; onCr
   // the editor locks. Naming the week is the one thing that cannot be deferred,
   // so it is the one thing asked. A template is pointed at a module when it is
   // actually placed.
+  // Created free, never paid. "Paid" means *scoped* -- tied to a programme,
+  // module and group -- and this dialog no longer asks for any of that, so
+  // calling the result paid claimed a scope it does not have. Free is what an
+  // unscoped week actually is, and the server clears the scope columns to match
+  // instead of leaving them half-set.
   const handleCreate = () => {
     if (!canCreate) return;
-    const base = createEmptyWeekTemplate('paid');
+    const base = createEmptyWeekTemplate('free');
     base.title = title.trim();
     onCreated(base);
   };
@@ -1758,6 +1763,18 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
                   uploadSource: 'Device upload',
                 },
               })}
+              onRemove={() => onChange({
+                settings: {
+                  ...component.settings,
+                  readingSource: 'File',
+                  resourceUrl: '',
+                  uploadedFileName: '',
+                  uploadedFileUrl: '',
+                  uploadedFileSize: 0,
+                  uploadedFileContentType: '',
+                  uploadSource: '',
+                },
+              })}
             />
             <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: Word (.doc, .docx), PDF, plain text (.txt), RTF, OpenDocument (.odt).</p>
           </div>
@@ -1844,6 +1861,18 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
                   uploadedFileSize: file.size,
                   uploadedFileContentType: file.contentType,
                   uploadSource: 'Device upload',
+                },
+              })}
+              onRemove={() => onChange({
+                settings: {
+                  ...component.settings,
+                  podcastSource: 'Audio File',
+                  podcastUrl: '',
+                  uploadedFileName: '',
+                  uploadedFileUrl: '',
+                  uploadedFileSize: 0,
+                  uploadedFileContentType: '',
+                  uploadSource: '',
                 },
               })}
             />
@@ -1948,6 +1977,9 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
             uploadedContentType={s('uploadedFileContentType')}
             onUploaded={file => onChange({
               settings: { ...component.settings, uploadedFileName: file.fileName, uploadedFileUrl: file.url, uploadedFileSize: file.size, uploadedFileContentType: file.contentType },
+            })}
+            onRemove={() => onChange({
+              settings: { ...component.settings, uploadedFileName: '', fileName: '', uploadedFileUrl: '', uploadedFileSize: 0, uploadedFileContentType: '' },
             })}
           />
           <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: PowerPoint (.ppt, .pptx, .pps, .ppsx) or PDF. The preview below is what a learner sees.</p>
@@ -2339,7 +2371,7 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints }: Compone
   );
 }
 
-function WeekComponentFileUpload({ componentId, componentType, accept, uploadedName, uploadedUrl, uploadedSize, uploadedContentType, onUploaded, onUpload = uploadWeekComponentResource }: {
+function WeekComponentFileUpload({ componentId, componentType, accept, uploadedName, uploadedUrl, uploadedSize, uploadedContentType, onUploaded, onRemove, onUpload = uploadWeekComponentResource }: {
   componentId: string;
   componentType: 'reading' | 'podcast' | 'powerpoint' | 'assignment';
   accept: string;
@@ -2348,13 +2380,31 @@ function WeekComponentFileUpload({ componentId, componentType, accept, uploadedN
   uploadedSize: number;
   uploadedContentType: string;
   onUploaded: (file: WeekComponentUploadResult['file']) => void;
+  // Clears the stored file without replacing it. Authors need this when a deck
+  // or document was attached by mistake and no replacement exists yet.
+  onRemove?: () => void;
   onUpload?: WeekComponentUploader;
 }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const [failedFile, setFailedFile] = useState<File | null>(null);
   const [previewOpen, setPreviewOpen] = useState(Boolean(uploadedUrl));
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const inputId = useMemo(() => `week-component-upload-${Math.random().toString(36).slice(2)}`, []);
+
+  // A removal prompt left open against a file that is already gone (or has been
+  // swapped for another) would apply to the wrong thing, so drop it.
+  useEffect(() => {
+    if (!uploadedUrl && !uploadedName) setConfirmRemove(false);
+  }, [uploadedUrl, uploadedName]);
+
+  const handleRemove = () => {
+    setConfirmRemove(false);
+    setError('');
+    setFailedFile(null);
+    setPreviewOpen(false);
+    onRemove?.();
+  };
 
   const handleFile = async (file: File) => {
     setUploading(true);
@@ -2391,6 +2441,11 @@ function WeekComponentFileUpload({ componentId, componentType, accept, uploadedN
               </a>
             </div>
           )}
+          {onRemove && (uploadedUrl || uploadedName) && !confirmRemove && (
+            <button type="button" disabled={uploading} onClick={() => setConfirmRemove(true)} className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold text-red-600 hover:text-red-700 disabled:opacity-50">
+              <AppIcon className="ri-delete-bin-line"></AppIcon> Remove file
+            </button>
+          )}
         </div>
         <div className="w-full shrink-0 sm:w-auto">
           <input
@@ -2415,6 +2470,22 @@ function WeekComponentFileUpload({ componentId, componentType, accept, uploadedN
         <AppIcon className="ri-information-line shrink-0"></AppIcon>
         Maximum file size: {COMPONENT_UPLOAD_MAX_LABEL}.
       </p>
+      {onRemove && confirmRemove && (
+        <div className="mt-2 flex flex-col gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="flex min-w-0 items-start gap-1.5 text-[11px] font-semibold text-red-700">
+            <AppIcon className="ri-error-warning-line mt-0.5 shrink-0"></AppIcon>
+            <span>Remove this file from the component? The component keeps its other details and you can upload a new file later.</span>
+          </p>
+          <div className="flex shrink-0 items-center gap-2">
+            <button type="button" onClick={() => setConfirmRemove(false)} className="inline-flex h-8 items-center justify-center rounded-md border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 hover:bg-background-100">
+              Cancel
+            </button>
+            <button type="button" onClick={handleRemove} className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-red-600 px-3 text-[11px] font-bold text-white hover:bg-red-700">
+              <AppIcon className="ri-delete-bin-line !text-white"></AppIcon> Remove file
+            </button>
+          </div>
+        </div>
+      )}
       {error && (
         <div className="mt-2 flex flex-col gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-red-700 sm:flex-row sm:items-center sm:justify-between">
           <p className="flex min-w-0 items-start gap-1.5 text-[11px] font-semibold">

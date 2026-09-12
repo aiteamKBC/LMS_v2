@@ -17,6 +17,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
+import { createCachedResource, clearAllCachedResources } from '@/api/cachedRequest';
 
 const apiMe = vi.fn();
 const apiLogin = vi.fn();
@@ -67,6 +68,7 @@ async function renderAuth() {
 }
 
 beforeEach(() => {
+  clearAllCachedResources();
   apiMe.mockReset().mockResolvedValue(null);
   apiLogin.mockReset();
   apiLogout.mockReset().mockResolvedValue(undefined);
@@ -105,6 +107,21 @@ describe('hydration from the session cookie', () => {
     apiMe.mockRejectedValue(new Error('network down'));
     const { result } = await renderAuth();
     expect(result.current.auth.isAuthenticated).toBe(false);
+    expect(result.current.initializationError).toMatch(/could not check your session/i);
+  });
+
+  it('restores the existing session on retry without asking for credentials', async () => {
+    apiMe.mockRejectedValueOnce(new Error('network down'));
+    const { result } = await renderAuth();
+    expect(result.current.initializationError).toBeTruthy();
+
+    apiMe.mockResolvedValueOnce(ADMIN);
+    act(() => result.current.retryInitialization());
+    await waitFor(() => expect(result.current.isInitialized).toBe(true));
+
+    expect(result.current.auth.account).toEqual(ADMIN);
+    expect(result.current.initializationError).toBeNull();
+    expect(apiLogin).not.toHaveBeenCalled();
   });
 });
 
@@ -191,6 +208,19 @@ describe('role mapping', () => {
 });
 
 describe('logout', () => {
+  it('drops learner snapshots when signing out or switching accounts', async () => {
+    apiMe.mockResolvedValue(ADMIN);
+    const { result } = await renderAuth();
+    const cached = createCachedResource('auth-test-learner', async () => ({ name: 'Previous learner' }));
+    await cached.read('125');
+    apiLogin.mockResolvedValue(LEARNER);
+    await act(async () => { await result.current.login('l@kbc.test', 'pw'); });
+    expect(cached.peek('125')).toBeUndefined();
+    await cached.read('125');
+    act(() => result.current.logout());
+    expect(cached.peek('125')).toBeUndefined();
+  });
+
   it('revokes the session server-side and clears local state', async () => {
     apiMe.mockResolvedValue(ADMIN);
     const { result } = await renderAuth();

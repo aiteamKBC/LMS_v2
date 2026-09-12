@@ -71,8 +71,8 @@ function DonutRing({ progress, color, size = 44, stroke = 4.5 }: { progress: num
   const r = (size - stroke) / 2;
   const circumference = 2 * Math.PI * r;
   const offset = circumference - (Math.min(progress, 100) / 100) * circumference;
-  const colorMap: Record<string, string> = { emerald: '#10b981', amber: '#f59e0b', red: '#ef4444', primary: 'oklch(var(--primary-500))' };
-  const strokeColor = colorMap[color] || '#10b981';
+  const colorMap: Record<string, string> = { emerald: 'var(--learner-success, #10b981)', amber: 'var(--learner-warning, #f59e0b)', red: 'var(--learner-danger, #ef4444)', primary: 'oklch(var(--primary-500))' };
+  const strokeColor = colorMap[color] || 'var(--learner-success, #10b981)';
 
   return (
     <svg width={size} height={size} className="shrink-0 -rotate-90">

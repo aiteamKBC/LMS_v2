@@ -20,7 +20,7 @@ export default function AttendanceHero({ missedCount, attendedCount, onReportAbs
                   s.currentRate >= 75 ? 'bg-amber-400/15 text-amber-300 border border-amber-400/20' :
                   'bg-red-400/15 text-red-300 border border-red-400/20';
 
-  const donutColor = isOnTarget ? '#10b981' : s.currentRate >= 75 ? '#f59e0b' : '#ef4444';
+  const donutColor = isOnTarget ? 'var(--learner-success, #10b981)' : s.currentRate >= 75 ? 'var(--learner-warning, #f59e0b)' : 'var(--learner-danger, #ef4444)';
   const r = 42;
   const circ = 2 * Math.PI * r;
   const offset = circ - (Math.min(s.currentRate, 100) / 100) * circ;

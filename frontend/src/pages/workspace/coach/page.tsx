@@ -44,7 +44,7 @@ import {
 
 const coachNav = roleNavMap.coach;
 
-type DashboardKpi = 'caseload' | 'active' | 'on-break' | 'on-track' | 'at-risk' | 'need-attention' | 'gateway' | 'epa' | 'evidence' | 'reviews';
+type DashboardKpi = 'caseload' | 'active' | 'on-break' | 'on-track' | 'at-risk' | 'need-attention' | 'completed' | 'epa' | 'evidence' | 'reviews';
 type OtjhStatusKey = 'at-risk' | 'need-attention' | 'on-track' | 'unknown';
 type PerformanceStatus = 'on-track' | 'at-risk' | 'high' | 'new-starter';
 type ScheduleStatus = 'upcoming' | 'overdue' | 'needs-schedule' | 'none';
@@ -93,6 +93,10 @@ interface CoachLearner {
   otjhStatus?: string | null;
   ksbProgress: number;
   ksbProgressAvailable?: boolean;
+  /** Distinct KSB codes evidenced in the audit mapping. A count, not a
+   *  percentage -- the mapping spans several standards, so it carries no
+   *  per-learner denominator. Matches the learner's own workspace. */
+  ksbEvidencedCount?: number | null;
   evidenceCount: number;
   evidenceCountAvailable?: boolean;
   evidenceCompletedCount: number;
@@ -253,8 +257,12 @@ function isOnBreakLearner(learner: CoachLearner): boolean {
   return normalizedProgramStatus(learner).includes('break');
 }
 
-function isGatewayLearner(learner: CoachLearner): boolean {
-  return normalizedProgramStatus(learner) === 'gateway';
+// Finished the programme. Matched on the canonical "Completed" status from
+// learner_api.constants, the value enrolment actually writes -- unlike the
+// gateway stage this replaced, which was never a programme status the platform
+// set, so that card could only ever read zero.
+function isCompletedLearner(learner: CoachLearner): boolean {
+  return normalizedProgramStatus(learner) === 'completed';
 }
 
 function isEpaLearner(learner: CoachLearner): boolean {
@@ -305,6 +313,7 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     otjhStatus: displayValue(learner.otjhStatus),
     ksbProgress: clampPercent(learner.ksbProgress),
     ksbProgressAvailable: learner.ksbProgressAvailable,
+    ksbEvidencedCount: learner.ksbEvidencedCount ?? null,
     evidenceCount: toNumber(learner.evidenceCount),
     evidenceCountAvailable: learner.evidenceCountAvailable,
     evidenceCompletedCount: toNumber(learner.evidenceCompletedCount),
@@ -318,6 +327,15 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     rawProgramStatus: learner.rawProgramStatus || null,
   };
 }
+
+/** KSB as the learner's own workspace shows it: the number of distinct codes
+ *  evidenced. Falls back to the curriculum percentage for learners with no
+ *  audit mapping, and to "--" when neither figure exists. */
+function ksbCellValue(learner: CoachLearner): string {
+  if (learner.ksbEvidencedCount != null) return `${learner.ksbEvidencedCount}`;
+  return learner.ksbProgressAvailable ? `${learner.ksbProgress}%` : EMPTY_VALUE;
+}
+
 
 function findAttendanceRecord(learner: CoachLearner, attendanceLearners: AttendanceApiLearner[]) {
   const learnerId = normalizeIdentity(learner.id);
@@ -847,6 +865,7 @@ function learnerAvatarTone(learner: CoachLearner): StatusTone {
   if (otjhStatus === 'at-risk') return 'critical';
   if (otjhStatus === 'need-attention') return 'caution';
   const programmeStatus = normalizedProgramStatus(learner);
+  if (programmeStatus === 'completed') return 'positive';
   if (programmeStatus === 'gateway') return 'brand';
   if (programmeStatus === 'epa') return 'info';
   return 'neutral';
@@ -894,7 +913,7 @@ const KPI_FILTER_LABEL: Record<DashboardKpi, string> = {
   'on-track': 'On track learners',
   'at-risk': 'At risk learners',
   'need-attention': 'Learners needing attention',
-  gateway: 'Gateway learners',
+  completed: 'Completed learners',
   epa: 'EPA learners',
   evidence: 'Evidence awaiting review',
   reviews: 'Upcoming reviews',
@@ -1130,7 +1149,7 @@ export default function CoachDashboard() {
   const enrichedLearners = useMemo(() => enrichLearnerSchedule(learners, calendarEvents), [learners, calendarEvents]);
   const activeLearners = useMemo(() => enrichedLearners.filter(isActiveLearner), [enrichedLearners]);
   const onBreakLearners = useMemo(() => enrichedLearners.filter(isOnBreakLearner), [enrichedLearners]);
-  const gatewayLearners = useMemo(() => enrichedLearners.filter(isGatewayLearner), [enrichedLearners]);
+  const completedLearners = useMemo(() => enrichedLearners.filter(isCompletedLearner), [enrichedLearners]);
   const epaLearners = useMemo(() => enrichedLearners.filter(isEpaLearner), [enrichedLearners]);
   const atRiskLearners = useMemo(
     () => activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'at-risk'),
@@ -1255,7 +1274,7 @@ export default function CoachDashboard() {
       case 'caseload': return () => true;
       case 'active': return isActiveLearner;
       case 'on-break': return isOnBreakLearner;
-      case 'gateway': return isGatewayLearner;
+      case 'completed': return isCompletedLearner;
       case 'epa': return isEpaLearner;
       case 'at-risk':
       case 'need-attention':
@@ -1589,13 +1608,13 @@ export default function CoachDashboard() {
                   onFilter={() => setSelectedKpi('on-break')}
                 />
                 <FilterMetricCard
-                  label="Gateway"
-                  value={gatewayLearners.length}
-                  note="At gateway stage"
-                  tone="upcoming"
-                  icon="ri-flag-line"
-                  active={kpiFilter === 'gateway'}
-                  onFilter={() => setSelectedKpi('gateway')}
+                  label="Completed"
+                  value={completedLearners.length}
+                  note="Finished the programme"
+                  tone="positive"
+                  icon="ri-verified-badge-line"
+                  active={kpiFilter === 'completed'}
+                  onFilter={() => setSelectedKpi('completed')}
                 />
                 <FilterMetricCard
                   label="EPA"
@@ -1970,7 +1989,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
     'on-track': { title: 'Learners on track', subtitle: 'Learners currently meeting their OTJH target', icon: 'ri-checkbox-circle-line', iconStyle: 'bg-emerald-100 text-emerald-600' },
     'at-risk': { title: 'Learners at risk', subtitle: 'Learners requiring immediate coaching action', icon: 'ri-alarm-warning-line', iconStyle: 'bg-red-100 text-red-600' },
     'need-attention': { title: 'Learners needing attention', subtitle: 'Learners who need targeted support this week', icon: 'ri-error-warning-line', iconStyle: 'bg-amber-100 text-amber-600' },
-    gateway: { title: 'Gateway learners', subtitle: 'Learners currently at the gateway stage', icon: 'ri-flag-line', iconStyle: 'bg-accent-100 text-accent-700' },
+    completed: { title: 'Completed learners', subtitle: 'Learners who have finished the programme', icon: 'ri-verified-badge-line', iconStyle: 'bg-green-100 text-green-700' },
     epa: { title: 'EPA learners', subtitle: 'Learners currently at the end-point assessment stage', icon: 'ri-award-line', iconStyle: 'bg-secondary-100 text-secondary-700' },
     evidence: { title: 'Evidence awaiting review', subtitle: 'Evidence submissions and review status', icon: 'ri-file-search-line', iconStyle: 'bg-secondary-100 text-secondary-600' },
     reviews: { title: 'Upcoming reviews', subtitle: 'Progress reviews scheduled in the next 14 days', icon: 'ri-file-chart-line', iconStyle: 'bg-primary-100 text-primary-600' },
@@ -1983,7 +2002,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
     'on-track': 'on-track',
     'at-risk': 'at-risk',
     'need-attention': 'need-attention',
-    gateway: 'gateway',
+    completed: 'completed',
     epa: 'epa',
   };
   const modalLearners = type === 'caseload'
@@ -1992,8 +2011,8 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
       ? learners.filter(isActiveLearner)
       : type === 'on-break'
         ? learners.filter(isOnBreakLearner)
-      : type === 'gateway'
-        ? learners.filter(isGatewayLearner)
+      : type === 'completed'
+        ? learners.filter(isCompletedLearner)
       : type === 'epa'
         ? learners.filter(isEpaLearner)
     : type === 'on-track' || type === 'at-risk' || type === 'need-attention'
@@ -2029,11 +2048,20 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
     onClose();
   };
 
+  // Scrolls the whole overlay rather than centring a fixed-height box. A
+  // centred flex item taller than its container overflows in BOTH directions,
+  // and the half above the viewport cannot be scrolled back to -- which cropped
+  // the header, cutting the icon in half and pushing the title under the panel
+  // edge. `my-auto` inside a `min-h-full` wrapper still centres a short dialog,
+  // while a tall one starts at the top where it can actually be read.
   return createPortal(
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-6 lg:p-8" role="dialog" aria-modal="true" aria-labelledby="kpi-modal-title" aria-describedby="kpi-modal-description">
-      <button type="button" onClick={onClose} className="absolute inset-0 bg-foreground-950/10 backdrop-blur-[5px] backdrop-saturate-125" aria-label="Close popup"></button>
-      <div className="relative flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-white/80 bg-background-50 shadow-xl">
-        <header className="relative overflow-hidden border-b border-foreground-100/80 bg-gradient-to-r from-primary-50/90 via-background-50 to-secondary-50/60 px-5 py-5 sm:px-7 sm:py-6">
+    <div className="fixed inset-0 z-[9999] overflow-y-auto overscroll-contain p-3 sm:p-6 lg:p-8" role="dialog" aria-modal="true" aria-labelledby="kpi-modal-title" aria-describedby="kpi-modal-description">
+      <button type="button" onClick={onClose} className="fixed inset-0 bg-foreground-950/10 backdrop-blur-[5px] backdrop-saturate-125" aria-label="Close popup"></button>
+      <div className="relative mx-auto flex min-h-full w-full max-w-5xl items-start justify-center">
+        <div className="relative my-auto flex max-h-[88vh] w-full flex-col overflow-hidden rounded-2xl border border-white/80 bg-background-50 shadow-xl">
+        {/* shrink-0 so a long caseload cannot squeeze the header away: the body
+            below is the flex child that scrolls, and this stays put. */}
+        <header className="relative z-10 shrink-0 overflow-hidden border-b border-foreground-100/80 bg-gradient-to-r from-primary-50/90 via-background-50 to-secondary-50/60 px-5 py-5 sm:px-7 sm:py-6">
           <div className="pointer-events-none absolute -right-12 -top-20 h-48 w-48 rounded-full bg-primary-200/25 blur-3xl"></div>
           <div className="relative flex items-start justify-between gap-4">
             <div className="flex min-w-0 items-center gap-4">
@@ -2051,7 +2079,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-background-50 to-background-100/50 p-4 sm:p-6">
-          {(type === 'caseload' || type === 'active' || type === 'on-break' || type === 'on-track' || type === 'at-risk' || type === 'need-attention' || type === 'gateway' || type === 'epa') && (
+          {(type === 'caseload' || type === 'active' || type === 'on-break' || type === 'on-track' || type === 'at-risk' || type === 'need-attention' || type === 'completed' || type === 'epa') && (
             <div className="space-y-3.5">
               {modalLearners.map(learner => {
                 const status = OTJH_STATUS_META[normalizeOtjhStatus(learner.otjhStatus)];
@@ -2073,8 +2101,8 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
                           <span className="truncate text-sm font-bold text-foreground-900 transition-colors group-hover:text-primary-700 sm:text-[15px]">{learner.name}</span>
                           {type === 'active' || type === 'on-break' ? (
                             <StatusBadge tone={isActiveLearner(learner) ? 'positive' : 'caution'} label={displayValue(learner.rawProgramStatus)} size="sm" />
-                          ) : type === 'gateway' || type === 'epa' ? (
-                            <StatusBadge tone={type === 'gateway' ? 'upcoming' : 'info'} label={type === 'gateway' ? 'Gateway' : 'EPA'} size="sm" />
+                          ) : type === 'completed' || type === 'epa' ? (
+                            <StatusBadge tone={type === 'completed' ? 'positive' : 'info'} label={type === 'completed' ? 'Completed' : 'EPA'} size="sm" />
                           ) : (
                             <StatusBadge tone={status.tone} label={status.label} size="sm" />
                           )}
@@ -2084,7 +2112,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
                     </div>
                     <div className="grid min-w-0 grid-cols-3 gap-2 text-center sm:col-span-2 lg:col-span-1 lg:min-w-[320px]">
                       <ModalMiniMetric label="OTJH" value={otjh} />
-                      <ModalMiniMetric label="KSB" value={learner.ksbProgressAvailable ? `${learner.ksbProgress}%` : EMPTY_VALUE} />
+                      <ModalMiniMetric label="KSB" value={ksbCellValue(learner)} />
                       <ModalMiniMetric label="Attendance" value={attendance} tone={percentTone(learner.attendanceRateAvailable ? learner.attendanceRate : null, ATTENDANCE_MINIMUM_RATE, ATTENDANCE_EXPECTED_RATE)} />
                     </div>
                     <span className="hidden h-10 w-10 items-center justify-center rounded-lg bg-background-100 text-foreground-400 transition-colors group-hover:bg-primary-50 group-hover:text-primary-700 sm:flex"><AppIcon className="ri-arrow-right-s-line text-xl"></AppIcon></span>
@@ -2168,6 +2196,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
           {type === 'evidence' && <Link to="/coach/marking-queue" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open marking queue</Link>}
           {type === 'reviews' && <Link to="/coach/progress-reviews" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open reviews</Link>}
         </footer>
+        </div>
       </div>
     </div>,
     document.body,
