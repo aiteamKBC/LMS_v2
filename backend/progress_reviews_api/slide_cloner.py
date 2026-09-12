@@ -249,6 +249,16 @@ def replace_picture_fill(shape, image_bytes: bytes, slide_part) -> None:
         blip.set(R_EMBED, rId)
 
 
+def set_proportional_fill_width(fill_shape, track_shape, fraction: float) -> None:
+    """Resize a progress-bar fill (a GROUP) against its track sibling's full
+    width, for a percentage-driven bar built as a same-position track+fill
+    pair (this template's Programme Progress / OTJ / LMS bars) — never left
+    at whatever percentage the template's original example happened to show.
+    """
+    fraction = max(0.0, min(1.0, fraction))
+    fill_shape.width = int(track_shape.width * fraction)
+
+
 def shape_bounds_in(shape) -> Optional[tuple]:
     if shape.left is None or shape.top is None:
         return None

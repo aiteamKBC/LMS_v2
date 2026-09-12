@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 from pathlib import Path
 
 from pptx import Presentation
@@ -49,8 +50,35 @@ from .review_pack import NOT_AVAILABLE
 
 logger = logging.getLogger(__name__)
 
-TEMPLATE_PATH = Path(__file__).parent / "templates" / "kbc_progress_review_template.pptx"
-TEMPLATE_VERSION = "v1"
+TEMPLATE_DIR = Path(__file__).parent / "templates"
+DEFAULT_TEMPLATE_VERSION = "v1"
+DEFAULT_TEMPLATE_PATH = TEMPLATE_DIR / "kbc_progress_review_template.pptx"
+
+
+def resolve_template_path() -> Path:
+    """The template file to render from, driven by
+    KBC_PROGRESS_REVIEW_TEMPLATE_VERSION so a design refresh means dropping in
+    `kbc_progress_review_template_<version>.pptx` and setting the env var —
+    never touching this module's slide-population logic (see the class
+    docstring's shape-index provenance, which is tied to the current, v1,
+    template file specifically).
+    """
+    version = os.environ.get("KBC_PROGRESS_REVIEW_TEMPLATE_VERSION", DEFAULT_TEMPLATE_VERSION)
+    if version == DEFAULT_TEMPLATE_VERSION:
+        return DEFAULT_TEMPLATE_PATH
+    versioned_path = TEMPLATE_DIR / f"kbc_progress_review_template_{version}.pptx"
+    if versioned_path.exists():
+        return versioned_path
+    logger.warning(
+        "KBC_PROGRESS_REVIEW_TEMPLATE_VERSION=%s has no template file (%s); falling back to %s.",
+        version, versioned_path.name, DEFAULT_TEMPLATE_VERSION,
+    )
+    return DEFAULT_TEMPLATE_PATH
+
+
+# Kept for backward-compat direct imports (e.g. tests asserting the default
+# template's slide count) — always the v1 file regardless of the env var.
+TEMPLATE_PATH = DEFAULT_TEMPLATE_PATH
 
 MONTH_LABEL = "%B"
 
@@ -269,6 +297,7 @@ def _populate_closure(slide, pack):
         "Reflection and relevant KSB mapping uploaded within 48 hours.",
     ]
     _set_bullets(slide, 16, evidence_needed, header_count=1, limit=4)
+    _set_para(slide, 16, 0, "What will evidence each activity")
 
     protocol = [
         "Protect dedicated OTJ time each week.",
@@ -292,7 +321,12 @@ def _populate_closure(slide, pack):
 
 
 def _populate_attendance(slide, pack):
-    attendance = pack["attendance"]
+    attendance, learner = pack["attendance"], pack["learner"]
+    _set(slide, 5, (
+        f"{learner.get('full_name')} recorded {_pct(attendance.get('attendance_percentage'))} attendance this period."
+        if attendance.get("attendance_percentage") != NOT_AVAILABLE
+        else f"Attendance data for {learner.get('full_name')} is {NOT_AVAILABLE} for this review window."
+    ))
     monthly = attendance.get("monthly_summary") or []
     slots = [(8, 9, 10), (13, 14, 15), (18, 19, 20)]
     for i, (month_idx, pct_idx, note_idx) in enumerate(slots):
@@ -312,13 +346,33 @@ def _populate_attendance(slide, pack):
     future_protocol = ["Any missed session should trigger a prompt catch-up, recorded the same week."]
     _set_bullets(slide, 24, future_protocol, header_count=1)
 
+    practical_action = _shape_in_group(slide, 26, 1)
+    if practical_action is not None:
+        missed = attendance.get("missed_sessions")
+        text = (
+            f"Practical action: agree a catch-up plan for {missed} missed session(s)."
+            if isinstance(missed, int) and missed > 0
+            else "Practical action: no catch-up action needed this period."
+        )
+        sc.set_all_text(practical_action, fit.clamp(text, 160))
+
 
 def _populate_progress_otj_lms(slide, pack):
     progress, otj = pack["progress"], pack["otj"]
-    _set(slide, 10, f"Current: {_pct(progress.get('current_programme_progress_percentage'))}")
-    _set(slide, 11, _pct(progress.get("current_programme_progress_percentage")))
-    _set(slide, 14, f"Target: {_pct(progress.get('target_progress_percentage'))}")
-    _set(slide, 15, _pct(progress.get("target_progress_percentage")))
+    _set(slide, 5, (
+        f"Programme progress and OTJ hours against target, with a clear action for the coming period."
+    ))
+    shapes = _shapes(slide)
+    current_pct = progress.get("current_programme_progress_percentage")
+    target_pct = progress.get("target_progress_percentage")
+    _set(slide, 10, f"Current: {_pct(current_pct)}")
+    _set(slide, 11, _pct(current_pct))
+    _set(slide, 14, f"Target: {_pct(target_pct)}")
+    _set(slide, 15, _pct(target_pct))
+    if isinstance(current_pct, (int, float)):
+        sc.set_proportional_fill_width(shapes[9], shapes[8], current_pct / 100)
+    if isinstance(target_pct, (int, float)):
+        sc.set_proportional_fill_width(shapes[13], shapes[12], target_pct / 100)
     rag_label, _tone = _rag_label_and_tone(otj.get("risk_status"))
     _set(slide, 16, f"{_s(pack['learner'].get('full_name'))} is {rag_label.lower()} with progress." if rag_label != NOT_AVAILABLE else NOT_AVAILABLE)
 
@@ -329,18 +383,21 @@ def _populate_progress_otj_lms(slide, pack):
     _set(slide, 31, _s(otj.get("duplicate_or_weak_otj_warning")))
 
     modules = pack["lms_modules"]
-    module_lines = [36, 39, 42]
-    for idx, slot in enumerate(module_lines):
+    module_slots = [(36, 35, 34), (39, 38, 37), (42, 41, 40)]
+    for idx, (label_idx, fill_idx, track_idx) in enumerate(module_slots):
         if idx < len(modules):
             m = modules[idx]
-            _set(slide, slot, f"{m['module']} {m['completion_percentage']}%")
+            _set(slide, label_idx, f"{m['module']} {m['completion_percentage']}%")
+            sc.set_proportional_fill_width(shapes[fill_idx], shapes[track_idx], m["completion_percentage"] / 100)
         else:
-            _set(slide, slot, NOT_AVAILABLE)
+            _set(slide, label_idx, NOT_AVAILABLE)
+            sc.set_proportional_fill_width(shapes[fill_idx], shapes[track_idx], 0)
     _set(slide, 43, f"• Action: {progress.get('action_notes')}")
 
 
 def _populate_epa(slide, pack):
     epa = pack["epa"]
+    _set(slide, 5, "Confidence across each EPA component, and the outstanding evidence admin that affects it.")
     _set(slide, 8, _s(epa.get("current_readiness")))
     _set(slide, 9, (epa.get("portfolio_risks") or [NOT_AVAILABLE])[0])
     _set(slide, 12, _s(pack["progress"].get("overdue_lms_activities")))
@@ -371,24 +428,33 @@ def _populate_assignments(slide, pack):
     review = pack["review"]
     month_label = _month_range_label(review["review_period_start"], review["review_period_end"])
     _set(slide, 4, f"Assignments Submitted: {month_label}")
+    _set(slide, 5, f"The top evidence submitted in the review window, grouped into logical blocks with its workplace and KSB value.")
 
     blocks = _evidence_blocks(pack, 3)
-    slots = [(9, 10, 11), (15, 16, 17), (21, 22, 23)]
-    for i, (title_idx, detail_idx, value_idx) in enumerate(slots):
+    slots = [(8, 9, 10, 11), (14, 15, 16, 17), (20, 21, 22, 23)]
+    for i, (label_group_idx, title_idx, detail_idx, value_idx) in enumerate(slots):
         if i < len(blocks):
             item = blocks[i]
+            label = _date_label(item.get("evidence_date")) if item.get("evidence_date") != NOT_AVAILABLE else f"Item {i + 1}"
+            _set_in_group(slide, label_group_idx, 1, label)
             _set(slide, title_idx, fit.clamp(item.get("evidence_title"), 60))
             _set(slide, detail_idx, f"• {fit.bullet_line(item.get('evidence_summary'), 160)}")
             ksb = ", ".join(item.get("ksb_mappings") or []) or "workplace application"
             _set(slide, value_idx, f"Evidence value: {item.get('evidence_strength')}, evidences {ksb}")
         else:
+            _set_in_group(slide, label_group_idx, 1, NOT_AVAILABLE)
             _set(slide, title_idx, NOT_AVAILABLE)
             _set(slide, detail_idx, NOT_AVAILABLE)
             _set(slide, value_idx, NOT_AVAILABLE)
 
+    next_step = _shape_in_group(slide, 25, 1)
+    if next_step is not None:
+        sc.set_all_text(next_step, "Next step: ensure every assignment is linked to one or more artefacts and a short reflection.")
+
 
 def _populate_portfolio_review(slide, pack):
     evidence, ksbs = pack["evidence"], pack["ksbs"]
+    _set(slide, 5, "An honest read on evidence quality, and what it will take to make the portfolio EPA-ready.")
     blocks = _evidence_blocks(pack, 3)
     slots = [(8, 9, 10), (13, 14, 15), (18, 19, 20)]
     for i, (strength_idx, title_idx, note_idx) in enumerate(slots):
@@ -411,20 +477,38 @@ def _populate_portfolio_review(slide, pack):
     epa_ready = ["Add a one-page evidence cover sheet mapping each item to its KSBs and outcome."]
     _set_bullets(slide, 29, epa_ready, header_count=1)
 
+    best_practice = _shape_in_group(slide, 31, 1)
+    if best_practice is not None:
+        sc.set_all_text(best_practice, fit.clamp(
+            f"Best practice: show the assessor what changed because {pack['learner'].get('full_name')} did the work.", 160,
+        ))
 
-def _populate_evidence_detail(slide, pack, month_offset: int, fetch_image: ImageFetcher):
+
+# Evidence detail slides do not have uniform capacity — slide 8 (the first)
+# has 4 photo/caption slots, slides 9 and 10 have 3 each (10 total across the
+# three slides). The closing OTJ/value bar's group index shifts accordingly.
+_EVIDENCE_DETAIL_LAYOUT = {
+    0: {"caption_indices": [10, 13, 16, 19], "bar_group": 21},
+    1: {"caption_indices": [10, 13, 16], "bar_group": 18},
+    2: {"caption_indices": [10, 13, 16], "bar_group": 18},
+}
+
+
+def _populate_evidence_detail(slide, pack, slot_offset: int, month_index: int, fetch_image: ImageFetcher):
+    layout = _EVIDENCE_DETAIL_LAYOUT[month_index]
+    caption_indices = layout["caption_indices"]
     blocks = _evidence_blocks(pack, 999)
-    start = month_offset * 4
-    items = blocks[start : start + 4]
+    items = blocks[slot_offset : slot_offset + len(caption_indices)]
 
     review = pack["review"]
     label = _month_range_label(review["review_period_start"], review["review_period_end"])
-    _set(slide, 4, f"Additional Job Activities: {label}" if month_offset == 0 else f"Additional Evidence {month_offset + 1}: {label}")
+    _set(slide, 4, f"Additional Job Activities: {label}" if month_index == 0 else f"Additional Evidence {month_index + 1}: {label}")
+    _set(slide, 5, "Strongest evidence found for this review period, with the OTJ time it represents.")
 
     bullets = [fit.bullet_line(item.get("evidence_summary")) for item in items] or [NOT_AVAILABLE]
     _set_bullets(slide, 7, bullets, header_count=1, limit=5)
+    _set_para(slide, 7, 0, f"Strongest evidence: {label}")
 
-    caption_indices = [10, 13, 16, 19]
     photos = _photo_shapes(slide)
     for i, caption_idx in enumerate(caption_indices):
         if i < len(items):
@@ -441,10 +525,23 @@ def _populate_evidence_detail(slide, pack, month_offset: int, fetch_image: Image
         else:
             _set(slide, caption_idx, NOT_AVAILABLE)
 
+    bar = _shape_in_group(slide, layout["bar_group"], 1)
+    if bar is not None:
+        codes = sorted({code for item in items for code in (item.get("ksb_mappings") or [])})
+        text = (
+            f"Evidence value: strong evidence for {', '.join(codes)}." if codes
+            else f"{len(items)} evidence item(s) found for this period." if items
+            else "No qualifying evidence was found for this slot."
+        )
+        sc.set_all_text(bar, fit.clamp(text, 160))
+
+    return len(items)
+
 
 def _populate_workplace_impact(slide, pack):
     learner, evidence = pack["learner"], pack["evidence"]
     _set(slide, 4, f"Workplace Application & Impact at {_s(learner.get('employer'))}")
+    _set(slide, 5, f"Where the programme has translated into real workplace value at {_s(learner.get('employer'))} this period.")
     accepted = [e for e in evidence if e.get("manager_verification_status") == "accepted"]
     lines = [
         f"{len(accepted)} manager-verified evidence item(s) this period show applied contribution." if accepted else NOT_AVAILABLE,
@@ -471,34 +568,77 @@ def _populate_ksb_table_slide(slide, rows: list, *, occurrence: int = 0):
     return max(0, len(rows) - max_rows)
 
 
+def _populate_ksb_behaviours_slide(slide, rows: list):
+    overflow = _populate_ksb_table_slide(slide, rows)
+    _set(slide, 9, ", ".join(item["code"] for item in rows) or NOT_AVAILABLE)
+    return overflow
+
+
 def _populate_priority_ksbs(slide, pack):
     priority = pack["ksbs"].get("priority_next", [])
-    slots = [(9, 10), (14, 15), (19, 20), (24, 25)]
-    for i, (title_idx, idea_idx) in enumerate(slots):
+    _set(slide, 5, (
+        f"These are not concerns; they are the next evidence-building opportunities "
+        f"to make {pack['learner'].get('full_name')}'s portfolio more rounded."
+    ))
+    slots = [(8, 9, 10), (13, 14, 15), (18, 19, 20), (23, 24, 25)]
+    for i, (code_group_idx, title_idx, idea_idx) in enumerate(slots):
         if i < len(priority):
             item = priority[i]
+            _set_in_group(slide, code_group_idx, 1, item["code"])
             _set(slide, title_idx, fit.clamp(item["description"], 70))
             _set(slide, idea_idx, f"Evidence idea: {fit.bullet_line(item['how_to_evidence'], 180)}")
         else:
+            _set_in_group(slide, code_group_idx, 1, NOT_AVAILABLE)
             _set(slide, title_idx, NOT_AVAILABLE)
             _set(slide, idea_idx, NOT_AVAILABLE)
 
+    decision_bar = _shape_in_group(slide, 27, 1)
+    if decision_bar is not None:
+        codes = ", ".join(item["code"] for item in priority[:2]) or NOT_AVAILABLE
+        sc.set_all_text(decision_bar, fit.clamp(
+            f"Suggested manager decision: agree one live project where {pack['learner'].get('full_name')} can evidence {codes}.", 200,
+        ))
+
 
 def _populate_smart_targets(slide, pack):
+    """Title/subheading/breadcrumb sit at indices 3/4/5 on this slide — the
+    reverse of every earlier content slide (see the module docstring)."""
     review, actions = pack["review"], pack["actions"]
     _set(slide, 3, f"SMART Targets & Action Plan: {_month_range_label(review['action_period_start'], review['action_period_end'])}")
+    _set(slide, 4, "Turn this review into measurable next steps, agreed and dated within the action period.")
+    _set_breadcrumb(slide, pack, index=5)
+
+    learner_name, manager_name = pack["learner"].get("full_name"), pack["learner"].get("manager_name")
     priority_codes = ", ".join(i["code"] for i in pack["ksbs"].get("priority_next", [])[:2]) or NOT_AVAILABLE
     focus_lines = [f"{i + 1}. {a['title']}: {a['detail']}" for i, a in enumerate(actions[:4])]
     _set_bullets(slide, 8, focus_lines, header_count=1, limit=4, prefix="")
     _set_bullets(slide, 9, [f"Treat KSB gaps ({priority_codes}) as evidence-building opportunities from live work."], header_count=1)
+
+    # Shapes 12 and 15 hold a learner/manager-specific header as their own
+    # first paragraph (not a reusable label like "Focus areas" above), so it
+    # must be replaced too, not preserved as a header_count=1 template.
+    for_learner_header = f"For {learner_name} and {manager_name}" if manager_name != NOT_AVAILABLE else f"For {learner_name}"
     for_learner = [f"Owner: {a['owner']} — due {_date_label(a['due_by'])}" for a in actions]
     _set_bullets(slide, 12, for_learner, header_count=1)
+    _set_para(slide, 12, 0, for_learner_header)
+
     evidence_to_upload = ["Project brief or plan", "Manager verification", "Reflection mapped to KSBs"]
     _set_bullets(slide, 15, evidence_to_upload, header_count=1)
+    _set_para(slide, 15, 0, f"Evidence {learner_name} can upload")
+
+    decision_bar = _shape_in_group(slide, 16, 1)
+    if decision_bar is not None:
+        sc.set_all_text(decision_bar, fit.clamp(
+            f"Decision today: agree {pack['learner'].get('full_name')}'s next evidence project, owner and dates.", 200,
+        ))
 
 
 def _populate_professional_responsibilities(slide, pack):
+    """Title/subheading/breadcrumb at indices 3/4/5 — see _populate_smart_targets."""
     employer = pack["learner"].get("employer")
+    _set(slide, 4, f"A short reminder before closing: safeguarding, British Values and what EPA evidence quality looks like at {employer}.")
+    _set_breadcrumb(slide, pack, index=5)
+
     _set_bullets(slide, 8, [f"Protect everyone's right to learn and work safely at {employer}, free from harassment or discrimination."], header_count=1)
     _set_bullets(slide, 11, ["Democracy: encourage voice, challenge and feedback in every review."], header_count=1)
     _set_bullets(slide, 14, [
@@ -506,21 +646,45 @@ def _populate_professional_responsibilities(slide, pack):
         "Project Showcase and Professional Discussion draw directly on this portfolio.",
     ], header_count=1, limit=4)
 
+    tip = _shape_in_group(slide, 15, 1)
+    if tip is not None:
+        sc.set_all_text(tip, fit.clamp(
+            f"Keep it practical: every strong EPA example should show context, {pack['learner'].get('full_name')}'s action, and the outcome.", 200,
+        ))
+
 
 def _populate_manager_questions(slide, pack):
+    """Title/breadcrumb at indices 3/5 — see _populate_smart_targets. Index 4
+    (subheading) already carries the manager-feedback sentence."""
     review = pack["review"]
     manager = pack["learner"].get("manager_name")
     _set(slide, 4, f"{manager}'s feedback will help measure programme impact, confidence and EPA readiness." if manager != NOT_AVAILABLE else NOT_AVAILABLE)
+    _set_breadcrumb(slide, pack, index=5)
+
+    questions_header = _shape_in_group(slide, 7, 1)
+    if questions_header is not None:
+        sc.set_all_text(questions_header, fit.clamp(f"Questions for {manager}" if manager != NOT_AVAILABLE else "Questions for the line manager", 60))
+
+    # These three text boxes have no internal header paragraph of their own
+    # (their header is the separate pill-shaped label handled above) — every
+    # paragraph is real content, so header_count=0 here, unlike the
+    # header-plus-bullets shapes on the other slides.
     questions = [f"{i + 1}. {q}" for i, q in enumerate(pack["manager_questions"])]
-    _set_bullets(slide, 8, questions, header_count=1, limit=8, prefix="")
-    _set_bullets(slide, 11, ["Impact observed:", "Improvements noticed:", "Support agreed:"], header_count=1, prefix="")
+    _set_bullets(slide, 8, questions, header_count=0, limit=8, prefix="")
+    _set_bullets(slide, 11, ["Impact observed:", "Improvements noticed:", "Support agreed:"], header_count=0, prefix="")
     priority_codes = ", ".join(i["code"] for i in pack["ksbs"].get("priority_next", [])[:3]) or NOT_AVAILABLE
     _set_bullets(slide, 14, [
         f"Project / activity: agree evidence for {priority_codes}",
         f"{pack['learner'].get('full_name')}'s role:",
         "Evidence to upload:",
         f"Review date: {_date_label(review.get('action_period_end'))}",
-    ], header_count=1, prefix="")
+    ], header_count=0, prefix="")
+
+    closing = _shape_in_group(slide, 15, 1)
+    if closing is not None:
+        sc.set_all_text(closing, fit.clamp(
+            f"Q/A: agree the next workplace learning opportunity and the evidence {pack['learner'].get('full_name')} will submit.", 200,
+        ))
 
 
 # --------------------------------------------------------------------------- #
@@ -529,16 +693,20 @@ def _populate_manager_questions(slide, pack):
 
 def generate_progress_review_pptx(pack: dict, *, fetch_image: ImageFetcher = default_image_fetcher) -> bytes:
     """Clone the KBC template and populate all 19 slides from `pack`."""
-    prs = Presentation(str(TEMPLATE_PATH))
+    prs = Presentation(str(resolve_template_path()))
     slides = list(prs.slides)
     if len(slides) != 19:
         raise RuntimeError(f"Progress Review template must have 19 slides, found {len(slides)}.")
 
     _populate_title(slides[0], pack)
 
+    # Slides 2, 16, 17 and 18 carry the breadcrumb at a different shape index
+    # than every other content slide (title/subheading/breadcrumb order is not
+    # consistent across the template's two source decks) — each populate
+    # function below sets its own breadcrumb at the correct index instead.
     for index in range(1, 19):
-        if index == 2:
-            continue  # the Curtis-sourced Closure slide sets its own breadcrumb at a different shape index
+        if index in (2, 16, 17, 18):
+            continue
         _set_breadcrumb(slides[index], pack)
 
     _populate_snapshot(slides[1], pack)
@@ -548,17 +716,22 @@ def generate_progress_review_pptx(pack: dict, *, fetch_image: ImageFetcher = def
     _populate_epa(slides[5], pack)
     _populate_assignments(slides[6], pack)
     _populate_portfolio_review(slides[7], pack)
-    _populate_evidence_detail(slides[8], pack, 0, fetch_image)
-    _populate_evidence_detail(slides[9], pack, 1, fetch_image)
-    _populate_evidence_detail(slides[10], pack, 2, fetch_image)
+    used = _populate_evidence_detail(slides[8], pack, 0, 0, fetch_image)
+    used += _populate_evidence_detail(slides[9], pack, used, 1, fetch_image)
+    _populate_evidence_detail(slides[10], pack, used, 2, fetch_image)
     _populate_workplace_impact(slides[11], pack)
+
+    learner_name = pack["learner"].get("full_name")
+    _set(slides[12], 5, f"Full standard wording shown for the Knowledge areas evidenced through {learner_name}'s assignments and workplace activity.")
+    _set(slides[13], 5, f"Skill evidence evidenced through {learner_name}'s assignments and workplace activity.")
+    _set(slides[14], 5, f"Behavioural evidence shown for {learner_name}'s programme to date.")
 
     knowledge_overflow = _populate_ksb_table_slide(slides[12], pack["ksbs"].get("knowledge_evidenced", []))
     skills = pack["ksbs"].get("skills_evidenced", [])
     skills_table_1_capacity = len(_table(slides[13], 0).table.rows) - 1 if _table(slides[13], 0) else 0
     _populate_ksb_table_slide(slides[13], skills[:skills_table_1_capacity], occurrence=0)
     _populate_ksb_table_slide(slides[13], skills[skills_table_1_capacity:], occurrence=1)
-    _populate_ksb_table_slide(slides[14], pack["ksbs"].get("behaviours_evidenced", []))
+    _populate_ksb_behaviours_slide(slides[14], pack["ksbs"].get("behaviours_evidenced", []))
 
     _populate_priority_ksbs(slides[15], pack)
     _populate_smart_targets(slides[16], pack)

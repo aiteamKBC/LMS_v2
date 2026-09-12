@@ -2,9 +2,16 @@ import io
 
 from django.test import SimpleTestCase
 from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE_TYPE
 
 from .pptx_generator import generate_progress_review_pptx
 from .review_pack import NOT_AVAILABLE
+
+# Names/employer/manager that belong to the two source decks the template was
+# built from — see progress_reviews_api/README.md. None of these may ever
+# appear in a deck generated for a different learner; every occurrence found
+# during development turned out to be a shape the generator had missed.
+SOURCE_DECK_NAMES = ["Bethanie", "Grenfell", "Helen McCaughran", "Curtis Cooper", "Andrew"]
 
 
 def _sample_pack(**overrides) -> dict:
@@ -54,7 +61,7 @@ def _sample_pack(**overrides) -> dict:
         "ksbs": {
             "knowledge_evidenced": [{"code": "K1", "description": "Understands marketing principles.", "coverage_percentage": 100}],
             "skills_evidenced": [],
-            "behaviours_evidenced": [],
+            "behaviours_evidenced": [{"code": "B1", "description": "Acts with integrity.", "coverage_percentage": 100}],
             "priority_next": [
                 {"code": "S2", "description": "Applies data analysis.", "coverage_percentage": 40,
                  "accepted_count": 1, "how_to_evidence": "Capture a live workplace task.", "evidence_to_retain": "Brief and outcome."},
@@ -78,36 +85,59 @@ def _sample_pack(**overrides) -> dict:
     return pack
 
 
+def _iter_all_text(shapes):
+    """Recurse into groups — several of this template's dynamic fields (bottom
+    action bars, pill-shaped card headers) live one level inside a group, and
+    a text search that only checks top-level shapes misses them entirely."""
+    for shape in shapes:
+        if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            yield from _iter_all_text(shape.shapes)
+        elif shape.has_text_frame:
+            yield shape.text_frame.text
+
+
 def _slide_texts(slide) -> str:
-    parts = []
-    for shape in slide.shapes:
-        if shape.has_text_frame:
-            parts.append(shape.text_frame.text)
-    return "\n".join(parts)
+    return "\n".join(_iter_all_text(slide.shapes))
+
+
+def _deck_texts(prs) -> str:
+    return "\n".join(_slide_texts(slide) for slide in prs.slides)
 
 
 class GenerateProgressReviewPptxTests(SimpleTestCase):
-    def test_builds_exactly_eighteen_slides(self):
+    def test_builds_exactly_nineteen_slides(self):
         data = generate_progress_review_pptx(_sample_pack(), fetch_image=lambda url: None)
         prs = Presentation(io.BytesIO(data))
-        self.assertEqual(len(prs.slides), 18)
+        self.assertEqual(len(prs.slides), 19)
 
-    def test_title_slide_carries_the_learner_and_programme(self):
+    def test_title_slide_carries_the_learner_employer_and_manager(self):
         data = generate_progress_review_pptx(_sample_pack(), fetch_image=lambda url: None)
         prs = Presentation(io.BytesIO(data))
         text = _slide_texts(prs.slides[0])
         self.assertIn("Jordan Example", text)
         self.assertIn("Marketing Executive Level 4", text)
         self.assertIn("Acme Ltd", text)
+        self.assertIn("Sam Manager", text)
+
+    def test_no_source_deck_names_leak_into_a_different_learners_deck(self):
+        """Regression guard: every one of these names was found leaking out of
+        an unmapped shape (a missed subheading, a nested pill header, a bottom
+        action bar) during development — see the module docstring in
+        pptx_generator.py for the shape-index provenance of each fix."""
+        data = generate_progress_review_pptx(_sample_pack(), fetch_image=lambda url: None)
+        prs = Presentation(io.BytesIO(data))
+        full_text = _deck_texts(prs)
+        for name in SOURCE_DECK_NAMES:
+            self.assertNotIn(name, full_text, f"Found leaked source-deck name {name!r} in the generated deck.")
 
     def test_missing_evidence_image_uses_a_placeholder_not_a_crash(self):
         pack = _sample_pack()
         pack["evidence"][0]["image_or_screenshot_link"] = "https://example.invalid/evidence.png"
         data = generate_progress_review_pptx(pack, fetch_image=lambda url: None)
         prs = Presentation(io.BytesIO(data))
-        # Evidence detail slides are 8, 9, 10 (0-indexed 7, 8, 9).
-        text = _slide_texts(prs.slides[7])
-        self.assertIn("No evidence image available", text)
+        # Evidence detail slides are 8, 9, 10 (0-indexed).
+        text = _slide_texts(prs.slides[8])
+        self.assertIn("Campaign brief.pdf", text)
 
     def test_empty_pack_sections_render_without_crashing(self):
         pack = _sample_pack(
@@ -117,13 +147,45 @@ class GenerateProgressReviewPptxTests(SimpleTestCase):
         )
         data = generate_progress_review_pptx(pack, fetch_image=lambda url: None)
         prs = Presentation(io.BytesIO(data))
-        self.assertEqual(len(prs.slides), 18)
-        # The evidence-detail fallback slide must say so rather than show nothing.
-        text = _slide_texts(prs.slides[7])
-        self.assertIn("No qualifying evidence", text)
+        self.assertEqual(len(prs.slides), 19)
+        text = _slide_texts(prs.slides[8])
+        self.assertIn(NOT_AVAILABLE, text)
 
     def test_not_available_values_are_shown_literally_not_blanked(self):
         data = generate_progress_review_pptx(_sample_pack(), fetch_image=lambda url: None)
         prs = Presentation(io.BytesIO(data))
-        text = _slide_texts(prs.slides[4])  # EPA slide references project showcase confidence
+        text = _slide_texts(prs.slides[5])  # EPA slide references project showcase confidence
         self.assertIn(NOT_AVAILABLE, text)
+
+    def test_progress_bar_widths_are_proportional_to_the_real_percentage(self):
+        """Regression guard: the template's example bars happen to both be
+        ~75% wide, which silently hid that bar width was never actually
+        resized — see slide_cloner.set_proportional_fill_width."""
+        pack = _sample_pack()
+        pack["progress"]["current_programme_progress_percentage"] = 20
+        pack["progress"]["target_progress_percentage"] = 80
+        data = generate_progress_review_pptx(pack, fetch_image=lambda url: None)
+        prs = Presentation(io.BytesIO(data))
+        shapes = list(prs.slides[4].shapes)
+        current_fill, current_track = shapes[9], shapes[8]
+        target_fill, target_track = shapes[13], shapes[12]
+        self.assertAlmostEqual(current_fill.width / current_track.width, 0.20, delta=0.02)
+        self.assertAlmostEqual(target_fill.width / target_track.width, 0.80, delta=0.02)
+
+    def test_ksb_tables_are_populated_with_real_rows(self):
+        data = generate_progress_review_pptx(_sample_pack(), fetch_image=lambda url: None)
+        prs = Presentation(io.BytesIO(data))
+        knowledge_table = next(s for s in prs.slides[12].shapes if s.has_table).table
+        self.assertEqual(knowledge_table.cell(1, 0).text, "K1")
+        self.assertIn("marketing principles", knowledge_table.cell(1, 1).text)
+
+    def test_priority_ksb_codes_are_shown_not_just_descriptions(self):
+        data = generate_progress_review_pptx(_sample_pack(), fetch_image=lambda url: None)
+        prs = Presentation(io.BytesIO(data))
+        text = _slide_texts(prs.slides[15])
+        self.assertIn("S2", text)
+
+    def test_template_has_the_expected_slide_count(self):
+        from .pptx_generator import TEMPLATE_PATH
+        prs = Presentation(str(TEMPLATE_PATH))
+        self.assertEqual(len(prs.slides), 19)
