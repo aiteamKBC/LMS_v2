@@ -23,7 +23,7 @@ import { ProgressBar } from '@/components/ui/ProgressMetric';
 import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
 import { LearnerProfilePhoto } from '@/components/feature/LearnerProfilePhoto';
 import { toneStyle, statusTone, type StatusTone } from '@/lib/statusTone';
-import { waitingCopy } from '@/utils/learnerAccessGate';
+import { canViewAssignedProgramme, waitingCopy } from '@/utils/learnerAccessGate';
 import { displayValue, EMPTY_VALUE, ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
 import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
 import overviewStyles from './Overview.module.css';
@@ -52,12 +52,14 @@ export default function LearnerOverview() {
   const { auth, canSeeNavItem } = useAuth();
   const reviewingLearner = auth.account?.role === 'admin' || auth.account?.role === 'staff';
   const knownLearner = real;
-  // Imported learning already has progress to show, even while the new
-  // programme is at Delivery. The route gate still checks monthly signatures.
+  const hasAssignedProgramme = canViewAssignedProgramme(kind, real?.accessGate);
+  const learningBlocked = !reviewingLearner && (real?.learningAccess?.blocked
+    ?? real?.accessGate?.reasons.includes('start-date-future') ?? false);
+  // An assigned plan can be previewed before teaching starts.
   const isCommercialPreStart = isRealMode && kind === 'commercial'
     && !reviewingLearner
     && real?.programmeStatus?.trim().toLowerCase() === 'delivery'
-    && !real.studentActivityAvailable;
+    && !real.studentActivityAvailable && !hasAssignedProgramme;
   const skipPreStartData = isRealMode && (!real || isCommercialPreStart);
   const learnerKind: LearnerKind | null = kind === 'commercial' || kind === 'apprenticeship' ? kind : null;
   const weekRead = useLiveLearnerRead(learnerKind, id, isRealMode && !skipPreStartData, overviewWeek.read, overviewWeek.peek);
@@ -94,8 +96,8 @@ export default function LearnerOverview() {
      the session started. */
   useEffect(() => {
     if (!isRealMode || loading) return;
-    syncLearnerStatus(kind, id, real?.programmeStatus);
-  }, [isRealMode, loading, kind, id, real?.programmeStatus]);
+    syncLearnerStatus(kind, id, real?.programmeStatus, real || undefined);
+  }, [isRealMode, loading, kind, id, real]);
 
   const heroName = isRealMode ? ((knownLearner?.name.split(' ')[0]) || knownLearner?.name || 'Learner') : p.firstName;
   const heroFullName = isRealMode ? (knownLearner?.name || 'Learner') : p.fullName;
@@ -121,7 +123,7 @@ export default function LearnerOverview() {
     ? ([heroProgramme, heroEmployer].filter(Boolean).join(' · ') || undefined)
     : `${p.programme} ${p.programmeLevel} · ${p.employer}`;
   const startDateDisplay = isRealMode
-    ? (formatProgrammeStartDate(real?.programmeStartDate) || (loading ? 'Loading…' : EMPTY_VALUE))
+    ? (formatProgrammeStartDate(real?.learningAccess?.startDate ?? real?.programmeStartDate) || (loading ? 'Loading…' : EMPTY_VALUE))
     : p.startDate;
   const plannedEndDisplay = isRealMode
     ? (formatProgrammeStartDate(real?.programmeEndDate) || (loading ? 'Loading…' : EMPTY_VALUE))
@@ -280,6 +282,14 @@ export default function LearnerOverview() {
     >
       <PageContainer className={overviewStyles.overview}>
         {loadError && <LearnerLoadError error={loadError} onRetry={refresh} />}
+        {learningBlocked && (
+          <div role="status" className="rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-sm text-foreground-700">
+            <p className="font-semibold">{real?.learningAccess?.startDate || real?.accessGate?.startDate
+              ? `Learning starts on ${formatProgrammeStartDate(real?.learningAccess?.startDate || real?.accessGate?.startDate)}`
+              : 'Your cohort start date is awaiting confirmation'}</p>
+            <p>You can view your programme and training plan now. All assigned modules open when your cohort starts.</p>
+          </div>
+        )}
         {reviewingLearner && real?.accessGate?.reasons.includes('invitation') && (
           <div role="status" className="rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-sm text-foreground-700">
             <p className="font-semibold">{real.accessGate.reasons.length === 1 ? 'Ready to invite' : 'Invitation pending'}</p>
@@ -323,10 +333,11 @@ export default function LearnerOverview() {
                 <button
                   type="button"
                   onClick={() => navigate(trainingPlanHref)}
+                  disabled={learningBlocked}
                   className={`${overviewStyles.heroAction} ${overviewStyles.primaryAction}`}
                 >
                   <AppIcon className="ri-play-line" />
-                  Continue learning
+                  {learningBlocked ? 'Learning opens on your start date' : 'Continue learning'}
                 </button>
                 <button
                   type="button"
@@ -381,8 +392,8 @@ export default function LearnerOverview() {
         </div>
 
         {isRealMode && real && learnerKind && <DashboardActivities kind={learnerKind} programmeStatus={real.programmeStatus} canSeeNavItem={canSeeNavItem} />}
-        {isRealMode && learnerKind && id && <OverviewLearningPanels key={`${learnerKind}:${id}`} kind={learnerKind} learnerId={id} />}
-        {isRealMode && learnerKind && id && <DashboardTrainingPlan key={`plan:${learnerKind}:${id}`} kind={learnerKind} learnerId={id} />}
+        {isRealMode && learnerKind && id && !learningBlocked && <OverviewLearningPanels key={`${learnerKind}:${id}`} kind={learnerKind} learnerId={id} />}
+        {isRealMode && learnerKind && id && <DashboardTrainingPlan key={`plan:${learnerKind}:${id}`} kind={learnerKind} learnerId={id} canOpenActivities={!learningBlocked} />}
       </PageContainer>
     </WorkspaceShell>
   );

@@ -260,7 +260,7 @@ def _unavailable():
     return response
 
 
-def refusal_for(path, account, *, django_user_is_authenticated=False):
+def refusal_for(path, account, *, django_user_is_authenticated=False, method='GET'):
     """The response refusing this caller, or None to let the request through.
 
     Split out from the middleware so ``config.batch`` can apply the same rules to
@@ -297,7 +297,11 @@ def refusal_for(path, account, *, django_user_is_authenticated=False):
     _, roles = rule
     if roles is ANY or account.role in roles:
         from old_otjh.gate import refusal
-        return refusal(path, account)
+        transition_refusal = refusal(path, account)
+        if transition_refusal is not None:
+            return transition_refusal
+        from learner_api.programme_access import refusal as programme_refusal
+        return programme_refusal(path, account, method)
 
     return _forbidden(roles)
 
@@ -323,6 +327,7 @@ class ApiSessionGateMiddleware:
                 request.path_info,
                 account,
                 django_user_is_authenticated=self._django_user(request),
+                method=request.method,
             )
             if refusal is not None:
                 return refusal

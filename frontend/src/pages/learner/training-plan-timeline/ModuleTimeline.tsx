@@ -12,11 +12,11 @@ import layout from './ModuleTimeline.module.css';
 const monthNames = Array.from({ length: 12 }, (_, i) => new Date(2024, i, 1).toLocaleDateString('en-GB', { month: 'short' }));
 type Props = {
   data: TrainingPlanDashboard; modules: TimelineModule[]; kind: string; learnerId: string;
-  today: string; selectedMonth: string; selectedId?: string;
+  today: string; selectedMonth: string; selectedId?: string; canOpenActivities?: boolean;
   onMonthChange: (month: string) => void; onModuleSelect: (module: TimelineModule) => void;
 };
 
-export function ModuleTimeline({ data, modules, kind, learnerId, today, selectedMonth, selectedId, onMonthChange, onModuleSelect }: Props) {
+export function ModuleTimeline({ data, modules, kind, learnerId, today, selectedMonth, selectedId, onMonthChange, onModuleSelect, canOpenActivities = true }: Props) {
   const [fullscreen, setFullscreen] = useState(false);
   const [inspectedId, setInspectedId] = useState('');
   const [jumpId, setJumpId] = useState('');
@@ -117,7 +117,7 @@ export function ModuleTimeline({ data, modules, kind, learnerId, today, selected
             const status = moduleStatus(module);
             const tone = status === 'Completed' ? layout.completed : status === 'In progress' ? layout.inProgress : layout.notStarted;
             return <div key={module.id} data-module-id={module.id} className={`${layout.row} ${selectedId === module.id ? layout.selectedRow : ''}`}>
-              <div className={layout.moduleLabel}><Link to={subjectHref(module.id)} title={module.title}>{module.title}</Link><span role="progressbar" aria-label={`${module.title} activity progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={module.progress}>{module.progress}%</span></div>
+              <div className={layout.moduleLabel}>{canOpenActivities ? <Link to={subjectHref(module.id)} title={module.title}>{module.title}</Link> : <span title={module.title}>{module.title}</span>}<span role="progressbar" aria-label={`${module.title} activity progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={module.progress}>{module.progress}%</span></div>
               <div className={layout.track} data-timeline-track>
                 {monthNames.map((_, index) => <span key={index} className={`${layout.monthCell} ${selectedMonth === `${year}-${String(index + 1).padStart(2, '0')}` ? layout.selectedCell : ''}`} />)}
                 {position ? <button type="button" className={`${layout.bar} ${tone}`} style={{ left: `${position.left}%`, width: `${position.width}%` }}
@@ -137,7 +137,7 @@ export function ModuleTimeline({ data, modules, kind, learnerId, today, selected
           </div></div>}
         </div>
       </div>
-      {inspected && <TimelineInspector module={inspected} coach={data.coach.name} href={subjectHref(inspected.id)} onClose={closeInspector} />}
+      {inspected && <TimelineInspector module={inspected} coach={data.coach.name} href={canOpenActivities ? subjectHref(inspected.id) : undefined} onClose={closeInspector} />}
     </div>
   </section>;
   return fullscreen ? <><div aria-hidden="true" style={{ height: placeholderHeight.current }} /><Modal title="Programme timeline" size="max-w-none" className={layout.fullscreen} onClose={() => { saveScroll(); setFullscreen(false); }} returnFocusRef={fullButton}>

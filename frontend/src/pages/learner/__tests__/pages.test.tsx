@@ -138,6 +138,46 @@ async function renderLearnerPage(file: string) {
 }
 
 describe('learner loading and recovery', () => {
+  it('shows an assigned programme and plan before cohort start while keeping study closed', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return new Response(JSON.stringify(url.includes('/learner-summary/')
+        ? { ...detail(), name: 'Ayman Learner', programme: 'Marketing Executive Level 4', cohort: 'October 2026',
+          programmeStatus: 'Delivery', programmeStartDate: '2026-10-01',
+          learningAccess: { blocked: true, startDate: '2026-10-01' },
+          accessGate: { blocked: true, reasons: ['start-date-future'], startDate: '2026-10-01', outstandingDocuments: [] } }
+        : payload(url)));
+    }));
+    const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
+    render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Ayman Learner' })).toBeVisible();
+    expect(screen.getByText('Learning starts on 1 October 2026')).toBeVisible();
+    expect(screen.getByText('Marketing Executive Level 4', { exact: false })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Learning opens on your start date' })).toBeDisabled();
+    expect(await screen.findByRole('region', { name: 'Monthly study plan' })).toBeVisible();
+    expect(screen.queryByText('Your programme starts soon')).not.toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method && init.method !== 'GET')).toBe(false);
+  });
+
+  it('opens learning using the cohort date even when the individual date and saved status are still in the future', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return new Response(JSON.stringify(url.includes('/learner-summary/')
+        ? { ...detail(), programmeStatus: 'Delivery', programmeStartDate: '2026-10-01',
+          learningAccess: { blocked: false, startDate: '2026-09-10' },
+          accessGate: { blocked: true, reasons: ['start-date-future'], startDate: '2026-10-01', outstandingDocuments: [] } }
+        : payload(url)));
+    }));
+    const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
+    render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Continue learning' })).toBeEnabled();
+    expect(screen.getByText('10 September 2026')).toBeVisible();
+    expect(screen.queryByText('1 October 2026')).not.toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Monthly study plan' })).toBeVisible();
+  });
+
   it.each(['admin', 'staff'])('lets %s review a prepared learner before any invitation, with no historical learning', async role => {
     viewer.role = role;
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {

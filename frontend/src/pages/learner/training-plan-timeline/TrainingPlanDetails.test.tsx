@@ -34,6 +34,14 @@ beforeEach(()=>{HTMLElement.prototype.scrollIntoView=vi.fn();vi.useFakeTimers({t
 afterEach(()=>{cleanup();vi.useRealTimers();vi.restoreAllMocks();HTMLElement.prototype.scrollIntoView=originalScrollIntoView;});
 
 describe('Dashboard training plan controls',()=>{
+  it('keeps the plan visible without activity or meeting links before cohort start',()=>{
+    render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={subjects} kind="commercial" learnerId="499"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} canOpenActivities={false}/></MemoryRouter>);
+    expect(screen.getByRole('region',{name:'Monthly study plan'})).toBeVisible();
+    expect(screen.getByRole('region',{name:'Module timeline'})).toBeVisible();
+    expect([...document.querySelectorAll('a')].filter(link=>link.getAttribute('href')?.startsWith('/learner/modules/'))).toHaveLength(0);
+    expect(screen.queryByRole('link',{name:'Join Teams'})).not.toBeInTheDocument();
+  });
   it('jumps to the timeline below the cards',()=>{
     renderBoard();
     expect(screen.getByRole('link',{name:'View full timeline'})).toHaveAttribute('href','#module-timeline');

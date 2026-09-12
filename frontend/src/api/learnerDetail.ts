@@ -1,6 +1,6 @@
 import { createCachedResource } from './cachedRequest';
 import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
-import type { LearnerAccessGate } from '@/utils/learnerAccessGate';
+import type { LearnerAccessGate, LearnerLearningAccess } from '@/utils/learnerAccessGate';
 // ============================================================================
 // Learner-detail API client.
 // Talks to the Django backend at /learner_api (proxied to :8000 by Vite in dev).
@@ -199,12 +199,13 @@ export interface LearnerDetail {
    * `blocked: false` when nothing is holding them back.
    */
   accessGate?: LearnerAccessGate;
+  learningAccess?: LearnerLearningAccess;
 }
 
 export type LearnerSummary = Pick<LearnerDetail,
   'id' | 'name' | 'email' | 'phone' | 'programme' | 'programmeStatus' |
   'cohort' | 'group' | 'employer' | 'employerId' | 'learnerType' | 'isActive'
-> & Pick<LearnerDetail, 'studentActivityAvailable' | 'programmeStartDate' | 'programmeEndDate' | 'accessGate'>;
+> & Pick<LearnerDetail, 'studentActivityAvailable' | 'programmeStartDate' | 'programmeEndDate' | 'accessGate' | 'learningAccess'>;
 
 /** Small identity response for pages that only need the learner heading. */
 export function fetchLearnerSummary(kind: LearnerKind, id: string, force = false): Promise<LearnerSummary> {
