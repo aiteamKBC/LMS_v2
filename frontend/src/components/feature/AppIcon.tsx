@@ -71,6 +71,7 @@ import {
   FolderUp,
   Gift,
   GitBranch,
+  GripVertical,
   GraduationCap,
   HandHeart,
   Headphones,
@@ -186,6 +187,13 @@ function resolveIcon(name: string): LucideIcon {
   // Sign-out sits in the header and on the access-required screen; without
   // this it fell through every branch below and rendered a bare circle.
   if (/logout|log-out|sign-out|signout/.test(key)) return LogOut;
+  // Every drag handle in the workspace names itself `ri-draggable`, which
+  // matched nothing and fell through to the bare Circle fallback -- so the
+  // module builder's week rail, the week builder and the quiz editor each drew
+  // a row of empty circles where a grip should be. An unlabelled circle beside
+  // a list row reads as an unselected radio button, so it was not merely the
+  // wrong picture: it invited a click that does nothing.
+  if (/drag|grip/.test(key)) return GripVertical;
   if (/dashboard|layout/.test(key)) return LayoutDashboard;
   if (/home/.test(key)) return LayoutDashboard;
   // High-frequency workspace actions should never fall back to a generic circle.

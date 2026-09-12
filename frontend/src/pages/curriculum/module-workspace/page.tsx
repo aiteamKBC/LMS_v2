@@ -541,7 +541,14 @@ export default function ModuleWorkspacePage() {
   // each of them. Counting the week's live components instead made a week that
   // is one live session short consume one date rather than two, and every week
   // below it slid a day early.
-  const planSessionDates = (plan?.sessions || []).map(session => session.date);
+  //
+  // The date read here is the week's SLOT -- the delivery day it was authored
+  // into, before any holiday was ticked. A closure moves the live session out
+  // of the week and nothing else, so the week is still grouped under, and read
+  // in, the month it runs in. Taking the session's own date instead slid every
+  // week after a closure into a month it does not teach in, and disagreed with
+  // the Course structure rail, which reads the same slots.
+  const planSessionDates = (plan?.sessions || []).map(session => session.slotDate || session.date);
   const weekSlotCounts = moduleWeekSessionSlots(structure, planSessionDates.length);
   const weekDateByNumber = new Map<number, string>();
   let planDateCursor = 0;
