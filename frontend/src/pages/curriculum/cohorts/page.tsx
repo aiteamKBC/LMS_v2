@@ -3,14 +3,16 @@ import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
-import { type CurriculumCohort } from '@/lib/curriculumApi';
+import { fetchArchivedCurriculumCohorts, type CurriculumArchivedCohort, type CurriculumCohort } from '@/lib/curriculumApi';
 import {
   cohortsForProgramme,
   cohortYear,
   formatDateLabel,
+  formatDateTimeLabel,
   matchesSearch,
   normaliseKey,
   programmeIdentity,
+  recordsForProgramme,
   removeById,
   sameIdentifier,
   sortEntities,
@@ -18,25 +20,30 @@ import {
   COHORT_SORT_OPTIONS,
 } from '../shared/entities/model';
 import { CohortFormDrawer } from '../shared/entities/forms';
-import { archiveCohortWithConfirm } from '../shared/entities/archive';
+import {
+  archiveCohortWithConfirm,
+  permanentlyDeleteCohortWithConfirm,
+  restoreCohortWithConfirm,
+} from '../shared/entities/archive';
+import { ArchiveNotice, ArchiveToggleButton, useCurriculumArchive } from '../shared/entities/archiveView';
 import { CurriculumStructureWizard, withoutDiscardedRecords, type StructureWizardCreated } from '../shared/entities/structureWizard';
 import {
   EntityEmptyState,
   EntityFilterBar,
   EntityHero,
   EntityTable,
+  HeroSecondaryButton,
   InlineError,
+  NamedActions,
   PlainCell,
-  RowActions,
   StackedCell,
 } from '../shared/entities/ui';
-import { AppIcon } from '@/components/feature/AppIcon';
 
 // Every Cohort in the Curriculum, managed on its own page rather than as step 2
 // of the structure wizard. The parent Programme is chosen in the form; nothing
 // forces the user on into Group or Module creation afterwards.
 
-const GRID = 'grid grid-cols-[minmax(180px,1.3fr)_minmax(150px,1fr)_110px_110px_80px_130px_80px_92px]';
+const GRID = 'grid grid-cols-[minmax(180px,1.3fr)_minmax(150px,1fr)_110px_110px_80px_130px_80px_175px]';
 
 const COLUMNS = [
   { label: 'Cohort' },
@@ -46,6 +53,23 @@ const COLUMNS = [
   { label: 'EPA', align: 'center' as const },
   { label: 'Apprenticeship end' },
   { label: 'Groups', align: 'center' as const },
+  { label: 'Actions', align: 'right' as const },
+];
+
+// The archive drops the planning columns nobody acts on in here and carries the
+// two facts a restore or a delete actually turns on instead: when it was
+// archived, and what still sits inside it. Its actions are named rather than
+// glyphs -- "restore" and "delete for ever" are not the obvious edit/archive
+// pair, and one of them cannot be undone.
+const ARCHIVE_GRID = 'grid grid-cols-[minmax(180px,1.3fr)_minmax(150px,1fr)_120px_130px_90px_90px_210px]';
+
+const ARCHIVE_COLUMNS = [
+  { label: 'Cohort' },
+  { label: 'Programme' },
+  { label: 'Start' },
+  { label: 'Archived' },
+  { label: 'Groups', align: 'center' as const },
+  { label: 'Learners', align: 'center' as const },
   { label: 'Actions', align: 'right' as const },
 ];
 
@@ -64,22 +88,41 @@ export default function CurriculumCohortsPage() {
   // The guided run: this same cohort form, then the group and module ones, for a
   // cohort that is being stood up rather than added to a running programme.
   const [wizardOpen, setWizardOpen] = useState(false);
+  // Which list this page is showing. Kept in the URL for the same reason the
+  // programme scope is: the archive is somewhere a reader is sent ("it is in
+  // the archive"), so the link has to be able to say so.
+  const [showArchived, setShowArchived] = useState(() => searchParams.get('view') === 'archive');
   // The cohort a save just wrote, marked in the table until the eye has had a
   // chance to land on it.
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const highlightTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(highlightTimer.current), []);
 
-  // Keep the programme scope in the URL so a filtered list can be linked to —
-  // the Programme workspace's Cohorts tab hands off here.
+  // Keep the programme scope and the archive view in the URL so a filtered list
+  // can be linked to — the Programme workspace's Cohorts tab hands off here.
   useEffect(() => {
-    const current = searchParams.get('programme') || '';
-    if (current === programmeFilter) return;
     const next = new URLSearchParams(searchParams);
     if (programmeFilter) next.set('programme', programmeFilter);
     else next.delete('programme');
+    if (showArchived) next.set('view', 'archive');
+    else next.delete('view');
+    if (next.toString() === searchParams.toString()) return;
     setSearchParams(next, { replace: true });
-  }, [programmeFilter, searchParams, setSearchParams]);
+  }, [programmeFilter, searchParams, setSearchParams, showArchived]);
+
+  // Nothing is read until the archive is actually opened; see useCurriculumArchive.
+  const archived = useCurriculumArchive(fetchArchivedCurriculumCohorts, showArchived);
+
+  // The same programme/year/search filters as the live list, applied to rows
+  // that carry their own programme rather than resolving one through a parent —
+  // an archived cohort's programme may itself be archived.
+  const visibleArchivedCohorts = useMemo(() => {
+    const scoped = recordsForProgramme(archived.records, programmes, programmeFilter);
+    return scoped.filter(cohort => {
+      if (yearFilter && cohortYear(cohort) !== yearFilter) return false;
+      return matchesSearch(search, [cohort.name, cohort.programme, cohort.startDate, cohort.id]);
+    });
+  }, [archived.records, programmeFilter, programmes, search, yearFilter]);
 
   const groupsByCohort = useMemo(() => {
     const map = new Map<string, number>();
@@ -126,6 +169,24 @@ export default function CurriculumCohortsPage() {
       applyLocal(previous => ({ ...previous, cohorts: removeById(previous.cohorts, cohort.id) }));
       await reload({ silent: true });
     });
+  };
+
+  /**
+   * Coming back out of the archive puts a cohort into the live list, so both of
+   * these refresh that list as well as the archive they were run from. The live
+   * refresh is the slow one (the overview is rebuilt server-side), which is why
+   * the archive is re-read on its own rather than waiting behind it.
+   */
+  const restore = async (cohort: CurriculumArchivedCohort) => {
+    await restoreCohortWithConfirm(cohort, async () => {
+      await archived.reload();
+      await reload({ silent: true });
+    });
+  };
+
+  const deletePermanently = async (cohort: CurriculumArchivedCohort) => {
+    // Nothing to put back into the live list here, so only the archive moves.
+    await permanentlyDeleteCohortWithConfirm(cohort, () => archived.reload());
   };
 
   const programmeOptions = useMemo(
@@ -190,18 +251,34 @@ export default function CurriculumCohortsPage() {
           ]}
           primaryAction={{ label: 'Add Cohort', onClick: openCreate }}
           secondaryActions={(
-            <button
-              type="button"
-              onClick={() => setWizardOpen(true)}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-white/15"
-            >
-              <AppIcon className="ri-route-line text-base"></AppIcon>
-              Cohort + group + module
-            </button>
+            <>
+              <HeroSecondaryButton
+                icon="ri-route-line"
+                label="Cohort + group + module"
+                onClick={() => setWizardOpen(true)}
+              />
+              <ArchiveToggleButton
+                active={showArchived}
+                count={archived.loaded ? archived.records.length : null}
+                onToggle={() => setShowArchived(previous => !previous)}
+              />
+            </>
           )}
         />
 
         {error && <InlineError message={error} onRetry={() => void reload()} />}
+        {showArchived && archived.error && (
+          <InlineError message={archived.error} onRetry={() => void archived.reload()} />
+        )}
+
+        {showArchived && (
+          <ArchiveNotice>
+            Archived cohorts are hidden from planning but still in the database. Restoring one puts it back in the
+            active list along with the groups archived with it — their modules were detached and have to be attached
+            again. Deleting one here removes it and those groups for good; module content, learner accounts and learner
+            progress are never touched.
+          </ArchiveNotice>
+        )}
 
         <EntityFilterBar
           search={search}
@@ -221,67 +298,156 @@ export default function CurriculumCohortsPage() {
               options: [{ value: '', label: 'All years' }, ...years.map(year => ({ value: year, label: year }))],
             },
           ]}
-          sort={{ value: sort, onChange: setSort, options: COHORT_SORT_OPTIONS }}
+          sort={showArchived ? undefined : { value: sort, onChange: setSort, options: COHORT_SORT_OPTIONS }}
           onReset={() => { setSearch(''); setProgrammeFilter(''); setYearFilter(''); setSort(''); }}
-          summary={loaded
-            ? `Showing ${visibleCohorts.length} of ${cohorts.length} cohorts${refreshing ? ' · updating…' : ''}`
-            : undefined}
+          summary={showArchived
+            ? (archived.loaded
+              ? `Showing ${visibleArchivedCohorts.length} of ${archived.records.length} archived cohorts`
+              : undefined)
+            : (loaded
+              ? `Showing ${visibleCohorts.length} of ${cohorts.length} cohorts${refreshing ? ' · updating…' : ''}`
+              : undefined)}
         />
 
-        <EntityTable
-          columns={COLUMNS}
-          gridClass={GRID}
-          rows={visibleCohorts}
-          rowKey={cohort => cohort.id}
-          getRowHref={cohort => `/curriculum/cohorts/${encodeURIComponent(cohort.id)}`}
-          loading={loading && !loaded}
-          refreshing={refreshing}
-          highlightKey={highlightId}
-          empty={(
-            <EntityEmptyState
-              icon="ri-calendar-event-line"
-              title={cohorts.length ? 'No cohorts match these filters' : 'No cohorts yet'}
-              message={cohorts.length
-                ? 'Clear a filter, or search for a different cohort.'
-                : 'Add a cohort against a programme to start planning delivery.'}
-              action={cohorts.length ? undefined : { label: 'Add Cohort', onClick: openCreate }}
-            />
-          )}
-          renderRow={cohort => (
-            <>
-              <StackedCell
-                href={`/curriculum/cohorts/${encodeURIComponent(cohort.id)}`}
-                primary={(
-                  <span className="flex items-center gap-2">
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: cohort.color || '#6d28d9' }} />
-                    {cohort.name}
-                  </span>
-                )}
-                secondary={cohort.id}
+        {showArchived ? (
+          <EntityTable
+            columns={ARCHIVE_COLUMNS}
+            gridClass={ARCHIVE_GRID}
+            rows={visibleArchivedCohorts}
+            rowKey={cohort => cohort.id}
+            loading={archived.loading && !archived.loaded}
+            empty={(
+              <EntityEmptyState
+                icon="ri-inbox-line"
+                title={archived.records.length ? 'No archived cohorts match these filters' : 'Nothing in the archive'}
+                message={archived.records.length
+                  ? 'Clear a filter, or search for a different cohort.'
+                  : 'Cohorts you archive are kept here until you restore them or delete them for good.'}
               />
-              <StackedCell
-                primary={cohort.programme || 'Unassigned programme'}
-                secondary={cohort.durationMonths ? `${cohort.durationMonths} months` : undefined}
+            )}
+            renderRow={cohort => (
+              <>
+                <StackedCell
+                  primary={(
+                    <span className="flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: cohort.color || '#6d28d9' }} />
+                      {cohort.name}
+                    </span>
+                  )}
+                  secondary={cohort.id}
+                />
+                <StackedCell
+                  primary={cohort.programme || 'Unassigned programme'}
+                  secondary={cohort.durationMonths ? `${cohort.durationMonths} months` : undefined}
+                />
+                <PlainCell>{formatDateLabel(cohort.startDate)}</PlainCell>
+                <PlainCell>
+                  {formatDateTimeLabel(cohort.archivedAt)}
+                  {/* Only when a parent's archive brought it here: that parent is
+                      the record to restore, and this one's own Restore is refused
+                      until it is back. */}
+                  {cohort.archivedBy === 'programme-delete' && (
+                    <span className="mt-0.5 block text-[11px] font-semibold text-amber-700">With its programme</span>
+                  )}
+                </PlainCell>
+                <PlainCell align="center">{cohort.groups}</PlainCell>
+                <PlainCell align="center">{cohort.learners}</PlainCell>
+                <NamedActions
+                  actions={[
+                    {
+                      icon: 'ri-arrow-go-back-line',
+                      label: 'Restore',
+                      title: 'Put this cohort back in the active list',
+                      onClick: () => void restore(cohort),
+                    },
+                    {
+                      icon: 'ri-delete-bin-line',
+                      label: 'Delete',
+                      // A cohort somebody is still enrolled in cannot be removed,
+                      // and the button says so before the click rather than the
+                      // endpoint saying it after.
+                      title: cohort.learners
+                        ? `${cohort.learners} learner${cohort.learners === 1 ? '' : 's'} are still placed here — move them first`
+                        : 'Remove this cohort from the database for good',
+                      disabled: Boolean(cohort.learners),
+                      onClick: () => void deletePermanently(cohort),
+                    },
+                  ]}
+                />
+              </>
+            )}
+          />
+        ) : (
+          <EntityTable
+            columns={COLUMNS}
+            gridClass={GRID}
+            rows={visibleCohorts}
+            rowKey={cohort => cohort.id}
+            getRowHref={cohort => `/curriculum/cohorts/${encodeURIComponent(cohort.id)}`}
+            loading={loading && !loaded}
+            refreshing={refreshing}
+            highlightKey={highlightId}
+            empty={(
+              <EntityEmptyState
+                icon="ri-calendar-event-line"
+                title={cohorts.length ? 'No cohorts match these filters' : 'No cohorts yet'}
+                message={cohorts.length
+                  ? 'Clear a filter, or search for a different cohort.'
+                  : 'Add a cohort against a programme to start planning delivery.'}
+                action={cohorts.length ? undefined : { label: 'Add Cohort', onClick: openCreate }}
               />
-              <PlainCell>{formatDateLabel(cohort.startDate)}</PlainCell>
-              <PlainCell>{formatDateLabel(cohort.practicalEndDate || cohort.endDate)}</PlainCell>
-              <PlainCell align="center">{cohort.epaMonths == null ? '—' : `${cohort.epaMonths}m`}</PlainCell>
-              <PlainCell>
-                {formatDateLabel(cohort.apprenticeshipEndDate)}
-                {cohort.apprenticeshipEndOverride ? (
-                  <span className="ml-1 text-[10px] font-bold uppercase text-amber-600" title="Manually authored">set</span>
-                ) : null}
-              </PlainCell>
-              <PlainCell align="center">{groupsByCohort.get(normaliseKey(cohort.id)) || 0}</PlainCell>
-              <RowActions
-                actions={[
-                  { icon: 'ri-edit-line', label: 'Edit cohort', onClick: () => openEdit(cohort) },
-                  { icon: 'ri-archive-line', label: 'Archive cohort', tone: 'danger', onClick: () => void archive(cohort) },
-                ]}
-              />
-            </>
-          )}
-        />
+            )}
+            renderRow={cohort => (
+              <>
+                <StackedCell
+                  href={`/curriculum/cohorts/${encodeURIComponent(cohort.id)}`}
+                  primary={(
+                    <span className="flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: cohort.color || '#6d28d9' }} />
+                      {cohort.name}
+                    </span>
+                  )}
+                  secondary={cohort.id}
+                />
+                <StackedCell
+                  primary={cohort.programme || 'Unassigned programme'}
+                  secondary={cohort.durationMonths ? `${cohort.durationMonths} months` : undefined}
+                />
+                <PlainCell>{formatDateLabel(cohort.startDate)}</PlainCell>
+                <PlainCell>{formatDateLabel(cohort.practicalEndDate || cohort.endDate)}</PlainCell>
+                <PlainCell align="center">{cohort.epaMonths == null ? '—' : `${cohort.epaMonths}m`}</PlainCell>
+                <PlainCell>
+                  {formatDateLabel(cohort.apprenticeshipEndDate)}
+                  {cohort.apprenticeshipEndOverride ? (
+                    <span className="ml-1 text-[10px] font-bold uppercase text-amber-600" title="Manually authored">set</span>
+                  ) : null}
+                </PlainCell>
+                <PlainCell align="center">{groupsByCohort.get(normaliseKey(cohort.id)) || 0}</PlainCell>
+                {/* Named rather than glyphs, matching the Groups table and the
+                    archive view below: edit and archive are not tellable apart by
+                    icon without hovering every row, and the column has the room.
+                    The short word goes on the button, the whole sentence in its
+                    title. */}
+                <NamedActions
+                  actions={[
+                    {
+                      icon: 'ri-edit-line',
+                      label: 'Edit',
+                      title: 'Edit this cohort, its dates, EPA window and holidays',
+                      onClick: () => openEdit(cohort),
+                    },
+                    {
+                      icon: 'ri-archive-line',
+                      label: 'Archive',
+                      title: 'Hide this cohort and its groups from the active list. Nothing is deleted, and it can be restored from the archive',
+                      onClick: () => void archive(cohort),
+                    },
+                  ]}
+                />
+              </>
+            )}
+          />
+        )}
       </div>
 
       <CohortFormDrawer

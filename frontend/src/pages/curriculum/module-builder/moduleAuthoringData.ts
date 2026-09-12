@@ -168,9 +168,18 @@ function monthLabelOf(key: string) {
  *
  * `skippedHolidays` on a session names the delivery days that were closed on the
  * way to it, so a date that moved can say why it moved.
+ *
+ * Each session carries two dates, because a closure moves only one thing.
+ * `date` is when the LIVE SESSION runs — walked past every closed delivery day
+ * on the way to it. `slotDate` is the delivery day it was due on counting from
+ * the module's start with no closure at all, and that is where the WEEK sits:
+ * a holiday closes the room, not the reading, the assignment or anything else
+ * the week holds, so those stay on the week they were authored into. The two
+ * agree until the first closure and differ by one delivery slot per closure
+ * after it.
  */
 export interface ModuleWeekSessionPlan {
-  sessions: Array<{ sessionNumber: number; date: string; day: string; skippedHolidays: string[] }>;
+  sessions: Array<{ sessionNumber: number; date: string; day: string; slotDate?: string; slotDay?: string; skippedHolidays: string[] }>;
   skippedHolidays: string[];
   finalEndDate: string;
   warnings: string[];
@@ -247,11 +256,40 @@ export function moduleWeekSessionSlots(
  *
  * A week owns a run of dates, not one date: `week.sessionDate` is only the first
  * of them. The rail shows the whole run so a Mon+Fri week reads as the two
- * sessions it actually delivers.
+ * delivery days it actually occupies.
+ *
+ * These are the week's SLOT dates — where the week sits on the calendar. A
+ * closure pushes the live session out of the week and into the next open slot,
+ * but the week itself does not follow it, so a week whose session was moved is
+ * still read, still grouped under its own month, and still holds every other
+ * component on the day it was authored for. Where the live sessions ended up is
+ * `moduleWeekLiveSessionDates`.
  */
 export function moduleWeekSessionDates(
   module: ModuleCatalogueItem | null | undefined,
   sessions: ModuleWeekSessionPlan['sessions'] | undefined,
+): string[][] {
+  return moduleWeekPlanDates(module, sessions, session => session.slotDate || session.date);
+}
+
+/**
+ * Where each authored week's live sessions actually run, in week order.
+ *
+ * The same walk as `moduleWeekSessionDates`, reading the other of the two dates
+ * a planned session carries. Equal to the week's own run until a holiday closes
+ * a delivery day; one slot later per closure after that.
+ */
+export function moduleWeekLiveSessionDates(
+  module: ModuleCatalogueItem | null | undefined,
+  sessions: ModuleWeekSessionPlan['sessions'] | undefined,
+): string[][] {
+  return moduleWeekPlanDates(module, sessions, session => session.date);
+}
+
+function moduleWeekPlanDates(
+  module: ModuleCatalogueItem | null | undefined,
+  sessions: ModuleWeekSessionPlan['sessions'] | undefined,
+  dateOf: (session: ModuleWeekSessionPlan['sessions'][number]) => string | undefined,
 ): string[][] {
   const plan = sessions || [];
   if (!module || !plan.length) return [];
@@ -259,7 +297,7 @@ export function moduleWeekSessionDates(
   let sessionIndex = 0;
   return module.weekStructure.map((_week, weekIndex) => {
     const slotCount = slotCounts[weekIndex] || 1;
-    const dates = plan.slice(sessionIndex, sessionIndex + slotCount).map(session => session.date).filter(Boolean);
+    const dates = plan.slice(sessionIndex, sessionIndex + slotCount).map(session => dateOf(session) || '').filter(Boolean);
     sessionIndex += slotCount;
     return dates;
   });
@@ -269,9 +307,15 @@ export function moduleWeekSessionDates(
  * The module with every week carrying the day it now runs on.
  *
  * The plan is applied by *position*, because week N is session N: a seventh week
- * added to a six-week module takes the seventh planned date -- the next delivery
- * day the cohort has not closed for a holiday -- and the weeks before it keep
- * the dates they already had.
+ * added to a six-week module takes the seventh delivery day from the start, and
+ * the weeks before it keep the dates they already had.
+ *
+ * A week and the live session it holds can land on different days. The week
+ * takes its planned SLOT -- the delivery day it was due on before any holiday
+ * was ticked -- while the live session takes the date the plan walked it to,
+ * past every closed day in the way. That is the whole of the holiday rule on
+ * this screen: a closure moves the session out of the week, and everything else
+ * the week holds stays on the week it was authored into.
  *
  * With `followEndDate`, the module's end date follows the plan only when it *was*
  * the plan: an end date that is one of the planned session dates was calculated
@@ -306,6 +350,9 @@ export function applyModuleWeekSessionPlan(
     const slots = sessions.slice(sessionIndex, sessionIndex + slotCount);
     sessionIndex += slotCount;
     const firstSession: ModuleWeekSessionPlan['sessions'][number] | undefined = slots[0];
+    // The week's own day, not the one its session was pushed to.
+    const slotDate = firstSession ? (firstSession.slotDate || firstSession.date || '') : '';
+    const slotDay = firstSession ? (firstSession.slotDay || firstSession.day || '') : '';
     let components = week.components;
     if (liveComponents.length) {
       const plannedByComponentId = new Map<string, ModuleWeekSessionPlan['sessions'][number] | undefined>();
@@ -336,15 +383,13 @@ export function applyModuleWeekSessionPlan(
       });
       if (componentsMoved) components = plannedComponents;
     }
-    const sessionDate = firstSession?.date || '';
-    const sessionDay = firstSession?.day || '';
     if (
       components === week.components
-      && (week.sessionDate || '') === sessionDate
-      && (week.sessionDay || '') === sessionDay
+      && (week.sessionDate || '') === slotDate
+      && (week.sessionDay || '') === slotDay
     ) return week;
     weeksMoved = true;
-    return { ...week, components, sessionDate, sessionDay };
+    return { ...week, components, sessionDate: slotDate, sessionDay: slotDay };
   });
   const currentEndDate = String(module.endDate || '').trim();
   const endDateFollowsPlan = options.followEndDate !== false
