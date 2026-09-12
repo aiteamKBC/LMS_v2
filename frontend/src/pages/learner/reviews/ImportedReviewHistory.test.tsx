@@ -2,16 +2,19 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ImportedReviewHistory } from './ImportedReviewHistory';
+import { clearAllCachedResources } from '@/api/cachedRequest';
 
 function reply(body: unknown): Response {
   return {
     ok: true,
     status: 200,
+    json: async () => body,
     text: async () => JSON.stringify(body),
   } as Response;
 }
 
 beforeEach(() => {
+  clearAllCachedResources();
   vi.stubGlobal('AppIcon', ({ className }: { className?: string }) => <i className={className} />);
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(reply({
     learnerId: 272,
@@ -35,7 +38,7 @@ beforeEach(() => {
   })));
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { clearAllCachedResources(); vi.unstubAllGlobals(); });
 
 describe('ImportedReviewHistory', () => {
   it('opens the imported review sections inside the list page', async () => {
@@ -47,6 +50,10 @@ describe('ImportedReviewHistory', () => {
     expect(screen.getByText('Learning Progress')).toBeInTheDocument();
     expect(screen.getByText('Overall progress')).toBeInTheDocument();
     expect(screen.getByText('64%')).toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Back to reviews/i }));
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Progress Review August' })).not.toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith(
       '/learner_api/review-history/commercial/125/?category=progress-review',
       expect.objectContaining({ credentials: 'include', cache: 'no-store' }),
@@ -61,5 +68,13 @@ describe('ImportedReviewHistory', () => {
 
     expect(screen.queryByText('Progress Review August')).not.toBeInTheDocument();
     expect(screen.getByText('Progress Review September')).toBeInTheDocument();
+  });
+
+  it('shows when the table has no matching records', async () => {
+    render(<ImportedReviewHistory kind="commercial" learnerId="125" category="progress-review" />);
+    await screen.findByText('Progress Review August');
+    fireEvent.change(screen.getByLabelText('Search reviews'), { target: { value: 'unmatched search' } });
+    expect(screen.getByText('No reviews match these filters.')).toBeInTheDocument();
+    expect(screen.queryByText('Progress Review August')).not.toBeInTheDocument();
   });
 });

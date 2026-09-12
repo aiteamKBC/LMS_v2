@@ -621,6 +621,13 @@ function LearnerCalendarBody() {
   }, [visibleBusySlots]);
   const displayedEvents = useMemo(() => [...myEvents, ...personalBusyEvents], [myEvents, personalBusyEvents]);
   const focusedEventKey = useMemo(() => new URLSearchParams(location.search).get('event') || '', [location.search]);
+
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get('book') === 'student-support') {
+      setBookType('student-support');
+      setShowBookModal(true);
+    }
+  }, [location.search]);
   useEffect(() => {
     if (!focusedEventKey || handledFocusEventRef.current === focusedEventKey) return;
     const focusEvent = displayedEvents.find((event) => event.eventKey === focusedEventKey || event.id === focusedEventKey);

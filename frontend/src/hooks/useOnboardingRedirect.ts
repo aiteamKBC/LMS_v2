@@ -74,6 +74,11 @@ function withoutCommercialCompliance(items: SidebarNavItem[]): SidebarNavItem[] 
   });
 }
 
+/** Pages that apply to this learner type, independent of programme stage. */
+export function navItemsForLearnerKind(items: SidebarNavItem[], learnerKind?: string): SidebarNavItem[] {
+  return learnerKind?.toLowerCase() === 'commercial' ? withoutCommercialCompliance(items) : items;
+}
+
 /**
  * Whether the learner is waiting for enrolment to begin.
  *
@@ -110,7 +115,7 @@ export function navItemsForStatus(
   hasPreviousLearning = false,
 ): SidebarNavItem[] {
   const commercial = learnerKind?.toLowerCase() === 'commercial';
-  const availableNav = commercial ? withoutCommercialCompliance(fullNav) : fullNav;
+  const availableNav = navItemsForLearnerKind(fullNav, learnerKind);
   // Filtered from the real nav, not re-declared, so labels/icons/hrefs stay in
   // one place and cannot drift.
   const pick = (ids: string[]) =>
@@ -122,7 +127,7 @@ export function navItemsForStatus(
   if (isOnboardingStatus(programmeStatus)) return commercial ? pick(FRESH_NAV_IDS) : ONBOARDING_NAV_ITEMS;
   if (isDeliveryStatus(programmeStatus)) {
     const ids = commercial ? FRESH_NAV_IDS : DELIVERY_NAV_IDS;
-    return pick(hasPreviousLearning ? [...ids, 'learner-my-learning', 'learner-training-plan-view'] : ids);
+    return pick(hasPreviousLearning ? [...ids, 'learner-my-learning'] : ids);
   }
   return availableNav;
 }

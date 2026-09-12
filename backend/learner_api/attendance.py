@@ -10,6 +10,8 @@ from django.http import JsonResponse
 from login.permissions import learner_self_or_staff
 
 from .learner_detail import SOURCE_MODELS
+from .student_activity_access import student_activity_available
+from .teams_attendance import fetch_verified_teams_attendance_rows
 
 
 DEFAULT_KBC_ATTENDANCE_DATABASE = 'AiTeamKBC'
@@ -258,9 +260,35 @@ def _summarize_attendance(rows):
         'consecutiveMissed': consecutive_missed,
         'updatedAt': updated_at.isoformat() if updated_at else None,
         'attendanceRate': attendance_rate,
-        'source': 'kbc-attendance',
+        'source': 'combined' if len({row.get('source', 'kbc-attendance') for row in rows}) > 1
+                  else rows[0].get('source', 'kbc-attendance'),
         'sessionHistory': session_history,
     }
+
+
+def combined_attendance_rows(source):
+    """Refresh KBC on every server read and merge actual Teams occurrences."""
+    rows = []
+    if student_activity_available(getattr(source, 'aptem_id', None)):
+        rows = [{**row, 'source': 'kbc-attendance'} for row in fetch_kbc_attendance_rows(
+            aptem_id=source.aptem_id, learner_id=source.id,
+            learner_name=getattr(source, 'username', '') or '', learner_email=source.email or '',
+        )]
+    # The shared Teams reader groups reconnects by occurrence and email and
+    # excludes sessions without a finished attendance report. IDs here refer
+    # to LearnerProfile, so use the verified email and check enrolment linkage.
+    teams = fetch_verified_teams_attendance_rows(learner_emails=[source.email]) if source.email else []
+    for row in teams:
+        if str(row.get('enrolment_id')) != str(source.id):
+            continue
+        rows.append({**row, 'learner_id': source.id, 'source': 'microsoft-teams'})
+    unique = {}
+    for row in rows:
+        key = (row['source'], str(row.get('occurrence_id') or row.get('session_id')), row['session_date'])
+        previous = unique.get(key)
+        if previous is None or row['attendance_status'] in {'present', 'late'}:
+            unique[key] = row
+    return list(unique.values())
 
 
 @learner_self_or_staff(kwarg="learner_id")
@@ -281,13 +309,8 @@ def learner_attendance(request, kind, learner_id):
         return _error(f'Database error: {exc}', 502)
 
     try:
-        rows = fetch_kbc_attendance_rows(
-            aptem_id=getattr(source, 'aptem_id', None),
-            learner_id=source.id,
-            learner_name=getattr(source, 'username', '') or '',
-            learner_email=getattr(source, 'email', '') or '',
-        )
+        rows = combined_attendance_rows(source)
     except Exception:
-        return _error('Unable to load attendance from KBC.', 502)
+        return _error('Unable to load attendance. Please try again.', 502)
 
     return JsonResponse({'attendance': _summarize_attendance(rows)})

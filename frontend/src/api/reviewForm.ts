@@ -1,3 +1,4 @@
+import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
 
 const BASE = '/learner_api/reviews';
@@ -173,6 +174,7 @@ export interface ReviewFormResponse {
 }
 
 async function call<T>(url: string, init?: RequestInit): Promise<T> {
+  if (!init?.method || init.method.toUpperCase() === 'GET') return readLearnerJson<T>(url, init);
   let res: Response;
   try {
     res = await fetch(url, {
@@ -193,6 +195,7 @@ async function call<T>(url: string, init?: RequestInit): Promise<T> {
     const message = (data as { error?: string } | null)?.error || `Request failed with ${res.status}`;
     throw new Error(message);
   }
+  invalidateLearnerReads();
   return data as T;
 }
 

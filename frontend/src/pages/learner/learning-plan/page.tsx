@@ -7,6 +7,7 @@ import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { buildLearnerJourney } from '@/utils/learnerJourney';
 import { PageContainer } from '@/components/ui/PageContainer';
+import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 
 const learnerNav = roleNavMap.learner;
 
@@ -22,14 +23,13 @@ function learnerRoute(base: string, kind?: string, id?: string) {
 export default function LearnerLearningPlanPage() {
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
   const { kind, id } = useResolvedLearner(urlKind, urlId);
-  const { real, loading } = useLearnerDetailParam(kind, id);
+  const { real, loading, loadError, refresh } = useLearnerDetailParam(kind, id);
   const journey = useMemo(() => buildLearnerJourney(real), [real]);
   const subtitle = real
     ? [real.programme, real.employer, real.cohort ? `Cohort ${real.cohort}` : ''].filter(Boolean).join(' · ')
     : '';
   const overviewHref = kind && id ? `/workspace/learner/${kind}/${id}` : '/workspace/learner';
   const modulesHref = learnerRoute('/learner/learning-plan/modules', kind, id);
-  const trainingPlanHref = learnerRoute('/learner/training-plan-timeline', kind, id);
 
   return (
     <WorkspaceShell
@@ -44,6 +44,7 @@ export default function LearnerLearningPlanPage() {
       breadcrumbCurrentLabel="Learning Plan"
     >
       <PageContainer>
+        {loadError && <LearnerLoadError error={loadError} onRetry={refresh} />}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Link
             to={overviewHref}
@@ -71,7 +72,7 @@ export default function LearnerLearningPlanPage() {
           </div>
         </section>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <Link
             to={modulesHref}
             className="group flex min-h-56 flex-col rounded-2xl border border-foreground-100/70 bg-background-50 p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary-300 hover:shadow-md md:p-6"
@@ -106,22 +107,6 @@ export default function LearnerLearningPlanPage() {
             </span>
           </Link>
 
-          <Link
-            to={trainingPlanHref}
-            className="group flex min-h-56 flex-col rounded-2xl border border-foreground-100/70 bg-background-50 p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary-300 hover:shadow-md md:p-6"
-          >
-            <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-violet-50 text-violet-600 transition-colors group-hover:bg-violet-100">
-              <AppIcon className="ri-calendar-todo-line text-2xl" />
-            </span>
-            <h2 className="mt-5 font-heading text-xl font-bold text-foreground-900">Training Plan</h2>
-            <p className="mt-2 max-w-md text-sm leading-6 text-foreground-500">
-              Review your training plan month by month alongside your learning progress.
-            </p>
-            <span className="mt-auto inline-flex items-center gap-1.5 pt-6 text-sm font-bold text-primary-600 group-hover:text-primary-700">
-              Open Training Plan
-              <AppIcon className="ri-arrow-right-line transition-transform group-hover:translate-x-0.5" />
-            </span>
-          </Link>
         </div>
       </PageContainer>
     </WorkspaceShell>

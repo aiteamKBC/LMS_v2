@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { fetchLearnerDetail, invalidateLearnerDetailCache, type LearnerDetail, type LearnerKind } from '@/api/learnerDetail';
+import { fetchLearnerDetail, peekLearnerDetail, invalidateLearnerDetailCache, type LearnerDetail, type LearnerKind } from '@/api/learnerDetail';
 
 /**
  * Shared real-vs-mock data hook for learner self-view and staff drill-down
@@ -40,7 +40,8 @@ export function useLearnerDetailParam(kind: string | undefined, id: string | und
   useEffect(() => {
     if (!isRealMode || !id || !identity) return;
     let cancelled = false;
-    setState((previous) => ({ identity, real: previous?.identity === identity ? previous.real : null, loading: true, loadError: null }));
+    const cached = peekLearnerDetail(kind as LearnerKind, id, true);
+    setState((previous) => ({ identity, real: previous?.identity === identity ? previous.real : cached ?? null, loading: !cached, loadError: null }));
     fetchLearnerDetail(kind as LearnerKind, id)
       .then((data) => { if (!cancelled) setState({ identity, real: data, loading: false, loadError: null }); })
       .catch((error) => {
@@ -52,5 +53,6 @@ export function useLearnerDetailParam(kind: string | undefined, id: string | und
   // Staff can move directly between View pages. Hide the previous learner in
   // the first render of the new URL, before the next request effect runs.
   const current = identity && state?.identity === identity ? state : null;
-  return { isRealMode, real: current?.real ?? null, loading: current?.loading ?? isRealMode, loadError: current?.loadError ?? null, refresh };
+  const cached = !current && identity && id ? peekLearnerDetail(kind as LearnerKind, id, true) : undefined;
+  return { isRealMode, real: current?.real ?? cached ?? null, loading: current?.loading ?? (isRealMode && !!id && !cached), loadError: current?.loadError ?? null, refresh };
 }

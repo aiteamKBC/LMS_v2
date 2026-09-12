@@ -87,7 +87,7 @@ export default function GatewayReadinessPage() {
       pageTitle="Gateway Readiness" pageSubtitle="Prepare for your Gateway and End-Point Assessment"
       userName={p.fullName} userRole={`${p.programme} ${p.programmeLevel} Apprentice`}
     >
-      <div className="p-6 space-y-6">
+      <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
         {/* 1. Hero Banner + What's Blocking Me + Countdown */}
         <GatewayHeroSection />
 
@@ -294,7 +294,7 @@ export default function GatewayReadinessPage() {
                       <div className="relative w-24 h-24">
                         <svg viewBox="0 0 36 36" className="w-24 h-24 -rotate-90">
                           <circle cx="18" cy="18" r="15.5" fill="none" stroke="oklch(var(--background-200))" strokeWidth="4"></circle>
-                          <circle cx="18" cy="18" r="15.5" fill="none" stroke={pct >= 50 ? '#10b981' : pct >= 30 ? '#f59e0b' : '#ef4444'} strokeWidth="4" strokeDasharray={`${pct} ${100 - pct}`} strokeLinecap="round"></circle>
+                          <circle cx="18" cy="18" r="15.5" fill="none" stroke={pct >= 50 ? 'var(--learner-success, #10b981)' : pct >= 30 ? 'var(--learner-warning, #f59e0b)' : 'var(--learner-danger, #ef4444)'} strokeWidth="4" strokeDasharray={`${pct} ${100 - pct}`} strokeLinecap="round"></circle>
                         </svg>
                         <div className="absolute inset-0 flex items-center justify-center">
                           <span className="text-lg font-bold text-foreground-900">{pct}%</span>

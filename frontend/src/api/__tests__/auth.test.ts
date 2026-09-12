@@ -58,6 +58,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -163,6 +164,39 @@ describe('apiLogin', () => {
 });
 
 describe('apiMe', () => {
+  it('aborts a stalled shared lookup and allows a fresh retry', async () => {
+    vi.useFakeTimers();
+    fetchMock.mockImplementationOnce((_url, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal!.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+    }));
+    const first = expect(apiMe()).rejects.toMatchObject({ status: 0, code: 'timeout' });
+    const second = expect(apiMe()).rejects.toMatchObject({ code: 'timeout' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const signal = lastInit().signal!;
+    await vi.advanceTimersByTimeAsync(15_000);
+    await Promise.all([first, second]);
+    expect(signal.aborted).toBe(true);
+
+    fetchMock.mockResolvedValueOnce(reply(200, { user: ACCOUNT }));
+    await expect(apiMe()).resolves.toEqual(ACCOUNT);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('also bounds a response whose headers arrive but body stalls', async () => {
+    vi.useFakeTimers();
+    fetchMock.mockImplementationOnce(async (_url, init: RequestInit) => ({
+      ...reply(200, {}),
+      text: () => new Promise((_resolve, reject) => {
+        init.signal!.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+      }),
+    }));
+    const result = expect(apiMe()).rejects.toMatchObject({ code: 'timeout' });
+    await vi.advanceTimersByTimeAsync(15_000);
+    await result;
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('returns the account when signed in', async () => {
     fetchMock.mockResolvedValue(reply(200, { user: ACCOUNT }));
     await expect(apiMe()).resolves.toEqual(ACCOUNT);

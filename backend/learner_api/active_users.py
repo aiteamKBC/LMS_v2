@@ -820,6 +820,16 @@ def hydrate_source_training_plan(source):
     making every new Active learner immediately able to open their activities.
     """
     plan = get_training_plan(source)
+    # Once a selected module has its week tree, the expensive curriculum
+    # expansion has already happened. Re-running it on every learner-detail
+    # request made navigation wait on a full module/week/component join even
+    # when nothing had changed. Plan writes still pass through this function
+    # with the compact module selection and are expanded as before.
+    if isinstance(plan, list) and plan and all(
+        isinstance(module, dict) and isinstance(module.get("weeks"), list)
+        for module in plan
+    ):
+        return plan
     hydrated = hydrate_training_plan(plan)
     if hydrated == plan:
         return hydrated
@@ -1579,6 +1589,9 @@ def _fetch_ksb_items_from_profile_source(profile_source_id):
     profile_source_id = _clean_ksb_profile_source_id(profile_source_id)
     if not profile_source_id:
         return []
+    if profile_source_id.lower().startswith("standard:"):
+        from curriculum_api.views import standard_required_ksbs
+        return _coerce_ksb_items(standard_required_ksbs(profile_source_id.split(":", 1)[1]))
     try:
         # Savepointed: see the note above _fetch_ksb_items_for_programme.
         with transaction.atomic(using="enrolment"), connections["enrolment"].cursor() as cursor:
@@ -1600,9 +1613,6 @@ def _fetch_ksb_items(programme, training_plan=None):
     programme_id = _resolve_programme_id(programme, training_plan=training_plan)
     if not programme and not programme_id:
         return []
-    items = _fetch_ksb_items_for_programme(programme_id, programme)
-    if items:
-        return items
     profile_source_id = _resolve_ksb_profile_source_id(
         programme_id=programme_id,
         programme=programme,
@@ -1612,6 +1622,9 @@ def _fetch_ksb_items(programme, training_plan=None):
         items = _fetch_ksb_items_from_profile_source(profile_source_id)
         if items:
             return items
+    items = _fetch_ksb_items_for_programme(programme_id, programme)
+    if items:
+        return items
     items = _fetch_ksb_items_from_plan_mappings(
         programme_id=programme_id,
         programme=programme,
@@ -1840,11 +1853,10 @@ def mirror_placement_to_enrolment(profile):
 
 def sync_active_user(source):
     """Upsert one permanent learner and refresh authored plan/KSB child rows."""
+    from .apprenticeship_agreement import _group_dates
+
     status = _s(getattr(source, "programme_status", ""))
-    start_date, end_date = cohort_dates(
-        getattr(source, "programme", None),
-        getattr(source, "cohort", None),
-    )
+    start_date, end_date, _ = _group_dates(source)
     defaults = {
         "full_name": _s(getattr(source, "username", ""))
         or _s(getattr(source, "email", ""))

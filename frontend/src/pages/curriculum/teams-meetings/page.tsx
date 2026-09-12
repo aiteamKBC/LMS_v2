@@ -545,11 +545,17 @@ interface CreateForm {
 
 export default function CurriculumTeamsMeetingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { programmes, cohorts, groups, modules, tutors, holidays, loading, loaded, error, reload } = useCurriculumEntities({ includeHolidays: true, includeStaff: true });
+  const { programmes, cohorts, groups, modules, tutors, holidays, loading, loaded, refreshing, error, reload } = useCurriculumEntities({ includeHolidays: true, includeStaff: true });
 
   const [summaries, setSummaries] = useState<CurriculumTeamsMeetingSummary[]>([]);
   const [sessions, setSessions] = useState<CurriculumSession[]>([]);
   const [teamsLoading, setTeamsLoading] = useState(true);
+  // Whether the Teams state has ever landed. Every action on this page re-reads
+  // it, and a re-read is not a first load: without this the table swapped itself
+  // for six skeleton blocks every time somebody pressed Update Teams calendar,
+  // so the row they had just acted on vanished and came back seconds later. A
+  // refresh belongs over the rows already on screen, not in place of them.
+  const [teamsLoaded, setTeamsLoaded] = useState(false);
   const [teamsError, setTeamsError] = useState<string | null>(null);
   const [graphConfigured, setGraphConfigured] = useState(true);
   const [defaultOrganizer, setDefaultOrganizer] = useState('');
@@ -618,6 +624,7 @@ export default function CurriculumTeamsMeetingsPage() {
       setSummaries(nextSummaries);
       setSessions(nextSessions);
       setTeamsError(null);
+      setTeamsLoaded(true);
     } catch (err) {
       if (signal?.aborted) return;
       setTeamsError(err instanceof Error ? err.message : 'Unable to load the tracked Teams meetings.');
@@ -980,10 +987,14 @@ export default function CurriculumTeamsMeetingsPage() {
         repeatOccurrences: occurrences.length,
         scheduledOccurrences: occurrences,
       });
-      await loadTeamsState();
+      // Not awaited, the same as the create flow: the table refresh is a round
+      // trip and the confirmation must not queue behind it. The rows stay on
+      // screen while it runs, so the table catches up under the alert.
+      void loadTeamsState();
       // The occurrence rows this drawer reads its join links and attendance
       // from have just been rewritten, so the drawer's own read is stale until
-      // it is taken again.
+      // it is taken again. This one IS awaited: the drawer is open in front of
+      // the reader, and showing it the dates it just replaced would be wrong.
       if (summary.liveSessionId) await loadDetail(summary.liveSessionId);
       const warnings = result.warnings || [];
       if (warnings.length) {
@@ -1370,7 +1381,12 @@ export default function CurriculumTeamsMeetingsPage() {
   );
 
 
-  const listLoading = (loading && !loaded) || teamsLoading;
+  // Skeletons only while there is genuinely nothing to show. Once both halves
+  // have landed once, every later read is a refresh: the rows stay put and the
+  // table's own progress bar says a read is in flight. That is what keeps a row
+  // on screen while the action taken on it is saved and re-read.
+  const listLoading = (loading && !loaded) || (teamsLoading && !teamsLoaded);
+  const listRefreshing = !listLoading && (refreshing || teamsLoading);
 
   return (
     <WorkspaceShell
@@ -1465,6 +1481,7 @@ export default function CurriculumTeamsMeetingsPage() {
           rowKey={row => row.catalogueId}
           getRowHref={row => `${namedCurriculumWorkspacePath('modules', row.catalogueId, row.name)}&tab=schedule`}
           loading={listLoading}
+          refreshing={listRefreshing}
           empty={(
             <EntityEmptyState
               icon="ri-vidicon-line"

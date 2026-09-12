@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchEvidence, type EvidenceRecord } from '@/api/evidence';
-import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerQuizAttempt } from '@/api/learnerDetail';
+import { type EvidenceRecord } from '@/api/evidence';
+import { type LearnerDetail, type LearnerKind, type LearnerQuizAttempt } from '@/api/learnerDetail';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { CardSkeleton } from '@/components/feature/Skeletons';
@@ -29,6 +29,7 @@ import {
   eventDisplayDate,
   eventIdentity,
   eventPeriodLabel,
+  eventTargetDate,
   fetchCoachCalendarEvents,
   formatDateLabel,
   formatTimeLabel,
@@ -48,11 +49,13 @@ import {
   sortEvents,
   statusLabel,
 } from '../shared/calendarEvents';
-import ProgressReviewSlidesModal, {
+import {
   type ProgressReviewSlide,
   type ProgressReviewSlideListItem,
   type ProgressReviewSlidesDeck,
 } from './components/ProgressReviewSlidesModal';
+import ProgressReviewPptxModal from './components/ProgressReviewPptxModal';
+import { bulkGenerateProgressReviews, fetchLatestRun } from '@/api/progressReviews';
 import {
   buildKsbProgress,
   completedComponentIds,
@@ -134,10 +137,6 @@ function displayValue(value?: string | number | null) {
 function cleanOptionalText(value?: string | number | null) {
   if (value === null || value === undefined) return '';
   return String(value).trim();
-}
-
-function isLearnerKind(value?: string | null): value is LearnerKind {
-  return value === 'commercial' || value === 'apprenticeship';
 }
 
 function reviewHasLearnerReference(review: CoachCalendarEvent) {
@@ -281,66 +280,6 @@ function trainingPlanContextLabel(details?: EvidenceRecord['trainingPlanDetails'
     displayValue(details?.componentTitle),
   ].filter(value => value !== '--');
   return parts.length ? parts.join(' / ') : '--';
-}
-
-async function fetchAnyLearnerDetail(id: string) {
-  const [commercial, apprenticeship] = await Promise.allSettled([
-    fetchLearnerDetail('commercial', id),
-    fetchLearnerDetail('apprenticeship', id),
-  ]);
-
-  if (commercial.status === 'fulfilled') {
-    return { kind: 'commercial' as const, detail: commercial.value };
-  }
-
-  if (apprenticeship.status === 'fulfilled') {
-    return { kind: 'apprenticeship' as const, detail: apprenticeship.value };
-  }
-
-  const commercialMessage = commercial.status === 'rejected' && commercial.reason instanceof Error
-    ? commercial.reason.message
-    : null;
-  const apprenticeshipMessage = apprenticeship.status === 'rejected' && apprenticeship.reason instanceof Error
-    ? apprenticeship.reason.message
-    : null;
-  const non404 = [commercialMessage, apprenticeshipMessage].find(message => message && !message.includes('404'));
-
-  throw new Error(non404 || commercialMessage || apprenticeshipMessage || 'Could not load learner detail.');
-}
-
-async function fetchReviewLearnerDetail(event: CoachCalendarEvent) {
-  const profileId = cleanOptionalText(event.learnerId);
-  const detailId = cleanOptionalText(event.enrolmentId);
-  const preferredKind = isLearnerKind(event.learnerType) ? event.learnerType : null;
-
-  if (preferredKind && detailId) {
-    try {
-      return {
-        kind: preferredKind,
-        detail: await fetchLearnerDetail(preferredKind, detailId),
-        detailId,
-      };
-    } catch (preferredError) {
-      try {
-        const { kind, detail } = await fetchAnyLearnerDetail(detailId);
-        return { kind, detail, detailId };
-      } catch {
-        throw preferredError;
-      }
-    }
-  }
-
-  if (detailId) {
-    const { kind, detail } = await fetchAnyLearnerDetail(detailId);
-    return { kind, detail, detailId };
-  }
-
-  if (profileId) {
-    const { kind, detail } = await fetchAnyLearnerDetail(profileId);
-    return { kind, detail, detailId: profileId };
-  }
-
-  throw new Error('This review is missing its learner id, so slides cannot be generated yet.');
 }
 
 function buildReviewActivities(detail: LearnerDetail): ProgressReviewActivity[] {
@@ -677,6 +616,324 @@ export function buildProgressReviewSlidesDeck(
     },
   ];
 
+  const learnerName = displayValue(detail.name);
+  const programmeName = displayValue(detail.programme || review.programme);
+  const employerName = displayValue(detail.employer);
+  const managerName = displayValue(detail.lineManager);
+  const priorityKsbs = weakestKsbs.length ? weakestKsbs : strongestKsbs.slice(0, 4);
+  const activityByMonth = Array.from(recentActivities.reduce((map, activity) => {
+    const date = parseLocalDate(activity.at);
+    const key = date
+      ? new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(date)
+      : 'Undated activity';
+    const current = map.get(key) || { count: 0, minutes: 0, items: [] as ProgressReviewActivity[] };
+    current.count += 1;
+    current.minutes += activity.minutes;
+    current.items.push(activity);
+    map.set(key, current);
+    return map;
+  }, new Map<string, { count: number; minutes: number; items: ProgressReviewActivity[] }>())).slice(0, 4);
+  const actionPlanItems: ProgressReviewSlideListItem[] = [
+    {
+      title: 'Close evidence admin',
+      badge: pendingEvidence ? `${pendingEvidence} pending` : 'Check',
+      tone: pendingEvidence ? 'warn' : 'default',
+      detail: 'Review pending uploads, confirm naming, and map useful artefacts to the right plan areas.',
+      meta: 'Owner: coach and learner',
+    },
+    {
+      title: 'Agree workplace evidence project',
+      badge: priorityKsbs.length ? `${priorityKsbs.length} KSBs` : 'Optional',
+      tone: priorityKsbs.length ? 'warn' : 'good',
+      detail: 'Choose one live workplace project that can evidence planning, delivery, stakeholder input, and impact.',
+      meta: 'Owner: learner and manager',
+    },
+    {
+      title: 'Protect learning time',
+      badge: displayValue(detail.otjhStatus),
+      tone: toneForStatus(detail.otjhStatus),
+      detail: 'Confirm the learner has a practical routine for completing activities and recording learning time.',
+      meta: window.label,
+    },
+  ];
+
+  slides.splice(
+    2,
+    0,
+    {
+      id: 'closure-next-phase',
+      title: 'Closure & Next Phase',
+      type: 'lists',
+      heading: 'Progress review closure and next learning phase',
+      subheading: 'Confirm what is being closed today and what the learner should focus on next.',
+      columns: [
+        {
+          title: 'Position today',
+          items: [
+            { title: 'Review status', badge: statusLabel(review.status), tone: toneForStatus(review.status), detail: `Current review window: ${window.label}.` },
+            { title: 'Programme position', badge: `${ksbCoverage}% KSB`, tone: ksbCoverage >= 70 ? 'good' : ksbCoverage >= 45 ? 'warn' : 'danger', detail: `${recentActivities.length} activities and ${recentEvidence.length} evidence items found.` },
+            { title: 'OTJ position', badge: displayValue(detail.otjhStatus), tone: toneForStatus(detail.otjhStatus), detail: displayValue(detail.otjhProgressHours) !== '--' ? displayValue(detail.otjhProgressHours) : 'Confirm recorded OTJ hours during the review.' },
+          ],
+        },
+        {
+          title: 'Next phase prompts',
+          items: [
+            { title: 'Learning focus', detail: modulesTouched.slice(0, 3).join(' - ') || 'Agree the next released module or learning activity.' },
+            { title: 'Evidence focus', detail: priorityKsbs.slice(0, 3).map(item => item.code).join(', ') || 'Confirm the next evidence opportunity.' },
+            { title: 'Manager input', detail: 'Confirm the manager can verify contribution and workplace impact.' },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'progress-otj-lms',
+      title: 'Progress, OTJ & LMS',
+      type: 'metrics',
+      heading: 'Programme progress, OTJ and LMS',
+      subheading: 'A practical dashboard slide for discussing progress position and admin gaps.',
+      metrics: [
+        { label: 'KSB coverage', value: `${ksbCoverage}%`, tone: ksbCoverage >= 70 ? 'good' : ksbCoverage >= 45 ? 'warn' : 'danger' },
+        { label: 'OTJ status', value: displayValue(detail.otjhStatus), tone: toneForStatus(detail.otjhStatus) },
+        { label: 'Recorded time', value: recentMinutes ? formatHoursMinutes(recentMinutes / 60) : '--' },
+        { label: 'Active modules', value: String(modulesTouched.length) },
+        { label: 'Evidence uploads', value: String(recentEvidence.length) },
+        { label: 'Approved evidence', value: String(approvedEvidence), tone: approvedEvidence ? 'good' : 'default' },
+        { label: 'Quiz average', value: quizAverage !== null ? `${quizAverage}%` : '--', tone: quizAverage !== null && quizAverage < 70 ? 'warn' : 'good' },
+        { label: 'Review status', value: statusLabel(review.status), tone: toneForStatus(review.status) },
+      ],
+      highlights: actionPlanItems,
+    },
+    {
+      id: 'epa-readiness',
+      title: 'EPA Readiness',
+      type: 'lists',
+      heading: 'EPA readiness and evidence admin',
+      subheading: 'Frame portfolio quality, evidence mapping, and next evidence-building decisions.',
+      columns: [
+        {
+          title: 'Current readiness',
+          items: [
+            { title: 'Portfolio position', badge: approvedEvidence ? 'Evidence present' : 'Needs review', tone: approvedEvidence ? 'good' : 'warn', detail: `${approvedEvidence} approved, ${pendingEvidence} pending, and ${rejectedEvidence} rejected evidence items.` },
+            { title: 'Assessment position', badge: quizAverage !== null ? `${quizAverage}%` : 'No quiz data', tone: quizAverage !== null && quizAverage >= 70 ? 'good' : 'warn', detail: recentQuizzes.length ? `${passedQuizzes}/${recentQuizzes.length} recent quizzes passed.` : 'No recent quiz attempts found.' },
+            { title: 'KSB position', badge: `${ksbCoverage}%`, tone: ksbCoverage >= 70 ? 'good' : ksbCoverage >= 45 ? 'warn' : 'danger', detail: 'Use priority KSB slides to agree evidence depth and manager verification.' },
+          ],
+        },
+        {
+          title: 'Evidence admin',
+          items: [
+            { title: 'Naming and mapping', detail: 'Confirm files are named clearly and linked to the right module, week, component, or KSB.' },
+            { title: 'Manager verification', detail: 'Agree what the manager can verify and whether a witness statement is needed.' },
+            { title: 'Reflection quality', detail: 'Check evidence shows context, personal action, outcome, and reflection.' },
+          ],
+        },
+      ],
+    },
+  );
+
+  slides.splice(
+    8,
+    0,
+    ...activityByMonth.map(([month, summary], index): ProgressReviewSlide => ({
+      id: `activity-${index + 1}`,
+      title: `${month} Evidence`,
+      type: 'lists',
+      heading: `${month} workplace evidence`,
+      subheading: 'Auto-filled from recent activity. Edit this into a narrative evidence spotlight.',
+      columns: [
+        {
+          title: 'Strongest evidence',
+          items: summary.items.slice(0, 5).map(activity => ({
+            title: activity.title,
+            badge: activity.status,
+            tone: toneForStatus(activity.status),
+            detail: activity.detail,
+            meta: `${activity.module} - ${activity.week}`,
+          })),
+        },
+        {
+          title: 'Portfolio value',
+          items: [
+            { title: 'Activity count', badge: `${summary.count}`, detail: `${summary.count} learning activities were found in ${month}.` },
+            { title: 'Recorded time', badge: summary.minutes ? formatHoursMinutes(summary.minutes / 60) : '--', detail: 'Use this only as a discussion aid unless the OTJ record is signed.' },
+            { title: 'Evidence prompt', detail: 'Add artefacts, screenshots, outputs, manager comments, and a short reflection.' },
+          ],
+        },
+      ],
+    })),
+  );
+
+  slides.push(
+    {
+      id: 'workplace-impact',
+      title: 'Workplace Impact',
+      type: 'lists',
+      heading: `Workplace application and impact at ${employerName}`,
+      subheading: 'A structured slide for discussing value delivered through the programme.',
+      columns: [
+        {
+          title: 'Impact themes',
+          items: [
+            { title: 'Quality and consistency', detail: 'What improved in learner output, process, or professional judgement?' },
+            { title: 'Efficiency and ownership', detail: 'Where has the learner taken more ownership or reduced friction for the team?' },
+            { title: 'Insight and evaluation', detail: 'What evidence shows the learner using data, feedback, or reflection to improve work?' },
+          ],
+        },
+        {
+          title: 'Evidence to retain',
+          items: [
+            { title: 'Before and after', detail: 'Capture baseline, final output, and what changed because of the learner contribution.' },
+            { title: 'Stakeholder voice', detail: 'Capture manager, colleague, customer, or stakeholder feedback where available.' },
+            { title: 'Measurable result', detail: 'Add performance data, quality checks, time saved, or decision records.' },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'ksbs-to-strengthen',
+      title: 'KSBs To Strengthen',
+      type: 'lists',
+      heading: 'KSBs to strengthen next',
+      subheading: 'These are evidence-building opportunities, not performance concerns.',
+      columns: [
+        {
+          title: 'Priority KSBs',
+          items: priorityKsbs.slice(0, 6).map(item => ({
+            title: `${item.code} - ${item.description || 'KSB focus area'}`,
+            badge: `${item.pct}%`,
+            tone: item.pct >= 70 ? 'default' : item.pct >= 45 ? 'warn' : 'danger',
+            detail: `${item.doneCount} of ${item.totalCount} linked activities completed.`,
+            meta: item.contributors.slice(0, 2).map(contributor => contributor.title).join(' - ') || 'Agree a workplace evidence route.',
+          })),
+        },
+        {
+          title: 'Evidence ideas',
+          items: [
+            { title: 'Live project', detail: 'Use one authentic workplace project with clear objective, owner, deadline, and output.' },
+            { title: 'Evidence pack', detail: 'Retain brief, plan, drafts, approvals, screenshots, results, and reflection.' },
+            { title: 'Manager verification', detail: 'Ask the manager to verify personal contribution and workplace impact.' },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'next-actions',
+      title: 'Next Actions',
+      type: 'lists',
+      heading: 'Next actions: learning evidence opportunities',
+      subheading: 'Agree specific evidence actions, owners, and dates before closing the meeting.',
+      columns: [
+        { title: 'Action plan', items: actionPlanItems },
+        {
+          title: 'Decision prompts',
+          items: [
+            { title: 'Project or activity', detail: 'Which upcoming work can the learner contribute to meaningfully?' },
+            { title: 'Evidence owner', detail: 'Who will provide artefacts, manager comments, or verification?' },
+            { title: 'Deadline', detail: 'Agree the upload deadline and the next review checkpoint.' },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'smart-targets',
+      title: 'SMART Targets',
+      type: 'lists',
+      heading: 'SMART targets and action plan',
+      subheading: 'Turn the review into measurable next steps.',
+      columns: [
+        {
+          title: 'Learning and portfolio',
+          items: [
+            { title: 'Specific', detail: 'Complete the agreed learning activity or project evidence pack.' },
+            { title: 'Measurable', detail: 'Evidence includes outputs, dates, mapped KSBs, and manager verification.' },
+            { title: 'Time-bound', detail: 'Set a clear deadline before the next progress review.' },
+          ],
+        },
+        {
+          title: 'Success measures',
+          items: [
+            { title: 'Evidence uploaded', detail: 'Files are named, mapped, and supported by reflection.' },
+            { title: 'Manager verified', detail: 'Manager confirms learner contribution and impact.' },
+            { title: 'Progress reviewed', detail: 'Coach reviews and updates support plan if needed.' },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'professional-responsibilities',
+      title: 'Professional Duties',
+      type: 'lists',
+      heading: 'Professional responsibilities and EPA brief',
+      subheading: 'A closing reminder covering safeguarding, British Values, and EPA evidence quality.',
+      columns: [
+        {
+          title: 'Professional responsibilities',
+          items: [
+            { title: 'Safeguarding', detail: 'Recognise, respond, report, record, and refer concerns through the correct route.' },
+            { title: 'British Values', detail: 'Democracy, rule of law, individual liberty, mutual respect, and tolerance.' },
+            { title: 'Ethical practice', detail: 'Keep data, consent, accessibility, inclusion, and approvals in view.' },
+          ],
+        },
+        {
+          title: 'EPA evidence quality',
+          items: [
+            { title: 'Context', detail: 'Explain the workplace situation and learner responsibility.' },
+            { title: 'Action and outcome', detail: 'Show what the learner did and what changed as a result.' },
+            { title: 'Reflection', detail: 'Capture what the learner learned and what they would improve.' },
+          ],
+        },
+      ],
+    },
+    {
+      id: 'manager-questions',
+      title: 'Manager Questions',
+      type: 'lists',
+      heading: 'Manager questions: workplace impact check',
+      subheading: `Questions for ${managerName !== '--' ? managerName : 'the learner manager'} to confirm impact, support, and evidence.`,
+      columns: [
+        {
+          title: 'Questions',
+          items: [
+            'What improvements have you seen in confidence, independence, or professional judgement?',
+            'Which workplace examples best show applied learning rather than routine activity?',
+            'Which upcoming project can create strong evidence for the priority KSBs?',
+            'What evidence can you verify for portfolio and EPA readiness?',
+            'Are there any concerns, barriers, or support needs to address before the next review?',
+          ].map((question, index) => ({ title: `${index + 1}. ${question}`, detail: 'Coach to capture notes during the review.' })),
+        },
+        {
+          title: 'Manager notes',
+          items: [
+            { title: 'Impact observed', detail: 'Add notes here.' },
+            { title: 'Support agreed', detail: 'Add notes here.' },
+            { title: 'Evidence project', detail: 'Project / role / evidence to upload / review date.' },
+          ],
+        },
+      ],
+    },
+  );
+
+  while (slides.length < 18) {
+    slides.splice(slides.length - 5, 0, {
+      id: `evidence-planning-${slides.length}`,
+      title: 'Evidence Planning',
+      type: 'lists',
+      heading: `${learnerName} evidence planning`,
+      subheading: `Editable planning slide for ${programmeName}.`,
+      columns: [
+        {
+          title: 'Evidence opportunity',
+          items: [
+            { title: 'Workplace task', detail: 'Describe the live work, learner responsibility, and intended outcome.' },
+            { title: 'KSB mapping', detail: priorityKsbs.slice(0, 4).map(item => item.code).join(', ') || 'Add target KSBs.' },
+            { title: 'Verification', detail: `Manager: ${managerName}. Add witness notes and sign-off route.` },
+          ],
+        },
+      ],
+    });
+  }
+
+  if (slides.length > 18) slides.splice(18);
+
   return {
     learnerName: displayValue(detail.name),
     reviewLabel: 'Progress review slides',
@@ -702,8 +959,9 @@ export default function CoachProgressReviews() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [completionEvent, setCompletionEvent] = useState<CoachCalendarEvent | null>(null);
-  const [slidesBusyEventId, setSlidesBusyEventId] = useState<string | null>(null);
-  const [slidesDeck, setSlidesDeck] = useState<ProgressReviewSlidesDeck | null>(null);
+  const [pptxModalReview, setPptxModalReview] = useState<CoachCalendarEvent | null>(null);
+  const [generatedReviewKeys, setGeneratedReviewKeys] = useState<Set<string>>(new Set());
+  const [bulkGenerating, setBulkGenerating] = useState(false);
 
   useEffect(() => {
     if (!coach.isInitialized) return;
@@ -778,6 +1036,39 @@ export default function CoachProgressReviews() {
     (activePage - 1) * REVIEWS_PER_PAGE,
     activePage * REVIEWS_PER_PAGE,
   );
+
+  const visibleReviewsKey = paginatedReviews
+    .filter((review) => reviewHasLearnerReference(review) && eventTargetDate(review))
+    .map((review) => `${eventIdentity(review)}:${eventTargetDate(review)}`)
+    .join('|');
+
+  useEffect(() => {
+    if (!visibleReviewsKey) return;
+    let cancelled = false;
+    const candidates = paginatedReviews.filter((review) => reviewHasLearnerReference(review) && eventTargetDate(review));
+
+    Promise.all(candidates.map(async (review) => {
+      const learnerId = review.learnerId || review.enrolmentId || '';
+      try {
+        const result = await fetchLatestRun(learnerId, eventTargetDate(review));
+        return result.exists && result.generationStatus === 'completed' ? eventIdentity(review) : null;
+      } catch {
+        return null;
+      }
+    })).then((keys) => {
+      if (cancelled) return;
+      const found = keys.filter((key): key is string => Boolean(key));
+      if (!found.length) return;
+      setGeneratedReviewKeys((prev) => {
+        const next = new Set(prev);
+        found.forEach((key) => next.add(key));
+        return next;
+      });
+    });
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleReviewsKey]);
 
   const changeTab = (nextTab: ReviewTab) => {
     setTab(nextTab);
@@ -867,36 +1158,43 @@ export default function CoachProgressReviews() {
     setCompletionEvent(event);
   };
 
-  const handleCreateSlides = async (event: CoachCalendarEvent) => {
-    const reviewId = eventIdentity(event);
-    if (!reviewHasLearnerReference(event)) {
-      setActionError('This review is missing its learner id, so slides cannot be generated yet.');
+  const handleCreateSlides = (event: CoachCalendarEvent) => {
+    if (!reviewHasLearnerReference(event) || !eventTargetDate(event)) {
+      setActionError('This review is missing its learner id or review date, so slides cannot be generated yet.');
       setActionNotice(null);
-      setExpanded(reviewId);
+      setExpanded(eventIdentity(event));
       return;
     }
-
-    setSlidesBusyEventId(reviewId);
     setActionError(null);
     setActionNotice(null);
+    setPptxModalReview(event);
+  };
+
+  const markReviewSlidesGenerated = (event: CoachCalendarEvent) => {
+    setGeneratedReviewKeys((prev) => {
+      const next = new Set(prev);
+      next.add(eventIdentity(event));
+      return next;
+    });
+  };
+
+  const handleBulkGenerateSlides = async () => {
+    const count = events.filter((event) => reviewHasLearnerReference(event) && eventTargetDate(event)).length;
+    if (!count) return;
+    if (!window.confirm(`Generate Progress Review PPTX decks for ${count} review(s) with a learner and review date? This may take a while.`)) return;
+    setBulkGenerating(true);
     try {
-      const { kind, detail, detailId } = await fetchReviewLearnerDetail(event);
-      const evidenceLearnerId = detailId || cleanOptionalText(detail.id) || cleanOptionalText(event.learnerId);
-      let evidence: EvidenceRecord[] = [];
-      try {
-        evidence = await fetchEvidence(kind, evidenceLearnerId);
-      } catch (evidenceError) {
-        console.error(evidenceError);
-        setActionNotice('Slides were created, but evidence records could not be loaded. The deck uses learner progress data only.');
+      const data = await bulkGenerateProgressReviews({});
+      const failed = data.results.filter((row) => row.generationStatus === 'failed').length;
+      if (failed) {
+        setActionError(`Bulk generation finished with ${failed} of ${data.results.length} failure(s).`);
+      } else {
+        setActionNotice(`Bulk generation complete — ${data.results.length} deck(s) generated.`);
       }
-      setSlidesDeck(buildProgressReviewSlidesDeck(event, ownerName, kind, detail, evidence));
-      setExpanded(reviewId);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Unable to generate slides for this learner right now.');
-      setActionNotice(null);
-      setExpanded(reviewId);
+      setActionError(err instanceof Error ? err.message : 'Unable to run bulk generation.');
     } finally {
-      setSlidesBusyEventId(null);
+      setBulkGenerating(false);
     }
   };
 
@@ -937,21 +1235,32 @@ export default function CoachProgressReviews() {
           description={`Schedule, run and complete learner progress reviews for ${ownerName}'s active learners.`}
           icon="ri-file-chart-line"
           actions={(
-            <button
-              type="button"
-              onClick={() => changeTab(overdue > 0 ? 'overdue' : 'this-month')}
-              className={cn(
-                'inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-[12px] font-semibold transition',
-                overdue > 0
-                  ? 'border-red-200 bg-red-50 text-red-700 hover:border-red-300'
-                  : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300',
-              )}
-            >
-              <AppIcon className={overdue > 0 ? 'ri-alarm-warning-line' : 'ri-checkbox-circle-line'}></AppIcon>
-              {overdue > 0
-                ? `${overdue} overdue review${overdue === 1 ? '' : 's'}`
-                : 'Everything is on track'}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleBulkGenerateSlides}
+                disabled={bulkGenerating}
+                className="inline-flex h-9 items-center gap-2 rounded-lg border border-foreground-200 bg-white px-3 text-[12px] font-semibold text-foreground-700 transition hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <AppIcon className={bulkGenerating ? 'ri-loader-4-line animate-spin' : 'ri-stack-line'}></AppIcon>
+                {bulkGenerating ? 'Generating slides…' : 'Bulk generate slides'}
+              </button>
+              <button
+                type="button"
+                onClick={() => changeTab(overdue > 0 ? 'overdue' : 'this-month')}
+                className={cn(
+                  'inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-[12px] font-semibold transition',
+                  overdue > 0
+                    ? 'border-red-200 bg-red-50 text-red-700 hover:border-red-300'
+                    : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300',
+                )}
+              >
+                <AppIcon className={overdue > 0 ? 'ri-alarm-warning-line' : 'ri-checkbox-circle-line'}></AppIcon>
+                {overdue > 0
+                  ? `${overdue} overdue review${overdue === 1 ? '' : 's'}`
+                  : 'Everything is on track'}
+              </button>
+            </div>
           )}
         />
 
@@ -1004,7 +1313,7 @@ export default function CoachProgressReviews() {
             {!loading && paginatedReviews.map(review => {
               const isOpen = expanded === eventIdentity(review);
               const isBusy = busyEventId === eventIdentity(review);
-              const isSlidesBusy = slidesBusyEventId === eventIdentity(review);
+              const hasSlides = generatedReviewKeys.has(eventIdentity(review));
               const joinAvailable = canJoinMeeting(review);
               return (
                 <CalendarEventRow
@@ -1026,10 +1335,10 @@ export default function CoachProgressReviews() {
                         <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" disabled={isBusy} onClick={() => { handleJoin(review); }} />
                       ) : null}
                       <RowAction
-                        label={isSlidesBusy ? 'Creating slides' : 'Create slides'}
-                        icon={isSlidesBusy ? 'ri-loader-4-line animate-spin' : 'ri-slideshow-line'}
-                        disabled={isSlidesBusy || !reviewHasLearnerReference(review)}
-                        onClick={() => { void handleCreateSlides(review); }}
+                        label={hasSlides ? 'View slides' : 'Create slides'}
+                        icon={hasSlides ? 'ri-slideshow-2-line' : 'ri-slideshow-line'}
+                        disabled={!reviewHasLearnerReference(review)}
+                        onClick={() => { handleCreateSlides(review); }}
                       />
                       <RowAction
                         label={needsScheduling(review) ? 'Schedule' : 'Manage'}
@@ -1085,10 +1394,10 @@ export default function CoachProgressReviews() {
                             <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" onClick={() => { handleJoin(review); }} disabled={isBusy} />
                           ) : null}
                           <RowAction
-                            label={isSlidesBusy ? 'Creating slides' : 'Create slides'}
-                            icon={isSlidesBusy ? 'ri-loader-4-line animate-spin' : 'ri-slideshow-line'}
-                            disabled={isSlidesBusy || !reviewHasLearnerReference(review)}
-                            onClick={() => { void handleCreateSlides(review); }}
+                            label={hasSlides ? 'View slides' : 'Create slides'}
+                            icon={hasSlides ? 'ri-slideshow-2-line' : 'ri-slideshow-line'}
+                            disabled={!reviewHasLearnerReference(review)}
+                            onClick={() => { handleCreateSlides(review); }}
                           />
                           <RowAction
                             label={review.status === 'scheduled' || review.status === 'in-progress' ? 'Reschedule' : 'Schedule'}
@@ -1151,10 +1460,11 @@ export default function CoachProgressReviews() {
             onSubmit={handleCompleteReview}
           />
         ) : null}
-        <ProgressReviewSlidesModal
-          open={Boolean(slidesDeck)}
-          deck={slidesDeck}
-          onClose={() => setSlidesDeck(null)}
+        <ProgressReviewPptxModal
+          open={Boolean(pptxModalReview)}
+          review={pptxModalReview}
+          onClose={() => setPptxModalReview(null)}
+          onGenerated={markReviewSlidesGenerated}
         />
       </PageContainer>
     </WorkspaceShell>

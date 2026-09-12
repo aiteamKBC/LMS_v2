@@ -18,6 +18,14 @@ const gate = (overrides: Partial<LearnerAccessGate> = {}): LearnerAccessGate => 
 });
 
 describe('waitingCopy', () => {
+  it('explains invitation readiness instead of claiming an assigned start date is missing', () => {
+    const copy = waitingCopy(gate({ reasons: ['invitation'], startDate: '2025-05-01' }), { commercial: true });
+    expect(copy.title).toBe('Your platform invitation is pending');
+    expect(copy.lines.join(' ')).toContain('not sent your platform invitation');
+    expect(copy.lines.join(' ')).not.toContain('not been confirmed');
+    expect(copy.steps.join(' ')).toContain('set your password');
+  });
+
   it('names the learning plan when that is what is missing', () => {
     // The reported learner: start date 1 May 2025, no plan assigned.
     const copy = waitingCopy(

@@ -23,6 +23,7 @@ describe('reflection submission API', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(
       '/learner_api/reflection/submissions/?learnerKind=commercial&learnerId=19',
+      expect.objectContaining({ credentials: 'include', signal: expect.any(AbortSignal) }),
     );
     expect(statuses).toEqual({
       'quiz:quiz-68': 'accepted',

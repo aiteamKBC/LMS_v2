@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchCurriculumProgrammes, type CurriculumProgramme } from '@/lib/curriculumApi';
+import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 
 type LoadOptions = {
   silent?: boolean;
@@ -44,6 +45,15 @@ export function useCurriculumProgrammes({ skipCache = false, revalidate = false,
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
+
+  // Programmes are made in other places too -- the structure wizard, a second
+  // tab, a colleague on another machine -- and this list has no way to hear
+  // about those. `revalidate`, not `skipCache`: the server drops its payload
+  // cache on write, so the network already has the truth and there is nothing
+  // to gain from making it spend the multi-second rebuild on every tab switch.
+  useLiveRefresh(() => {
+    void load(undefined, { silent: true, revalidate: true, skipCache: false });
+  });
 
   const removeProgramme = (id: string) => {
     setProgrammes(prev => prev.filter(p => (p.sourceId || p.id) !== id));

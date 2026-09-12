@@ -2,6 +2,8 @@ export interface VoiceReflectionContext {
   activityTitle: string;
   moduleLabel: string;
   weekLabel: string;
+  minimumWords?: number;
+  onePointPerLine?: boolean;
 }
 
 interface VoiceReflectionResponse {

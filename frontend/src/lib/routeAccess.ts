@@ -144,7 +144,7 @@ export function homeRouteFor(
   account: Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord'>,
 ): string {
   if (account.access === 'record-monitor') return '/old-otjh/monitor';
-  if (account.role === 'learner' && account.hasLegacyRecord) return '/old-otjh';
+  if (account.role === 'learner') return HOME_BY_ROLE.learner;
   if (account.role === 'employer' && account.subjectId) {
     return `/employers/${account.subjectId}`;
   }
@@ -164,8 +164,10 @@ export function isBareLearnerWorkspacePath(path: string | null | undefined): boo
 /**
  * Where LoginPage should send a successfully authenticated account.
  *
- * Legacy learners start at the transition portal, and record monitors at their
- * monitoring dashboard, regardless of a remembered destination.
+ * Learners default to their Dashboard, including learners with imported records.
+ * Explicit deep links still work; enrolment and previous-record prerequisites
+ * are enforced by the existing page/access gates. Record monitors always start
+ * at their monitoring dashboard.
  *
  * `from` is helpful for pasted deep links, but `/workspace/learner` without a
  * learner id is the learner self-workspace. Staff can open learner pages for
@@ -178,7 +180,7 @@ export function postLoginRouteFor(
   account: Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord'>,
   requestedPath?: string | null,
 ): string {
-  if (account.access === 'record-monitor' || (account.role === 'learner' && account.hasLegacyRecord)) {
+  if (account.access === 'record-monitor') {
     return homeRouteFor(account);
   }
   const requested = String(requestedPath || '').trim();

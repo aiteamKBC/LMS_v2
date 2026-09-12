@@ -10,6 +10,17 @@ const data: TrainingPlanDashboard = { months: { '2026-09': { label: '', topics: 
 const subject: Subject = { id: 'legacy:1', title: 'Marketing', source: 'legacy', activities: ['2026-09-01','2026-09-08','2026-09-15','2026-09-22'].map((date, i) => ({ id: `${i}`, title: `Activity ${i}`, completed: i < 2, category: 'reading', position: i, schedule: { date } })) };
 
 describe('Training Plan calculations', () => {
+  it('renders identical monthly totals from compact dashboard summaries', () => {
+    const full = buildPlanModules([subject], data)[0];
+    const compact = buildPlanModules([{
+      id: subject.id, title: subject.title, source: subject.source, completed: 2, total: 4,
+      dates: subject.activities.map(item => item.schedule.date!), moduleIds: ['module-1'], sessionTitles: [],
+    }], data)[0];
+    for (const key of ['activityCount', 'done', 'progress', 'start', 'end', 'weeks', 'actual'] as const) {
+      expect(compact[key]).toEqual(full[key]);
+    }
+    expect(monthMetrics('2026-09', [compact], data)).toEqual(monthMetrics('2026-09', [full], data));
+  });
   it('offers every year inside a multi-year module even without a contract for that year', () => {
     expect(timelineYears(['2024-09-01','2028-07-01','invalid'],2026,2026)).toEqual([2024,2025,2026,2027,2028]);
   });

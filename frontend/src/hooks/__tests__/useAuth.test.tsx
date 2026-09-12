@@ -17,6 +17,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
+import { createCachedResource, clearAllCachedResources } from '@/api/cachedRequest';
+import { getRememberedLearner, rememberLearner, rememberSignedInLearner } from '../useMyLearner';
 
 const apiMe = vi.fn();
 const apiLogin = vi.fn();
@@ -67,6 +69,7 @@ async function renderAuth() {
 }
 
 beforeEach(() => {
+  clearAllCachedResources();
   apiMe.mockReset().mockResolvedValue(null);
   apiLogin.mockReset();
   apiLogout.mockReset().mockResolvedValue(undefined);
@@ -74,7 +77,46 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  rememberSignedInLearner(undefined, undefined);
   localStorage.clear();
+});
+
+describe('learner identity lifecycle', () => {
+  const account = { ...LEARNER, subjectType: 'learner' as const, subjectId: 499, learnerType: 'commercial' };
+
+  it('pins the restored account despite stale learner selections', async () => {
+    rememberLearner('apprenticeship', '125');
+    apiMe.mockResolvedValue(account);
+    await renderAuth();
+    rememberLearner('apprenticeship', '125');
+    expect(getRememberedLearner()).toEqual({ kind: 'commercial', id: '499' });
+  });
+
+  it('releases the learner pin on logout', async () => {
+    apiMe.mockResolvedValue(account);
+    const { result } = await renderAuth();
+    act(() => result.current.logout());
+    rememberLearner('commercial', '125');
+    expect(getRememberedLearner()?.id).toBe('125');
+  });
+
+  it('releases the learner pin when another tab signs out', async () => {
+    apiMe.mockResolvedValue(account);
+    const { result } = await renderAuth();
+    act(() => window.dispatchEvent(new StorageEvent('storage', { key: 'kbc_auth_email', newValue: null })));
+    expect(result.current.auth.account).toBeNull();
+    rememberLearner('commercial', '125');
+    expect(getRememberedLearner()?.id).toBe('125');
+  });
+
+  it('restores staff learner review after switching from a learner account', async () => {
+    apiMe.mockResolvedValue(account);
+    apiLogin.mockResolvedValue(ADMIN);
+    const { result } = await renderAuth();
+    await act(async () => { await result.current.login(ADMIN.email, 'pw'); });
+    rememberLearner('commercial', '125');
+    expect(getRememberedLearner()?.id).toBe('125');
+  });
 });
 
 describe('hydration from the session cookie', () => {
@@ -105,6 +147,21 @@ describe('hydration from the session cookie', () => {
     apiMe.mockRejectedValue(new Error('network down'));
     const { result } = await renderAuth();
     expect(result.current.auth.isAuthenticated).toBe(false);
+    expect(result.current.initializationError).toMatch(/could not check your session/i);
+  });
+
+  it('restores the existing session on retry without asking for credentials', async () => {
+    apiMe.mockRejectedValueOnce(new Error('network down'));
+    const { result } = await renderAuth();
+    expect(result.current.initializationError).toBeTruthy();
+
+    apiMe.mockResolvedValueOnce(ADMIN);
+    act(() => result.current.retryInitialization());
+    await waitFor(() => expect(result.current.isInitialized).toBe(true));
+
+    expect(result.current.auth.account).toEqual(ADMIN);
+    expect(result.current.initializationError).toBeNull();
+    expect(apiLogin).not.toHaveBeenCalled();
   });
 });
 
@@ -191,6 +248,19 @@ describe('role mapping', () => {
 });
 
 describe('logout', () => {
+  it('drops learner snapshots when signing out or switching accounts', async () => {
+    apiMe.mockResolvedValue(ADMIN);
+    const { result } = await renderAuth();
+    const cached = createCachedResource('auth-test-learner', async () => ({ name: 'Previous learner' }));
+    await cached.read('125');
+    apiLogin.mockResolvedValue(LEARNER);
+    await act(async () => { await result.current.login('l@kbc.test', 'pw'); });
+    expect(cached.peek('125')).toBeUndefined();
+    await cached.read('125');
+    act(() => result.current.logout());
+    expect(cached.peek('125')).toBeUndefined();
+  });
+
   it('revokes the session server-side and clears local state', async () => {
     apiMe.mockResolvedValue(ADMIN);
     const { result } = await renderAuth();

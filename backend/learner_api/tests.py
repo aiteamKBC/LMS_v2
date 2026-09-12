@@ -103,6 +103,31 @@ class LearnerQuizReferenceTests(SimpleTestCase):
 
 
 class LearnerDetailPrefetchTests(SimpleTestCase):
+    def test_progress_projection_reuses_loaded_history_and_nested_relations(self):
+        from .models import LearnerProgressEntry, LearnerProgressKsb, LearnerQuizAnswer
+
+        profile = LearnerProfile(id=19)
+        progress = LearnerProgressEntry(id=1, learner=profile, kind="quiz", quiz_ref="42", passed=True)
+        answer = LearnerQuizAnswer(id=2, progress=progress, question_ref=7, chosen_answer_ref=8, is_correct=True)
+        answer._prefetched_objects_cache = {"chosen_answers": [], "correct_answers": []}
+        progress._prefetched_objects_cache = {
+            "ksb_links": [LearnerProgressKsb(progress=progress, position=1, ksb_code="K1")],
+            "quiz_answers": [answer],
+        }
+        profile._prefetched_objects_cache = {"progress_entries": [progress]}
+        # SimpleTestCase refuses any database access: repeated projections must
+        # keep both achievements and answers without issuing another query.
+        first = profile.training_plan_progress
+        self.assertEqual(profile.training_plan_progress, first)
+        self.assertEqual(first[0]["ksbs"], ["K1"])
+        self.assertEqual(first[0]["questions"][0]["chosenAnswerId"], 8)
+        self.assertTrue(first[0]["passed"])
+
+    def test_empty_prefetched_history_needs_no_database_read(self):
+        profile = LearnerProfile(id=19)
+        profile._prefetched_objects_cache = {"progress_entries": []}
+        self.assertEqual(profile.training_plan_progress, [])
+
     @patch("learner_api.learner_detail.prefetch_related_objects")
     @patch("learner_api.learner_detail.learner_profile_for_source")
     def test_prefetches_the_complete_progress_graph(self, resolve_profile, prefetch):
@@ -112,7 +137,7 @@ class LearnerDetailPrefetchTests(SimpleTestCase):
 
         self.assertIs(_active_profile_for_source(source, 19), profile)
 
-        resolve_profile.assert_called_once_with(source, 19, active_only=True)
+        resolve_profile.assert_called_once_with(source, 19)
         prefetch.assert_called_once_with(
             [profile],
             "ksb_assignment__profile_version__definitions",
@@ -123,7 +148,7 @@ class LearnerDetailPrefetchTests(SimpleTestCase):
 
     @patch("learner_api.learner_detail.prefetch_related_objects")
     @patch("learner_api.learner_detail.learner_profile_for_source", return_value=None)
-    def test_skips_prefetch_when_the_learner_is_not_active(self, _resolve_profile, prefetch):
+    def test_skips_prefetch_when_the_learner_has_no_profile(self, _resolve_profile, prefetch):
         self.assertIsNone(_active_profile_for_source(SimpleNamespace(), 19))
         prefetch.assert_not_called()
 
@@ -143,7 +168,8 @@ class LearnerReflectionStatusTests(SimpleTestCase):
             {"learnerKind": "commercial", "learnerId": "19"},
         )
 
-        with patch("learner_api.reflection_submissions.connections", {"enrolment": connection}):
+        with patch("learner_api.reflection_submissions.connections", {"enrolment": connection}), \
+                patch("login.permissions.authenticate_request", return_value=SimpleNamespace(role="learner", subject_id=19)):
             response = get_reflection_submission(request)
 
         self.assertEqual(response.status_code, 200)
@@ -190,8 +216,12 @@ class AssignmentFormReadinessTests(SimpleTestCase):
             "businessImpact": "Faster customer response",
         }))
 
-        with patch("learner_api.components.connections", {"enrolment": connection}):
+        with patch("learner_api.components.connections", {"enrolment": connection}), \
+                patch("learner_api.monthly_assignment.assignment_checks", return_value=[{"passed": True}]) as checks:
             self.assertTrue(_assignment_form_ready("COMP-1", "commercial", "19"))
+
+        self.assertEqual(checks.call_args.args[0]["activityId"], "COMP-1")
+        self.assertEqual(checks.call_args.args[0]["learnerId"], "19")
 
         params = cursor.execute.call_args.args[1]
         self.assertEqual(params, ["commercial", "19", "COMP-1"])
@@ -251,7 +281,8 @@ class LearnerProgressionTests(SimpleTestCase):
     def test_commercial_becomes_active_after_start_date_with_assigned_plan(self, _today, _start, sync):
         learner = self._learner("Delivery", learner_type="commercial", plan=[{"moduleId": "mod-1"}])
 
-        self.assertEqual(advance_learner(learner), "Active")
+        with patch("learner_api.learner_progression._has_platform_invitation", return_value=True):
+            self.assertEqual(advance_learner(learner), "Active")
         self.assertEqual(learner.programme_status, "Active")
         sync.assert_called_once_with(learner)
 
@@ -279,9 +310,9 @@ class TrainingPlanHydrationTests(SimpleTestCase):
         cursor = MagicMock()
         connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
         cursor.fetchall.return_value = [
-            ("mod-1", "Module 1", 11, "Week 1", 1, 101, "Watch this", "video", Decimal("1.25")),
-            ("mod-1", "Module 1", 11, "Week 1", 1, 102, "Quiz", "quiz", Decimal("0.50")),
-            ("mod-1", "Module 1", 12, "Week 2", 2, 103, "Read this", "reading", None),
+            ("mod-1", "Module 1", None, None, None, None, None, 11, "Week 1", 1, 101, "Watch this", "video", Decimal("1.25")),
+            ("mod-1", "Module 1", None, None, None, None, None, 11, "Week 1", 1, 102, "Quiz", "quiz", Decimal("0.50")),
+            ("mod-1", "Module 1", None, None, None, None, None, 12, "Week 2", 2, 103, "Read this", "reading", None),
         ]
 
         result = hydrate_training_plan([{"moduleId": "mod-1", "moduleTitle": "Old title"}])
@@ -289,13 +320,14 @@ class TrainingPlanHydrationTests(SimpleTestCase):
         self.assertEqual(result, [{
             "moduleId": "mod-1",
             "moduleTitle": "Module 1",
+            "startDate": "", "endDate": "",
             "weeks": [
-                {"weekId": "11", "weekTitle": "Week 1", "components": [
-                    {"componentId": "101", "componentTitle": "Watch this", "expectedOtjh": 1.25},
-                    {"componentId": "102", "componentTitle": "Quiz", "expectedOtjh": 0.5},
+                {"weekId": "11", "weekTitle": "Week 1", "sessionDate": "", "components": [
+                    {"componentId": "101", "componentTitle": "Watch this", "type": "video", "expectedOtjh": 1.25},
+                    {"componentId": "102", "componentTitle": "Quiz", "type": "quiz", "expectedOtjh": 0.5},
                 ]},
-                {"weekId": "12", "weekTitle": "Week 2", "components": [
-                    {"componentId": "103", "componentTitle": "Read this", "expectedOtjh": None},
+                {"weekId": "12", "weekTitle": "Week 2", "sessionDate": "", "components": [
+                    {"componentId": "103", "componentTitle": "Read this", "type": "reading", "expectedOtjh": None},
                 ]},
             ],
         }])
@@ -578,7 +610,7 @@ class KbcAbsenceSessionTests(SimpleTestCase):
             'module_title': 'Ray-Project Management Office (PMO)',
         }
 
-    @patch('learner_api.absence_reports.fetch_kbc_attendance_rows')
+    @patch('learner_api.absence_reports.lecture_register')
     def test_missed_session_dropdown_uses_absent_kbc_rows(self, fetch_rows):
         fetch_rows.return_value = [
             self.absent_row,
@@ -596,14 +628,9 @@ class KbcAbsenceSessionTests(SimpleTestCase):
         self.assertEqual(sessions[0]['sessionId'], self.absent_row['session_id'])
         self.assertEqual(sessions[0]['dateIso'], '2026-08-14')
         self.assertEqual(sessions[0]['title'], self.absent_row['session_title'])
-        fetch_rows.assert_called_once_with(
-            aptem_id='92',
-            learner_id=272,
-            learner_name='Test Learner',
-            learner_email='learner@example.com',
-        )
+        fetch_rows.assert_called_once_with(self.learner)
 
-    @patch('learner_api.absence_reports.fetch_kbc_attendance_rows')
+    @patch('learner_api.absence_reports.lecture_register')
     def test_submission_resolves_the_selected_kbc_session(self, fetch_rows):
         fetch_rows.return_value = [self.absent_row]
 
@@ -666,13 +693,14 @@ class TeamsAttendanceEligibilityTests(SimpleTestCase):
 
 
 class LearnerAttendanceEndpointTests(SimpleTestCase):
+    @patch('learner_api.attendance.fetch_verified_teams_attendance_rows', return_value=[])
     @patch('learner_api.attendance.fetch_kbc_attendance_rows', return_value=[])
-    def test_reads_kbc_register_with_the_enrolments_aptem_id(self, fetch_rows):
+    def test_reads_kbc_register_with_the_enrolments_aptem_id(self, fetch_rows, fetch_teams):
         source = SimpleNamespace(
             id=19,
             username='Test Learner',
             email='learner@example.com',
-            aptem_id='APT-92',
+            aptem_id='92',
         )
         source_model = MagicMock()
         source_model.DoesNotExist = type('SourceDoesNotExist', (Exception,), {})
@@ -691,7 +719,7 @@ class LearnerAttendanceEndpointTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 200)
         fetch_rows.assert_called_once_with(
-            aptem_id='APT-92',
+            aptem_id='92',
             learner_id=19,
             learner_name='Test Learner',
             learner_email='learner@example.com',
@@ -819,7 +847,7 @@ class LearnerReflectionQuestionTests(SimpleTestCase):
             [(
                 "COMP-1", "WEEK-1", "MOD-1", "quiz", "Quiz component", "",
                 {"linkedQuizId": 7}, "", 0,
-                [{"code": "K1", "weight": 10}], reflection_required, reflection_question,
+                [{"code": "K1", "weight": 10}], reflection_required, reflection_question, False,
             )],
             [],
             [(7, "Quiz title", 3, 30, "Minutes")],
@@ -1159,7 +1187,9 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
             ksbs=[{"code": "K1", "number": "1", "type": "Knowledge", "description": "Knowledge 1"}],
         )
 
-        detail = to_learner_detail(source, learner_profile)
+        with patch("learner_api.mappers._component_marking_statuses", return_value={}), \
+                patch("learner_api.active_users.cohort_dates", return_value=(None, None)):
+            detail = to_learner_detail(source, learner_profile)
 
         self.assertEqual(detail["progressKsbCodes"], ["B3", "K1", "S2"])
 
@@ -1599,7 +1629,7 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
                                 with patch(
                                     "learner_api.components.save_progress_record",
                                     side_effect=save_side_effect,
-                                ):
+                                ), patch("learner_api.components.requires_tutor_validation", return_value=False):
                                     return self._post("COMP-UNDER-TEST", **post_options)
 
     def test_unknown_component_write_returns_400(self):

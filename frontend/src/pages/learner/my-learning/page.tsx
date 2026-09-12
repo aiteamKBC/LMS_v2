@@ -1,20 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
 import { StudentActivityPanel as SubjectCardsPanel } from './SubjectWorkspace';
 export { StudentActivityPanel } from './SubjectWorkspace';
-import { StudentMaterial } from './StudentMaterial';
+import { DeferredStudentMaterial as StudentMaterial } from './DeferredStudentMaterial';
 import { AssignmentsTab } from './AssignmentsTab';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
+import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
+import { usePrefetchStudentActivity } from '@/hooks/usePrefetchStudentActivity';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
-import { buildStations } from '@/components/feature/RealLearningJourneyView';
+import type { buildStations } from '@/components/feature/RealLearningJourneyView';
 import { buildLinkedQuizzes, splitLinkedQuizWeek, type LinkedQuiz } from '@/utils/linkedQuizzes';
 import {
-  buildLearnerJourney, componentTypeMeta, gradePercent, hasComponentContent, isOpenableComponent,
-  formatHoursMinutes, parseHours, type JourneyComponent, type JourneyModule,
+  componentTypeMeta, gradePercent,
+  formatHoursMinutes, type JourneyComponent, type JourneyModule,
 } from '@/utils/learnerJourney';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
@@ -26,7 +28,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ProgressBar } from '@/components/ui/ProgressMetric';
 import { toneStyle, statusTone, type StatusTone } from '@/lib/statusTone';
 import { EMPTY_VALUE } from '@/lib/format';
-import { fetchStudentActivity, type StudentActivityItem, type StudentActivityResponse } from '@/api/studentActivity';
+import { fetchStudentActivity, peekStudentActivity, type StudentActivityItem, type StudentActivityResponse } from '@/api/studentActivity';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 
 const learnerNav = roleNavMap.learner;
@@ -47,62 +49,13 @@ export default function MyLearningPage() {
   const navigate = useNavigate();
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
   const { kind, id } = useResolvedLearner(urlKind, urlId);
+  usePrefetchStudentActivity(kind, id);
   const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
   const { canProgress, showReadOnlyNotice } = useLearnerWorkspaceAccess(id);
 
   const [tab, setTab] = useState<TabKey>(() => new URLSearchParams(location.search).get('tab') === 'assignments' ? 'assignments' : defaultTabForPath(location.pathname));
 
-  const journey = useMemo(() => buildLearnerJourney(real), [real]);
-  const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
-
-  const completedIds = useMemo(() => new Set<string>([
-    ...(real?.videoProgress || []).map((v) => v.componentId),
-    ...(real?.componentProgress || []).map((c) => c.componentId),
-  ]), [real]);
-
-  // The "you are here" week — the first, in plan order, that isn't fully done.
-  const currentWeek = useMemo(() => {
-    for (const mod of journey) {
-      for (const w of mod.weeks) {
-        const openable = w.components.filter(hasComponentContent);
-        const done = openable.filter((c) => c.isQuiz ? (c.quizAttempts?.length ?? 0) > 0 : !!c.componentId && completedIds.has(c.componentId)).length;
-        if (openable.length > 0 && done < openable.length) return { module: mod.module, week: w };
-      }
-    }
-    return null;
-  }, [journey, completedIds]);
-
-  const otj = useMemo(() => {
-    const completedHours = parseHours(real?.completedHours);
-    const plannedHours = parseHours(real?.plannedHours ?? real?.totalExpectedOtjh);
-    const targetHours = parseHours(real?.targetHours);
-    const status = real?.otjhStatus || null;
-    const targetPercent = targetHours > 0 ? Math.round((completedHours / targetHours) * 100) : 0;
-    const percent = plannedHours > 0 ? Math.round((completedHours / plannedHours) * 100) : 0;
-    return { completedHours, plannedHours, targetHours, status, targetPercent, percent };
-  }, [real]);
-
   const canTake = !!(kind && id) && canProgress;
-
-  // The next thing to open, in plan order — the "Continue Learning" CTA jumps
-  // straight there instead of leaving the learner to hunt for it.
-  const nextComponent = useMemo(() => {
-    if (!currentWeek) return null;
-    return currentWeek.week.components.find((c) => {
-      if (!hasComponentContent(c)) return false;
-      if (c.isQuiz) return true; // a quiz's own attempt history decides "done", not completedIds
-      return c.componentId ? !completedIds.has(c.componentId) : false;
-    }) || null;
-  }, [currentWeek, completedIds]);
-
-  const nextComponentHref = useMemo(() => {
-    if (!nextComponent || !kind || !id || !canProgress || !currentWeek) return null;
-    const q = `?module=${encodeURIComponent(currentWeek.module)}&week=${encodeURIComponent(currentWeek.week.week)}`;
-    if (nextComponent.isQuiz && hasComponentContent(nextComponent)) return `/learner/quiz/${kind}/${id}/${nextComponent.quizMeta!.quizId}${q}`;
-    if (nextComponent.type === 'video' && nextComponent.videoUrl && nextComponent.componentId) return `/learner/video/${kind}/${id}/${nextComponent.componentId}${q}`;
-    if (isOpenableComponent(nextComponent)) return `/learner/component/${kind}/${id}/${nextComponent.componentId}${q}`;
-    return null;
-  }, [nextComponent, kind, id, canProgress, currentWeek]);
 
   const subtitle = real
     ? [real.programme, real.employer, real.cohort ? `Cohort ${real.cohort}` : ''].filter(Boolean).join(' · ')
@@ -436,6 +389,7 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
   id?: string;
   showReadOnlyNotice?: boolean;
 }) {
+  const metrics = useLearnerMetrics(kind, id);
   const identity = `${kind}:${id}`;
   const [activityState, setActivityState] = useState<{
     identity: string; real: LearnerDetail | null; retry: number;
@@ -444,8 +398,13 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
   const [activityRetry, setActivityRetry] = useState(0);
   const activityAvailable = !!real?.studentActivityAvailable;
   const current = activityState?.identity === identity && activityState.real === real && activityState.retry === activityRetry ? activityState : null;
-  const activityData = activityState?.identity === identity && activityAvailable ? activityState.data : null;
-  const activityLoading = activityAvailable && !current && !loadError;
+  const activityData = activityAvailable
+    ? (activityState?.identity === identity ? activityState.data : null) ?? (kind && id ? peekStudentActivity(kind, id) : null)
+    : null;
+  // Mounted cards retain their complete snapshot until a refresh is ready.
+  // On a revisit, cached activity can populate the first frame immediately.
+  const activityLoading = activityAvailable && !current
+    && (activityState?.identity === identity || !activityData) && !loadError;
 
   useEffect(() => {
     if (loading || loadError || !activityAvailable || !kind || !id) return;
@@ -467,6 +426,7 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
         description="Your subjects, activities and progress"
         icon="ri-book-2-line"
       />
+      {metrics.error && <p role="alert" className="text-sm text-amber-800">{metrics.error} <button onClick={metrics.refresh} className="font-semibold underline">Retry programme totals</button></p>}
       {showReadOnlyNotice && (
         <div className="flex items-start gap-2.5 rounded-xl border border-primary-200/70 bg-primary-50/60 px-3.5 py-2.5">
           <AppIcon className="ri-eye-line mt-0.5 shrink-0 text-[15px] text-primary-600" />
@@ -477,12 +437,13 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
         </div>
       )}
       <SubjectCardsPanel
+        metrics={metrics.data}
         kind={kind} learnerId={id} real={real}
-        data={activityData}
+        data={activityData ?? null}
         loading={loading || (activityAvailable && activityLoading)}
         error={loadError || current?.error || null}
         onRetry={() => setActivityRetry((value) => value + 1)}
-        onProgress={() => setActivityRetry((value) => value + 1)}
+        onProgress={() => { setActivityRetry((value) => value + 1); metrics.refresh(); }}
       />
     </div>
   );

@@ -1,0 +1,409 @@
+/*
+ * Student workspace palette, taken from features/old-otjh/journalPdf.ts.
+ * The root scope also reaches menus/dialogs rendered into document.body.
+ * Leaving a learner workspace automatically restores the other portal's theme.
+ */
+:root:has(.dashboard-theme[data-workspace-role="learner"]),
+.dashboard-theme[data-workspace-role="learner"] {
+  --learner-navy: #182d48;
+  --learner-purple: #673ab7;
+  --learner-success: #167853;
+  --learner-danger: #b93737;
+  --learner-warning: #9c762b;
+  --learner-soft: #f6f8fb;
+  --learner-accent-soft: #f0eaf8;
+  --learner-success-soft: #e5f1eb;
+  --learner-danger-soft: #f8e9e9;
+  --learner-warning-soft: #f8f0df;
+
+  /* RGB scales support all Tailwind opacity, hover and focus variants. */
+  --learner-navy-50: 246 248 251;
+  --learner-navy-100: 237 241 246;
+  --learner-navy-200: 222 226 232;
+  --learner-navy-300: 187 200 215;
+  --learner-navy-400: 99 115 136;
+  --learner-navy-500: 24 45 72;
+  --learner-navy-600: 21 39 62;
+  --learner-navy-700: 18 34 55;
+  --learner-navy-800: 16 30 48;
+  --learner-navy-900: 13 25 40;
+  --learner-navy-950: 9 18 31;
+  --learner-purple-50: 247 244 251;
+  --learner-purple-100: 240 234 248;
+  --learner-purple-200: 223 210 240;
+  --learner-purple-300: 196 175 228;
+  --learner-purple-400: 148 112 204;
+  --learner-purple-500: 103 58 183;
+  --learner-purple-600: 89 49 158;
+  --learner-purple-700: 77 42 136;
+  --learner-purple-800: 62 34 110;
+  --learner-purple-900: 48 27 85;
+  --learner-purple-950: 33 18 57;
+  --learner-success-50: 240 248 244;
+  --learner-success-100: 229 241 235;
+  --learner-success-200: 201 227 215;
+  --learner-success-300: 155 201 179;
+  --learner-success-400: 88 162 129;
+  --learner-success-500: 22 120 83;
+  --learner-success-600: 18 102 70;
+  --learner-success-700: 16 86 59;
+  --learner-success-800: 13 69 48;
+  --learner-success-900: 11 53 37;
+  --learner-success-950: 7 37 26;
+  --learner-danger-50: 253 245 245;
+  --learner-danger-100: 248 233 233;
+  --learner-danger-200: 239 205 205;
+  --learner-danger-300: 223 165 165;
+  --learner-danger-400: 203 109 109;
+  --learner-danger-500: 185 55 55;
+  --learner-danger-600: 159 47 47;
+  --learner-danger-700: 135 40 40;
+  --learner-danger-800: 110 32 32;
+  --learner-danger-900: 86 26 26;
+  --learner-danger-950: 59 18 18;
+  --learner-warning-50: 252 248 240;
+  --learner-warning-100: 248 240 223;
+  --learner-warning-200: 239 224 186;
+  --learner-warning-300: 223 198 138;
+  --learner-warning-400: 197 162 81;
+  --learner-warning-500: 156 118 43;
+  --learner-warning-600: 133 99 36;
+  --learner-warning-700: 113 84 31;
+  --learner-warning-800: 92 68 25;
+  --learner-warning-900: 72 53 19;
+  --learner-warning-950: 49 37 14;
+  --learner-neutral-50: 246 248 251;
+  --learner-neutral-100: 237 241 246;
+  --learner-neutral-200: 222 226 232;
+  --learner-neutral-300: 187 200 215;
+  --learner-neutral-400: 131 144 162;
+  --learner-neutral-500: 99 115 136;
+  --learner-neutral-600: 75 94 118;
+  --learner-neutral-700: 52 75 102;
+  --learner-neutral-800: 36 64 93;
+  --learner-neutral-900: 24 45 72;
+  --learner-neutral-950: 16 30 48;
+
+  /* Existing semantic utilities consume OKLCH channel values. */
+  --background-50: 1.000000 0.000000 89.876;
+  --background-100: 0.978460 0.004531 258.324;
+  --background-200: 0.956540 0.007965 253.854;
+  --background-300: 0.911462 0.009234 258.337;
+  --background-400: 0.827456 0.025430 251.933;
+  --background-500: 0.648990 0.030866 256.525;
+  --background-600: 0.550142 0.038042 255.313;
+  --background-700: 0.475872 0.045461 254.500;
+  --background-800: 0.406072 0.053928 253.021;
+  --background-900: 0.294102 0.056505 255.375;
+  --background-950: 0.232236 0.040148 255.247;
+  --primary-50: 0.978460 0.004531 258.324;
+  --primary-100: 0.956540 0.007965 253.854;
+  --primary-200: 0.911462 0.009234 258.337;
+  --primary-300: 0.827456 0.025430 251.933;
+  --primary-400: 0.550142 0.038042 255.313;
+  --primary-500: 0.294102 0.056505 255.375;
+  --primary-600: 0.269630 0.049365 255.189;
+  --primary-700: 0.249393 0.045712 255.720;
+  --primary-800: 0.232236 0.040148 255.247;
+  --primary-900: 0.210529 0.034560 254.612;
+  --primary-950: 0.180815 0.030228 257.482;
+  --secondary-50: 0.971443 0.009773 305.406;
+  --secondary-100: 0.945777 0.019688 305.262;
+  --secondary-200: 0.883439 0.042971 305.093;
+  --secondary-300: 0.789765 0.077226 302.763;
+  --secondary-400: 0.619413 0.138727 300.462;
+  --secondary-500: 0.474250 0.186171 294.782;
+  --secondary-600: 0.426578 0.166905 295.214;
+  --secondary-700: 0.385186 0.148283 295.709;
+  --secondary-800: 0.334294 0.124990 295.819;
+  --secondary-900: 0.285254 0.100393 296.088;
+  --secondary-950: 0.226760 0.072776 298.097;
+  --accent-50: 0.971443 0.009773 305.406;
+  --accent-100: 0.945777 0.019688 305.262;
+  --accent-200: 0.883439 0.042971 305.093;
+  --accent-300: 0.789765 0.077226 302.763;
+  --accent-400: 0.619413 0.138727 300.462;
+  --accent-500: 0.474250 0.186171 294.782;
+  --accent-600: 0.426578 0.166905 295.214;
+  --accent-700: 0.385186 0.148283 295.709;
+  --accent-800: 0.334294 0.124990 295.819;
+  --accent-900: 0.285254 0.100393 296.088;
+  --accent-950: 0.226760 0.072776 298.097;
+  --foreground-50: 0.978460 0.004531 258.324;
+  --foreground-100: 0.911462 0.009234 258.337;
+  --foreground-200: 0.827456 0.025430 251.933;
+  --foreground-300: 0.648990 0.030866 256.525;
+  --foreground-400: 0.550142 0.038042 255.313;
+  --foreground-500: 0.475872 0.045461 254.500;
+  --foreground-600: 0.406072 0.053928 253.021;
+  --foreground-700: 0.363560 0.060944 250.610;
+  --foreground-800: 0.342251 0.060531 252.342;
+  --foreground-900: 0.294102 0.056505 255.375;
+  --foreground-950: 0.294102 0.056505 255.375;
+
+  --kbc-primary-deep: var(--learner-navy);
+  --kbc-primary: var(--learner-navy);
+  --kbc-primary-secondary: #24496b;
+  --kbc-primary-accent: var(--learner-purple);
+  --kbc-purple-soft: #edf1f6;
+  --kbc-purple-wash: var(--learner-soft);
+  --kbc-brand-gold: var(--learner-purple);
+  --kbc-app-bg: var(--learner-soft);
+  --kbc-canvas: var(--learner-soft);
+  --kbc-page-bg: var(--learner-soft);
+  --kbc-surface: #ffffff;
+  --kbc-border: #dee2e8;
+  --kbc-text: var(--learner-navy);
+  --kbc-muted: #637388;
+  --kbc-table-header-text: #ffffff;
+  --kbc-table-text: var(--kbc-text);
+  --kbc-table-border: var(--kbc-border);
+  --kbc-chrome-color: var(--learner-navy);
+  --kbc-hero-gradient: linear-gradient(var(--learner-navy), var(--learner-navy));
+  --kbc-shadow-card: 0 1px 2px rgb(24 45 72 / 0.04), 0 8px 20px -16px rgb(24 45 72 / 0.2);
+  --kbc-shadow-popover: 0 20px 48px -24px rgb(24 45 72 / 0.3), 0 4px 12px -8px rgb(24 45 72 / 0.16);
+
+  --action-primary: var(--learner-navy);
+  --action-primary-hover: #24496b;
+  --action-primary-active: #101e30;
+  --action-primary-foreground: #ffffff;
+  --action-primary-focus: rgb(103 58 183 / 0.28);
+  --color-success: var(--learner-success);
+  --color-warning: var(--learner-warning);
+  --color-danger: var(--learner-danger);
+
+  --resource-reading-icon: var(--learner-navy);
+  --resource-reading-bg: var(--learner-soft);
+  --resource-reading-border: var(--kbc-border);
+  --resource-video-icon: var(--learner-purple);
+  --resource-video-bg: var(--learner-accent-soft);
+  --resource-video-border: #dfd2f0;
+  --resource-podcast-icon: var(--learner-purple);
+  --resource-podcast-bg: var(--learner-accent-soft);
+  --resource-podcast-border: #dfd2f0;
+  --resource-quiz-icon: var(--learner-purple);
+  --resource-quiz-bg: var(--learner-accent-soft);
+  --resource-quiz-border: #dfd2f0;
+  --resource-assignment-icon: var(--learner-navy);
+  --resource-assignment-bg: var(--learner-soft);
+  --resource-assignment-border: var(--kbc-border);
+  --resource-document-icon: var(--learner-navy);
+  --resource-document-bg: var(--learner-soft);
+  --resource-document-border: var(--kbc-border);
+
+  --llp-background: var(--background-50);
+  --llp-surface: var(--background-50);
+  --llp-card: var(--background-50);
+  --llp-popover: var(--background-50);
+  --llp-popover-foreground: var(--foreground-900);
+  --llp-foreground: var(--foreground-900);
+  --llp-primary: var(--primary-500);
+  --llp-primary-foreground: 1 0 0;
+  --llp-secondary: var(--background-100);
+  --llp-secondary-foreground: var(--foreground-900);
+  --llp-muted: var(--background-100);
+  --llp-muted-foreground: var(--foreground-400);
+  --llp-accent: var(--accent-500);
+  --llp-accent-foreground: 1 0 0;
+  --llp-border: var(--background-300);
+  --llp-input: var(--background-300);
+  --llp-ring: var(--accent-500);
+  --llp-success: 0.509378 0.104657 161.944;
+  --llp-warning: 0.589370 0.102424 81.089;
+  --llp-destructive: 0.530791 0.166804 24.866;
+  --llp-destructive-foreground: 1 0 0;
+}
+
+/* Keep the existing dark-mode control, with navy surfaces and readable text. */
+:root[data-theme="dark"]:has(.dashboard-theme[data-workspace-role="learner"]) {
+  --learner-soft: #1e344d;
+  --learner-accent-soft: #302748;
+  --learner-success-soft: #163c31;
+  --learner-danger-soft: #462a32;
+  --learner-warning-soft: #413923;
+  --learner-purple: #bfa3ee;
+  --learner-success: #7bc8a8;
+  --learner-danger: #ed9b9b;
+  --learner-warning: #e1c285;
+  --kbc-app-bg: #101e30;
+  --kbc-page-bg: #101e30;
+  --kbc-canvas: #101e30;
+  --kbc-surface: #182d48;
+  --kbc-purple-soft: #24405d;
+  --kbc-border: #3b526c;
+  --kbc-text: #f6f8fb;
+  --kbc-muted: #b6c4d5;
+  --kbc-primary: #24496b;
+  --kbc-primary-deep: #d2deed;
+  --kbc-primary-secondary: #315f89;
+  --action-primary: #24496b;
+  --action-primary-hover: #315f89;
+  --theme-app-bg: var(--kbc-app-bg);
+  --theme-page-bg: var(--kbc-page-bg);
+  --theme-surface: var(--kbc-surface);
+  --theme-surface-secondary: var(--learner-soft);
+  --theme-surface-elevated: var(--learner-soft);
+  --theme-input: var(--kbc-page-bg);
+  --theme-text-primary: var(--kbc-text);
+  --theme-text-secondary: var(--kbc-muted);
+  --theme-text-muted: var(--kbc-muted);
+  --theme-border: var(--kbc-border);
+  --theme-border-strong: #637388;
+  --theme-hover: #24405d;
+  --background-50: 0.294102 0.056505 255.375;
+  --background-100: 0.319363 0.053029 252.608;
+  --background-200: 0.363560 0.060944 250.610;
+  --background-300: 0.431038 0.051799 252.048;
+  --background-400: 0.518211 0.050915 249.823;
+  --background-500: 0.614349 0.043284 249.687;
+  --background-600: 0.708112 0.035671 251.094;
+  --background-700: 0.814891 0.028491 253.267;
+  --background-800: 0.896042 0.024335 253.958;
+  --background-900: 0.956540 0.007965 253.854;
+  --background-950: 0.978460 0.004531 258.324;
+  --foreground-50: 0.319363 0.053029 252.608;
+  --foreground-100: 0.431038 0.051799 252.048;
+  --foreground-200: 0.550142 0.038042 255.313;
+  --foreground-300: 0.708112 0.035671 251.094;
+  --foreground-400: 0.814891 0.028491 253.267;
+  --foreground-500: 0.855793 0.023452 252.196;
+  --foreground-600: 0.896042 0.024335 253.958;
+  --foreground-700: 0.921505 0.014966 251.163;
+  --foreground-800: 0.956540 0.007965 253.854;
+  --foreground-900: 0.978460 0.004531 258.324;
+  --foreground-950: 1.000000 0.000000 89.876;
+  --primary-50: 0.319363 0.053029 252.608;
+  --primary-100: 0.363560 0.060944 250.610;
+  --primary-200: 0.472582 0.085142 248.093;
+  --primary-300: 0.636450 0.058513 251.235;
+  --primary-400: 0.728998 0.050624 252.315;
+  --primary-500: 0.796210 0.042990 251.696;
+  --primary-600: 0.849581 0.034719 249.604;
+  --primary-700: 0.896042 0.024335 253.958;
+  --primary-800: 0.930156 0.016661 250.847;
+  --primary-900: 0.956540 0.007965 253.854;
+  --primary-950: 1.000000 0.000000 89.876;
+  --accent-50: 0.299356 0.059186 295.139;
+  --accent-100: 0.353110 0.078607 294.010;
+  --accent-200: 0.441524 0.089925 297.688;
+  --accent-300: 0.546887 0.103960 301.922;
+  --accent-400: 0.666359 0.111463 302.117;
+  --accent-500: 0.767142 0.108961 301.015;
+  --accent-600: 0.814597 0.089369 302.167;
+  --accent-700: 0.865403 0.065564 302.870;
+  --accent-800: 0.914263 0.040439 301.290;
+  --accent-900: 0.946380 0.022235 302.932;
+  --accent-950: 0.971443 0.009773 305.406;
+  --secondary-50: 0.299356 0.059186 295.139;
+  --secondary-100: 0.353110 0.078607 294.010;
+  --secondary-200: 0.441524 0.089925 297.688;
+  --secondary-300: 0.546887 0.103960 301.922;
+  --secondary-400: 0.666359 0.111463 302.117;
+  --secondary-500: 0.767142 0.108961 301.015;
+  --secondary-600: 0.814597 0.089369 302.167;
+  --secondary-700: 0.865403 0.065564 302.870;
+  --secondary-800: 0.914263 0.040439 301.290;
+  --secondary-900: 0.946380 0.022235 302.932;
+  --secondary-950: 0.971443 0.009773 305.406;
+}
+
+/* Narrow compatibility rules for older shared CSS with fixed colours. */
+body:has(.dashboard-theme[data-workspace-role="learner"]) .dashboard-theme[data-workspace-role="learner"] :is(.kbc-sidebar-panel, .kbc-workspace-topbar),
+body:has(.dashboard-theme[data-workspace-role="learner"]) .dashboard-theme[data-workspace-role="learner"] .workspace-main table thead th {
+  background: var(--learner-navy) !important;
+  color: #ffffff !important;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .kbc-sidebar-active-marker {
+  background: var(--learner-purple) !important;
+  box-shadow: none !important;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] aside[data-workspace-role="learner"] > .bg-brand-deep {
+  background: var(--learner-navy) !important;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .workspace-breadcrumbs {
+  background: var(--kbc-surface) !important;
+  border-color: var(--kbc-border) !important;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .workspace-main :is(.ui-panel, .ui-metric-card, .card-premium):hover {
+  border-color: #bbc8d7 !important;
+  box-shadow: var(--kbc-shadow-card) !important;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .workspace-main :is(.coach-metric-card, .workspace-hero-metric) {
+  background: var(--learner-soft) !important;
+  border-color: var(--kbc-border) !important;
+  box-shadow: var(--kbc-shadow-card) !important;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .workspace-main :is(.coach-metric-card, .workspace-hero-metric) :is(.workspace-hero-metric__value, .workspace-hero-metric__label, p) {
+  color: var(--kbc-text) !important;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .workspace-main :is(.learner-super-admin-hero, .workspace-hero-banner) {
+  box-shadow: var(--kbc-shadow-card) !important;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .workspace-main .page-header .workspace-hero-banner__icon {
+  background: var(--kbc-purple-soft) !important;
+  color: var(--kbc-primary-deep) !important;
+  border-color: var(--kbc-border) !important;
+  box-shadow: none !important;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .workspace-main .page-header .workspace-hero-banner__icon > svg {
+  color: inherit !important;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .workspace-main :is(span, div)[class*="rounded"][class*="bg-emerald-50"]:has(> svg) {
+  background: var(--learner-success-soft) !important;
+  color: var(--learner-success);
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .workspace-main :is(span, div)[class*="rounded"][class*="bg-red-50"]:has(> svg) {
+  background: var(--learner-danger-soft) !important;
+  color: var(--learner-danger);
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .workspace-main :is(span, div)[class*="rounded"][class*="bg-amber-50"]:has(> svg) {
+  background: var(--learner-warning-soft) !important;
+  color: var(--learner-warning);
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .workspace-main table tbody tr:hover {
+  box-shadow: inset 3px 0 0 var(--learner-purple);
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .workspace-main .learner-overview-learning-plan-button {
+  border-color: #dee2e8 !important;
+  background: #ffffff !important;
+  color: var(--learner-navy) !important;
+  box-shadow: none !important;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .workspace-main .learner-overview-learning-plan-button:hover {
+  background: #edf1f6 !important;
+}
+
+body:has(.dashboard-theme[data-workspace-role="learner"]) :is(button, a):is(.primary-action, .bg-primary-500, .bg-primary-600, .bg-primary-700) {
+  box-shadow: 0 3px 10px -6px rgb(24 45 72 / 0.25) !important;
+}
+
+body:has(.dashboard-theme[data-workspace-role="learner"]) :is(input, textarea, select):focus {
+  border-color: var(--learner-purple) !important;
+  box-shadow: 0 0 0 3px rgb(103 58 183 / 0.16) !important;
+}
+
+body:has(.dashboard-theme[data-workspace-role="learner"]) :is(input, textarea)::placeholder {
+  color: var(--kbc-muted);
+}
+
+/* Header popovers and modal buttons live outside the workspace DOM. */
+body:has(.dashboard-theme[data-workspace-role="learner"]) :is(.swal2-popup, .workspace-drawer, .kbc-sidebar-flyout) {
+  background: var(--kbc-surface) !important;
+  border-color: var(--kbc-border) !important;
+  color: var(--kbc-text) !important;
+}

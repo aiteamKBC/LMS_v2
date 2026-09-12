@@ -1,14 +1,18 @@
-import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render as renderReact, renderHook, screen, waitFor, within } from '@testing-library/react';
+import type { ReactElement } from 'react';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { StudentActivityResponse, SubjectMaterial, SubjectAttemptResult } from '@/api/studentActivity';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import * as api from '@/api/studentActivity';
+import * as reads from '@/api/learnerRead';
 import { ModulesTab, StudentActivityPanel } from './page';
 import { StudentMaterial } from './StudentMaterial';
 import { buildUnifiedLearningSummary, SubjectOverview, subjectsFrom, useSubjectMetadata } from './SubjectWorkspace';
 
 // AppIcon is normally supplied by the app build's auto-import plugin.
 vi.stubGlobal('AppIcon', () => <span />);
+const render = (element: ReactElement) => renderReact(element, { wrapper: MemoryRouter });
 
 const data: StudentActivityResponse = {
   learner_name: 'Anna Rundell', count: 2, unique_activity_count: 2,
@@ -109,6 +113,14 @@ describe('learner subject cards', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(retry).toHaveBeenCalledOnce();
   });
+
+  it('identifies a retained historical snapshot instead of presenting it as a live verification', () => {
+    const retry = vi.fn();
+    render(<StudentActivityPanel data={{ ...data, source_status: 'historical' }} loading={false} error={null} onRetry={retry} />);
+    expect(screen.getByRole('status')).toHaveTextContent('The latest results could not be verified');
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(retry).toHaveBeenCalledOnce();
+  });
 });
 
 const linkedMetadata = {
@@ -133,6 +145,43 @@ const linkedReal = {
 describe('subjects shared with Module Builder', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it('uses verified activity lineage from the activity API when the cover response has none', () => {
+    const summary = buildUnifiedLearningSummary({ ...data, activity_sources: linkedMetadata.activity_sources }, linkedReal,
+      { covers: {}, current_subjects: [{ id: 'MOD-1', title: 'Renamed current module' }] });
+    expect(summary.subjectCount).toBe(1);
+    expect(summary.activityCount).toBe(3);
+    expect(summary.completedActivityCount).toBe(2);
+  });
+
+  it('renders cached subjects immediately while activity and metadata revalidate', async () => {
+    let finishActivity!: (value: StudentActivityResponse) => void;
+    let finishMetadata!: (value: typeof linkedMetadata) => void;
+    vi.spyOn(api, 'peekStudentActivity').mockReturnValue(data);
+    vi.spyOn(reads, 'peekLearnerJson').mockReturnValue(linkedMetadata);
+    vi.spyOn(api, 'fetchStudentActivity').mockImplementation(() => new Promise(resolve => { finishActivity = resolve; }));
+    vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise(resolve => { finishMetadata = resolve; }));
+    render(<ModulesTab real={linkedReal} loading={false} loadError={null} kind="commercial" id="132" />);
+    expect(screen.getByRole('button', { name: /Leadership/ })).toBeVisible();
+    expect(screen.getByText('2 of 3 completed')).toBeVisible();
+    expect(screen.queryByText('Loading subjects')).not.toBeInTheDocument();
+    await act(async () => { finishActivity(data); finishMetadata(linkedMetadata); });
+    expect(screen.getByText('2 of 3 completed')).toBeVisible();
+  });
+
+  it('opens a native activity through the router without reloading the document', async () => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
+    const real = { modules: ['Native module'], components: [
+      { componentId: 'COMP-1', moduleId: 'MOD-1', module: 'Native module', week: 'Week 1',
+        component: 'Native reading', type: 'reading', contentHtml: '<p>Read this lesson.</p>' },
+    ] } as LearnerDetail;
+    function Location() { return <output data-testid="path">{useLocation().pathname}</output>; }
+    render(<><Location /><StudentActivityPanel real={real} data={null} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} /></>);
+    fireEvent.click(await screen.findByRole('button', { name: /Native module/ }));
+    expandMonthAndWeek('Undated activities');
+    fireEvent.click(screen.getByRole('link', { name: 'Open activity' }));
+    expect(screen.getByTestId('path')).toHaveTextContent('/learner/component/commercial/132/COMP-1');
+  });
+
   it.each(['132', '245'])('places a newly built Introduction before months for learner %s', async learnerId => {
     const real = { modules: ['New module'], components: [
       { componentId: 'NEW-INTRO', moduleId: 'NEW-MODULE', module: 'New module', component: 'Welcome', type: 'reading', week: 'Introduction' },
@@ -153,7 +202,7 @@ describe('subjects shared with Module Builder', () => {
     expect(screen.getByText('First lecture')).not.toBeVisible();
   });
 
-  it('waits for historical data and links before showing any native cards or totals', async () => {
+  it('loads history and metadata together, publishing cards only when both are ready', async () => {
     let finishActivity!: (value: StudentActivityResponse) => void;
     let finishMetadata!: (value: typeof linkedMetadata) => void;
     vi.spyOn(api, 'fetchStudentActivity').mockImplementation(() => new Promise(resolve => { finishActivity = resolve; }));
@@ -161,7 +210,8 @@ describe('subjects shared with Module Builder', () => {
     render(<ModulesTab real={linkedReal} loading={false} loadError={null} kind="commercial" id="132" />);
     expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
     expect(screen.queryByRole('button', { name: /Leadership/ })).not.toBeInTheDocument();
-    expect(metadata).not.toHaveBeenCalled();
+    expect(metadata).toHaveBeenCalledOnce();
+    expect(metadata).toHaveBeenCalledWith('/learner_api/subject-covers/132/?refs=', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     await act(async () => finishActivity(data));
     expect(metadata).toHaveBeenCalledOnce();
     expect(screen.queryByRole('region', { name: 'Your subjects' })).not.toBeInTheDocument();
@@ -199,7 +249,7 @@ describe('subjects shared with Module Builder', () => {
     rerender(<ModulesTab {...props} real={refreshed} loading={false} />);
     expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Leadership/ })).toBe(card);
-    expect(metadata).toHaveBeenCalledOnce();
+    expect(metadata).toHaveBeenCalledTimes(2);
     await act(async () => finishActivity(data));
     expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
     expect(metadata).toHaveBeenCalledTimes(2);
@@ -286,7 +336,7 @@ describe('subjects shared with Module Builder', () => {
     }} loading={false} error={null} onRetry={vi.fn()} />);
     expect(within(screen.getByText('Recorded OTJH').parentElement!).getByText('1171h 20m')).toBeInTheDocument();
     expect(within(screen.getByText('Planned OTJH').parentElement!).getByText('867h')).toBeInTheDocument();
-    expect(screen.getByText(/Programme totals use TP Planned/)).toBeInTheDocument();
+    expect(screen.getByText(/Programme totals include accepted historical hours/)).toBeInTheDocument();
   });
 
   it('merges a unique legacy/current title while keeping ambiguous same-title courses separate', () => {
@@ -379,6 +429,23 @@ function mockMaterialRequests(material = activityMaterial, save: () => Promise<S
 
 describe('subject months, weeks and completion', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it('completes a reused activity only in the course where it was submitted', async () => {
+    mockMaterialRequests();
+    const first = { ...data.activities[1], group_name: 'Course A' };
+    const second = { ...first, activity_id: 'la:2:11', group_id: 2, group_name: 'Course B' };
+    render(<StudentActivityPanel data={{ ...data, activities: [first, second], count: 2, completed_count: 0, module_count: 2 }} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Course A/ }));
+    expandMonthAndWeek('Undated activities');
+    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Submit & complete' }));
+    await screen.findByText('Activity completed.');
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '100');
+    fireEvent.click(screen.getByRole('button', { name: 'All subjects' }));
+    expect(within(screen.getByRole('button', { name: /Course B/ })).getByText('0 of 1 completed')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: /Course B/ }));
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '0');
+  });
 
   it('starts with months and weeks closed and reveals activities only after both are opened', async () => {
     mockMaterialRequests();

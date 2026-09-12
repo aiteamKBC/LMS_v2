@@ -42,6 +42,7 @@ from .active_users import (
     sync_active_user,
 )
 from .identity import learner_profile_for_source
+from .directory import learner_directory_queryset
 from .learner_progression import ACTIVE_STATUS, advance_learner
 from login.services import sync_account
 

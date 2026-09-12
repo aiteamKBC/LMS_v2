@@ -101,7 +101,7 @@ it.each(['/workspace/learner', '/coach/caseload'])('opens monitoring after email
   expect(screen.queryByRole('heading', { name: 'Learner destination' })).not.toBeInTheDocument();
 });
 
-it.each([false, true])('opens the legacy portal despite an LMS return target (existing session: %s)', async existingSession => {
+it.each([false, true])('opens Dashboard for an imported learner (existing session: %s)', async existingSession => {
   const account = { role: 'learner' as const, subjectId: 42, hasLegacyRecord: true, accessHome: '/workspace/learner' };
   if (existingSession) authState.account = account;
   else login.mockResolvedValue(account);
@@ -115,8 +115,8 @@ it.each([false, true])('opens the legacy portal despite an LMS return target (ex
     autofill(screen.getByLabelText('Password', { exact: true }) as HTMLInputElement, ' Example password 7! ');
     fireEvent.click(screen.getByRole('button', { name: 'Sign in to Workspace' }));
   }
-  expect(await screen.findByRole('heading', { name: 'Transition portal' })).toBeInTheDocument();
-  expect(screen.queryByRole('heading', { name: 'LMS destination' })).not.toBeInTheDocument();
+  expect(await screen.findByRole('heading', { name: 'LMS destination' })).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: 'Transition portal' })).not.toBeInTheDocument();
   if (existingSession) expect(login).not.toHaveBeenCalled();
   else expect(login).toHaveBeenCalledWith('learner@example.test', ' Example password 7! ', false);
 });

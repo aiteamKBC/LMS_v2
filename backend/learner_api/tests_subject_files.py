@@ -9,11 +9,38 @@ from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from .subject_content import build_material
 from .subject_files import stream_pdf
-from .student_activity import subject_file, _local_pdf_urls
+from .student_activity import subject_file, start_subject_attempt, _local_pdf_urls
 
 
 @override_settings(KBC_LMS_SCHEMA_URL='https://example.org/wp-json/kbc-lms/v1/all-students-schema')
 class SubjectFileTests(SimpleTestCase):
+    def test_starting_a_pdf_attempt_resolves_attachments_without_a_server_error(self):
+        original = 'https://example.org/wp-json/kbc-lms/v1/material/10/view?attachment_id=9&token=test-token'
+        wrapper = 'https://view.officeapps.live.com/op/embed.aspx?src=' + quote(original, safe='')
+        stored = {'title': 'Reading', 'learner_name': 'Learner', 'reading_url': wrapper,
+                  '_source': {'activity_id': 10}}
+        schema = {'content_type': 'pdf', 'iframe_url': wrapper, 'source': {'attachments': [
+            {'attachment_id': 9, 'filename': 'Reading.pdf', 'mime_type': 'application/pdf'}]}}
+        for archive in ('', '_legacy_files/9/Reading.pdf'):
+            with self.subTest(archive=archive), \
+                    patch('login.permissions._auth_gate_enabled', return_value=True), \
+                    patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='learner', subject_id=123)), \
+                    patch('learner_api.student_activity._owned_material', return_value=(77, stored)), \
+                    patch('learner_api.student_activity.material_schema', return_value=schema), \
+                    patch('learner_api.media_proxy._legacy_attachment_upload_path', return_value=archive) as resolve, \
+                    patch('learner_api.subject_store.start', return_value='attempt') as start:
+                response = start_subject_attempt(RequestFactory().post('/'), kind='apprenticeship',
+                                                 pk=123, group_id=500, activity_id=10)
+                self.assertEqual(response.status_code, 201)
+                payload = json.loads(response.content)
+                expected = ('/curriculum_api/curriculum/uploads/' + archive if archive else
+                            '/learner_api/student-activity/apprenticeship/123/500/10/files/9/')
+                self.assertEqual(payload['definition']['media'][0]['url'], expected)
+                self.assertTrue(payload['definition']['has_reading'])
+                self.assertNotIn('test-token', response.content.decode())
+                resolve.assert_called_once_with('9')
+                start.assert_called_once()
+
     def test_original_pdf_is_extracted_from_office_without_losing_its_token(self):
         original = 'https://example.org/wp-json/kbc-lms/v1/material/10/view?attachment_id=9&token=test-token'
         wrapper = 'https://view.officeapps.live.com/op/embed.aspx?src=' + quote(original, safe='')

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchLeaderboard, type LeaderboardEntry as RankedEntry } from '@/api/engagement';
-import { fetchLearnerDetail } from '@/api/learnerDetail';
+import { fetchLearnerSummary } from '@/api/learnerDetail';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { POINT_RULES, POINTS_HISTORY, COMMUNITY_IMPACT } from '../data';
 import { Medal } from 'lucide-react';
@@ -31,7 +31,7 @@ export function LeaderboardTab() {
 
   useEffect(() => {
     let cancelled = false;
-    fetchLearnerDetail(myLearner.kind, myLearner.id)
+    fetchLearnerSummary(myLearner.kind, myLearner.id)
       .then(detail => { if (!cancelled) setMyCohort(detail.cohort || null); })
       .catch(() => { /* leaderboard still works without cohort scoping */ });
     return () => { cancelled = true; };

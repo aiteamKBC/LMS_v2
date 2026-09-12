@@ -68,6 +68,7 @@
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:learner": "vitest run src/pages/learner src/pages/workspace/learner src/hooks/__tests__ src/api/__tests__ src/api/reflectionSubmission.test.ts src/features/old-otjh src/components/feature src/router/__tests__ --maxWorkers=2",
     "test:watch": "vitest",
     "type-check": "tsc --noEmit --project tsconfig.app.json",
     "e2e": "playwright test",

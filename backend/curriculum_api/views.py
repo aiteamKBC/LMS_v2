@@ -327,6 +327,50 @@ def shared_curriculum_epoch():
         return 0
 
 
+CURRICULUM_CHANGE_LOG_KEY = 'curriculum:changes'
+# Enough to cover the epochs a polling client can fall behind by between two
+# reads. A save is a handful of bumps and a client asks every 25 seconds, so 50
+# spans a burst of writing comfortably; past that the client is told nothing
+# useful and falls back to dropping everything, which is where it started.
+CURRICULUM_CHANGE_LOG_SIZE = 50
+
+
+def record_curriculum_change(path, low, high):
+    """Note that the epochs in ``(low, high]`` were moved by a write to ``path``.
+
+    The counter on its own says only that something changed, which leaves every
+    open tab in the estate to throw away its whole cache and read the ~13s
+    overview back. This log is what turns that into "re-read the programmes".
+
+    Deliberately best-effort. The read-modify-write below is not atomic, so two
+    workers finishing at once can lose an entry -- and that is safe, because a
+    client only trusts the log when it covers every epoch it missed and drops
+    back to the blunt refresh when it does not. A lost entry costs one wasted
+    reload; a lost entry mistaken for "nothing relevant changed" would cost a
+    stale screen, which is why coverage is checked rather than assumed.
+    """
+    if high <= low:
+        return
+    try:
+        entries = list(cache.get(CURRICULUM_CHANGE_LOG_KEY) or [])
+        entries.append({'path': path, 'lo': int(low), 'hi': int(high)})
+        cache.set(
+            CURRICULUM_CHANGE_LOG_KEY,
+            entries[-CURRICULUM_CHANGE_LOG_SIZE:],
+            timeout=None,
+        )
+    except Exception:
+        logger.warning('Unable to record curriculum change for %s.', path, exc_info=True)
+
+
+def recent_curriculum_changes():
+    try:
+        return list(cache.get(CURRICULUM_CHANGE_LOG_KEY) or [])
+    except Exception:
+        logger.warning('Unable to read the curriculum change log.', exc_info=True)
+        return []
+
+
 def shared_curriculum_cache_key(key, epoch):
     digest = hashlib.sha256(str(key).encode()).hexdigest()
     return f'curriculum:v{epoch}:{digest}'
@@ -8692,6 +8736,23 @@ def delivery_days_per_week(module_row):
     return max(1, len([part for part in (piece.strip() for piece in raw.split(',')) if part]))
 
 
+def module_week_delivery_days(module_row, week_count=0):
+    """How many planned dates one authored week consumes.
+
+    The stored delivery day is the authority -- it is what the plan generator
+    itself steps through -- but a module whose row never got one still knows the
+    ratio, because it stores both counts: 20 sessions across 10 weeks runs two a
+    week whatever the day column says. Taking the larger of the two is what keeps
+    this identical to the frontend's `moduleDeliveryDaysPerWeek`, which has only
+    the counts to read.
+    """
+    weeks = max(0, parse_int(week_count, 0))
+    from_counts = 1
+    if weeks:
+        from_counts = max(1, round(module_stored_session_count(module_row, weeks) / weeks))
+    return max(1, delivery_days_per_week(module_row), from_counts)
+
+
 def module_stored_week_count(module_row, week_count=0):
     """How many WEEKS a module is authored as -- the week builder's number.
 
@@ -14900,26 +14961,48 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks):
     sessionDate/sessionDay/sessionStartTime/sessionDurationMinutes from every
     week it returned. Pure computation over rows the caller already holds --
     it issues no queries of its own.
+
+    A week consumes one planned date per DELIVERY DAY, not one per live-session
+    component it happens to hold: a Mon+Fri module spends two of its dates on
+    every week it authors, whether or not both live sessions have been authored
+    yet. Counting components instead walked a ten-week Mon+Fri module through
+    only eleven of its twenty dates, so every week after the first gap was
+    stamped with a date earlier than the one it runs on -- and disagreed with the
+    frontend's `applyModuleWeekSessionPlan`, which already walked it per delivery
+    day.
+
+    A week over-authored with more live sessions than delivery days dates the
+    extras only while the plan has dates to spare -- every week owes its delivery
+    days first. Lengthening the plan to fit the extras instead moved the whole
+    module: a ten-week, ten-session module with one week carrying a second live
+    session ran an eleventh date, so every week below it was stamped a session
+    late and disagreed with the ten rows the sessions drawer shows. Counted
+    sessions are the module's, not the authoring's.
     """
-    required_plan_entries = sum(
-        max(1, len([component for component in week.get('components') or [] if component.get('type') == 'live-session']))
-        for week in weeks
-    )
+    per_week = module_week_delivery_days(module, len(weeks))
+    planned_count = module_stored_session_count(module, len(weeks))
+    spare = max(0, planned_count - len(weeks) * per_week)
+    week_slot_counts = []
+    for week in weeks:
+        authored = len([component for component in week.get('components') or [] if component.get('type') == 'live-session'])
+        extra = min(max(0, authored - per_week), spare)
+        spare -= extra
+        week_slot_counts.append(per_week + extra)
     session_plan = module_session_plan_for_count(
         module,
-        max(module_stored_session_count(module, len(weeks)), required_plan_entries),
+        max(planned_count, sum(week_slot_counts)),
     ).get('sessions') or []
     session_start_time, _session_end_time, session_duration = module_session_clock(module, group_row)
     session_index = 0
-    for week in weeks:
+    for week_index, week in enumerate(weeks):
         live_components = [component for component in week.get('components') or [] if component.get('type') == 'live-session']
-        first_planned = {}
+        slot_count = week_slot_counts[week_index] if week_index < len(week_slot_counts) else 1
+        slots = session_plan[session_index:session_index + slot_count]
+        session_index += slot_count
+        first_planned = slots[0] if slots else {}
         if live_components:
-            for component in live_components:
-                planned = session_plan[session_index] if session_index < len(session_plan) else {}
-                session_index += 1
-                if not first_planned:
-                    first_planned = planned
+            for offset, component in enumerate(live_components):
+                planned = slots[offset] if offset < len(slots) else {}
                 settings = component.get('settings') if isinstance(component.get('settings'), dict) else {}
                 tracked_occurrence = (
                     clean_str(settings.get('sessionDateTimeUtc'))
@@ -14946,9 +15029,6 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks):
                     planned_settings['sessionDateTimeUtc'] = planned_instant
                     planned_settings['teamsStartDateTimeUtc'] = planned_instant
                 component['settings'] = planned_settings
-        else:
-            first_planned = session_plan[session_index] if session_index < len(session_plan) else {}
-            session_index += 1
         session_date = format_date(first_planned.get('date'))
         week['sessionDate'] = session_date
         week['sessionDay'] = clean_str(first_planned.get('day'))
@@ -17335,6 +17415,38 @@ def restore_authoring_delivery_rows(rows):
 
 
 @require_GET
+def curriculum_cache_epoch(request):
+    """The number that changes whenever curriculum data is written.
+
+    A client polls this to find out that somebody else has saved. It is the same
+    counter `invalidate_curriculum_cache()` bumps, so it moves on every write and
+    on nothing else -- no timestamps, no per-record versions to keep in step.
+
+    Deliberately the cheapest read in this module: one Redis GET, no database, no
+    payload build. A tab open in another country polls it every half minute, so
+    it has to stay that way. Reading it must never fail a page either --
+    `shared_curriculum_epoch()` already answers 0 when Redis is unreachable, and
+    a client that sees a frozen epoch simply keeps the data it has and falls back
+    on its own refresh-when-you-return.
+
+    Only meaningful across workers when a shared cache is configured. On LocMem
+    (local development, single process) it still moves for that process, which is
+    all a single-process dev server needs.
+
+    `changes` says which paths moved the counter, so a client that is only a few
+    epochs behind can refresh those and leave the rest of its cache alone. It is
+    a hint and nothing more: a client is expected to check that the entries cover
+    every epoch it missed, and to fall back to refreshing everything when they do
+    not. Reading it costs one more Redis GET and it is capped at
+    CURRICULUM_CHANGE_LOG_SIZE entries, so this stays the cheap read it has to be.
+    """
+    return JsonResponse({
+        'epoch': shared_curriculum_epoch(),
+        'changes': recent_curriculum_changes(),
+    })
+
+
+@require_GET
 def curriculum_stats(request):
     return JsonResponse(get_cached_payload(request)['stats'])
 
@@ -19029,8 +19141,13 @@ def curriculum_module_session_plan(request, module_catalogue_id):
         module_row = module_rows[0]
         requested_sessions = max(0, parse_int(request.GET.get('sessions'), 0))
         requested_weeks = max(0, parse_int(request.GET.get('weeks'), 0))
+        # The plan a caller asks for by WEEKS has to be as long as the weeks
+        # will consume, and the builder consumes one date per delivery day. Read
+        # through the same helper the week walk uses, so a module whose day
+        # column is empty but whose two counts say twice a week still gets a plan
+        # its weeks can be sliced out of rather than one half the length.
         requested = requested_sessions or (
-            requested_weeks * delivery_days_per_week(module_row) if requested_weeks else 0
+            requested_weeks * module_week_delivery_days(module_row, requested_weeks) if requested_weeks else 0
         )
         plan = module_session_plan_for_count(
             module_row,

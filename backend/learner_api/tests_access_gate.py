@@ -33,6 +33,7 @@ def _learner(**kwargs):
 class AccessGateTests(SimpleTestCase):
     def _gate(self, learner, start=PAST, documents=None):
         with patch('learner_api.learner_progression._programme_start_date', return_value=start), \
+                patch('learner_api.learner_progression._has_platform_invitation', return_value=True), \
                 patch('learner_api.learner_progression.compliance_document_state',
                       return_value=documents or {}):
             return access_gate(learner)

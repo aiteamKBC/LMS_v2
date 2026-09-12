@@ -1,10 +1,12 @@
 """Auditor-managed contract uploads and reversible archive state."""
 
 import json
+import logging
 import mimetypes
 import os
 import re
 import uuid
+from hashlib import sha256
 
 from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
@@ -13,9 +15,11 @@ from django.views.decorators.csrf import csrf_exempt
 from .db_source import resolve
 from .learner_exclusions import is_excluded_learner
 from .views import _azure_service_client, _has_audit_permission
+from learner_api.training_plan_contract import verified_planned_hours
 
 
 CONN = "enrolment"
+log = logging.getLogger(__name__)
 MAX_CONTRACT_SIZE = 25 * 1024 * 1024
 ALLOWED_CONTRACT_EXTENSIONS = {
     ".csv", ".doc", ".docx", ".jpeg", ".jpg", ".pdf", ".png",
@@ -117,6 +121,29 @@ def _learner_upload_metadata(cursor, learner_id):
     }
 
 
+def _uploaded_training_plan_hours(uploaded_file, document_name, extension):
+    if not re.search(r'training[\s_-]*plan', document_name, re.I):
+        return None, 'not-applicable', None
+    if extension != '.pdf':
+        return None, 'needs-review', None
+    try:
+        uploaded_file.seek(0)
+        data = uploaded_file.read()
+        hours = verified_planned_hours(data)
+        if hours is not None:
+            return hours, 'verified', {
+                'version': 1, 'source': 'learning-plan-table',
+                'pdf_sha256': sha256(data).hexdigest(), 'planned_hours': str(hours),
+            }
+    except Exception:
+        # Uploading an unreadable/scanned document is still useful. Keep its
+        # hours unknown and tell the auditor it needs review, never guess zero.
+        log.warning('Uploaded training-plan hours could not be verified.')
+    finally:
+        uploaded_file.seek(0)
+    return None, 'needs-review', None
+
+
 @csrf_exempt
 def upload_contract(request):
     if request.method != "POST":
@@ -151,6 +178,9 @@ def upload_contract(request):
     if not learner:
         return _error("Learner not found.", 404)
 
+    planned_hours, hours_status, hours_metadata = _uploaded_training_plan_hours(
+        uploaded_file, document_name, extension,
+    )
     upload_id = uuid.uuid4()
     blob_name = f"aptem_cv_contracts_probe/{learner_id}/uploads/{upload_id}/{filename}"
     try:
@@ -173,6 +203,8 @@ def upload_contract(request):
         "content_type": uploaded_file.content_type or mimetypes.guess_type(filename)[0],
         "size": uploaded_file.size,
     }
+    if hours_metadata:
+        raw['_training_plan_hours'] = hours_metadata
     try:
         with transaction.atomic(using=CONN):
             with connections[resolve(CONN)].cursor() as cursor:
@@ -183,12 +215,12 @@ def upload_contract(request):
                         document_name, status, date, answer_text, file, raw, fetched_at,
                         natural_key, email, current_programme, program_status,
                         "Programme understanding", "Break in learning", azure_path,
-                        azure_upload_attempted_at
+                        azure_upload_attempted_at, training_plan_planned_hours
                     ) values (
                         'Uploaded', 'audit_upload', %s, %s, %s,
                         %s, 'Uploaded', now(), '', '', %s::jsonb, now(),
                         %s, %s, %s, %s,
-                        %s::jsonb, %s::jsonb, %s, now()
+                        %s::jsonb, %s::jsonb, %s, now(), %s
                     )
                     returning id, date
                     ''',
@@ -197,7 +229,7 @@ def upload_contract(request):
                         json.dumps(raw), f"audit-upload:{upload_id}", learner["email"],
                         learner["programme"], learner["programme_status"],
                         json.dumps(learner["programme_understanding"]),
-                        json.dumps(learner["break_in_learning"]), azure_path,
+                        json.dumps(learner["break_in_learning"]), azure_path, planned_hours,
                     ],
                 )
                 contract_id, uploaded_at = cursor.fetchone()
@@ -213,6 +245,8 @@ def upload_contract(request):
         "contract_id": str(contract_id),
         "document_name": document_name,
         "uploaded_at": uploaded_at.isoformat() if uploaded_at else None,
+        "training_plan_planned_hours": float(planned_hours) if planned_hours is not None else None,
+        "training_plan_hours_status": hours_status,
     }, status=201)
 
 

@@ -1,3 +1,4 @@
+import { readLearnerJson, peekLearnerJson } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
 
 export type AttendanceSessionStatus = 'attended' | 'missed' | 'late';
@@ -28,18 +29,17 @@ export interface LearnerAttendance {
   consecutiveMissed: number;
   updatedAt: string | null;
   attendanceRate: number;
-  source?: 'kbc-attendance';
+  source?: 'kbc-attendance' | 'microsoft-teams' | 'combined';
   sessionHistory: AttendanceSessionRow[];
 }
 
-export async function fetchLearnerAttendance(kind: LearnerKind, learnerId: string): Promise<LearnerAttendance | null> {
-  let response: Response;
-  try {
-    response = await fetch(`/learner_api/attendance/${kind}/${learnerId}/`, { headers: { 'Content-Type': 'application/json' } });
-  } catch {
-    throw new Error('Could not reach the attendance service.');
-  }
-  const data = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(data?.error || `Could not load attendance (${response.status}).`);
+const attendanceUrl = (kind: LearnerKind, learnerId: string) => `/learner_api/attendance/${kind}/${learnerId}/`;
+
+export function peekLearnerAttendance(kind: LearnerKind, learnerId: string): LearnerAttendance | null | undefined {
+  return peekLearnerJson<{ attendance: LearnerAttendance | null }>(attendanceUrl(kind, learnerId))?.attendance;
+}
+
+export async function fetchLearnerAttendance(kind: LearnerKind, learnerId: string, signal?: AbortSignal, fresh = false): Promise<LearnerAttendance | null> {
+  const data = await readLearnerJson<{ attendance: LearnerAttendance | null }>(attendanceUrl(kind, learnerId), { ttlMs: 30_000, signal, revalidate: fresh });
   return data.attendance ?? null;
 }

@@ -1,9 +1,9 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import type { TrainingPlanDashboard, PlanReview } from '@/api/trainingPlanDashboard';
 import type { Subject } from '../my-learning/SubjectWorkspace';
-import { TrainingPlanBoard } from './page';
+import { TrainingPlanDetails } from './TrainingPlanDetails';
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 
@@ -25,36 +25,54 @@ const fixture=():TrainingPlanDashboard=>({
   reviews:[review('future','2026-09-22'),review('overdue','2026-09-08'),review('done','2026-09-01','completed'),review('booked','2026-09-15','scheduled')],
   coach:{name:'Assigned coach',bookingUrl:'https://outlook.office.com/book/assigned-coach'},contractStatus:'ready',generatedAt:'2026-09-10T08:00:00Z',
 });
-function Destination(){const route=useLocation();return <output data-testid="destination">{route.pathname}{route.search}</output>;}
+function Destination(){const route=useLocation();return <output data-testid="destination">{route.pathname}{route.search}{route.hash}</output>;}
 function renderBoard(data=fixture(),onRefresh=vi.fn()){
-  return render(<MemoryRouter initialEntries={['/plan']}><Routes><Route path="/plan" element={<TrainingPlanBoard data={data} subjects={subjects} kind="commercial" learnerId="125" onRefresh={onRefresh}/>}/><Route path="*" element={<Destination/>}/></Routes></MemoryRouter>);
+  return render(<MemoryRouter initialEntries={['/plan']}><Routes><Route path="/plan" element={<TrainingPlanDetails data={data} subjects={subjects} kind="commercial" learnerId="125" onRefresh={onRefresh} onRetryContract={onRefresh}/>}/><Route path="*" element={<Destination/>}/></Routes></MemoryRouter>);
 }
-beforeEach(()=>{vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-09-10T08:00:00Z'));});
-afterEach(()=>{cleanup();vi.useRealTimers();vi.restoreAllMocks();});
+const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+beforeEach(()=>{HTMLElement.prototype.scrollIntoView=vi.fn();vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-09-10T08:00:00Z'));});
+afterEach(()=>{cleanup();vi.useRealTimers();vi.restoreAllMocks();HTMLElement.prototype.scrollIntoView=originalScrollIntoView;});
 
-describe('Training Plan controls',()=>{
-  it('updates the selected month through month headings, jump menu, arrows, year and Today',()=>{
+describe('Dashboard training plan controls',()=>{
+  it('jumps to the timeline below the cards',()=>{
+    renderBoard();
+    expect(screen.getByRole('link',{name:'View full timeline'})).toHaveAttribute('href','#module-timeline');
+    const cards=screen.getByRole('region',{name:'Module overview'});
+    const timeline=screen.getByRole('region',{name:'Module timeline'});
+    expect(cards.compareDocumentPosition(timeline)&Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+  it('moves the month controls with the panel and supports year boundaries',()=>{
     renderBoard();
     const panel=within(screen.getByRole('region',{name:'Monthly study plan'}));
     expect(panel.getByRole('heading',{name:'September 2026'})).toBeVisible();
-    fireEvent.click(screen.getByRole('button',{name:'October 2026 — Research'}));
+    fireEvent.change(screen.getByLabelText('Focus month'),{target:{value:'2026-10'}});
     expect(panel.getByRole('heading',{name:'October 2026'})).toBeVisible();
     expect(panel.getAllByText('20')).toHaveLength(2);
     fireEvent.click(screen.getByRole('button',{name:'Next month'}));
     expect(panel.getByRole('heading',{name:'November 2026'})).toBeVisible();
     fireEvent.click(screen.getByRole('button',{name:'Previous month'}));
-    fireEvent.change(screen.getByRole('combobox',{name:'Jump to month'}),{target:{value:'2026-12'}});
+    fireEvent.change(screen.getByLabelText('Focus month'),{target:{value:'2026-12'}});
     fireEvent.click(screen.getByRole('button',{name:'Next month'}));
-    expect(screen.getByRole('combobox',{name:'Timeline year'})).toHaveValue('2027');
-    fireEvent.change(screen.getByRole('combobox',{name:'Timeline year'}),{target:{value:'2026'}});
-    expect(panel.getByRole('heading',{name:'January 2026'})).toBeVisible();
-    fireEvent.click(screen.getByRole('button',{name:'Today'}));
-    expect(panel.getByRole('heading',{name:'September 2026'})).toBeVisible();
+    expect(panel.getByRole('heading',{name:'January 2027'})).toBeVisible();
+    expect(screen.getByLabelText('Focus month')).toHaveValue('2027-01');
   });
-  it('keeps summary and selected month calculations separate, and filters actual attendance',()=>{
+  it('shares the timeline month controls with the cards and selects module details without navigating away',()=>{
     renderBoard();
-    expect(screen.getByRole('progressbar',{name:'Overall activity progress'})).toHaveAttribute('aria-valuenow','50');
-    expect(screen.getByRole('progressbar',{name:"This month's study hours"})).toHaveAttribute('aria-valuenow','63.89');
+    expect(screen.getByRole('progressbar',{name:'Marketing activity progress'})).toHaveAttribute('aria-valuenow','50');
+    fireEvent.click(screen.getByRole('button',{name:'October 2026 — Research'}));
+    expect(screen.getByLabelText('Focus month')).toHaveValue('2026-10');
+    fireEvent.change(screen.getByRole('combobox',{name:'Timeline year'}),{target:{value:'2027'}});
+    fireEvent.click(screen.getByRole('button',{name:'Today'}));
+    expect(screen.getByRole('combobox',{name:'Timeline year'})).toHaveValue('2026');
+    fireEvent.click(screen.getByRole('button',{name:'Show New module overview'}));
+    expect(screen.getByRole('combobox',{name:'Focus module'})).toHaveValue('current:NEW');
+    expect(within(screen.getByRole('region',{name:'Module overview'})).getByRole('heading',{name:'New module'})).toBeVisible();
+    expect(screen.queryByTestId('destination')).not.toBeInTheDocument();
+    expect(screen.getByRole('complementary',{name:'Timeline module details'})).toBeVisible();
+    expect(HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
+  });
+  it('preserves selected month calculations and filters actual attendance',()=>{
+    renderBoard();
     const panel=within(screen.getByRole('region',{name:'Monthly study plan'}));
     for(const value of ['18','11.5','6.5','4.5'])expect(panel.getByText(value)).toBeVisible();
     fireEvent.change(panel.getByRole('combobox',{name:'Filter monthly sessions'}),{target:{value:'completed'}});
@@ -67,26 +85,21 @@ describe('Training Plan controls',()=>{
     fireEvent.change(panel.getByRole('combobox',{name:'Filter monthly sessions'}),{target:{value:'all'}});
     expect(panel.getAllByRole('article')).toHaveLength(3);
     fireEvent.click(screen.getByRole('button',{name:'Next month'}));
-    expect(screen.getByRole('progressbar',{name:"This month's study hours"})).toHaveAttribute('aria-valuenow','63.89');
+    expect(panel.getByRole('heading',{name:'October 2026'})).toBeVisible();
   });
   it('opens the selected Builder module overview including a module without dates',()=>{
     renderBoard();
-    fireEvent.click(screen.getByRole('button',{name:'Show New module overview'}));
+    fireEvent.change(screen.getByRole('combobox',{name:'Focus module'}),{target:{value:'current:NEW'}});
     const panel=within(screen.getByRole('region',{name:'Module overview'}));
     expect(panel.getByRole('heading',{name:'New module'})).toBeVisible();
     expect(panel.getByText('Just assigned')).toBeVisible();
     fireEvent.click(panel.getByRole('link',{name:'Go to module'}));
     expect(screen.getByTestId('destination')).toHaveTextContent('/learner/modules/commercial/125?subject=current%3ANEW');
   });
-  it.each(['Marketing','View activities in Marketing','Go to module','View session materials'])('navigates %s to the learner and subject it displays',(label)=>{
+  it.each(['View activities in Marketing','Go to module','View session materials'])('navigates %s to the learner and subject it displays',(label)=>{
     renderBoard();
     fireEvent.click(screen.getAllByRole('link',{name:label})[0]);
     expect(screen.getByTestId('destination')).toHaveTextContent('/learner/modules/commercial/125?subject=legacy%3A10');
-  });
-  it('books the oldest outstanding review and carries its event key and learner identity',()=>{
-    renderBoard();
-    fireEvent.click(screen.getByRole('link',{name:'Book review'}));
-    expect(screen.getByTestId('destination')).toHaveTextContent('/learner/calendar?kind=commercial&learner=125&event=overdue');
   });
   it.each([['Book now','overdue'],['View booking','booked'],['View','done']])('opens %s on the specific review',(label,id)=>{
     renderBoard();
@@ -104,32 +117,19 @@ describe('Training Plan controls',()=>{
   });
   it('uses the assigned coach booking URL and exact Teams occurrence URL',()=>{
     renderBoard();
-    for(const label of ['Support session','Book a support session'])expect(screen.getByRole('link',{name:label})).toHaveAttribute('href','https://outlook.office.com/book/assigned-coach');
-    for(const label of ['Join live session','Join Teams']){
+    for(const label of ['Book a support session'])expect(screen.getByRole('link',{name:label})).toHaveAttribute('href','https://outlook.office.com/book/assigned-coach');
+    for(const label of ['Join Teams']){
       const link=screen.getByRole('link',{name:label});
       expect(link).toHaveAttribute('href','https://teams.microsoft.com/l/meetup-join/verified');
       expect(link).toHaveAttribute('target','_blank');
     }
   });
-  it('opens module content while the next session has no join link',()=>{
-    const data=fixture();data.sessions[2].joinUrl=null;renderBoard(data);
-    fireEvent.click(screen.getByRole('link',{name:'View module'}));
-    expect(screen.getByTestId('destination')).toHaveTextContent('subject=legacy%3A10');
-  });
   it('uses a support booking fallback and keeps absent bookings/sessions non-interactive',()=>{
     const data=fixture();data.reviews=[];data.sessions=[];renderBoard(data);
-    expect(screen.getAllByRole('link',{name:'Book a support session'})).toHaveLength(2);
+    expect(screen.getAllByRole('link',{name:'Book a support session'})).toHaveLength(1);
     expect(screen.queryByRole('link',{name:'Join live session'})).not.toBeInTheDocument();
     cleanup();data.coach.bookingUrl=null;renderBoard(data);
     expect(screen.queryByRole('link',{name:/support session/i})).not.toBeInTheDocument();
     expect(screen.queryByRole('link',{name:'Book review'})).not.toBeInTheDocument();
-  });
-  it('invokes refresh and advances the upcoming session while the page stays open',()=>{
-    vi.useFakeTimers();vi.setSystemTime(new Date('2026-09-15T09:59:50Z'));
-    const refresh=vi.fn();renderBoard(fixture(),refresh);
-    fireEvent.click(screen.getByRole('button',{name:'Refresh training plan'}));expect(refresh).toHaveBeenCalledOnce();
-    expect(screen.getByRole('link',{name:'Join live session'})).toBeVisible();
-    act(()=>vi.advanceTimersByTime(30_000));
-    expect(screen.queryByRole('link',{name:'Join live session'})).not.toBeInTheDocument();
   });
 });

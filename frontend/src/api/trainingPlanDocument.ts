@@ -1,3 +1,4 @@
+import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
 // ============================================================================
 // Training Plan API client
 //
@@ -69,7 +70,7 @@ async function readJson<T>(res: Response): Promise<T> {
 export async function fetchTrainingPlanDocument(
   learnerId: string | number,
 ): Promise<TrainingPlanResponse> {
-  return readJson(await fetch(`${BASE}/${learnerId}/`, { credentials: 'include' }));
+  return readLearnerJson(`${BASE}/${learnerId}/`);
 }
 
 /** Issue the plan, freezing the current content onto a new row. */
@@ -79,6 +80,7 @@ export async function issueTrainingPlanDocument(
   const data = await readJson<{ document: TrainingPlanDocument }>(
     await fetch(`${BASE}/${learnerId}/issue/`, { method: 'POST', credentials: 'include' }),
   );
+  invalidateLearnerReads();
   return data.document;
 }
 

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
-import type { Summary } from './api';
+import type { JournalSummary, MonthDetail } from './api';
 import { downloadJournal } from './downloadJournal';
 import styles from './journal.module.css';
 
-export function JournalDownloads({ summary, month, aptemId, disabled }: {
-  summary: Summary; month: string; aptemId?: number; disabled: boolean;
+export function JournalDownloads({ summary, month, aptemId, disabled, loadMonth }: {
+  summary: JournalSummary; month: string; aptemId?: number; disabled: boolean;
+  loadMonth?: (month: string, signal?: AbortSignal) => Promise<MonthDetail>;
 }) {
   const [preparing, setPreparing] = useState<'month' | 'all' | null>(null);
   const [progress, setProgress] = useState('');
@@ -14,7 +15,7 @@ export function JournalDownloads({ summary, month, aptemId, disabled }: {
   useEffect(() => {
     setPreparing(null); setProgress(''); setError('');
     return () => { request.current?.abort(); request.current = null; };
-  }, [summary.learner?.aptem_id]);
+  }, [summary.learner?.id, summary.learner?.aptem_id]);
 
   const download = async (scope: 'month' | 'all') => {
     if (request.current || disabled) return;
@@ -22,7 +23,7 @@ export function JournalDownloads({ summary, month, aptemId, disabled }: {
     request.current = controller;
     setPreparing(scope); setError('');
     try {
-      await downloadJournal({ summary, aptemId, months: scope === 'all' ? summary.months.map(item => item.month) : [month],
+      await downloadJournal({ summary, aptemId, loadMonth, months: scope === 'all' ? summary.months.map(item => item.month) : [month],
         signal: controller.signal, onProgress: message => { if (!controller.signal.aborted) setProgress(message); } });
       if (!controller.signal.aborted) setProgress('Your PDF is ready.');
     } catch (cause) {

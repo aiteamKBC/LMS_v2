@@ -126,9 +126,18 @@ describe('homeRouteFor', () => {
 });
 
 describe('postLoginRouteFor', () => {
-  it('always starts legacy learners at the transition portal', () => {
-    for (const requested of ['/workspace/learner', '/learner/attendance', '/old-otjh/months/2026-07', undefined]) {
-      expect(postLoginRouteFor({ role: 'learner', subjectId: 42, hasLegacyRecord: true }, requested)).toBe('/old-otjh');
+  it('defaults both new and imported learners to Dashboard even with an old home value', () => {
+    for (const hasLegacyRecord of [false, true]) {
+      const account = { role: 'learner' as const, subjectId: 42, hasLegacyRecord, accessHome: '/old-otjh' };
+      expect(homeRouteFor(account)).toBe('/workspace/learner');
+      expect(postLoginRouteFor(account)).toBe('/workspace/learner');
+      expect(postLoginRouteFor(account, '/workspace/learner')).toBe('/workspace/learner');
+    }
+  });
+
+  it('preserves explicit activity and previous-record links for imported learners', () => {
+    for (const requested of ['/learner/attendance', '/old-otjh/months/2026-07']) {
+      expect(postLoginRouteFor({ role: 'learner', subjectId: 42, hasLegacyRecord: true }, requested)).toBe(requested);
     }
   });
 

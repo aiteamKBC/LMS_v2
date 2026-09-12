@@ -1,6 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
 import { findModule, formatProgrammeLevel, namedCurriculumWorkspacePath, programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entities/model';
@@ -974,7 +975,7 @@ function useProgrammeDetailData(programmeId: string) {
   // for the usual reason: the caller is asking for the state it just wrote.
   const load = useCallback(async (
     signal?: AbortSignal,
-    options: { silent?: boolean; skipCache?: boolean } = {},
+    options: { silent?: boolean; skipCache?: boolean; revalidate?: boolean } = {},
   ) => {
     if (!programmeId) {
       setData(null);
@@ -991,6 +992,7 @@ function useProgrammeDetailData(programmeId: string) {
       const detail = await fetchCurriculumProgrammeDetail(programmeId, signal, {
         visibility: 'all',
         skipCache: options.skipCache,
+        revalidate: options.revalidate,
       });
       if (signal?.aborted) return null;
       const overview = programmeDetailToOverview(detail);
@@ -1032,6 +1034,15 @@ function useProgrammeDetailData(programmeId: string) {
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
+
+  // A programme's page is the one most likely to be left open while somebody
+  // else edits the same programme -- a second tab, a colleague on another
+  // machine. Re-read on return to the tab and on a cross-tab write, silently and
+  // with `revalidate`: the server drops its payload cache on write, so there is
+  // nothing to gain from forcing the multi-second detail rebuild.
+  useLiveRefresh(() => {
+    void load(undefined, { silent: true, revalidate: true });
+  }, { enabled: Boolean(programmeId) });
 
   return {
     data,

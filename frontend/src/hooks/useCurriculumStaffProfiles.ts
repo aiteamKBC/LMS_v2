@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fetchCurriculumCoaches, fetchCurriculumTutors, type CurriculumStaffProfile } from '@/lib/curriculumApi';
+import { useRefreshOnReturn } from '@/hooks/useRefreshOnReturn';
 
 type UseCurriculumStaffProfilesOptions = {
   autoLoad?: boolean;
@@ -48,6 +49,12 @@ export function useCurriculumStaffProfiles({ autoLoad = true }: UseCurriculumSta
     if (!autoLoad) return;
     return load();
   }, [autoLoad, load]);
+
+  // Return-only, no cross-tab write listener: staff come from the enrolment
+  // directory, so a curriculum write in another tab never changes this list.
+  // What does change it is somebody being given access elsewhere, and coming
+  // back to the tab is when that should show up.
+  useRefreshOnReturn(() => { load({ silent: true }); }, { enabled: autoLoad });
 
   return { tutors, coaches, loading, error, reload: load };
 }

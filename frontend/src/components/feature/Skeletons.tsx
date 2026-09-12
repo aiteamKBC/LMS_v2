@@ -283,7 +283,7 @@ export function HeroSkeleton() {
  * The rail width is imported rather than typed as a class so it cannot drift
  * away from the real sidebar's.
  */
-export function PageSkeleton() {
+export function PageSkeleton({ workspaceRole }: { workspaceRole?: string } = {}) {
   const [sidebarExpanded] = useState(() => {
     try {
       return localStorage.getItem('kbc_sidebar_pinned') === 'true';
@@ -292,7 +292,12 @@ export function PageSkeleton() {
     }
   });
   return (
-    <div className="flex h-screen overflow-hidden bg-background-200" aria-busy="true" aria-label="Loading page">
+    <div
+      className={`flex h-screen overflow-hidden bg-background-200 ${workspaceRole ? 'dashboard-theme' : ''}`}
+      data-workspace-role={workspaceRole}
+      aria-busy="true"
+      aria-label="Loading page"
+    >
       {/* Sidebar rail — hidden below md, matching the real off-canvas drawer. */}
       <div
         className="hidden lg:block shrink-0 my-3 ml-3 mr-3 rounded-[24px] bg-brand-deep p-4 space-y-4"

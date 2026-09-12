@@ -1,3 +1,4 @@
+import { readLearnerJson, peekLearnerJson, invalidateLearnerReads } from './learnerRead';
 import type { LearnerKind } from './learnerDetail';
 
 export interface StudentActivityItem {
@@ -69,6 +70,8 @@ export interface StudentActivityResponse {
   mapped_count: number;
   planned_mapped_count: number;
   activities: StudentActivityItem[];
+  source_status?: 'live' | 'historical';
+  activity_sources?: Record<string, { module_id: string; group_id: number; activity_id: number }>;
   subjects?: { id: number; name: string }[];
   covers?: Record<string, string>;
   persistence_ready?: boolean;
@@ -112,27 +115,30 @@ export interface SubjectMaterial {
 }
 
 export async function subjectRequest<T>(url: string, options: RequestInit = {}): Promise<T> {
+  if (!options.method || options.method.toUpperCase() === 'GET') {
+    const cacheable = url.includes('/subject-covers/');
+    return readLearnerJson<T>(url, { ...options, ttlMs: cacheable ? 30_000 : 0 });
+  }
   const response = await fetch(url, { credentials: 'include', cache: 'no-store', ...options });
   const body = await response.json().catch(() => null);
   if (!response.ok) throw new Error(body?.error || `Request failed (${response.status})`);
   if (body == null) throw new Error('The server returned an invalid response.');
+  invalidateLearnerReads();
   return body as T;
 }
 
 export async function fetchStudentActivity(kind: LearnerKind, learnerId: string, signal?: AbortSignal): Promise<StudentActivityResponse> {
-  let response: Response;
-  try {
-    response = await fetch(`/learner_api/student-activity/${kind}/${learnerId}/`, {
-      credentials: 'include',
-      headers: { Accept: 'application/json' },
-      signal,
-    });
-  } catch {
-    throw new Error('Could not reach the server.');
+  const payload = await readLearnerJson<StudentActivityResponse>(
+    `/learner_api/student-activity/${kind}/${learnerId}/`,
+    { signal, headers: { Accept: 'application/json' }, ttlMs: 30_000 },
+  );
+  if (!Array.isArray(payload.activities)) {
+    invalidateLearnerReads();
+    throw new Error('Received an invalid student activity response.');
   }
-
-  const payload = await response.json().catch(() => null) as (StudentActivityResponse & { error?: string }) | null;
-  if (!response.ok) throw new Error(payload?.error || `Request failed (${response.status})`);
-  if (!payload || !Array.isArray(payload.activities)) throw new Error('Received an invalid student activity response.');
   return payload;
+}
+
+export function peekStudentActivity(kind: LearnerKind, learnerId: string): StudentActivityResponse | undefined {
+  return peekLearnerJson(`/learner_api/student-activity/${kind}/${learnerId}/`, { headers: { Accept: 'application/json' } });
 }

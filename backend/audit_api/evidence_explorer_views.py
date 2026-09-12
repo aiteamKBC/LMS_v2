@@ -173,6 +173,11 @@ def evidence_list(request: HttpRequest) -> JsonResponse:
             status=503,
         )
 
+    return JsonResponse(evidence_payload(rows, aptem_id, month))
+
+
+def evidence_payload(rows, aptem_id, month=""):
+    """Pure display projection shared by the audit and learner evidence libraries."""
     items = []
     counts = {category: 0 for category in CATEGORIES}
     content_classified = 0
@@ -247,7 +252,7 @@ def evidence_list(request: HttpRequest) -> JsonResponse:
             "note_preview": (row.get("note_preview") or "").strip() or None,
         })
 
-    return JsonResponse({
+    return {
         "aptem_id": aptem_id,
         "month": month or None,
         "total": len(items),
@@ -255,7 +260,7 @@ def evidence_list(request: HttpRequest) -> JsonResponse:
         "content_classified": content_classified,
         "misfiled": misfiled,
         "items": items,
-    })
+    }
 
 
 @require_GET

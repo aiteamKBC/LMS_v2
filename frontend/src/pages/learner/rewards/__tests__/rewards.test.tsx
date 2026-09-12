@@ -18,7 +18,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 // on the bare identifier needs it supplied here.
 (globalThis as unknown as { AppIcon: typeof AppIcon }).AppIcon = AppIcon;
 
-const fetchLearnerDetail = vi.fn();
+const fetchLearnerSummary = vi.fn();
 const fetchRewards = vi.fn();
 const fetchVoucherClaims = vi.fn();
 const fetchRecognitions = vi.fn();
@@ -27,7 +27,7 @@ const fetchMyPoints = vi.fn();
 const createVoucherClaim = vi.fn();
 
 vi.mock('@/api/learnerDetail', () => ({
-  fetchLearnerDetail: (...args: unknown[]) => fetchLearnerDetail(...args),
+  fetchLearnerSummary: (...args: unknown[]) => fetchLearnerSummary(...args),
 }));
 vi.mock('@/api/engagement', () => ({
   fetchRewards: (...args: unknown[]) => fetchRewards(...args),
@@ -50,7 +50,7 @@ const REWARD = {
 };
 
 function resolvesTo(overrides: { balance?: number; earned?: number; rewards?: typeof REWARD[] } = {}) {
-  fetchLearnerDetail.mockResolvedValue({ id: '19', name: 'Sophie Williams', programme: 'MSN' });
+  fetchLearnerSummary.mockResolvedValue({ id: '19', name: 'Sophie Williams', programme: 'MSN' });
   fetchRewards.mockResolvedValue(overrides.rewards ?? [REWARD]);
   fetchVoucherClaims.mockResolvedValue([]);
   fetchRecognitions.mockResolvedValue([]);
@@ -59,7 +59,7 @@ function resolvesTo(overrides: { balance?: number; earned?: number; rewards?: ty
 }
 
 beforeEach(() => {
-  fetchLearnerDetail.mockReset();
+  fetchLearnerSummary.mockReset();
   fetchRewards.mockReset();
   fetchVoucherClaims.mockReset();
   fetchRecognitions.mockReset();
@@ -108,7 +108,7 @@ describe('learner rewards page', () => {
   });
 
   it('shows a load failure banner rather than a blank page', async () => {
-    fetchLearnerDetail.mockResolvedValue({ id: '19', name: 'Sophie Williams', programme: 'MSN' });
+    fetchLearnerSummary.mockResolvedValue({ id: '19', name: 'Sophie Williams', programme: 'MSN' });
     fetchRewards.mockRejectedValue(new Error('Could not reach the server.'));
     fetchVoucherClaims.mockResolvedValue([]);
     fetchRecognitions.mockResolvedValue([]);

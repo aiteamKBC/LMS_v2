@@ -1,3 +1,4 @@
+import { readLearnerJson } from './learnerRead';
 // ============================================================================
 // Extended ILR API client
 // Talks to the Django backend at /enrolment_api (proxied to :8000 by Vite in dev).
@@ -38,6 +39,7 @@ export interface ExtendedIlrResponse {
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  if (!init?.method || init.method.toUpperCase() === 'GET') return readLearnerJson<T>(url, { ...init, headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', ...init?.headers } });
   let res: Response;
   try {
     // credentials: 'include' sends the session cookie — the enrolment API now

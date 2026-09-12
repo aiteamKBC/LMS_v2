@@ -1,6 +1,6 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import type { MonthDetail, Signature, Summary } from './api';
+import type { MonthDetail, Signature, JournalSummary } from './api';
 import { monthLabel } from './report';
 
 type Color = [number, number, number];
@@ -71,7 +71,7 @@ function header(doc: jsPDF, report: MonthDetail, assets: JournalPdfAssets, subti
   doc.line(margin, 31, 285, 31);
 }
 
-function profile(doc: jsPDF, learner: NonNullable<Summary['learner']>, report: MonthDetail) {
+function profile(doc: jsPDF, learner: NonNullable<JournalSummary['learner']>, report: MonthDetail) {
   const fields = [
     ['Learner', learner.name, 'Start date', date(report.profile?.start_date)],
     ['Programme', learner.programme, 'First evidence', date(report.profile?.first_evidence_date)],
@@ -113,7 +113,7 @@ function metrics(doc: jsPDF, report: MonthDetail, y: number) {
   });
 }
 
-function continuedHeader(doc: jsPDF, learner: NonNullable<Summary['learner']>, report: MonthDetail, assets: JournalPdfAssets) {
+function continuedHeader(doc: jsPDF, learner: NonNullable<JournalSummary['learner']>, report: MonthDetail, assets: JournalPdfAssets) {
   image(doc, assets.logo, 12, 7, 25, 11.5);
   font(doc, 8.5, true);
   doc.text(text(learner.name), 44, 12, { maxWidth: 190 });
@@ -122,7 +122,7 @@ function continuedHeader(doc: jsPDF, learner: NonNullable<Summary['learner']>, r
   doc.setDrawColor(...colors.border); doc.line(margin, 23, 285, 23);
 }
 
-function activityLog(doc: jsPDF, report: MonthDetail, learner: NonNullable<Summary['learner']>, assets: JournalPdfAssets, y: number) {
+function activityLog(doc: jsPDF, report: MonthDetail, learner: NonNullable<JournalSummary['learner']>, assets: JournalPdfAssets, y: number) {
   font(doc, 11.5, true); doc.text('Activity log', margin, y);
   font(doc, 7.5, false, colors.muted);
   doc.text('Recorded off-the-job learning time and whether it is accepted', margin, y + 5);
@@ -159,7 +159,7 @@ function activityLog(doc: jsPDF, report: MonthDetail, learner: NonNullable<Summa
   });
 }
 
-function signoff(doc: jsPDF, report: MonthDetail, learner: NonNullable<Summary['learner']>, assets: JournalPdfAssets) {
+function signoff(doc: jsPDF, report: MonthDetail, learner: NonNullable<JournalSummary['learner']>, assets: JournalPdfAssets) {
   doc.addPage();
   header(doc, report, assets, 'Monthly record sign-off');
   font(doc, 11.5, true); doc.text('Report sign-off', margin, 42);
@@ -192,7 +192,7 @@ function signoff(doc: jsPDF, report: MonthDetail, learner: NonNullable<Summary['
 
 /** Builds searchable, paginated pages from the saved monthly record, never a
  * screenshot of the UI or an unsaved signature draft. */
-export function buildJournalPdf(summary: Summary, reports: MonthDetail[], assets: JournalPdfAssets) {
+export function buildJournalPdf(summary: JournalSummary, reports: MonthDetail[], assets: JournalPdfAssets) {
   if (!summary.learner || !reports.length) throw new Error('No learner reports are available to download.');
   for (const report of reports) {
     for (const signature of [report.student_signature, report.coach_signature]) {

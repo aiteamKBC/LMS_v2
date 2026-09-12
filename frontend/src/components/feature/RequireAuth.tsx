@@ -1,6 +1,6 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { PageSkeleton } from '@/components/feature/Skeletons';
+import { RouteLoadingSkeleton } from './RouteLoadingSkeleton';
 import { homeRouteFor, mayAccessRoute } from '@/lib/routeAccess';
 import { OldOtjhGate } from '@/features/old-otjh/hooks';
 
@@ -30,12 +30,26 @@ import { OldOtjhGate } from '@/features/old-otjh/hooks';
  * to the request itself, whether or not a page was ever drawn.
  */
 export function RequireAuth() {
-  const { auth, isInitialized } = useAuth();
+  const { auth, isInitialized, initializationError, retryInitialization } = useAuth();
   const location = useLocation();
 
   // Session unresolved: hold the page's shape rather than flashing either the
   // login form or a console we may be about to take away.
-  if (!isInitialized) return <PageSkeleton />;
+  if (!isInitialized) return <RouteLoadingSkeleton />;
+
+  if (initializationError) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background-200 p-6">
+        <div role="alert" className="w-full max-w-md rounded-2xl border border-foreground-200 bg-background-50 p-6">
+          <h1 className="text-lg font-semibold text-foreground-900">Could not load your session</h1>
+          <p className="mt-2 text-sm text-foreground-600">{initializationError}</p>
+          <button type="button" onClick={retryInitialization} className="mt-4 rounded-lg bg-primary-600 px-4 py-2 font-semibold text-white">
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const account = auth.account;
 

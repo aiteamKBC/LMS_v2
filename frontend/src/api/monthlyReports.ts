@@ -1,3 +1,4 @@
+import { readLearnerJson } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
 
 const BASE = '/learner_api/monthly-reports';
@@ -129,13 +130,7 @@ export async function fetchMonthlyReports(
   kind: LearnerKind,
   id: string,
 ): Promise<MonthlyReportsResponse> {
-  let res: Response;
-  try {
-    res = await fetch(`${BASE}/${kind}/${id}/`, { cache: 'no-store' });
-  } catch {
-    throw new Error('Could not reach the server. Is the backend running on port 8000?');
-  }
-  const data = await parse<Partial<MonthlyReportsResponse>>(res);
+  const data = await readLearnerJson<Partial<MonthlyReportsResponse>>(`${BASE}/${kind}/${id}/`);
   return {
     reports: data.reports || [],
     savedSignature: data.savedSignature || '',

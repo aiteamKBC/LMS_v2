@@ -1,3 +1,5 @@
+import { createCachedResource } from './cachedRequest';
+import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
 import type { LearnerAccessGate } from '@/utils/learnerAccessGate';
 // ============================================================================
 // Learner-detail API client.
@@ -7,10 +9,22 @@ import type { LearnerAccessGate } from '@/utils/learnerAccessGate';
 // ============================================================================
 
 const BASE = '/learner_api/learner-detail';
-const CACHE_TTL_MS = 30_000;
-
-const detailCache = new Map<string, { data: LearnerDetail; expiresAt: number }>();
-const detailRequests = new Map<string, Promise<LearnerDetail>>();
+const detailResource = createCachedResource<LearnerDetail>('learner-detail', key =>
+  readLearnerJson(`${BASE}/${key.replace(':', '/')}/?content=summary`));
+const componentResource = createCachedResource<LearnerDetail>('learner-component-detail', async key => {
+  const [kind, id, componentId] = JSON.parse(key) as [LearnerKind, string, string];
+  const detail = await detailResource.read(`${kind}:${id}`);
+  const component = detail.components.find(item => item.componentId === componentId);
+  // A reading can contain only an iframe/image: it has no text for the list's
+  // availability flag, but the runner must still receive the original markup.
+  if (!component || component.contentHtml || (!component.hasReadingContent && component.type !== 'reading')) return detail;
+  const reading = await readLearnerJson<{ componentId: string; contentHtml: string | null }>(
+    `${BASE}/${kind}/${id}/?content=reading&component_id=${encodeURIComponent(componentId)}`);
+  if (reading.componentId !== componentId) throw new Error('The server returned a different activity. Please try again.');
+  return { ...detail, components: detail.components.map(item => item === component ? { ...item, contentHtml: reading.contentHtml } : item) };
+});
+const summaryResource = createCachedResource<LearnerSummary>('learner-summary', key =>
+  readLearnerJson(`/learner_api/learner-summary/${key.replace(':', '/')}/`));
 
 export type LearnerKind = 'commercial' | 'apprenticeship';
 
@@ -46,6 +60,7 @@ export interface LearnerComponentEntry {
   videoUrl?: string | null;             // present on video components authored with a URL
   audioUrl?: string | null;             // podcast / reading voice-over
   contentHtml?: string | null;          // reading rich-text content
+  hasReadingContent?: boolean;         // list response; HTML is loaded when opened
   fileName?: string | null;             // powerpoint / document file name
   downloadAllowed?: boolean;            // powerpoint download flag
   reflectionPrompt?: string | null;     // authored reflection prompt / learner guidance
@@ -152,6 +167,7 @@ export interface LearnerDetail {
   epaMonths?: number | null;
   group: string;
   employer: string;
+  employerId?: number | null;
   lineManager: string;
   isActive: boolean;
   modules: string[];
@@ -183,6 +199,23 @@ export interface LearnerDetail {
    * `blocked: false` when nothing is holding them back.
    */
   accessGate?: LearnerAccessGate;
+}
+
+export type LearnerSummary = Pick<LearnerDetail,
+  'id' | 'name' | 'email' | 'phone' | 'programme' | 'programmeStatus' |
+  'cohort' | 'group' | 'employer' | 'employerId' | 'learnerType' | 'isActive'
+> & Pick<LearnerDetail, 'studentActivityAvailable' | 'programmeStartDate' | 'programmeEndDate' | 'accessGate'>;
+
+/** Small identity response for pages that only need the learner heading. */
+export function fetchLearnerSummary(kind: LearnerKind, id: string, force = false): Promise<LearnerSummary> {
+  if (force) return summaryResource.read(`${kind}:${id}`, { revalidate: true });
+  const detail = peekLearnerDetail(kind, id);
+  return detail ? Promise.resolve(detail) : summaryResource.read(`${kind}:${id}`);
+}
+
+/** Render a revisit immediately, without a loading-frame flash. */
+export function peekLearnerDetail(kind: LearnerKind, id: string, whileRefreshing = false): LearnerDetail | undefined {
+  return detailResource.peek(`${kind}:${id}`, whileRefreshing ? 5 * 60_000 : 0);
 }
 
 /** A completed non-quiz, non-video component (podcast/reading/slides/reflection/…). */
@@ -248,64 +281,22 @@ export interface LearnerVideoProgress {
   passed?: boolean | null;
 }
 
-async function request<T>(url: string): Promise<T> {
-  let res: Response;
-  try {
-    res = await fetch(url, { headers: { 'Content-Type': 'application/json' } });
-  } catch {
-    throw new Error('Could not reach the server. Is the backend running on port 8000?');
-  }
-  const text = await res.text();
-  let data: unknown = null;
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch {
-      if (!res.ok) {
-        throw new Error(`Backend returned HTML instead of JSON (${res.status}). Check the Django server error output.`);
-      }
-      throw new Error('Received an invalid JSON response from the backend.');
-    }
-  }
-  if (!res.ok) {
-    const message = typeof data === 'object' && data && 'error' in data
-      ? String((data as { error?: string }).error)
-      : `Request failed (${res.status})`;
-    throw new Error(message);
-  }
-  return data as T;
-}
-
 /** Remove cached learner data after a progress-changing action. */
 export function invalidateLearnerDetailCache(kind?: LearnerKind, id?: string): void {
-  if (kind && id) {
-    detailCache.delete(`${kind}:${id}`);
-    detailRequests.delete(`${kind}:${id}`);
-    return;
-  }
-  detailCache.clear();
-  detailRequests.clear();
+  const key = kind && id ? `${kind}:${id}` : undefined;
+  detailResource.invalidate(key);
+  componentResource.invalidate();
+  summaryResource.invalidate(key);
+  invalidateLearnerReads();
 }
 
-/**
- * Fetch a learner once and share the result between pages. Monthly Cycle,
- * Coaching and Reviews frequently mount back-to-back and need the same heavy
- * payload; this prevents duplicate requests and keeps it briefly in memory.
- */
-export function fetchLearnerDetail(kind: LearnerKind, id: string, options: { force?: boolean } = {}): Promise<LearnerDetail> {
-  const key = `${kind}:${id}`;
-  const cached = detailCache.get(key);
-  if (!options.force && cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.data);
+/** Share the expensive workspace payload between learner pages. */
+export function fetchLearnerDetail(kind: LearnerKind, id: string, options: { force?: boolean; componentId?: string } = {}): Promise<LearnerDetail> {
+  if (options.force) invalidateLearnerDetailCache(kind, id);
+  if (options.componentId) return componentResource.read(JSON.stringify([kind, id, options.componentId]));
+  return detailResource.read(`${kind}:${id}`);
+}
 
-  const pending = detailRequests.get(key);
-  if (pending) return pending;
-
-  const promise = request<LearnerDetail>(`${BASE}/${kind}/${id}/`)
-    .then((data) => {
-      if (detailRequests.get(key) === promise) detailCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
-      return data;
-    })
-    .finally(() => { if (detailRequests.get(key) === promise) detailRequests.delete(key); });
-  detailRequests.set(key, promise);
-  return promise;
+export function peekLearnerSummary(kind: LearnerKind, id: string): LearnerSummary | undefined {
+  return summaryResource.peek(`${kind}:${id}`) ?? peekLearnerDetail(kind, id);
 }

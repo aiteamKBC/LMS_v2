@@ -68,7 +68,7 @@ describe('WorkspaceSwitcher', () => {
     renderAt('/workspace/coach');
     await user.click(trigger());
 
-    // Scoped to the menu: the trigger also carries the current section's label.
+    // The menu labels each workspace; the trigger keeps its neutral label.
     const menu = within(screen.getByRole('menu'));
     expect(menu.getAllByRole('menuitem')).toHaveLength(PORTAL_WORKSPACES.length);
     for (const workspace of PORTAL_WORKSPACES) {
@@ -89,17 +89,20 @@ describe('WorkspaceSwitcher', () => {
     expect(screen.queryByText('Quality & compliance')).toBeNull();
   });
 
-  it('names the section currently open, from any page inside it', () => {
+  it('marks the current section in its menu, from any page inside it', async () => {
     signedIn();
     renderAt('/users/commercial/19');
-    // The trigger doubles as a "you are here" label; /users is Enrolment.
-    expect(trigger().textContent).toContain('Enrolment');
+    expect(trigger().textContent).toContain('Workspaces');
+    await userEvent.setup().click(trigger());
+    expect(screen.getByRole('menuitem', { name: /Enrolment/ })).toHaveAttribute('aria-current', 'true');
   });
 
-  it('names the Super Admin workspace when you are in it', () => {
+  it('marks Super Admin in its menu when you are in it', async () => {
     signedIn();
     renderAt('/workspace/admin');
-    expect(trigger().textContent).toContain('Super Admin');
+    expect(trigger().textContent).toContain('Workspaces');
+    await userEvent.setup().click(trigger());
+    expect(screen.getByRole('menuitem', { name: /Super Admin/ })).toHaveAttribute('aria-current', 'true');
   });
 
   it('falls back to a neutral label outside the listed sections', () => {

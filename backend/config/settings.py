@@ -259,6 +259,12 @@ EVIDENCE_AUDIT_SERVICE_URL = os.environ.get(
 ).rstrip("/")
 OPENAI_TRANSCRIPTION_MODEL = os.environ.get("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe")
 OPENAI_REFLECTION_MODEL = os.environ.get("OPENAI_REFLECTION_MODEL", "gpt-4o-mini")
+# Assignment proofreading uses the existing OpenAI API key again. Ignore any
+# leftover local-trial environment setting when starting the application.
+PROOFREAD_PROVIDER = "openai"
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+OLLAMA_PROOFREAD_MODEL = os.environ.get("OLLAMA_PROOFREAD_MODEL", "qwen2.5:1.5b")
+OLLAMA_PROOFREAD_TIMEOUT = int(os.environ.get("OLLAMA_PROOFREAD_TIMEOUT", "120"))
 OPENAI_MODERATION_MODEL = os.environ.get("OPENAI_MODERATION_MODEL", "omni-moderation-latest")
 KBC_LMS_SCHEMA_URL = os.environ.get(
     "KBC_LMS_SCHEMA_URL",
@@ -305,6 +311,7 @@ INSTALLED_APPS = [
     'curriculum_api',
     'engagement_api',
     'enrolment_api',
+    'progress_reviews_api',
     'chat',
     # Platform authentication (auth schema on the Neon enrolment database).
     # Its tables are unmanaged and created by `manage.py apply_login_tables`.
@@ -342,6 +349,10 @@ MIDDLEWARE = [
     # account, and it clears the thread-local on the way out -- worker threads
     # are reused, and a leaked actor would credit one person's save to another.
     'curriculum_api.versioning.ActorMiddleware',
+    # Notes which curriculum path moved the shared cache epoch, so a polling tab
+    # can refresh the collection that changed instead of all of them. Reads the
+    # epoch either side of the view, so it has to wrap it.
+    'curriculum_api.middleware.CurriculumChangeLogMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     # Turns a missing Curriculum table into a 503 naming the absent relations,
@@ -747,6 +758,7 @@ AZURE_QUARANTINE_CONTAINER = os.environ.get("AZURE_QUARANTINE_CONTAINER", "evide
 AZURE_APPROVED_CONTAINER = os.environ.get("AZURE_APPROVED_CONTAINER", "evidence-approved")
 AZURE_REJECTED_CONTAINER = os.environ.get("AZURE_REJECTED_CONTAINER", "evidence-rejected")
 AZURE_SAS_TTL_MINUTES = int(os.environ.get("AZURE_SAS_TTL_MINUTES", "15"))
+AZURE_LEARNER_PHOTOS_CONTAINER = os.environ.get("AZURE_LEARNER_PHOTOS_CONTAINER") or "learner-photos"
 
 # Generated/signed enrolment paperwork (ILR and the other compliance documents)
 # — see enrolment_api/documents.py. Separate from the evidence containers: these
@@ -772,6 +784,12 @@ AZURE_ENROLMENT_DOCS_CONTAINER = (
     os.environ.get("AZURE_ENROLMENT_DOCS_CONTAINER")
     or os.environ.get("AZURE_Enrolment_Docs_CONTAINER")
     or "enrolment-docs"
+)
+
+# Generated Progress Review PPTX decks — see progress_reviews_api/storage.py.
+# Platform-generated like the enrolment documents above: no quarantine/scan step.
+AZURE_PROGRESS_REVIEW_CONTAINER = (
+    os.environ.get("AZURE_PROGRESS_REVIEW_CONTAINER") or "progress-review-decks"
 )
 
 # --- Platform authentication (the `login` app) -------------------------------

@@ -7,6 +7,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { LoaderCircle } from "lucide-react";
+import { auditDocumentEmbedUrl as embedUrlOf } from "@/features/audit/documentPreview";
 import { getDocumentUrl, getEvidenceUrl } from "@/features/audit/learner-log-pro-copy/lib/manualApi";
 
 export const Route = createFileRoute("/doc")({
@@ -25,13 +26,6 @@ export const Route = createFileRoute("/doc")({
 // the SAS URL outranks the display name: attached docs can carry a mislabelled
 // extension (e.g. a PDF assessor report named "… .docx"), and the wrong viewer
 // shows "File not found".
-function embedUrlOf(url: string, name: string, contentType: string | null) {
-  const kind = (contentType || "").toLowerCase();
-  const blobPath = url.split("?", 1)[0];
-  if (/\.(pdf|png|jpe?g|gif|webp)$/i.test(blobPath)) return url;
-  const isOffice = /\.(docx?|xlsx?|pptx?)$/i.test(blobPath) || /\.(docx?|xlsx?|pptx?)($|\?)/i.test(name) || kind.includes("officedocument") || kind.includes("msword") || kind.includes("ms-excel") || kind.includes("ms-powerpoint");
-  return isOffice ? `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}` : url;
-}
 
 function DocumentPreviewPage() {
   const router = useRouter();

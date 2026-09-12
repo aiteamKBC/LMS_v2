@@ -1,3 +1,4 @@
+import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
 
 const BASE = '/learner_api/evidence';
@@ -85,37 +86,27 @@ export async function uploadEvidence(
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
-  return parse<UploadEvidenceResult>(res);
+  const data = await parse<UploadEvidenceResult>(res);
+  invalidateLearnerReads();
+  return data;
 }
 
 export async function fetchEvidence(
   kind: LearnerKind,
   id: string,
-  opts: { sectionRef?: string; status?: string } = {},
+  opts: { sectionRef?: string; status?: string; signal?: AbortSignal } = {},
 ): Promise<EvidenceRecord[]> {
   const params = new URLSearchParams();
   if (opts.sectionRef) params.set('section_ref', opts.sectionRef);
   if (opts.status) params.set('status', opts.status);
   const qs = params.toString() ? `?${params.toString()}` : '';
-  let res: Response;
-  try {
-    res = await fetch(`${BASE}/${kind}/${id}/${qs}`, { cache: 'no-store' });
-  } catch {
-    throw new Error('Could not reach the server. Is the backend running on port 8000?');
-  }
-  const data = await parse<{ results: EvidenceRecord[] }>(res);
+  const data = await readLearnerJson<{ results: EvidenceRecord[] }>(`${BASE}/${kind}/${id}/${qs}`, { signal: opts.signal });
   return data.results;
 }
 
 /** Get a short-lived SAS download URL for an approved evidence file. */
 export async function getEvidenceDownloadUrl(kind: LearnerKind, id: string, fileId: string): Promise<string> {
-  let res: Response;
-  try {
-    res = await fetch(`${BASE}/${kind}/${id}/${fileId}/download/`);
-  } catch {
-    throw new Error('Could not reach the server. Is the backend running on port 8000?');
-  }
-  const data = await parse<{ url: string }>(res);
+  const data = await readLearnerJson<{ url: string }>(`${BASE}/${kind}/${id}/${fileId}/download/`);
   return data.url;
 }
 
@@ -132,4 +123,5 @@ export async function deleteEvidence(kind: LearnerKind, id: string, fileId: stri
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
   await parse<{ deleted: boolean }>(res);
+  invalidateLearnerReads();
 }

@@ -13,7 +13,8 @@ export type LearnerAccessReason =
   | 'documents'
   | 'plan'
   | 'start-date-missing'
-  | 'start-date-future';
+  | 'start-date-future'
+  | 'invitation';
 
 export interface LearnerAccessGate {
   blocked: boolean;
@@ -93,7 +94,9 @@ export function waitingCopy(
       ? 'Your learning plan is being prepared'
       : has('start-date-missing')
         ? 'Your start date has not been set yet'
-        : 'Your programme starts soon';
+        : has('start-date-future')
+          ? 'Your programme starts soon'
+          : 'Your platform invitation is pending';
 
   if (has('documents')) {
     lines.push(
@@ -119,6 +122,12 @@ export function waitingCopy(
     // The date has gone by, so saying "you are waiting for it" would be a
     // plain untruth — name it as passed and leave the real blocker above.
     lines.push(`Your start date of ${startDate} has already passed, so nothing else is waiting on it.`);
+  }
+
+  if (has('invitation')) {
+    lines.push('Your programme team has not sent your platform invitation yet.');
+    steps.push('Your programme team sends your invitation email.');
+    steps.push('Follow the invitation to set your password and sign in.');
   }
 
   steps.push(

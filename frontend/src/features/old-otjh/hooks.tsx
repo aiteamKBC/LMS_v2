@@ -25,7 +25,11 @@ export function OldOtjhGate({ children }: { children: ReactNode }) {
 
 function LegacyLearningGate({ children }: { children: ReactNode }) {
   const query = useRecordSummary();
-  if (query.isPending) return <PageSkeleton />;
+  const { pathname } = useLocation();
+  const learnerRoute = pathname === '/learner'
+    || pathname.startsWith('/learner/')
+    || pathname.startsWith('/workspace/learner');
+  if (query.isPending) return <PageSkeleton workspaceRole={learnerRoute ? 'learner' : undefined} />;
   if (query.error || !query.data?.can_access_lms) return <Navigate to="/old-otjh" replace state={{ contactCoach: true }} />;
   return <>{children}</>;
 }

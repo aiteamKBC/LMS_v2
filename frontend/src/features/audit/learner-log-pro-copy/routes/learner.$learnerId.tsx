@@ -484,9 +484,15 @@ function LearnerProfilePage() {
     setContractActionError(null);
     setContractActionMessage(null);
     try {
-      await uploadContract(Number(profile.data.aptem_id), file);
+      const result = await uploadContract(Number(profile.data.aptem_id), file);
       await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
-      setContractActionMessage(`${file.name} was uploaded successfully.`);
+      if (result.training_plan_hours_status === 'needs-review') {
+        setContractActionError(`${file.name} was uploaded. Its planned training hours could not be verified; please review the training plan.`);
+      } else {
+        const hours = result.training_plan_hours_status === 'verified' && result.training_plan_planned_hours != null
+          ? ` Planned training hours: ${result.training_plan_planned_hours.toFixed(2)}.` : '';
+        setContractActionMessage(`${file.name} was uploaded successfully.${hours}`);
+      }
     } catch (error) {
       setContractActionError(error instanceof Error ? error.message : "The document could not be uploaded.");
     } finally {

@@ -19,7 +19,7 @@ import urllib.request
 
 from django.conf import settings
 
-from audit_api.last_audit_ledger_views import _activity_payload
+from audit_api.last_audit_ledger_views import _activity_payload, _is_completed
 from old_otjh.live_attempts import hints
 from .subject_content import _SameHostRedirect
 from .subject_dates import activity_schedule, apply_section_placement, as_date
@@ -29,6 +29,7 @@ _cache = OrderedDict()
 _lock = threading.RLock()
 _gates = [threading.Lock() for _ in range(32)]
 TTL = 300
+FAILURE_TTL = 30
 MAX_CACHE_BYTES = 64 * 1024 * 1024
 
 
@@ -44,6 +45,7 @@ def _remember(key, fetch):
         try:
             value = fetch()
         except (OSError, HTTPException, ValueError, TypeError, KeyError, EOFError):
+            now = monotonic()
             # A short source outage must not replace a verified full course with
             # an older, smaller mirror. Never retain a snapshot beyond an hour.
             if prior and prior[3] + 3600 > now:
@@ -52,12 +54,16 @@ def _remember(key, fetch):
                 return deepcopy(prior[2])
             value = None
         size = len(json.dumps(value, default=str)) if value is not None else 0
+        # Start freshness/backoff when the slow read finishes. Starting it
+        # before a 15-second timeout made the old five-second failure cache expire
+        # before insertion, so every queued page retried the failing source.
+        now = monotonic()
         with _lock:
             _cache.pop(key, None)
             while _cache and (len(_cache) >= 128 or sum(v[1] for v in _cache.values()) + size > MAX_CACHE_BYTES):
                 _cache.popitem(last=False)
             if size <= MAX_CACHE_BYTES:
-                _cache[key] = (now + (TTL if value is not None else 5), size, value, now)
+                _cache[key] = (now + (TTL if value is not None else FAILURE_TTL), size, value, now)
         return deepcopy(value)
 
 
@@ -66,7 +72,9 @@ def _page(endpoint, secret, page):
         'X-KBC-API-Key': secret, 'Accept': 'application/json',
         'Accept-Encoding': 'gzip', 'User-Agent': 'KBC-LearningOS/1.0',
     })
-    with urllib.request.build_opener(_SameHostRedirect()).open(request, timeout=15) as response:
+    # Full source pages are large; the live audit observed valid responses
+    # exceeding 15 seconds. Match the bounded timeout used by that audit.
+    with urllib.request.build_opener(_SameHostRedirect()).open(request, timeout=45) as response:
         stream = gzip.GzipFile(fileobj=response) if response.headers.get('Content-Encoding') == 'gzip' else response
         raw = stream.read(80 * 1024 * 1024 + 1)
     if len(raw) > 80 * 1024 * 1024:
@@ -80,8 +88,38 @@ def _page(endpoint, secret, page):
     return payload
 
 
+def _unique_activities(definitions):
+    """One learner/course/activity result can have several lecture placements.
+
+    Keep its content and completion once. Conflicting lecture dates are not a
+    reliable activity date; conflicting quiz IDs must not choose an answer key.
+    """
+    unique = {}
+    for incoming in definitions:
+        aid = incoming.get('activity_id')
+        if type(aid) is not int:
+            raise ValueError('Invalid source activity identities')
+        if aid not in unique:
+            unique[aid] = deepcopy(incoming)
+            continue
+        existing = unique[aid]
+        if existing.get('activity_date') != incoming.get('activity_date'):
+            existing['activity_date'] = None
+        old_quiz, new_quiz = existing.get('quiz') or {}, incoming.get('quiz') or {}
+        old_id, new_id = old_quiz.get('quiz_id'), new_quiz.get('quiz_id')
+        if old_id and new_id and old_id != new_id:
+            existing['quiz_definition_ambiguous'] = True
+        elif not old_id and new_id:
+            existing['quiz'] = deepcopy(new_quiz)
+        for field in ('video', 'audio', 'reading'):
+            if not existing.get(field) and incoming.get(field):
+                existing[field] = deepcopy(incoming[field])
+    return list(unique.values())
+
+
 def _select(payload, ident, email):
     groups, found = [], False
+    allowed_emails = {email} if isinstance(email, str) else set(email)
     for group in payload['groups']:
         if not isinstance(group, dict) or not isinstance(group.get('learners'), list):
             raise ValueError('Invalid source memberships')
@@ -90,7 +128,7 @@ def _select(payload, ident, email):
         matches = [learner for learner in group['learners'] if learner.get('learner_id') == ident]
         if not matches:
             continue
-        if len(matches) != 1 or str(matches[0].get('learner_email') or '').strip().casefold() != email:
+        if len(matches) != 1 or str(matches[0].get('learner_email') or '').strip().casefold() not in allowed_emails:
             raise ValueError('Source identity mismatch')
         found = True
         definitions = group.get('activities')
@@ -99,11 +137,10 @@ def _select(payload, ident, email):
             raise ValueError('Incomplete source course')
         if any(not isinstance(row, dict) for row in [*definitions, *results]):
             raise ValueError('Invalid source activity records')
-        aids = [a.get('activity_id') for a in definitions]
-        if any(type(aid) is not int for aid in aids) or len(aids) != len(set(aids)):
-            raise ValueError('Invalid source activity identities')
         groups.append({'id': group['group_id'], 'name': group.get('group_name') or '',
-                       'activities': definitions, 'results': results})
+                       'activities': _unique_activities(definitions), 'results': results})
+        if not isinstance(email, str):
+            groups[-1]['_learner_email'] = str(matches[0]['learner_email']).strip().casefold()
     return groups if found else None
 
 
@@ -130,7 +167,8 @@ def read_learner(cursor, aptem_id, email):
     endpoint = getattr(settings, 'KBC_LMS_SCHEMA_URL', '')
     if not email or not secret or not endpoint:
         return None
-    cursor.execute('''SELECT l.learner_id,coalesce(a.lms_learner_id,l.learner_id)
+    cursor.execute('''SELECT l.learner_id,coalesce(a.lms_learner_id,l.learner_id),
+        CASE WHEN a.lms_learner_id IS NULL THEN l.learner_email ELSE a.lms_email END
         FROM "Last_audit".learners l
         LEFT JOIN "Last_audit".learner_lms_aliases a
           ON a.aptem_id=l.aptem_id AND a.canonical_lms_id=l.learner_id
@@ -138,12 +176,21 @@ def read_learner(cursor, aptem_id, email):
     identities = cursor.fetchall()
     if not identities or len({row[0] for row in identities}) != 1:
         return None
-    ids = tuple(sorted({int(row[1]) for row in identities}))
-    key = ('learner', endpoint, hashlib.sha256(secret.encode()).hexdigest(), ids, email)
+    sources = tuple(sorted({(int(row[1]), str(row[2] or '').strip().casefold()) for row in identities}))
+    # The enrolment email verifies the canonical learner above. Each stored
+    # alias then verifies its own original email, which can be a former account.
+    if any(not source_email for _, source_email in sources):
+        return None
+    if len({ident for ident, _ in sources}) != len(sources):
+        return None
+    key = ('learner', endpoint, hashlib.sha256(secret.encode()).hexdigest(), sources, email)
     def fetch():
         pages, groups = {}, {}
-        for ident in ids:
-            for group in _read_identity(endpoint, secret, ident, email, pages):
+        for ident, source_email in sources:
+            # A primary account can use either its saved original email or its
+            # current canonical email; both are already verified DB identities.
+            expected = tuple(sorted({source_email, email})) if ident == identities[0][0] and source_email != email else source_email
+            for group in _read_identity(endpoint, secret, ident, expected, pages):
                 existing = groups.get(group['id'])
                 if existing:
                     # Aliases share course definitions; results preserve every
@@ -152,7 +199,7 @@ def read_learner(cursor, aptem_id, email):
                         raise ValueError('Course changed during source read')
                     existing['results'].extend(group['results'])
                 else:
-                    groups[group['id']] = {**group, '_learner_id': ident, '_learner_email': email}
+                    groups[group['id']] = {**group, '_learner_id': ident, '_learner_email': group.get('_learner_email', source_email)}
         return {'groups': list(groups.values())}
     return _remember(key, fetch)
 
@@ -271,7 +318,7 @@ def merge_result(before, incoming):
 
 
 def source_rows(group):
-    definitions = {a['activity_id']: a for a in group['activities']}
+    definitions = {a['activity_id']: a for a in _unique_activities(group['activities'])}
     results = {}
     for result in group['results']:
         aid = result.get('activity_id')
@@ -284,7 +331,7 @@ def source_rows(group):
                     'quiz_attempt_number': quiz.get('attempt_number'), 'quiz_answers': quiz.get('answers') or []}
         results[aid] = merge_result(results.get(aid, {}), incoming)
     rows = []
-    for position, a in enumerate(group['activities']):
+    for position, a in enumerate(definitions.values()):
         video, audio, reading, quiz = a.get('video') or {}, a.get('audio') or {}, a.get('reading') or {}, a.get('quiz') or {}
         result = results.get(a['activity_id'], {})
         rows.append({'activity_id': a['activity_id'], 'group_id': group['id'], 'group_name': group['name'],
@@ -293,6 +340,7 @@ def source_rows(group):
                      'audio_url': audio.get('iframe_url'), 'reading_iframe_url': reading.get('iframe_url'),
                      'reading_text_body': reading.get('text_body'), 'reading_type': reading.get('reading_type'),
                      'quiz_id': quiz.get('quiz_id'), 'quiz_questions': quiz.get('questions'), 'quiz_body': quiz.get('quiz_body'),
+                     'quiz_definition_ambiguous': bool(a.get('quiz_definition_ambiguous')),
                      'quiz_passing_score': quiz.get('passing_score'), 'quiz_maximum_score': result.get('quiz_maximum_score') or quiz.get('maximum_score'),
                      **{k: v for k, v in result.items() if k != 'quiz_maximum_score'}})
     return rows
@@ -340,6 +388,27 @@ def overlay_subjects(payload, live, stored_schedules):
             apply_section_placement(item, group['id'], section_id)
             items.append(item)
     return {**payload, 'subjects': list(subjects.values()), 'activities': items}
+
+
+def overlay_progress_rows(historical, live):
+    """Use the same current course inventory for dashboard totals and cards.
+
+    This only reconciles result facts; it does not fetch lecture schedules or
+    content and retains existing audited mappings for each exact placement.
+    """
+    if live is None:
+        return historical
+    previous = {(r['group_id'], r['activity_id']): r for r in historical}
+    replaced = {group['id'] for group in live['groups']}
+    result = [r for r in historical if r['group_id'] not in replaced]
+    for group in live['groups']:
+        for row in source_rows(group):
+            old = previous.get((row['group_id'], row['activity_id']), {})
+            combined = {**old, **row}
+            if _is_completed(old):
+                combined['status'] = 'completed'
+            result.append(combined)
+    return result
 
 
 def material(live, group_id, activity_id, stored, learner_name):

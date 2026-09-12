@@ -1,3 +1,4 @@
+import { readLearnerJson } from './learnerRead';
 const BASE = '/learner_api/kbc-lms/all-students-schema';
 
 export interface LmsSource {
@@ -83,19 +84,5 @@ export async function fetchLmsSchema(options: { page?: number; perPage?: number;
   if (options.search) params.set('search', options.search);
   if (options.email) params.set('email', options.email);
   const qs = params.toString() ? `?${params.toString()}` : '';
-  const res = await fetch(`${BASE}/${qs}`, { headers: { Accept: 'application/json' } });
-  const text = await res.text();
-  let data: unknown = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    throw new Error(`The LMS proxy returned an unexpected response (${res.status}).`);
-  }
-  if (!res.ok) {
-    const message = typeof data === 'object' && data && 'error' in data
-      ? String((data as { error?: string }).error)
-      : `LMS schema request failed (${res.status}).`;
-    throw new Error(message);
-  }
-  return data as LmsSchemaResponse;
+  return readLearnerJson<LmsSchemaResponse>(`${BASE}/${qs}`, { headers: { Accept: 'application/json' }, ttlMs: 30_000 });
 }

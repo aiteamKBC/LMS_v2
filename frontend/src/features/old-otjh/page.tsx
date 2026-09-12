@@ -21,24 +21,45 @@ import { getLearners, refreshMonths, type Summary } from './api';
 import { MonthBadge, RecordBadge, RecordProgress, SignatureChip } from './RecordDesign';
 import styles from './design.module.css';
 import journal from './journal.module.css';
+import shell from './shell.module.css';
 
 const btnPrimary = styles.primaryButton;
 const btnSecondary = styles.secondaryButton;
 
 
 function Shell({ children }: { children: ReactNode }) {
-  const { auth } = useAuth();
+  const { auth, logout } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const { aptemId, month } = useParams<{ aptemId: string; month: string }>();
   const student = auth.account?.role === 'learner';
   const monitor = auth.account?.access === 'record-monitor';
   const backFallback = month ? (aptemId ? `/old-otjh/coach/${aptemId}/months` : '/old-otjh/months')
     : student ? '/old-otjh' : monitor ? '/old-otjh/monitor' : aptemId ? '/old-otjh/coach' : '/workspace/coach';
-  return <WorkspaceShell role={student ? 'learner' : 'coach'} roleLabel={student ? 'Learner' : monitor ? 'Record monitor' : 'Coach'}
+  if (student) return <div className={`${styles.scope} ${shell.shell}`}>
+    <header className={shell.header}>
+      <Link to="/old-otjh" className={shell.brand} aria-label="My learning">
+        <img src="/assets/kbc-logo.png" alt="Kent Business College" className={shell.logo} />
+        <div className={shell.brandText}>
+          <p>Training &amp; Development Reports</p>
+          <span>Monthly Activity Logs</span>
+        </div>
+      </Link>
+      <nav className={shell.actions} aria-label="Account actions">
+        <span className={shell.college}>Kent Business College</span>
+        <button type="button" onClick={logout} className={`${shell.button} ${shell.logout}`}><AppIcon className="ri-logout-box-r-line" />Log out</button>
+      </nav>
+    </header>
+    <main className={shell.main}>
+      <PageContainer className={`${styles.page} ${shell.content} ${month ? journal.canvas : location.pathname.replace(/\/$/, '') === '/old-otjh/months' ? shell.monthsCanvas : ''}`}>
+        {(month || location.pathname !== '/old-otjh') && <button type="button" className={shell.backButton} onClick={() => navigate(backFallback)}><AppIcon className="ri-arrow-left-line" />Back</button>}
+        {children}
+      </PageContainer>
+    </main>
+  </div>;
+  return <WorkspaceShell role="coach" roleLabel={monitor ? 'Record monitor' : 'Coach'}
     showBackButton backFallbackHref={backFallback}
-    pageTitle="Previous learning record" filterLearnerNavigation={false} navItems={student ? [
-      { id: 'learner-overview', label: 'My learning', href: '/old-otjh', icon: 'ri-dashboard-line' },
-      { id: 'previous-record', label: 'Previous learning record', href: '/old-otjh/months', icon: 'ri-history-line' },
-    ] : monitor ? [
+    pageTitle="Previous learning record" filterLearnerNavigation={false} navItems={monitor ? [
       { id: 'record-monitor', label: 'Record monitoring', href: '/old-otjh/monitor', icon: 'ri-dashboard-line' },
     ] : coachNavItems.map(item => item.id === 'coach-previous-records' ? {
         ...item,
@@ -77,24 +98,37 @@ export function Progress({ summary }: { summary: Summary }) {
 }
 
 function Welcome({ summary }: { summary?: Summary }) {
-  const complete = summary?.completed_months ?? 0;
   const total = summary?.total_months ?? 0;
-  const percent = total ? Math.min(100, Math.max(0, Math.round(complete / total * 100))) : 0;
   const firstName = summary?.learner?.name?.trim().split(/\s+/)[0];
   return <section className={styles.hero} aria-label="My learning"><div className={styles.heroLayout}>
-    <div><p className={styles.eyebrow}>Kent Business College · My learning</p>
-      <h1 className="mt-3 font-heading">Welcome back{firstName ? `, ${firstName}` : ''}.</h1>
-      <p className={`${styles.heroCopy} mt-3`}>{summary?.can_access_lms
-        ? 'Your previous learning record is complete. Your next chapter in the LMS is ready.'
-        : 'Review your monthly records, sign them with your coach, and complete your transition to the new LMS.'}</p>
+    <div><p className={styles.eyebrow}>Welcome to your learning area</p>
+      <h1 className="mt-3 font-heading">Welcome back<span className={styles.heroAccent}>{firstName ? `, ${firstName}.` : '.'}</span></h1>
+      <p className={`${styles.heroCopy} mt-3`}>{summary?.can_access_lms ? 'Your previous learning record is complete. You can continue to access your LMS or review your full monthly learning record below.' : 'Review your monthly records, sign them with your coach, and complete your transition to the new LMS.'}</p>
+      <div className={styles.heroMeta}><div><AppIcon className="ri-graduation-cap-line" /><span><small>Programme</small><strong>{summary?.learner?.programme || '-'}</strong></span></div><div><AppIcon className="ri-team-line" /><span><small>Assigned coach</small><strong>{summary?.learner?.coach_name || 'Unassigned'}</strong></span></div></div>
     </div>
-    {summary && <div className={styles.ringPanel}>
-      <div className={styles.ring} aria-hidden="true" style={{ background: `conic-gradient(var(--record-gold) ${percent * 3.6}deg, rgba(255,255,255,.18) 0deg)` }}><span>{percent}%</span></div>
-      <div className="text-[13px]"><p className="font-semibold">{complete} of {total} months</p><p className="mt-1 text-white/80">signed and completed</p></div>
-    </div>}
+    {summary && <div className={`${styles.ringPanel} ${styles.heroMonthsPanel}`}><div className={styles.heroMonthsHeading}><p className={styles.ringTitle}>Full monthly learning record</p><RecordBadge tone="positive">{total} months</RecordBadge></div><p className={styles.heroMonthsPeriod}>Sep 2024 – Aug 2026</p><div className={styles.heroMonthGrid}>{summary.months.map(month => <span key={month.month}>{monthLabel(month.month).replace(' ', '\n')}</span>)}</div></div>}
   </div></section>;
 }
 
+function ProgrammeOverview({ summary }: { summary: Summary }) {
+  const requiredMonths = summary.months.filter(month => month.is_required !== false);
+  const allSigned = requiredMonths.length > 0 && requiredMonths.every(month => Boolean(month.student_signature));
+  const reviewIcon = summary.can_access_lms ? 'ri-checkbox-circle-fill' : 'ri-time-line';
+  return <section className={`${styles.card} ${styles.overviewCard}`}>
+    <h2>Programme overview</h2><p className={styles.overviewIntro}>Key information about your learning programme.</p>
+    <div className={styles.overviewGrid}>
+      <div><AppIcon className="ri-user-line" /><span><small>Learner</small><strong>{summary.learner?.name || '-'}</strong></span></div>
+      <div><AppIcon className="ri-book-open-line" /><span><small>Programme</small><strong>{summary.learner?.programme || '-'}</strong></span></div>
+      <div><AppIcon className="ri-team-line" /><span><small>Coach</small><strong>{summary.learner?.coach_name || 'Unassigned'}</strong></span></div>
+      <div><AppIcon className="ri-file-list-3-line" /><span><small>Record status</small><RecordBadge tone={summary.can_access_lms ? 'positive' : 'pending'}>{summary.can_access_lms ? 'Complete' : 'In progress'}</RecordBadge></span></div>
+    </div>
+    <div className={styles.statusBar}>
+      <div><AppIcon className={allSigned ? 'ri-checkbox-circle-fill' : 'ri-time-line'} /><span><strong>{allSigned ? 'All months signed' : 'Signatures pending'}</strong><small>{allSigned ? 'Your learner signature is saved for every required month.' : 'Review your months and add any missing learner signatures.'}</small></span></div>
+      <div><AppIcon className={reviewIcon} /><span><strong>{summary.can_access_lms ? 'Review complete' : 'Review in progress'}</strong><small>{summary.can_access_lms ? 'Your learning record has been reviewed.' : 'Your learning record is still being reviewed.'}</small></span></div>
+      <div><AppIcon className={reviewIcon} /><span><strong>{summary.can_access_lms ? 'LMS access available' : 'LMS access pending'}</strong><small>{summary.can_access_lms ? 'You can continue to access your learning plan.' : 'Complete your signatures to unlock access.'}</small></span></div>
+    </div>
+  </section>;
+}
 function Portal() {
   const lmsButton = useRef<HTMLButtonElement>(null);
   const query = useRecordSummary(undefined, true);
@@ -119,20 +153,22 @@ function Portal() {
   };
   return <><Welcome summary={query.data} />
     <div className={styles.portalGrid}>
-      <section className={`${styles.card} ${styles.lift} ${styles.portalCard}`}>
+      <section className={`${styles.card} ${styles.lift} ${styles.portalCard} ${styles.lmsCard}`}>
         <div className={styles.cardTop}><span className={`${styles.iconTile} ${styles.iconSolid}`}><AppIcon className="ri-graduation-cap-line" /></span>
           <RecordBadge tone={query.data?.can_access_lms && !query.error ? 'positive' : query.data && !query.error ? 'pending' : 'neutral'}>
             <AppIcon className={query.data?.can_access_lms && !query.error ? 'ri-checkbox-circle-line' : 'ri-lock-line'} />
             {query.error ? 'Check unavailable' : !query.data ? 'Checking access' : query.data.can_access_lms ? 'Access available' : 'Access pending'}
           </RecordBadge></div>
-        <h2 className="mt-1 text-lg font-heading font-semibold">LMS</h2><p className="text-[13px] text-foreground-500">Your learning plan, activities and progress.</p>
+        <h2 className="mt-1 text-lg font-heading font-semibold">Open your LMS</h2><p className="text-[13px] text-foreground-500">Continue to your learning plan, activities and progress.</p>
         <button ref={lmsButton} className={`${btnPrimary} mt-2`} disabled={checking || query.isPending || query.starting} onClick={() => void enterLms()}>{checking ? 'Checking…' : 'Open LMS'}<AppIcon className="ri-arrow-right-line" /></button>
       </section>
-      <section className={`${styles.card} ${styles.lift} ${styles.portalCard}`}>
+      <section className={`${styles.card} ${styles.lift} ${styles.portalCard} ${styles.recordsCard}`}>
         <div className={styles.cardTop}><span className={styles.iconTile}><AppIcon className="ri-book-open-line" /></span>
           {query.data && <RecordBadge>{query.data.completed_months ?? 0}/{query.data.total_months ?? 0} months</RecordBadge>}</div>
-        <h2 className="mt-1 text-lg font-heading font-semibold">Previous learning record</h2><p className="text-[13px] text-foreground-500">Review your monthly learning records and signatures.</p>
+        <h2 className="mt-1 text-lg font-heading font-semibold">Full monthly learning record</h2><p className="text-[13px] text-foreground-500">Review all your months, accepted hours and signatures.</p>
+        <p className={styles.recordPeriod}><AppIcon className="ri-calendar-line" />Sep 2024 – Aug 2026</p>
         <Link className={`${btnSecondary} mt-2`} to="/old-otjh/months">Review previous record<AppIcon className="ri-arrow-right-line" /></Link>
+        {query.data?.months[0] && <Link aria-label="Review first month" className={`${btnSecondary} mt-2`} to={`/old-otjh/months/${query.data.months[0].month}`}>View first month<AppIcon className="ri-arrow-right-line" /></Link>}
       </section>
     </div>
     {dialogOpen && (query.data || checkError || query.error) && <TransitionDialog returnFocusRef={lmsButton} summary={query.data}
@@ -140,7 +176,7 @@ function Portal() {
       onReview={() => { const next = nextOutstanding(query.data!); setDialogOpen(false); navigate(next ? `/old-otjh/months/${next}` : '/old-otjh/months'); }} />}
     {query.isPending ? <Panel><p role="status" className="text-sm text-foreground-500">Loading your previous record…</p></Panel>
       : query.error ? <ErrorState error={query.error} retry={query.retryStart} />
-      : query.data && <Progress summary={query.data} />}
+      : query.data && <ProgrammeOverview summary={query.data} />}
   </>;
 }
 
@@ -151,6 +187,10 @@ function MonthList({ aptemId }: { aptemId?: number }) {
   const [reason, setReason] = useState('');
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkMessage, setBulkMessage] = useState('');
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<'all' | 'complete' | 'pending'>('all');
+  const [yearFilter, setYearFilter] = useState('all');
+  const [collapsedYears, setCollapsedYears] = useState<string[]>([]);
   const refresh = useMutation({ mutationFn: () => refreshMonths(aptemId!, reason),
     onSuccess: () => { setReason(''); void client.invalidateQueries({ queryKey: ['old-otjh'] }); } });
   if (query.isPending || query.starting) return <MonthListSkeleton />;
@@ -165,10 +205,20 @@ function MonthList({ aptemId }: { aptemId?: number }) {
   const student = auth.account?.role === 'learner';
   const canBulkSign = auth.account?.access !== 'record-monitor' && (student || ['coach', 'super-admin'].includes(auth.account?.access || ''));
   const unsigned = summary.months.filter(item => item.is_required !== false && (student ? item.status !== 'complete' : !item.coach_signature));
+  const years = Array.from(new Set(summary.months.map(item => item.month.slice(0, 4)))).sort();
+  const filteredMonths = summary.months.filter(item => {
+    const label = monthLabel(item.month).toLowerCase();
+    return (!search.trim() || label.includes(search.trim().toLowerCase()))
+      && (yearFilter === 'all' || item.month.startsWith(yearFilter))
+      && (filter === 'all' || (filter === 'complete' ? item.status === 'complete' : item.status !== 'complete'));
+  });
+  const groupedMonths = years.map(year => ({ year, months: filteredMonths.filter(item => item.month.startsWith(year)) })).filter(group => group.months.length);
+  const acceptedTotal = summary.months.reduce((sum, item) => sum + (Number(item.actual_hours) || 0), 0);
   return <div className={styles.monthList}>
     <header className={styles.monthListHeader}>
       <p className={styles.eyebrow}>Previous learning record</p>
       <h1 className="font-heading font-semibold">{aptemId === undefined ? 'Monthly learning records' : summary.learner?.name || 'Monthly learning records'}</h1>
+      <p className={styles.programmeLine}>Full programme record <span>·</span> Sep 2024 – Aug 2026</p>
       <div className={styles.learnerMeta}>
         {summary.learner?.programme && <span>{summary.learner.programme}</span>}
         <span><AppIcon className="ri-user-line" />Coach: {summary.learner?.coach_name || 'Unassigned'}</span>
@@ -191,6 +241,17 @@ function MonthList({ aptemId }: { aptemId?: number }) {
       </div>
       <div className={styles.monthCutoff}><AppIcon className="ri-calendar-line" /><div><span>Previous record through</span><strong>31 August 2026</strong></div></div>
     </section>
+    <section className={styles.statStrip} aria-label="Record summary">
+      <div><AppIcon className="ri-book-open-line" /><strong>{total}</strong><span>Months</span></div>
+      <div><AppIcon className="ri-time-line" /><strong>{duration(acceptedTotal)}</strong><span>Accepted</span></div>
+      <div><AppIcon className="ri-edit-line" /><strong>{complete}</strong><span>Signed</span></div>
+      <div><AppIcon className="ri-checkbox-circle-line" /><strong>{percent}%</strong><span>Complete</span></div>
+    </section>
+    <section className={styles.monthFilters} aria-label="Filter learning records">
+      <label><AppIcon className="ri-search-line" /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search month (e.g. January)" aria-label="Search month" /></label>
+      <div className={styles.filterPills}>{(['all', 'complete', 'pending'] as const).map(value => <button key={value} type="button" className={filter === value ? styles.activePill : ''} onClick={() => setFilter(value)}>{value === 'all' ? 'All months' : value === 'complete' ? 'Complete' : 'Needs signature'}</button>)}</div>
+      <div className={styles.yearTabs}>{['all', ...years].map(value => <button key={value} type="button" className={yearFilter === value ? styles.activeYear : ''} onClick={() => setYearFilter(value)}>{value === 'all' ? 'All' : value}</button>)}</div>
+    </section>
     {canBulkSign && <div className={styles.bulkActions}>
       <p>{unsigned.length ? `${unsigned.length} ${unsigned.length === 1 ? 'month' : 'months'} awaiting your sign-off. ${student ? 'Sign once to complete your previous learning record.' : 'Add the coach signature across the record.'}` : 'Your signature is saved for all months.'}</p>
       <button className={btnPrimary} disabled={!unsigned.length} onClick={() => setBulkOpen(true)}><AppIcon className="ri-edit-line" />Sign all months</button>
@@ -204,8 +265,11 @@ function MonthList({ aptemId }: { aptemId?: number }) {
         : `Your signature was saved for ${result.signed_months.length} ${result.signed_months.length === 1 ? 'month' : 'months'}. ${result.completed_months.length} completed automatically.${result.skipped_months.length ? ' Existing signatures were kept.' : ''}`);
     }} />}
     {query.data.months.length === 0 && <Panel><EmptyState title="No previous activity months are available" description="Please contact your coach to check your previous record." /></Panel>}
-    <div className={styles.monthGrid}>{query.data.months.map(month => <section key={month.month} className={`${styles.card} ${styles.lift} ${styles.monthCard} ${month.status === 'complete' ? styles.monthComplete : ''}`}>
+    <div className={styles.yearGroups}>{groupedMonths.map(group => <section key={group.year} className={styles.yearGroup}>
+      <div className={styles.yearHeading}><div><strong>{group.year}</strong><span> · {group.months.length} months</span><small>{monthLabel(group.months[0].month)} – {monthLabel(group.months.at(-1)?.month)}</small></div><button type="button" onClick={() => setCollapsedYears(current => current.includes(group.year) ? current.filter(value => value !== group.year) : [...current, group.year])}>{collapsedYears.includes(group.year) ? 'Expand year' : 'Collapse year'} <AppIcon className={collapsedYears.includes(group.year) ? 'ri-arrow-down-s-line' : 'ri-arrow-up-s-line'} /></button></div>
+      {!collapsedYears.includes(group.year) && <div className={styles.monthGrid}>{group.months.map(month => <section key={month.month} className={`${styles.card} ${styles.lift} ${styles.monthCard} ${month.status === 'complete' ? styles.monthComplete : ''}`}>
       <div className={styles.monthCardHeading}>
+        <span className={styles.monthNumber}>{summary.months.findIndex(item => item.month === month.month) + 1}</span>
         <span className={styles.monthIcon}><AppIcon className={month.status === 'complete' ? 'ri-calendar-check-line' : 'ri-calendar-line'} /></span>
         <h2 className="font-heading font-semibold">{monthLabel(month.month)}</h2>
         <span className={styles.activityCount}>{month.row_count} {month.row_count === 1 ? 'activity' : 'activities'}</span>
@@ -218,6 +282,7 @@ function MonthList({ aptemId }: { aptemId?: number }) {
       <div className={styles.signatureChips}><SignatureChip signed={Boolean(month.student_signature)} label="Learner signature" /><SignatureChip signed={Boolean(month.coach_signature)} label="Coach signature" /></div>
       <div className={styles.monthCardFooter}><MonthBadge month={month} />
         <Link className={styles.monthReviewLink} to={`${base}/${month.month}`}>Review month<AppIcon className="ri-arrow-right-line" /></Link></div>
+    </section>)}</div>}
     </section>)}</div>
     {query.data.can_access_lms && aptemId === undefined && <Link className={btnPrimary} to="/workspace/learner">Continue to new LMS</Link>}
     {auth.account?.access === 'super-admin' && aptemId !== undefined && <Panel className="space-y-3">

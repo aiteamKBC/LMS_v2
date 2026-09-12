@@ -688,11 +688,24 @@ class LearnerProfile(models.Model):
         # `.all()` issues a query per entry per relation. Large learner histories
         # can otherwise spend minutes on thousands of round trips in the
         # property every progress and OTJH screen reads.
-        entries = self.progress_entries.prefetch_related(
-            "ksb_links",
-            "quiz_answers__chosen_answers",
-            "quiz_answers__correct_answers",
-        )
+        prefetched = getattr(self, "_prefetched_objects_cache", {})
+        entries = prefetched.get("progress_entries")
+        if entries is None:
+            entries = self.progress_entries.prefetch_related(
+                "ksb_links",
+                "quiz_answers__chosen_answers",
+                "quiz_answers__correct_answers",
+            )
+        else:
+            # Reuse rows already loaded by learner detail. Calling the related
+            # manager's prefetch_related clones its queryset and fetches the
+            # whole history again on each projection of the same profile.
+            from django.db.models import prefetch_related_objects
+
+            prefetch_related_objects(
+                entries, "ksb_links", "quiz_answers__chosen_answers",
+                "quiz_answers__correct_answers",
+            )
         for entry in entries:
             if entry.kind == "activity_event":
                 continue

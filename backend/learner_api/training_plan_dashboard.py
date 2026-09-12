@@ -2,7 +2,6 @@
 from datetime import datetime, timezone
 import logging
 import math
-import re
 import time
 
 from django.db import DatabaseError, connections
@@ -15,7 +14,7 @@ from .learner_detail import SOURCE_MODELS
 from .models import LearnerProfile
 from .student_activity import CURRENT_SUBJECTS_SQL, _builder_subject_metadata
 from .subject_content import clean_text, safe_url
-from .training_plan_contract import read_contract, contract_extract_metadata
+from .training_plan_contract import read_contract, contract_extract_metadata, selected_contract
 
 log = logging.getLogger(__name__)
 
@@ -41,23 +40,6 @@ def instant(value):
     return value.isoformat()
 
 
-def selected_contract(candidates):
-    """Use an available duplicate of the same document version, never an older plan."""
-    if not candidates:
-        return None
-    selected = candidates[0]
-    if selected.get('azure_path') or not selected.get('date'):
-        return selected
-    def name(row):
-        return re.sub(r'\.pdf$', '', str(row.get('document_name') or '').strip(), flags=re.I).casefold()
-    # Review-import placeholders can repeat an existing document but omit its
-    # Azure path. Their timestamps differ only by subsecond export precision.
-    same = [row for row in candidates[1:] if row.get('azure_path') and row.get('date')
-            and row['date'].replace(microsecond=0) == selected['date'].replace(microsecond=0)
-            and name(row) == name(selected)]
-    return same[0] if len(same) == 1 else selected
-
-
 def plan_session(row):
     start = row['scheduled_start'] or row['start_datetime']
     end = row['scheduled_end']
@@ -71,6 +53,7 @@ def plan_session(row):
 
 def find_contract(cursor, aptem_id):
     cursor.execute('''SELECT c.id,c.azure_path,c.training_plan_planned_hours,
+        c.document_name AS original_name,
         coalesce(nullif(a.display_name,''),c.document_name) AS document_name,
         c.date,c.fetched_at,c.fully_signed_date,c.raw AS extraction_metadata
         FROM fetching_evidence.aptem_cv_contracts_probe c
@@ -119,7 +102,8 @@ def read_dashboard(source, section=None):
             if len(candidates) > 1 or (candidates and (not email or email != str(candidates[0]['learner_email'] or '').strip().casefold())):
                 raise LookupError('The training plan is not linked to this learner.')
             historical = candidates[0] if candidates else None
-            contract = find_contract(cur, aptem_id)
+            if section != 'overview':
+                contract = find_contract(cur, aptem_id)
         if section == 'contract':
             return contract_plan(source, contract)
         if aptem_id:

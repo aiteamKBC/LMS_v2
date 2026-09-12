@@ -215,7 +215,6 @@ class CalendarResponseTests(SimpleTestCase):
         with patch.object(module, 'SOURCE_MODELS', {'commercial': Mock()}) as models, \
                 patch.object(module.CoachCalendarEvent.objects, 'filter', return_value=queryset), \
                 patch('coach_api.views.collect_live_session_events', return_value=live_events or []) as collect_live, \
-                patch.object(module, 'learner_profile_for_source', return_value=mirror):
                 patch.object(module, 'learner_profile_for_source', return_value=mirror), \
                 patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='staff', id=-1)):
             models['commercial'].all_learners.filter.return_value.first.return_value = _learner()

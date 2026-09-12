@@ -1,0 +1,68 @@
+{
+  "source": "LMS.Aptem_users.Program-Status",
+  "date": "2026-09-12",
+  "read_only": true,
+  "display_counts": {
+    "Active": 3,
+    "Withdrawn": 8,
+    "Delivery": 358
+  },
+  "withdrawn": [
+    {
+      "id": 132,
+      "name": "Anna Rundell",
+      "stored_status": "Delivery",
+      "display_status": "Withdrawn",
+      "aptem_status": "Withdrawn"
+    },
+    {
+      "id": 159,
+      "name": "JORDEN GUEST",
+      "stored_status": "Delivery",
+      "display_status": "Withdrawn",
+      "aptem_status": "Withdrawn"
+    },
+    {
+      "id": 194,
+      "name": "Adam Edmondson",
+      "stored_status": "Delivery",
+      "display_status": "Withdrawn",
+      "aptem_status": "Withdrawn"
+    },
+    {
+      "id": 304,
+      "name": "Hannah Killick",
+      "stored_status": "Delivery",
+      "display_status": "Withdrawn",
+      "aptem_status": "Withdrawn"
+    },
+    {
+      "id": 372,
+      "name": "Lauren Sinclair",
+      "stored_status": "Delivery",
+      "display_status": "Withdrawn",
+      "aptem_status": "Withdrawn"
+    },
+    {
+      "id": 397,
+      "name": "Martha Pitcher",
+      "stored_status": "Delivery",
+      "display_status": "Withdrawn",
+      "aptem_status": "Withdrawn"
+    },
+    {
+      "id": 431,
+      "name": "Philip Durham",
+      "stored_status": "Delivery",
+      "display_status": "Withdrawn",
+      "aptem_status": "Withdrawn"
+    },
+    {
+      "id": 465,
+      "name": "Sienna Parkinson",
+      "stored_status": "Delivery",
+      "display_status": "Withdrawn",
+      "aptem_status": "Withdrawn"
+    }
+  ]
+}

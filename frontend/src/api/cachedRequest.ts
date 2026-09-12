@@ -49,13 +49,14 @@ export function createCachedResource<T>(
   fetcher: (key: string) => Promise<T>,
   ttlMs: number = DEFAULT_TTL_MS,
 ) {
-  const read = (key: string, options: { force?: boolean } = {}): Promise<T> => {
+  const read = (key: string, options: { force?: boolean; revalidate?: boolean } = {}): Promise<T> => {
     const cache = bucket<Entry<unknown>>(caches, name);
     const pending = bucket<Promise<unknown>>(inFlight, name);
 
     if (!options.force) {
       const hit = cache.get(key) as Entry<T> | undefined;
-      if (hit && hit.expiresAt > Date.now()) return Promise.resolve(hit.data);
+      // Background refresh bypasses the snapshot but still shares a read.
+      if (!options.revalidate && hit && hit.expiresAt > Date.now()) return Promise.resolve(hit.data);
       // An identical request is already on the wire — join it rather than
       // opening a second one. This is what collapses the StrictMode pair.
       const existing = pending.get(key) as Promise<T> | undefined;
@@ -64,7 +65,12 @@ export function createCachedResource<T>(
 
     const promise = fetcher(key)
       .then((data) => {
-        cache.set(key, { data, expiresAt: Date.now() + ttlMs });
+        // A save, account change or newer forced read may have superseded this
+        // request while it was in flight. Never put that older response back.
+        if (pending.get(key) === promise) {
+          if (cache.size >= 200) cache.delete(cache.keys().next().value!);
+          cache.set(key, { data, expiresAt: Date.now() + ttlMs });
+        }
         return data;
       })
       // A failure is never cached: the next mount retries rather than being
@@ -87,19 +93,20 @@ export function createCachedResource<T>(
    * flash is what made revisiting a wizard step look like a page load.
    *
    * Never a substitute for `read`: a miss returns undefined and the caller must
-   * still fetch. Expiry is honoured, so this cannot serve a stale entry that
-   * `read` would have refreshed.
+   * still fetch. Callers may opt into a bounded stale snapshot while `read`
+   * refreshes it in the background. Invalidation always removes the snapshot.
    */
-  const peek = (key: string): T | undefined => {
+  const peek = (key: string, staleForMs = 0): T | undefined => {
     const hit = bucket<Entry<unknown>>(caches, name).get(key) as Entry<T> | undefined;
-    return hit && hit.expiresAt > Date.now() ? hit.data : undefined;
+    return hit && hit.expiresAt + staleForMs > Date.now() ? hit.data : undefined;
   };
 
   /** Drop one key (or the whole resource) after a write that changes it. */
   const invalidate = (key?: string): void => {
     const cache = bucket<Entry<unknown>>(caches, name);
-    if (key === undefined) cache.clear();
-    else cache.delete(key);
+    const pending = bucket<Promise<unknown>>(inFlight, name);
+    if (key === undefined) { cache.clear(); pending.clear(); }
+    else { cache.delete(key); pending.delete(key); }
   };
 
   /**
@@ -108,6 +115,7 @@ export function createCachedResource<T>(
    * object would serve something the server never sent.
    */
   const prime = (key: string, data: T): void => {
+    bucket<Promise<unknown>>(inFlight, name).delete(key);
     bucket<Entry<unknown>>(caches, name).set(key, { data, expiresAt: Date.now() + ttlMs });
   };
 
@@ -116,6 +124,9 @@ export function createCachedResource<T>(
 
 /** Test seam — drops every cached resource. */
 export function clearAllCachedResources(): void {
+  // Clear the captured maps too: a pending promise can still reference them.
+  caches.forEach(cache => cache.clear());
+  inFlight.forEach(pending => pending.clear());
   caches.clear();
   inFlight.clear();
 }

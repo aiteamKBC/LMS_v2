@@ -67,7 +67,7 @@
 .hoursHeading p { margin-top: 4px; color: var(--record-muted); font-size: 11px; }
 .hoursGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .metric { min-width: 0; padding: 14px 16px; border-left: 5px solid var(--record-deep); border-radius: 6px; background: var(--record-soft); }
-.acceptedMetric { border-left-color: #059669; }
+.acceptedMetric { border-left-color: var(--record-accepted-accent, #059669); }
 .metricValue { margin-top: 10px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--record-ink); font-size: 18px; font-weight: 600; line-height: 1.3; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .metricNote { margin-top: 6px; font-size: 9px; color: var(--record-muted); }
 .hoursNote { display: flex; gap: 6px; margin-top: 10px; color: var(--record-muted); font-size: 10px; }

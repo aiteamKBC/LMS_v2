@@ -1,3 +1,4 @@
+import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
 // ============================================================================
 // Engagement API client.
 // Talks to the Django engagement_api at /engagement_api (proxied to :8000 by
@@ -61,6 +62,7 @@ function csrfToken(): Promise<string> {
 }
 
 async function request<T>(url: string, options?: { method?: string; body?: string }): Promise<T> {
+  if (!options?.method || options.method.toUpperCase() === 'GET') return readLearnerJson<T>(url);
   const method = (options?.method || 'GET').toUpperCase();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (UNSAFE_METHODS.has(method)) {
@@ -76,6 +78,7 @@ async function request<T>(url: string, options?: { method?: string; body?: strin
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) throw new Error((data && data.error) || `Request failed (${res.status})`);
+  invalidateLearnerReads();
   return data as T;
 }
 

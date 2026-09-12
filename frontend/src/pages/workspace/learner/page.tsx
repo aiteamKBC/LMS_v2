@@ -1,125 +1,35 @@
-import { useState, useMemo, useRef, useEffect, useCallback, Fragment } from 'react';
+import { useState, useEffect } from 'react';
+import { BookOpen, CalendarCheck, Clock3, BarChart3, Info, type LucideIcon } from 'lucide-react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { LEARNER_PROFILE, WEEKLY_LEARNING_COMPONENTS } from '@/mocks/learner-profile';
-import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
+import { LEARNER_PROFILE } from '@/mocks/learner-profile';
+import { useLearnerSummaryParam } from '@/hooks/useLearnerSummaryParam';
+import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
+import { useAuth } from '@/hooks/useAuth';
+import { overviewWeek } from '@/api/learnerOverview';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
-import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
-import { buildLearnerJourney, componentTypeMeta, componentNoun, evidencedTargetKsbCodes, gradePercent, formatHoursMinutes, hasComponentContent, isOpenableComponent, parseHours, type JourneyComponent } from '@/utils/learnerJourney';
-import type {
-  ComponentMarking,
-  LearnerComponentProgress,
-  LearnerDetail,
-  LearnerKind,
-  LearnerVideoProgress,
-} from '@/api/learnerDetail';
-import { learningReflectionStatusKey, loadLearningReflectionStatuses, type LearningReflectionStatusMap } from '@/api/reflectionSubmission';
-import { buildStations, type ModuleStation } from '@/components/feature/RealLearningJourneyView';
-import { fetchLearnerCalendarEvents, fetchLearnerCoach, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { formatHoursMinutes } from '@/utils/learnerJourney';
+import { type LearnerKind } from '@/api/learnerDetail';
+import { fetchLearnerCoach } from '@/api/learnerCalendar';
 import { useFreshUserRedirect, useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
 import { syncLearnerStatus } from '@/hooks/useLearnerNavGate';
-import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
-import { fetchLearnerCertificateStatus, issueLearnerCertificate, type LearnerCertificate, type LearnerCertificateStatus } from '@/api/learnerCertificates';
-import type { CertificateTemplate } from '@/api/platformAdmin';
-import type React from 'react';
+import { useLearnerAttendance } from '@/hooks/useLearnerAttendance';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { CertificateDocument } from '@/components/feature/CertificateDocument';
-import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { PageSkeleton } from '@/components/feature/Skeletons';
+import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { PageContainer } from '@/components/ui/PageContainer';
-import { Panel } from '@/components/ui/Panel';
-import { SectionHeader } from '@/components/ui/SectionHeader';
-import { RowAction } from '@/components/ui/ActionRow';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { ProgressBar } from '@/components/ui/ProgressMetric';
 import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
+import { LearnerProfilePhoto } from '@/components/feature/LearnerProfilePhoto';
 import { toneStyle, statusTone, type StatusTone } from '@/lib/statusTone';
 import { waitingCopy } from '@/utils/learnerAccessGate';
 import { displayValue, EMPTY_VALUE, ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
-import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
-import { COMPONENT_ACCESS_MESSAGE } from '@/lib/componentAccessWindow';
-import { isNavigableComponent } from '@/pages/learner/video-watch/weekPreview';
-import { useUnifiedLearningSummary } from '@/pages/learner/my-learning/SubjectWorkspace';
-
-/* ─────────────────────────────────────────────
-   Real-learner component progress + current-week UI
-   ───────────────────────────────────────────── */
-
-type CompState = 'passed' | 'attempted' | 'watched' | 'completed' | 'awaiting' | 'todo';
-
-/**
- * Derive a component's real progress from what the learner has recorded.
- *
- * Three kinds of completion, one per way a component can be finished: a quiz is
- * graded, a video is watched, and everything else (reading, slides, podcast,
- * assignment, reflection…) is completed through the component runner, which
- * writes its own `component` record. Reading only the first two left every
- * completed reading and slide deck showing "To do" — see LearnerComponentProgress.
- */
-function componentProgress(
-  c: JourneyComponent,
-  videos: LearnerVideoProgress[],
-  completions: LearnerComponentProgress[] = [],
-  markingStatus: Record<string, ComponentMarking> = {},
-): { state: CompState; label: string; percent: number; detail?: string } {
-  // An activity the author marked for tutor validation is not finished when the
-  // learner submits it — it is finished when a coach accepts it. Completing it
-  // records the work and hands it in; showing it green at that point told the
-  // learner their assignment was done before anybody had assessed it.
-  if (c.componentId && c.tutorValidationRequired) {
-    const decision = markingStatus[c.componentId]?.status;
-    if (decision === 'referred' || decision === 'rejected') {
-      return { state: 'attempted', label: 'Needs work', percent: 0 };
-    }
-    if (decision && decision !== 'accepted' && decision !== 'partial') {
-      return { state: 'awaiting', label: 'Awaiting coach', percent: 50 };
-    }
-    if (!decision) {
-      // Submitted or not, nothing has reached a coach yet.
-      return { state: 'todo', label: 'To do', percent: 0 };
-    }
-  }
-  if (c.isQuiz && c.quizAttempts && c.quizAttempts.length > 0) {
-    const best = c.quizAttempts.reduce((b, a) => (gradePercent(a.grade) > gradePercent(b.grade) ? a : b));
-    const pct = gradePercent(best.grade);
-    return best.passed
-      ? { state: 'passed', label: 'Passed', percent: 100, detail: `${pct}%` }
-      : { state: 'attempted', label: 'Attempted', percent: pct, detail: `${pct}%` };
-  }
-  if (c.type === 'video' && c.componentId) {
-    const watched = videos.some((v) => v.componentId === c.componentId);
-    if (watched) return { state: 'watched', label: 'Completed', percent: 100 };
-  }
-  if (c.componentId) {
-    const done = completions.filter((entry) => entry.componentId === c.componentId);
-    if (done.length > 0) {
-      // An explicit false is a recorded failure and never counts as done; an
-      // absent `passed` is the normal ungraded completion.
-      return done.some((entry) => entry.passed !== false)
-        ? { state: 'completed', label: 'Completed', percent: 100 }
-        : { state: 'attempted', label: 'Attempted', percent: 0 };
-    }
-  }
-  return { state: 'todo', label: 'To do', percent: 0 };
-}
-
-const STATE_STYLE: Record<CompState, { pill: string; dot: string; bar: string }> = {
-  passed:    { pill: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', bar: 'bg-emerald-500' },
-  attempted: { pill: 'bg-amber-100 text-amber-700', dot: 'bg-amber-500', bar: 'bg-amber-500' },
-  watched:   { pill: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', bar: 'bg-emerald-500' },
-  completed: { pill: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', bar: 'bg-emerald-500' },
-  awaiting:  { pill: 'bg-sky-100 text-sky-700', dot: 'bg-sky-500', bar: 'bg-sky-500' },
-  todo:      { pill: 'bg-background-200 text-foreground-500', dot: 'bg-foreground-300', bar: 'bg-foreground-300' },
-};
-
-const REFLECTION_STATUS: Record<string, { label: string; style: string; icon: string }> = {
-  accepted: { label: 'Reflection accepted', style: 'bg-emerald-100 text-emerald-700', icon: 'ri-check-double-line' },
-  submitted_for_tutor_review: { label: 'Reflection awaiting review', style: 'bg-primary-100 text-primary-700', icon: 'ri-time-line' },
-  pending: { label: 'Reflection awaiting review', style: 'bg-primary-100 text-primary-700', icon: 'ri-time-line' },
-  referred: { label: 'Reflection needs changes', style: 'bg-amber-100 text-amber-700', icon: 'ri-arrow-go-back-line' },
-  reject: { label: 'Reflection needs changes', style: 'bg-amber-100 text-amber-700', icon: 'ri-arrow-go-back-line' },
-  rejected: { label: 'Reflection needs changes', style: 'bg-amber-100 text-amber-700', icon: 'ri-arrow-go-back-line' },
-};
+import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
+import overviewStyles from './Overview.module.css';
+import { OverviewLearningPanels } from './OverviewLearningPanels';
+import { DashboardTrainingPlan } from './DashboardTrainingPlan';
+import { DashboardActivities } from './DashboardActivities';
 
 function formatProgrammeStartDate(value?: string | null): string {
   if (!value) return '';
@@ -129,104 +39,8 @@ function formatProgrammeStartDate(value?: string | null): string {
     : new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }).format(date);
 }
 
-/** Week names are authored as free text, but often include a UK date such as
- * 3/3/2026. Turn it into a clear seven-day learning period when available. */
-function weekPeriodLabel(value: string): string | null {
-  const match = value.match(/(?:^|\D)(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})(?:\D|$)/);
-  if (!match) return null;
-  const [, dayText, monthText, yearText] = match;
-  const day = Number(dayText);
-  const month = Number(monthText);
-  const year = Number(yearText);
-  const start = new Date(Date.UTC(year, month - 1, day));
-  if (
-    start.getUTCFullYear() !== year
-    || start.getUTCMonth() !== month - 1
-    || start.getUTCDate() !== day
-  ) return null;
-  const end = new Date(start);
-  end.setUTCDate(end.getUTCDate() + 6);
-  const format = (date: Date) => new Intl.DateTimeFormat('en-GB', {
-    day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC',
-  }).format(date);
-  return `${format(start)} – ${format(end)}`;
-}
-
-/* ─────────────────────────────────────────────
-   Scroll-triggered reveal component
-   ───────────────────────────────────────────── */
-function SectionReveal({ children, className = '', delay = 0, immediate = false }: { children: React.ReactNode; className?: string; delay?: number; immediate?: boolean }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    if (immediate) return;
-    const el = ref.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setTimeout(() => setVisible(true), delay);
-          observer.disconnect();
-        }
-      },
-      { threshold: 0.08, rootMargin: '0px 0px -30px 0px' },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [delay, immediate]);
-
-  return (
-    <div
-      ref={ref}
-      className={`transition-all duration-[500ms] ease-out ${className} ${
-        immediate || visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'
-      }`}
-    >
-      {children}
-    </div>
-  );
-}
-
-/* Small date helpers for the Upcoming panel — only what a list needs, not a grid. */
-const MINI_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-
-function miniEventYMD(s?: string | null): { y: number; m: number; d: number } | null {
-  if (!s) return null;
-  const [y, m, d] = s.split('-').map(Number);
-  if (!y || !m || !d) return null;
-  return { y, m: m - 1, d };
-}
-function miniEventDate(ev: LearnerCalendarEvent) {
-  return miniEventYMD(ev.scheduledDate) || miniEventYMD(ev.date) || miniEventYMD(ev.targetDate);
-}
-
 const learnerNav = roleNavMap.learner;
 
-/* ── type → colour mapping (mock-mode "Continue Learning" list) ── */
-const typeStyle: Record<string, { bg: string; iconBg: string; iconText: string; chip: string }> = {
-  'Live Session': { bg: 'bg-emerald-50/80', iconBg: 'bg-emerald-100', iconText: 'text-emerald-600', chip: 'bg-emerald-100 text-emerald-700' },
-  'Video': { bg: 'bg-accent-50/80', iconBg: 'bg-accent-100', iconText: 'text-accent-600', chip: 'bg-accent-100 text-accent-700' },
-  'Reading': { bg: 'bg-primary-50/80', iconBg: 'bg-primary-100', iconText: 'text-primary-600', chip: 'bg-primary-100 text-primary-700' },
-  'Podcast': { bg: 'bg-secondary-50/80', iconBg: 'bg-secondary-100', iconText: 'text-secondary-600', chip: 'bg-secondary-100 text-secondary-700' },
-  'Quiz': { bg: 'bg-amber-50/80', iconBg: 'bg-amber-100', iconText: 'text-amber-600', chip: 'bg-amber-100 text-amber-700' },
-  'Activity': { bg: 'bg-accent-50/80', iconBg: 'bg-accent-100', iconText: 'text-accent-700', chip: 'bg-accent-100 text-accent-700' },
-  'Reflection': { bg: 'bg-primary-50/80', iconBg: 'bg-primary-100', iconText: 'text-primary-600', chip: 'bg-primary-100 text-primary-700' },
-  'Evidence': { bg: 'bg-secondary-50/80', iconBg: 'bg-secondary-100', iconText: 'text-secondary-600', chip: 'bg-secondary-100 text-secondary-700' },
-};
-
-const statusStyle: Record<string, { bg: string; text: string; dot: string; border: string }> = {
-  'Not Started': { bg: 'bg-background-50', text: 'text-foreground-500', dot: 'bg-foreground-300', border: 'border-foreground-200/60' },
-  'In Progress': { bg: 'bg-accent-50/40', text: 'text-accent-800', dot: 'bg-accent-500', border: 'border-accent-300/50' },
-  'Evidence Required': { bg: 'bg-amber-50/40', text: 'text-amber-700', dot: 'bg-amber-500', border: 'border-amber-200/60' },
-  'Evidence Submitted': { bg: 'bg-primary-50/40', text: 'text-primary-700', dot: 'bg-primary-500', border: 'border-primary-200/60' },
-  'Referred': { bg: 'bg-red-50/40', text: 'text-red-700', dot: 'bg-red-500', border: 'border-red-200/60' },
-  'Completed': { bg: 'bg-emerald-50/40', text: 'text-emerald-700', dot: 'bg-emerald-500', border: 'border-emerald-200/60' },
-};
-
-/* ─────────────────────────────────────────────
-   PAGE
-   ───────────────────────────────────────────── */
 export default function LearnerOverview() {
   const p = LEARNER_PROFILE;
   const navigate = useNavigate();
@@ -234,69 +48,24 @@ export default function LearnerOverview() {
   /* ── Real-learner mode: /workspace/learner/:kind/:id ── */
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
   const { kind, id } = useResolvedLearner(urlKind, urlId);
-  // Anyone but this learner reads the workspace: the plan is visible, nothing in
-  // it can be progressed. Booking a session is unaffected — see the coach card.
-  const { canProgress, showReadOnlyNotice } = useLearnerWorkspaceAccess(id);
-  const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
-  const isCommercialPreStart = isRealMode
-    && kind === 'commercial'
-    && real?.programmeStatus?.trim().toLowerCase() === 'delivery';
-  const skipPreStartData = isRealMode && (real == null || isCommercialPreStart);
+  const { isRealMode, real, loading, loadError, refresh } = useLearnerSummaryParam(kind, id);
+  const { auth, canSeeNavItem } = useAuth();
+  const reviewingLearner = auth.account?.role === 'admin' || auth.account?.role === 'staff';
+  const knownLearner = real;
+  // Imported learning already has progress to show, even while the new
+  // programme is at Delivery. The route gate still checks monthly signatures.
+  const isCommercialPreStart = isRealMode && kind === 'commercial'
+    && !reviewingLearner
+    && real?.programmeStatus?.trim().toLowerCase() === 'delivery'
+    && !real.studentActivityAvailable;
+  const skipPreStartData = isRealMode && (!real || isCommercialPreStart);
   const learnerKind: LearnerKind | null = kind === 'commercial' || kind === 'apprenticeship' ? kind : null;
+  const weekRead = useLiveLearnerRead(learnerKind, id, isRealMode && !skipPreStartData, overviewWeek.read, overviewWeek.peek);
 
-  const [attendance, setAttendance] = useState<LearnerAttendance | null>(null);
-  const [attendanceLoading, setAttendanceLoading] = useState(isRealMode);
-  const [reflectionStatuses, setReflectionStatuses] = useState<LearningReflectionStatusMap>({});
+  const attendanceRead = useLearnerAttendance(learnerKind, id, isRealMode && !skipPreStartData);
+  const { data: attendance, loading: attendanceLoading } = attendanceRead;
   const [coach, setCoach] = useState<{ name: string; email: string } | null>(null);
-  const [calendarEvents, setCalendarEvents] = useState<LearnerCalendarEvent[]>([]);
-  const [calendarLoading, setCalendarLoading] = useState(isRealMode);
-
-  useEffect(() => {
-    if (!isRealMode || !kind || !id || skipPreStartData) {
-      setAttendance(null);
-      setAttendanceLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setAttendance(null);
-    setAttendanceLoading(true);
-    fetchLearnerAttendance(kind, id)
-      .then((record) => {
-        if (!cancelled) setAttendance(record);
-      })
-      .catch(() => {
-        if (!cancelled) setAttendance(null);
-      })
-      .finally(() => {
-        if (!cancelled) setAttendanceLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isRealMode, kind, id, skipPreStartData]);
-
-  useEffect(() => {
-    if (!isRealMode || !kind || !id || skipPreStartData) {
-      setReflectionStatuses({});
-      return;
-    }
-
-    let cancelled = false;
-    loadLearningReflectionStatuses({ learnerKind: kind, learnerId: id })
-      .then((statuses) => {
-        if (!cancelled) setReflectionStatuses(statuses);
-      })
-      .catch(() => {
-        if (!cancelled) setReflectionStatuses({});
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isRealMode, kind, id, skipPreStartData]);
-
-  // Assigned coach — powers the "My Coach" card and the header's coach fact.
+  // Assigned coach shown in the profile header.
   useEffect(() => {
     if (!isRealMode || !id || skipPreStartData) {
       setCoach(null);
@@ -309,30 +78,13 @@ export default function LearnerOverview() {
     return () => { cancelled = true; };
   }, [isRealMode, id, skipPreStartData]);
 
-  // Upcoming coaching/review sessions — read-only here; booking still lives on
-  // the full calendar page, not duplicated on the Overview.
-  useEffect(() => {
-    if (!isRealMode || !learnerKind || !id || skipPreStartData) {
-      setCalendarEvents([]);
-      setCalendarLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setCalendarLoading(true);
-    fetchLearnerCalendarEvents(learnerKind, id)
-      .then((res) => { if (!cancelled) setCalendarEvents(res.events.filter((e) => e.status !== 'cancelled')); })
-      .catch(() => { if (!cancelled) setCalendarEvents([]); })
-      .finally(() => { if (!cancelled) setCalendarLoading(false); });
-    return () => { cancelled = true; };
-  }, [isRealMode, learnerKind, id, skipPreStartData]);
-
   /* ── Onboarding learners land on their enrolment wizard, not the overview ──
      Gated on `!loading` so a not-yet-loaded status never reads as "not onboarding". */
-  const redirectingToOnboarding = useOnboardingRedirect(real?.programmeStatus, isRealMode && !loading, kind);
+  const redirectingToOnboarding = useOnboardingRedirect(real?.programmeStatus, isRealMode && !loading && !reviewingLearner, kind);
 
   /* ── A learner whose enrolment hasn't been started yet gets the waiting page ──
      Same gating as above: `!loading` so an unresolved status never reads as fresh. */
-  const isFreshUser = useFreshUserRedirect(real?.programmeStatus, isRealMode && !loading);
+  const isFreshUser = useFreshUserRedirect(real?.programmeStatus, isRealMode && !loading && !reviewingLearner);
   const isCommercialWaiting = isCommercialPreStart && !loading;
 
   /* The sidebar caches the programme status for the whole browser session and
@@ -345,11 +97,11 @@ export default function LearnerOverview() {
     syncLearnerStatus(kind, id, real?.programmeStatus);
   }, [isRealMode, loading, kind, id, real?.programmeStatus]);
 
-  const heroName = isRealMode ? ((real?.name.split(' ')[0]) || real?.name || 'Learner') : p.firstName;
-  const heroFullName = isRealMode ? (real?.name || 'Learner') : p.fullName;
-  const heroProgramme = isRealMode ? (real?.programme || '') : p.programme;
-  const heroEmployer = isRealMode ? (real?.employer || '') : p.employer;
-  const heroCohort = isRealMode ? (real?.cohort || '') : p.cohort;
+  const heroName = isRealMode ? ((knownLearner?.name.split(' ')[0]) || knownLearner?.name || 'Learner') : p.firstName;
+  const heroFullName = isRealMode ? (knownLearner?.name || 'Learner') : p.fullName;
+  const heroProgramme = isRealMode ? (knownLearner?.programme || '') : p.programme;
+  const heroEmployer = isRealMode ? (knownLearner?.employer || '') : p.employer;
+  const heroCohort = isRealMode ? (knownLearner?.cohort || '') : p.cohort;
   const subtitleParts = isRealMode
     ? [
         heroProgramme ? `Programme: ${heroProgramme}` : '',
@@ -360,7 +112,6 @@ export default function LearnerOverview() {
 
   const trainingPlanHref = kind && id ? `/learner/training-plan/${kind}/${id}` : '/learner/training-plan';
   const learningPlanHubHref = kind && id ? `/learner/learning-plan/${kind}/${id}` : '/learner/learning-plan';
-  const journeyHref = kind && id ? `/learner/modules/${kind}/${id}` : '/learner/modules';
   const programmeProgressHref = kind && id ? `/learner/my-learning/${kind}/${id}` : '/learner/my-learning';
   const otjhProgressHref = kind && id ? `/learner/otjh/${kind}/${id}` : '/learner/otjh';
   const ksbProgressHref = kind && id ? `/learner/ksbs/${kind}/${id}` : '/learner/ksbs';
@@ -370,98 +121,26 @@ export default function LearnerOverview() {
     ? ([heroProgramme, heroEmployer].filter(Boolean).join(' · ') || undefined)
     : `${p.programme} ${p.programmeLevel} · ${p.employer}`;
   const startDateDisplay = isRealMode
-    ? (formatProgrammeStartDate(real?.programmeStartDate) || EMPTY_VALUE)
+    ? (formatProgrammeStartDate(real?.programmeStartDate) || (loading ? 'Loading…' : EMPTY_VALUE))
     : p.startDate;
   const plannedEndDisplay = isRealMode
-    ? (formatProgrammeStartDate(real?.programmeEndDate) || EMPTY_VALUE)
+    ? (formatProgrammeStartDate(real?.programmeEndDate) || (loading ? 'Loading…' : EMPTY_VALUE))
     : p.plannedEndDate;
   const coachDisplayName = isRealMode ? (coach?.name || 'Not yet assigned') : p.coach.name;
-  const coachDisplayEmail = isRealMode ? (coach?.email || '') : p.coach.email;
 
-  /* ── Real learner's training-plan journey, grouped module -> week -> components ── */
-  const journey = useMemo(() => (isRealMode ? buildLearnerJourney(real) : []), [isRealMode, real]);
-  const { stations, currentIndex, currentWeek: currentWeekLabel } = useMemo(() => buildStations(journey, real), [journey, real]);
-  const learnerSelectionKey = `${kind ?? ''}:${id ?? ''}`;
-  const [moduleSelection, setModuleSelection] = useState<{ learnerKey: string; index: number } | null>(null);
-  const selectedModuleIndex = moduleSelection?.learnerKey === learnerSelectionKey ? moduleSelection.index : null;
-  const currentStation = currentIndex >= 0 ? stations[currentIndex] : null;
-  const selectedStation = selectedModuleIndex == null
-    ? null
-    : stations.find((station) => station.index === selectedModuleIndex) ?? null;
-  const displayedStation = selectedStation ?? currentStation;
-  const journeyAllDone = currentIndex === -1 && stations.length > 0;
+  const currentModule = weekRead.data?.modules.find(module => module.id === weekRead.data?.latestModuleId)
+    || weekRead.data?.modules[0];
   const currentModuleLabel = isRealMode
-    ? (displayedStation ? displayedStation.module.module : journeyAllDone ? 'Gateway ready' : EMPTY_VALUE)
-    : p.currentModule;
+    ? (currentModule?.title || (weekRead.loading ? 'Loading...' : EMPTY_VALUE)) : p.currentModule;
+  const metrics = useLearnerMetrics(learnerKind, id, isRealMode && !skipPreStartData);
 
-  // The learner's live module opens on its current week. Selecting another
-  // module from the journey swaps this page to that module's first unfinished
-  // week (or its first week when the module is complete).
-  const currentWeek = useMemo(() => {
-    if (displayedStation) {
-      const liveWeekIndex = displayedStation.index === currentIndex
-        ? displayedStation.module.weeks.findIndex((week) => week.week === currentWeekLabel)
-        : -1;
-      const unfinishedWeekIndex = displayedStation.weekDots.findIndex((week) => week.total > 0 && week.done < week.total);
-      const weekIndex = liveWeekIndex >= 0 ? liveWeekIndex : unfinishedWeekIndex >= 0 ? unfinishedWeekIndex : 0;
-      const week = displayedStation.module.weeks[weekIndex];
-      if (week) return {
-        module: displayedStation.module.module,
-        week,
-        weekIndex,
-        totalWeeks: displayedStation.module.weeks.length,
-      };
-      return null;
-    }
-    for (const mod of journey) {
-      if (mod.weeks.length > 0) return { module: mod.module, week: mod.weeks[0], weekIndex: 0, totalWeeks: mod.weeks.length };
-    }
-    return null;
-  }, [currentIndex, currentWeekLabel, displayedStation, journey]);
-  const evidencedKsbCodes = useMemo(() => evidencedTargetKsbCodes(real), [real]);
-
-  const unifiedLearning = useUnifiedLearningSummary(
-    real,
-    learnerKind ?? undefined,
-    id,
-    isRealMode && !skipPreStartData && !!real?.studentActivityAvailable,
-  );
-  // OTJ hours: completed + planned come from the backend (stored in
-  // Active_users.Completed_hours / planned_hours). "activities" counts every
-  // completed item across kinds (distinct quizzes + videos + future types).
-  const otj = useMemo(() => {
-    const completedHours = parseHours(real?.completedHours);
-    const plannedHours = parseHours(real?.plannedHours ?? real?.totalExpectedOtjh);
-    const targetHours = parseHours(real?.targetHours);
-    const distinctQuizzes = new Set((real?.quizAttempts ?? []).map((a) => a.quizId)).size;
-    const videos = (real?.videoProgress ?? []).length;
-    // Readings, slide decks, podcasts and the rest complete through the
-    // component runner and count the same as a quiz or a video.
-    const completions = new Set(
-      (real?.componentProgress ?? []).map((entry) => entry.componentId),
-    ).size;
-    const activities = distinctQuizzes + videos + completions;
-    const percent = plannedHours > 0 ? Math.round((completedHours / plannedHours) * 100) : 0;
-    // Progress vs the current-week target (the "should have reached by now" bar).
-    const variance = real?.progressVariance ? parseFloat(real.progressVariance) : null;   // decimal, e.g. -0.86
-    const progressHours = parseHours(real?.progressHours);                                  // completed - target (signed)
-    const status = real?.otjhStatus || null;   // "On track" | "Need attention" | "At risk"
-    const targetPercent = targetHours > 0 ? Math.round((completedHours / targetHours) * 100) : 0;
-    return { completedHours, plannedHours, targetHours, activities, percent, variance, progressHours, status, targetPercent };
-  }, [real]);
-
-  /* ── Compact progress cards ── */
-  const completedModules = stations.filter((station) => station.status === 'completed').length;
-  const moduleProgressPercent = stations.length ? Math.round((completedModules / stations.length) * 100) : null;
-
-  const usesCombinedProgress = isRealMode && !!real?.studentActivityAvailable;
-  const programmeProgressPercent = isRealMode ? moduleProgressPercent : p.overallProgress;
+  const programme = metrics.data?.programme;
+  const programmeProgressPercent = isRealMode ? programme?.percent ?? null : p.overallProgress;
   const programmeProgressValue = programmeProgressPercent == null ? EMPTY_VALUE : `${programmeProgressPercent}%`;
   const programmeProgressCaption = isRealMode
-    ? stations.length
-      ? `${completedModules}/${stations.length} modules complete`
-      : 'No training plan yet'
-    : `${p.currentWeek ? `Week ${p.currentWeek} · ` : ''}${p.currentModule}`;
+    ? programme?.total != null ? `${programme.completed}/${programme.total} activities complete`
+      : metrics.loading ? 'Loading progress...' : 'Progress unavailable'
+    : p.currentModule;
 
   const attendancePercent = isRealMode ? (attendance ? attendance.attendanceRate : null) : p.attendanceRate;
   const attendanceValue = attendancePercent == null ? EMPTY_VALUE : `${attendancePercent}%`;
@@ -472,117 +151,30 @@ export default function LearnerOverview() {
     ? 'neutral'
     : attendancePercent >= ATTENDANCE_EXPECTED_RATE ? 'positive' : attendancePercent >= ATTENDANCE_MINIMUM_RATE ? 'caution' : 'critical';
 
-  const auditTpPlanned = unifiedLearning.data?.audit_tp_planned;
-  const auditLmsActual = unifiedLearning.data?.audit_lms_actual;
-  const otjPlannedHours = isRealMode
-    ? usesCombinedProgress ? auditTpPlanned : otj.plannedHours
-    : p.otjhTarget;
-  const otjActualHours = isRealMode
-    ? usesCombinedProgress ? auditLmsActual : otj.completedHours
-    : p.otjhCompleted;
+  const otjPlannedHours = isRealMode ? metrics.data?.otjh.planned : p.otjhTarget;
+  const otjActualHours = isRealMode ? metrics.data?.otjh.actual : p.otjhCompleted;
   const otjPercent = otjActualHours != null && otjPlannedHours != null && otjPlannedHours > 0
     ? Math.round((otjActualHours / otjPlannedHours) * 100)
     : null;
   const otjPlannedValue = otjPlannedHours != null ? `${otjPlannedHours.toFixed(2)} h` : EMPTY_VALUE;
   const otjActualValue = otjActualHours != null ? `${otjActualHours.toFixed(2)} h` : EMPTY_VALUE;
   const otjCaption = isRealMode
-    ? usesCombinedProgress
-      ? unifiedLearning.summary
-        ? `Across ${stations.length} programme modules`
-        : unifiedLearning.error ? 'Recorded time unavailable' : 'Loading recorded time...'
-      : (otj.targetHours > 0 ? `Target ${formatHoursMinutes(otj.targetHours)}${otj.status ? ` · ${otj.status}` : ''}` : `${otj.activities} ${otj.activities === 1 ? 'activity' : 'activities'} logged`)
+    ? metrics.loading ? 'Loading recorded time...' : metrics.data?.otjh.actual == null ? 'Recorded time unavailable' : 'Across your programme'
     : `${formatHoursMinutes(p.otjhCompleted)} / ${formatHoursMinutes(p.otjhTarget)} planned`;
-  const otjTone: StatusTone = isRealMode ? (usesCombinedProgress ? 'brand' : otj.status ? statusTone(otj.status) : 'brand') : 'brand';
+  const otjTone: StatusTone = 'brand';
+  const ksb = metrics.data?.ksb;
+  const ksbPercent = isRealMode ? ksb?.percent ?? null : p.ksbProgress;
+  const ksbValue = ksbPercent == null ? EMPTY_VALUE : `${ksbPercent}%`;
+  const ksbCaption = isRealMode
+    ? ksb?.total != null ? `${ksb.completed} of ${ksb.total} points achieved`
+      : metrics.loading ? 'Loading KSB progress...' : 'KSB details unavailable'
+    : `${p.ksbValidated} of ${p.ksbTotal} validated`;
+  const ksbTone: StatusTone = ksbPercent == null ? 'neutral'
+    : ksbPercent >= 50 ? 'positive' : ksbPercent >= 30 ? 'caution' : 'critical';
 
-  const ksbTotal = isRealMode ? (real?.ksbs.length || 0) : p.ksbTotal;
-  const ksbPercent = isRealMode
-    ? (ksbTotal ? Math.round((evidencedKsbCodes.size / ksbTotal) * 100) : null)
-    : p.ksbProgress;
-  const ksbValue = isRealMode ? `${evidencedKsbCodes.size}` : `${p.ksbProgress}%`;
-  const ksbCaption = isRealMode ? `${evidencedKsbCodes.size} of ${ksbTotal} evidenced` : `${p.ksbValidated} of ${p.ksbTotal} validated`;
-  const ksbTone: StatusTone = !isRealMode
-    ? (p.ksbProgress >= 50 ? 'positive' : p.ksbProgress >= 30 ? 'caution' : 'critical')
-    : ksbTotal === 0 ? 'neutral' : ksbPercent >= 50 ? 'positive' : ksbPercent >= 30 ? 'caution' : 'critical';
-
-  /* ── Mark-as-complete state for the mock-mode timeline ── */
-  const [userCompletions, setUserCompletions] = useState<Record<number, boolean>>({});
-
-  const handleMarkComplete = useCallback((idx: number) => {
-    setUserCompletions(prev => ({ ...prev, [idx]: true }));
-  }, []);
-
-  /* ── Continue Learning (mock mode) ── */
-  const timelineComponents = useMemo(() => {
-    const dayOrder = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
-    const dateLabels = ['9 Jun', '10 Jun', '11 Jun', '12 Jun', '13 Jun'];
-    const ids = ['w4-c4', 'w4-c2', 'w4-c1', 'w4-c6', 'w4-c5'];
-
-    return ids.map((id, i) => {
-      const comp = WEEKLY_LEARNING_COMPONENTS.find(c => c.id === id);
-      if (!comp) return null;
-      return {
-        ...comp,
-        dayLabel: dayOrder[i],
-        dateLabel: dateLabels[i],
-      };
-    }).filter(Boolean);
-  }, []);
-
-  /* ── Upcoming (mock mode) ── */
-  const upcomingEvents = [
-    { date: '14 Jun', title: 'Workplace Reflection Due', type: 'Evidence', urgent: true, countdown: '2 days' },
-    { date: '18 Jun', title: 'Monthly Coaching', type: 'Coaching', urgent: false, countdown: '6 days' },
-    { date: '22 Jun', title: 'Portfolio Submission', type: 'Portfolio', urgent: false, countdown: '10 days' },
-    { date: '25 Jun', title: 'Progress Review', type: 'Review', urgent: false, countdown: '13 days' },
-  ];
-
-  const now = useMemo(() => new Date(), []);
-
-  const upcomingReal = useMemo(() => {
-    const floor = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    return calendarEvents
-      .map((ev) => ({ ev, dt: miniEventDate(ev) }))
-      .filter((x): x is { ev: LearnerCalendarEvent; dt: { y: number; m: number; d: number } } =>
-        x.dt !== null && new Date(x.dt.y, x.dt.m, x.dt.d).getTime() >= floor)
-      .sort((a, b) => new Date(a.dt.y, a.dt.m, a.dt.d).getTime() - new Date(b.dt.y, b.dt.m, b.dt.d).getTime())
-      .slice(0, 4)
-      .map(({ ev, dt }) => ({
-        id: ev.id,
-        day: String(dt.d),
-        month: MINI_MONTHS[dt.m].slice(0, 3),
-        timeLabel: ev.scheduledTime || 'Time TBC',
-        title: ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title,
-        subtitle: [ev.type === 'coaching' ? 'Coaching' : ev.type === 'review' ? 'Review' : ev.type, ev.coachName].filter(Boolean).join(' · '),
-        tone: (ev.type === 'review' ? 'brand' : 'info') as StatusTone,
-      }));
-  }, [calendarEvents, now]);
-
-  const upcomingMock = useMemo(() => upcomingEvents.slice(0, 4).map((e, i) => {
-    const [day, month] = e.date.split(' ');
-    return {
-      id: `mock-${i}`,
-      day: day || e.date,
-      month: month || '',
-      timeLabel: e.countdown,
-      title: e.title,
-      subtitle: e.type,
-      tone: (e.urgent ? 'critical' : 'neutral') as StatusTone,
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), []);
-
-  // Nothing of the overview is rendered until the learner's programme status is
-  // known. The onboarding redirect can only decide once the detail has loaded,
-  // so painting the overview while the fetch is in flight showed an onboarding
-  // learner the full delivery page for a moment before bouncing them to their
-  // wizard. Waiting here is the whole fix — the redirect itself was correct.
   if (isRealMode && (loading || redirectingToOnboarding)) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-[13px] text-foreground-400">
-        <AppIcon className="ri-loader-4-line animate-spin mr-2" />
-        {redirectingToOnboarding ? 'Opening your enrolment…' : 'Loading your workspace…'}
-      </div>
-    );
+    // Only the small identity read gates the page; cards load independently.
+    return <PageSkeleton workspaceRole="learner" />;
   }
 
   /* ================================================================
@@ -681,43 +273,49 @@ export default function LearnerOverview() {
       roleLabel={learnerNav.label}
       navItems={learnerNav.items}
       workspaceLabel={learnerNav.workspaceLabel}
-      pageTitle="Overview"
+      pageTitle="Dashboard"
       pageSubtitle={isRealMode ? subtitleParts.join(' · ') : `${p.programme} ${p.programmeLevel} · ${p.employer} · Cohort ${p.cohort}`}
       userName={isRealMode ? heroFullName : p.fullName}
       userRole={isRealMode ? (heroProgramme ? `${heroProgramme} Learner` : 'Learner') : `${p.programme} Apprentice`}
     >
-      <PageContainer>
+      <PageContainer className={overviewStyles.overview}>
+        {loadError && <LearnerLoadError error={loadError} onRetry={refresh} />}
+        {reviewingLearner && real?.accessGate?.reasons.includes('invitation') && (
+          <div role="status" className="rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-sm text-foreground-700">
+            <p className="font-semibold">{real.accessGate.reasons.length === 1 ? 'Ready to invite' : 'Invitation pending'}</p>
+            <p>You can review this learner’s saved data here. Programme activation waits for a successfully sent invitation and completed programme setup.</p>
+          </div>
+        )}
 
         {/* ================================================================
             PROFILE HEADER
             ================================================================ */}
-        <SectionReveal delay={0}>
+        <div>
             <header
-              className="learner-super-admin-hero relative overflow-hidden rounded-2xl px-5 py-5 shadow-sm md:px-7 md:py-6"
-              style={{ background: 'linear-gradient(108deg, oklch(var(--primary-800)) 0%, oklch(var(--primary-700)) 30%, oklch(var(--primary-500)) 66%, oklch(var(--primary-400)) 100%)' }}
+              className={`learner-super-admin-hero ${overviewStyles.hero}`}
             >
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 opacity-40"
-              style={{ backgroundImage: 'radial-gradient(circle at 78% 22%, rgba(255,255,255,.34), transparent 22%), radial-gradient(circle at 60% 100%, rgba(255,255,255,.18), transparent 28%)' }}
-            />
-            <div className="relative z-10 flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-              <div className="flex min-w-0 items-start gap-4">
-                <LearnerAvatar
+            <div aria-hidden="true" className={overviewStyles.heroArtwork} />
+            <div className={overviewStyles.heroTop}>
+              <div className={overviewStyles.identity}>
+                {isRealMode && learnerKind && id ? <LearnerProfilePhoto
+                  kind={learnerKind} learnerId={id} name={displayLearnerName}
+                  className={overviewStyles.avatar}
+                /> : <LearnerAvatar
                   name={displayLearnerName}
                   size="lg"
-                  className="h-16 w-16 bg-white/20 text-xl text-white ring-white/35"
-                />
+                  className={`${overviewStyles.avatar} bg-white/15 text-white ring-white/30`}
+                />}
                 <div className="min-w-0">
-                  <h1 className="text-2xl font-heading font-bold tracking-tight text-white md:text-3xl">{displayLearnerName}</h1>
-                  {headerDescription ? <p className="mt-1 text-[13px] text-white/85">{headerDescription}</p> : null}
+                  <p className={overviewStyles.eyebrow}>Learner</p>
+                  <h1 className={`${overviewStyles.name} font-heading`}>{displayLearnerName}</h1>
+                  {headerDescription ? <p className={overviewStyles.description}>{headerDescription}</p> : null}
                 </div>
               </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <div className={overviewStyles.heroActions}>
                 <button
                   type="button"
                   onClick={() => navigate('/learner/messages')}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/80 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-white/90"
+                  className={overviewStyles.heroAction}
                 >
                   <AppIcon className="ri-chat-3-line" />
                   Message coach
@@ -725,46 +323,49 @@ export default function LearnerOverview() {
                 <button
                   type="button"
                   onClick={() => navigate(trainingPlanHref)}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-white/90"
+                  className={`${overviewStyles.heroAction} ${overviewStyles.primaryAction}`}
                 >
-                  <AppIcon className="ri-play-circle-line" />
+                  <AppIcon className="ri-play-line" />
                   Continue learning
                 </button>
                 <button
                   type="button"
                   onClick={() => navigate(learningPlanHubHref)}
-                  className="learner-overview-learning-plan-button inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/70 bg-white/15 px-3 text-[12px] font-semibold text-white shadow-sm transition"
+                  className={overviewStyles.heroAction}
                 >
-                  <AppIcon className="ri-book-2-line" />
+                  <AppIcon className="ri-road-map-line" />
                   Learner's Map
                 </button>
               </div>
             </div>
-            <div className="relative z-10 mt-5 flex flex-wrap items-center gap-2">
-              <ProfileFact icon="ri-stack-line" label="Cohort" value={displayCohort} />
-              <ProfileFact icon="ri-flag-2-line" label="Module" value={currentModuleLabel} />
-              <ProfileFact icon="ri-user-star-line" label="Coach" value={coachDisplayName} />
+            <dl className={overviewStyles.facts}>
+              <ProfileFact icon="ri-group-line" label="Cohort" value={displayCohort} />
+              <ProfileFact icon="ri-book-2-line" label="Module" value={currentModuleLabel} />
+              <ProfileFact icon="ri-user-line" label="Coach" value={coachDisplayName} />
               <ProfileFact icon="ri-calendar-event-line" label="Start date" value={startDateDisplay} />
-              <div className="inline-flex items-center gap-1.5 rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-[12px] text-white/80">
-                <AppIcon className="ri-checkbox-circle-line text-[13px] text-emerald-300" />
-                <span className="text-white/65">Status</span>
-                <span className="font-semibold text-white">{displayValue(isRealMode ? real?.programmeStatus : p.status)}</span>
-              </div>
-              <ProfileFact icon="ri-calendar-check-line" label="Planned end" value={plannedEndDisplay} />
-            </div>
+              <ProfileFact label="Status" value={displayValue(isRealMode ? knownLearner?.programmeStatus : p.status)} status />
+              <ProfileFact icon="ri-calendar-event-line" label="Planned end" value={plannedEndDisplay} />
+            </dl>
             </header>
-        </SectionReveal>
+        </div>
 
+        {metrics.error && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
+          {metrics.error} <button className="ml-2 font-semibold underline" onClick={metrics.refresh}>Try again</button>
+        </div>}
+        {attendanceRead.error && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
+          Attendance could not refresh. {attendanceRead.error}
+          <button className="ml-2 font-semibold underline" onClick={attendanceRead.refresh}>Retry attendance</button>
+        </div>}
         {/* ================================================================
-            COMPACT PROGRESS CARDS
+            PROGRAMME PROGRESS CARDS
             ================================================================ */}
-        <SectionReveal delay={60}>
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <ProgressStat href={programmeProgressHref} icon="ri-road-map-line" label="Programme Progress" value={programmeProgressValue} percent={programmeProgressPercent} caption={programmeProgressCaption} tone="brand" />
-              <ProgressStat href="/learner/attendance" icon="ri-calendar-check-line" label="Attendance" value={attendanceValue} percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
+        <div>
+            <div className={overviewStyles.metrics}>
+              <ProgressStat href={programmeProgressHref} icon={BookOpen} label="Programme Progress" value={programmeProgressValue} percent={programmeProgressPercent} caption={programmeProgressCaption} tone="brand" />
+              <ProgressStat href="/learner/attendance" icon={CalendarCheck} label="Attendance" value={attendanceValue} percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
               <ProgressStat
                 href={otjhProgressHref}
-                icon="ri-time-line"
+                icon={Clock3}
                 label="OTJ Hours"
                 value={otjActualValue}
                 values={[
@@ -775,165 +376,13 @@ export default function LearnerOverview() {
                 caption={otjCaption}
                 tone={otjTone}
               />
-              <ProgressStat href={ksbProgressHref} icon="ri-bar-chart-2-line" label="KSB Progress" value={ksbValue} percent={ksbPercent} caption={ksbCaption} tone={ksbTone} />
+              <ProgressStat href={ksbProgressHref} icon={BarChart3} label="KSB Progress" value={ksbValue} percent={ksbPercent} caption={ksbCaption} tone={ksbTone} />
             </div>
-        </SectionReveal>
+        </div>
 
-        <SectionReveal delay={100}>
-          <Panel>
-            <SectionHeader
-              title="My Apprenticeship Journey"
-              icon="ri-road-map-line"
-              actions={
-                <Link to={journeyHref} className="compact-action text-[12px] font-semibold text-primary-600 hover:text-primary-700">
-                  View full journey <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
-                </Link>
-              }
-            />
-            <div className="mt-4">
-              {isRealMode ? (
-                <MiniJourney
-                  real={real}
-                  loading={loading}
-                  loadError={loadError}
-                  progressPercent={programmeProgressPercent}
-                  progressCaption={programmeProgressCaption}
-                  selectedModuleIndex={displayedStation?.index ?? null}
-                  onSelectModule={(index) => setModuleSelection({ learnerKey: learnerSelectionKey, index })}
-                />
-              ) : (
-                <div>
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-[13px] font-semibold text-foreground-900">{p.overallProgress}% complete</span>
-                    <span className="text-[12px] text-foreground-400">Currently on: <span className="font-semibold text-foreground-700">{p.currentModule}</span></span>
-                  </div>
-                  <ProgressBar percent={p.overallProgress} />
-                </div>
-              )}
-            </div>
-          </Panel>
-        </SectionReveal>
-
-        {/* ================================================================
-            CONTINUE LEARNING + UPCOMING / MY COACH
-            ================================================================ */}
-        <SectionReveal delay={180}>
-          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
-            <div className="space-y-4 lg:col-span-2">
-              <Panel>
-                <SectionHeader
-                  title="Continue Learning"
-                  icon="ri-play-circle-line"
-                  description={isRealMode ? (currentWeek ? `${currentWeek.week.week} · ${currentWeek.module}` : undefined) : "This week's plan"}
-                  actions={
-                    (isRealMode && real && journey.length > 0) || !isRealMode ? (
-                      <Link to={trainingPlanHref} className="text-[12px] font-semibold text-primary-600 hover:text-primary-700">
-                        View full plan
-                      </Link>
-                    ) : undefined
-                  }
-                />
-                <div className="mt-3">
-                  {isRealMode ? (
-                    journey.length === 0 ? (
-                      loading ? <RowsSkeleton rows={4} /> : <EmptyState size="sm" title="No training plan yet" description="Your training plan will appear here once it's built." />
-                    ) : !currentWeek ? (
-                      <EmptyState size="sm" title="No training plan yet" description="Your training plan will appear here once it's built." />
-                    ) : (
-                      <CurrentWeekCard
-                        moduleTitle={currentWeek.module}
-                        weekLabel={currentWeek.week.week}
-                        weekIndex={currentWeek.weekIndex}
-                        totalWeeks={currentWeek.totalWeeks}
-                        components={currentWeek.week.components}
-                        videos={real?.videoProgress ?? []}
-                        completions={real?.componentProgress ?? []}
-                        markingStatus={real?.componentMarkingStatus ?? {}}
-                        kind={kind}
-                        learnerId={id}
-                        reflectionStatuses={reflectionStatuses}
-                        canProgress={canProgress}
-                        showReadOnlyNotice={showReadOnlyNotice}
-                      />
-                    )
-                  ) : (
-                    <div className="relative">
-                      <div className="absolute left-[19px] top-3 bottom-3 w-px bg-background-200" />
-                      <div className="space-y-0">
-                        {timelineComponents.slice(0, 4).map((comp, i) => {
-                          const effectiveStatus = userCompletions[i] ? 'completed' : comp.status;
-                          return (
-                            <TimelineCard
-                              key={comp.id}
-                              component={comp}
-                              status={effectiveStatus}
-                              canMarkComplete={comp.status.toLowerCase() !== 'completed' && !userCompletions[i]}
-                              onMarkComplete={() => handleMarkComplete(i)}
-                            />
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </Panel>
-
-            </div>
-
-            <div className="space-y-4 lg:col-span-1">
-              <Panel>
-                <SectionHeader
-                  title="Upcoming"
-                  description="Sessions and reviews"
-                  actions={<Link to="/learner/calendar" className="text-[12px] font-semibold text-primary-600 hover:text-primary-700">View calendar</Link>}
-                />
-                <div className="mt-3 space-y-2">
-                  {isRealMode && calendarLoading ? (
-                    <RowsSkeleton rows={3} avatar={false} />
-                  ) : (isRealMode ? upcomingReal : upcomingMock).length === 0 ? (
-                    <EmptyState
-                      size="sm"
-                      title="No upcoming sessions"
-                      description={isRealMode ? 'Book a catch-up or support session with your coach.' : undefined}
-                      action={<RowAction label="Book a session" icon="ri-calendar-check-line" emphasis="primary" onClick={() => navigate('/learner/calendar')} />}
-                    />
-                  ) : (
-                    (isRealMode ? upcomingReal : upcomingMock).map((item) => (
-                      <UpcomingRow key={item.id} {...item} onClick={() => navigate('/learner/calendar')} />
-                    ))
-                  )}
-                </div>
-              </Panel>
-
-              <Panel padding="sm">
-                <SectionHeader title="My Coach" />
-                <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <LearnerAvatar name={coachDisplayName} tone="brand" size="lg" />
-                    <div className="min-w-0">
-                      <p className="truncate text-[14px] font-semibold text-foreground-900">{coachDisplayName}</p>
-                      <p className="truncate text-[12px] text-foreground-500">{coachDisplayEmail || 'Contact your programme team'}</p>
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <RowAction label="Message" icon="ri-chat-3-line" onClick={() => navigate('/learner/messages')} />
-                    <RowAction label="Book a session" icon="ri-check-line" emphasis="primary" onClick={() => navigate('/learner/calendar')} />
-                  </div>
-                </div>
-              </Panel>
-
-              <Panel>
-                <SectionHeader title="Next steps" icon="ri-flashlight-line" />
-                <div className="mt-3 space-y-2">
-                  <DashboardNextStep icon="ri-book-open-line" label="Review your current module overview" href={trainingPlanHref} tone="brand" />
-                  <DashboardNextStep icon="ri-calendar-check-line" label="Book your next coaching session" href="/learner/calendar" tone="positive" />
-                  <DashboardNextStep icon="ri-time-line" label="Log an on-the-job activity" href="/learner/otjh" tone="upcoming" iconTone="otj" />
-                </div>
-              </Panel>
-            </div>
-          </div>
-        </SectionReveal>
-
+        {isRealMode && real && learnerKind && <DashboardActivities kind={learnerKind} programmeStatus={real.programmeStatus} canSeeNavItem={canSeeNavItem} />}
+        {isRealMode && learnerKind && id && <OverviewLearningPanels key={`${learnerKind}:${id}`} kind={learnerKind} learnerId={id} />}
+        {isRealMode && learnerKind && id && <DashboardTrainingPlan key={`plan:${learnerKind}:${id}`} kind={learnerKind} learnerId={id} />}
       </PageContainer>
     </WorkspaceShell>
   );
@@ -944,53 +393,27 @@ export default function LearnerOverview() {
    ───────────────────────────────────────────── */
 
 /** One labelled fact in the profile header's meta row. */
-function ProfileFact({ icon, label, value }: { icon: string; label: string; value: string }) {
+function ProfileFact({ icon, label, value, status = false }: { icon?: string; label: string; value: string; status?: boolean }) {
+  const statusStyle = status ? toneStyle(statusTone(value)) : null;
   return (
-    <span className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-[12px] text-white/80">
-      <AppIcon className={`${icon} shrink-0 text-[13px] text-white/75`}></AppIcon>
-      <span className="shrink-0 text-white/65">{label}</span>
-      <span className="min-w-0 truncate font-semibold text-white">{value || EMPTY_VALUE}</span>
-    </span>
+    <div className={overviewStyles.fact}>
+      {statusStyle ? (
+        <span aria-hidden="true" className={`${overviewStyles.statusIcon} ${statusStyle.dot}`}>
+          <span />
+        </span>
+      ) : <AppIcon aria-hidden="true" className={`${icon} ${overviewStyles.factIcon}`} />}
+      <div className="min-w-0">
+        <dt className={overviewStyles.factLabel}>{label}</dt>
+        <dd className={overviewStyles.factValue}>{value || EMPTY_VALUE}</dd>
+      </div>
+    </div>
   );
 }
 
-function LearningEmptyIllustration() {
-  return (
-    <span aria-hidden="true" className="relative flex h-12 w-16 items-center justify-center">
-      <span className="absolute h-9 w-10 -translate-x-2 translate-y-1 rotate-[-8deg] rounded-lg bg-primary-50 shadow-sm ring-1 ring-primary-100" />
-      <span className="absolute h-10 w-11 translate-x-1 -translate-y-1 rotate-[8deg] rounded-lg bg-primary-100 shadow-sm ring-1 ring-primary-200/70" />
-      <span className="relative flex h-9 w-11 translate-x-1 items-center justify-center rounded-lg bg-primary-500 text-white shadow-md shadow-primary-300/30">
-        <AppIcon className="ri-file-list-3-line text-xl" />
-      </span>
-    </span>
-  );
-}
-
-function DashboardNextStep({ icon, label, href, tone = 'brand', iconTone }: { icon: string; label: string; href: string; tone?: StatusTone; iconTone?: 'otj' }) {
-  const style = toneStyle(tone);
-  const iconClasses = iconTone === 'otj'
-    ? 'bg-gradient-to-br from-[#d49a38] via-[#b27715] to-[#8f5e0e] text-white shadow-sm shadow-[#b27715]/35'
-    : tone === 'positive'
-      ? 'bg-gradient-to-br from-emerald-300 via-emerald-500 to-emerald-700 text-white shadow-sm shadow-emerald-500/30'
-      : 'bg-gradient-to-br from-primary-300 via-primary-500 to-primary-700 text-white shadow-sm shadow-primary-500/30';
-  return (
-    <Link
-      to={href}
-      className="group flex items-center gap-2.5 rounded-xl border border-foreground-100 bg-background-50 px-3 py-2.5 transition hover:border-primary-200 hover:bg-primary-50/40"
-    >
-      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${iconClasses}`}>
-        <AppIcon className={`${icon} text-[15px]`} />
-      </span>
-      <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-foreground-700">{label}</span>
-      <AppIcon className="ri-arrow-right-s-line shrink-0 text-foreground-300 transition group-hover:translate-x-0.5 group-hover:text-primary-500" />
-    </Link>
-  );
-}
-
-/** A compact linked stat card: label, value, progress bar, caption. The four "quick health check" cards. */
-function ProgressStat({ href, icon, label, value, values, percent, caption, tone = 'neutral' }: {
+/** Shared linked summary cards; presentation does not change the metric sources. */
+function ProgressStat({ href, icon: Icon, label, value, values, percent, caption, tone = 'neutral' }: {
   href: string;
-  icon: string;
+  icon: LucideIcon;
   label: string;
   value: string;
   values?: readonly { label: string; value: string }[];
@@ -1003,749 +426,32 @@ function ProgressStat({ href, icon, label, value, values, percent, caption, tone
     <Link
       to={href}
       aria-label={`Open ${label}`}
-      className="group flex min-w-0 items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-primary-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+      data-tone={tone}
+      className={`group ${overviewStyles.metric}`}
     >
-      <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition-transform duration-200 group-hover:scale-105 ${style.bg} ${tone === 'neutral' ? 'text-foreground-400' : style.text}`}>
-        <AppIcon className={`${icon} text-xl`} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-[12px] font-semibold text-foreground-500">{label}</p>
-        {values ? (
-          <div className="mt-1 grid grid-cols-2 gap-x-3">
-            {values.map((item, index) => (
-              <div key={item.label} className={index > 0 ? 'border-l border-foreground-200 pl-3' : ''}>
-                <p className="truncate text-[9px] font-semibold uppercase tracking-[0.05em] text-foreground-400">{item.label}</p>
-                <p className={`mt-1 truncate text-[17px] font-semibold leading-none tabular-nums ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{item.value}</p>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className={`mt-1 text-[22px] font-semibold leading-none tabular-nums ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{value}</p>
-        )}
-        <ProgressBar percent={percent} tone={percent == null || tone === 'neutral' ? undefined : style.dot} className="mt-2.5" />
-        {caption ? <p className="mt-1.5 truncate text-[12px] leading-snug text-foreground-500">{caption}</p> : null}
+      <div className={overviewStyles.metricTop}>
+        <span className={overviewStyles.metricIcon}>
+          <Icon aria-hidden="true" />
+        </span>
+        <p className={overviewStyles.metricLabel}>{label}</p>
+        <AppIcon aria-hidden="true" className={`ri-arrow-right-s-line ${overviewStyles.metricArrow}`} />
+        {!values && <p className={`${overviewStyles.metricValue} ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{value}</p>}
       </div>
-      <AppIcon aria-hidden="true" className="ri-arrow-right-s-line shrink-0 text-foreground-300 transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-primary-500" />
+      {values ? (
+        <div className={overviewStyles.metricValues}>
+          {values.map(item => (
+            <div key={item.label}>
+              <p className={overviewStyles.metricSubLabel}>{item.label}</p>
+              <p className={`${overviewStyles.hoursValue} ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{item.value}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <ProgressBar percent={percent} tone={percent == null || tone === 'neutral' ? undefined : style.dot} height="h-3" className={overviewStyles.metricBar} />
+      {caption ? <p className={overviewStyles.metricCaption}>
+        {values ? <Info aria-hidden="true" /> : null}
+        <span>{caption}</span>
+      </p> : null}
     </Link>
-  );
-}
-
-/** One row in the Upcoming panel — a date chip, title, and time. */
-function UpcomingRow({ day, month, timeLabel, title, subtitle, tone = 'neutral', onClick }: {
-  day: string; month: string; timeLabel?: string; title: string; subtitle?: string; tone?: StatusTone; onClick?: () => void;
-}) {
-  const style = toneStyle(tone);
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-xl border border-foreground-200/60 bg-background-50 px-3 py-2.5 text-left transition hover:border-primary-300/60 hover:shadow-sm"
-    >
-      <span className={`flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-lg ${style.bg}`}>
-        <span className={`text-[13px] font-bold leading-none ${style.text}`}>{day}</span>
-        <span className={`mt-0.5 text-[9px] font-semibold uppercase leading-none ${style.text}`}>{month}</span>
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13px] font-semibold text-foreground-900">{title}</span>
-        {subtitle ? <span className="block truncate text-[12px] text-foreground-400">{subtitle}</span> : null}
-      </span>
-      {timeLabel ? <span className="shrink-0 text-[12px] text-foreground-400">{timeLabel}</span> : null}
-    </button>
-  );
-}
-
-/** One component row inside the Continue Learning card. */
-function CurrentWeekRow({ c, videos, completions, markingStatus, reflectionStatus, onOpen, accessRestricted = false }: {
-  c: JourneyComponent;
-  videos: LearnerVideoProgress[];
-  completions: LearnerComponentProgress[];
-  markingStatus?: Record<string, ComponentMarking>;
-  reflectionStatus?: string;
-  onOpen?: () => void;
-  accessRestricted?: boolean;
-}) {
-  const meta = componentTypeMeta(c.title);
-  const prog = componentProgress(c, videos, completions, markingStatus);
-  const style = STATE_STYLE[prog.state];
-  const actionable = !!onOpen;
-  const reflection = REFLECTION_STATUS[reflectionStatus || ''];
-  const completed = prog.state === 'watched' || prog.state === 'passed' || prog.state === 'completed';
-  const unavailable = !hasComponentContent(c);
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      disabled={!actionable}
-      title={unavailable ? 'Content unavailable' : accessRestricted ? COMPONENT_ACCESS_MESSAGE : undefined}
-      className={`group relative w-full flex items-center gap-3 overflow-hidden rounded-xl border px-3.5 py-3 text-left transition-smooth ${
-        unavailable || accessRestricted
-          ? 'border-foreground-100 bg-background-100/70 opacity-55 grayscale'
-          : completed
-          ? 'border-emerald-200 bg-emerald-50/60 shadow-sm shadow-emerald-100/60'
-          : 'border-foreground-100 bg-background-50'
-      } ${
-        actionable
-          ? completed
-            ? 'cursor-pointer hover:border-emerald-300 hover:bg-emerald-50 hover:shadow-md hover:shadow-emerald-100/70'
-            : 'cursor-pointer hover:border-primary-300/70 hover:shadow-sm'
-          : 'cursor-default'
-      }`}
-    >
-      {completed && <span className="absolute inset-y-0 left-0 w-1 bg-emerald-500" aria-hidden="true" />}
-      <span className={`relative w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${completed ? 'bg-emerald-100' : meta.bg}`}>
-        <AppIcon className={`${completed ? 'ri-check-line text-emerald-700' : `${meta.icon} ${meta.color}`} text-[15px]`} />
-        <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ring-2 ${completed ? 'ring-emerald-50' : 'ring-background-50'} ${style.dot}`} />
-      </span>
-      <span className="flex-1 min-w-0">
-        <span className="block text-[10px] font-semibold uppercase tracking-wider text-foreground-400">{meta.label}</span>
-        <span className={`block text-[13px] font-semibold leading-snug truncate ${completed ? 'text-emerald-950' : 'text-foreground-900'}`}>{meta.detail || meta.label}</span>
-        {(prog.state === 'attempted') && (
-          <span className="mt-1 flex items-center gap-2">
-            <span className="h-1 w-24 rounded-full bg-background-200 overflow-hidden">
-              <span className={`block h-full rounded-full ${style.bar}`} style={{ width: `${prog.percent}%` }} />
-            </span>
-          </span>
-        )}
-      </span>
-      <span className="shrink-0 flex flex-col items-end gap-1">
-        {unavailable ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-background-200 px-2 py-0.5 text-[10px] font-semibold text-foreground-500">
-            <AppIcon className="ri-lock-line text-[10px]" />Content unavailable
-          </span>
-        ) : accessRestricted ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
-            <AppIcon className="ri-time-line text-[10px]" />Available 07:0019:00 UK
-          </span>
-        ) : (
-        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${style.pill}`}>
-          {prog.state === 'passed' && <AppIcon className="ri-check-line text-[10px]" />}
-          {prog.state === 'watched' && <AppIcon className="ri-check-line text-[10px]" />}
-          {prog.state === 'completed' && <AppIcon className="ri-check-line text-[10px]" />}
-          {prog.label}{prog.detail ? ` · ${prog.detail}` : ''}
-        </span>
-        )}
-        {reflection && (
-          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${reflection.style}`}>
-            <AppIcon className={`${reflection.icon} text-[10px]`} />
-            {reflection.label}
-          </span>
-        )}
-        {c.expectedOtjh != null && c.expectedOtjh > 0 && (
-          <span className="text-[10px] text-foreground-400 inline-flex items-center gap-1"><AppIcon className="ri-time-line text-[10px]" />{c.expectedOtjh}h</span>
-        )}
-      </span>
-      {accessRestricted
-        ? <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
-        : actionable && <AppIcon className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-500 transition-smooth shrink-0" />}
-    </button>
-  );
-}
-
-/** The Continue Learning card body: progress + this week's components. */
-function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, components, videos, completions, markingStatus, kind, learnerId, reflectionStatuses, canProgress, showReadOnlyNotice = false }: {
-  moduleTitle: string; weekLabel: string; weekIndex: number; totalWeeks: number; components: JourneyComponent[];
-  videos: LearnerVideoProgress[]; completions: LearnerComponentProgress[];
-  /** Coach decision per component id — an activity needing tutor validation is
-   *  not counted as done until this says accepted. */
-  markingStatus?: Record<string, ComponentMarking>;
-  kind?: string; learnerId?: string;
-  reflectionStatuses: LearningReflectionStatusMap;
-  /** False for a staff/coach viewer: the rows still show progress, but none of
-   *  them opens the runner that would record progress as the learner. */
-  canProgress: boolean;
-  /** Show a read-only notice for non-learner viewers. */
-  showReadOnlyNotice?: boolean;
-}) {
-  const navigate = useNavigate();
-  const componentAccess = useComponentAccessWindow();
-  const [showAccessNotice, setShowAccessNotice] = useState(false);
-  const availableComponents = components.filter(hasComponentContent);
-  const total = availableComponents.length;
-  const done = availableComponents.filter((c) => {
-    // "Awaiting coach" is deliberately not counted: the week is not finished
-    // while an activity is still with a coach.
-    const s = componentProgress(c, videos, completions, markingStatus).state;
-    return s === 'passed' || s === 'watched' || s === 'completed';
-  }).length;
-  const percent = total ? Math.round((done / total) * 100) : 0;
-  const period = weekPeriodLabel(weekLabel);
-
-  const openFor = (c: JourneyComponent): (() => void) | undefined => {
-    // Returning undefined leaves the row rendered but inert — CurrentWeekRow
-    // already draws that state for components with nowhere to open.
-    if (!kind || !learnerId || !canProgress) return undefined;
-    const q = `?module=${encodeURIComponent(moduleTitle)}&week=${encodeURIComponent(weekLabel)}`;
-    let destination = '';
-    if (c.isQuiz && hasComponentContent(c)) destination = `/learner/quiz/${kind}/${learnerId}/${c.quizMeta!.quizId}${q}`;
-    else if (c.type === 'video' && c.videoUrl && c.componentId) destination = `/learner/video/${kind}/${learnerId}/${c.componentId}${q}`;
-    else if (isOpenableComponent(c)) destination = `/learner/component/${kind}/${learnerId}/${c.componentId}${q}`;
-    if (!destination) return undefined;
-    return componentAccess.open
-      ? () => navigate(destination)
-      : () => setShowAccessNotice(true);
-  };
-
-  const reflectionStatusFor = (c: JourneyComponent): string => {
-    const activityId = c.isQuiz && c.quizMeta?.quizId != null
-      ? `quiz-${c.quizMeta.quizId}`
-      : c.componentId || '';
-    if (!activityId) return '';
-    return reflectionStatuses[
-      learningReflectionStatusKey(c.isQuiz ? 'quiz' : componentNoun(c.type), activityId)
-    ] || '';
-  };
-
-  return (
-    <div>
-      <LearningWeekStrip
-        completedDates={availableComponents.flatMap((component) => {
-          const state = componentProgress(component, videos, completions, markingStatus).state;
-          if (!['passed', 'watched', 'completed'].includes(state)) return [];
-          if (component.isQuiz) {
-            return (component.quizAttempts || []).filter((attempt) => attempt.passed).map((attempt) => attempt.submittedAt);
-          }
-          const isVideo = (component.type || '').toLowerCase() === 'video' || Boolean(component.videoUrl);
-          const records = isVideo ? [...videos, ...completions] : completions;
-          return records
-            .filter((entry) => entry.componentId === component.componentId && entry.passed !== false)
-            .map((entry) => entry.submittedAt);
-        })}
-      />
-      {showReadOnlyNotice && (
-        <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-primary-200/70 bg-primary-50/60 px-3.5 py-2.5">
-          <AppIcon className="ri-eye-line mt-0.5 shrink-0 text-[15px] text-primary-600" />
-          <p className="text-[12px] leading-snug text-foreground-600">
-            <span className="font-semibold text-foreground-800">Viewing read-only.</span>{' '}
-            Only the learner can complete activities, upload evidence or submit reflections. You can still book a session.
-          </p>
-        </div>
-      )}
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary-100 bg-primary-50/50 px-3.5 py-2.5">
-        <span className="flex min-w-0 items-center gap-2.5">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-100 text-primary-700">
-            <AppIcon className="ri-calendar-event-line text-[15px]" />
-          </span>
-          <span className="shrink-0 rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-semibold text-primary-700 ring-1 ring-primary-200">
-            Week {weekIndex + 1} of {totalWeeks}
-          </span>
-        </span>
-      </div>
-      {showAccessNotice && (
-        <div role="alert" className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-[12px] text-amber-900">
-          <AppIcon className="ri-time-line mt-0.5 shrink-0 text-sm" />
-          <span>
-            <strong>Components are currently closed.</strong> {COMPONENT_ACCESS_MESSAGE}{' '}
-            Current UK time: {componentAccess.currentTimeLabel}.
-          </span>
-          <button type="button" aria-label="Dismiss" onClick={() => setShowAccessNotice(false)} className="ml-auto text-amber-700">
-            <AppIcon className="ri-close-line" />
-          </button>
-        </div>
-      )}
-      {total === 0 ? (
-        <div className="mt-3 flex min-h-[138px] flex-col items-center justify-center rounded-xl border border-dashed border-primary-200/70 bg-primary-50/10 px-5 py-5 text-center">
-          <LearningEmptyIllustration />
-          <p className="mt-2 text-[13px] font-semibold text-primary-700">No components in this week yet.</p>
-          <p className="mt-1 text-[12px] text-foreground-400">Check back soon for learning activities.</p>
-        </div>
-      ) : (
-        <>
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <span className="text-[13px] font-semibold text-foreground-900">{done}/{total} complete</span>
-            <span className="text-[13px] font-semibold tabular-nums text-primary-700">{percent}%</span>
-          </div>
-          <ProgressBar percent={percent} className="mb-4" />
-        <div className="space-y-2">
-          {components.map((c, i) => (
-            <CurrentWeekRow
-              key={c.componentId || `${c.title}-${i}`}
-              c={c}
-              videos={videos}
-              completions={completions}
-              markingStatus={markingStatus}
-              reflectionStatus={reflectionStatusFor(c)}
-              onOpen={openFor(c)}
-              accessRestricted={Boolean(canProgress && hasComponentContent(c) && isNavigableComponent(c) && !componentAccess.open)}
-            />
-          ))}
-        </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function LearningWeekStrip({ completedDates = [] }: { completedDates?: string[] }) {
-  const days = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
-  const today = new Date();
-  const todayIndex = (today.getDay() + 6) % 7;
-  const weekStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - todayIndex);
-  const weekEnd = new Date(weekStart);
-  weekEnd.setDate(weekEnd.getDate() + 7);
-  const completedDayIndexes = new Set(completedDates.flatMap((value) => {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime()) || date < weekStart || date >= weekEnd) return [];
-    return [(date.getDay() + 6) % 7];
-  }));
-  return (
-    <div className="mb-4 flex items-start px-2 sm:px-5">
-      {days.map((day, index) => (
-        <Fragment key={day}>
-          <div className="flex min-w-0 flex-1 flex-col items-center gap-1.5">
-            <span
-              aria-label={[day, index === todayIndex ? 'today' : '', completedDayIndexes.has(index) ? 'activity completed' : ''].filter(Boolean).join(', ')}
-              className={`flex h-6 w-6 items-center justify-center rounded-full border ${completedDayIndexes.has(index) ? 'border-emerald-600 bg-emerald-500 text-white' : index === todayIndex ? 'border-primary-700 bg-primary-50 text-primary-700' : 'border-foreground-200 bg-background-50 text-transparent'} ${index === todayIndex ? 'ring-4 ring-primary-100' : ''}`}
-            >
-              {completedDayIndexes.has(index) ? <AppIcon className="ri-check-line text-[12px]" /> : index === todayIndex ? <span className="h-1.5 w-1.5 rounded-full bg-primary-700" /> : null}
-            </span>
-            <span className={`text-[10px] font-semibold ${index === todayIndex ? 'text-primary-700' : completedDayIndexes.has(index) ? 'text-emerald-700' : 'text-foreground-400'}`}>{day}</span>
-          </div>
-          {index < days.length - 1 ? <span className="mt-3 h-px flex-1 border-t border-dashed border-foreground-200" /> : null}
-        </Fragment>
-      ))}
-    </div>
-  );
-}
-
-
-type StationTone = 'done' | 'current' | 'upcoming';
-
-/** A node with an SVG progress ring — the fill shows how far through the module the learner is. */
-function JourneyNode({ icon, label, title, sub, tone, pct, selected = false, onClick }: {
-  icon: string;
-  label: string;
-  /** Full module name, for the hover tooltip when the label is clamped. */
-  title?: string;
-  sub?: string;
-  tone: StationTone;
-  pct?: number;
-  selected?: boolean;
-  onClick?: () => void;
-}) {
-  const t = tone === 'done'
-    ? { fill: '#10b981', bg: 'bg-emerald-500 text-white', label: 'text-foreground-700', shadow: 'shadow-emerald-500/25' }
-    : tone === 'current'
-      ? { fill: '#7c5cff', bg: 'bg-primary-500 text-white', label: 'text-primary-700 font-semibold', shadow: 'shadow-primary-500/30' }
-      : { fill: '#cbd5e1', bg: 'bg-background-100 text-foreground-400', label: 'text-foreground-400', shadow: '' };
-  const size = 48, stroke = 3, r = (size - stroke) / 2, circ = 2 * Math.PI * r;
-  const ringPct = pct != null ? pct : tone === 'done' ? 100 : 0;
-  const content = (
-    <>
-      <div className="relative" style={{ width: size, height: size }}>
-        <svg width={size} height={size} className="-rotate-90 absolute inset-0">
-          <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="text-background-200" stroke="currentColor" />
-          <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} stroke={t.fill} strokeLinecap="round"
-            strokeDasharray={circ} strokeDashoffset={circ - (Math.min(100, ringPct) / 100) * circ} className="transition-all duration-700 ease-out" />
-        </svg>
-        <span className={`absolute inset-[6px] rounded-full flex items-center justify-center shadow-sm ${t.bg} ${t.shadow} ${tone === 'current' ? 'animate-pulse-slow' : ''}`}>
-          <AppIcon className={`${icon} text-base`} />
-        </span>
-      </div>
-      <span
-        title={title}
-        className={`text-[11px] leading-tight ${t.label} line-clamp-2 break-words`}
-      >{label}</span>
-      {sub ? <span className="text-[10px] text-foreground-400 leading-none tabular-nums">{sub}</span> : null}
-    </>
-  );
-
-  return onClick ? (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={`Select ${label}`}
-      aria-pressed={selected}
-      className={`group flex w-[104px] shrink-0 cursor-pointer flex-col items-center gap-1.5 rounded-xl px-1 py-1 text-center transition-all duration-200 hover:-translate-y-1 hover:bg-primary-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 ${selected ? 'bg-primary-50 ring-2 ring-primary-300 ring-offset-2' : ''}`}
-    >
-      {content}
-    </button>
-  ) : (
-    <div className="flex w-[104px] shrink-0 flex-col items-center gap-1.5 px-1 py-1 text-center">
-      {content}
-    </div>
-  );
-}
-function JourneyConnector({ filled }: { filled: boolean }) {
-  return (
-    <div className="flex-1 min-w-[20px] h-1 mt-6 rounded-full bg-background-200 overflow-hidden">
-      <div className={`h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500 transition-all duration-700 ${filled ? 'w-full' : 'w-0'}`} />
-    </div>
-  );
-}
-function stationTone(s: ModuleStation): StationTone {
-  return s.status === 'completed' ? 'done' : s.status === 'current' ? 'current' : 'upcoming';
-}
-
-function formatCertificateDate(value?: string | null): string {
-  if (!value) return 'Today';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? value
-    : new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(date);
-}
-
-function CertificatePreview({ certificate, template, onClose }: { certificate: LearnerCertificate; template: CertificateTemplate; onClose: () => void }) {
-  const snapshot = certificate.snapshot || {};
-  const layout = snapshot.layoutConfig || template.layoutConfig || {};
-  const learner = snapshot.learner;
-  const title = snapshot.certificateTitle || template.title;
-  const body = snapshot.bodyText || template.bodyText;
-  const learnerName = learner?.name || 'Learner';
-  const programme = snapshot.programme || learner?.programme || 'Programme';
-  const progress = snapshot.progressPercent ?? certificate.progressPercent;
-
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-5" onClick={onClose}>
-      <div className="w-full max-w-5xl rounded-2xl bg-background-100 p-4" onClick={(event) => event.stopPropagation()}>
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <div>
-            <p className="text-sm font-bold text-foreground-900">{certificate.certificateNumber}</p>
-            <p className="text-xs text-foreground-500">Issued {formatCertificateDate(certificate.issuedAt)}</p>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={() => window.print()} className="primary-action rounded-lg bg-primary-700 px-4 py-2 text-xs font-bold text-white">
-              Download / Print PDF
-            </button>
-            <button onClick={onClose} className="rounded-lg border bg-white px-4 py-2 text-xs font-bold">
-              Close
-            </button>
-          </div>
-        </div>
-        <CertificateDocument
-          title={title}
-          bodyText={body}
-          learnerName={learnerName}
-          programmeName={programme}
-          progressLabel={`${progress}%`}
-          certificateNumber={certificate.certificateNumber}
-          awardedOn={formatCertificateDate(certificate.issuedAt)}
-          verificationUrl={certificate.verificationUrl}
-          layoutConfig={layout}
-        />
-      </div>
-    </div>
-  );
-}
-
-function MiniJourney({
-  real,
-  loading,
-  loadError,
-  progressPercent,
-  progressCaption,
-  selectedModuleIndex,
-  onSelectModule,
-}: {
-  real: LearnerDetail | null;
-  loading: boolean;
-  loadError: string | null;
-  progressPercent: number | null;
-  progressCaption: string;
-  selectedModuleIndex: number | null;
-  onSelectModule: (index: number) => void;
-}) {
-  const journey = useMemo(() => buildLearnerJourney(real), [real]);
-  const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
-  const [certificateStatus, setCertificateStatus] = useState<LearnerCertificateStatus | null>(null);
-  const [issuedCertificate, setIssuedCertificate] = useState<LearnerCertificate | null>(null);
-  const [certificateBusy, setCertificateBusy] = useState(false);
-  const [certificateNotice, setCertificateNotice] = useState('');
-
-  useEffect(() => {
-    if (!real?.id || !real.learnerType) {
-      setCertificateStatus(null);
-      setIssuedCertificate(null);
-      return;
-    }
-    let cancelled = false;
-    setCertificateNotice('');
-    fetchLearnerCertificateStatus(real.learnerType, real.id)
-      .then((result) => {
-        if (!cancelled) setCertificateStatus(result);
-      })
-      .catch(() => {
-        if (!cancelled) setCertificateStatus(null);
-      });
-    return () => { cancelled = true; };
-  }, [real?.id, real?.learnerType]);
-
-  if (loading) return <RowsSkeleton rows={4} className="py-2" />;
-  if (loadError) return <EmptyState size="sm" title={loadError} />;
-  if (journey.length === 0) return <EmptyState size="sm" title="No training plan built for this learner yet." />;
-
-  const current = currentIndex >= 0 ? stations[currentIndex] : null;
-  const selected = selectedModuleIndex == null
-    ? current
-    : stations.find((station) => station.index === selectedModuleIndex) ?? current;
-  const allDone = currentIndex === -1 && stations.length > 0;
-  return (
-    <div>
-      {/* Overall progress banner.
-          Two different measures used to sit under one "Overall progress"
-          heading: this figure counts whole MODULES finished (13/34 = 38%),
-          while every node on the track below shows how much of that module's
-          CONTENT is done. A module at 99% counts as zero here, so the headline
-          looked wrong beside a row of green nodes. Both are worth showing —
-          they answer different questions — so each is now labelled for what it
-          actually measures. */}
-      <div className="rounded-xl bg-primary-50/60 border border-primary-100/60 p-3 mb-4">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-primary-600">Modules completed</span>
-          <span className="text-[15px] font-heading font-bold text-foreground-900 tabular-nums">
-            {progressPercent == null ? EMPTY_VALUE : `${progressPercent}%`}
-          </span>
-        </div>
-        <ProgressBar percent={progressPercent} height="h-2" />
-        <p className="text-[11px] text-foreground-500 mt-1.5">{progressCaption}</p>
-
-        <div className="mt-3 border-t border-primary-100/70 pt-2.5">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-primary-600">Content completed</span>
-            <span className="text-[15px] font-heading font-bold text-foreground-900 tabular-nums">{overallPct}%</span>
-          </div>
-          <ProgressBar percent={overallPct} height="h-2" />
-          <p className="text-[11px] text-foreground-500 mt-1.5">
-            Across every activity in your {stations.length} assigned module{stations.length === 1 ? '' : 's'}
-          </p>
-        </div>
-      </div>
-
-      {certificateStatus?.template ? (
-        <div className={`mb-4 flex items-center gap-3 rounded-xl border p-3.5 ${certificateStatus.eligibility?.eligible ? 'border-amber-200 bg-amber-50/60' : 'border-foreground-200 bg-background-100'}`}>
-          <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${certificateStatus.eligibility?.eligible ? 'bg-amber-500 text-white' : 'bg-background-200 text-foreground-400'}`}>
-            <AppIcon className={certificateStatus.eligibility?.eligible ? 'ri-award-fill' : 'ri-lock-2-line'} />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-bold text-foreground-900">{certificateStatus.certificate ? 'Certificate issued' : certificateStatus.eligibility?.eligible ? 'Certificate unlocked' : 'Progress certificate'}</p>
-            <p className="text-xs text-foreground-500">
-              {certificateStatus.certificate
-                ? `${certificateStatus.certificate.certificateNumber} · issued ${formatCertificateDate(certificateStatus.certificate.issuedAt)}`
-                : certificateStatus.eligibility?.eligible
-                  ? `${certificateStatus.template.title} is ready to issue.`
-                  : `Reach ${certificateStatus.template.minimumProgress}% to unlock · ${Math.max(0, certificateStatus.template.minimumProgress - (certificateStatus.eligibility?.progressPercent ?? overallPct))}% remaining`}
-            </p>
-            {certificateNotice ? <p className="mt-1 text-xs font-semibold text-red-600">{certificateNotice}</p> : null}
-          </div>
-          {certificateStatus.eligibility?.eligible || certificateStatus.certificate ? (
-            <button
-              disabled={certificateBusy}
-              onClick={() => {
-                if (!real?.id || !real.learnerType) return;
-                if (certificateStatus.certificate) {
-                  setIssuedCertificate(certificateStatus.certificate);
-                  return;
-                }
-                setCertificateBusy(true);
-                setCertificateNotice('');
-                issueLearnerCertificate(real.learnerType, real.id)
-                  .then((result) => {
-                    setCertificateStatus(result);
-                    setIssuedCertificate(result.certificate);
-                  })
-                  .catch((error) => setCertificateNotice(error instanceof Error ? error.message : 'Could not issue certificate.'))
-                  .finally(() => setCertificateBusy(false));
-              }}
-              className="primary-action rounded-lg bg-primary-700 px-4 py-2 text-xs font-bold text-white disabled:opacity-60"
-            >
-              {certificateBusy ? 'Issuing...' : 'View certificate'}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-
-      {/* Milestone track */}
-      <div className="overflow-x-auto pb-1">
-        <div className="flex items-start min-w-max px-1">
-          <JourneyNode icon="ri-flag-fill" label="Start" tone="done" />
-          {stations.map((s) => (
-            <Fragment key={s.index}>
-              <JourneyConnector filled={s.status === 'completed'} />
-              {/* The module's own name, not "Module 7". A learner reading the
-                  track wants to recognise what they studied; a position in an
-                  ordering they never see tells them nothing, and made every
-                  learner's journey look identical. The full title is on hover
-                  for the ones the node has to truncate. */}
-              <JourneyNode
-                icon={s.status === 'completed' ? 'ri-check-line' : s.status === 'current' ? 'ri-flag-2-fill' : 'ri-lock-2-line'}
-                label={s.module.module || `Module ${s.index + 1}`}
-                title={s.module.module || undefined}
-                sub={s.pct == null ? '—' : `${s.pct}%`}
-                tone={stationTone(s)}
-                pct={s.pct ?? 0}
-                selected={selected?.index === s.index}
-                onClick={() => onSelectModule(s.index)}
-              />
-            </Fragment>
-          ))}
-          <JourneyConnector filled={allDone} />
-          <JourneyNode icon="ri-trophy-fill" label="Gateway" tone={allDone ? 'done' : 'upcoming'} />
-        </div>
-      </div>
-
-      {/* Selected-module card */}
-      {selected ? (
-        <div
-          aria-live="polite"
-          className="mt-4 rounded-xl border border-primary-200/60 bg-primary-50/30 p-3.5"
-        >
-          <div className="flex items-center gap-2 mb-2.5">
-            <span className="w-7 h-7 rounded-lg bg-primary-500 text-white flex items-center justify-center shrink-0"><AppIcon className="ri-flag-2-fill text-sm" /></span>
-            <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-primary-600 leading-none">
-                {selected.index === current?.index ? 'You are here' : `Selected Module ${selected.index + 1}`}
-              </p>
-              <p className="text-[13px] font-semibold text-foreground-900 truncate leading-tight mt-0.5">{selected.module.module}</p>
-            </div>
-            <span className="ml-auto text-[13px] font-heading font-bold text-primary-700 tabular-nums shrink-0">{selected.pct == null ? EMPTY_VALUE : `${selected.pct}%`}</span>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <JourneyStat icon="ri-stack-line" label="Components" value={`${selected.componentCount}`} />
-            <JourneyStat icon="ri-questionnaire-line" label="Quizzes" value={selected.quizTotal > 0 ? `${selected.quizTaken}/${selected.quizTotal}` : '—'} />
-            <JourneyStat icon="ri-play-circle-line" label="Videos" value={selected.videoTotal > 0 ? `${selected.videoDone}/${selected.videoTotal}` : '—'} />
-          </div>
-        </div>
-      ) : allDone ? (
-        <div className="mt-4 rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-3.5 flex items-center gap-2.5">
-          <span className="w-8 h-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0"><AppIcon className="ri-trophy-fill" /></span>
-          <p className="text-[13px] font-semibold text-emerald-700">All modules complete — you&apos;ve reached the Gateway!</p>
-        </div>
-      ) : null}
-      {issuedCertificate && certificateStatus?.template ? (
-        <CertificatePreview certificate={issuedCertificate} template={certificateStatus.template} onClose={() => setIssuedCertificate(null)} />
-      ) : null}
-    </div>
-  );
-}
-
-function JourneyStat({ icon, label, value }: { icon: string; label: string; value: string }) {
-  return (
-    <div className="rounded-lg bg-background-50 border border-foreground-100 px-2 py-2 text-center">
-      <AppIcon className={`${icon} text-primary-500 text-sm`} />
-      <p className="text-[13px] font-heading font-bold text-foreground-900 leading-none mt-1">{value}</p>
-      <p className="text-[9px] uppercase tracking-wider text-foreground-400 mt-0.5">{label}</p>
-    </div>
-  );
-}
-
-function TimelineCard({ component, status, canMarkComplete, onMarkComplete }: {
-  component: (typeof WEEKLY_LEARNING_COMPONENTS[number]) & { dayLabel: string; dateLabel: string };
-  status: string;
-  canMarkComplete: boolean;
-  onMarkComplete: () => void;
-}) {
-  const [animating, setAnimating] = useState(false);
-  const isCompleted = status === 'completed';
-  const isToday = status === 'In Progress';
-
-  const ts = typeStyle[component.type] || typeStyle['Evidence'];
-  const ss = statusStyle[status] || statusStyle['Not Started'];
-
-  const handleClick = () => {
-    if (!canMarkComplete || animating) return;
-    setAnimating(true);
-    onMarkComplete();
-    setTimeout(() => setAnimating(false), 500);
-  };
-
-  return (
-    <div className={`relative flex items-start gap-4 py-3 group`}>
-      {/* Timeline dot */}
-      <button
-        type="button"
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          handleClick();
-        }}
-        disabled={!canMarkComplete}
-        className={`relative z-10 shrink-0 rounded-full flex items-center justify-center transition-all duration-[350ms] ease-out mt-3 ${
-          canMarkComplete
-            ? 'cursor-pointer hover:scale-125'
-            : 'cursor-default'
-        }`}
-        style={{ width: canMarkComplete ? '22px' : '10px', height: canMarkComplete ? '22px' : '10px' }}
-        aria-label={canMarkComplete ? `Mark "${component.title}" as complete` : undefined}
-        title={canMarkComplete ? `Mark "${component.title}" as complete` : isCompleted ? 'Completed' : isToday ? 'Today' : 'Upcoming'}
-      >
-        {isCompleted ? (
-          <span className="flex items-center justify-center w-full h-full rounded-full bg-emerald-400 ring-2 ring-emerald-100">
-            <AppIcon className={`${animating ? 'ri-check-line' : ''} text-white text-[8px]`}></AppIcon>
-          </span>
-        ) : canMarkComplete ? (
-          <span className="flex items-center justify-center w-full h-full rounded-full border-2 border-dashed border-accent-400/60 bg-accent-50 group-hover:border-accent-500 group-hover:bg-accent-100 transition-smooth">
-            <AppIcon className="ri-check-line text-accent-500 text-xs opacity-0 group-hover:opacity-100 transition-opacity duration-200"></AppIcon>
-          </span>
-        ) : (
-          <span className={`w-[10px] h-[10px] rounded-full block ${
-            isToday ? 'bg-accent-500 ring-4 ring-accent-200' :
-            'bg-foreground-200 ring-2 ring-background-100'
-          }`} />
-        )}
-      </button>
-
-      {/* Day label */}
-      <div className="text-center shrink-0 w-12 mt-2">
-        <p className="text-xs text-foreground-400 uppercase font-semibold tracking-wider">{component.dayLabel}</p>
-        <p className="text-xs text-foreground-600 font-medium">{component.dateLabel}</p>
-      </div>
-
-      {/* Card content */}
-      <Link
-        to={`/learner/training-plan`}
-        className="flex-1 min-w-0 block"
-      >
-        <div className={`relative rounded-xl border p-4 transition-smooth cursor-pointer hover:border-primary-300/60 hover:shadow-sm ${isCompleted ? 'border-foreground-200/50 bg-background-50' : 'border-foreground-200/50 bg-background-50'}`}>
-          <div className="flex items-start gap-4">
-            {/* Type icon */}
-            <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${ts.iconBg} ${ts.iconText}`}>
-              <AppIcon className={`${component.typeIcon} text-lg`}></AppIcon>
-            </div>
-
-            <div className="flex-1 min-w-0">
-              {/* Top row: type chip + status */}
-              <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                <span className={`text-xs font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ${ts.chip}`}>{component.type}</span>
-                {component.isLive && !isCompleted && (
-                  <span className="text-xs font-semibold text-red-600 bg-red-50 px-2 py-0.5 rounded-full">LIVE</span>
-                )}
-                {component.status === 'In Progress' && !component.isLive && !isCompleted && (
-                  <span className="text-xs font-semibold text-accent-600 bg-accent-50 px-2 py-0.5 rounded-full">Active</span>
-                )}
-                {isCompleted && (
-                  <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-1">
-                    <AppIcon className="ri-check-line"></AppIcon> Done
-                  </span>
-                )}
-                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ml-auto ${ss.bg} ${ss.text}`}>
-                  <span className={`inline-block w-1.5 h-1.5 rounded-full ${ss.dot} mr-1 align-middle`}></span>
-                  {status}
-                </span>
-              </div>
-
-              {/* Title */}
-              <p className={`text-sm font-semibold mb-2 ${isCompleted ? 'text-foreground-400 line-through' : 'text-foreground-900'}`}>{component.title}</p>
-
-              {/* Compact meta row */}
-              <div className="flex items-center gap-x-4 gap-y-1 text-xs text-foreground-400 flex-wrap">
-                <span className="flex items-center gap-1"><AppIcon className="ri-timer-line"></AppIcon> {component.duration}</span>
-                <span className="flex items-center gap-1"><AppIcon className="ri-time-line"></AppIcon> {component.plannedOTJH}h OTJH</span>
-                {component.actualOTJH > 0 && (
-                  <span className="flex items-center gap-1 text-emerald-600">
-                    <AppIcon className="ri-check-line"></AppIcon> {component.actualOTJH}h logged
-                  </span>
-                )}
-                <span className="flex items-center gap-1"><AppIcon className="ri-calendar-line"></AppIcon> {component.dueDate}</span>
-                <span className="flex items-center gap-1 text-amber-600"><AppIcon className="ri-coin-line"></AppIcon> {component.points} pts</span>
-              </div>
-            </div>
-
-            {/* Arrow */}
-            <div className="w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth shrink-0 mt-0.5">
-              <AppIcon className="ri-arrow-right-line text-sm"></AppIcon>
-            </div>
-          </div>
-        </div>
-      </Link>
-    </div>
   );
 }

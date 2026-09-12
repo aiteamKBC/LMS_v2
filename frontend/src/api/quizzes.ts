@@ -1,3 +1,4 @@
+import { readLearnerJson } from './learnerRead';
 // ============================================================================
 // Quiz-taking API client.
 // Talks to the Django backend at /learner_api/quizzes (proxied to :8000 by Vite in dev).
@@ -116,6 +117,7 @@ export interface QuizAttemptResult {
 }
 
 async function request<T>(url: string, init?: globalThis.RequestInit): Promise<T> {
+  if (!init?.method || init.method.toUpperCase() === 'GET') return readLearnerJson<T>(url, { ...init, headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', ...init?.headers } });
   let res: Response;
   try {
     res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...init });

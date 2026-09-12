@@ -11,6 +11,9 @@ urlpatterns = [
     path('curriculum/reviews/<str:review_id>/', reviews.curriculum_review_detail, name='curriculum-review-detail'),
     path('curriculum/overview/', views.curriculum_overview, name='curriculum-overview'),
     path('curriculum/stats/', views.curriculum_stats, name='curriculum-stats'),
+    # Polled by every open tab to notice a write made somewhere else. Kept next
+    # to nothing in cost: one Redis read, no database.
+    path('curriculum/cache-epoch/', views.curriculum_cache_epoch, name='curriculum-cache-epoch'),
     path('curriculum/preview/cohort-end-date/', views.curriculum_preview_cohort_end_date, name='curriculum-preview-cohort-end-date'),
     path('curriculum/preview/module-session-plan/', views.curriculum_preview_module_session_plan, name='curriculum-preview-module-session-plan'),
     path('curriculum/preview/tutor-availability/', views.curriculum_preview_tutor_availability, name='curriculum-preview-tutor-availability'),

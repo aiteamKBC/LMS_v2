@@ -34,6 +34,23 @@ afterEach(async () => {
 });
 
 describe('monthly assignment drafts', () => {
+  it('renders HTML stored in a legacy question field and removes unsafe markup', async () => {
+    render(<AssignmentSubmissionWizard {...props} questionText={'<span style="font-size:14px" onclick="alert(1)">What have you learned this month?</span><script>alert(1)</script>'} />);
+    const question = await screen.findByText('What have you learned this month?');
+    expect(question.tagName).toBe('SPAN');
+    expect(question).toHaveStyle({ fontSize: '14px' });
+    expect(question).not.toHaveAttribute('onclick');
+    expect(question.parentElement?.querySelector('script')).toBeNull();
+  });
+
+  it('preserves plain question text with line breaks and comparison symbols', async () => {
+    const text = 'Compare results: 2 < 3 and 5 > 4.\nExplain your findings.';
+    render(<AssignmentSubmissionWizard {...props} questionText={text} />);
+    await screen.findByLabelText(/Your answer \(/);
+    expect(screen.getByText(/Compare results/).textContent).toBe(text);
+    expect(screen.getByText(/Compare results/)).toHaveClass('whitespace-pre-line');
+  });
+
   it('opens historical originals through their resolver and never saves the imported record', async () => {
     vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({
       status: 'accepted', submissionOrigin: 'imported_legacy',

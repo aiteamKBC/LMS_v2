@@ -13,13 +13,13 @@ import { AppIcon } from '@/components/feature/AppIcon';
 (globalThis as unknown as { AppIcon: typeof AppIcon }).AppIcon = AppIcon;
 
 const fetchLeaderboard = vi.fn();
-const fetchLearnerDetail = vi.fn();
+const fetchLearnerSummary = vi.fn();
 
 vi.mock('@/api/engagement', () => ({
   fetchLeaderboard: (...args: unknown[]) => fetchLeaderboard(...args),
 }));
 vi.mock('@/api/learnerDetail', () => ({
-  fetchLearnerDetail: (...args: unknown[]) => fetchLearnerDetail(...args),
+  fetchLearnerSummary: (...args: unknown[]) => fetchLearnerSummary(...args),
 }));
 
 const { LeaderboardTab } = await import('../LeaderboardTab');
@@ -37,8 +37,8 @@ const ENTRIES = [
 
 beforeEach(() => {
   fetchLeaderboard.mockReset();
-  fetchLearnerDetail.mockReset();
-  fetchLearnerDetail.mockResolvedValue({ id: SESSION_LEARNER_ID, name: 'Sophie Williams', cohort: 'Sept 2025 Kent' });
+  fetchLearnerSummary.mockReset();
+  fetchLearnerSummary.mockResolvedValue({ id: SESSION_LEARNER_ID, name: 'Sophie Williams', cohort: 'Sept 2025 Kent' });
   localStorage.clear();
 });
 
@@ -64,11 +64,11 @@ describe('LeaderboardTab', () => {
   });
 
   it('says so when the cohort ranking has no cohort to scope to, instead of silently showing everyone', async () => {
-    fetchLearnerDetail.mockResolvedValue({ id: SESSION_LEARNER_ID, name: 'Sophie Williams', cohort: '' });
+    fetchLearnerSummary.mockResolvedValue({ id: SESSION_LEARNER_ID, name: 'Sophie Williams', cohort: '' });
     fetchLeaderboard.mockResolvedValue({ scope: 'monthly', cohort: null, entries: ENTRIES });
     const user = userEvent.setup();
     render(<LeaderboardTab />);
-    await waitFor(() => expect(fetchLearnerDetail).toHaveBeenCalled());
+    await waitFor(() => expect(fetchLearnerSummary).toHaveBeenCalled());
     await waitFor(() => expect(fetchLeaderboard).toHaveBeenCalledTimes(1));
 
     await user.click(screen.getByRole('button', { name: /Cohort Rankings/i }));

@@ -24,8 +24,14 @@ describe('parseVideoUrl', () => {
       // which is what gives the learner a scrubber.
       expect(parseVideoUrl(url)).toEqual({
         kind: 'file', src: `/learner_api/media/google-drive/${id}/`,
+        fallbackSrc: `https://drive.google.com/file/d/${id}/preview`,
       });
     }
+  });
+
+  it('retains a Drive resource key on its permitted preview', () => {
+    expect(parseVideoUrl('https://drive.google.com/file/d/1234567890/view?resourcekey=key-123').fallbackSrc)
+      .toBe('https://drive.google.com/file/d/1234567890/preview?resourcekey=key-123');
   });
 
   it('still recognises the platforms it always did', () => {

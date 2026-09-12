@@ -168,14 +168,16 @@ export function WorkspaceShell({
 }: WorkspaceShellProps) {
   // A learner who is still onboarding, or who has finished enrolment but is not
   // yet being taught, gets a reduced sidebar — most of the workspace needs a
-  // running training plan. Applied here so every learner page inherits it.
+  // running training plan. Staff reviewing a learner get the same full menu on
+  // every page, while learner-type and navigation permissions still apply.
   const { auth, isAdmin } = useAuth();
   const location = useLocation();
   // Keep the approved admin page styling in the shared directory, but let the
   // selected workspace supply its own menu, labels and breadcrumbs.
   const isAdminDirectory = isAdmin && /^\/(?:users|employers)(?:\/|$)/.test(location.pathname);
   const chromeRole = isAdminDirectory ? 'admin' : role;
-  const navItems = useLearnerNavGate(filterLearnerNavigation ? role : '', navItemsProp);
+  const reviewingLearner = auth.account?.role === 'admin' || auth.account?.role === 'staff';
+  const navItems = useLearnerNavGate(filterLearnerNavigation ? role : '', navItemsProp, reviewingLearner);
   const navigate = useNavigate();
   const [searchOpen, setSearchOpen] = useState(false);
   const [previousRoute, setPreviousRoute] = useState('');

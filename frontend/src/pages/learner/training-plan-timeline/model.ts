@@ -1,5 +1,6 @@
 import type { TrainingPlanDashboard, PlanSession } from '@/api/trainingPlanDashboard';
 import type { Subject } from '../my-learning/SubjectWorkspace';
+import type { PlanSubjectSummary } from '@/api/learnerOverview';
 
 export function dateKey(value: string | null | undefined) {
   if (!value) return '';
@@ -31,24 +32,31 @@ export function reviewToBook(reviews: TrainingPlanDashboard['reviews']) {
     .sort((a, b) => reviewDate(a).localeCompare(reviewDate(b)))[0] || null;
 }
 
-export function buildPlanModules(subjects: Subject[], data: TrainingPlanDashboard) {
+export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], data: TrainingPlanDashboard) {
   return subjects.map(subject => {
+    const summary = 'activities' in subject ? null : subject;
+    const activities = 'activities' in subject ? subject.activities : [];
     const moduleId = data.moduleLinks[subject.id]?.id || (subject.id.startsWith('current:') ? subject.id.slice(8) : null);
     const detail = data.modules.find(module => module.id === moduleId);
     const sessions = data.sessions.filter(session => session.moduleId === moduleId).map(session => {
-      const matches = subject.activities.filter(activity => Date.parse(activity.native?.sessionDateTimeUtc || '') === Date.parse(session.start)
+      const matches = activities.filter(activity => Date.parse(activity.native?.sessionDateTimeUtc || '') === Date.parse(session.start)
         || (activity.category === 'live_session' && activity.schedule.date === sessionDay(session.start)));
+      if (summary) {
+        const titles = summary.sessionTitles.filter(item => item.date === sessionDay(session.start));
+        return titles.length === 1 ? { ...session, title: titles[0].title } : session;
+      }
       return matches.length === 1 ? { ...session, title: matches[0].title } : session;
     });
-    const activityDates = subject.activities.filter(a => !a.schedule.date_needs_review).map(a => dateKey(a.schedule.date)).filter(Boolean);
+    const activityDates = summary?.dates || activities.filter(a => !a.schedule.date_needs_review).map(a => dateKey(a.schedule.date)).filter(Boolean);
     const dates = [...new Set([...activityDates, ...sessions.map(session => sessionDay(session.start))])].filter(Boolean).sort();
     const start = dateKey(detail?.start_date) || dates[0] || '';
     const end = dateKey(detail?.end_date) || dates.at(-1) || start;
-    const done = subject.activities.filter(activity => activity.completed).length;
+    const done = summary?.completed ?? activities.filter(activity => activity.completed).length;
+    const activityCount = summary?.total ?? activities.length;
     const groupId = subject.id.startsWith('legacy:') ? subject.id.slice(7) : '';
     const actual = data.actual.filter(row => groupId && row.groupId === groupId);
-    return { ...subject, moduleId, detail, sessions, dates, start, end,
-      weeks: new Set(dates.map(weekKey)).size, done, progress: percent(done, subject.activities.length),
+    return { ...subject, activities, activityCount, moduleId, detail, sessions, dates, start, end,
+      weeks: new Set(dates.map(weekKey)).size, done, progress: percent(done, activityCount),
       actual: actual.length ? actual.reduce((sum, row) => sum + row.hours, 0) : null };
   });
 }

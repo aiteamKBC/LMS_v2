@@ -19,7 +19,6 @@
 .signTable th:nth-child(4) { width: 12%; }
 .signTable th:nth-child(5) { width: 16%; }
 .activityTable .activityRow:nth-child(even) { background: var(--record-surface); }
-.activityTable .activityRow:hover { background: var(--record-soft); }
 .activityTable .activityCell { min-width: 0; overflow-wrap: anywhere; }
 .activityDescription { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; min-width: 0; }
 .activityTrigger { display: inline-flex; align-items: flex-start; gap: 6px; text-align: left; max-width: 100%; padding-block: 2px; border-radius: 5px; }
@@ -78,6 +77,33 @@
 .document { font-size: 11px; }
 .modalIntro { animation: reveal 180ms ease-out; }
 @keyframes reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Keep report tables on the journal's navy palette when the workspace theme
+   applies its default purple table treatment. */
+:global(body.dashboard-theme .workspace-main) .activityLog table.activityTable > thead > tr > th,
+:global(body.dashboard-theme .workspace-main) .signoff table.signTable > thead > tr > th {
+  background: #a4adb7 !important;
+  color: #263f54 !important;
+}
+
+:global(body.dashboard-theme .workspace-main) .activityLog table.activityTable > tbody > .groupRow > th {
+  background: #eef0f1 !important;
+  color: #304a61 !important;
+}
+
+/* The theme wrapper is not always mounted on body (it can be a root div), so
+   keep a wrapper-agnostic rule as well. */
+:global(.dashboard-theme .workspace-main) table.activityTable thead th,
+:global(.dashboard-theme .workspace-main) table.signTable thead th {
+  background: #a4adb7 !important;
+  color: #263f54 !important;
+}
+
+:global(html body .dashboard-theme .workspace-main) table.activityTable thead th,
+:global(html body .dashboard-theme .workspace-main) table.signTable thead th {
+  background: #a4adb7 !important;
+  color: #263f54 !important;
+}
 @media (prefers-reduced-motion: reduce) { .modalIntro { animation: none; } }
 @media (max-width: 1023px) {
   /* The workspace's generic tables have a minimum width and fixed cell

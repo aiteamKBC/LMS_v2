@@ -8,7 +8,7 @@ import hashlib
 import io
 import json
 import math
-from datetime import date
+from datetime import date, timedelta
 from urllib.parse import urlparse
 
 from django.core import signing
@@ -43,6 +43,13 @@ def month_bounds(month):
         return None, None
 
 
+def coaching_booking_bounds(month):
+    start, end = month_bounds(month)
+    if not start:
+        return None, None
+    return end - timedelta(days=9), end + timedelta(days=5)
+
+
 def presentation_fingerprint(payload):
     monthly = mapping(payload.get("monthlyAssignment"))
     contents = {key: payload.get(key) for key in ("learnerKind", "learnerId", "activityId")}
@@ -57,7 +64,7 @@ def presentation_fingerprint(payload):
 def valid_presentation(payload):
     monthly = mapping(payload.get("monthlyAssignment"))
     slides = items(monthly.get("slides"))
-    if not (1 <= len(slides) <= 30 and monthly.get("presentationReviewed") is True):
+    if not (1 <= len(slides) <= 200 and monthly.get("presentationReviewed") is True):
         return False
     try:
         digest = signing.loads(text(monthly.get("presentationToken")), salt="monthly-assignment-pptx")
@@ -79,12 +86,12 @@ def approved_evidence_ids(payload):
 def booked_coaching(payload):
     from .calendar import _learner_calendar_record
     monthly = mapping(payload.get("monthlyAssignment"))
-    start, end = month_bounds(monthly.get("month"))
+    start, end = coaching_booking_bounds(monthly.get("month"))
     if not start or not text(monthly.get("meetingKey")):
         return False
     record = _learner_calendar_record(payload.get("learnerKind"), int(payload.get("learnerId")), monthly["meetingKey"])
     return bool(record and record.event_type == "mcr" and record.scheduled_date
-                and end.replace(day=end.day - 9) <= record.scheduled_date <= end
+                and start <= record.scheduled_date <= end
                 and record.status in ("scheduled", "in-progress", "completed", "awaiting-signature"))
 
 
@@ -95,7 +102,9 @@ def available_ksb_codes(payload):
     model = CommercialUser if payload.get("learnerKind") == "commercial" else EnrolmentUser
     source = model.all_learners.filter(pk=payload.get("learnerId")).first()
     profile = learner_profile_for_source(source, payload.get("learnerId"), active_only=True) if source else None
-    return set(component_ksb_codes(payload.get("activityId"))) | {k["code"] for k in (profile.ksbs if profile else [])}
+    from .active_users import current_curriculum_ksb_items_for_learner
+    programme_items = current_curriculum_ksb_items_for_learner(profile, source=source) if source else []
+    return set(component_ksb_codes(payload.get("activityId"))) | {k["code"] for k in (programme_items or (profile.ksbs if profile else []))}
 
 
 def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowed_ksbs=None):
@@ -109,11 +118,13 @@ def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowe
         entry_id = text(entry.get("id"))
         url = text(entry.get("url"))
         is_link = entry_id.startswith("link:") and urlparse(url).scheme in ("https", "http") and bool(urlparse(url).hostname)
+        point_text = text(entry.get("points")).strip()
         try:
-            points = [int(p.strip()) for p in text(entry.get("points")).split(",") if p.strip()]
+            points = [int(p.strip()) for p in point_text.split(",") if p.strip()]
         except ValueError:
             points = []
-        if entry_id and (is_link or entry_id in owned) and points and all(1 <= p <= len(answer_lines) for p in points):
+        valid_points = not point_text or (bool(points) and all(1 <= p <= len(answer_lines) for p in points))
+        if entry_id and (is_link or entry_id in owned) and valid_points:
             linked_ids.add(entry_id)
     claims = [mapping(c) for c in items(monthly.get("claims"))]
     allowed = available_ksb_codes(payload) if allowed_ksbs is None and claims else (allowed_ksbs or set())
@@ -126,7 +137,7 @@ def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowe
     checks = [
         ("answer", "Assignment answer: at least 120 words", words(payload.get("assignmentAnswer")) >= 120),
         ("learning", "Learned, understood and gained skills: at least 20 words each", all(words(v) >= 20 for v in [payload.get("whatYouLearned"), monthly.get("understood"), monthly.get("gainedSkills")])),
-        ("evidence", "At least one available evidence item cross-referenced to valid answer points", bool(linked_ids)),
+        ("evidence", "At least one available evidence item; answer point numbers are optional and must be valid if provided", bool(linked_ids)),
         ("ksbs", "Every claimed programme KSB has a 20-word explanation and linked evidence", bool(claims) and len(set(claimed_codes)) == len(claimed_codes) and set(claimed_codes) <= allowed and all(words(c.get("explanation")) >= 20 and bool(set(str(e) for e in items(c.get("evidenceIds"))) & linked_ids) for c in claims)),
         ("planned", "Planned hours and KSBs reviewed", monthly.get("plannedReviewed") is True),
         ("declarations", "New learning, skills and employer evidence-sharing declarations confirmed", all(monthly.get(k) is True for k in ["newKnowledge", "newSkills", "sharingConsent"])),
@@ -135,7 +146,7 @@ def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowe
         ("benefit", "Employer benefit confirmed and measurable outcomes described (20 words)", monthly.get("employerBenefit") is True and words(payload.get("businessImpact")) >= 20),
         ("impact", "Career, job and employer impacts: at least 20 words each", all(words(monthly.get(k)) >= 20 for k in ["careerImpact", "jobImpact", "employerImpact"])),
         ("action", "Action plan and EPA preparedness: at least 20 words each", all(words(monthly.get(k)) >= 20 for k in ["actionPlan", "epaPreparedness"])),
-        ("meeting", "Coaching meeting booked in the last ten days of the submission month", booked),
+        ("meeting", "Coaching meeting booked from the last ten days of the submission month through the 5th of the following month", booked),
         ("presentation", "Presentation generated, exported and reviewed", valid_presentation(payload)),
     ]
     return [{"key": key, "label": label, "passed": bool(passed)} for key, label, passed in checks]
@@ -168,27 +179,33 @@ def export_presentation(request):
     try:
         payload = parse_request(request)
         slides = items(mapping(payload.get("monthlyAssignment")).get("slides"))
-        if not 1 <= len(slides) <= 30:
-            raise ValueError("Add between 1 and 30 slides before exporting.")
-        if any(not text(mapping(s).get("title")) or not text(mapping(s).get("body")) or len(text(mapping(s).get("body"))) > 12000 for s in slides):
-            raise ValueError("Every slide needs a title and content (up to 12,000 characters).")
-        from pptx import Presentation
-        from pptx.util import Pt
-        deck = Presentation()
-        for content in slides:
-            # Long narratives are split so exported slides remain readable.
-            body = text(content["body"])
-            paragraphs = [body[i:i + 900] for i in range(0, len(body), 900)]
-            for index, paragraph in enumerate(paragraphs):
-                slide = deck.slides.add_slide(deck.slide_layouts[1])
-                slide.shapes.title.text = content["title"] + (" (continued)" if index else "")
-                frame = slide.placeholders[1].text_frame
-                frame.text = paragraph
-                for p in frame.paragraphs:
-                    p.font.size = Pt(18)
-        stream = io.BytesIO()
-        deck.save(stream)
-        response = HttpResponse(stream.getvalue(), content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation")
+        if not 1 <= len(slides) <= 200:
+            raise ValueError("Add between 1 and 200 slides before exporting.")
+        for index, slide in enumerate(slides, 1):
+            if not text(mapping(slide).get("title")):
+                raise ValueError(f"Slide {index}: add a title before exporting.")
+            if not text(mapping(slide).get("body")):
+                raise ValueError(f"Slide {index}: add content, regenerate from your completed answers, or remove this slide.")
+            if len(text(mapping(slide).get("body"))) > 12000:
+                raise ValueError(f"Slide {index}: split the content across more slides (maximum 12,000 characters per slide).")
+        from .presentation_design import build_deck
+        design = mapping(mapping(payload.get("monthlyAssignment")).get("presentationDesign"))
+        if design and not design.get("evidenceId"):
+            raise ValueError("This saved reference contains colours only. Upload the original PPTX again to use its full template, or choose the default KBC design.")
+        if design.get("evidenceId"):
+            from .presentation_template import load_owned_template, build_from_template
+            from .presentation_design import extract_design
+            try:
+                _, reference = load_owned_template(payload["learnerKind"], payload["learnerId"], design["evidenceId"])
+                extract_design(reference)
+                content = build_from_template(slides, reference, design)
+            except ValueError:
+                raise
+            except Exception:
+                return JsonResponse({"error": "Could not load or apply the saved PowerPoint template. Try uploading it again."}, status=503)
+        else:
+            content = build_deck(slides)
+        response = HttpResponse(content, content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation")
         response["Content-Disposition"] = 'attachment; filename="monthly-assignment.pptx"'
         response["X-Presentation-Token"] = signing.dumps(presentation_fingerprint(payload), salt="monthly-assignment-pptx")
         response["Cache-Control"] = "no-store"

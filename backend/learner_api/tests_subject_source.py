@@ -50,6 +50,7 @@ class SubjectSourceTests(SimpleTestCase):
         source._cache.clear()
         self.addCleanup(source._cache.clear)
         self.stack = self.enterContext(ExitStack())
+        self.stack.enter_context(patch.object(views, '_activity_sources', return_value={}))
         self._real_schedule = source.course_schedule
         self.schedule = self.stack.enter_context(patch.object(source, 'course_schedule', return_value={}))
         self.live = {'groups': [course()]}
@@ -99,11 +100,10 @@ class SubjectSourceTests(SimpleTestCase):
         self.assertEqual(chosen, [course()])
         self.assertNotIn('other private results', json.dumps(chosen))
 
-    def test_duplicate_or_incomplete_source_is_rejected(self):
+    def test_repeated_activity_counts_once_and_incomplete_source_is_rejected(self):
         payload = page()
         payload['groups'][0]['activities'].append(payload['groups'][0]['activities'][0])
-        with self.assertRaises(ValueError):
-            source._select(payload, 7, 'learner@example.org')
+        self.assertEqual(len(source._select(payload, 7, 'learner@example.org')[0]['activities']), 2)
         payload = page()
         payload['groups'][0]['learners'][0].pop('activity_results')
         with self.assertRaises(ValueError):
@@ -115,9 +115,81 @@ class SubjectSourceTests(SimpleTestCase):
         self.assertEqual(result, [course()])
         self.assertEqual([c.args[-1] for c in fetch.call_args_list], [3, 2])
 
+    def test_alias_uses_its_saved_email_and_merges_earlier_completion(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [(7, 7, 'learner@example.org'), (7, 8, 'Former@Example.org')]
+        old, current = course(), course()
+        current['results'] = []
+        with patch.object(source, '_read_identity', side_effect=[[current], [old]]) as fetch:
+            live = source.read_learner(cursor, 77, 'learner@example.org')
+        self.assertEqual([(c.args[2], c.args[3]) for c in fetch.call_args_list],
+                         [(7, 'learner@example.org'), (8, 'former@example.org')])
+        self.assertEqual(len(live['groups']), 1)
+        result = source.overlay_subjects(self.empty, live, {})
+        self.assertTrue(all(row['completed'] for row in result['activities']))
+
+    def test_missing_or_conflicting_alias_email_is_not_guessed(self):
+        cursor = MagicMock()
+        for identities in [[(7, 8, '')], [(7, 8, 'a@example.org'), (7, 8, 'b@example.org')]]:
+            cursor.fetchall.return_value = identities
+            with patch.object(source, '_read_identity') as fetch:
+                self.assertIsNone(source.read_learner(cursor, 77, 'learner@example.org'))
+                fetch.assert_not_called()
+
+    def test_primary_source_can_use_current_verified_email_after_email_change(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [(7, 7, 'former@example.org')]
+        with patch.object(source, 'hints', return_value={'7': 3}), patch.object(source, '_page', return_value=page()):
+            live = source.read_learner(cursor, 77, 'learner@example.org')
+        self.assertIsNotNone(live)
+        self.assertEqual(live['groups'][0]['_learner_email'], 'learner@example.org')
+
+    def test_primary_email_fallback_cannot_accept_an_unverified_source_email(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [(7, 7, 'former@example.org')]
+        with patch.object(source, 'hints', return_value={'7': 3}), patch.object(source, '_page', return_value=page(email='unverified@example.org')):
+            self.assertIsNone(source.read_learner(cursor, 77, 'learner@example.org'))
+
+    def test_repeated_lecture_keeps_quiz_requirement_and_does_not_double_count(self):
+        group = course()
+        duplicate = deepcopy(group['activities'][1])
+        duplicate['activity_date'] = '2026-09-01'
+        duplicate['quiz'] = None
+        group['activities'].append(duplicate)
+        group['results'] = [{'activity_id': 20, 'reading_result': {'viewed': True},
+                             'quiz_result': {'passed': False}}]
+        result = source.overlay_subjects(self.empty, {'groups': [group]}, {})
+        self.assertEqual(len(result['activities']), 2)
+        reading = result['activities'][1]
+        self.assertFalse(reading['completed'])
+        self.assertIsNone(reading['date'])
+
+    def test_conflicting_linked_quizzes_cannot_choose_an_answer_key(self):
+        group = course()
+        duplicate = deepcopy(group['activities'][1])
+        duplicate['quiz']['quiz_id'] = 99
+        group['activities'].append(duplicate)
+        material = source.material({'groups': [group]}, 500, 20, None, 'Learner')
+        self.assertTrue(material['_source']['quiz_definition_ambiguous'])
+        with patch.object(views, 'material_schema', return_value={'quiz': quiz()}):
+            definition = views._definition_for(material)
+        self.assertFalse(definition['quiz']['ready'])
+        self.assertIn('confirm which quiz', definition['quiz']['message'])
+
+    def test_dashboard_and_cards_use_the_same_current_inventory_and_completion(self):
+        historical = [{'group_id': 500, 'activity_id': 10, 'status': 'completed'},
+                      {'group_id': 500, 'activity_id': 99, 'status': 'completed'},
+                      {'group_id': 600, 'activity_id': 10, 'status': 'not_started'}]
+        self.live['groups'][0]['results'] = []
+        rows = source.overlay_progress_rows(historical, self.live)
+        from .dashboard_metrics import programme_totals
+        totals = programme_totals(rows, [], [], set(), {})
+        self.assertEqual((totals['total'], totals['completed']), (3, 1))
+        self.assertEqual({(r['group_id'], r['activity_id']) for r in rows}, {(500, 10), (500, 20), (600, 10)})
+
     def test_scoped_cache_avoids_repeated_fetch_and_cannot_mix_learners(self):
         cursor = MagicMock()
-        cursor.fetchall.return_value = [(7, 7)]
+        cursor.fetchall.return_value = [(7, 7, 'learner@example.org')]
         with patch.object(source, '_read_identity', return_value=[course()]) as fetch:
             first = source.read_learner(cursor, 77, 'learner@example.org')
             first['groups'][0]['name'] = 'Changed outside cache'
@@ -139,9 +211,42 @@ class SubjectSourceTests(SimpleTestCase):
         with patch.object(source, 'monotonic', return_value=3601):
             self.assertIsNone(source._remember('test', failed))
 
+    def test_slow_timeout_does_not_expire_backoff_before_response_finishes(self):
+        clock = [0]
+
+        def failed():
+            clock[0] += 15
+            raise OSError('Source timed out')
+
+        fetch = MagicMock(side_effect=failed)
+        with patch.object(source, 'monotonic', side_effect=lambda: clock[0]):
+            self.assertIsNone(source._remember('slow', fetch))
+            self.assertIsNone(source._remember('slow', fetch))
+            self.assertEqual(fetch.call_count, 1)
+            clock[0] += source.FAILURE_TTL + 1
+            self.assertIsNone(source._remember('slow', fetch))
+            self.assertEqual(fetch.call_count, 2)
+
+    def test_slow_success_gets_full_freshness_window_after_completion(self):
+        clock = [0]
+
+        def slow():
+            clock[0] += 15
+            return self.live
+
+        fetch = MagicMock(side_effect=slow)
+        with patch.object(source, 'monotonic', side_effect=lambda: clock[0]):
+            source._remember('slow', fetch)
+            clock[0] = source.TTL + 1
+            self.assertEqual(source._remember('slow', fetch), self.live)
+            self.assertEqual(fetch.call_count, 1)
+            clock[0] = source.TTL + 16
+            source._remember('slow', fetch)
+            self.assertEqual(fetch.call_count, 2)
+
     def test_alias_failure_cannot_publish_partial_results(self):
         cursor = MagicMock()
-        cursor.fetchall.return_value = [(7, 7), (7, 8)]
+        cursor.fetchall.return_value = [(7, 7, 'learner@example.org'), (7, 8, 'former@example.org')]
         with patch.object(source, '_read_identity', side_effect=[[course()], ValueError('unmatched')]):
             self.assertIsNone(source.read_learner(cursor, 77, 'learner@example.org'))
 
@@ -313,10 +418,11 @@ class SubjectSourceTests(SimpleTestCase):
             start.assert_called_once()
 
     def test_live_listing_merges_local_progress_before_totalling(self):
+        self.stack.enter_context(patch.object(views, '_direct_progress_records', return_value=[]))
         self._view_setup()
         self.live['groups'][0]['results'] = []
         saved = {'ready': True, 'history': [], 'covers': {}, 'progress': [
-            {'activity_id': 10, 'completed': True, 'best_percent': None, 'attempt_count': 1}]}
+            {'group_id': 500, 'activity_id': 10, 'completed': True, 'best_percent': None, 'attempt_count': 1}]}
         with patch.object(views, 'read_student_activity', return_value=deepcopy(self.empty)), \
                 patch.object(views.subject_store, 'state', return_value=saved):
             response = views.student_activity(RequestFactory().get('/'), kind='apprenticeship', pk=123)

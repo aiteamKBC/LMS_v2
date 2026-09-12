@@ -1,15 +1,20 @@
-import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback, useId } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { getEvidenceDownloadUrl, uploadEvidence, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import { formatHoursMinutes } from '@/lib/format';
+import type { HistoricalEvidenceItem } from '@/api/historicalEvidence';
+import { HistoricalEvidencePreview } from './HistoricalEvidencePreview';
+import { EvidenceGroups } from './EvidenceGroups';
+import { evidenceMonth } from './evidenceGrouping';
+import styles from './EvidenceGroups.module.css';
 
 /* ═══════════════════════════════════════════════════════════════
    TYPES
    ═══════════════════════════════════════════════════════════════ */
-type EvidenceStatus = 'Validated' | 'Pending tutor' | 'Needs work' | 'Draft' | 'Submitted';
-type EvidenceType = 'Document' | 'Presentation' | 'Spreadsheet' | 'Reflection' | 'Quiz' | 'Meeting notes' | 'Workplace evidence' | 'Audio' | 'Image';
+type EvidenceStatus = 'Validated' | 'Pending tutor' | 'Needs work' | 'Draft' | 'Submitted' | 'Recorded';
+type EvidenceType = 'Assignment' | 'Document' | 'Presentation' | 'Spreadsheet' | 'Reflection' | 'Quiz' | 'Meeting notes' | 'Workplace evidence' | 'Audio' | 'Image';
 
 interface EvidenceDocument {
   name: string;
@@ -18,11 +23,14 @@ interface EvidenceDocument {
   uploaded: string;
 }
 
-interface EvidenceItem {
+export interface EvidenceItem {
   id: string;
   title: string;
   type: EvidenceType;
   module: string;
+  componentKey: string;
+  componentLabel: string;
+  componentContext?: string;
   week: number;
   weekLabel: string;
   sessionType: string;
@@ -42,6 +50,8 @@ interface EvidenceItem {
    *  the activity it belongs to has been submitted for marking. */
   canDelete?: boolean;
   sortDate?: number;
+  month?: string;
+  historical?: HistoricalEvidenceItem;
 }
 
 function formatBytes(bytes: number): string {
@@ -59,6 +69,7 @@ function formatEvidenceDate(value: string | null): string {
 
 function recordType(record: EvidenceRecord): EvidenceType {
   const authoredType = record.trainingPlanDetails?.componentType?.toLowerCase() || '';
+  if (authoredType.includes('assignment') || authoredType.includes('assessment')) return 'Assignment';
   if (record.contentType.startsWith('image/')) return 'Image';
   if (record.contentType.startsWith('audio/')) return 'Audio';
   if (authoredType.includes('quiz')) return 'Quiz';
@@ -108,9 +119,12 @@ function evidenceRecordToItem(record: EvidenceRecord): EvidenceItem {
   return {
     id: record.id,
     fileId: record.id,
-    title: details.componentTitle || record.filename,
+    title: record.filename,
     type: recordType(record),
     module: details.moduleTitle || 'Programme evidence',
+    componentKey: JSON.stringify(['current', details.moduleId || details.moduleTitle, details.weekId || details.weekTitle, details.componentId || details.componentTitle || 'general']),
+    componentLabel: details.componentTitle || 'General evidence',
+    componentContext: [details.moduleTitle, details.weekTitle].filter(Boolean).join(' · '),
     week,
     weekLabel,
     sessionType: details.componentType || 'Evidence Upload',
@@ -123,6 +137,7 @@ function evidenceRecordToItem(record: EvidenceRecord): EvidenceItem {
     canDelete: record.canDelete !== false,
     date: formatEvidenceDate(record.uploadedAt),
     sortDate: record.uploadedAt ? new Date(record.uploadedAt).getTime() : 0,
+    month: evidenceMonth(record.uploadedAt),
     description: details.evidenceDescription || `Uploaded file: ${record.filename}`,
     progress: status === 'Validated' ? 100 : status === 'Needs work' ? 0 : 50,
     documents: [{ name: record.filename, status: docStatus, size: formatBytes(record.sizeBytes), uploaded: formatEvidenceDate(record.uploadedAt) }],
@@ -130,8 +145,28 @@ function evidenceRecordToItem(record: EvidenceRecord): EvidenceItem {
   };
 }
 
+function historicalRecordToItem(record: HistoricalEvidenceItem): EvidenceItem {
+  const original = record.status.trim().toLowerCase();
+  const status: EvidenceStatus = ['accepted', 'validated', 'approved'].includes(original) ? 'Validated'
+    : ['referred', 'rejected', 'needs work'].includes(original) ? 'Needs work'
+      : ['submitted', 'pending', 'awaiting assessment'].includes(original) ? 'Submitted'
+        : original === 'draft' ? 'Draft' : 'Recorded';
+  const type: EvidenceType = record.category === 'assignment' ? 'Assignment'
+    : record.category === 'attendance_reflection' ? 'Reflection'
+      : record.category === 'review' ? 'Meeting notes'
+        : record.category === 'work_product' ? 'Workplace evidence' : 'Document';
+  return { id: record.id, title: record.name, type, module: record.component_name || 'Previous learning record',
+    componentKey: record.component_id ? `aptem:${record.component_id}` : `previous:${(record.component_name || record.activity?.title || (record.source === 'audit' ? record.name : '') || 'general').trim().toLowerCase()}`,
+    componentLabel: record.component_name || record.activity?.title || (record.source === 'audit' ? record.name : '') || 'General evidence',
+    week: 0, weekLabel: 'Previous evidence', sessionType: record.category.replaceAll('_', ' '),
+    ksb: record.ksb_codes, otjh: record.otjh_hours, status, rawStatus: record.status,
+    date: formatEvidenceDate(record.date), sortDate: record.date ? new Date(record.date).getTime() : 0,
+    month: evidenceMonth(record.report_month) || evidenceMonth(record.date), canDelete: false, historical: record };
+}
+const NO_HISTORICAL_RECORDS: HistoricalEvidenceItem[] = [];
 
 const STATUS_CONFIG: Record<EvidenceStatus, { bg: string; text: string; dot: string; label: string }> = {
+  Recorded: { bg: 'bg-background-100', text: 'text-foreground-500', dot: 'bg-foreground-400', label: 'Recorded' },
   Validated: { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500', label: 'Validated' },
   'Pending tutor': { bg: 'bg-amber-50', text: 'text-amber-700', dot: 'bg-amber-500', label: 'Pending Tutor' },
   'Needs work': { bg: 'bg-red-50', text: 'text-red-700', dot: 'bg-red-500', label: 'Needs Work' },
@@ -140,6 +175,7 @@ const STATUS_CONFIG: Record<EvidenceStatus, { bg: string; text: string; dot: str
 };
 
 const TYPE_CONFIG: Record<string, { icon: string; bg: string; text: string }> = {
+  Assignment: { icon: 'ri-file-edit-line', bg: 'bg-primary-50', text: 'text-primary-700' },
   Document: { icon: 'ri-file-text-line', bg: 'bg-primary-50', text: 'text-primary-700' },
   Presentation: { icon: 'ri-slideshow-3-line', bg: 'bg-accent-50', text: 'text-accent-700' },
   Spreadsheet: { icon: 'ri-table-2', bg: 'bg-secondary-50', text: 'text-secondary-700' },
@@ -195,136 +231,6 @@ const KSB_TYPE_COLORS: Record<string, { bg: string; text: string }> = {
 /* ═══════════════════════════════════════════════════════════════
    SUB-COMPONENTS
    ═══════════════════════════════════════════════════════════════ */
-
-/* ── Stat Strip Card ── */
-function StatStripCard({ label, value, icon, color }: { label: string; value: number; icon: string; color: string }) {
-  const colorMap: Record<string, { iconBg: string; iconText: string; accent: string }> = {
-    emerald: { iconBg: 'bg-gradient-to-br from-[#b9f6db] via-[#34d399] to-[#059669] shadow-sm shadow-emerald-500/25', iconText: 'text-white', accent: 'text-emerald-700' },
-    amber: { iconBg: 'bg-gradient-to-br from-[#f8dda0] via-[#d49a38] to-[#b27715] shadow-sm shadow-[#b27715]/25', iconText: 'text-white', accent: 'text-amber-700' },
-    red: { iconBg: 'bg-gradient-to-br from-[#fecaca] via-[#f87171] to-[#dc2626] shadow-sm shadow-red-500/25', iconText: 'text-white', accent: 'text-red-700' },
-    primary: { iconBg: 'bg-gradient-to-br from-[#d8c9ff] via-[#8b5cf6] to-[#5420a8] shadow-sm shadow-primary-500/25', iconText: 'text-white', accent: 'text-primary-700' },
-    secondary: { iconBg: 'bg-gradient-to-br from-[#ddd6fe] via-[#a78bfa] to-[#6d28d9] shadow-sm shadow-secondary-500/25', iconText: 'text-white', accent: 'text-secondary-700' },
-  };
-  const c = colorMap[color] || colorMap.primary;
-  return (
-    <div className="coach-metric-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
-      <div className="flex items-center gap-2.5 mb-2">
-        <span className={`w-10 h-10 rounded-xl flex items-center justify-center ring-1 ring-black/5 ${c.iconBg} ${c.iconText}`}>
-          <AppIcon className={`${icon} text-base`}></AppIcon>
-        </span>
-        <span className="text-xs text-foreground-400">{label}</span>
-      </div>
-      <p className={`text-xl font-heading font-bold ${c.accent}`}>{value}</p>
-    </div>
-  );
-}
-
-/* ── Evidence Card ── */
-function EvidenceCard({ ev, onClick }: { ev: EvidenceItem; onClick: () => void }) {
-  const st = STATUS_CONFIG[ev.status];
-  const tp = TYPE_CONFIG[ev.type] || TYPE_CONFIG.Document;
-  return (
-    <div
-      onClick={onClick}
-      className="rounded-2xl border border-foreground-200/70 bg-background-50 p-5 cursor-pointer transition-all duration-200 hover:border-primary-200/50 hover:shadow-sm group"
-    >
-      <div className="flex items-start gap-3.5 mb-4">
-        <span className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${tp.bg} ${tp.text} transition-transform duration-200 group-hover:scale-105`}>
-          <AppIcon className={`${tp.icon} text-lg`}></AppIcon>
-        </span>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-start justify-between gap-2">
-            <h3 className="text-sm font-semibold text-foreground-900 leading-snug line-clamp-2 group-hover:text-primary-700 transition-smooth">
-              {ev.title}
-            </h3>
-          </div>
-          <div className="flex items-center gap-2 mt-1.5 text-xs text-foreground-400">
-            <span className="text-[10px] font-bold text-foreground-500 bg-background-100 px-1.5 py-0.5 rounded">{ev.weekLabel}</span>
-            <span className="text-foreground-300">·</span>
-            <span className="truncate">{ev.module}</span>
-            <span className="text-foreground-300">·</span>
-            <span>{ev.date}</span>
-          </div>
-        </div>
-      </div>
-      <div className="flex items-center gap-2 mb-3 text-xs text-foreground-400">
-        <span className="flex items-center gap-1">
-          <AppIcon className="ri-hard-drive-2-line text-[10px]"></AppIcon>
-          {ev.documents?.[0]?.size || 'Size unavailable'}
-        </span>
-        <span className="text-foreground-200">·</span>
-        <span className="flex items-center gap-1">
-          <AppIcon className="ri-file-list-line text-[10px]"></AppIcon>
-          {ev.type}
-        </span>
-        {ev.otjh > 0 && <>
-          <span className="text-foreground-200">·</span>
-          <span className="flex items-center gap-1"><AppIcon className="ri-time-line text-[10px]" />{formatHoursMinutes(ev.otjh)} OTJH</span>
-        </>}
-      </div>
-      <div className="flex items-center gap-1.5 mb-3 flex-wrap">
-        {ev.ksb.map(code => {
-          const kc = KSB_TYPE_COLORS[code.startsWith('K') ? 'Knowledge' : code.startsWith('S') ? 'Skill' : 'Behaviour'];
-          return (
-            <span key={code} className={`text-[10px] font-bold px-2 py-1 rounded-md ${kc.bg} ${kc.text} border border-current/10`}>
-              {code}
-            </span>
-          );
-        })}
-      </div>
-      <div className="flex items-center justify-between pt-3 border-t border-foreground-200/40">
-        <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-full ${st.bg} ${st.text} border border-current/10`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`}></span>
-          {st.label}
-        </span>
-        <AppIcon className="ri-arrow-right-line text-foreground-300 group-hover:text-primary-500 transition-smooth text-sm"></AppIcon>
-      </div>
-    </div>
-  );
-}
-
-/* ── Evidence Row (List View) ── */
-function EvidenceRow({ ev, onClick }: { ev: EvidenceItem; onClick: () => void }) {
-  const st = STATUS_CONFIG[ev.status];
-  const tp = TYPE_CONFIG[ev.type] || TYPE_CONFIG.Document;
-  return (
-    <div
-      onClick={onClick}
-      className="flex items-center gap-4 p-4 rounded-xl border border-foreground-200/70 bg-background-50 cursor-pointer transition-all duration-200 hover:border-primary-200/50 hover:shadow-sm group"
-    >
-      <span className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${tp.bg} ${tp.text}`}>
-        <AppIcon className={`${tp.icon} text-lg`}></AppIcon>
-      </span>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-0.5">
-          <h3 className="text-sm font-semibold text-foreground-900 truncate group-hover:text-primary-700 transition-smooth">{ev.title}</h3>
-          <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${st.bg} ${st.text} border border-current/10 shrink-0`}>
-            <span className={`w-1 h-1 rounded-full ${st.dot}`}></span>
-            {st.label}
-          </span>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-foreground-400">
-          <span className="text-[10px] font-bold text-foreground-500 bg-background-100 px-1.5 py-0.5 rounded">{ev.weekLabel}</span>
-          <span>{ev.module}</span>
-          <span className="text-foreground-200">·</span>
-          <span>{ev.date}</span>
-          <span className="text-foreground-200">·</span>
-          <span>{ev.documents?.[0]?.size || 'Size unavailable'}</span>
-          <span className="text-foreground-200">·</span>
-          <span>{ev.type}</span>
-          {ev.otjh > 0 && <><span className="text-foreground-200">·</span><span>{formatHoursMinutes(ev.otjh)} OTJH</span></>}
-        </div>
-      </div>
-      <div className="hidden sm:flex items-center gap-1.5 shrink-0">
-        {ev.ksb.map(code => {
-          const kc = KSB_TYPE_COLORS[code.startsWith('K') ? 'Knowledge' : code.startsWith('S') ? 'Skill' : 'Behaviour'];
-          return <span key={code} className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${kc.bg} ${kc.text}`}>{code}</span>;
-        })}
-      </div>
-      <AppIcon className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-500 transition-smooth shrink-0 text-sm"></AppIcon>
-    </div>
-  );
-}
 
 /* ── File Preview Modal ── */
 function FilePreviewModal({ item, onClose, onDownload, opening }: {
@@ -419,6 +325,9 @@ export function EvidenceBody({
   canProgress,
   showReadOnlyNotice,
   evidenceRecords,
+  historicalRecords = NO_HISTORICAL_RECORDS,
+  historicalLoading = false,
+  historicalError = null,
   evidenceLoading,
   evidenceError,
   reloadEvidence,
@@ -429,16 +338,20 @@ export function EvidenceBody({
   canProgress: boolean;
   showReadOnlyNotice: boolean;
   evidenceRecords: EvidenceRecord[];
+  historicalRecords?: HistoricalEvidenceItem[];
+  historicalLoading?: boolean;
+  historicalError?: string | null;
   evidenceLoading: boolean;
   evidenceError: string | null;
   reloadEvidence: () => void | Promise<void>;
 }) {
   const weekLookup = useMemo(() => buildWeekLookup(real), [real]);
   const allKsbs = useMemo(() => buildAllKSBs(real), [real]);
-  const [activeFilter, setActiveFilter] = useState<'All' | 'Validated' | 'Pending' | 'Draft' | 'Needs work'>('All');
+  const [activeFilter, setActiveFilter] = useState<'All' | 'Validated' | 'Pending' | 'Draft' | 'Needs work' | 'Recorded'>('All');
+  const [sourceFilter, setSourceFilter] = useState('all');
+  const [monthFilter, setMonthFilter] = useState('all');
   const [filterType, setFilterType] = useState<'All' | EvidenceType>('All');
   const [searchQuery, setSearchQuery] = useState('');
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [selectedEvidence, setSelectedEvidence] = useState<string | null>(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadTitle, setUploadTitle] = useState('');
@@ -459,9 +372,12 @@ export function EvidenceBody({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const filterRef = useRef<HTMLDivElement>(null);
+  const filterRef = useRef<HTMLElement>(null);
+  const filterPanelId = useId();
 
-  const allEvidence = useMemo(() => evidenceRecords.map(evidenceRecordToItem), [evidenceRecords]);
+  const allEvidence = useMemo(() => [...evidenceRecords.map(evidenceRecordToItem), ...historicalRecords.map(historicalRecordToItem)], [evidenceRecords, historicalRecords]);
+  const months = useMemo(() => [...new Set(allEvidence.map(item => item.month || ''))].sort().reverse(), [allEvidence]);
+  const loadingAny = evidenceLoading || historicalLoading;
 
   const filtered = useMemo(() => {
     let list = [...allEvidence];
@@ -470,13 +386,15 @@ export function EvidenceBody({
       else list = list.filter(e => e.status === activeFilter);
     }
     if (filterType !== 'All') list = list.filter(e => e.type === filterType);
+    if (sourceFilter !== 'all') list = list.filter(e => sourceFilter === 'previous' ? !!e.historical : !e.historical);
+    if (monthFilter !== 'all') list = list.filter(e => (e.month || '') === monthFilter);
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter(e => e.title.toLowerCase().includes(q) || e.module.toLowerCase().includes(q) || e.ksb.some(k => k.toLowerCase().includes(q)) || String(e.week).includes(q));
+      const q = searchQuery.trim().toLowerCase();
+      list = list.filter(e => e.title.toLowerCase().includes(q) || e.componentLabel.toLowerCase().includes(q) || e.componentContext?.toLowerCase().includes(q) || e.module.toLowerCase().includes(q) || e.ksb.some(k => k.toLowerCase().includes(q)) || String(e.week).includes(q));
     }
     list.sort((a, b) => (b.sortDate || 0) - (a.sortDate || 0));
     return list;
-  }, [activeFilter, filterType, searchQuery, allEvidence]);
+  }, [activeFilter, filterType, sourceFilter, monthFilter, searchQuery, allEvidence]);
 
   const selectedItem = allEvidence.find(e => e.id === selectedEvidence);
   const previewItem = allEvidence.find(e => e.id === showFilePreview);
@@ -487,9 +405,11 @@ export function EvidenceBody({
     pending: allEvidence.filter(e => e.status === 'Pending tutor' || e.status === 'Submitted').length,
     draft: allEvidence.filter(e => e.status === 'Draft').length,
     needsWork: allEvidence.filter(e => e.status === 'Needs work').length,
+    recorded: allEvidence.filter(e => e.status === 'Recorded').length,
   }), [allEvidence]);
 
-  const hasActiveFilters = activeFilter !== 'All' || filterType !== 'All' || searchQuery.trim().length > 0;
+  const hasActiveFilters = activeFilter !== 'All' || filterType !== 'All' || sourceFilter !== 'all' || monthFilter !== 'all' || searchQuery.trim().length > 0;
+  const clearFilters = () => { setActiveFilter('All'); setFilterType('All'); setSourceFilter('all'); setMonthFilter('all'); setSearchQuery(''); };
 
   const handleUpload = async (files: File[]) => {
     if (!uploadTitle.trim() || files.length === 0 || uploading || !canProgress || !learnerKind || !learnerId) return;
@@ -542,10 +462,11 @@ export function EvidenceBody({
   }, [learnerKind, learnerId, openingEvidenceId]);
 
   const openEvidence = useCallback((id: string | null) => {
-    setSelectedEvidence(id);
+    if (id && allEvidence.find(item => item.id === id)?.historical) { setShowFilePreview(id); setSelectedEvidence(null); }
+    else setSelectedEvidence(id);
     setConfirmingDelete(false);
     setDeleteError(null);
-  }, []);
+  }, [allEvidence]);
 
   const handleDelete = useCallback(async (item: EvidenceItem) => {
     if (!item.fileId || !learnerKind || !learnerId) return;
@@ -626,7 +547,9 @@ export function EvidenceBody({
         />
       )}
 
-      {showFilePreview && (
+      {showFilePreview && previewItem?.historical && learnerKind && learnerId ? (
+        <HistoricalEvidencePreview key={`${learnerKind}:${learnerId}:${previewItem.id}`} item={previewItem.historical} kind={learnerKind} learnerId={learnerId} onClose={() => setShowFilePreview(null)} />
+      ) : showFilePreview && (
         <FilePreviewModal
           item={previewItem || null}
           onClose={() => setShowFilePreview(null)}
@@ -640,10 +563,10 @@ export function EvidenceBody({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-base font-heading font-semibold text-foreground-900">Evidence Library</h2>
-            <p className="text-sm text-foreground-400 mt-0.5">Upload, track & map your apprenticeship evidence to KSBs</p>
+            <p className="text-sm text-foreground-400 mt-0.5">Your assignments and evidence, organised by month and component</p>
           </div>
           {showReadOnlyNotice ? (
-            <span className="inline-flex items-center gap-2 rounded-full border border-foreground-200 bg-background-100 px-4 py-2 text-xs font-semibold text-foreground-500 whitespace-nowrap">
+            <span className="inline-flex items-center gap-2 rounded-full border border-foreground-200 bg-background-100 px-4 py-2 text-xs font-semibold text-foreground-500">
               <AppIcon className="ri-eye-line"></AppIcon> Read only — the learner uploads their own evidence
             </span>
           ) : (
@@ -666,165 +589,89 @@ export function EvidenceBody({
           </div>
         )}
 
+        {historicalError && <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+          <span>Previous evidence: {historicalError}</span><button onClick={() => void reloadEvidence()} className="font-semibold underline">Retry previous evidence</button>
+        </div>}
         <section>
-          {evidenceLoading && (
+          {loadingAny && (
             <div className="mb-3 flex items-center gap-2 text-xs text-foreground-400">
               <AppIcon className="ri-loader-4-line animate-spin" /> Loading evidence…
             </div>
           )}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            <StatStripCard label="Total Evidence" value={counts.total} icon="ri-folder-line" color="primary" />
-            <StatStripCard label="Validated" value={counts.validated} icon="ri-check-double-line" color="emerald" />
-            <StatStripCard label="Pending" value={counts.pending} icon="ri-time-line" color="amber" />
-            <StatStripCard label="Needs Work" value={counts.needsWork} icon="ri-error-warning-line" color="red" />
-            <StatStripCard label="Drafts" value={counts.draft} icon="ri-draft-line" color="secondary" />
+          <div className={styles.summary} aria-label="Evidence summary">
+            <div className={styles.summaryTotal}><strong>{loadingAny ? '—' : counts.total}</strong><span>Total evidence</span></div>
+            {([
+              { label: 'Validated', filter: 'Validated', count: counts.validated },
+              { label: 'Pending', filter: 'Pending', count: counts.pending },
+              { label: 'Needs work', filter: 'Needs work', count: counts.needsWork },
+              { label: 'Drafts', filter: 'Draft', count: counts.draft },
+            ] as const).map(stat => <button key={stat.filter} type="button" aria-pressed={activeFilter === stat.filter}
+              onClick={() => setActiveFilter(value => value === stat.filter ? 'All' : stat.filter)}>
+              {stat.label}<strong>{loadingAny ? '—' : stat.count}</strong>
+            </button>)}
           </div>
         </section>
 
         {/* ═══════════════════════════════════
             FILTERS + SEARCH
             ═══════════════════════════════════ */}
-        <section>
-          <div className="bg-background-50 rounded-2xl border border-foreground-200/70 p-4 md:p-5 space-y-4">
-            <div className="flex flex-col sm:flex-row gap-3">
-              <div className="relative flex-1">
-                <AppIcon className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
-                <input
-                  type="text"
-                  placeholder="Search title, module, KSB code, or week..."
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-background-100 border border-background-200 text-sm text-foreground-900 placeholder:text-foreground-300 focus:outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100 transition-smooth"
-                />
-                {searchQuery && (
-                  <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-foreground-200 text-background-50 hover:bg-foreground-300 transition-smooth cursor-pointer">
-                    <AppIcon className="ri-close-line text-[10px]"></AppIcon>
-                  </button>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="relative" ref={filterRef}>
-                  <button
-                    onClick={() => setShowFilterDropdown(!showFilterDropdown)}
-                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap border ${
-                      hasActiveFilters
-                        ? 'bg-primary-50 text-primary-700 border-primary-200/50'
-                        : 'bg-background-100 text-foreground-500 border-transparent hover:text-foreground-700 hover:border-foreground-200/40'
-                    }`}
-                  >
-                    <AppIcon className="ri-filter-3-line text-sm"></AppIcon>
-                    Filters
-                    {hasActiveFilters && (
-                      <span className="w-2 h-2 rounded-full bg-primary-500"></span>
-                    )}
-                  </button>
-                  {showFilterDropdown && (
-                    <div className="absolute right-0 mt-2 w-[280px] bg-background-50 rounded-2xl border border-foreground-200/70 shadow-xl z-50 p-4 space-y-4">
-                      <div>
-                        <p className="text-xs font-semibold text-foreground-400 uppercase tracking-wider mb-2">Status</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {(['All', 'Validated', 'Pending', 'Draft', 'Needs work'] as const).map(tab => {
-                            const count = tab === 'All' ? counts.total : tab === 'Validated' ? counts.validated : tab === 'Pending' ? counts.pending : tab === 'Draft' ? counts.draft : counts.needsWork;
-                            return (
-                              <button
-                                key={tab}
-                                onClick={() => setActiveFilter(tab)}
-                                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${
-                                  activeFilter === tab
-                                    ? 'bg-[#b27715] text-white shadow-[0_3px_8px_rgba(178,119,21,0.28)]'
-                                    : 'bg-background-100 text-foreground-500 hover:bg-[#fff8eb] hover:text-[#b27715]'
-                                }`}
-                              >
-                                {tab}
-                                <span className={`text-[10px] px-1 py-0.5 rounded-full ${activeFilter === tab ? 'bg-white/15' : 'bg-background-200/60 text-foreground-400'}`}>{count}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                      <div>
-                        <p className="text-xs font-semibold text-foreground-400 uppercase tracking-wider mb-2">Type</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {(['All', 'Document', 'Presentation', 'Spreadsheet', 'Reflection', 'Quiz', 'Meeting notes', 'Workplace evidence', 'Image', 'Audio'] as const).map(t => (
-                            <button
-                              key={t}
-                              onClick={() => setFilterType(t)}
-                              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${
-                                filterType === t
-                                  ? 'bg-[#b27715] text-white shadow-[0_3px_8px_rgba(178,119,21,0.28)]'
-                                  : 'bg-background-100 text-foreground-500 hover:bg-[#fff8eb] hover:text-[#b27715]'
-                              }`}
-                            >
-                              {t === 'All' ? 'All' : t}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      {hasActiveFilters && (
-                        <div className="pt-2 border-t border-foreground-200/60">
-                          <button
-                            onClick={() => { setActiveFilter('All'); setFilterType('All'); setSearchQuery(''); }}
-                            className="flex items-center gap-1.5 text-xs text-primary-600 hover:text-primary-700 font-semibold cursor-pointer"
-                          >
-                            <AppIcon className="ri-close-circle-line"></AppIcon> Clear all filters
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-center p-1 bg-background-100 rounded-xl border border-foreground-200/60">
-                  <button onClick={() => setViewMode('grid')} className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm transition-smooth cursor-pointer ${viewMode === 'grid' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-400 hover:text-foreground-600'}`}>
-                    <AppIcon className="ri-grid-fill"></AppIcon>
-                  </button>
-                  <button onClick={() => setViewMode('list')} className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm transition-smooth cursor-pointer ${viewMode === 'list' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-400 hover:text-foreground-600'}`}>
-                    <AppIcon className="ri-list-check"></AppIcon>
-                  </button>
-                </div>
-              </div>
+        <section ref={filterRef} className={styles.toolbar} aria-label="Evidence filters">
+          <div className={styles.toolbarRow}>
+            <label className={styles.search}>
+              <AppIcon className="ri-search-line" />
+              <input aria-label="Search evidence" type="search" placeholder="Search evidence, component or KSB..." value={searchQuery} onChange={event => setSearchQuery(event.target.value)} />
+            </label>
+            <button type="button" className={styles.toolbarButton} aria-pressed={filterType === 'Assignment'} onClick={() => setFilterType(value => value === 'Assignment' ? 'All' : 'Assignment')}>
+              <AppIcon className="ri-file-edit-line" />Assignments only
+            </button>
+            <button type="button" className={styles.toolbarButton} aria-expanded={showFilterDropdown} aria-controls={filterPanelId} onClick={() => setShowFilterDropdown(value => !value)}>
+              <AppIcon className="ri-filter-3-line" />Filters{hasActiveFilters && <span className={styles.filterDot} />}
+            </button>
+          </div>
+          {showFilterDropdown && <div id={filterPanelId} className={styles.filterPanel}>
+            <div className={styles.filterFields}>
+              <label>Source<select aria-label="Source" value={sourceFilter} onChange={event => setSourceFilter(event.target.value)}>
+                <option value="all">All evidence</option><option value="previous">Previous evidence</option><option value="current">Uploaded here</option>
+              </select></label>
+              <label>Month<select aria-label="Month" value={monthFilter} onChange={event => setMonthFilter(event.target.value)}>
+                <option value="all">All months</option>{months.map(month => <option key={month} value={month}>{month ? new Date(`${month}-01T12:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }) : 'Date not recorded'}</option>)}
+              </select></label>
             </div>
-
-            <div className="flex items-center justify-between text-xs text-foreground-400 pt-2 border-t border-foreground-200/60">
-              <span>Showing {filtered.length} of {allEvidence.length} items</span>
-              {(activeFilter !== 'All' || filterType !== 'All' || searchQuery) && (
-                <button
-                  onClick={() => { setActiveFilter('All'); setFilterType('All'); setSearchQuery(''); }}
-                  className="text-primary-600 hover:text-primary-700 font-medium cursor-pointer"
-                >
-                  Clear all filters
-                </button>
-              )}
-            </div>
+            <fieldset><legend>Status</legend><div className={styles.choices}>
+              {(['All', 'Validated', 'Pending', 'Draft', 'Needs work', 'Recorded'] as const).map(tab => {
+                const count = tab === 'All' ? counts.total : tab === 'Validated' ? counts.validated : tab === 'Pending' ? counts.pending : tab === 'Draft' ? counts.draft : tab === 'Recorded' ? counts.recorded : counts.needsWork;
+                return <button key={tab} type="button" aria-pressed={activeFilter === tab} onClick={() => setActiveFilter(tab)}>{tab}<span>{count}</span></button>;
+              })}
+            </div></fieldset>
+            <fieldset><legend>Type</legend><div className={styles.choices}>
+              {(['All', 'Assignment', 'Document', 'Presentation', 'Spreadsheet', 'Reflection', 'Quiz', 'Meeting notes', 'Workplace evidence', 'Image', 'Audio'] as const).map(type =>
+                <button key={type} type="button" aria-pressed={filterType === type} onClick={() => setFilterType(type)}>{type}</button>)}
+            </div></fieldset>
+          </div>}
+          <div className={styles.resultCount}>
+            <span>Showing {filtered.length} of {allEvidence.length} items</span>
+            {hasActiveFilters && <button type="button" onClick={clearFilters}>Clear all filters</button>}
           </div>
         </section>
 
         {/* ═══════════════════════════════════
-            EVIDENCE GRID / LIST
+            EVIDENCE BY MONTH AND COMPONENT
             ═══════════════════════════════════ */}
         <section>
-          {viewMode === 'grid' ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filtered.map(ev => (
-                <EvidenceCard key={ev.id} ev={ev} onClick={() => openEvidence(ev.id)} />
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {filtered.map(ev => (
-                <EvidenceRow key={ev.id} ev={ev} onClick={() => openEvidence(ev.id)} />
-              ))}
-            </div>
-          )}
+          <EvidenceGroups
+            key={JSON.stringify([activeFilter, filterType, sourceFilter, monthFilter, searchQuery.trim()])}
+            items={filtered} expandMatches={hasActiveFilters} onOpen={openEvidence}
+          />
 
-          {!evidenceLoading && filtered.length === 0 && (
+          {!loadingAny && !evidenceError && !historicalError && filtered.length === 0 && (
             <div className="py-16 text-center bg-background-50 rounded-2xl border border-foreground-200/70">
               <span className="w-14 h-14 rounded-2xl bg-background-100 flex items-center justify-center mx-auto mb-4">
                 <AppIcon className="ri-folder-open-line text-foreground-300 text-2xl"></AppIcon>
               </span>
-              <p className="text-sm text-foreground-500 mb-1">{allEvidence.length ? 'No evidence matches your filters' : 'No evidence uploaded yet'}</p>
-              <p className="text-xs text-foreground-400 mb-3">{allEvidence.length ? 'Try adjusting your search or clearing filters' : 'Use Upload Evidence to add the first file.'}</p>
+              <p className="text-sm text-foreground-500 mb-1">{allEvidence.length ? 'No evidence matches your filters' : 'No evidence found yet'}</p>
+              <p className="text-xs text-foreground-400 mb-3">{allEvidence.length ? 'Try adjusting your search or clearing filters' : canProgress ? 'Previous records and files you upload will appear here.' : 'Previous records and files uploaded by this learner will appear here.'}</p>
               {allEvidence.length > 0 && <button
-                onClick={() => { setActiveFilter('All'); setFilterType('All'); setSearchQuery(''); }}
+                onClick={clearFilters}
                 className="px-4 py-2 rounded-xl bg-primary-500 text-background-50 dark:text-foreground-950 text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer"
               >
                 Clear all filters

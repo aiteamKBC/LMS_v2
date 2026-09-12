@@ -24,7 +24,7 @@ export default function MonthlyReadinessHero({ month }: MonthlyReadinessHeroProp
   const offset = circumference - (d.progress / 100) * circumference;
 
   return (
-    <div className="learner-super-admin-hero relative overflow-hidden rounded-xl bg-gradient-to-br from-primary-950 via-primary-900 to-primary-800">
+    <div className="learner-super-admin-hero relative overflow-hidden rounded-xl workspace-page-hero">
       {/* Liquid blob overlays */}
       <div className="absolute -top-20 -left-20 w-72 h-72 rounded-full bg-accent-400/8 blur-3xl animate-spin-slow"></div>
       <div className="absolute -bottom-16 right-0 w-64 h-64 rounded-full bg-primary-400/10 blur-3xl animate-spin-slower"></div>
@@ -43,8 +43,8 @@ export default function MonthlyReadinessHero({ month }: MonthlyReadinessHeroProp
             />
           </svg>
           <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <span className="text-3xl font-bold text-white font-heading">{d.progress}%</span>
-            <span className="text-[11px] text-white/50 font-medium mt-0.5">Readiness</span>
+            <span className="text-3xl font-bold text-primary-800 font-heading">{d.progress}%</span>
+            <span className="text-[11px] text-foreground-500 font-medium mt-0.5">Readiness</span>
           </div>
         </div>
 
@@ -55,19 +55,19 @@ export default function MonthlyReadinessHero({ month }: MonthlyReadinessHeroProp
               Monthly Readiness Score
             </span>
           </div>
-          <h2 className="text-2xl font-heading font-bold text-white mt-1">{d.monthLabel}</h2>
+          <h2 className="text-2xl font-heading font-bold text-primary-800 mt-1">{d.monthLabel}</h2>
           <div className="flex items-center gap-3 mt-2 justify-center sm:justify-start">
             <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${sc.bg} ${sc.color} ${sc.border}`}>
               {sc.label}
             </span>
-            <span className="text-sm text-white/60">{d.summary}</span>
+            <span className="text-sm text-foreground-500">{d.summary}</span>
           </div>
 
           {/* Week progress bar */}
           <div className="mt-4">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-xs text-white/50 font-medium">Week Progress</span>
-              <span className="text-xs text-white/40">Week {d.week} of {d.totalWeeks}</span>
+              <span className="text-xs text-foreground-500 font-medium">Week Progress</span>
+              <span className="text-xs text-foreground-500">Week {d.week} of {d.totalWeeks}</span>
             </div>
             <div className="w-full h-2.5 bg-primary-800/60 rounded-full overflow-hidden flex gap-0.5">
               {Array.from({ length: d.totalWeeks }).map((_, i) => (

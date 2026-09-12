@@ -13,6 +13,7 @@ import {
   type CurriculumStaffProfile,
   type CurriculumTeamsMeetingSummary,
 } from '@/lib/curriculumApi';
+import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 
 /**
  * The entity pages (Programmes / Cohorts / Groups / Modules) all read the same
@@ -57,7 +58,10 @@ const EMPTY: CurriculumEntities = {
   teamsMeetings: [],
 };
 
-type LoadOptions = { silent?: boolean; skipCache?: boolean };
+// `revalidate` ignores this tab's cache but lets the server answer from its own,
+// which is what a re-read after somebody else's write needs: current rows
+// without the multi-second rebuild `skipCache` forces out of the backend.
+type LoadOptions = { silent?: boolean; skipCache?: boolean; revalidate?: boolean };
 
 export function useCurriculumEntities(options: CurriculumEntitiesOptions = {}) {
   const { includeStaff = false, includeHolidays = false, includeTeams = false } = options;
@@ -77,6 +81,7 @@ export function useCurriculumEntities(options: CurriculumEntitiesOptions = {}) {
       const overview = await fetchCurriculumOverview(signal, {
         compact: true,
         skipCache: loadOptions.skipCache,
+        revalidate: loadOptions.revalidate,
       });
       if (signal?.aborted || requestId !== requestIdRef.current) return null;
 
@@ -105,10 +110,10 @@ export function useCurriculumEntities(options: CurriculumEntitiesOptions = {}) {
       setRefreshing(false);
 
       const [tutors, coaches, holidays, teamsMeetings] = await Promise.all([
-        includeStaff ? fetchCurriculumTutors(signal, { skipCache: loadOptions.skipCache }).catch(() => []) : Promise.resolve([]),
-        includeStaff ? fetchCurriculumCoaches(signal, { skipCache: loadOptions.skipCache }).catch(() => []) : Promise.resolve([]),
-        includeHolidays ? fetchCurriculumHolidays(signal, { skipCache: loadOptions.skipCache }).catch(() => []) : Promise.resolve([]),
-        includeTeams ? fetchCurriculumTeamsMeetingSummaries(signal, { skipCache: loadOptions.skipCache }).catch(() => []) : Promise.resolve([]),
+        includeStaff ? fetchCurriculumTutors(signal, { skipCache: loadOptions.skipCache, revalidate: loadOptions.revalidate }).catch(() => []) : Promise.resolve([]),
+        includeStaff ? fetchCurriculumCoaches(signal, { skipCache: loadOptions.skipCache, revalidate: loadOptions.revalidate }).catch(() => []) : Promise.resolve([]),
+        includeHolidays ? fetchCurriculumHolidays(signal, { skipCache: loadOptions.skipCache, revalidate: loadOptions.revalidate }).catch(() => []) : Promise.resolve([]),
+        includeTeams ? fetchCurriculumTeamsMeetingSummaries(signal, { skipCache: loadOptions.skipCache, revalidate: loadOptions.revalidate }).catch(() => []) : Promise.resolve([]),
       ]);
       if (signal?.aborted || requestId !== requestIdRef.current) return null;
 
@@ -143,6 +148,13 @@ export function useCurriculumEntities(options: CurriculumEntitiesOptions = {}) {
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
+
+  // The entity pages sit open while records are created elsewhere, so they
+  // re-read when the reader returns to the tab and when another tab writes.
+  // Silent, so the table stays on screen rather than collapsing to skeletons.
+  useLiveRefresh(() => {
+    void load(undefined, { silent: true, revalidate: true });
+  });
 
   return {
     ...entities,

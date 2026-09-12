@@ -169,4 +169,14 @@ describe('lazyRoute, as the router actually wires it', () => {
     await expect(load(lazyRoute(loader))).rejects.toThrow(/Cannot read properties/);
     expect(reload).not.toHaveBeenCalled();
   });
+
+  it('retries a failed speculative preload without reloading the current page', async () => {
+    const loader = vi.fn().mockRejectedValueOnce(staleChunk()).mockResolvedValue({ default: () => null });
+    const page = lazyRoute(loader);
+    await expect(page.preload()).rejects.toThrow(/Failed to fetch/);
+    expect(reload).not.toHaveBeenCalled();
+    await load(page);
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(reload).not.toHaveBeenCalled();
+  });
 });
