@@ -66,13 +66,32 @@ def _openai_client():
 @csrf_exempt
 @require_POST
 def proofread_reflection(request):
-    if not settings.OPENAI_API_KEY:
+    provider = getattr(settings, "PROOFREAD_PROVIDER", "openai")
+    if provider not in {"openai", "ollama"}:
+        return _error("Unknown proofreading provider.", 503, "invalid_provider")
+    local = provider == "ollama"
+    if not local and not settings.OPENAI_API_KEY:
         return _error("AI proofreading is not configured.", 503, "openai_not_configured")
 
     try:
         payload = json.loads(request.body.decode("utf-8") or "{}")
     except (UnicodeDecodeError, ValueError):
         return _error("Invalid request body.", 400, "invalid_json")
+
+    if not isinstance(payload, dict):
+        return _error("Invalid request body.", 400, "invalid_json")
+    minimum_words = payload.get("minimumWords", 0)
+    one_point_per_line = payload.get("onePointPerLine", False)
+    if type(minimum_words) is not int or not 0 <= minimum_words <= 2000 or type(one_point_per_line) is not bool:
+        return _error("Invalid proofreading requirements.", 400, "invalid_requirements")
+    requirements = (
+        f" The field requires at least {minimum_words} whitespace-separated words. Preserve this minimum "
+        "when the original meets it, using faithful rephrasing only. Never pad with invented facts or "
+        "repetition to reach it. If the learner has not provided enough substance, prioritise fidelity."
+        if minimum_words else ""
+    )
+    if one_point_per_line:
+        requirements += " Put each distinct point on its own line using actual newline characters. Do not return one dense paragraph or add bullet markers or numbering."
 
     original_text = str(payload.get("text") or "").strip()
     if not original_text:
@@ -84,21 +103,19 @@ def proofread_reflection(request):
     module_label = str(payload.get("moduleLabel") or "").strip()[:300]
     week_label = str(payload.get("weekLabel") or "").strip()[:120]
 
-    client = _openai_client()
-    if client is None:
+    client = None if local else _openai_client()
+    if not local and client is None:
         return _error("AI proofreading is unavailable on the server.", 503, "openai_package_missing")
 
     try:
-        if _moderation_flagged(client, original_text):
+        if not local and _moderation_flagged(client, original_text):
             return _error(
                 "This text contains language that cannot be added to a learning reflection.",
                 422,
                 "inappropriate_content",
             )
 
-        response = client.responses.create(
-            model=settings.OPENAI_REFLECTION_MODEL,
-            input=[
+        messages = [
                 {
                     "role": "system",
                     "content": (
@@ -107,9 +124,15 @@ def proofread_reflection(request):
                         "where helpful; and remove accidental repetition or speech filler. Preserve the learner's first-"
                         "person voice, meaning, level of certainty, requests for help, and all factual details. Do not "
                         "invent learning, examples, workplace experience, outcomes, claims or achievements. Do not make "
-                        "the answer sound more advanced than the learner's original meaning. Accept learning reflections, "
+                        "the answer sound more advanced than the learner's original meaning. Make only changes that "
+                        "clearly improve correctness or readability. Keep already correct, clear wording unchanged; "
+                        "return the original text when no improvement is needed. Prefer familiar words and do not "
+                        "replace them with more formal synonyms merely to make the output different. Preserve "
+                        "comparisons and degrees of improvement: for example, 'more effectively' must not become "
+                        "'effectively', because that loses the comparison. Accept learning reflections, "
                         "questions, difficulties and requests for learning support. Reject only clearly unrelated or "
                         "inappropriate content. Return the required JSON only."
+                        + requirements
                     ),
                 },
                 {
@@ -124,17 +147,18 @@ def proofread_reflection(request):
                         "</learner_text>"
                     ),
                 },
-            ],
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "proofread_learning_reflection",
-                    "schema": PROOFREAD_SCHEMA,
-                    "strict": True,
-                }
-            },
-        )
-        reviewed = json.loads(response.output_text)
+            ]
+        if local:
+            from .local_proofreading import proofread
+            reviewed = proofread(messages, PROOFREAD_SCHEMA)
+        else:
+            response = client.responses.create(
+                model=settings.OPENAI_REFLECTION_MODEL,
+                input=messages,
+                text={"format": {"type": "json_schema", "name": "proofread_learning_reflection",
+                                 "schema": PROOFREAD_SCHEMA, "strict": True}},
+            )
+            reviewed = json.loads(response.output_text)
         if not reviewed.get("accepted"):
             return _error(
                 reviewed.get("reason") or "This text is not suitable for a learning reflection.",
@@ -145,7 +169,7 @@ def proofread_reflection(request):
         improved_text = str(reviewed.get("improved_text") or "").strip()
         if not improved_text:
             return _error("No improved text was produced.", 502, "empty_proofread_result")
-        if _moderation_flagged(client, improved_text):
+        if not local and _moderation_flagged(client, improved_text):
             return _error(
                 "The improved text did not pass the content check.",
                 422,
@@ -155,12 +179,14 @@ def proofread_reflection(request):
         return JsonResponse({
             "text": improved_text,
             "language": "en-GB",
-            "model": settings.OPENAI_REFLECTION_MODEL,
+            "model": settings.OLLAMA_PROOFREAD_MODEL if local else settings.OPENAI_REFLECTION_MODEL,
+            "provider": provider,
         })
     except Exception:
         logger.exception("Reflection proofreading failed")
         return _error(
-            "We could not proofread the reflection right now. Please try again.",
+            ("Local proofreading is unavailable. Check that Ollama is running and the model is downloaded, then try again."
+             if local else "We could not proofread the reflection right now. Please try again."),
             502,
             "proofread_failed",
         )

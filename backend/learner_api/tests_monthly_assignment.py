@@ -55,10 +55,19 @@ class MonthlyAssignmentTests(SimpleTestCase):
         self.assertFalse(checks["ksbs"])
 
     def test_evidence_must_reference_existing_answer_points(self):
-        for points in ["", "0", "2", "1,abc"]:
+        for points in ["0", "2", "1,abc", ","]:
             payload = self.payload()
             payload["monthlyAssignment"]["evidence"][0]["points"] = points
             self.assertFalse(self.checks(payload)["evidence"], points)
+
+    def test_answer_point_numbers_are_optional_without_bypassing_evidence_ownership(self):
+        for points in ["", "   ", None]:
+            payload = self.payload()
+            payload["monthlyAssignment"]["evidence"][0]["points"] = points
+            checks = self.checks(payload)
+            self.assertTrue(checks["evidence"])
+            self.assertTrue(checks["ksbs"])
+            self.assertFalse(self.checks(payload, evidence_ids=set())["evidence"])
 
     def test_http_links_can_be_used_but_javascript_cannot(self):
         payload = self.payload()

@@ -95,7 +95,9 @@ def available_ksb_codes(payload):
     model = CommercialUser if payload.get("learnerKind") == "commercial" else EnrolmentUser
     source = model.all_learners.filter(pk=payload.get("learnerId")).first()
     profile = learner_profile_for_source(source, payload.get("learnerId"), active_only=True) if source else None
-    return set(component_ksb_codes(payload.get("activityId"))) | {k["code"] for k in (profile.ksbs if profile else [])}
+    from .active_users import current_curriculum_ksb_items_for_learner
+    programme_items = current_curriculum_ksb_items_for_learner(profile, source=source) if source else []
+    return set(component_ksb_codes(payload.get("activityId"))) | {k["code"] for k in (programme_items or (profile.ksbs if profile else []))}
 
 
 def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowed_ksbs=None):
@@ -109,11 +111,13 @@ def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowe
         entry_id = text(entry.get("id"))
         url = text(entry.get("url"))
         is_link = entry_id.startswith("link:") and urlparse(url).scheme in ("https", "http") and bool(urlparse(url).hostname)
+        point_text = text(entry.get("points")).strip()
         try:
-            points = [int(p.strip()) for p in text(entry.get("points")).split(",") if p.strip()]
+            points = [int(p.strip()) for p in point_text.split(",") if p.strip()]
         except ValueError:
             points = []
-        if entry_id and (is_link or entry_id in owned) and points and all(1 <= p <= len(answer_lines) for p in points):
+        valid_points = not point_text or (bool(points) and all(1 <= p <= len(answer_lines) for p in points))
+        if entry_id and (is_link or entry_id in owned) and valid_points:
             linked_ids.add(entry_id)
     claims = [mapping(c) for c in items(monthly.get("claims"))]
     allowed = available_ksb_codes(payload) if allowed_ksbs is None and claims else (allowed_ksbs or set())
@@ -126,7 +130,7 @@ def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowe
     checks = [
         ("answer", "Assignment answer: at least 120 words", words(payload.get("assignmentAnswer")) >= 120),
         ("learning", "Learned, understood and gained skills: at least 20 words each", all(words(v) >= 20 for v in [payload.get("whatYouLearned"), monthly.get("understood"), monthly.get("gainedSkills")])),
-        ("evidence", "At least one available evidence item cross-referenced to valid answer points", bool(linked_ids)),
+        ("evidence", "At least one available evidence item; answer point numbers are optional and must be valid if provided", bool(linked_ids)),
         ("ksbs", "Every claimed programme KSB has a 20-word explanation and linked evidence", bool(claims) and len(set(claimed_codes)) == len(claimed_codes) and set(claimed_codes) <= allowed and all(words(c.get("explanation")) >= 20 and bool(set(str(e) for e in items(c.get("evidenceIds"))) & linked_ids) for c in claims)),
         ("planned", "Planned hours and KSBs reviewed", monthly.get("plannedReviewed") is True),
         ("declarations", "New learning, skills and employer evidence-sharing declarations confirmed", all(monthly.get(k) is True for k in ["newKnowledge", "newSkills", "sharingConsent"])),

@@ -4947,16 +4947,16 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
     }, 250);
   };
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="w-full max-w-2xl rounded-2xl bg-background-50 shadow-2xl overflow-hidden" onClick={event => event.stopPropagation()}>
-        <div className="px-5 py-4 bg-primary-950 text-white flex items-center justify-between">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 backdrop-blur-sm p-2 sm:p-4" onClick={onClose}>
+      <div className="flex max-h-[calc(100dvh-2rem)] w-full min-w-0 max-w-3xl flex-col rounded-2xl bg-background-50 shadow-2xl overflow-hidden" onClick={event => event.stopPropagation()}>
+        <div className="shrink-0 px-4 py-3 sm:px-5 bg-primary-950 text-white flex items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-heading font-bold text-white">Choose KSBs</h3>
             <p className="mt-0.5 text-[10px] text-white/65">Previously added KSBs stay visible and cannot be selected twice.</p>
           </div>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20"><AppIcon className="ri-close-line"></AppIcon></button>
+          <button onClick={onClose} aria-label="Close KSB chooser" className="w-8 h-8 shrink-0 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20"><AppIcon className="ri-close-line"></AppIcon></button>
         </div>
-        <div className="p-5 space-y-4">
+        <div className="min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-5 space-y-3">
           <div className="space-y-3">
             {!sourceLocked ? (
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
@@ -4995,7 +4995,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                       onClick={() => setKsbTypeFilter(category.value)}
                       className={`rounded-xl border px-2 py-2.5 text-left transition-smooth ${active ? category.activeClass : 'border-background-200 bg-background-100 text-foreground-700 hover:border-primary-200 hover:bg-background-50'}`}
                     >
-                      <span className="flex items-center gap-2">
+                      <span className="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-2">
                         <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg text-[12px] font-black ${active ? 'bg-white/20 text-white' : category.iconClass}`}>{category.code}</span>
                         <span className="min-w-0">
                           <span className="block truncate text-[10px] font-black sm:text-[11px]">{category.label}</span>
@@ -5020,7 +5020,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
               </div>
             </div>
           )}
-          <div className="max-h-96 overflow-y-auto space-y-2">
+          <div className="space-y-2">
             {filteredKsbOptions.map(option => {
               const tone = ksbVisualTone(option.code, option.type);
               const alreadyAdded = existingMappingByOptionId.has(option.id);
@@ -5087,7 +5087,8 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
             {resolvedSelectedSource && !sourceKsbOptions.length && <EmptyState text="No KSBs are available for this selection." />}
             {resolvedSelectedSource && Boolean(sourceKsbOptions.length) && !filteredKsbOptions.length && <EmptyState text="No KSBs match your search or filter." />}
           </div>
-          <div className="flex items-center justify-between gap-3 border-t border-background-200 pt-3">
+        </div>
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-background-200 bg-background-50 px-3 py-3 sm:px-5">
             <p className="text-[11px] font-semibold text-foreground-500">
               {existingMappingByOptionId.size ? `${existingMappingByOptionId.size} already added · ` : ''}
               {selectedItems.length} new selected
@@ -5096,12 +5097,11 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
               type="button"
               disabled={!selectedItems.length || addingKsbs}
               onClick={handleAddSelectedKsbs}
-              className="h-9 rounded-lg bg-primary-500 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-foreground-200 disabled:text-foreground-400"
+              className="h-9 shrink-0 rounded-lg bg-primary-500 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-foreground-200 disabled:text-foreground-400"
             >
               {addingKsbs ? 'Adding...' : 'Add KSBs'}
             </button>
           </div>
-        </div>
       </div>
     </div>
   );
