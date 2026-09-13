@@ -150,7 +150,7 @@ export default function BookCoachSessionModal({ defaultSessionType, onClose, onB
         {!loading && !loadError && !coach?.coachEmail && <p role="alert" className="mb-4 text-sm text-amber-800">No coach has been assigned to you yet. Please contact your programme team.</p>}
         <form onSubmit={submit}>
           <fieldset disabled={submitting} className="space-y-4">
-            <div><p className="mb-1.5 text-xs font-semibold text-foreground-500">Session Type <span className="text-red-400">*</span></p><CoachSessionTypePicker value={sessionType} onChange={value => { setSessionType(value); setError(''); }} /></div>
+            <div><p className="mb-1.5 text-xs font-semibold text-foreground-500">Session Type <span className="text-red-400">*</span></p><CoachSessionTypePicker value={sessionType} excludeTypes={['mcr']} onChange={value => { setSessionType(value); setError(''); }} /></div>
             {sessionType === 'other' && <label className="block text-xs font-semibold text-foreground-500">Other <span className="text-red-400">*</span><input type="text" required value={otherType} onChange={event => { setOtherType(event.target.value); setError(''); }} maxLength={100} placeholder="Write the session type you need" className={fieldClass} /></label>}
             <div className="grid grid-cols-2 gap-3">
               <label className="text-xs font-semibold text-foreground-500">Date <span className="text-red-400">*</span><input type="date" required min={isoDate(new Date())} value={date} onChange={event => { setDate(event.target.value); setError(''); }} className={fieldClass} /></label>

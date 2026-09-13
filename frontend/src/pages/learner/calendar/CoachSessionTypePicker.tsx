@@ -12,12 +12,14 @@ export const COACH_SESSION_TYPES = [
 
 export type CoachSessionRequestType = typeof COACH_SESSION_TYPES[number]['value'];
 
-export default function CoachSessionTypePicker({ value, onChange }: {
+export default function CoachSessionTypePicker({ value, onChange, excludeTypes }: {
   value: BookableSessionType;
   onChange: (value: CoachSessionRequestType) => void;
+  excludeTypes?: readonly CoachSessionRequestType[];
 }) {
+  const visibleTypes = COACH_SESSION_TYPES.filter(type => !excludeTypes?.includes(type.value));
   return <div role="group" aria-label="Session Type" className="grid grid-cols-2 gap-3">
-    {COACH_SESSION_TYPES.map(type => <button
+    {visibleTypes.map(type => <button
       key={type.value}
       type="button"
       aria-pressed={value === type.value}
