@@ -54,6 +54,7 @@ function payload(url: string): unknown {
     mode: { available: false, mode: 'live', requestedMode: null, status: 'active', emailSent: false, managerAvailable: false, remindersEnabled: true, updatedAt: null },
   };
   if (url.includes('/attendance/')) return { attendance: null };
+  if (url.includes('/rewards-summary/')) return { points: { learnerId: '125', earned: 0, committed: 0, balance: 0 }, rewards: [] };
   if (url.includes('/metrics/')) return { migrated: false,
     programme: { completed: 0, total: 0, percent: null, status: 'empty' },
     ksb: { completed: 0, total: 0, percent: null, status: 'empty', codes: [] },
@@ -233,6 +234,31 @@ describe('learner loading and recovery', () => {
     const returnedHero=within(await screen.findByLabelText('Learner programme'));
     fireEvent.click(returnedHero.getByRole('button',{name:"Learner's Map"}));
     expect(screen.getByTestId('navigation-destination')).toHaveTextContent('/learner/learning-plan/modules/commercial/125');
+  });
+
+  it.each([
+    { present: 8, sessions: 10, fail: false, caption: '80% attendance', rate: '80' },
+    { present: 0, sessions: 3, fail: false, caption: '0% attendance', rate: '0' },
+    { present: 0, sessions: 0, fail: false, caption: 'No attendance records yet', rate: null },
+    { present: null, sessions: null, fail: true, caption: 'Attendance unavailable', rate: null },
+  ])('shows attendance counts and rate without a fixed target ($caption)', async ({ present, sessions, fail, caption, rate }) => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/attendance/')) return new Response(JSON.stringify(fail
+        ? { error: 'Attendance unavailable' }
+        : { attendance: sessions ? { present, sessions, attendanceRate: Number(rate) } : null }), { status: fail ? 503 : 200 });
+      return new Response(JSON.stringify(payload(url)));
+    }));
+    const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
+    render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+    const card = within(await screen.findByRole('link', { name: 'Open Attendance' }));
+    expect(await card.findByText(caption)).toBeVisible();
+    expect(card.getByText('Attended').nextElementSibling).toHaveTextContent(present == null ? '--' : String(present));
+    expect(card.getByText('Sessions to date').nextElementSibling).toHaveTextContent(sessions == null ? '--' : String(sessions));
+    expect(card.queryByText('Target')).not.toBeInTheDocument();
+    expect(card.queryByText('90%')).not.toBeInTheDocument();
+    if (rate == null) expect(card.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
+    else expect(card.getByRole('progressbar')).toHaveAttribute('aria-valuenow', rate);
   });
 
   it('shows unavailable header facts when the schedule fails instead of claiming the coach is unassigned', async () => {

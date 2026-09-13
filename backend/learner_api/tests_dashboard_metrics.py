@@ -7,7 +7,8 @@ from unittest.mock import MagicMock, patch
 from django.db import DatabaseError
 from django.test import SimpleTestCase, RequestFactory
 
-from .dashboard_metrics import programme_totals, ksb_totals, read_planned_hours, learner_metrics
+from .dashboard_metrics import (programme_totals, ksb_totals, read_planned_hours,
+                                activity_planned_hours, read_metrics, learner_metrics)
 from .student_activity import _direct_progress_otjh
 from .attendance import combined_attendance_rows, _summarize_attendance
 
@@ -103,6 +104,69 @@ class DashboardMetricsTests(SimpleTestCase):
             manager.using.return_value.filter.return_value.order_by.return_value.values.return_value.first.return_value = None
             self.assertIsNone(read_planned_hours(SimpleNamespace(pk=125, aptem_id=None), 'commercial', MagicMock()))
             imported.assert_not_called()
+
+    def test_activity_target_sums_the_whole_plan_and_deduplicates_components(self):
+        native = [{'id': 'video', 'expected_hours': '1.25', 'module_id': 'first'},
+                  {'id': 'reading', 'expected_hours': 2.5, 'module_id': 'second'},
+                  {'id': 'reflection', 'expected_hours': 0.75, 'module_id': 'second'}]
+        self.assertEqual(activity_planned_hours([], native + [native[0]], {}), 4.5)
+
+    def test_activity_target_unions_exact_historical_and_native_placements(self):
+        old = [{'group_id': 2, 'activity_id': 10, 'expected_hours': 1},
+               {'group_id': 2, 'activity_id': 11, 'expected_hours': 3},
+               {'group_id': 3, 'activity_id': 11, 'expected_hours': 3}]
+        native = [{'id': 'imported', 'expected_hours': 2}, {'id': 'new', 'expected_hours': 0.5}]
+        links = {'imported': ('2', '10')}
+        self.assertEqual(activity_planned_hours(old + [old[0]], native, links), 8.5)
+
+    def test_missing_native_hours_can_use_the_exact_historical_mapping(self):
+        old = [{'group_id': 2, 'activity_id': 10, 'expected_hours': 1.25}]
+        self.assertEqual(activity_planned_hours(old, [{'id': 'imported'}], {'imported': ('2', '10')}), 1.25)
+
+    def test_missing_or_invalid_activity_hours_do_not_create_a_partial_target(self):
+        self.assertIsNone(activity_planned_hours([], [], {}))
+        for value in (None, '', 'unknown', -1, float('inf'), float('nan')):
+            with self.subTest(value=value):
+                self.assertIsNone(activity_planned_hours([], [
+                    {'id': 'known', 'expected_hours': 2}, {'id': 'missing', 'expected_hours': value}], {}))
+        self.assertEqual(activity_planned_hours([], [{'id': 'zero', 'expected_hours': 0}], {}), 0)
+
+    def test_current_activity_hours_update_the_fallback_without_completing_it(self):
+        native = [{'id': 'activity', 'expected_hours': 1.25}]
+        self.assertEqual(activity_planned_hours([], native, {}), 1.25)
+        native[0]['expected_hours'] = 2.75
+        self.assertEqual(activity_planned_hours([], native, {}), 2.75)
+
+    def test_missing_snapshot_hours_still_allow_an_imported_contract_total(self):
+        with patch('learner_api.dashboard_metrics.TrainingPlanDocument.objects') as manager, \
+             patch('learner_api.dashboard_metrics.find_contract', return_value={'training_plan_planned_hours': 867}):
+            manager.using.return_value.filter.return_value.order_by.return_value.values.return_value.first.return_value = {'otjh': {}}
+            self.assertEqual(read_planned_hours(SimpleNamespace(pk=125, aptem_id=92), 'commercial', MagicMock()), 867)
+
+    def test_metrics_return_activity_sum_when_document_or_its_total_is_missing(self):
+        source = SimpleNamespace(pk=101, aptem_id=None, email='test@example.com')
+        native = [{'id': 'video', 'expected_hours': 1.5, 'ksb_mappings': []},
+                  {'id': 'reading', 'expected_hours': 2.25, 'ksb_mappings': []}]
+        for document, expected in ((None, 3.75), ({'otjh': {}}, 3.75),
+                                   ({'otjh': {'plannedTotal': None}}, 3.75),
+                                   ({'otjh': {'plannedTotal': 0}}, 0),
+                                   ({'otjh': {'plannedTotal': 90}}, 90)):
+            with self.subTest(document=document), \
+                 patch('learner_api.dashboard_metrics.connections') as connections, \
+                 patch('learner_api.dashboard_metrics._direct_progress_records', return_value=[]), \
+                 patch('learner_api.dashboard_metrics.rows', side_effect=[native, []]), \
+                 patch('learner_api.dashboard_metrics.TrainingPlanDocument.objects') as manager:
+                manager.using.return_value.filter.return_value.order_by.return_value.values.return_value.first.return_value = document
+                cursor = connections.__getitem__.return_value.cursor.return_value.__enter__.return_value
+                cursor.fetchall.return_value = [('module-one', 'First module'), ('module-two', 'Second module')]
+                result = read_metrics(source, 'commercial')
+                self.assertEqual(result['otjh']['planned'], expected)
+                self.assertEqual(result['otjh']['actual'], 0)
+                query, params = cursor.execute.call_args_list[1].args
+                self.assertIn('c.expected_otjh AS expected_hours', query)
+                self.assertIn('c.module_catalogue_id=ANY(%s)', query)
+                self.assertIn('c.deleted_at IS NULL OR c.deleted_via_parent IS NOT NULL', query)
+                self.assertEqual(params, [['module-one', 'module-two']])
 
     def test_endpoint_scopes_identity_and_returns_retryable_error(self):
         source = SimpleNamespace(pk=125, aptem_id=92, email='test@example.com')

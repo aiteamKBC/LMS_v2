@@ -1,5 +1,12 @@
 # Learner dashboard metrics verification
 
+## Missing OTJ target follow-up (2026-09-13)
+
+- 25 database-free dashboard metrics/attendance tests passed, including the new activity-hours fallback, exact-identity deduplication, missing/invalid hours and preserved document totals (including zero).
+- Read-only verification: learner 101 has 287 assigned components with 427.5 planned hours. The metrics response previously returned `planned: null` and now returns `planned: 427.5`, matching an independent component sum.
+- The migrated learner 125 still returns the stored contract target of 867 hours. The production query, including the historical hours join, completed successfully.
+- No database, schema or frontend layout changes were needed.
+
 Verified on 12 September 2026. These checks cover the shared Programme Progress, OTJ Hours and KSB totals, and the combined attendance register. Source definitions and the owner's confirmed calculation rules are in [learner-dashboard-data-rules.docx](learner-dashboard-data-rules.docx) and its [Markdown copy](learner-dashboard-data-rules.md).
 
 ## Automated checks
