@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -9,6 +9,7 @@ import { responsesForSection, type ProgressReviewResponses } from '@/pages/share
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { useReviewSessions } from '@/pages/learner/reviews/useReviewSessions';
 import { bookingDateRestrictionMessage, firstAvailableBookingDate, isoDate } from '@/pages/learner/reviews/bookingDates';
+import BookCoachSessionModal from '@/pages/learner/reviews/BookCoachSessionModal';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
 import ProgressReviewSlidesModal, { type ProgressReviewSlidesDeck } from '@/pages/coach/progress-reviews/components/ProgressReviewSlidesModal';
@@ -69,17 +70,111 @@ function importedValue(value: unknown): string {
   try { return JSON.stringify(value); } catch { return String(value); }
 }
 
-function ImportedReviewSections({ review }: { review: NonNullable<LearnerCalendarEvent['importedReview']> }) {
-  if (!review.sections.length) return <Empty>No section details were imported for this review.</Empty>;
+function rawTextFields(rawText: string): Array<{ label: string; value: string }> {
+  const blocks = rawText.split(/\r?\n\s*\r?\n+/).map((block) => block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)).filter((lines) => lines.length);
+  return blocks.flatMap((lines) => {
+    if (lines.length === 1) {
+      const separator = lines[0].indexOf(':');
+      if (separator > 0 && separator < lines[0].length - 1) {
+        return [{ label: lines[0].slice(0, separator).trim(), value: lines[0].slice(separator + 1).trim() }];
+      }
+      return [{ label: lines[0], value: '-' }];
+    }
+    const first = lines[0];
+    const separator = first.indexOf(':');
+    if (separator > 0) {
+      const inlineValue = first.slice(separator + 1).trim();
+      return [{ label: first.slice(0, separator).trim(), value: [inlineValue, ...lines.slice(1)].filter(Boolean).join('\n') || '-' }];
+    }
+    return [{ label: first, value: lines.slice(1).join('\n') || '-' }];
+  });
+}
+
+function importedSectionName(name: string): string {
+  return name.trim().replace(/\s+(completed|incomplete)$/i, '').trim().toLowerCase();
+}
+
+function FunctionalSkillsContent({ section, onPreview }: { section: NonNullable<LearnerCalendarEvent['importedReview']>['sections'][number]; onPreview: (url: string, name: string) => void }) {
+  const text = section.rawText || '';
+  const beforeResults = text.split(/\bResults\b/i)[0];
+  const resultsText = text.split(/\bResults\b/i)[1] || '';
+  const assessments = [...beforeResults.matchAll(/\b(English|Maths)\s*\n+\s*Assessment Date:\s*([^\n]+)\s*\n+\s*(Level\s*\d+)/gi)].map((m) => ({ subject: m[1], date: m[2], level: m[3] }));
+  const exemptions = [...(text.match(/\bExemptions\b([\s\S]*?)(?=\bResults\b|$)/i)?.[1] || '').matchAll(/\b(English|Maths|ICT)\s*\n+\s*(Opt Out|Not Exempt)(?:\s*\n+\s*([^\n]+\.pdf))?/gi)].map((m) => ({ subject: m[1], status: m[2], attachment: m[3] }));
+  const results = [...resultsText.matchAll(/\b(English Reading|English Writing|English SLC|Maths|ICT)\s*\n+\s*Assessment Date:\s*\n+\s*([^\n]+)/gi)].map((m) => ({ subject: m[1], score: m[2] }));
+  const links = section.fields.flatMap((field) => 'links' in field && Array.isArray(field.links) ? field.links : []);
+  const attachment = links[0];
+  const attachmentUrl = attachment?.azure_url || attachment?.url || attachment?.href;
+  const card = (content: ReactNode) => <div className="rounded-lg border border-background-200 bg-white p-3 shadow-sm">{content}</div>;
+  if (!assessments.length && !exemptions.length && !results.length) return <ImportedSectionList sections={[section]} renderSpecial={false} />;
+  return <div className="space-y-6">
+    <div><h4 className="mb-3 text-base font-bold text-foreground-900">Initial Assessments</h4><div className="rounded-xl bg-background-100/70 p-4"><p className="mb-3 text-sm font-semibold text-foreground-700">Functional Skills Assessments</p><div className="grid gap-3 sm:grid-cols-2">{assessments.map((item) => card(<><p className="text-sm font-bold text-foreground-900">{item.subject}</p><p className="mt-1 text-xs text-foreground-500">Assessment Date: {item.date}</p><span className="mt-2 inline-flex w-fit rounded bg-primary-50 px-2 py-1 text-xs font-bold text-primary-700">{item.level}</span></>))}</div></div></div>
+    <div><h4 className="mb-3 text-base font-bold text-foreground-900">Exemptions</h4><div className="rounded-xl bg-background-100/70 p-4"><div className="grid gap-3 sm:grid-cols-3">{exemptions.map((item) => card(<><div className="flex items-start justify-between gap-2"><p className="text-sm font-bold text-foreground-900">{item.subject}</p><span className="rounded bg-background-200 px-2 py-1 text-[10px] font-bold text-foreground-600">{item.status}</span></div>{item.attachment && attachmentUrl && <button type="button" onClick={() => onPreview(attachmentUrl, item.attachment || 'Attachment')} className="mt-3 block max-w-full truncate text-left text-xs font-semibold text-primary-600 underline">{item.attachment}</button>}</>))}</div></div></div>
+    <div><h4 className="mb-3 text-base font-bold text-foreground-900">Results</h4><div className="rounded-xl bg-background-100/70 p-4"><div className="grid gap-3 sm:grid-cols-3">{results.map((item) => card(<><p className="text-sm font-bold text-foreground-900">{item.subject}</p><p className="mt-1 text-xs text-foreground-500">Assessment Date:</p><span className="mt-2 inline-flex h-8 w-8 items-center justify-center rounded-full border-4 border-background-200 text-[10px] font-bold text-foreground-700">{item.score}</span></>))}</div></div></div>
+  </div>;
+}
+
+function ReviewsScheduleContent({ section }: { section: NonNullable<LearnerCalendarEvent['importedReview']>['sections'][number] }) {
+  const tableRows = section.tables.flatMap((table) => table.rows || []);
+  if (tableRows.length > 1) return <div className="overflow-x-auto rounded-xl border border-background-200 bg-white"><table className="min-w-full text-left text-xs"><thead className="bg-background-100 text-[10px] uppercase tracking-wide text-foreground-500"><tr>{(tableRows[0] || []).map((cell, i) => <th key={i} className="px-4 py-3">{importedValue(cell)}</th>)}</tr></thead><tbody className="divide-y divide-background-200">{tableRows.slice(1).map((row, i) => <tr key={i}>{(Array.isArray(row) ? row : [row]).map((cell, j) => <td key={j} className="px-4 py-3 whitespace-pre-wrap">{importedValue(cell)}</td>)}</tr>)}</tbody></table></div>;
+  const dates = [...(section.rawText || '').matchAll(/\b\d{2}\/\d{2}\/\d{4}\b/g)].map((m) => m[0]);
+  const rows = Array.from({ length: Math.ceil(dates.length / 2) }, (_, i) => [dates[i * 2] || '-', dates[i * 2 + 1] || '-']);
+  return <div className="overflow-x-auto rounded-xl border border-background-200 bg-white"><table className="min-w-full text-left text-xs"><thead className="bg-background-100 text-[10px] uppercase tracking-wide text-foreground-500"><tr><th className="px-4 py-3">Review Name / Review Type</th><th className="px-4 py-3">Planned Date</th><th className="px-4 py-3">Actual Date</th></tr></thead><tbody className="divide-y divide-background-200">{rows.map(([planned, actual], i) => <tr key={i}><td className="px-4 py-3"><p className="font-bold text-foreground-900">Progress Review</p><p className="text-foreground-500">Progress Review</p></td><td className="px-4 py-3">{planned}</td><td className="px-4 py-3">{actual}</td></tr>)}</tbody></table></div>;
+}
+
+function LearnerInformationContent({ section }: { section: NonNullable<LearnerCalendarEvent['importedReview']>['sections'][number] }) {
+  const fields = section.fields;
+  const nameField = fields.find((field) => String(field.label || '').trim().toLowerCase() === 'name');
+  const name = importedValue(nameField?.value);
+  return <div className="grid gap-6 md:grid-cols-[280px_1fr]">
+    <div className="flex flex-col items-center justify-center border-b border-background-200 pb-6 md:border-b-0 md:border-r md:pb-0 md:pr-8"><span className="flex h-20 w-20 items-center justify-center rounded-full bg-slate-400 text-xl font-bold text-white">{initials(name)}</span><p className="mt-3 text-xl font-bold text-foreground-900">{name}</p></div>
+    <div className="grid gap-x-8 gap-y-4 sm:grid-cols-[minmax(210px,1fr)_minmax(260px,2fr)]">{fields.filter((field) => String(field.label || '').trim().toLowerCase() !== 'name').map((field, index) => { const label = String(field.label || 'Response'); const value = importedValue(field.value); const display = /date/i.test(label) && /^\d{4}-\d{2}-\d{2}/.test(value) ? formatDate(value.slice(0, 10)) : value; return <Fragment key={`${label}:${index}`}><p className="text-xs font-semibold text-foreground-700">{label}</p><p className="whitespace-pre-wrap text-sm text-foreground-500">{display}</p></Fragment>; })}</div>
+  </div>;
+}
+
+function ImportedSectionList({ sections, renderSpecial = true, specialSections = false }: { sections: NonNullable<LearnerCalendarEvent['importedReview']>['sections']; renderSpecial?: boolean; specialSections?: boolean }) {
+  const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
+  if (!sections.length) return <Empty>No section details were imported for this review.</Empty>;
   return <div className="space-y-3">
-    {review.sections.map((section) => <section key={section.id} className="rounded-xl border border-background-200 bg-background-100/45 p-4">
+    {sections.map((section) => <section key={section.id} className="rounded-xl border border-background-200 bg-background-100/45 p-4">
       <h3 className="text-sm font-bold text-foreground-900">{section.name}</h3>
       <div className="mt-3 space-y-3">
-        {section.fields.map((field, index) => <div key={`${field.label || 'field'}:${index}`} className="rounded-lg border border-background-200 bg-white p-3"><p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">{field.label || 'Response'}</p><p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-foreground-700">{importedValue(field.value)}</p></div>)}
+        {renderSpecial && importedSectionName(section.name) === 'learner information' && <LearnerInformationContent section={section} />}
+        {renderSpecial && specialSections && importedSectionName(section.name) === 'functional skills' && <FunctionalSkillsContent section={section} onPreview={(url, name) => setPreview({ url, name })} />}
+        {renderSpecial && specialSections && importedSectionName(section.name) === 'reviews schedule' && <ReviewsScheduleContent section={section} />}
+        {(!renderSpecial || (specialSections ? !['learner information', 'functional skills', 'reviews schedule'].includes(importedSectionName(section.name)) : importedSectionName(section.name) !== 'learner information')) && <>
+        {(section.fields.length ? section.fields : rawTextFields(section.rawText)).map((field, index) => <div key={`${field.label || 'field'}:${index}`} className="rounded-lg border border-background-200 bg-white p-3"><p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">{field.label || 'Response'}</p><p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-foreground-700">{importedValue(field.value)}</p>{'links' in field && Array.isArray(field.links) && field.links.length > 0 && <div className="mt-2 space-y-1">{field.links.map((link, linkIndex) => { const url = link.azure_url || link.url || link.href; const name = link.text || link.title || `Attachment ${linkIndex + 1}`; return <button key={linkIndex} type="button" onClick={() => url && setPreview({ url, name })} className="block max-w-full truncate text-left text-xs font-semibold text-primary-600 underline hover:text-primary-800">{name}</button>; })}</div>}</div>)}
         {section.tables.map((table, index) => <div key={index} className="overflow-x-auto rounded-lg border border-background-200 bg-white"><table className="min-w-full text-left text-xs"><tbody className="divide-y divide-background-200">{(table.rows || []).map((row, rowIndex) => <tr key={rowIndex} className={rowIndex === 0 ? 'bg-background-100 font-bold text-foreground-800' : 'text-foreground-700'}>{(Array.isArray(row) ? row : [row]).map((cell, cellIndex) => <td key={cellIndex} className="whitespace-pre-wrap px-3 py-2.5 align-top">{importedValue(cell)}</td>)}</tr>)}</tbody></table></div>)}
-        {section.rawText && section.rawText !== 'EMPTY_STRING' && <p className="whitespace-pre-wrap rounded-lg border border-background-200 bg-white p-3 text-sm leading-6 text-foreground-700">{section.rawText}</p>}
+        {!section.fields.length && !rawTextFields(section.rawText).length && section.rawText && section.rawText !== 'EMPTY_STRING' && <p className="whitespace-pre-wrap rounded-lg border border-background-200 bg-white p-3 text-sm leading-6 text-foreground-700">{section.rawText}</p>}
+        </>}
       </div>
     </section>)}
+    {preview && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(null); }}><div role="dialog" aria-modal="true" aria-label={preview.name} className="flex h-[min(88vh,900px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"><div className="flex items-center justify-between gap-3 border-b border-background-200 px-4 py-3"><p className="truncate text-sm font-bold text-foreground-900">{preview.name}</p><button type="button" aria-label="Close attachment preview" onClick={() => setPreview(null)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-500 hover:bg-background-100"><AppIcon className="ri-close-line" /></button></div><iframe title={preview.name} src={preview.url} className="min-h-0 flex-1 bg-background-100" /></div></div>}
+  </div>;
+}
+
+function ImportedReviewDetailAccordions({
+  review,
+  openSections,
+  onToggle,
+}: {
+  review: NonNullable<LearnerCalendarEvent['importedReview']>;
+  openSections: string[];
+  onToggle: (id: string) => void;
+}) {
+  const sections = review.sections;
+  const hasExplicitOpenSection = openSections.some((id) => id.startsWith('imported-section:'));
+  const showStatuses = /gateway/i.test(`${review.type} ${review.name}`);
+  const personalSupportPlan = /personal support plan/i.test(`${review.type} ${review.name}`);
+  if (!sections.length) return <Empty>Detailed questions and answers have not been imported for this review yet.</Empty>;
+  return <div className="space-y-3">
+    {sections.map((section, index) => {
+      const id = `imported-section:${section.id}`;
+      const title = section.name.replace(/\s+(completed|incomplete)$/i, '').trim();
+      const status = showStatuses && importedSectionName(section.name) !== 'learner information' ? section.fields.length || section.tables.length || (section.rawText && section.rawText !== 'EMPTY_STRING') ? 'Complete' : 'Incomplete' : undefined;
+      return <Accordion key={id} id={id} title={title} icon="ri-file-list-3-line" showStep={false} status={status} open={openSections.includes(id) || (!hasExplicitOpenSection && index === 0)} onToggle={onToggle}>
+        <ImportedSectionList sections={[section]} specialSections={personalSupportPlan} />
+      </Accordion>;
+    })}
   </div>;
 }
 
@@ -181,9 +276,9 @@ function PersonCard({ role, name, icon, tone }: { role: string; name?: string; i
 }
 
 function Accordion({
-  id, title, icon, open, onToggle, children,
+  id, title, icon, open, onToggle, children, status, showStep = true,
 }: {
-  id: string; title: string; icon: string; open: boolean; onToggle: (id: string) => void; children: ReactNode;
+  id: string; title: string; icon: string; open: boolean; onToggle: (id: string) => void; children: ReactNode; status?: string; showStep?: boolean;
 }) {
   const steps: Record<string, number> = {
     'progress-checks': 1,
@@ -201,12 +296,13 @@ function Accordion({
       <button type="button" onClick={() => onToggle(id)} aria-expanded={open} className={`flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors sm:px-5 sm:py-4 ${open ? 'bg-gradient-to-r from-primary-50/90 to-secondary-50/30' : 'hover:bg-primary-50/35'}`}>
         <span className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors ${open ? 'bg-primary-600 text-white shadow-md shadow-primary-600/20' : id === 'rag' ? 'bg-amber-50 text-amber-700' : 'bg-primary-50 text-primary-700'}`}>
           <AppIcon className={`${icon} text-base`} />
-          <span className={`absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-white px-1 text-[8px] font-extrabold ${open ? 'bg-secondary-500' : 'bg-primary-700'} text-white`}>{step}</span>
+          {showStep && <span className={`absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-white px-1 text-[8px] font-extrabold ${open ? 'bg-secondary-500' : 'bg-primary-700'} text-white`}>{step}</span>}
         </span>
         <span className="min-w-0 flex-1">
-          <span className={`block text-[9px] font-bold uppercase tracking-[0.12em] ${open ? 'text-primary-600' : 'text-foreground-400'}`}>Review section {step} of 8</span>
+          {showStep && <span className={`block text-[9px] font-bold uppercase tracking-[0.12em] ${open ? 'text-primary-600' : 'text-foreground-400'}`}>Review section {step} of 8</span>}
           <span className="mt-0.5 block text-sm font-bold text-foreground-900 sm:text-[15px]">{title}</span>
         </span>
+        {status && <span className="hidden rounded-full border border-slate-300 bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-600 sm:inline-flex">{status}</span>}
         <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all ${open ? 'rotate-180 bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500'}`}><AppIcon className="ri-arrow-down-s-line text-lg" /></span>
       </button>
       {open && <div className="border-t border-primary-100 bg-white p-4 sm:p-6">{children}</div>}
@@ -228,14 +324,11 @@ function ProgressReviewsList() {
   const [bookingTime, setBookingTime] = useState('09:00');
   const [bookingSubmitting, setBookingSubmitting] = useState(false);
   const [bookingError, setBookingError] = useState('');
-  const [otherBookingMode, setOtherBookingMode] = useState(false);
-  const [otherSessionType, setOtherSessionType] = useState('');
+  const [showCoachSessionBooking, setShowCoachSessionBooking] = useState(false);
   const dateRestriction = bookingDateRestrictionMessage(bookingDate, bookingCalendar);
 
   function openBooking(review: LearnerCalendarEvent) {
     setBookingReview(review);
-    setOtherBookingMode(false);
-    setOtherSessionType('');
     setBookingDate(firstAvailableBookingDate(reviewDate(review), bookingCalendar));
     setBookingTime(review.scheduledTime || '09:00');
     setBookingError('');
@@ -244,24 +337,19 @@ function ProgressReviewsList() {
   async function submitBooking(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!bookingReview || bookingSubmitting || !bookingDate || !bookingTime || dateRestriction) return;
-    if (otherBookingMode && !otherSessionType.trim()) {
-      setBookingError('Please enter the type of session you need.');
-      return;
-    }
     setBookingSubmitting(true);
     setBookingError('');
     try {
       const imported = bookingReview.importedReview;
       const slot = { scheduledDate: bookingDate, scheduledTime: bookingTime, durationMinutes: 60 };
-      const response = !otherBookingMode && !imported && bookingReview.status === 'scheduled'
+      const response = !imported && bookingReview.status === 'scheduled'
         ? await rescheduleLearnerCalendarSession(myLearner.kind, myLearner.id, { ...slot, eventKey: bookingReview.eventKey })
         : await bookLearnerCalendarSession(myLearner.kind, myLearner.id, {
             ...slot,
-            sessionType: otherBookingMode ? 'other' : 'progress-review',
-            reviewId: otherBookingMode ? undefined : imported?.id,
-            assignmentMonth: !otherBookingMode && imported ? (reviewDate(bookingReview) || bookingDate).slice(0, 7) : undefined,
-            eventKey: otherBookingMode || imported ? undefined : bookingReview.eventKey,
-            notes: otherBookingMode ? `Requested session type: ${otherSessionType.trim()}` : undefined,
+            sessionType: 'progress-review',
+            reviewId: imported?.id,
+            assignmentMonth: imported ? (reviewDate(bookingReview) || bookingDate).slice(0, 7) : undefined,
+            eventKey: imported ? undefined : bookingReview.eventKey,
           });
       const updated = imported ? {
         ...response.event,
@@ -273,10 +361,8 @@ function ProgressReviewsList() {
         scheduledDate: bookingDate,
         scheduledTime: bookingTime,
       } : response.event;
-      setEvents(current => otherBookingMode ? [...current, response.event] : current.map(review => review.id === bookingReview.id ? updated : review));
+      setEvents(current => current.map(review => review.id === bookingReview.id ? updated : review));
       setBookingReview(null);
-      setOtherBookingMode(false);
-      setOtherSessionType('');
       refresh();
     } catch (reason) {
       setBookingError(reason instanceof Error ? reason.message : 'Could not book this review.');
@@ -306,8 +392,6 @@ function ProgressReviewsList() {
     { label: 'Not Scheduled', value: planningCount, icon: 'ri-time-line', tone: 'critical' as const, iconClassName: 'bg-red-100 text-red-700' },
     { label: 'Awaiting Signature', value: awaitingSignatureCount, icon: 'ri-quill-pen-line', tone: 'brand' as const, iconClassName: 'bg-violet-100 text-violet-700' },
   ];
-  const firstBookableReview = reviews.find((review) => review.status.toLowerCase() === 'not-scheduled');
-  const bookableReviews = reviews.filter((review) => review.status.toLowerCase() === 'not-scheduled');
 
   return (
     <WorkspaceShell
@@ -340,7 +424,7 @@ function ProgressReviewsList() {
         <section aria-label="Reviews sessions" className="overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-sm">
           <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
             <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><AppIcon className="ri-file-list-3-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Reviews sessions</h2><p className="mt-0.5 text-xs text-foreground-500">Check each review status and open the full review record.</p></div></div>
-            <div className="flex flex-wrap items-center gap-2"><button type="button" disabled={!firstBookableReview} onClick={() => firstBookableReview && openBooking(firstBookableReview)} className="inline-flex h-9 items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-xs font-bold text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"><AppIcon className="ri-calendar-check-line" />Book review</button><Link to={`/learner/calendar?kind=${myLearner.kind}&learner=${myLearner.id}`} className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />Open calendar</Link></div>
+            <div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => setShowCoachSessionBooking(true)} className="inline-flex h-9 items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-xs font-bold text-white transition hover:bg-primary-700"><AppIcon className="ri-calendar-check-line" />Book review</button><Link to={`/learner/calendar?kind=${myLearner.kind}&learner=${myLearner.id}`} className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />Open calendar</Link></div>
           </div>
           <div role="tablist" aria-label="Review status" className="flex overflow-x-auto border-b border-background-200 bg-white px-4 pt-3 sm:px-5">
             {(['planned', 'finished'] as const).map((tab) => {
@@ -442,13 +526,11 @@ function ProgressReviewsList() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">Scheduling assistant</p>
-                  <h2 id="review-booking-title" className="mt-1 text-lg font-bold text-foreground-900">{otherBookingMode ? 'Schedule other session' : bookingReview.status === 'scheduled' ? 'Reschedule review' : 'Schedule review'}</h2>
-                  <p className="mt-1 text-xs text-foreground-500">Choose the day and time for {otherBookingMode ? 'your requested session' : progressReviewTitle(bookingReview)}.</p>
+                  <h2 id="review-booking-title" className="mt-1 text-lg font-bold text-foreground-900">{bookingReview.status === 'scheduled' ? 'Reschedule review' : 'Schedule review'}</h2>
+                  <p className="mt-1 text-xs text-foreground-500">Choose the day and time for {progressReviewTitle(bookingReview)}.</p>
                 </div>
                 <button type="button" disabled={bookingSubmitting} aria-label="Close booking dialog" onClick={() => setBookingReview(null)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100"><AppIcon className="ri-close-line" /></button>
               </div>
-              {bookingReview.status === 'not-scheduled' && bookableReviews.length > 0 && <label className="mt-5 block text-xs font-semibold text-foreground-600">Review session<select aria-label="Select progress review session" value={otherBookingMode ? '__other__' : bookingReview.id} onChange={event => { if (event.target.value === '__other__') { setOtherBookingMode(true); setOtherSessionType(''); setBookingError(''); return; } const next = bookableReviews.find(review => review.id === event.target.value); if (next) openBooking(next); }} className="mt-1.5 h-11 w-full rounded-2xl border border-background-300 bg-white px-3.5 text-base font-normal text-foreground-800 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100">{bookableReviews.map(review => <option key={review.id} value={review.id}>{review.importedReview?.type || (review.type?.toLowerCase().includes('gateway') ? 'Gateway Review' : 'Progress Review')} &middot; {formatDate(reviewDate(review))}</option>)}<option value="__other__">Other</option></select></label>}
-              {otherBookingMode && <label className="mt-3 block text-xs font-semibold text-foreground-600">Other <span className="text-red-500">*</span><input type="text" value={otherSessionType} onChange={event => { setOtherSessionType(event.target.value); setBookingError(''); }} maxLength={100} placeholder="Write the session type you need" className="mt-1.5 h-11 w-full rounded-2xl border border-background-300 bg-white px-3.5 text-base font-normal text-foreground-800 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100" /></label>}
               <div className="mt-5 grid grid-cols-2 gap-3">
                 <label className="text-xs font-semibold text-foreground-600">Day<input type="date" required min={isoDate(new Date())} value={bookingDate} onChange={event => { setBookingDate(event.target.value); setBookingError(''); }} className="mt-1.5 h-10 w-full rounded-xl border border-background-300 bg-background-50 px-3 text-sm font-normal text-foreground-800 outline-none focus:border-primary-400" /></label>
                 <label className="text-xs font-semibold text-foreground-600">Time<input type="time" required value={bookingTime} onChange={event => setBookingTime(event.target.value)} className="mt-1.5 h-10 w-full rounded-xl border border-background-300 bg-background-50 px-3 text-sm font-normal text-foreground-800 outline-none focus:border-primary-400" /></label>
@@ -456,11 +538,12 @@ function ProgressReviewsList() {
               {(dateRestriction || bookingError) && <p role="alert" className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700"><AppIcon className="ri-error-warning-line mr-1" />{dateRestriction || bookingError}</p>}
               <div className="mt-5 flex gap-2">
                 <button type="button" disabled={bookingSubmitting} onClick={() => setBookingReview(null)} className="flex-1 rounded-xl border border-background-300 px-4 py-2.5 text-sm font-semibold text-foreground-600 hover:bg-background-100">Cancel</button>
-                <button type="submit" disabled={bookingSubmitting || !bookingDate || !bookingTime || Boolean(dateRestriction)} className="flex-1 rounded-xl bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50">{bookingSubmitting ? 'Saving…' : otherBookingMode ? 'Book session' : bookingReview.status === 'scheduled' ? 'Save new time' : 'Book meeting'}</button>
+                <button type="submit" disabled={bookingSubmitting || !bookingDate || !bookingTime || Boolean(dateRestriction)} className="flex-1 rounded-xl bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50">{bookingSubmitting ? 'Saving…' : bookingReview.status === 'scheduled' ? 'Save new time' : 'Book meeting'}</button>
               </div>
             </form>
           </div>
         )}
+        {showCoachSessionBooking && <BookCoachSessionModal defaultSessionType="progress-review" onClose={() => setShowCoachSessionBooking(false)} onBooked={refresh} />}
       </main>
     </WorkspaceShell>
   );
@@ -653,7 +736,7 @@ export default function ProgressReviewsPage() {
                     <div className="grid gap-3 sm:grid-cols-3">
                       <PersonCard role="Learner" name={learner?.name} icon="ri-user-line" tone="bg-primary-100 text-primary-700" />
                       <PersonCard role="Coach" name={selected?.coachName} icon="ri-user-star-line" tone="bg-amber-100 text-amber-700" />
-                      <PersonCard role="Line manager" name={learner?.lineManager} icon="ri-briefcase-line" tone="bg-emerald-100 text-emerald-700" />
+                      <PersonCard role="Line manager" name={selected?.importedReview?.managerName || learner?.lineManager} icon="ri-briefcase-line" tone="bg-emerald-100 text-emerald-700" />
                     </div>
                   </div>
 
@@ -674,24 +757,29 @@ export default function ProgressReviewsPage() {
                 </div>
               </section>
 
-              {selected.importedReview && <Accordion id="imported-review-details" title={`${reviewTypeLabel(selected)} details`} icon="ri-file-list-3-line" open={openSections.includes('imported-review-details')} onToggle={toggleSection}><ImportedReviewSections review={selected.importedReview} /></Accordion>}
-              <Accordion id="progress-checks" title="Progress Checks" icon="ri-check-double-line" open={openSections.includes('progress-checks')} onToggle={toggleSection}>
-                <SavedReviewAnswers sectionId="progress-checks" responses={selected?.reviewResponses} emptyMessage="No progress checks have been recorded for this Progress Review." />
-              </Accordion>
-              <Accordion id="learner-reflection" title="Learner Reflections & Ratings" icon="ri-user-heart-line" open={openSections.includes('learner-reflection')} onToggle={toggleSection}><SavedReviewAnswers sectionId="learner-reflection" responses={selected?.reviewResponses} emptyMessage="Learner reflection data is not available for this Progress Review." /></Accordion>
-              <Accordion id="manager-reflection" title="Manager Reflections & Ratings" icon="ri-briefcase-line" open={openSections.includes('manager-reflection')} onToggle={toggleSection}><SavedReviewAnswers sectionId="manager-reflection" responses={selected?.reviewResponses} emptyMessage="Manager reflection data is not available for this Progress Review." /></Accordion>
-              <Accordion id="tutor-reflection" title="Tutor Reflections & Ratings" icon="ri-user-star-line" open={openSections.includes('tutor-reflection')} onToggle={toggleSection}><SavedReviewAnswers sectionId="tutor-reflection" responses={selected?.reviewResponses} emptyMessage="Tutor reflection data is not available for this Progress Review." /></Accordion>
-              <Accordion id="safeguarding" title="Safeguarding & Key Themes" icon="ri-shield-check-line" open={openSections.includes('safeguarding')} onToggle={toggleSection}><SavedReviewAnswers sectionId="safeguarding" responses={selected?.reviewResponses} emptyMessage="No safeguarding or key-theme discussion has been recorded for this Progress Review." /></Accordion>
-              <Accordion id="additional-support" title="Additional Support" icon="ri-hand-heart-line" open={openSections.includes('additional-support')} onToggle={toggleSection}><SavedReviewAnswers sectionId="additional-support" responses={selected?.reviewResponses} emptyMessage="No additional support information has been recorded for this Progress Review." /></Accordion>
-              <Accordion id="actions" title="Progress Targets & Actions" icon="ri-focus-3-line" open={openSections.includes('actions')} onToggle={toggleSection}><SavedReviewAnswers sectionId="actions" responses={selected?.reviewResponses} emptyMessage="No targets or actions have been recorded for this Progress Review." /></Accordion>
-              <Accordion id="rag" title="RAG Status" icon="ri-traffic-light-line" open={openSections.includes('rag')} onToggle={toggleSection}>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-xl bg-background-100 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">OTJH status</p><p className="mt-1 text-base font-bold text-foreground-900">{learner?.otjhStatus || '-'}</p></div>
-                  <div className="rounded-xl bg-background-100 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Progress variance</p><p className="mt-1 text-base font-bold text-foreground-900">{progressVariance === null ? '-' : `${Math.round(progressVariance * 100)}%`}</p></div>
-                  <div className="rounded-xl bg-background-100 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Coach RAG</p><p className="mt-1 text-base font-bold text-foreground-900">{selected?.reviewResponses?.rag_status || '-'}</p></div>
-                </div>
-                {responsesForSection(selected?.reviewResponses, 'rag').length > 0 && <div className="mt-4"><SavedReviewAnswers sectionId="rag" responses={selected?.reviewResponses} emptyMessage="No RAG assessment has been recorded for this Progress Review." /></div>}
-              </Accordion>
+              {selected.importedReview ? (
+                <ImportedReviewDetailAccordions review={selected.importedReview} openSections={openSections} onToggle={toggleSection} />
+              ) : (
+                <>
+                  <Accordion id="progress-checks" title="Progress Checks" icon="ri-check-double-line" open={openSections.includes('progress-checks')} onToggle={toggleSection}>
+                    <SavedReviewAnswers sectionId="progress-checks" responses={selected.reviewResponses} emptyMessage="No progress checks have been recorded for this Progress Review." />
+                  </Accordion>
+                  <Accordion id="learner-reflection" title="Learner Reflections & Ratings" icon="ri-user-heart-line" open={openSections.includes('learner-reflection')} onToggle={toggleSection}><SavedReviewAnswers sectionId="learner-reflection" responses={selected.reviewResponses} emptyMessage="Learner reflection data is not available for this Progress Review." /></Accordion>
+                  <Accordion id="manager-reflection" title="Manager Reflections & Ratings" icon="ri-briefcase-line" open={openSections.includes('manager-reflection')} onToggle={toggleSection}><SavedReviewAnswers sectionId="manager-reflection" responses={selected.reviewResponses} emptyMessage="Manager reflection data is not available for this Progress Review." /></Accordion>
+                  <Accordion id="tutor-reflection" title="Tutor Reflections & Ratings" icon="ri-user-star-line" open={openSections.includes('tutor-reflection')} onToggle={toggleSection}><SavedReviewAnswers sectionId="tutor-reflection" responses={selected.reviewResponses} emptyMessage="Tutor reflection data is not available for this Progress Review." /></Accordion>
+                  <Accordion id="safeguarding" title="Safeguarding & Key Themes" icon="ri-shield-check-line" open={openSections.includes('safeguarding')} onToggle={toggleSection}><SavedReviewAnswers sectionId="safeguarding" responses={selected.reviewResponses} emptyMessage="No safeguarding or key-theme discussion has been recorded for this Progress Review." /></Accordion>
+                  <Accordion id="additional-support" title="Additional Support" icon="ri-hand-heart-line" open={openSections.includes('additional-support')} onToggle={toggleSection}><SavedReviewAnswers sectionId="additional-support" responses={selected.reviewResponses} emptyMessage="No additional support information has been recorded for this Progress Review." /></Accordion>
+                  <Accordion id="actions" title="Progress Targets & Actions" icon="ri-focus-3-line" open={openSections.includes('actions')} onToggle={toggleSection}><SavedReviewAnswers sectionId="actions" responses={selected.reviewResponses} emptyMessage="No targets or actions have been recorded for this Progress Review." /></Accordion>
+                  <Accordion id="rag" title="RAG Status" icon="ri-traffic-light-line" open={openSections.includes('rag')} onToggle={toggleSection}>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-xl bg-background-100 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">OTJH status</p><p className="mt-1 text-base font-bold text-foreground-900">{learner?.otjhStatus || '-'}</p></div>
+                      <div className="rounded-xl bg-background-100 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Progress variance</p><p className="mt-1 text-base font-bold text-foreground-900">{progressVariance === null ? '-' : `${Math.round(progressVariance * 100)}%`}</p></div>
+                      <div className="rounded-xl bg-background-100 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Coach RAG</p><p className="mt-1 text-base font-bold text-foreground-900">{selected.reviewResponses?.rag_status || '-'}</p></div>
+                    </div>
+                    {responsesForSection(selected.reviewResponses, 'rag').length > 0 && <div className="mt-4"><SavedReviewAnswers sectionId="rag" responses={selected.reviewResponses} emptyMessage="No RAG assessment has been recorded for this Progress Review." /></div>}
+                  </Accordion>
+                </>
+              )}
             </main>
           </div>
         )}
