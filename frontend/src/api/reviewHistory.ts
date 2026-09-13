@@ -1,7 +1,7 @@
 import { readLearnerJson } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
 
-export type ReviewHistoryCategory = 'monthly-coaching' | 'progress-review';
+export type ReviewHistoryCategory = 'monthly-coaching' | 'progress-review' | 'reviews';
 
 export interface ImportedReviewLink {
   text?: string;
