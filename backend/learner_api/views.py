@@ -43,6 +43,7 @@ from .active_users import (
 )
 from .identity import learner_profile_for_source
 from .account_deletion import delete_learner_account
+from .learner_dates import save_enrolment_fields
 from .directory import learner_directory_queryset
 from .learner_progression import ACTIVE_STATUS, advance_learner
 from login.services import sync_account
@@ -893,7 +894,7 @@ def enrolment_user_detail(request, pk):
             for attr, value in fields.items():
                 setattr(user, attr, value)
             if fields:
-                user.save(update_fields=list(fields.keys()))
+                save_enrolment_fields(user, fields)
                 # The address and name on this row ARE the sign-in identity, and
                 # the login account keeps its own copy — which is what an
                 # invitation is sent to. Correcting an email here without this

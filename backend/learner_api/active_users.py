@@ -1854,10 +1854,12 @@ def mirror_placement_to_enrolment(profile):
 def sync_active_user(source):
     """Upsert one permanent learner and refresh authored plan/KSB child rows."""
     from .apprenticeship_agreement import _group_dates
+    from .learner_dates import learner_date_values
 
     status = _s(getattr(source, "programme_status", ""))
     start_date, end_date, _ = _group_dates(source)
     defaults = {
+        **learner_date_values(source),
         "full_name": _s(getattr(source, "username", ""))
         or _s(getattr(source, "email", ""))
         or f"Learner {source.id}",

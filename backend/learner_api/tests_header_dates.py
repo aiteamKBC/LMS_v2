@@ -42,6 +42,8 @@ class HeaderDateTests(SimpleTestCase):
         with patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "0"}), \
                 patch("learner_api.views.EnrolmentUser") as model, \
                 patch("learner_api.views.advance_learner"), \
+                patch("learner_api.learner_dates.transaction.atomic"), \
+                patch("learner_api.learner_dates.learner_profile_for_source", return_value=None), \
                 patch("learner_api.views.to_board", return_value={}):
             model.all_learners.filter.return_value.first.return_value = learner
             response = enrolment_user_detail(request, 501)
