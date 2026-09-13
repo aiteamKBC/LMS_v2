@@ -16,6 +16,7 @@ import type { LearnerDetail } from '@/api/learnerDetail';
 
 /** One week as the sidebar lists it. */
 export interface SidebarWeek {
+  key?: string;
   week: string;
   count: number;
   completed: number;
@@ -68,8 +69,17 @@ export function toggleExpandedWeek(current: string | null, week: string): string
 export interface ActivityPlacement {
   moduleTitle: string;
   weekTitle: string;
+  weekLabel: string;
   weekComponents: JourneyComponent[];
   weeks: SidebarWeek[];
+}
+
+/** Repeated week names need their plan position to distinguish occurrences. */
+export function weekDisplayLabel(weeks: { week: string }[], index: number): string {
+  const title = weeks[index].week;
+  return weeks.filter((week) => week.week === title).length > 1
+    ? `Week ${index + 1} · ${title}`
+    : title;
 }
 
 /**
@@ -101,12 +111,14 @@ export function placeActivity(
       return {
         moduleTitle: module.module,
         weekTitle: week.week,
+        weekLabel: weekDisplayLabel(module.weeks, module.weeks.indexOf(week)),
         weekComponents: week.components,
-        weeks: module.weeks.map((w) => ({
+        weeks: module.weeks.map((w, index) => ({
+          key: w.components[0]?.weekId || `week-${index}`,
           week: w.week,
           count: w.components.length,
           completed: w.components.filter((c) => isComponentComplete(c, completedIds)).length,
-          active: w.week === week.week,
+          active: w === week,
           components: w.components,
         })),
       };

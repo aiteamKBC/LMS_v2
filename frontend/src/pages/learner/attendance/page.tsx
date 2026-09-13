@@ -1,9 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
-import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
@@ -18,6 +17,7 @@ import {
   type AttendanceLecture,
 } from '@/api/attendanceLectures';
 import AbsenceReportForm from './components/AbsenceReportForm';
+import AbsenceReportDialog from './components/AbsenceReportDialog';
 import AttendanceModePanel from './components/AttendanceModePanel';
 import AttendanceLectureList, { type AttendanceFilter } from './components/AttendanceLectureList';
 import styles from './attendance.module.css';
@@ -85,52 +85,76 @@ export default function AttendancePage() {
         Lectures could not refresh. Showing the last loaded record. <button onClick={read.refresh} className="font-semibold underline">Retry</button>
       </div>}
       {read.loading ? <Panel><RowsSkeleton rows={6} /></Panel> : !data ? <LearnerLoadError error={read.error || 'Could not load lectures.'} onRetry={read.refresh} /> : <>
-        <div className={styles.overview}>
-          <Panel className={styles.rateCard}>
-            <p className={styles.rateLabel}>Attendance rate</p>
-            <p className={styles.rateValue}>{counts.rate == null ? '—' : `${counts.rate}%`}</p>
-            <div className={styles.rateTrack} role="progressbar" aria-label="Attendance rate" aria-valuemin={0} aria-valuemax={100}
-              aria-valuenow={counts.rate ?? undefined} aria-valuetext={counts.rate == null ? 'No completed attendance records yet' : `${counts.rate}%`}>
-              <span style={{ width: `${counts.rate ?? 0}%` }} />
-            </div>
-            <p className={styles.rateDescription}>{counts.rate == null ? 'No completed attendance records yet' : `${counts.rate}% attendance · includes late attendance`}</p>
-          </Panel>
-          <Stat label="Total Lectures" value={counts.all} icon="ri-book-open-line" tone="total" />
-          <Stat label="Attended" value={counts.attended} icon="ri-checkbox-circle-line" tone="attended" />
-          <Stat label="Absent" value={counts.absent} icon="ri-close-circle-line" tone="absent" />
-          <Stat label="Caught up" value={counts.covered} icon="ri-play-circle-line" tone="covered" />
-        </div>
         <div className={styles.workspace}>
-          <div className="min-w-0 space-y-4">
-            <AttendanceLectureList lectures={lectures} modules={data.modules} moduleId={selectedModule} onModuleChange={setModuleId}
+          <div className={styles.mainColumn}>
+            <Panel className={styles.overview}>
+              <label className={styles.moduleField}><span>Select Module</span>
+                <select aria-label="Module" value={selectedModule} onChange={event => { setModuleId(event.target.value); setFilter('all'); }}>
+                  <option value="all">All modules</option>
+                  {data.modules.map(module => <option key={module.id} value={module.id}>{module.title}</option>)}
+                </select>
+              </label>
+              <div className={styles.moduleOverview}>
+                <h2>Module Overview</h2>
+                <p className={styles.selectedModule} title={data.modules.find(module => module.id === selectedModule)?.title || 'All modules'}>
+                  {data.modules.find(module => module.id === selectedModule)?.title || 'All modules'}
+                </p>
+                <p className={styles.rateDescription} title="Includes late attendance">{counts.rate == null ? 'No completed attendance records yet' : <>{counts.rate}% attendance<span className="sr-only"> · includes late attendance</span></>}</p>
+              </div>
+              <div className={styles.metrics}>
+                <Stat label="Total Lectures" value={counts.all} total={counts.all} icon="ri-book-open-line" tone="total" />
+                <Stat label="Attended" value={counts.attended} total={counts.all} icon="ri-checkbox-circle-line" tone="attended" />
+                <Stat label="Absent" value={counts.absent} total={counts.all} icon="ri-close-line" tone="absent" />
+                <Stat label="Covered Missed" value={counts.covered} total={counts.all} icon="ri-star-fill" tone="covered" />
+              </div>
+            </Panel>
+            <AttendanceLectureList key={selectedModule} lectures={lectures} moduleId={selectedModule} onModuleChange={setModuleId}
               filter={filter} onFilterChange={setFilter} tabs={tabs} onOpen={openActivities} onReport={setReport} />
-            <Panel><p className="text-sm font-semibold">Keep learning at your own pace</p><p className="mt-1 text-xs text-foreground-500">Complete the activities linked to missed lectures to cover your learning. Catch-up completion is tracked separately from live attendance.</p></Panel>
+            <p className={styles.learningNote}><AppIcon className="ri-information-line" />Complete the activities linked to missed lectures to cover your learning. Catch-up is tracked separately from live attendance.</p>
           </div>
           <aside className={styles.sidebar}>
             <AttendanceModePanel mode={data.mode} busy={modeBusy} error={modeError} notice={modeNotice} onChange={changeMode} />
-            <Panel><SectionHeader title="Here to help" icon="ri-customer-service-2-line" />
-              <p className="mt-2 text-xs leading-5 text-foreground-500">Get support with your lectures, attendance or catching up.</p>
-              <Link to="/learner/support" className={styles.supportLink}><AppIcon className="ri-chat-3-line" />Contact Support<span aria-hidden="true">↗</span></Link>
-              <Link to="/learner/calendar?book=student-support" className={styles.supportLink}><AppIcon className="ri-calendar-event-line" />Book a Support Session<span aria-hidden="true">→</span></Link>
+            <Panel className={styles.supportPanel}>
+              <div className={styles.sidebarHeading}>
+                <span className={styles.sectionIcon}><AppIcon className="ri-group-line" /></span>
+                <div><h2>Book Support Session</h2><p>Need extra help? Book a one-to-one support session with your tutor.</p></div>
+              </div>
+              <Link to="/learner/calendar?book=student-support" className={`primary-action ${styles.supportButton}`}><AppIcon className="ri-calendar-event-line" />Book a Support Session</Link>
+              <Link to="/learner/support" className={styles.contactLink}>Contact Support</Link>
             </Panel>
-            <Panel><SectionHeader title="Recent Activity" icon="ri-history-line" actions={data.recentActivity.length > 5 ? <button className="text-xs font-semibold text-primary-600" onClick={() => setShowAllActivity(value => !value)}>{showAllActivity ? 'Show less' : 'View all'}</button> : undefined} />
-              {!data.recentActivity.length ? <p className="mt-3 text-xs text-foreground-500">Your recent activity will appear here.</p> : <ul className={styles.recentActivity}>{data.recentActivity.slice(0, showAllActivity ? undefined : 5).map(item => <li key={item.id} className="text-xs"><p>{item.title}</p><time dateTime={item.at} className="mt-1 block text-foreground-400">{new Date(item.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</time></li>)}</ul>}
+            <Panel className={styles.activityPanel}>
+              <div className={styles.activityHeading}><h2><AppIcon className="ri-history-line" />Recent Activity <span>(Audit Trail)</span></h2>
+                {data.recentActivity.length > 5 && <button type="button" onClick={() => setShowAllActivity(value => !value)}>{showAllActivity ? 'Show less' : 'View all'} <span aria-hidden="true">→</span></button>}
+              </div>
+              {!data.recentActivity.length ? <p className="mt-3 text-xs text-foreground-500">Your recent activity will appear here.</p> : <ul className={styles.recentActivity}>{data.recentActivity.slice(0, showAllActivity ? undefined : 5).map(item => <li key={item.id}>
+                <span className={styles.activityIcon} data-type={item.type}><AppIcon className={activityIcon(item.type)} /></span>
+                <p>{item.title}</p>
+                <time dateTime={item.at}><span>{new Date(item.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span><span>{new Date(item.at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span></time>
+              </li>)}</ul>}
             </Panel>
           </aside>
         </div>
       </>}
     </PageContainer>
-    <RightSlidePanel isOpen={report !== null} onClose={() => setReport(null)} title="Report Absence" width="w-[520px]">
-      {report && <AbsenceReportForm key={typeof report === 'string' ? report : report.id}
+    {report && <AbsenceReportDialog onClose={() => setReport(null)}>
+      <AbsenceReportForm key={typeof report === 'string' ? report : report.id}
         preselectMatch={typeof report === 'string' ? null : { id: report.id, dateIso: report.date, title: report.title }}
-        onSubmitted={() => read.refresh()} onCancel={() => setReport(null)} showGuidance={false} showHistory={false} />}
-    </RightSlidePanel>
+        onSubmitted={() => read.refresh()} onCancel={() => setReport(null)} showGuidance={false} showHistory={false} compact />
+    </AbsenceReportDialog>}
   </WorkspaceShell>;
 }
 
-function Stat({ label, value, icon, tone }: { label: string; value: number; icon: string; tone: 'total' | 'attended' | 'absent' | 'covered' }) {
-  return <div className={`coach-metric-card flex items-center gap-3 ${styles.metric}`} data-tone={tone}>
-    <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${styles.icon}`}><AppIcon className={`${icon} text-2xl`} /></span>
-    <div><p className={`text-2xl font-semibold tabular-nums ${styles.value}`}>{value}</p><p className="mt-1 text-xs text-foreground-500">{label}</p></div>
+function Stat({ label, value, total, icon, tone }: { label: string; value: number; total: number; icon: string; tone: 'total' | 'attended' | 'absent' | 'covered' }) {
+  return <div className={styles.metric} data-tone={tone} style={{ '--metric-progress': `${total ? value / total * 100 : 0}%` } as CSSProperties}>
+    <span className={styles.metricRing} aria-hidden="true"><span><AppIcon className={icon} /></span></span>
+    <div><p className={styles.value}>{value}</p><p className={styles.metricLabel}>{label}</p></div>
   </div>;
+}
+
+function activityIcon(type: string) {
+  if (type.includes('absence')) return 'ri-flag-line';
+  if (type.includes('support') || type.includes('booking')) return 'ri-calendar-event-line';
+  if (type.includes('mode')) return 'ri-toggle-line';
+  if (type.includes('attendance')) return 'ri-calendar-check-line';
+  return 'ri-book-open-line';
 }

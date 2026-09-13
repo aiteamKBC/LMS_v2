@@ -36,7 +36,7 @@ import { ComponentAccessNotice } from '@/components/feature/ComponentAccessNotic
 import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { ActivitySidebar } from './ActivitySidebar';
-import { isNavigableComponent } from './weekPreview';
+import { isNavigableComponent, placeActivity, weekDisplayLabel, type ActivityPlacement } from './weekPreview';
 import { componentRoute } from './componentRoute';
 import { AssignmentSubmissionWizard, type AssignmentAnswers } from './AssignmentSubmissionWizard';
 import { useSavedAssignmentAccess } from './useSavedAssignmentAccess';
@@ -54,15 +54,10 @@ const learnerNav = roleNavMap.learner;
 type Phase = 'consume' | 'reflect' | 'confirm';
 type TimeSource = 'timer' | 'input';
 
-/** Normalised completion record for the results screen (video + component share these). */
-interface DoneRecord { timeTaken: string | null; ksbs: string[]; reportedTime: string; feedback: string }
+interface DoneRecord { activityKey: string; componentId: string; timeTaken: string | null }
 
-interface FoundContext {
+interface FoundContext extends ActivityPlacement {
   component: JourneyComponent;
-  moduleTitle: string;
-  weekTitle: string;
-  weekComponents: JourneyComponent[];
-  weeks: { week: string; count: number; completed: number; active: boolean; components: JourneyComponent[] }[];
 }
 
 interface TimedCompletion {
@@ -180,37 +175,17 @@ function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange:
 
 /** Find the target component + its week/module context inside the built journey. */
 function locate(detail: LearnerDetail | null, componentId: string, completedIds: Set<string>): FoundContext | null {
-  if (!detail) return null;
-  const journey = buildLearnerJourney(detail);
-  for (const mod of journey) {
-    for (const wk of mod.weeks) {
-      const target = wk.components.find((c) => c.componentId === componentId);
-      if (target) {
-        return {
-          component: target,
-          moduleTitle: mod.module,
-          weekTitle: wk.week,
-          weekComponents: wk.components,
-          weeks: mod.weeks.map((w) => ({
-            week: w.week,
-            count: w.components.length,
-            completed: w.components.filter((component) => isComponentComplete(component, completedIds)).length,
-            active: w.week === wk.week,
-            components: w.components,
-          })),
-        };
-      }
-    }
-  }
-  return null;
+  const placement = placeActivity(detail, { componentId }, completedIds);
+  const component = placement?.weekComponents.find((c) => c.componentId === componentId);
+  return placement && component ? { ...placement, component } : null;
 }
 
-function nextActivityRoute(detail: LearnerDetail | null, currentComponentId: string | undefined, kind: string | undefined, id: string | undefined): string | null {
+function nextActivityRoute(detail: LearnerDetail | null, currentComponentId: string | undefined, kind: string | undefined, id: string | undefined): { href: string; label: string } | null {
   if (!detail || !currentComponentId || !kind || !id) return null;
   const journey = buildLearnerJourney(detail);
   const ordered = journey.flatMap((module) => (
-    module.weeks.flatMap((week) => (
-      week.components.map((component) => ({ module: module.module, week: week.week, component }))
+    module.weeks.flatMap((week, index) => (
+      week.components.map((component) => ({ module: module.module, week: week.week, weekLabel: weekDisplayLabel(module.weeks, index), component }))
     ))
   ));
   const currentIndex = ordered.findIndex((item) => item.component.componentId === currentComponentId);
@@ -218,7 +193,12 @@ function nextActivityRoute(detail: LearnerDetail | null, currentComponentId: str
   const next = ordered
     .slice(currentIndex + 1)
     .find((item) => hasComponentContent(item.component) && isNavigableComponent(item.component));
-  return next ? componentRoute(kind, id, next.component, next.module, next.week) : null;
+  if (!next) return null;
+  const meta = componentTypeMeta(next.component.title);
+  return {
+    href: componentRoute(kind, id, next.component, next.module, next.week),
+    label: `${meta.detail || meta.label} · ${next.weekLabel} · ${next.module}`,
+  };
 }
 
 export default function ComponentViewPage() {
@@ -251,6 +231,8 @@ export default function ComponentViewPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [record, setRecord] = useState<DoneRecord | null>(null);
+  const [repeating, setRepeating] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   // Bumped by the uploader so the criteria panel re-checks after an upload.
   const [evidenceVersion, setEvidenceVersion] = useState(0);
   const [evidenceFiles, setEvidenceFiles] = useState<EvidenceRecord[]>([]);
@@ -266,6 +248,14 @@ export default function ComponentViewPage() {
   // React Router can reuse this page while only the component id changes.
   // Restore the independently saved counter for the newly selected activity.
   useEffect(() => {
+    setPhase('consume');
+    setRecord(null);
+    setRepeating(false);
+    setRefreshError(null);
+    setSubmitError(null);
+    setPlayerPlaying(false);
+    setUnsupported(false);
+    setRealDuration(null);
     setWallElapsed(readActivityTimer(timerStorageKey)?.elapsedSeconds ?? 0);
     setManualTimeSeconds(null);
     setTimeSource('timer');
@@ -299,7 +289,12 @@ export default function ComponentViewPage() {
 
   // Keep completion state derived from the same progress records used by the
   // learner journey. This is also needed by the sidebar's done counts.
-  const completedIds = useMemo(() => completedComponentIds(detail), [detail]);
+  const completedIds = useMemo(() => {
+    const ids = completedComponentIds(detail);
+    // A successful save stays visible even if the subsequent refresh fails.
+    if (record?.activityKey === timerStorageKey) ids.add(record.componentId);
+    return ids;
+  }, [detail, record, timerStorageKey]);
   const ctx = useMemo(
     () => (componentId ? locate(detail, componentId, completedIds) : null),
     [detail, componentId, completedIds],
@@ -326,6 +321,12 @@ export default function ComponentViewPage() {
   // and verify the submitted duration.
   const isLiveSession = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session';
   const isAssignment = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'assignment';
+  const completed = !!component && isComponentComplete(component, completedIds);
+  const recordingAttempt = isAssignment || !completed || repeating;
+  const nextActivity = useMemo(() => nextActivityRoute(detail, componentId, kind, id), [detail, componentId, kind, id]);
+  const completedTime = record?.activityKey === timerStorageKey
+    ? formatRecordedClock(record.timeTaken)
+    : component ? completionTimeFor(component, detail) : null;
   const noun = componentNoun(component?.type);
   const contentOpenable = component ? isOpenableComponent(component) : false;
   const savedAssignment = useSavedAssignmentAccess(kind, id, componentId, isAssignment && !contentOpenable && canUseComponent);
@@ -361,6 +362,7 @@ export default function ComponentViewPage() {
 
   const moduleTitle = ctx?.moduleTitle ?? searchParams.get('module') ?? '';
   const weekTitle = ctx?.weekTitle ?? searchParams.get('week') ?? '';
+  const weekLabel = ctx?.weekLabel ?? weekTitle;
   const backHref = kind && id ? `/workspace/learner/${kind}/${id}` : '/workspace/learner';
 
 
@@ -480,7 +482,7 @@ export default function ComponentViewPage() {
   // The server stamps and signs the start, preventing claims for time before
   // this learner opened this specific activity.
   useEffect(() => {
-    if (phase !== 'consume' || !openable || !componentId || !kind || !id || !canUseComponent) return;
+    if (phase !== 'consume' || !recordingAttempt || !openable || !componentId || !kind || !id || !canUseComponent) return;
     const learnerKind = kind as LearnerKind;
     const activityKind = isVideo ? 'video' : 'component';
     let cancelled = false;
@@ -515,7 +517,7 @@ export default function ComponentViewPage() {
         if (!cancelled) setSubmitError(error instanceof Error ? error.message : 'Could not start activity timing');
       });
     return () => { cancelled = true; };
-  }, [phase, openable, componentId, kind, id, canUseComponent, isVideo, trackingMode, timerStorageKey]);
+  }, [phase, recordingAttempt, openable, componentId, kind, id, canUseComponent, isVideo, trackingMode, timerStorageKey]);
 
   // Only visible time counts for ordinary page content. Audio is intentionally
   // allowed to keep counting in a background tab because playback can continue
@@ -523,7 +525,7 @@ export default function ComponentViewPage() {
   // uses the real wall-clock delta instead of assuming every callback is exactly
   // one second apart.
   useEffect(() => {
-    if (phase !== 'consume' || !canUseComponent || (!unsupported && !playerPlaying)) return;
+    if (phase !== 'consume' || !recordingAttempt || !canUseComponent || (!unsupported && !playerPlaying)) return;
     let lastAudioTickAt = Date.now();
     timerRef.current = setInterval(() => {
       if (isAudio || document.visibilityState === 'visible') {
@@ -541,9 +543,10 @@ export default function ComponentViewPage() {
       }
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [phase, canUseComponent, unsupported, playerPlaying, timerStorageKey]);
+  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isAudio, timerStorageKey]);
 
   const finishConsuming = () => {
+    if (!recordingAttempt) return;
     if (timerRef.current) clearInterval(timerRef.current);
     if (component?.reflectionRequired === false) {
       setPhase('confirm');
@@ -563,7 +566,7 @@ export default function ComponentViewPage() {
 
   const finalizeSubmit = async (
     reflection: { ksbs: string[]; feedback: string; reportedTime: string },
-    options: { stayOnPage?: boolean; rethrow?: boolean } = {},
+    options: { rethrow?: boolean } = {},
   ) => {
     if (!component || !componentId || !kind || !id || submitting || !canUseComponent) return;
     if (componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed) {
@@ -574,6 +577,7 @@ export default function ComponentViewPage() {
     }
     setSubmitting(true);
     setSubmitError(null);
+    setRefreshError(null);
     try {
       const tracking = trackingSessionRef.current || await trackingPromiseRef.current;
       if (!tracking) throw new Error('Activity timing did not start. Reopen the activity and try again.');
@@ -586,7 +590,7 @@ export default function ComponentViewPage() {
           videoTitle: meta?.detail || meta?.label || 'Video',
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
         });
-        setRecord({ timeTaken: res.record.timeTaken, ksbs: res.record.ksbs, reportedTime: res.record.reportedTime, feedback: res.record.feedback });
+        setRecord({ activityKey: timerStorageKey, componentId, timeTaken: res.record.timeTaken });
       } else {
         const res = await submitComponentProgress(componentId, kind as 'commercial' | 'apprenticeship', id, {
           week: weekTitle || null, module: moduleTitle || null,
@@ -596,24 +600,21 @@ export default function ComponentViewPage() {
           componentTitle: pageTitle, componentType: component.type || undefined,
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
         });
-        setRecord({ timeTaken: res.record.timeTaken, ksbs: res.record.ksbs, reportedTime: res.record.reportedTime, feedback: res.record.feedback });
+        setRecord({ activityKey: timerStorageKey, componentId, timeTaken: res.record.timeTaken });
       }
       clearActivityTimer(timerStorageKey);
       setWallElapsed(0);
       setManualTimeSeconds(null);
       setTimeSource(usesManualTimeOnly ? 'input' : 'timer');
+      setRepeating(false);
       // A refresh failure after a committed completion must not invite the
       // learner to submit the same timing session again.
-      const refreshed = await fetchLearnerDetail(kind as LearnerKind, id, { componentId }).catch(error => {
-        if (!options.stayOnPage) throw error;
+      const refreshed = await fetchLearnerDetail(kind as LearnerKind, id, { componentId }).catch(() => {
+        setRefreshError('Your completion was saved. Refresh the page to reload the activity list.');
         return detail;
       });
       setDetail(refreshed);
       setPhase('consume');
-      if (!options.stayOnPage && refreshed) {
-        const nextHref = nextActivityRoute(refreshed, componentId, kind, id);
-        if (nextHref) navigate(nextHref, { replace: true });
-      }
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : 'Could not save progress');
       if (options.rethrow) throw e;
@@ -639,7 +640,7 @@ export default function ComponentViewPage() {
     <WorkspaceShell
       role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel}
       pageTitle={pageTitle}
-      pageSubtitle={[moduleTitle, weekTitle].filter(Boolean).join(' · ')}
+      pageSubtitle={[moduleTitle, weekLabel].filter(Boolean).join(' · ')}
       userName="Learner" userRole="Learner"
       hideBreadcrumbs
     >
@@ -654,7 +655,7 @@ export default function ComponentViewPage() {
           Back to training plan
         </button>
 
-        {component && canProgress && componentAccess.outsideWorkingHours && (
+        {component && canProgress && recordingAttempt && componentAccess.outsideWorkingHours && (
           <div role="note" className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-4 text-amber-950 shadow-sm sm:px-5">
             <div className="flex items-start gap-3">
               <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-700">
@@ -758,11 +759,11 @@ export default function ComponentViewPage() {
                     {component.expectedOtjh != null && component.expectedOtjh > 0 && (
                       <span className="inline-flex items-center gap-1"><AppIcon className="ri-timer-line" />{component.expectedOtjh}h OTJ</span>
                     )}
-                    {weekTitle && <span className="inline-flex items-center gap-1"><AppIcon className="ri-calendar-line" />{weekTitle}</span>}
+                    {weekLabel && <span className="inline-flex items-center gap-1"><AppIcon className="ri-calendar-line" />{weekLabel}</span>}
                   </div>
                 </div>
 
-                {!isAssignment && <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-3">
+                {!isAssignment && recordingAttempt && <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-3">
                   {!usesManualTimeOnly && (
                     <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-mono text-sm font-semibold tabular-nums bg-background-100 text-foreground-700" title="Time on this activity">
                       <AppIcon className="ri-timer-line" /> {formatClock(elapsedSeconds)}
@@ -873,6 +874,23 @@ export default function ComponentViewPage() {
                 </div>}
               </div>
 
+              {completed && !isAssignment && (
+                <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                  <p role="status" className="flex items-center gap-2 text-sm font-semibold text-emerald-800">
+                    <AppIcon className="ri-checkbox-circle-fill" /> Completed
+                    {completedTime && <span className="font-mono">· {completedTime}</span>}
+                  </p>
+                  <p className="mt-1 text-xs text-emerald-800">Your completion for {weekLabel} is saved.</p>
+                  {refreshError && <p role="alert" className="mt-2 text-xs text-amber-900">{refreshError}</p>}
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    {nextActivity && <button type="button" onClick={() => navigate(nextActivity.href)} className="rounded-lg bg-emerald-700 px-3 py-2 text-left text-xs font-semibold text-white hover:bg-emerald-800">
+                      Next activity: {nextActivity.label}
+                    </button>}
+                    {!repeating && <button type="button" onClick={() => setRepeating(true)} className="text-xs font-semibold text-emerald-800 underline">Record another attempt</button>}
+                  </div>
+                </div>
+              )}
+
               {component.description && (
                 <div className="mt-4 rounded-xl border border-background-300 bg-white p-4">
                   <h2 className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-2">Description</h2>
@@ -958,7 +976,7 @@ export default function ComponentViewPage() {
                         ksbs: (component.ksbMappings || []).map(mapping => mapping.code),
                         feedback: `${answers.whatYouLearned}\n\nBusiness impact:\n${answers.businessImpact}`,
                         reportedTime: formatClock(submittedTimeSeconds),
-                      }, { stayOnPage: true, rethrow: true });
+                      }, { rethrow: true });
                     }}
                   />
                 </div>
