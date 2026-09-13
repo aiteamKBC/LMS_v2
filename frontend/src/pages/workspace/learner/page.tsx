@@ -24,7 +24,7 @@ import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
 import { LearnerProfilePhoto } from '@/components/feature/LearnerProfilePhoto';
 import { toneStyle, statusTone, type StatusTone } from '@/lib/statusTone';
 import { canViewAssignedProgramme, waitingCopy } from '@/utils/learnerAccessGate';
-import { displayValue, EMPTY_VALUE, ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
+import { displayValue, EMPTY_VALUE } from '@/lib/format';
 import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
 import overviewStyles from './Overview.module.css';
 import { DashboardTrainingPlan } from './DashboardTrainingPlan';
@@ -145,14 +145,20 @@ export default function LearnerOverview() {
   const programmeTargetDetail = isRealMode && programme?.total != null && programme.total > 0
     ? `${programme.total.toLocaleString('en-GB')} activities` : 'All assigned activities';
 
-  const attendancePercent = isRealMode ? (attendance ? attendance.attendanceRate : null) : p.attendanceRate;
-  const attendanceValue = attendancePercent == null ? EMPTY_VALUE : `${attendancePercent}%`;
-  const attendanceCaption = isRealMode
-    ? (attendance ? `${attendance.present}/${attendance.sessions} sessions` : attendanceLoading ? 'Loading…' : 'No attendance record yet')
-    : `${p.sessionsAttended}/${p.sessionsAttended + p.sessionsMissed} sessions`;
-  const attendanceTone: StatusTone = attendancePercent == null
-    ? 'neutral'
-    : attendancePercent >= ATTENDANCE_EXPECTED_RATE ? 'positive' : attendancePercent >= ATTENDANCE_MINIMUM_RATE ? 'caution' : 'critical';
+  const attendanceReady = !!attendance || (!attendanceLoading && !attendanceRead.error);
+  const attendanceSessions = isRealMode
+    ? attendance?.sessions ?? (attendanceReady ? 0 : null)
+    : p.sessionsAttended + p.sessionsMissed;
+  const attendancePresent = isRealMode
+    ? attendance?.present ?? (attendanceReady ? 0 : null) : p.sessionsAttended;
+  const attendancePercent = attendanceSessions && attendancePresent != null
+    ? Math.round(attendancePresent / attendanceSessions * 100) : null;
+  const attendanceValue = attendancePresent?.toLocaleString('en-GB') ?? EMPTY_VALUE;
+  const attendanceTotalValue = attendanceSessions?.toLocaleString('en-GB') ?? EMPTY_VALUE;
+  const attendanceCaption = attendancePercent != null ? `${attendancePercent}% attendance`
+    : attendanceLoading ? 'Loading attendance…'
+      : attendanceRead.error ? 'Attendance unavailable' : 'No attendance records yet';
+  const attendanceTone: StatusTone = attendancePercent == null ? 'neutral' : 'brand';
 
   const otjPlannedHours = isRealMode ? metrics.data?.otjh.planned : p.otjhTarget;
   const otjActualHours = isRealMode ? metrics.data?.otjh.actual : p.otjhCompleted;
@@ -373,7 +379,7 @@ export default function LearnerOverview() {
         <div>
             <div className={overviewStyles.metrics}>
               <ProgressStat href={programmeProgressHref} icon={BookOpen} label="Programme Progress" value={programmeProgressValue} targetValue="100%" targetDetail={programmeTargetDetail} percent={programmeProgressPercent} caption={programmeProgressCaption} tone="brand" />
-              <ProgressStat href="/learner/attendance" icon={CalendarCheck} label="Attendance" value={attendanceValue} targetValue={`${isRealMode ? ATTENDANCE_EXPECTED_RATE : p.attendanceTarget}%`} percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
+              <ProgressStat href="/learner/attendance" icon={CalendarCheck} label="Attendance" value={attendanceValue} valueLabel="Attended" targetValue={attendanceTotalValue} targetLabel="Sessions to date" percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
               <ProgressStat
                 href={otjhProgressHref}
                 icon={Clock3}
