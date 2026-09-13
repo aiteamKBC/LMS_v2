@@ -409,7 +409,7 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
   useEffect(() => {
     if (loading || loadError || !activityAvailable || !kind || !id) return;
     const controller = new AbortController();
-    void fetchStudentActivity(kind, id, controller.signal).then((data) => {
+    void fetchStudentActivity(kind, id, controller.signal, activityRetry > 0).then((data) => {
       if (!controller.signal.aborted) setActivityState({ identity, real, retry: activityRetry, data, error: null });
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setActivityState(previous => ({ identity, real, retry: activityRetry,
