@@ -1,4 +1,13 @@
 .root { container: trainingDetails / inline-size; min-width: 0; scroll-margin-top: 1.5rem; }
+.topRow { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.25rem; align-items: stretch; margin-bottom: 1.5rem; }
+.engagement { container: monthlyFocus / inline-size; min-width: 0; padding: clamp(1.125rem, 1.65cqi, 1.75rem); border: 1px solid var(--kbc-border); border-radius: 1.125rem; background: var(--kbc-surface); box-shadow: 0 2px 8px rgb(24 45 72 / .04); }
+.tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .25rem; padding: .25rem; margin-bottom: 1.25rem; border: 1px solid var(--kbc-border); border-radius: .75rem; background: var(--learner-soft); }
+.tabs button { min-height: 2.5rem; padding: .5rem .75rem; border-radius: .5rem; font-size: .8125rem; font-weight: 600; color: var(--kbc-muted); }
+.tabs button[aria-selected='true'] { background: var(--learner-accent-soft); color: var(--learner-purple); box-shadow: 0 1px 3px rgb(24 45 72 / .08); }
+.tabs button:hover { color: var(--learner-purple); }
+.tabPanel > section { display: flex; flex-direction: column; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.tabPanel h3 { overflow-wrap: anywhere; }
+.tabPanel[hidden] { display: none; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
 .title h2 { color: var(--learner-navy); font-size: 1rem; font-weight: 700; }
 .title a { margin-top: .35rem; }
@@ -7,8 +16,10 @@
 .filters input, .filters select { min-height: 2.5rem; max-width: 100%; min-width: 0; border: 1px solid var(--kbc-border); border-radius: .625rem; background: var(--kbc-surface); color: var(--kbc-text); padding: .5rem .75rem; font-size: .75rem; }
 .moduleSelect { width: clamp(12rem, 27cqi, 24rem); }
 .refreshing { margin-bottom: .75rem !important; font-size: .75rem; color: var(--kbc-muted); }
-.root .cards { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 1.25rem; scroll-margin-top: 1.25rem; }
-.root .cards > section { display: flex; flex-direction: column; grid-column: auto; min-width: 0; padding: clamp(1.125rem, 1.65cqi, 1.75rem); border: 1px solid var(--kbc-border); border-radius: 1.125rem; background: var(--kbc-surface); box-shadow: 0 2px 8px rgb(24 45 72 / .04); }
+.root .cards { display: grid; grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: 1.25rem; scroll-margin-top: 1.25rem; }
+.learningVisuals { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
+.learningVisuals > section { margin-top: 0; flex-shrink: 0; }
+.root .cards > section { display: flex; flex-direction: column; grid-column: auto; min-width: 0; margin-top: 0; padding: clamp(1.125rem, 1.65cqi, 1.75rem); border: 1px solid var(--kbc-border); border-radius: 1.125rem; background: var(--kbc-surface); box-shadow: 0 2px 8px rgb(24 45 72 / .04); }
 .root .cards > section.overview { grid-column: auto; }
 .cards h2 { font-size: .9375rem; line-height: 1.4; }
 .cards h3 { overflow-wrap: anywhere; }
@@ -16,15 +27,27 @@
 .root .monthly > p { margin-bottom: 0 !important; }
 .root .monthStats + div { margin-top: .25rem; }
 .root .monthly > a { margin-top: auto; padding-top: 1rem; }
-.root .cards dl { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.125rem .875rem; }
+.root .overview dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .root .cards dd { margin: 0; }
 .root .reviewList { max-height: 16rem; overflow: auto; scrollbar-gutter: stable; }
 .root .support { margin-top: 1.25rem; }
-.root .moduleProgress { margin-top: 1.25rem; }
+.root .moduleProgress { margin-top: auto; padding-top: 1rem; }
+.overview > .moduleProgress { margin-top: 1.25rem; }
 .root .overview > span { align-self: flex-start; }
 .moduleContext { margin-top: .75rem; color: var(--kbc-muted); font-size: .75rem; line-height: 1.6; }
 .moduleContext > p { color: var(--kbc-text); font-weight: 600; }
 .moduleContext > div { display: flex; flex-wrap: wrap; column-gap: 1rem; }
+.moduleIdentity { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin: .375rem 0; }
+.moduleIdentity h3 { margin: 0 !important; }
+.overviewGroups { display: grid; gap: .875rem; margin-top: 1rem; }
+.overviewGroup { padding: .875rem; background: var(--learner-soft); border: 1px solid var(--kbc-border); border-radius: .75rem; }
+.root .overviewGroup h3 { margin: 0 0 .75rem; font-size: .75rem; font-weight: 650; color: var(--learner-navy); }
+.factGrid { display: grid; gap: .875rem .75rem; margin: 0; }
+.factGrid > div { display: grid; grid-template-columns: 1rem minmax(0, 1fr); gap: .25rem .5rem; align-content: start; }
+.factGrid svg { grid-row: 1 / 3; color: var(--learner-purple); margin-top: .1rem; }
+.factGrid dt { color: var(--kbc-muted); font-size: .625rem; line-height: 1.5; }
+.factGrid dd { color: var(--kbc-text); font-size: .75rem; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.factGrid small { display: block; color: var(--kbc-muted); font-size: .625rem; font-weight: 400; margin-top: .2rem; }
 .moduleDescription { margin-top: .75rem !important; font-size: .75rem; color: var(--kbc-muted); line-height: 1.65; overflow-wrap: anywhere; }
 .root .moduleStats { margin: 1.25rem 0; }
 .moduleSection { border-top: 1px solid var(--kbc-border); padding-top: 1rem; margin-top: 1rem; }
@@ -40,23 +63,17 @@
 .moduleDisclosure li + li { margin-top: .375rem; }
 .ksbCodes { display: flex; flex-wrap: wrap; gap: .375rem; margin-top: .625rem; }
 .ksbCodes span { border-radius: .375rem; padding: .2rem .45rem; font-size: .6875rem; color: var(--learner-purple); background: var(--learner-accent-soft); }
-.cards a, .cards button { flex-shrink: 0; }
 .cards a { overflow-wrap: anywhere; }
 .cards a svg { flex-shrink: 0; }
-.loading { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.25rem; }
+.loading { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
 .loading > div { height: 18rem; border: 1px solid var(--kbc-border); border-radius: 1.125rem; background: var(--kbc-surface); padding: 1.5rem; }
 .loading span { display: block; height: 1rem; background: var(--learner-soft); margin-bottom: 1rem; border-radius: .375rem; }
 .loading span:first-child { width: 60%; }
 .loading span:last-child { height: 9rem; }
 .error { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; padding: 1rem; margin-bottom: 1rem; border-radius: .75rem; background: var(--learner-warning-soft); color: var(--learner-warning); font-size: .8125rem; }
 .error button { text-decoration: underline; font-weight: 600; }
-@container trainingDetails (min-width: 60rem) {
-  .root .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .root .cards > .monthly { grid-column: 1 / -1; }
-}
-@container trainingDetails (min-width: 72rem) {
-  .root .cards { grid-template-columns: minmax(0, 1.15fr) repeat(2, minmax(0, 1fr)); }
-  .root .cards > .monthly { grid-column: auto; }
+@container trainingDetails (min-width: 64rem) {
+  .withWeeklyFocus, .root .cards { grid-template-columns: minmax(0, 1.8fr) minmax(20rem, 1fr); }
 }
 @container trainingDetails (max-width: 39.99rem) {
   .filters { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 2.5rem; }
@@ -64,6 +81,8 @@
   .moduleSelect { width: auto; }
   .root .cards { gap: 1rem; }
   .loading { grid-template-columns: minmax(0, 1fr); }
+}
+@container monthlyFocus (max-width: 25rem) {
   .root .monthStats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .root .monthStats > div:nth-child(2) { border-right: 0; }
   .root .monthStats > div:nth-child(-n+2) { border-bottom: 1px solid var(--kbc-border); }

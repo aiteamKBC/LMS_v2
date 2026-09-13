@@ -59,7 +59,7 @@ describe('Attendance lecture workspace', () => {
   it('filters by module and keeps future/catch-up separate from attendance rate', async () => {
     expect(lectureCounts(payload.lectures)).toEqual({ all: 3, attended: 1, absent: 1, covered: 1, upcoming: 1, rate: 50 });
     mount();
-    expect(await screen.findByText('50% attendance · includes late attendance')).toBeInTheDocument();
+    expect(await screen.findByText('50% attendance')).toHaveTextContent('50% attendance · includes late attendance');
     fireEvent.change(screen.getByLabelText('Module'), { target: { value: 'native:new' } });
     expect(screen.queryByText('First lecture')).not.toBeInTheDocument();
     expect(screen.getByText('Future lecture')).toBeInTheDocument();
@@ -122,6 +122,8 @@ describe('Attendance lecture workspace', () => {
       id: `session-${index}`, title: `Session ${index}`, date: index < 15 ? `2026-09-${String(index + 1).padStart(2, '0')}` : `2026-08-${index + 1}`,
     }));
     mount(); await screen.findByRole('article', { name: 'Session 14' });
+    expect(screen.getAllByRole('article')).toHaveLength(20);
+    fireEvent.click(screen.getByRole('button', { name: 'Group by month' }));
     const calls = vi.mocked(fetch).mock.calls.length;
     expect(screen.getAllByRole('article')).toHaveLength(15);
     expect(screen.getAllByRole('article')[0]).toHaveAccessibleName('Session 14');
@@ -161,6 +163,7 @@ describe('Attendance lecture workspace', () => {
   it('reveals matches in collapsed months and recovers from empty filters and refreshed data', async () => {
     payload.lectures = Array.from({ length: 15 }, (_, index) => lecture({ id: `session-${index}`, title: `Session ${index}`, date: index < 10 ? '2026-09-01' : '2026-08-01' }));
     mount(); await screen.findByRole('article', { name: 'Session 0' });
+    fireEvent.click(screen.getByRole('button', { name: 'Group by month' }));
     expect(screen.queryByRole('article', { name: 'Session 14' })).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Search lectures'), { target: { value: 'Session 14' } });
     expect(screen.getByRole('article', { name: 'Session 14' })).toBeInTheDocument();
@@ -179,12 +182,15 @@ describe('Attendance lecture workspace', () => {
     render(<MemoryRouter><AbsenceReportForm preselectMatch={{ id: 'future', dateIso: '2026-10-01', title: 'Future lecture' }} showHistory={false} /></MemoryRouter>);
     await waitFor(() => expect(screen.getByLabelText('Lecture *')).toHaveValue('future'));
     fireEvent.click(screen.getByText('Illness or medical appointment'));
+    fireEvent.click(screen.getByRole('radio', { name: 'Watch the recording' }));
     fireEvent.click(screen.getByRole('checkbox'));
     fireEvent.click(screen.getByRole('button', { name: /Submit absence report/ }));
     await waitFor(() => expect(posts).toHaveLength(1));
     const body = posts[0].body as FormData;
     expect(body.get('sessionId')).toBe('teams:future');
     expect(body.get('explanation')).toBe('');
+    expect(body.get('recoveryMethod')).toBe('recorded');
+    expect(body.has('catchupEventKey')).toBe(false);
     expect(await screen.findByText(/has been saved for your coach to review/)).toBeInTheDocument();
   });
 });

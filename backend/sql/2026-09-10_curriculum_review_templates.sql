@@ -68,7 +68,8 @@ CREATE TABLE IF NOT EXISTS curriculum.review_fields (
     updated_at     timestamptz   NOT NULL DEFAULT now(),
     CONSTRAINT review_fields_field_type_valid CHECK (field_type IN (
         'text', 'boolean', 'numeric', 'date', 'list_item', 'boolean_case_block',
-        'email', 'phone', 'postcode_address', 'title_description', 'text_multiline'
+        'email', 'phone', 'postcode_address', 'title_description', 'text_multiline',
+        'action_button'
     ))
 );
 

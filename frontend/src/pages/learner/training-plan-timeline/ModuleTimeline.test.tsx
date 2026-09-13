@@ -18,6 +18,20 @@ function Harness({ rows = modules, onSelect = vi.fn() }: { rows?: typeof modules
 afterEach(cleanup);
 
 describe('Compact Gantt', () => {
+  it('starts its twelve-month window at the learner start month and places next-year modules within it', () => {
+    const onMonthChange = vi.fn();
+    const row = { ...modules[0], start: '2027-02-01', end: '2027-08-31' };
+    render(<MemoryRouter><ModuleTimeline data={data} modules={[row]} kind="commercial" learnerId="125" today="2026-09-12"
+      selectedMonth="2026-09" programmeStartDate="2026-08-03" onMonthChange={onMonthChange} onModuleSelect={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByRole('button', { name: 'August 2026' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'July 2027' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'January 2026' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show Module 1 overview' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'February 2027' }));
+    expect(onMonthChange).toHaveBeenCalledWith('2027-02');
+    fireEvent.change(screen.getByRole('combobox', { name: 'Timeline year' }), { target: { value: '2027' } });
+    expect(onMonthChange).toHaveBeenCalledWith('2027-08');
+  });
   it('keeps all four assigned modules visible across years and opens a future module schedule', () => {
     const rows = modules.slice(0, 4).map((module, index) => ({ ...module,
       title: ['Aya Modual', 'Marketing Impact and Planning', 'Social Media', 'Martech'][index],

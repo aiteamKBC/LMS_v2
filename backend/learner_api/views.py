@@ -30,7 +30,7 @@ from django.views.decorators.http import require_GET
 from login.permissions import staff_only
 from login.permissions import learner_self_or_staff
 from login.permissions import require_access
-from login.models import Invitation, LoginAccount, LoginSession, PasswordReset
+from login.models import LoginAccount
 
 from .active_users import (
     PLACEMENT_SOURCE_FIELDS,
@@ -42,6 +42,8 @@ from .active_users import (
     sync_active_user,
 )
 from .identity import learner_profile_for_source
+from .account_deletion import delete_learner_account
+from .learner_dates import save_enrolment_fields
 from .directory import learner_directory_queryset
 from .learner_progression import ACTIVE_STATUS, advance_learner
 from login.services import sync_account
@@ -70,6 +72,7 @@ from .mappers import (
     to_staff_row,
     write_commercial_fields,
     write_fields,
+    validate_learner_dates,
     write_staff_fields,
 )
 from .models import CommercialUser, Employer, EnrolmentUser, LearnerProfile, LearnerTrainingPlanModule, StaffUser
@@ -846,19 +849,12 @@ def enrolment_user_detail(request, pk):
         if getattr(request, "learner_self_write", False):
             return _error("Only staff can delete a user account.", 403)
 
-        account = LoginAccount.objects.filter(
-            subject_type="learner", subject_id=user.pk
-        ).first()
         try:
-            with transaction.atomic(using="enrolment"):
-                # These tables use deliberate non-cascading links so account
-                # removal is explicit and active sessions are revoked first.
-                if account is not None:
-                    LoginSession.objects.filter(account_id=account.pk).delete()
-                    Invitation.objects.filter(account_id=account.pk).delete()
-                    PasswordReset.objects.filter(account_id=account.pk).delete()
-                    account.delete()
-                user.delete()
+            delete_learner_account(user.pk)
+        except EnrolmentUser.DoesNotExist:
+            return _error("User not found.", 404)
+        except ValidationError as exc:
+            return _error(str(exc), 400)
         except DatabaseError as exc:
             return _error(f"Could not delete user account: {exc}", 502)
         return JsonResponse({"deleted": True, "id": pk})
@@ -890,6 +886,7 @@ def enrolment_user_detail(request, pk):
                         pk, ", ".join(rejected),
                     )
             fields = write_fields(payload)
+            validate_learner_dates(fields, user)
             _check_employer_id(fields)
         except ValidationError as exc:
             return _error(str(exc), 400)
@@ -897,7 +894,7 @@ def enrolment_user_detail(request, pk):
             for attr, value in fields.items():
                 setattr(user, attr, value)
             if fields:
-                user.save(update_fields=list(fields.keys()))
+                save_enrolment_fields(user, fields)
                 # The address and name on this row ARE the sign-in identity, and
                 # the login account keeps its own copy — which is what an
                 # invitation is sent to. Correcting an email here without this

@@ -6,7 +6,9 @@ import { Header } from './Header';
 import { AppIcon } from './AppIcon';
 import { GlobalSearch } from './GlobalSearch';
 import { useAuth } from '@/hooks/useAuth';
+import { isOwnLearnerRecord } from '@/api/auth';
 import { useLearnerNavGate } from '@/hooks/useLearnerNavGate';
+import { getRememberedLearner } from '@/hooks/useMyLearner';
 import { ArrowLeft } from 'lucide-react';
 import design from './WorkspaceDesign.module.css';
 
@@ -176,7 +178,18 @@ export function WorkspaceShell({
   // selected workspace supply its own menu, labels and breadcrumbs.
   const isAdminDirectory = isAdmin && /^\/(?:users|employers)(?:\/|$)/.test(location.pathname);
   const chromeRole = isAdminDirectory ? 'admin' : role;
-  const reviewingLearner = auth.account?.role === 'admin' || auth.account?.role === 'staff';
+  // "Reviewing" means staff looking at somebody ELSE's record, from the
+  // enrolment workspace — full menu, no fresh/onboarding gating. A staff member
+  // or administrator who is ALSO a learner (see login/learner_enrolment.py)
+  // opens their own record the same way any learner does, and there they need
+  // the ordinary reduced-menu behaviour, or the sidebar would offer pages a
+  // not-yet-started learner has nothing behind. `getRememberedLearner()` here
+  // is the same resolution `useLearnerNavGate` makes internally for `role`
+  // "learner" — this workspace is only ever rendered with that role.
+  const isStaffOrAdmin = auth.account?.role === 'admin' || auth.account?.role === 'staff';
+  const currentLearner = role === 'learner' ? getRememberedLearner() : null;
+  const reviewingLearner = isStaffOrAdmin
+    && !isOwnLearnerRecord(auth.account, currentLearner?.kind, currentLearner?.id);
   const navItems = useLearnerNavGate(filterLearnerNavigation ? role : '', navItemsProp, reviewingLearner);
   const navigate = useNavigate();
   const [searchOpen, setSearchOpen] = useState(false);

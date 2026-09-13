@@ -1,0 +1,20 @@
+{
+  "source_count": 30,
+  "programme_counts": {
+    "ME": 8,
+    "MM": 12,
+    "PCP": 10
+  },
+  "existing_enrolments": 0,
+  "existing_profiles": 0,
+  "sql_statements_parsed": 8,
+  "plpgsql_blocks_parsed": 1,
+  "dml_statements_explained_without_execution": 4,
+  "database_changes_executed": false,
+  "new_record_defaults": {
+    "learner_type": "commercial",
+    "programme_status": "Fresh user",
+    "lifecycle_status": "fresh user",
+    "invite_to_platform": false
+  }
+}

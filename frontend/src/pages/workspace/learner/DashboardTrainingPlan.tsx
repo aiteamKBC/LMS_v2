@@ -4,10 +4,12 @@ import type { LearnerKind } from '@/api/learnerDetail';
 import { useDashboardPlan } from './useDashboardPlan';
 import { dashboardPlanSubjects } from './dashboardPlan';
 import { TrainingPlanDetails } from '@/pages/learner/training-plan-timeline/TrainingPlanDetails';
+import { OverviewLearningPanels } from './OverviewLearningPanels';
+import { DashboardRewards } from './DashboardRewards';
 import styles from '@/pages/learner/training-plan-timeline/TrainingPlanDetails.module.css';
 
 /** Independent loading keeps the existing dashboard visible while plan sources resolve. */
-export function DashboardTrainingPlan({ kind, learnerId, canOpenActivities = true }: { kind: LearnerKind; learnerId: string; canOpenActivities?: boolean }) {
+export function DashboardTrainingPlan({ kind, learnerId, canOpenActivities = true, programmeStartDate, canOpenRewards = true }: { kind: LearnerKind; learnerId: string; canOpenActivities?: boolean; programmeStartDate?: string | null; canOpenRewards?: boolean }) {
   const { data, subjects: summaries, loading, error, refresh, retryContract } = useDashboardPlan(kind, learnerId);
   const [params] = useSearchParams();
   const { hash } = useLocation();
@@ -19,6 +21,7 @@ export function DashboardTrainingPlan({ kind, learnerId, canOpenActivities = tru
   const scrolled = useRef('');
   const hasSnapshot = !!data && !!summaries;
   const subjects = useMemo(() => data && summaries ? dashboardPlanSubjects(summaries, data) : [], [data, summaries]);
+  const weeklyFocus = canOpenActivities ? <OverviewLearningPanels kind={kind} learnerId={learnerId} /> : undefined;
   useEffect(() => {
     if (!hasSnapshot || (!initialSubjectId && hash !== '#module-timeline') || scrolled.current === scrollDestination) return;
     scrolled.current = scrollDestination;
@@ -29,9 +32,15 @@ export function DashboardTrainingPlan({ kind, learnerId, canOpenActivities = tru
   return <div ref={anchor} className={styles.root}>
     {error && <div role="alert" className={styles.error}><span>Your monthly learning could not refresh. {error}</span><button onClick={refresh}>Retry monthly learning</button></div>}
     {hasSnapshot && data ? <TrainingPlanDetails key={destination} data={data} subjects={subjects} kind={kind} learnerId={learnerId}
-      canOpenActivities={canOpenActivities} onRefresh={refresh} refreshing={loading} onRetryContract={retryContract} initialSubjectId={initialSubjectId} initialMonth={initialMonth} />
-      : !error && <div role="status" aria-label="Loading monthly learning and coaching" className={styles.loading}>
-        {[0, 1, 2].map(item => <div key={item} aria-hidden="true"><span /><span /><span /></div>)}
-      </div>}
+      weeklyFocus={weeklyFocus} programmeStartDate={programmeStartDate} canOpenActivities={canOpenActivities} onRefresh={refresh} refreshing={loading} onRetryContract={retryContract} initialSubjectId={initialSubjectId} initialMonth={initialMonth} />
+      : <>
+        <div className={`${styles.topRow} ${weeklyFocus ? styles.withWeeklyFocus : ''}`}>
+          {weeklyFocus}
+          {!error && <div role="status" aria-label="Loading monthly learning and coaching" className={styles.loading}>
+            <div aria-hidden="true"><span /><span /><span /></div>
+          </div>}
+        </div>
+      </>}
+    <DashboardRewards kind={kind} learnerId={learnerId} canOpenRewards={canOpenRewards} />
   </div>;
 }

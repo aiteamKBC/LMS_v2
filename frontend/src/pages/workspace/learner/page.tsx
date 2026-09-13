@@ -11,6 +11,7 @@ import { overviewSchedule } from '@/api/learnerOverview';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { formatHoursMinutes } from '@/utils/learnerJourney';
 import { type LearnerKind } from '@/api/learnerDetail';
+import { isOwnLearnerRecord } from '@/api/auth';
 import { useFreshUserRedirect, useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
 import { syncLearnerStatus } from '@/hooks/useLearnerNavGate';
 import { useLearnerAttendance } from '@/hooks/useLearnerAttendance';
@@ -26,7 +27,6 @@ import { canViewAssignedProgramme, waitingCopy } from '@/utils/learnerAccessGate
 import { displayValue, EMPTY_VALUE, ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
 import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
 import overviewStyles from './Overview.module.css';
-import { OverviewLearningPanels } from './OverviewLearningPanels';
 import { DashboardTrainingPlan } from './DashboardTrainingPlan';
 import { DashboardActivities } from './DashboardActivities';
 import { learnerHeaderPlan, learnerModuleHref } from './learnerHeaderPlan';
@@ -50,7 +50,14 @@ export default function LearnerOverview() {
   const { kind, id } = useResolvedLearner(urlKind, urlId);
   const { isRealMode, real, loading, loadError, refresh } = useLearnerSummaryParam(kind, id);
   const { auth, canSeeNavItem } = useAuth();
-  const reviewingLearner = auth.account?.role === 'admin' || auth.account?.role === 'staff';
+  // "Reviewing" means somebody else's record, opened by staff from the
+  // enrolment workspace: full menu, no progression gates, nothing saved.
+  // A staff member or administrator who is ALSO a learner reaches their OWN
+  // record the same way any learner would — the switcher sends them to their
+  // own learnerRecordId/Kind — and there they need the real learner experience,
+  // not the reviewing one, or they could never actually study.
+  const isStaffOrAdmin = auth.account?.role === 'admin' || auth.account?.role === 'staff';
+  const reviewingLearner = isStaffOrAdmin && !isOwnLearnerRecord(auth.account, kind, id);
   const knownLearner = real;
   const hasAssignedProgramme = canViewAssignedProgramme(kind, real?.accessGate);
   const learningBlocked = !reviewingLearner && (real?.learningAccess?.blocked
@@ -324,14 +331,6 @@ export default function LearnerOverview() {
               <div className={overviewStyles.heroActions}>
                 <button
                   type="button"
-                  onClick={() => navigate('/learner/messages')}
-                  className={overviewStyles.heroAction}
-                >
-                  <AppIcon className="ri-chat-3-line" />
-                  Message coach
-                </button>
-                <button
-                  type="button"
                   onClick={() => navigate(continueLearningHref)}
                   disabled={learningBlocked || scheduleRead.loading}
                   aria-busy={scheduleRead.loading}
@@ -392,8 +391,8 @@ export default function LearnerOverview() {
         </div>
 
         {isRealMode && real && learnerKind && <DashboardActivities kind={learnerKind} programmeStatus={real.programmeStatus} canSeeNavItem={canSeeNavItem} />}
-        {isRealMode && learnerKind && id && !learningBlocked && <OverviewLearningPanels key={`${learnerKind}:${id}`} kind={learnerKind} learnerId={id} />}
-        {isRealMode && learnerKind && id && <DashboardTrainingPlan key={`plan:${learnerKind}:${id}`} kind={learnerKind} learnerId={id} canOpenActivities={!learningBlocked} />}
+        {isRealMode && learnerKind && id && <DashboardTrainingPlan key={`plan:${learnerKind}:${id}`} kind={learnerKind} learnerId={id} canOpenActivities={!learningBlocked}
+          programmeStartDate={real?.learningAccess?.startDate ?? real?.programmeStartDate} canOpenRewards={!reviewingLearner} />}
       </PageContainer>
     </WorkspaceShell>
   );

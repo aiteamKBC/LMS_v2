@@ -327,6 +327,29 @@ def account_payload(account, *, subject=None):
                 }
                 for value in payload["accesses"]
             ]
+            # A staff member who is also studying. They keep ONE account -- a
+            # second one on the same address would make account_for_email
+            # ambiguous and lock them out of sign-in entirely -- so the learner
+            # side is reached from the workspace switcher instead, exactly like
+            # a coach who also tutors. See login.learner_enrolment.
+            from .learner_enrolment import existing_learner_record
+
+            learner_record = existing_learner_record(account.email)
+            if learner_record is not None:
+                payload["learnerRecordId"] = learner_record.pk
+                # Needed to address the record explicitly: the bare learner
+                # route resolves from the session, which for this person says
+                # "staff", so it would open a remembered or demo learner.
+                payload["learnerRecordKind"] = learner_record.learner_type or "commercial"
+                payload["accessWorkspaces"] = [
+                    *payload["accessWorkspaces"],
+                    {
+                        "access": "learner",
+                        "home": f"/workspace/learner?kind={learner_record.learner_type or 'commercial'}"
+                                f"&id={learner_record.pk}",
+                        "navRole": "learner",
+                    },
+                ]
         elif account.subject_type == SUBJECT_LEARNER:
             payload["learnerType"] = subject.learner_type
             payload["programme"] = subject.programme

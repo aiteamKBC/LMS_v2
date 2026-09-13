@@ -102,6 +102,7 @@ def read_native_occurrences(source):
         cur.execute('''SELECT o.id AS session_id,o.id AS occurrence_id,
             s.id AS live_session_id,s.module_catalogue_id,s.module_title,
             o.scheduled_start,o.scheduled_end,o.updated_at,o.session_number,
+            COALESCE(NULLIF(o.join_url,''),s.join_url) AS join_url,
             o.attendance_report_id,s.organizer_email AS coach_name
             FROM curriculum.live_session_occurrences o
             JOIN curriculum.live_sessions s ON s.id=o.live_session_id
@@ -312,6 +313,9 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
             'source': source, 'startTime': row['session_start_time'].strftime('%H:%M') if row.get('session_start_time') else '',
             'endTime': row['session_end_time'].strftime('%H:%M') if row.get('session_end_time') else '',
             'durationMinutes': _duration(row), 'contentSummary': '', 'ksbs': [], 'ksbScope': None, 'activities': [],
+            'startsAt': _aware(row['scheduled_start']).isoformat() if row.get('scheduled_start') else None,
+            'endsAt': _aware(row['scheduled_end']).isoformat() if row.get('scheduled_end') else None,
+            'joinUrl': _text(row.get('join_url')),
             'status': {'present': 'completed', 'late': 'late', 'absent': 'absent',
                        'upcoming': 'upcoming', 'in_progress': 'in_progress'}.get(row['attendance_status'], 'pending'),
             'catchupStatus': None, 'updatedAt': row['updated_at'].isoformat() if row.get('updated_at') else None,
@@ -417,7 +421,7 @@ def read_workspace(source, kind):
     for lecture in lectures:
         report = reported.get(lecture['reportId'])
         lecture['absenceReport'] = {'id': report['id'], 'status': report['status']} if report else None
-        lecture['canReportAbsence'] = lecture['status'] in {'absent', 'upcoming'} and not report
+        lecture['canReportAbsence'] = lecture['status'] in {'absent', 'upcoming', 'in_progress'} and not report
         if lecture['status'] in {'completed', 'late'} and lecture['updatedAt']:
             recent.append({'id': lecture['id'], 'title': f"{lecture['title']} attended", 'at': lecture['updatedAt'], 'type': 'attendance'})
     for report in reports:

@@ -140,6 +140,21 @@ describe('placeActivity', () => {
     expect(placement?.weekTitle).toBe('Week 2');
   });
 
+  it('keeps identically named weeks and their completion counts separate', () => {
+    const repeated = {
+      ...detail,
+      week: detail.week.map((w, index) => ({ ...w, week: 'Marketing Week', weekId: `W${index + 1}` })),
+      components: detail.components.map((c) => ({ ...c, week: 'Marketing Week', weekId: c.week === 'Week 1' ? 'W1' : 'W2' })),
+    };
+    const placement = placeActivity(repeated, { componentId: 'COMP-READ-9' }, new Set(['COMP-READ-2']));
+
+    expect(placement?.weekLabel).toBe('Week 2 · Marketing Week');
+    expect(placement?.weeks.map((w) => [w.key, w.active, w.completed])).toEqual([
+      ['W1', false, 1], ['W2', true, 0],
+    ]);
+    expect(placement?.weekComponents.map((c) => c.componentId)).toEqual(['COMP-READ-9']);
+  });
+
   it('has no placement for an activity that is not in the plan', () => {
     expect(placeActivity(detail, { quizId: 9999 }, new Set())).toBeNull();
     expect(placeActivity(detail, { componentId: 'COMP-GONE' }, new Set())).toBeNull();

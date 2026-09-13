@@ -7,6 +7,7 @@ import {
   isNavigableComponent,
   toggleExpandedWeek,
   weekComponentRows,
+  weekDisplayLabel,
   type SidebarWeek,
 } from './weekPreview';
 
@@ -71,7 +72,10 @@ export function ActivitySidebar({
     setExpandedWeek(null);
   }, [currentComponentId, currentQuizId]);
 
-  const weekDoneCount = weeks.find((w) => w.active)?.completed ?? 0;
+  const weekDoneCount = weekComponents.filter((c) => isComponentComplete(c, completedIds)).length;
+  const activeWeekIndex = weeks.findIndex((w) => w.active);
+  const currentWeekLabel = activeWeekIndex < 0 ? weekTitle : weekDisplayLabel(weeks, activeWeekIndex);
+  const hasUnavailableContent = weekComponents.some((c) => !hasComponentContent(c));
 
   /** Whether this row is the activity the host page is showing. */
   const isCurrentRow = (c: JourneyComponent) => (
@@ -84,11 +88,12 @@ export function ActivitySidebar({
     <aside className="space-y-4 lg:sticky lg:top-4">
       <div className="rounded-xl border border-background-300 bg-white overflow-hidden">
         <div className="px-4 py-3 border-b border-background-300">
-          <h2 className="text-sm font-heading font-bold text-foreground-800">{weekTitle || 'This week'}</h2>
+          <h2 className="text-sm font-heading font-bold text-foreground-800">{currentWeekLabel || 'This week'}</h2>
           <p className="text-[11px] text-foreground-400 mt-0.5">
             {weekComponents.length} components{' '}
             {weekDoneCount > 0 && <span className="text-emerald-600 font-semibold"> · {weekDoneCount} done</span>}
           </p>
+          {hasUnavailableContent && <p className="mt-2 text-[11px] leading-4 text-foreground-500">Locked activities have no learning content available yet.</p>}
         </div>
         <ul className="divide-y divide-background-300">
           {weekComponents.map((c) => {
@@ -107,6 +112,7 @@ export function ActivitySidebar({
                 <button
                   disabled={!clickable && !accessBlocked}
                   aria-disabled={accessBlocked || undefined}
+                  title={!contentAvailable ? 'Learning content is not available yet.' : undefined}
                   onClick={() => accessBlocked ? onAccessBlocked?.() : clickable && navigate(routeFor(c, weekTitle))}
                   className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
                     !contentAvailable || accessBlocked
@@ -142,10 +148,10 @@ export function ActivitySidebar({
                       {gradePercent(lastAttempt.grade)}%
                     </span>
                   )}
-                  {!contentAvailable || accessBlocked ? (
-                    <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
-                  ) : completed ? (
+                  {completed ? (
                     <AppIcon className="ri-checkbox-circle-fill text-emerald-600 text-sm shrink-0" />
+                  ) : !contentAvailable || accessBlocked ? (
+                    <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
                   ) : isCurrent ? (
                     <AppIcon className="ri-focus-3-line text-primary-600 text-sm shrink-0" />
                   ) : clickable ? (
@@ -166,19 +172,20 @@ export function ActivitySidebar({
             <p className="text-[11px] text-foreground-400 mt-0.5">{weeks.length} weeks</p>
           </div>
           <ul className="divide-y divide-background-300">
-            {weeks.map((w) => {
+            {weeks.map((w, index) => {
+              const weekKey = w.key || `week-${index}`;
               const weekComplete = w.count > 0 && w.completed >= w.count;
               // A week with nothing in it has nothing to drop down; every other
               // week can be opened, whether or not its activities can be
               // started yet.
               const viewable = w.count > 0;
-              const expanded = viewable && w.week === expandedWeek;
+              const expanded = viewable && weekKey === expandedWeek;
               return (
-                <li key={w.week}>
+                <li key={weekKey}>
                   <button
                     disabled={!viewable}
                     aria-expanded={viewable ? expanded : undefined}
-                    onClick={() => setExpandedWeek(toggleExpandedWeek(expandedWeek, w.week))}
+                    onClick={() => setExpandedWeek(toggleExpandedWeek(expandedWeek, weekKey))}
                     className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
                       !viewable
                         ? 'cursor-not-allowed bg-background-100/70 opacity-55'
@@ -198,7 +205,7 @@ export function ActivitySidebar({
                       <span className={`block text-[13px] font-semibold leading-snug truncate ${
                         weekComplete ? 'text-emerald-900' : w.active ? 'text-foreground-900' : 'text-foreground-700'
                       }`}>
-                        {w.week}
+                        {weekDisplayLabel(weeks, index)}
                       </span>
                       <span className={`block text-[10px] ${weekComplete ? 'text-emerald-700' : 'text-foreground-400'}`}>
                         {w.count} components{weekComplete ? ' complete' : ''}
@@ -233,6 +240,7 @@ export function ActivitySidebar({
                               type="button"
                               disabled={!row.openable && !accessBlocked}
                               aria-disabled={accessBlocked || undefined}
+                              title={!row.openable ? 'Learning content is not available yet.' : undefined}
                               onClick={() => accessBlocked ? onAccessBlocked?.() : row.openable && navigate(routeFor(row.component, w.week))}
                               className={`w-full flex items-center gap-2 pl-11 pr-4 py-2 text-left transition-colors ${
                                 row.openable && accessOpen ? 'hover:bg-white cursor-pointer' : 'cursor-not-allowed opacity-60'
