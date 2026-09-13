@@ -5,6 +5,16 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 import { type CalendarEvent } from '@/pages/learner/clubs/data';
+import { isReviewFilterKey } from '@/lib/reviewTypeFilters';
+import {
+  buildSourceFilters,
+  countBySource,
+  filterBySource,
+  learnerEventSource,
+  learnerSourceMeta,
+  LEARNER_NON_REVIEW_SOURCE_META,
+  type LearnerSourceFilter,
+} from './reviewTypeFilters';
 import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from '@/utils/ics-generator';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
@@ -121,8 +131,11 @@ const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAYS_SHORT = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTH_SHORT_INDEX: Record<string, number> = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
-const BOOKABLE_COACH_SESSION_TYPES = new Set<BookableSessionType>(['catch-up', 'student-support', 'mcr', 'progress-review']);
-const PROGRAMME_CYCLE_SESSION_TYPES = new Set<BookableSessionType>(['mcr', 'progress-review']);
+// 'review' is the generic bucket every CUSTOM Review Type lands in, so a
+// custom Review schedules through the same card and the same request as MCM
+// and Progress Review rather than needing its own path.
+const BOOKABLE_COACH_SESSION_TYPES = new Set<BookableSessionType>(['catch-up', 'student-support', 'mcr', 'progress-review', 'review']);
+const PROGRAMME_CYCLE_SESSION_TYPES = new Set<BookableSessionType>(['mcr', 'progress-review', 'review']);
 
 const CALENDAR_PROVIDERS: Array<{ provider: PersonalCalendarProvider; title: string; subtitle: string; icon: string }> = [
   { provider: 'google', title: 'Continue with Google', subtitle: 'OAuth access to free/busy availability', icon: 'ri-google-fill' },
@@ -173,17 +186,17 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
   const isLiveSession = ev.source === 'live-session';
   const eventSourceType = BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
     ? sessionTypeLabel(ev.source as BookableSessionType)
-    : ev.type === 'review' ? 'Progress Review' : ev.type === 'welfare' ? 'Student Support' : 'Coaching';
+    : ev.reviewTemplateId ? ev.title : ev.type === 'welfare' ? 'Student Support' : 'Coaching';
   const confirmed = (
     ev.status === 'scheduled' || ev.status === 'in-progress' || ev.status === 'completed'
   ) && (isLiveSession || ev.invited !== false);
   return {
     id: ev.id,
-    title: ev.source === 'mcr' && ev.sequence
-      ? `Monthly Coaching Meeting — ${eventMonthLabel(iso)} #${ev.sequence}`
-      : ev.source === 'progress-review' && ev.sequence
-        ? `Progress Review — ${eventMonthLabel(iso)} #${ev.sequence}`
-        : !isLiveSession && ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title,
+    // Review occurrences are titled by Curriculum (review_templates.name);
+    // the month and occurrence number are added the way they always were.
+    title: ev.reviewTemplateId && ev.sequence
+      ? `${ev.title} — ${eventMonthLabel(iso)} #${ev.sequence}`
+      : !isLiveSession && ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title,
     date: `${d} ${MONTH_NAMES[m - 1].substring(0, 3)}`,
     dayName,
     time,
@@ -202,6 +215,13 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
     meetingLink: ev.meetingLink || undefined,
     eventKey: ev.eventKey || ev.id,
     source: ev.source,
+    // Classification, kept beside the routing `source` rather than replacing
+    // it -- the filter row buckets on these, everything else still routes on
+    // `source`.
+    reviewTypeId: ev.reviewTypeId ?? null,
+    reviewTypeCode: ev.reviewTypeCode ?? null,
+    reviewTypeName: ev.reviewTypeName ?? null,
+    reviewTypeIsSystem: ev.reviewTypeIsSystem ?? false,
     durationMinutes: ev.durationMinutes || 60,
     bookingStatus: ev.status,
     bookingSessionType: BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
@@ -401,23 +421,14 @@ function restoreNotifications() {
 }
 
 type ViewMode = 'monthly' | 'weekly' | 'daily';
-type LearnerSourceFilter = 'all' | 'live-session' | 'mcr' | 'progress-review' | 'catch-up' | 'student-support' | 'personal' | 'busy';
 type LearnerStatusFilter = 'all' | 'needs-schedule' | 'scheduled' | 'pending' | 'in-progress' | 'completed';
 
-const LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'catch-up', 'student-support', 'personal', 'busy'];
-const VISIBLE_LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'catch-up', 'student-support'];
 const LEARNER_STATUS_FILTERS: LearnerStatusFilter[] = ['all', 'needs-schedule', 'scheduled', 'pending', 'in-progress', 'completed'];
 
-const LEARNER_SOURCE_META: Record<LearnerSourceFilter, { label: string; short: string; dot: string }> = {
-  all: { label: 'All Sources', short: 'All', dot: 'bg-foreground-400' },
-  'live-session': { label: 'Live Sessions', short: 'Live Session', dot: 'bg-violet-500' },
-  mcr: { label: 'Monthly Coaching Meeting', short: 'Monthly Coaching Meeting', dot: 'bg-orange-500' },
-  'progress-review': { label: 'Progress Review', short: 'Progress Review', dot: 'bg-teal-500' },
-  'catch-up': { label: 'Catch-up', short: 'Catch-up', dot: 'bg-rose-500' },
-  'student-support': { label: 'Student Support', short: 'Support', dot: 'bg-blue-500' },
-  personal: { label: 'Personal Events', short: 'Personal', dot: 'bg-sky-500' },
-  busy: { label: 'Busy Time', short: 'Busy', dot: 'bg-slate-500' },
-};
+// Source filters are no longer a fixed list: the Review buckets come from the
+// Review Types actually present in the learner's calendar, so a Review Type
+// added in Curriculum needs no change here. See ./reviewTypeFilters.
+// LEARNER_NON_REVIEW_SOURCE_META still holds the fixed, non-review sources.
 
 const LEARNER_STATUS_META: Record<LearnerStatusFilter, { label: string; dot: string }> = {
   all: { label: 'All', dot: 'bg-foreground-400' },
@@ -473,20 +484,13 @@ function sessionTypeLabel(value?: CalendarEvent['bookingSessionType'] | Bookable
       return 'Student Support';
     case 'catch-up':
       return 'Catch-up';
+    case 'review':
+      // Custom Review Types have no fixed name -- the card's own title is the
+      // Review Template's name, which is what the learner actually reads.
+      return 'Review';
     default:
       return 'Coach Session';
   }
-}
-
-function learnerEventSource(event: CalendarEvent): LearnerSourceFilter {
-  if (event.type === 'Busy') return 'busy';
-  if (event.club === 'Personal' || event.type === 'Personal') return 'personal';
-  if (event.source === 'live-session') return 'live-session';
-  if (event.source === 'mcr') return 'mcr';
-  if (event.source === 'progress-review') return 'progress-review';
-  if (event.source === 'catch-up') return 'catch-up';
-  if (event.source === 'student-support') return 'student-support';
-  return 'personal';
 }
 
 function learnerEventStatus(event: CalendarEvent): LearnerStatusFilter {
@@ -502,7 +506,7 @@ function shouldShowMeetingArtifacts(event: CalendarEvent): boolean {
   return Boolean(
     event.eventKey
     && event.meetingLink
-    && ['mcr', 'catch-up', 'progress-review', 'student-support'].includes(event.source || '')
+    && ['mcr', 'catch-up', 'progress-review', 'review', 'student-support'].includes(event.source || '')
     && ['completed', 'awaiting-signature'].includes(event.bookingStatus || '')
   );
 }
@@ -673,21 +677,23 @@ function LearnerCalendarBody() {
       event.location,
       event.format,
       sessionTypeLabel(event.bookingSessionType),
+      // Searching the Review Type name finds every Review of that type even
+      // when the templates are named differently from each other.
+      event.reviewTypeName || '',
     ].some((value) => value.toLowerCase().includes(term)));
   }, [searchTerm, visibleRangeEvents]);
-  const sourceFilterCounts = useMemo(() => {
-    const counts = Object.fromEntries(LEARNER_SOURCE_FILTERS.map((source) => [source, 0])) as Record<LearnerSourceFilter, number>;
-    searchedVisibleRangeEvents.forEach((event) => {
-      counts.all += 1;
-      counts[learnerEventSource(event)] += 1;
-    });
-    return counts;
-  }, [searchedVisibleRangeEvents]);
-  const sourceFilteredVisibleRangeEvents = useMemo(() => (
-    filterSource === 'all'
-      ? searchedVisibleRangeEvents
-      : searchedVisibleRangeEvents.filter((event) => learnerEventSource(event) === filterSource)
-  ), [filterSource, searchedVisibleRangeEvents]);
+  // Built from every loaded event, not just the visible range, so a Review
+  // Type's chip stays put (reading 0) as the learner pages between months --
+  // the same way the fixed chips have always behaved.
+  const sourceFilterOptions = useMemo(() => buildSourceFilters(displayedEvents), [displayedEvents]);
+  const sourceFilterCounts = useMemo(
+    () => countBySource(searchedVisibleRangeEvents, sourceFilterOptions),
+    [searchedVisibleRangeEvents, sourceFilterOptions],
+  );
+  const sourceFilteredVisibleRangeEvents = useMemo(
+    () => filterBySource(searchedVisibleRangeEvents, filterSource),
+    [filterSource, searchedVisibleRangeEvents],
+  );
   const statusFilterCounts = useMemo(() => {
     const counts = Object.fromEntries(LEARNER_STATUS_FILTERS.map((status) => [status, 0])) as Record<LearnerStatusFilter, number>;
     sourceFilteredVisibleRangeEvents.forEach((event) => {
@@ -722,6 +728,7 @@ function LearnerCalendarBody() {
           event.location,
           event.format,
           sessionTypeLabel(event.bookingSessionType),
+          event.reviewTypeName || '',
         ].some((value) => value.toLowerCase().includes(term));
       })
       .sort((a, b) => {
@@ -1620,20 +1627,20 @@ function LearnerCalendarBody() {
               <div className="rounded-xl bg-background-50/70 p-2">
                 <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-foreground-500">Source</p>
                 <div className="flex flex-wrap gap-2">
-                  {VISIBLE_LEARNER_SOURCE_FILTERS.map((source) => {
-                    const meta = LEARNER_SOURCE_META[source];
-                    const isActive = filterSource === source;
+                  {sourceFilterOptions.map((option) => {
+                    const isActive = filterSource === option.key;
+                    const count = sourceFilterCounts[option.key] ?? 0;
                     return (
                       <button
-                        key={source}
+                        key={option.key}
                         type="button"
-                        onClick={() => setFilterSource(source)}
+                        onClick={() => setFilterSource(option.key)}
                         className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition-smooth cursor-pointer ${isActive ? 'border-primary-500 bg-primary-600 text-white shadow-sm' : 'border-foreground-200 bg-white text-foreground-700 hover:border-primary-200 hover:bg-primary-50'}`}
-                        title={`${meta.label} (${sourceFilterCounts[source]})`}
+                        title={`${option.longLabel} (${count})`}
                       >
-                        <span className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-white' : meta.dot}`}></span>
-                        {meta.short}
-                        <span className={isActive ? 'text-white/80' : 'text-foreground-400'}>{sourceFilterCounts[source]}</span>
+                        <span className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-white' : option.dot}`}></span>
+                        {option.label}
+                        <span className={isActive ? 'text-white/80' : 'text-foreground-400'}>{count}</span>
                       </button>
                     );
                   })}
@@ -1723,14 +1730,13 @@ function LearnerCalendarBody() {
                                 </div>
                               );
                             }
-                            const eventSource = learnerEventSource(ev);
-                            const sourceMeta = LEARNER_SOURCE_META[eventSource];
+                            const sourceMeta = learnerSourceMeta(ev);
                             return (
                               <div
                                 key={ev.id}
                                 onClick={(event) => { event.stopPropagation(); setSelectedEvent(ev); }}
                                 className={`rounded-lg border px-2 py-1 text-left shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:brightness-95 ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
-                                title={`${LEARNER_SOURCE_META[eventSource].label} · ${ev.title}`}
+                                title={`${sourceMeta.label} · ${ev.title}`}
                               >
                                 <div className="flex min-w-0 items-center gap-1.5">
                                   <span className={`h-2 w-2 shrink-0 rounded-full ${sourceMeta.dot}`}></span>
@@ -1773,7 +1779,7 @@ function LearnerCalendarBody() {
                   <div className="space-y-2">
                     {selectedDaySorted.map((ev) => {
                       const eventSource = learnerEventSource(ev);
-                      const sourceMeta = LEARNER_SOURCE_META[eventSource];
+                      const sourceMeta = learnerSourceMeta(ev);
                       const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)];
                       return (
                         <button
@@ -1783,7 +1789,7 @@ function LearnerCalendarBody() {
                           className={`group flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition-all duration-150 hover:-translate-y-0.5 hover:shadow-sm cursor-pointer ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
                         >
                           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/75 shadow-sm">
-                            <AppIcon className={`${eventSource === 'live-session' ? 'ri-video-chat-line' : eventSource === 'mcr' ? 'ri-calendar-check-line' : eventSource === 'progress-review' ? 'ri-line-chart-line' : eventSource === 'student-support' ? 'ri-heart-2-line' : eventSource === 'busy' ? 'ri-lock-line' : 'ri-chat-3-line'} text-primary-600`}></AppIcon>
+                            <AppIcon className={`${eventSource === 'live-session' ? 'ri-video-chat-line' : isReviewFilterKey(eventSource) ? 'ri-calendar-check-line' : eventSource === 'student-support' ? 'ri-heart-2-line' : eventSource === 'busy' ? 'ri-lock-line' : 'ri-chat-3-line'} text-primary-600`}></AppIcon>
                           </span>
                           <div className="min-w-0 flex-1">
                             <div className="mb-1 flex min-w-0 items-center gap-1.5">
@@ -1940,7 +1946,7 @@ function LearnerCalendarBody() {
                 </span>
               </div>
               {selectedEvent ? (() => {
-                const sourceMeta = LEARNER_SOURCE_META[learnerEventSource(selectedEvent)];
+                const sourceMeta = learnerSourceMeta(selectedEvent);
                 const statusMeta = LEARNER_STATUS_META[learnerEventStatus(selectedEvent)];
                 return (
                   <div className="mt-4 space-y-3">
@@ -2035,7 +2041,7 @@ function LearnerCalendarBody() {
               <SectionHeader title="Next 7 days" icon="ri-calendar-todo-line" />
               <div className="mt-3 space-y-2">
                 {upcomingEvents.slice(0, 8).map((ev) => {
-                  const sourceMeta = LEARNER_SOURCE_META[learnerEventSource(ev)];
+                  const sourceMeta = learnerSourceMeta(ev);
                   const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)];
                   return (
                   <div key={ev.id} className="flex items-start gap-3 rounded-xl border border-background-200 bg-background-50 p-2.5 transition-smooth hover:border-primary-200 hover:bg-primary-50/20 cursor-pointer group" onClick={() => setSelectedEvent(ev)}>

@@ -717,6 +717,13 @@ export interface CalendarEvent {
   meetingLink?: string;
   eventKey?: string;
   source?: string;
+  /** Curriculum Review Type classification, carried through from the API so
+   *  the calendar can bucket review events by type. See
+   *  pages/learner/calendar/reviewTypeFilters.ts. */
+  reviewTypeId?: string | null;
+  reviewTypeCode?: string | null;
+  reviewTypeName?: string | null;
+  reviewTypeIsSystem?: boolean;
   /** Stored duration used when an existing booking is rescheduled. */
   durationMinutes?: number;
   /** Backend booking lifecycle status; kept separate from the display badge. */

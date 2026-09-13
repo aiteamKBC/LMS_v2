@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
-import { fetchLearnerCalendarEvents, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { fetchLearnerCalendarEvents, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, bookLearnerCalendarSession, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { monthlyCoachingAnswers } from '@/pages/shared/monthlyCoachingForm';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
@@ -11,6 +11,7 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
 import { ImportedReviewHistory } from '@/pages/learner/reviews/ImportedReviewHistory';
+import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '@/pages/learner/reviews/LearnerReviewInstanceForm';
 import {
   activityTimeLabel,
   learningKsbCodes,
@@ -38,9 +39,18 @@ function monthLabel(value?: string | null): string {
   return date.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
 }
 
+/** The Review Template's own live name (the backend titles every Curriculum
+ *  Review occurrence with it), month-stamped. The fixed wording is only the
+ *  fallback for a row that predates the Curriculum Review architecture. */
 function monthlyCoachingTitle(session?: LearnerCalendarEvent | null): string {
   const month = monthLabel(dateOf(session));
-  return `Monthly Coaching Meeting${month ? ` — ${month}` : ''}${session?.sequence ? ` #${session.sequence}` : ''}`;
+  const name = session?.title || 'Monthly Coaching Meeting';
+  return `${name}${month ? ` — ${month}` : ''}${session?.sequence ? ` #${session.sequence}` : ''}`;
+}
+
+/** The Review Type's label -- classification only, never the title. */
+function reviewTypeLabel(session?: LearnerCalendarEvent | null): string {
+  return session?.reviewTypeName || 'Coaching meeting';
 }
 
 function shouldShowLearnerMeetingRecording(session?: LearnerCalendarEvent | null): boolean {
@@ -171,13 +181,19 @@ function useMonthlyCoachingData() {
     return () => { cancelled = true; };
   }, [myLearner.kind, myLearner.id]);
 
-  return { learner, sessions, loading, error };
+  return { learner, sessions, setSessions, loading, error };
 }
 
 export function MonthlyCoachingListPage() {
   const myLearner = useMyLearner();
-  const { learner, sessions, loading, error } = useMonthlyCoachingData();
+  const { learner, sessions, setSessions, loading, error } = useMonthlyCoachingData();
   const [page, setPage] = useState(1);
+  const [scheduleSession, setScheduleSession] = useState<LearnerCalendarEvent | null>(null);
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduleTime, setScheduleTime] = useState('09:00');
+  const [scheduleBusy, setScheduleBusy] = useState(false);
+  const openSchedule = (session: LearnerCalendarEvent) => { setScheduleSession(session); setScheduleDate(session.scheduledDate || session.targetDate || new Date().toISOString().slice(0, 10)); setScheduleTime(session.scheduledTime?.slice(0, 5) || '09:00'); };
+  const saveSchedule = async () => { if (!scheduleSession || !scheduleDate) return; setScheduleBusy(true); try { const result = await bookLearnerCalendarSession(myLearner.kind, myLearner.id, { sessionType: 'mcr', eventKey: scheduleSession.eventKey || scheduleSession.id, scheduledDate: scheduleDate, scheduledTime: scheduleTime, durationMinutes: scheduleSession.durationMinutes || 60, timezoneOffsetMinutes: new Date(`${scheduleDate}T${scheduleTime}:00`).getTimezoneOffset() }); setSessions(current => current.map(item => item.id === scheduleSession.id ? { ...item, ...result.event } : item)); setScheduleSession(null); } catch (reason) { /* the page-level data hook will show the next load error */ } finally { setScheduleBusy(false); } };
   const pageSize = 10;
   const totalPages = Math.max(1, Math.ceil(sessions.length / pageSize));
   const visibleSessions = sessions.slice((page - 1) * pageSize, page * pageSize);
@@ -228,7 +244,7 @@ export function MonthlyCoachingListPage() {
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div className="min-w-0">
                               <h3 className="text-sm font-bold text-foreground-900">{monthlyCoachingTitle(session)}</h3>
-                              <p className="mt-1 text-[11px] text-foreground-500">30-day coaching meeting</p>
+                              <p className="mt-1 text-[11px] text-foreground-500">{reviewTypeLabel(session)}</p>
                             </div>
                             <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ring-inset ${session.status === 'completed' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : session.status === 'cancelled' ? 'bg-rose-50 text-rose-700 ring-rose-200' : booked ? 'bg-blue-50 text-blue-700 ring-blue-200' : 'bg-amber-50 text-amber-700 ring-amber-200'}`}>
                               <AppIcon className={session.status === 'completed' ? 'ri-checkbox-circle-line' : session.status === 'cancelled' ? 'ri-close-circle-line' : 'ri-time-line'} />{statusLabel(session.status)}
@@ -249,7 +265,7 @@ export function MonthlyCoachingListPage() {
                       </div>
 
                       <div className="grid grid-cols-2 gap-2">
-                        <Link to={calendarEventHref(session)} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />{booked ? 'Reschedule' : 'Schedule'}</Link>
+                        <button type="button" onClick={() => openSchedule(session)} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />{booked ? 'Reschedule' : 'Schedule'}</button>
                         <Link to={`/learner/monthly-coaching/${encodeURIComponent(session.id)}`} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-3 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700">View session <AppIcon className="ri-arrow-right-line" /></Link>
                       </div>
                     </article>
@@ -264,11 +280,11 @@ export function MonthlyCoachingListPage() {
                       const booked = Boolean(session.scheduledDate && session.scheduledTime) && !['not-scheduled', 'cancelled'].includes(session.status);
                       return (
                         <tr key={session.id} className="group transition-colors hover:bg-primary-50/35">
-                          <td className="px-5 py-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-background-100 text-xs font-extrabold text-primary-700 transition group-hover:bg-primary-100">#{session.sequence}</span><div><p className="text-xs font-bold text-foreground-900">{monthlyCoachingTitle(session)}</p><p className="mt-1 text-[10px] text-foreground-400">30-day coaching meeting</p></div></div></td>
+                          <td className="px-5 py-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-background-100 text-xs font-extrabold text-primary-700 transition group-hover:bg-primary-100">#{session.sequence}</span><div><p className="text-xs font-bold text-foreground-900">{monthlyCoachingTitle(session)}</p><p className="mt-1 text-[10px] text-foreground-400">{reviewTypeLabel(session)}</p></div></div></td>
                           <td className="px-5 py-4"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary-100 text-[9px] font-bold text-secondary-700">{initials(session.coachName)}</span><span className="text-xs font-semibold text-foreground-700">{session.coachName || '-'}</span></div></td>
                           <td className="px-5 py-4"><div className="flex items-center gap-2"><AppIcon className="ri-calendar-line text-primary-500" /><div><p className="text-xs font-semibold text-foreground-700">{formatDate(booked ? session.scheduledDate : session.targetDate)}</p>{booked && <p className="mt-1 text-[10px] text-foreground-400">at {formatTime(session.scheduledTime)}</p>}</div></div></td>
                           <td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ring-inset ${session.status === 'completed' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : session.status === 'cancelled' ? 'bg-rose-50 text-rose-700 ring-rose-200' : booked ? 'bg-blue-50 text-blue-700 ring-blue-200' : 'bg-amber-50 text-amber-700 ring-amber-200'}`}><AppIcon className={session.status === 'completed' ? 'ri-checkbox-circle-line' : session.status === 'cancelled' ? 'ri-close-circle-line' : 'ri-time-line'} />{statusLabel(session.status)}</span></td>
-                          <td className="px-5 py-4"><Link to={calendarEventHref(session)} className="inline-flex h-9 items-center gap-2 rounded-xl px-3 text-xs font-semibold text-foreground-600 transition hover:bg-primary-50 hover:text-primary-700"><AppIcon className="ri-calendar-2-line" />{booked ? 'Reschedule' : 'Schedule'}</Link></td>
+                          <td className="px-5 py-4"><button type="button" onClick={() => openSchedule(session)} className="inline-flex h-9 items-center gap-2 rounded-xl px-3 text-xs font-semibold text-foreground-600 transition hover:bg-primary-50 hover:text-primary-700"><AppIcon className="ri-calendar-2-line" />{booked ? 'Reschedule' : 'Schedule'}</button></td>
                           <td className="px-5 py-4"><div className="flex items-center justify-end"><Link to={`/learner/monthly-coaching/${encodeURIComponent(session.id)}`} className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary-600 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 hover:shadow-md">View <AppIcon className="ri-arrow-right-line" /></Link></div></td>
                         </tr>
                       );
@@ -284,6 +300,7 @@ export function MonthlyCoachingListPage() {
           )}
         </section>
         <ImportedReviewHistory kind={myLearner.kind} learnerId={myLearner.id} category="monthly-coaching" />
+        {scheduleSession && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"><div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"><div className="flex items-center justify-between"><h2 className="text-lg font-bold">Schedule coaching meeting</h2><button type="button" onClick={() => setScheduleSession(null)} aria-label="Close">×</button></div><p className="mt-1 text-sm text-foreground-500">Choose the date and time.</p><div className="mt-5 grid grid-cols-2 gap-3"><label className="text-xs font-semibold">Date<input type="date" value={scheduleDate} onChange={event => setScheduleDate(event.target.value)} className="mt-1 w-full rounded-lg border p-2 text-sm" /></label><label className="text-xs font-semibold">Time<input type="time" value={scheduleTime} onChange={event => setScheduleTime(event.target.value)} className="mt-1 w-full rounded-lg border p-2 text-sm" /></label></div><div className="mt-6 flex justify-end gap-2"><button type="button" onClick={() => setScheduleSession(null)} className="rounded-lg bg-background-100 px-4 py-2 text-xs font-semibold">Cancel</button><button type="button" disabled={scheduleBusy} onClick={() => void saveSchedule()} className="rounded-lg bg-primary-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{scheduleBusy ? 'Scheduling…' : 'Confirm schedule'}</button></div></div></div>}
       </main>
     </WorkspaceShell>
   );
@@ -333,6 +350,13 @@ export default function MonthlyCoachingPage() {
     0,
   );
   const toggle = (id: string) => setOpenSections((items) => items.includes(id) ? items.filter((item) => item !== id) : [...items, id]);
+  // Only ever a GET, and only for an occurrence that already HAS an instance:
+  // viewing an unscheduled slot must not create a durable review_instance.
+  const reviewInstance = useLearnerReviewInstance(
+    myLearner.kind,
+    myLearner.id,
+    selected?.reviewInstanceId ? (selected.eventKey || selected.id) : '',
+  );
   const loadArtifacts = useCallback((eventKey: string, signal?: AbortSignal) => fetchLearnerMeetingArtifacts(myLearner.kind, myLearner.id, eventKey, signal), [myLearner.id, myLearner.kind]);
   const artifactContentUrl = useCallback((eventKey: string, artifactType: string, artifactId: string, options: { preview?: boolean } = {}) => learnerMeetingArtifactContentUrl(myLearner.kind, myLearner.id, eventKey, artifactType, artifactId, options), [myLearner.id, myLearner.kind]);
 
@@ -344,13 +368,13 @@ export default function MonthlyCoachingPage() {
         {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : (
           <>
             <section className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm">
-              <div className="learner-super-admin-hero bg-gradient-to-r from-primary-950 to-primary-800 p-5 text-white sm:p-6"><span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[10px] font-bold text-white/80">{statusLabel(selected.status)}</span><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-accent-300">30-day coaching meeting</p><h1 className="mt-1 text-xl font-bold text-white">{monthlyCoachingTitle(selected)}</h1><p className="mt-1 text-sm text-white/60">{formatDate(dateOf(selected), true)} at {formatTime(selected.scheduledTime)}</p></div>{selected.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action rounded-lg px-4 py-2 text-xs font-bold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}</div></div>
+              <div className="learner-super-admin-hero bg-gradient-to-r from-primary-950 to-primary-800 p-5 text-white sm:p-6"><span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[10px] font-bold text-white/80">{statusLabel(selected.status)}</span><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-accent-300">{reviewTypeLabel(selected)}</p><h1 className="mt-1 text-xl font-bold text-white">{monthlyCoachingTitle(selected)}</h1><p className="mt-1 text-sm text-white/60">{formatDate(dateOf(selected), true)} at {formatTime(selected.scheduledTime)}</p></div>{selected.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action rounded-lg px-4 py-2 text-xs font-bold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}</div></div>
               <div className="space-y-5 p-5 sm:p-6">
                 {shouldShowLearnerMeetingRecording(selected) ? (
                   <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
                 ) : null}
                 <div><p className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-foreground-400">Session participants</p><div className="grid gap-3 sm:grid-cols-2"><div className="flex items-center gap-3 rounded-xl border border-background-200 p-3.5"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-100 text-xs font-bold text-primary-700">{initials(learner?.name)}</span><div><p className="text-[10px] font-semibold uppercase text-foreground-400">Learner</p><p className="text-sm font-bold text-foreground-900">{learner?.name || '-'}</p></div></div><div className="flex items-center gap-3 rounded-xl border border-background-200 p-3.5"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-accent-100 text-xs font-bold text-accent-700">{initials(selected.coachName)}</span><div><p className="text-[10px] font-semibold uppercase text-foreground-400">Coach</p><p className="text-sm font-bold text-foreground-900">{selected.coachName || '-'}</p></div></div></div></div>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{[['Duration', `${selected.durationMinutes || 60} minutes`], ['Meeting type', selected.meetingProvider || '-'], ['Scheduled time', formatTime(selected.scheduledTime)], ['Learning window', previous ? `Since session #${previous.sequence}` : 'First 30-day period']].map(([label, value]) => <div key={label} className="rounded-xl bg-background-100 p-3.5"><p className="text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p><p className="mt-1 text-xs font-bold text-foreground-800">{value}</p></div>)}</div>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{[['Duration', `${selected.durationMinutes || 60} minutes`], ['Meeting type', selected.meetingProvider || '-'], ['Scheduled time', formatTime(selected.scheduledTime)], ['Learning window', previous ? `Since session #${previous.sequence}` : 'Since the start of the programme']].map(([label, value]) => <div key={label} className="rounded-xl bg-background-100 p-3.5"><p className="text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p><p className="mt-1 text-xs font-bold text-foreground-800">{value}</p></div>)}</div>
               </div>
             </section>
 
@@ -358,26 +382,40 @@ export default function MonthlyCoachingPage() {
               <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-primary-50 p-4"><p className="text-[10px] font-semibold uppercase text-primary-500">Completed activities</p><p className="mt-1 text-2xl font-bold text-primary-800">{uniqueProgress.length}</p></div><div className="rounded-xl bg-accent-50 p-4"><p className="text-[10px] font-semibold uppercase text-accent-600">Completed activity time</p><p className="mt-1 text-2xl font-bold text-accent-800">{hoursLabel(learningMinutes)}</p></div><div className="rounded-xl bg-emerald-50 p-4"><p className="text-[10px] font-semibold uppercase text-emerald-600">KSBs evidenced</p><p className="mt-1 text-2xl font-bold text-emerald-800">{ksbCodes.length}</p></div></div>
               <div className="mt-4"><div className="mb-2 flex items-center justify-between"><h2 className="text-xs font-bold text-foreground-800">What the learner completed</h2><span className="text-[10px] text-foreground-400">{learningItems.length} {learningItems.length === 1 ? 'record' : 'records'}</span></div>{learningItems.length === 0 ? <Empty>No completed learning was recorded in this 30-day period.</Empty> : <div className="divide-y divide-background-200 rounded-xl border border-background-200">{learningItems.map((item) => <div key={item.key} className="flex items-start gap-3 p-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><AppIcon className="ri-checkbox-circle-line" /></span><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-foreground-800">{item.title}</p><p className="text-xs text-foreground-400">{item.detail}</p></div><span className="text-[10px] text-foreground-400">{new Date(item.at).toLocaleDateString('en-GB')}</span></div>)}</div>}</div>
             </Accordion>
-            <Accordion id="previous-summary" title="Previous Meeting Summary" icon="ri-history-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'previous-summary').length ? 'Complete' : 'Incomplete'} open={openSections.includes('previous-summary')} onToggle={toggle}>
-              <SavedMcmAnswers sectionId="previous-summary" responses={selected.reviewResponses} emptyMessage="No previous meeting summary has been recorded." />
-            </Accordion>
-            <Accordion id="opening" title="Opening the Meeting (5 minutes)" icon="ri-play-circle-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'opening').length ? 'Complete' : 'Incomplete'} open={openSections.includes('opening')} onToggle={toggle}>
-              <SavedMcmAnswers sectionId="opening" responses={selected.reviewResponses} emptyMessage="The opening check-in has not been recorded." />
-            </Accordion>
-            <Accordion id="presentation" title="Learner Presentation & Review (15 minutes)" icon="ri-presentation-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'presentation').length ? 'Complete' : 'Incomplete'} open={openSections.includes('presentation')} onToggle={toggle}>
-              <SavedMcmAnswers sectionId="presentation" responses={selected.reviewResponses} emptyMessage="No learner presentation information has been recorded for this session." />
-            </Accordion>
-            <Accordion id="ksb-reflection" title="Reflection on Knowledge, Skills, and Behaviours (10 minutes)" icon="ri-lightbulb-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'ksb-reflection').length ? 'Complete' : 'Incomplete'} open={openSections.includes('ksb-reflection')} onToggle={toggle}>
-              <SavedMcmAnswers sectionId="ksb-reflection" responses={selected.reviewResponses} emptyMessage="No KSB reflection has been recorded for this session." />
-            </Accordion>
-            <Accordion id="next-month" title="Preparing for Next Month (10 minutes)" icon="ri-calendar-todo-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'next-month').length ? 'Complete' : 'Incomplete'} open={openSections.includes('next-month')} onToggle={toggle}><SavedMcmAnswers sectionId="next-month" responses={selected.reviewResponses} emptyMessage="No targets or actions for next month have been recorded." /></Accordion>
-            <Accordion id="resources" title="Learning Resources – Coach Guidance (5 minutes)" icon="ri-book-open-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'resources').length ? 'Complete' : 'Incomplete'} open={openSections.includes('resources')} onToggle={toggle}><SavedMcmAnswers sectionId="resources" responses={selected.reviewResponses} emptyMessage="No coach learning resources or guidance have been recorded." /></Accordion>
-            <Accordion id="wellbeing" title="Wellbeing & Safeguarding Check (5 minutes)" icon="ri-shield-check-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'wellbeing').length ? 'Complete' : 'Incomplete'} open={openSections.includes('wellbeing')} onToggle={toggle}><SavedMcmAnswers sectionId="wellbeing" responses={selected.reviewResponses} emptyMessage="No wellbeing or safeguarding response has been recorded." /></Accordion>
-            <Accordion id="feedback" title="Learner Feedback on Teaching & Curriculum (5 minutes)" icon="ri-feedback-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'feedback').length ? 'Complete' : 'Incomplete'} open={openSections.includes('feedback')} onToggle={toggle}><SavedMcmAnswers sectionId="feedback" responses={selected.reviewResponses} emptyMessage="No learner feedback has been recorded." /></Accordion>
-            <Accordion id="confirm-next" title="Confirm Next Meeting & Close (5 minutes)" icon="ri-calendar-check-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'confirm-next').length ? 'Complete' : 'Incomplete'} open={openSections.includes('confirm-next')} onToggle={toggle}>
-              <SavedMcmAnswers sectionId="confirm-next" responses={selected.reviewResponses} emptyMessage="The next meeting confirmation has not been recorded." />
-            </Accordion>
-            <Accordion id="meeting-summary" title="Meeting Summary" icon="ri-file-text-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'meeting-summary').length ? 'Complete' : 'Incomplete'} open={openSections.includes('meeting-summary')} onToggle={toggle}><SavedMcmAnswers sectionId="meeting-summary" responses={selected.reviewResponses} emptyMessage="No meeting summary has been recorded." /></Accordion>
+            {/* The Review itself: one Curriculum-authored form, rendered by the
+                same ReviewFormRenderer the coach's ReviewInstanceModal uses. The
+                legacy accordions below stay only as the fallback for occurrences
+                with no Review instance (never scheduled, or rows that predate the
+                Curriculum Review architecture), so nothing already recorded on
+                coach_calendar_event.review_responses is lost. */}
+            {reviewInstance.loading ? (
+              <div className="rounded-2xl border border-background-200 bg-white p-5"><RowsSkeleton rows={3} /></div>
+            ) : reviewInstance.definition ? (
+              <LearnerReviewInstanceForm definition={reviewInstance.definition} />
+            ) : (
+              <>
+              <Accordion id="previous-summary" title="Previous Meeting Summary" icon="ri-history-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'previous-summary').length ? 'Complete' : 'Incomplete'} open={openSections.includes('previous-summary')} onToggle={toggle}>
+                <SavedMcmAnswers sectionId="previous-summary" responses={selected.reviewResponses} emptyMessage="No previous meeting summary has been recorded." />
+              </Accordion>
+              <Accordion id="opening" title="Opening the Meeting (5 minutes)" icon="ri-play-circle-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'opening').length ? 'Complete' : 'Incomplete'} open={openSections.includes('opening')} onToggle={toggle}>
+                <SavedMcmAnswers sectionId="opening" responses={selected.reviewResponses} emptyMessage="The opening check-in has not been recorded." />
+              </Accordion>
+              <Accordion id="presentation" title="Learner Presentation & Review (15 minutes)" icon="ri-presentation-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'presentation').length ? 'Complete' : 'Incomplete'} open={openSections.includes('presentation')} onToggle={toggle}>
+                <SavedMcmAnswers sectionId="presentation" responses={selected.reviewResponses} emptyMessage="No learner presentation information has been recorded for this session." />
+              </Accordion>
+              <Accordion id="ksb-reflection" title="Reflection on Knowledge, Skills, and Behaviours (10 minutes)" icon="ri-lightbulb-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'ksb-reflection').length ? 'Complete' : 'Incomplete'} open={openSections.includes('ksb-reflection')} onToggle={toggle}>
+                <SavedMcmAnswers sectionId="ksb-reflection" responses={selected.reviewResponses} emptyMessage="No KSB reflection has been recorded for this session." />
+              </Accordion>
+              <Accordion id="next-month" title="Preparing for Next Month (10 minutes)" icon="ri-calendar-todo-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'next-month').length ? 'Complete' : 'Incomplete'} open={openSections.includes('next-month')} onToggle={toggle}><SavedMcmAnswers sectionId="next-month" responses={selected.reviewResponses} emptyMessage="No targets or actions for next month have been recorded." /></Accordion>
+              <Accordion id="resources" title="Learning Resources – Coach Guidance (5 minutes)" icon="ri-book-open-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'resources').length ? 'Complete' : 'Incomplete'} open={openSections.includes('resources')} onToggle={toggle}><SavedMcmAnswers sectionId="resources" responses={selected.reviewResponses} emptyMessage="No coach learning resources or guidance have been recorded." /></Accordion>
+              <Accordion id="wellbeing" title="Wellbeing & Safeguarding Check (5 minutes)" icon="ri-shield-check-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'wellbeing').length ? 'Complete' : 'Incomplete'} open={openSections.includes('wellbeing')} onToggle={toggle}><SavedMcmAnswers sectionId="wellbeing" responses={selected.reviewResponses} emptyMessage="No wellbeing or safeguarding response has been recorded." /></Accordion>
+              <Accordion id="feedback" title="Learner Feedback on Teaching & Curriculum (5 minutes)" icon="ri-feedback-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'feedback').length ? 'Complete' : 'Incomplete'} open={openSections.includes('feedback')} onToggle={toggle}><SavedMcmAnswers sectionId="feedback" responses={selected.reviewResponses} emptyMessage="No learner feedback has been recorded." /></Accordion>
+              <Accordion id="confirm-next" title="Confirm Next Meeting & Close (5 minutes)" icon="ri-calendar-check-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'confirm-next').length ? 'Complete' : 'Incomplete'} open={openSections.includes('confirm-next')} onToggle={toggle}>
+                <SavedMcmAnswers sectionId="confirm-next" responses={selected.reviewResponses} emptyMessage="The next meeting confirmation has not been recorded." />
+              </Accordion>
+              <Accordion id="meeting-summary" title="Meeting Summary" icon="ri-file-text-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'meeting-summary').length ? 'Complete' : 'Incomplete'} open={openSections.includes('meeting-summary')} onToggle={toggle}><SavedMcmAnswers sectionId="meeting-summary" responses={selected.reviewResponses} emptyMessage="No meeting summary has been recorded." /></Accordion>
+              </>
+            )}
           </>
         )}
       </div>

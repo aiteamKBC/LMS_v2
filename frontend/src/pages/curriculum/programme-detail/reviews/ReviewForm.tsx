@@ -19,7 +19,9 @@ import {
   REVIEW_FIELD_TYPE_LABELS,
   REVIEW_FIELD_TYPES,
   createReviewTemplate,
+  createReviewType,
   fetchReviewDetail,
+  fetchReviewTypes,
   updateReviewTemplate,
   type CreateReviewInput,
   type ListItemConfiguration,
@@ -34,6 +36,7 @@ import {
   type ReviewSection,
   type ReviewSectionInput,
   type ReviewSummary,
+  type ReviewType,
   type TitleDescriptionConfiguration,
 } from '@/lib/curriculumApi';
 import { FormField, MultiSelectControl, SelectControl, TextAreaControl, TextControl } from '@/pages/curriculum/shared/entities/ui';
@@ -668,6 +671,13 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
   const [scheduleAnchorDate, setScheduleAnchorDate] = useState(() => defaultStartDate || new Date().toISOString().slice(0, 10));
   // Blank means unlimited -- the review keeps recurring indefinitely.
   const [occurrenceCount, setOccurrenceCount] = useState('');
+  // The Review's classification. Held as an id, never a name -- renaming
+  // either the Review or its type must not change how anything routes.
+  const [reviewTypeId, setReviewTypeId] = useState('');
+  const [reviewTypes, setReviewTypes] = useState<ReviewType[]>([]);
+  const [typesLoading, setTypesLoading] = useState(true);
+  const [typesError, setTypesError] = useState('');
+  const [addingType, setAddingType] = useState(false);
   const [statuses, setStatuses] = useState<string[]>([]);
   const [signatures, setSignatures] = useState<ReviewRoleFlags>(emptyRoleFlags());
   const [visibleTo, setVisibleTo] = useState<ReviewRoleFlags>({ advisor: true, employer: true, participant: true, referrer: true });
@@ -693,6 +703,7 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
         setUnit(detail.recurrence.unit);
         if (detail.scheduleAnchorDate) setScheduleAnchorDate(detail.scheduleAnchorDate);
         setOccurrenceCount(detail.occurrenceCount != null ? String(detail.occurrenceCount) : '');
+        setReviewTypeId(detail.reviewTypeId || '');
         setStatuses(detail.applicableStatuses);
         setSignatures(detail.signatures);
         setVisibleTo(detail.visibleTo);
@@ -709,6 +720,39 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
     return () => { cancelled = true; };
   }, [review]);
 
+  // The type catalogue is shared by every programme, so it loads once when
+  // the editor opens rather than per Review.
+  useEffect(() => {
+    let cancelled = false;
+    setTypesLoading(true);
+    setTypesError('');
+    fetchReviewTypes()
+      .then(types => { if (!cancelled) setReviewTypes(types); })
+      .catch(err => { if (!cancelled) setTypesError(err instanceof Error ? err.message : 'Unable to load review types.'); })
+      .finally(() => { if (!cancelled) setTypesLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // An archived type stays selectable on the Review that already uses it --
+  // deactivating a type must never block editing its existing Reviews.
+  const reviewTypeOptions = useMemo(() => {
+    const options = reviewTypes.filter(type => type.isActive || type.id === reviewTypeId);
+    if (reviewTypeId && !options.some(type => type.id === reviewTypeId)) {
+      const stored = review?.reviewTypeName || '';
+      if (stored) return [...options, { id: reviewTypeId, name: stored, code: '', isSystem: false, isActive: false }];
+    }
+    return options;
+  }, [reviewTypes, reviewTypeId, review]);
+
+  const handleTypeCreated = (created: ReviewType) => {
+    setReviewTypes(current => [...current.filter(type => type.id !== created.id), created]);
+    // Newly created types are selected straight away -- the user asked for
+    // this type because they want to use it.
+    setReviewTypeId(created.id);
+    setErrors(current => ({ ...current, reviewTypeId: '' }));
+    setAddingType(false);
+  };
+
   const statusOptions = useMemo(() => CURRICULUM_PROGRAMME_STATUSES.map(status => ({ value: status, label: status })), []);
   const totalFieldCount = useMemo(() => sections.reduce((total, s) => total + countFields(s.fields), 0), [sections]);
 
@@ -718,6 +762,7 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
     recurrence: { interval: Number(interval) || 0, unit },
     scheduleAnchorDate,
     occurrenceCount: occurrenceCount.trim() ? Number(occurrenceCount) : null,
+    reviewTypeId,
     applicableStatuses: statuses,
     signatures,
     visibleTo,
@@ -755,6 +800,7 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
   const clientErrors = (): Record<string, string> => {
     const next: Record<string, string> = {};
     if (!name.trim()) next.name = 'Review name is required.';
+    if (!reviewTypeId.trim()) next.reviewTypeId = 'Review type is required.';
     const intervalNumber = Number(interval);
     if (!Number.isFinite(intervalNumber) || intervalNumber <= 0) next.recurrenceInterval = 'Repeat interval must be a positive number.';
     if (!scheduleAnchorDate || Number.isNaN(new Date(scheduleAnchorDate).getTime())) next.scheduleAnchorDate = 'First occurrence date must be a valid date.';
@@ -778,7 +824,7 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
 
   const stepErrorKeys = (s: Section): string[] => {
     switch (s) {
-      case 'General': return ['name'];
+      case 'General': return ['name', 'reviewTypeId'];
       case 'Schedule': return ['recurrenceInterval', 'recurrenceUnit', 'scheduleAnchorDate', 'occurrenceCount'];
       case 'Eligibility': return ['applicableStatuses'];
       case 'Participants & Permissions': return ['allowEditingPriorDays', 'expectedOtjh'];
@@ -817,8 +863,8 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
     const validation = clientErrors();
     if (Object.keys(validation).length) {
       setErrors(validation);
-      if (validation.name || validation.recurrenceInterval || validation.scheduleAnchorDate) {
-        setSection(validation.name ? 'General' : 'Schedule');
+      if (validation.name || validation.reviewTypeId || validation.recurrenceInterval || validation.scheduleAnchorDate) {
+        setSection(validation.name || validation.reviewTypeId ? 'General' : 'Schedule');
       } else {
         setSection('Form Builder');
       }
@@ -933,6 +979,34 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
               <FormField label="Review name" required error={errors.name}>
                 <TextControl value={name} onChange={setName} placeholder="e.g. Progress Review" />
               </FormField>
+              <FormField
+                label="Review type"
+                required
+                as="group"
+                error={errors.reviewTypeId || typesError}
+                hint="What kind of review this is. It classifies the review for the coach calendar only — the schedule and the form below are yours to set however you like."
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="w-72">
+                    <SelectControl
+                      value={reviewTypeId}
+                      onChange={setReviewTypeId}
+                      ariaLabel="Review type"
+                      disabled={typesLoading}
+                      placeholder={typesLoading ? 'Loading review types...' : 'Select a review type'}
+                      options={reviewTypeOptions.map(type => ({ value: type.id, label: type.name }))}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAddingType(true)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-background-200 px-3 py-2 text-[11px] font-bold text-primary-600 transition-smooth hover:bg-background-100"
+                  >
+                    <AppIcon className="ri-add-line text-xs"></AppIcon>
+                    Add new type
+                  </button>
+                </div>
+              </FormField>
               <CheckboxRow label="Enabled" hint="A disabled review is kept configured but never applies to anyone." checked={enabled} onChange={setEnabled} />
             </div>
           )}
@@ -1043,6 +1117,72 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
           )}
         </div>
       )}
+      {addingType && (
+        <AddReviewTypeModal
+          onClose={() => setAddingType(false)}
+          onCreated={handleTypeCreated}
+        />
+      )}
+    </Modal>
+  );
+}
+
+// The whole "create a review type" surface: one field. Everything else the
+// type needs -- its id, its stable routing code, its system/active flags --
+// is generated by the backend, so there is deliberately nothing else to ask
+// for here.
+function AddReviewTypeModal({ onClose, onCreated }: {
+  onClose: () => void;
+  onCreated: (created: ReviewType) => void;
+}) {
+  const [name, setName] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const handleAdd = async () => {
+    if (!name.trim()) { setError('Type name is required.'); return; }
+    setError('');
+    setSaving(true);
+    try {
+      onCreated(await createReviewType(name.trim()));
+    } catch (err) {
+      // A duplicate name comes back as a field error ("A review type with
+      // this name already exists.") -- show it against the one input rather
+      // than as a generic alert.
+      const fields = err instanceof CurriculumApiError && err.data && typeof err.data === 'object'
+        ? (err.data as { fields?: Record<string, string> }).fields
+        : undefined;
+      setError(fields?.name || (err instanceof Error ? err.message : 'Could not add this review type.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="Add Review Type"
+      onClose={onClose}
+      size="max-w-md"
+      footer={(
+        <div className="flex w-full items-center justify-end gap-2">
+          <button type="button" onClick={onClose} className="inline-flex h-10 items-center rounded-lg border border-background-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 hover:bg-background-100">
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleAdd()}
+            disabled={saving}
+            className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {saving && <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>}
+            Add
+          </button>
+        </div>
+      )}
+    >
+      <FormField label="Type name" required error={error}>
+        <TextControl value={name} onChange={value => { setName(value); if (error) setError(''); }} placeholder="e.g. Career Review" />
+      </FormField>
     </Modal>
   );
 }

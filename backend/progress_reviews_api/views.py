@@ -22,7 +22,7 @@ from django.conf import settings
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from login.permissions import learner_self_or_staff, staff_only
+from login.permissions import authenticate_request, learner_self_or_staff, staff_only
 
 from . import runs, storage
 from .period import iter_review_periods, resolve_review_period
@@ -74,6 +74,24 @@ def _slugify(value: str) -> str:
     return slug or "learner"
 
 
+def _curriculum_programme_id(source):
+    """The learner's curriculum.programmes id, so the Progress Review cadence
+    comes from that programme's own Review template rather than the legacy
+    12-week constant.
+
+    None when the name does not resolve, or when Curriculum cannot be reached
+    at all -- ``_interval`` then falls back exactly as it did before, so a
+    lookup problem costs the pack its Curriculum cadence, never the pack.
+    """
+    try:
+        from coach_api.views import resolve_curriculum_programme_id
+
+        return resolve_curriculum_programme_id(getattr(source, "programme", None))
+    except Exception:
+        logger.warning("Could not resolve the Curriculum programme for a Progress Review pack.", exc_info=True)
+        return None
+
+
 def _programme_window(learner_id):
     """(start, end, kind, source) for one learner_id, resolved the same way
     review_pack does — LearnerProfile's real DateFields first, falling back to
@@ -88,7 +106,13 @@ def _programme_window(learner_id):
         return None, None, None, None
 
     profile = learner_profile_for_source(source, source_pk=learner_id)
-    start = _parse_date(getattr(profile, "start_date", None)) or _parse_date(getattr(source, "start_date", None))
+    # The learner's OWN date wins. LearnerProfile.start_date is the profile
+    # mirror, which active_users.mirror_learner_placement stamps with the
+    # COHORT delivery window on every placement edit -- reading it first made
+    # a learner who started on the 10th get review periods counted from their
+    # cohort's 3rd, while their coach calendar counted from the 10th. Same
+    # preference order as coach_api.views.resolve_schedule_window.
+    start = _parse_date(getattr(source, "start_date", None)) or _parse_date(getattr(profile, "start_date", None))
     end = (
         _parse_date(getattr(profile, "end_date", None))
         or _parse_date(getattr(source, "end_date", None))
@@ -110,7 +134,10 @@ def _generate_for_learner(learner_id: int, *, review_date=None, generated_by="sy
     if start is None:
         raise GenerationError("This learner has no programme start date recorded.", 422)
 
-    period = resolve_review_period(programme_start=start, programme_end=end, today=date.today(), review_date=review_date)
+    period = resolve_review_period(
+        programme_start=start, programme_end=end, today=date.today(), review_date=review_date,
+        programme_id=_curriculum_programme_id(source),
+    )
     run_id = runs.new_run_id()
 
     try:
@@ -215,7 +242,12 @@ def periods(request, learner_id):
         return _error(f"No learner found with id {learner_id}.", 404)
     if start is None:
         return _error("This learner has no programme start date recorded.", 422)
-    results = [item.to_dict() for item in iter_review_periods(start, end, today=date.today())]
+    results = [
+        item.to_dict()
+        for item in iter_review_periods(
+            start, end, today=date.today(), programme_id=_curriculum_programme_id(source),
+        )
+    ]
     return JsonResponse({"results": results})
 
 
@@ -230,7 +262,10 @@ def pack(request, learner_id):
         return _error("This learner has no programme start date recorded.", 422)
 
     review_date = _parse_date_param(request.GET.get("review_date"))
-    period = resolve_review_period(programme_start=start, programme_end=end, today=date.today(), review_date=review_date)
+    period = resolve_review_period(
+        programme_start=start, programme_end=end, today=date.today(), review_date=review_date,
+        programme_id=_curriculum_programme_id(source),
+    )
     try:
         pack_data = build_review_pack(learner_id, period, generated_by=_current_email(request))
     except LearnerLookupError:
@@ -278,13 +313,22 @@ def generate(request, learner_id):
     return JsonResponse(result, status=201)
 
 
-@staff_only()
 def download(request, review_id):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
     run = runs.get_run(review_id)
     if not run:
         return _error("Review not found.", 404)
+    account = authenticate_request(request)
+    if account is None:
+        return _error("Authentication required.", 401)
+    # Staff may download any generated deck; learners may download only their
+    # own review deck.  The run stores the canonical learner id, so the review
+    # id cannot be used to access another learner's PPTX.
+    if account.role == "learner" and int(run["learner_id"]) != int(account.subject_id):
+        return _error("You do not have permission to perform this action.", 403)
+    if account.role != "learner" and not getattr(account, "is_staff", False) and account.role not in {"staff", "admin", "super-admin", "coach"}:
+        return _error("You do not have permission to perform this action.", 403)
     pptx_file = runs.get_pptx_file_for_run(review_id)
     if not pptx_file:
         return _error("No PPTX file has been generated for this review yet.", 404)

@@ -2,6 +2,7 @@ import { createCachedResource } from './cachedRequest';
 import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
 import type { CoachMeetingArtifactsResponse } from '@/pages/coach/shared/calendarEvents';
+import type { ReviewInstanceFormDefinition } from '@/api/reviewInstances';
 
 const BASE = '/learner_api/calendar';
 const calendarResource = createCachedResource<LearnerCalendarResponse>('learner-calendar', key =>
@@ -14,6 +15,29 @@ export interface LearnerCalendarEvent {
   source: 'mcr' | 'progress-review' | string;
   type: 'coaching' | 'review' | string;
   sequence: number;
+  /** Set on every occurrence of a Curriculum Review template. Its `title` is
+   *  that template's live name, so nothing here reads a Review by name. */
+  reviewTemplateId?: string | null;
+  /** Set once the occurrence has been SCHEDULED (or the coach has opened its
+   *  form). Its presence is what routes View to the generic Curriculum Review
+   *  form; null means no durable instance exists yet, and looking at the
+   *  occurrence must not create one. */
+  reviewInstanceId?: string | null;
+  /** The Review's CLASSIFICATION, from curriculum.review_types. `source`
+   *  above stays the legacy routing bucket (mcr / progress-review / review);
+   *  these say which Review Type the event actually is, so the calendar can
+   *  offer a filter per type instead of collapsing every custom type into one
+   *  generic "Review". Null on anything that is not a Curriculum Review, and
+   *  on a Review whose template has no type yet. */
+  reviewTypeId?: string | null;
+  /** Stable code -- 'mcm', 'progress_review', 'career_review', ... */
+  reviewTypeCode?: string | null;
+  /** The FILTER label. Never the card title: that is `title` above, the
+   *  template's own name, which may differ entirely. */
+  reviewTypeName?: string | null;
+  /** System types (MCM, Progress Review) sort ahead of custom ones. */
+  reviewTypeIsSystem?: boolean;
+  occurrenceNumber?: number | null;
   status: 'not-scheduled' | 'scheduled' | 'in-progress' | 'completed' | 'cancelled' | string;
   date: string | null;
   targetDate: string | null;
@@ -83,6 +107,26 @@ export function fetchLearnerCalendarEvents(kind: LearnerKind, id: string, option
   return calendarResource.read(`${kind}:${id}`);
 }
 
+/**
+ * The Curriculum-authored Review form behind one of the learner's calendar
+ * events -- the same {instance, template, sections, signatures} definition the
+ * coach's review endpoint returns, so both sides render one form.
+ *
+ * `instance: null` means this occurrence has no Review instance yet (not
+ * scheduled). Reading it never creates one.
+ */
+export function fetchLearnerEventReviewInstance(
+  kind: LearnerKind,
+  learnerId: string,
+  eventKey: string,
+  signal?: AbortSignal,
+): Promise<ReviewInstanceFormDefinition | { instance: null }> {
+  return request<ReviewInstanceFormDefinition | { instance: null }>(
+    `${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/review/`,
+    { signal, credentials: 'include' },
+  );
+}
+
 export function fetchLearnerMeetingArtifacts(kind: LearnerKind, learnerId: string, eventKey: string, signal?: AbortSignal): Promise<CoachMeetingArtifactsResponse> {
   return request<CoachMeetingArtifactsResponse>(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/artifacts/`, { signal, credentials: 'include' });
 }
@@ -108,11 +152,14 @@ export async function signLearnerProgressReview(kind: LearnerKind, learnerId: st
 export type BookableSessionType =
   | 'catch-up'
   | 'student-support'
-  // Monthly coaching and progress reviews also come from the programme cycle,
-  // scheduled coach-side; booking one here adds a meeting of that kind rather
-  // than filling a scheduled slot.
+  // Curriculum Review occurrences. These are not booked from scratch: the
+  // occurrence already exists on both calendars, and scheduling one fills in
+  // the date/time of that same occurrence. 'review' is the generic bucket
+  // every custom Review Type lands in, so a custom type schedules through the
+  // identical path -- there is no per-Review-type scheduling code.
   | 'mcr'
   | 'progress-review'
+  | 'review'
   // The three onboarding reviews, bookable while still Onboarding (they go to
   // the learner's case owner rather than a coach, who doesn't exist yet).
   | OnboardingReviewType;
