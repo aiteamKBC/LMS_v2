@@ -1448,7 +1448,7 @@ function GenericComponentBody({ component, onChange, setSetting, rulePoints }: C
       <Section title="Basics">
         <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_repeat(2,minmax(0,1fr))]">
           <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
-          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
+          <Field label="Expected OTJH"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for ${weekTypeLabel(component.type)} (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -1543,7 +1543,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
+          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the "Attendance" points rule for live sessions (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -1666,7 +1666,7 @@ function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBod
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
+          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for videos (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -1783,7 +1783,7 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
+          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for reading materials (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -1993,7 +1993,7 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
+          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-time-line mr-1 text-primary-500"></AppIcon>2 hours is the starting estimate for a PowerPoint component. It is not calculated from the uploaded file or slide count; adjust it to the learner's expected off-the-job learning time.</p>
@@ -2255,7 +2255,7 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
+          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for a passed quiz (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -2344,7 +2344,7 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints }: Compone
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
+          <Field label="Expected OTJH hours"><OtjhHoursMinutesInput value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for assignments (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -2827,6 +2827,67 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
 }
 
 const inputClass = 'w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2 text-[12px] focus:border-primary-300 focus:ring-2 focus:ring-primary-100 outline-none transition-shadow';
+
+/** Decimal hours split into whole hours and minutes, so an author can type "1h 30m" instead of doing the division themselves. */
+function hoursAndMinutesOf(value: number): { hours: number; minutes: number } {
+  if (!Number.isFinite(value) || value < 0) return { hours: 0, minutes: 0 };
+  const hours = Math.floor(value);
+  const minutes = Math.round((value - hours) * 60);
+  return minutes === 60 ? { hours: hours + 1, minutes: 0 } : { hours, minutes };
+}
+
+/** Expected OTJH, entered as separate hours/minutes fields but stored as the same decimal-hours number the rest of the app reads. */
+function OtjhHoursMinutesInput({ value, onChange }: { value: number; onChange: (value: number) => void }) {
+  const { hours, minutes } = hoursAndMinutesOf(value);
+  const [hoursDraft, setHoursDraft] = useState(String(hours));
+  const [minutesDraft, setMinutesDraft] = useState(String(minutes));
+  const [focused, setFocused] = useState<'hours' | 'minutes' | null>(null);
+
+  useEffect(() => {
+    if (focused !== 'hours') setHoursDraft(String(hours));
+    if (focused !== 'minutes') setMinutesDraft(String(minutes));
+  }, [focused, hours, minutes]);
+
+  const commit = (nextHours: string, nextMinutes: string) => {
+    const parsedHours = Number(nextHours);
+    const parsedMinutes = Number(nextMinutes);
+    const safeHours = nextHours.trim() === '' || !Number.isFinite(parsedHours) || parsedHours < 0 ? 0 : parsedHours;
+    const safeMinutes = nextMinutes.trim() === '' || !Number.isFinite(parsedMinutes) || parsedMinutes < 0 ? 0 : parsedMinutes;
+    onChange(safeHours + safeMinutes / 60);
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex flex-1 items-center gap-1">
+        <input
+          type="number"
+          min={0}
+          step={1}
+          value={focused === 'hours' ? hoursDraft : String(hours)}
+          onFocus={() => { setFocused('hours'); setHoursDraft(String(hours)); }}
+          onBlur={() => { setFocused(null); commit(hoursDraft, minutesDraft); }}
+          onChange={e => { setHoursDraft(e.target.value); commit(e.target.value, minutesDraft); }}
+          className={`${inputClass} tabular-nums`}
+        />
+        <span className="text-[11px] font-semibold text-foreground-400">h</span>
+      </div>
+      <div className="flex flex-1 items-center gap-1">
+        <input
+          type="number"
+          min={0}
+          max={59}
+          step={1}
+          value={focused === 'minutes' ? minutesDraft : String(minutes)}
+          onFocus={() => { setFocused('minutes'); setMinutesDraft(String(minutes)); }}
+          onBlur={() => { setFocused(null); commit(hoursDraft, minutesDraft); }}
+          onChange={e => { setMinutesDraft(e.target.value); commit(hoursDraft, e.target.value); }}
+          className={`${inputClass} tabular-nums`}
+        />
+        <span className="text-[11px] font-semibold text-foreground-400">m</span>
+      </div>
+    </div>
+  );
+}
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return (

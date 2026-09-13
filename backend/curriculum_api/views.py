@@ -22490,6 +22490,10 @@ def curriculum_module_detail(request, identifier):
     existing_authoring = authoring_module_exists(module_catalogue_id) if module_catalogue_id else None
     if existing_authoring:
         if request.method == 'DELETE':
+            # Opt-in per request, exactly as the programme, cohort and group
+            # deletes read it: a bare DELETE still archives.
+            if request_wants_permanent_delete(request):
+                return permanent_module_delete_response(existing_authoring)
             delete_module_authoring_structure(module_catalogue_id)
             log_curriculum_decision(
                 'module.archive', outcome='soft_deleted', entity_id=module_catalogue_id,
@@ -24178,6 +24182,212 @@ def permanent_group_delete_response(group_row):
         'id': group_id,
         'removed': removed,
         'message': 'Group was removed from the database. Module content was kept.',
+    })
+
+
+# ---------------------------------------------------------------------------
+# The module archive.
+#
+# A module DELETE has always been a soft delete: delete_module_authoring_structure
+# stamps the module row and every week, component, KSB mapping, completion rule
+# and advanced detail beneath it. Nothing ever read those rows back, though, so
+# an archived module was hidden from every list and reachable from none of them
+# -- the state the cohort and group archives above exist to end. These are the
+# same three endpoints, applied to modules.
+# ---------------------------------------------------------------------------
+
+MODULE_CHILD_AUTHORING_TABLES = (
+    AUTHORING_WEEKS_TABLE,
+    AUTHORING_COMPONENTS_TABLE,
+    AUTHORING_KSB_MAPPINGS_TABLE,
+    AUTHORING_COMPLETION_TABLE,
+    AUTHORING_ADVANCED_TABLE,
+)
+
+# Said on the way out, for the reason ARCHIVE_MODULE_REATTACH_NOTE is: archiving
+# a module sends the quizzes only it owned to the Quiz Archive, and that archive
+# is the Quiz Workspace's own state. A module restore cannot reach into it, so it
+# says so rather than leaving it to be discovered.
+ARCHIVE_MODULE_QUIZ_NOTE = (
+    'Quizzes archived with it stay in the Quiz Archive - restore them from the Quiz Workspace.'
+)
+
+
+def archived_module_rows():
+    """Every archived module row, most recent archive first.
+
+    ``curriculum_row_effectively_deleted`` rather than the cohort/group
+    ``curriculum_row_is_archived``: a module's ``status`` is authoring state
+    ('draft', 'published'), and a legacy row carrying status 'archived' is still
+    listed by the catalogue. Reading that as archived here would put one module
+    in both lists at once.
+    """
+    rows = [row for row in safe_authoring_module_rows() if curriculum_row_effectively_deleted(row)]
+    rows.sort(key=lambda row: format_created_at(row.get('deleted_at')), reverse=True)
+    return rows
+
+
+def archived_module_component_counts():
+    """Component rows per module, in one narrow read.
+
+    ``columns`` is not an optimisation here so much as the difference between an
+    answer and a timeout: curriculum.components is the largest table in the
+    schema and most of its bytes are ``settings_json``, which a count never looks
+    at. Every row is counted, deleted or not -- an archived module's components
+    are all soft-deleted with it, and the question this answers is how much
+    authoring is sitting inside.
+    """
+    counts = defaultdict(int)
+    try:
+        rows = authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, columns=['module_catalogue_id'])
+    except (Exception, AssertionError):
+        logger.debug('Unable to count components for the module archive.', exc_info=True)
+        return counts
+    for row in rows:
+        key = clean_str(row.get('module_catalogue_id'))
+        if key:
+            counts[key] += 1
+    return counts
+
+
+def archived_module_payload(row, component_counts):
+    """One archived module, with what a restore or a delete would move."""
+    catalogue_id = clean_str(row.get('module_catalogue_id'))
+    programme_id = clean_str(row.get('programme_id'))
+    return {
+        'id': catalogue_id,
+        'catalogueId': catalogue_id,
+        'title': clean_str(row.get('title')),
+        'programmeId': programme_id,
+        'programme': clean_str(row.get('programme_name')),
+        'cohortId': clean_str(row.get('cohort_id')),
+        'cohort': clean_str(row.get('cohort_name')),
+        'groupId': clean_str(row.get('group_id')),
+        'group': clean_str(row.get('group_name')),
+        'tutor': clean_str(row.get('tutor_name')),
+        'weeks': module_stored_week_count(row),
+        'sessions': parse_int(row.get('sessions_number'), 0),
+        'components': component_counts.get(catalogue_id, 0),
+        'status': 'archived',
+        # The catalogue is scoped by programme, so a module restored under an
+        # archived programme comes back invisible. The view disables its Restore
+        # on this rather than letting the endpoint refuse after the click.
+        'programmeArchived': bool(archived_parent_programme(programme_id)),
+        **archive_stamp_fields(row),
+    }
+
+
+@require_GET
+def curriculum_archived_modules(request):
+    """Archived modules, each with what a restore or a delete would move."""
+    with curriculum_read_scope():
+        component_counts = archived_module_component_counts()
+        results = [
+            archived_module_payload(row, component_counts)
+            for row in archived_module_rows()
+            if clean_str(row.get('module_catalogue_id'))
+        ]
+    return JsonResponse({'schema': CURRICULUM_SCHEMA, 'count': len(results), 'results': results})
+
+
+@csrf_exempt
+def curriculum_module_restore(request, identifier):
+    """Take a module, and everything archived under it, back out of the archive."""
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+
+    catalogue_id = resolve_stored_module_catalogue_id(clean_str(identifier))
+    module_row = authoring_module_exists(catalogue_id) if catalogue_id else None
+    if not module_row:
+        log_curriculum_decision('module.restore', outcome='rejected', reason='not-found', entity_id=identifier)
+        return json_error('Module not found.', status=404)
+    if not curriculum_row_effectively_deleted(module_row):
+        return json_error(
+            'Module is not archived.', status=409,
+            reason='module-not-archived', restored=False, id=catalogue_id,
+        )
+
+    programme_id = clean_str(module_row.get('programme_id'))
+    archived_programme = archived_parent_programme(programme_id)
+    if archived_programme:
+        name = clean_str(archived_programme.get('name')) or 'The programme'
+        return json_error(
+            f'{name} is archived, so this module has no programme to come back to. Restore the '
+            'programme instead - it brings back everything archived with it, this module included.',
+            status=409, reason='programme-archived', restored=False, id=catalogue_id,
+        )
+
+    with transaction.atomic():
+        # Matched on the marker this module's own archive stamped, so only that
+        # cascade comes back: a component deleted by hand beforehand stays
+        # deleted rather than being resurrected by an unrelated restore.
+        restored = {
+            table: len(restore_rows_via_parent(table, catalogue_id))
+            for table in MODULE_CHILD_AUTHORING_TABLES
+        }
+        update_rows(
+            AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [catalogue_id],
+            restore_soft_delete_payload(AUTHORING_MODULES_TABLE),
+            allow_null_columns=RESTORE_NULLABLE_COLUMNS,
+        )
+    invalidate_curriculum_cache()
+    log_curriculum_decision(
+        'module.restore', outcome='restored', entity_id=catalogue_id,
+        parent_id=clean_str(module_row.get('group_id')),
+        reason=','.join(f'{table}:{count}' for table, count in sorted(restored.items())),
+    )
+    return JsonResponse({
+        'restored': True,
+        'id': catalogue_id,
+        'details': {
+            'weeks': restored.get(AUTHORING_WEEKS_TABLE, 0),
+            'components': restored.get(AUTHORING_COMPONENTS_TABLE, 0),
+        },
+        'message': f'Module restored. {ARCHIVE_MODULE_QUIZ_NOTE}',
+    })
+
+
+def permanent_module_delete_response(module_row):
+    """HTTP outcome of a permanent module delete: the module and all its authoring."""
+    catalogue_id = clean_str(module_row.get('module_catalogue_id'))
+    if not curriculum_row_effectively_deleted(module_row):
+        return json_error(
+            'Archive the module before deleting it permanently.',
+            status=409, reason='module-not-archived', deleted=False, permanent=False, id=catalogue_id,
+        )
+
+    try:
+        with transaction.atomic():
+            # Children first: the module row is what the rest point at, and a
+            # database with the foreign keys in place refuses it the other way
+            # round.
+            removed = {
+                table: len(delete_rows(table, 'module_catalogue_id = %s', [catalogue_id]))
+                for table in MODULE_CHILD_AUTHORING_TABLES
+            }
+            removed[AUTHORING_MODULES_TABLE] = len(
+                delete_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [catalogue_id])
+            )
+    except (IntegrityError, DatabaseError) as exc:
+        logger.warning('Permanent delete of module %s was refused: %s', catalogue_id, exc)
+        return json_error(
+            'The database refused the permanent delete because other rows still reference this module.',
+            status=409, reason='module-delete-restricted', deleted=False, permanent=False,
+            id=catalogue_id, detail=clean_str(str(exc)),
+        )
+
+    invalidate_curriculum_cache()
+    log_curriculum_decision(
+        'module.delete', outcome='permanent', entity_id=catalogue_id,
+        parent_id=clean_str(module_row.get('group_id')),
+        reason=','.join(f'{table}:{count}' for table, count in sorted(removed.items())),
+    )
+    return JsonResponse({
+        'deleted': True,
+        'permanent': True,
+        'id': catalogue_id,
+        'removed': removed,
+        'message': 'Module and its authored weeks, components and mappings were removed from the database.',
     })
 
 

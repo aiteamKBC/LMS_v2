@@ -299,6 +299,8 @@ interface Programme {
    */
   practicalWindow: string;
   apprenticeshipWindow: string;
+  /** Earliest cohort start date across the programme, ISO 'YYYY-MM-DD'. Blank when no cohort has one. */
+  earliestCohortStartDate: string;
   cohorts: Cohort[];
   modules: Module[];
   ksbHeatmap: KsbHeatmapRow[];
@@ -426,6 +428,7 @@ const EMPTY_PROGRAMME: Programme = {
   duration: 'Live curriculum',
   practicalWindow: '',
   apprenticeshipWindow: '',
+  earliestCohortStartDate: '',
   cohorts: [],
   modules: [],
   ksbHeatmap: [],
@@ -1529,6 +1532,7 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       duration: deliveryWindow || 'Live curriculum',
       practicalWindow,
       apprenticeshipWindow,
+      earliestCohortStartDate: deliveryStart,
       cohorts,
       modules,
       ksbHeatmap,
@@ -4171,21 +4175,32 @@ export default function ProgrammeDetailPage() {
             <div className="flex flex-col gap-3 rounded-2xl border border-foreground-200/60 bg-background-50 p-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="inline-flex rounded-xl border border-background-200 bg-background-100 p-1">
                 {([
-                  { kind: 'live' as const, label: 'Live', icon: 'ri-broadcast-line', count: liveSessions.length },
-                  { kind: 'recorded' as const, label: 'Recorded', icon: 'ri-film-line', count: recordedSessions.length },
+                  // Icon names resolve through AppIcon's keyword table: anything it
+                  // cannot place falls back to a bare circle, and two bare circles
+                  // read as unticked radio buttons rather than as a chosen tab.
+                  { kind: 'live' as const, label: 'Live', icon: 'ri-live-line', count: liveSessions.length },
+                  { kind: 'recorded' as const, label: 'Recorded', icon: 'ri-play-circle-line', count: recordedSessions.length },
                 ]).map(option => (
                   <button
                     key={option.kind}
                     type="button"
                     onClick={() => setSessionKind(option.kind)}
                     aria-pressed={sessionKind === option.kind}
-                    className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[12px] font-bold transition-smooth ${
-                      sessionKind === option.kind ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:text-foreground-900'
+                    className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[12px] font-bold outline-offset-2 transition-smooth focus-visible:outline focus-visible:outline-2 focus-visible:outline-white ${
+                      sessionKind === option.kind
+                        // !text-white: the wrapper's global tab CSS (index.css)
+                        // sets color on every button inside it at higher
+                        // specificity than a plain Tailwind class, so the
+                        // selected pill needs !important to actually go white.
+                        ? 'bg-primary-600 !text-white shadow-sm'
+                        : 'text-foreground-500 hover:bg-background-200 hover:text-foreground-900'
                     }`}
                   >
                     <AppIcon className={`${option.icon} text-sm`}></AppIcon>
                     {option.label}
-                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${sessionKind === option.kind ? 'bg-white/20 text-white' : 'bg-foreground-100 text-foreground-500'}`}>
+                    {/* The chosen tab's count sits on purple, so it needs a solid
+                        white chip: white-on-translucent-white washes out at 10px. */}
+                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${sessionKind === option.kind ? 'bg-white text-primary-700' : 'bg-background-200 text-foreground-600'}`}>
                       {option.count}
                     </span>
                   </button>
@@ -4667,7 +4682,7 @@ export default function ProgrammeDetailPage() {
         )}
 
         {tab === 'reviews' && (
-          <ReviewsTab programmeId={PROGRAMME.id} programmeName={PROGRAMME.name} />
+          <ReviewsTab programmeId={PROGRAMME.id} programmeName={PROGRAMME.name} defaultStartDate={PROGRAMME.earliestCohortStartDate} />
         )}
       </div>
 
