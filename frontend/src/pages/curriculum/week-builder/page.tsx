@@ -1448,7 +1448,7 @@ function GenericComponentBody({ component, onChange, setSetting, rulePoints }: C
       <Section title="Basics">
         <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_repeat(2,minmax(0,1fr))]">
           <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
-          <Field label="Expected OTJH"><input type="number" step="0.5" min="0" value={component.expectedOtjh} onChange={e => onChange({ expectedOtjh: Number(e.target.value) || 0 })} className={`${inputClass} tabular-nums`} /></Field>
+          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for ${weekTypeLabel(component.type)} (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -1543,7 +1543,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><input type="number" step="0.5" min="0" value={component.expectedOtjh} onChange={e => onChange({ expectedOtjh: Number(e.target.value) || 0 })} className={`${inputClass} tabular-nums`} /></Field>
+          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the "Attendance" points rule for live sessions (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -1666,7 +1666,7 @@ function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBod
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><input type="number" step="0.5" min="0" value={component.expectedOtjh} onChange={e => onChange({ expectedOtjh: Number(e.target.value) || 0 })} className={`${inputClass} tabular-nums`} /></Field>
+          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for videos (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -1783,7 +1783,7 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><input type="number" step="0.5" min="0" value={component.expectedOtjh} onChange={e => onChange({ expectedOtjh: Number(e.target.value) || 0 })} className={`${inputClass} tabular-nums`} /></Field>
+          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for reading materials (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -1902,7 +1902,7 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><input type="number" step="0.5" min="0" value={component.expectedOtjh} onChange={e => onChange({ expectedOtjh: Number(e.target.value) || 0 })} className={`${inputClass} tabular-nums`} /></Field>
+          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for podcasts (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -1993,7 +1993,7 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><input type="number" step="0.5" min="0" value={component.expectedOtjh} onChange={e => onChange({ expectedOtjh: Number(e.target.value) || 0 })} className={`${inputClass} tabular-nums`} /></Field>
+          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-time-line mr-1 text-primary-500"></AppIcon>2 hours is the starting estimate for a PowerPoint component. It is not calculated from the uploaded file or slide count; adjust it to the learner's expected off-the-job learning time.</p>
@@ -2255,7 +2255,7 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><input type="number" step="0.5" min="0" value={component.expectedOtjh} onChange={e => onChange({ expectedOtjh: Number(e.target.value) || 0 })} className={`${inputClass} tabular-nums`} /></Field>
+          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for a passed quiz (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -2344,7 +2344,7 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints }: Compone
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Expected OTJH hours"><input type="number" step="0.5" min="0" value={component.expectedOtjh} onChange={e => onChange({ expectedOtjh: Number(e.target.value) || 0 })} className={`${inputClass} tabular-nums`} /></Field>
+          <DurationFields value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} />
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for assignments (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
@@ -2925,6 +2925,26 @@ function Field({ label, children, className = '' }: { label: string; children: R
       <span className="block text-[11px] font-semibold text-foreground-500 mb-1">{label}</span>
       {children}
     </label>
+  );
+}
+
+function DurationFields({ value, onChange, label = 'Expected OTJH' }: { value: number; onChange: (value: number) => void; label?: string }) {
+  const totalMinutes = Math.max(0, Math.round((Number(value) || 0) * 60));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const update = (nextHours: number, nextMinutes: number) => {
+    const safeHours = Number.isFinite(nextHours) ? Math.max(0, Math.floor(nextHours)) : 0;
+    const safeMinutes = Number.isFinite(nextMinutes) ? Math.min(59, Math.max(0, Math.floor(nextMinutes))) : 0;
+    onChange((safeHours * 60 + safeMinutes) / 60);
+  };
+  return (
+    <div>
+      <span className="block text-[11px] font-semibold text-foreground-500 mb-1">{label}</span>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="relative"><input type="number" min="0" step="1" value={hours} onChange={event => update(Number(event.target.value), minutes)} className={`${inputClass} pr-12 tabular-nums`} /><span className="pointer-events-none absolute right-3 top-2.5 text-[11px] font-semibold text-foreground-400">hours</span></div>
+        <div className="relative"><input type="number" min="0" max="59" step="5" value={minutes} onChange={event => update(hours, Number(event.target.value))} className={`${inputClass} pr-14 tabular-nums`} /><span className="pointer-events-none absolute right-3 top-2.5 text-[11px] font-semibold text-foreground-400">minutes</span></div>
+      </div>
+    </div>
   );
 }
 
