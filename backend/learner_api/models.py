@@ -280,6 +280,8 @@ class EnrolmentUser(models.Model):
     # apply_created_users_employer_id command.
     employer_id = models.IntegerField(db_column="Employer_id", null=True, blank=True)
     line_manager = models.TextField(db_column="Line_manager", null=True, blank=True)
+    learner_start_date = models.TextField(db_column="Learner_start_date", null=True, blank=True)
+    learner_end_date = models.TextField(db_column="Learner_end_date", null=True, blank=True)
     start_date = models.TextField(db_column="Start_date", null=True, blank=True)
     end_date = models.TextField(db_column="End_date", null=True, blank=True)
     practical_period_end_date = models.TextField(db_column="Practical_period_end_date", null=True, blank=True)

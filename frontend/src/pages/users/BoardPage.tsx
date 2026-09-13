@@ -10,6 +10,7 @@ import { fetchAgreement, issueAgreement, type Agreement } from '@/api/apprentice
 import { renderAgreementPdf, agreementFilename } from '@/lib/apprenticeshipAgreementPdf';
 import { fetchIlrDocument, issueIlrDocument, signIlrDocument, type IlrDocument } from '@/api/ilrDocument';
 import { SignaturePad } from './wizard/steps/SignaturePad';
+import { LearnerHeaderDates } from './components/LearnerHeaderDates';
 import { useAuth } from '@/hooks/useAuth';
 import { renderIlrPdf, ilrFilename } from '@/lib/ilrDocumentPdf';
 import {
@@ -104,32 +105,20 @@ function initials(name: string) {
   return name.split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 }
 
-/** One labelled fact in the learner header's meta row. */
+/** A labelled fact in the learner summary. */
 function MetaItem({ icon, label, value }: { icon: string; label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <p className="text-[10px] uppercase tracking-wider text-white/50 mb-0.5">{label}</p>
-      <p className="text-[13px] text-white/90 font-medium flex items-center gap-1.5 min-w-0">
-        <i className={`${icon} text-white/40 shrink-0`} />
-        <span className="truncate" title={value}>{value}</span>
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</p>
+      <p className="flex items-start gap-2 text-sm font-medium text-slate-800">
+        <i className={`${icon} mt-0.5 shrink-0 text-violet-600`} aria-hidden="true" />
+        <span className="min-w-0 break-words">{value}</span>
       </p>
     </div>
   );
 }
 
-/**
- * The learner board's header.
- *
- * Deliberately not the shared <Hero>: that takes one free-text subtitle, so
- * owner / programme / employer had to be concatenated into a single string that
- * wrapped badly and gave no visual separation between a label and its value.
- *
- * Instead the identity block gets its own row (name + reference always on one
- * line at the top), the facts below it are a responsive grid of labelled cells,
- * and the controls sit in a bottom row that can't compress the name. Values
- * truncate with a `title` tooltip rather than wrapping, so the header height is
- * stable no matter how long an employer or programme name is.
- */
+/** Learner identity, key details, and enrolment actions. */
 function LearnerHeader({
   name,
   reference,
@@ -137,76 +126,56 @@ function LearnerHeader({
   programme,
   employer,
   onboardingStatus,
+  dates,
   status,
   actions,
 }: {
   name: string;
   reference: string;
-  /** The Owner cell. A control rather than a string: the coach is editable here. */
   ownerSlot: ReactNode;
   programme: string;
   employer?: string;
   onboardingStatus: string;
+  dates: ReactNode;
   status: ReactNode;
   actions: ReactNode;
 }) {
-  // Only the facts that exist — an "Employer: —" cell on every learner without
-  // one is noise. Owner is no longer in this list: it is an editable control
-  // (the coach picker), so it renders as `ownerSlot` in the same grid instead of
-  // as a read-only MetaItem.
-  const meta = [
-    ...(programme ? [{ icon: 'ri-book-open-line', label: 'Programme', value: programme }] : []),
-    ...(employer ? [{ icon: 'ri-briefcase-line', label: 'Employer', value: employer }] : []),
-  ];
-
   return (
-    <div
-      className="relative rounded-2xl overflow-hidden"
-      style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 55%, oklch(var(--primary-800)) 100%)' }}
-    >
-      <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
-      {/* Soft highlight behind the avatar, purely decorative. */}
-      <div className="absolute -top-16 -left-10 w-56 h-56 rounded-full bg-white/[0.06] blur-2xl pointer-events-none" />
-
-      <div className="relative p-5 sm:p-6 space-y-5">
-        {/* Identity */}
-        <div className="flex items-center gap-4 min-w-0">
-          <span className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm border border-white/20 flex items-center justify-center shrink-0 text-[15px] font-bold text-white">
-            {initials(name) || <i className="ri-user-3-line text-xl" />}
-          </span>
-          <div className="min-w-0">
-            <h2 className="text-[19px] sm:text-[21px] font-heading font-bold text-white leading-tight truncate" title={name}>
-              {name}
-            </h2>
-            <div className="flex items-center gap-2 mt-1 flex-wrap">
-              {reference && (
-                <span className="text-[11px] font-medium text-white/70 bg-white/10 border border-white/15 rounded-md px-2 py-0.5 truncate max-w-[260px]" title={reference}>
-                  {reference}
-                </span>
-              )}
-              {onboardingStatus && (
-                <span className="text-[11px] font-medium text-white/70 bg-white/10 border border-white/15 rounded-md px-2 py-0.5">
-                  Onboarding: {onboardingStatus}
-                </span>
-              )}
+    <section aria-label="Learner overview" className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="h-1 bg-violet-600" />
+      <div className="p-5 sm:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex min-w-0 items-center gap-4">
+            <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-violet-100 text-lg font-bold text-violet-800 ring-1 ring-inset ring-violet-200">
+              {initials(name) || <i className="ri-user-3-line text-xl" aria-hidden="true" />}
+            </span>
+            <div className="min-w-0">
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-widest text-slate-500">Enrolment overview</p>
+              <h2 className="break-words text-2xl font-heading font-bold leading-tight tracking-tight text-slate-900">{name}</h2>
+              {reference && <p className="mt-1 break-all text-xs text-slate-500">{reference}</p>}
             </div>
           </div>
+          {onboardingStatus && (
+            <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-800">
+              <i className="ri-road-map-line shrink-0" aria-hidden="true" />
+              <span>Onboarding: {onboardingStatus}</span>
+            </span>
+          )}
         </div>
-
-        {/* Facts. Owner leads, and is a control rather than text. */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3 pt-4 border-t border-white/10">
+        <div className={`mt-6 grid grid-cols-1 gap-5 border-t border-slate-100 pt-5 ${employer ? 'sm:grid-cols-2 lg:grid-cols-3' : 'sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]'}`}>
           {ownerSlot}
-          {meta.map((m) => <MetaItem key={m.label} {...m} />)}
-        </div>
-
-        {/* Controls — their own row, so a long name never squeezes them and they
-            never squeeze the name. */}
-        <div className="flex items-end justify-between gap-4 flex-wrap pt-4 border-t border-white/10">
-          {status}
-          <div className="flex items-center gap-2 flex-wrap">{actions}</div>
+          {programme && <MetaItem icon="ri-book-open-line" label="Programme" value={programme} />}
+          {employer && <MetaItem icon="ri-briefcase-line" label="Employer" value={employer} />}
         </div>
       </div>
-    </div>
+      <div className="flex flex-wrap items-end justify-between gap-4 border-t border-slate-200 bg-slate-50 px-5 py-4 sm:px-6">
+        <div className="flex flex-wrap items-start gap-4">
+          {status}
+          {dates}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">{actions}</div>
+      </div>
+    </section>
   );
 }
 
@@ -312,13 +281,13 @@ function HeroCoach({ learnerId, fallbackOwner }: { learnerId: string; fallbackOw
 
   return (
     <div className="min-w-0">
-      <p className="text-[10px] uppercase tracking-wider text-white/50 mb-0.5">Owner</p>
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Owner</p>
       <div className="flex items-center gap-2 min-w-0">
         <select
           value={val}
           onChange={(e) => setVal(e.target.value)}
           aria-label="Coach"
-          className="min-w-0 flex-1 px-2.5 py-1.5 text-[13px] font-medium bg-white/15 backdrop-blur-sm border border-white/25 rounded-lg text-white outline-none cursor-pointer hover:bg-white/20 focus:border-white/50 transition-smooth max-w-[220px] [&>option]:text-foreground-900 [&>option]:bg-background-50"
+          className="min-w-0 flex-1 px-2.5 py-1.5 text-[13px] font-medium bg-white border border-slate-300 rounded-lg text-slate-800 outline-none cursor-pointer hover:border-violet-400 focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 transition-smooth max-w-[220px] [&>option]:text-foreground-900 [&>option]:bg-background-50"
         >
           <option value="">— Unassigned —</option>
           {unlisted && saved && <option value={saved}>{savedName || saved}</option>}
@@ -331,13 +300,13 @@ function HeroCoach({ learnerId, fallbackOwner }: { learnerId: string; fallbackOw
           <button
             onClick={save}
             disabled={saving}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white text-primary-700 rounded-lg text-[12px] font-semibold hover:bg-white/90 transition-smooth cursor-pointer disabled:opacity-60 shrink-0"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-violet-100 text-violet-800 rounded-lg text-[12px] font-semibold hover:bg-violet-200 transition-smooth cursor-pointer disabled:opacity-60 shrink-0"
           >
             {saving ? <i className="ri-loader-4-line animate-spin" /> : <><i className="ri-save-line" />Save</>}
           </button>
         )}
       </div>
-      {err && <span className="block text-[11px] text-red-200 mt-1"><i className="ri-error-warning-line mr-1" />{err}</span>}
+      {err && <span className="block text-[11px] text-red-700 mt-1"><i className="ri-error-warning-line mr-1" />{err}</span>}
     </div>
   );
 }
@@ -346,8 +315,7 @@ function HeroCoach({ learnerId, fallbackOwner }: { learnerId: string; fallbackOw
  * Programme status, set from the page header.
  *
  * Replaced the separate "Enrolled learners" delivery list, which re-listed the
- * same learners this page already covers. Styled for the header's dark gradient
- * rather than with the standard light `inputClass`. The pick is held locally
+ * same learners this page already covers. The pick is held locally
  * until Save, so a mis-click never writes to the learner's record.
  */
 function HeroProgrammeStatus({ learnerId, initial }: { learnerId: string; initial: string }) {
@@ -377,13 +345,13 @@ function HeroProgrammeStatus({ learnerId, initial }: { learnerId: string; initia
 
   return (
     <div className="flex flex-col items-start gap-1.5">
-      <span className="text-[10px] uppercase tracking-wider text-white/60">Programme status</span>
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Programme status</span>
       <div className="flex items-center gap-2">
         <select
           value={val}
           onChange={(e) => setVal(e.target.value)}
           aria-label="Programme status"
-          className="px-3 py-2 text-[13px] font-medium bg-white/15 backdrop-blur-sm border border-white/25 rounded-lg text-white outline-none cursor-pointer hover:bg-white/20 focus:border-white/50 transition-smooth max-w-[200px] [&>option]:text-foreground-900 [&>option]:bg-background-50"
+          className="px-3 py-2 text-[13px] font-medium bg-white border border-slate-300 rounded-lg text-slate-800 outline-none cursor-pointer hover:border-violet-400 focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 transition-smooth max-w-[200px] [&>option]:text-foreground-900 [&>option]:bg-background-50"
         >
           <option value="">— Set status —</option>
           {PROGRAMME_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -392,13 +360,13 @@ function HeroProgrammeStatus({ learnerId, initial }: { learnerId: string; initia
           <button
             onClick={save}
             disabled={saving}
-            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white text-primary-700 rounded-lg text-[12px] font-semibold hover:bg-white/90 transition-smooth cursor-pointer disabled:opacity-60 shrink-0"
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-violet-100 text-violet-800 rounded-lg text-[12px] font-semibold hover:bg-violet-200 transition-smooth cursor-pointer disabled:opacity-60 shrink-0"
           >
             {saving ? <><i className="ri-loader-4-line animate-spin" />Saving…</> : <><i className="ri-save-line" />Save</>}
           </button>
         )}
       </div>
-      {err && <span className="text-[11px] text-red-200"><i className="ri-error-warning-line mr-1" />{err}</span>}
+      {err && <span className="text-[11px] text-red-700"><i className="ri-error-warning-line mr-1" />{err}</span>}
     </div>
   );
 }
@@ -436,7 +404,7 @@ function FinishEnrolment({ learnerId, status, onFinished }: { learnerId: string;
 
   if (done) {
     return (
-      <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/20 border border-emerald-300/40 text-[12px] font-semibold text-white">
+      <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-[12px] font-semibold text-emerald-800">
         <i className="ri-check-double-line" />Enrolment complete
       </span>
     );
@@ -449,14 +417,14 @@ function FinishEnrolment({ learnerId, status, onFinished }: { learnerId: string;
           <button
             onClick={run}
             disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3 py-2.5 bg-emerald-500 text-white rounded-xl text-[12px] font-semibold hover:bg-emerald-600 transition-smooth cursor-pointer disabled:opacity-60 shadow-lg shadow-black/10"
+            className="inline-flex items-center gap-1.5 px-3 py-2.5 bg-violet-700 text-white rounded-xl text-[12px] font-semibold hover:bg-violet-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 transition-smooth cursor-pointer disabled:opacity-60 shadow-sm"
           >
             {busy ? <><i className="ri-loader-4-line animate-spin" />Finishing…</> : <><i className="ri-check-line" />Confirm</>}
           </button>
           <button
             onClick={() => { setConfirming(false); setErr(null); }}
             disabled={busy}
-            className="px-3 py-2.5 rounded-xl text-[12px] font-semibold text-white/80 hover:text-white hover:bg-white/10 transition-smooth cursor-pointer disabled:opacity-60"
+            className="px-3 py-2.5 rounded-xl text-[12px] font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-200 transition-smooth cursor-pointer disabled:opacity-60"
           >
             Cancel
           </button>
@@ -465,13 +433,13 @@ function FinishEnrolment({ learnerId, status, onFinished }: { learnerId: string;
         <button
           onClick={() => setConfirming(true)}
           title="Check whether this learner is now eligible for automatic activation"
-          className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-emerald-500 text-white rounded-xl text-[13px] font-semibold hover:bg-emerald-600 transition-smooth cursor-pointer shadow-lg shadow-black/10"
+          className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-violet-700 text-white rounded-xl text-[13px] font-semibold hover:bg-violet-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 transition-smooth cursor-pointer shadow-sm"
         >
           <i className="ri-refresh-line" />Check enrolment status
         </button>
       )}
-      {confirming && !err && <span className="text-[11px] text-white/70 max-w-[220px]">Activation happens automatically after all documents are signed and the start date arrives.</span>}
-      {err && <span className="text-[11px] text-red-200 max-w-[220px]"><i className="ri-error-warning-line mr-1" />{err}</span>}
+      {confirming && !err && <span className="text-[11px] text-slate-600 max-w-[220px]">Activation happens automatically after all documents are signed and the start date arrives.</span>}
+      {err && <span className="text-[11px] text-red-700 max-w-[220px]"><i className="ri-error-warning-line mr-1" />{err}</span>}
     </div>
   );
 }
@@ -1362,7 +1330,7 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
     if (deleting) return;
     const ok = window.confirm(
       `Delete ${board.user.name}'s user account?\n\n` +
-      'This permanently removes the enrolment record and sign-in access. This action cannot be undone.',
+      'This permanently removes the enrolment record, login account and sign-in access, and the linked learner profile with its learning plan and progress. This action cannot be undone.',
     );
     if (!ok) return;
     setDeleting(true);
@@ -1401,13 +1369,6 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
   return (
     <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Enrolment Details" pageSubtitle={board.user.name} userName="Enrolment Officer" userRole="Enrolment Officer">
       <div className="p-6 max-w-5xl mx-auto">
-        {/* Learner header.
-            Purpose-built rather than the shared <Hero>: that one takes a single
-            free-text subtitle, which forced owner / programme / employer into one
-            run-on string. In a narrow column it wrapped to four lines and the
-            facts ran together with no way to tell a label from a value. Here they
-            are discrete labelled cells that reflow instead of wrapping mid-fact,
-            and the actions get their own row so they never squeeze the name. */}
         <div className="animate-fade-in-up mb-6">
           <LearnerHeader
             name={board.user.name}
@@ -1416,10 +1377,11 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
             programme={board.programme.name}
             employer={board.user.employer}
             onboardingStatus={board.programme.onboardingStatus}
+            dates={<LearnerHeaderDates learnerId={userId} startDate={board.programme.learnerStartDate} endDate={board.programme.learnerEndDate} />}
             status={<HeroProgrammeStatus learnerId={userId} initial={board.programme.status || ''} />}
             actions={
               <>
-                <button onClick={showWizard} className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white/15 backdrop-blur-sm border border-white/25 text-white rounded-lg text-[13px] font-semibold hover:bg-white/25 transition-smooth cursor-pointer">
+                <button onClick={showWizard} className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-white border border-slate-300 text-slate-700 rounded-xl text-[13px] font-semibold hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 transition-smooth cursor-pointer">
                   <i className="ri-magic-line" />Show Wizard
                 </button>
                 <FinishEnrolment learnerId={userId} status={board.programme.status || ''} onFinished={onReload} />
