@@ -47,3 +47,34 @@ class ImportedReviewSerialisationTests(SimpleTestCase):
         self.assertEqual(result["status"], "completed")
         self.assertTrue(result["detailsAvailable"])
         self.assertEqual(result["sections"][0]["name"], "Summary")
+
+    def test_serializer_falls_back_to_sections_embedded_in_review_data(self):
+        row = {
+            "id": 51,
+            "aptem_review_id": "A-51",
+            "review_name": "Progress Review",
+            "review_type": "Progress Review",
+            "reviewer_name": "Coach One",
+            "learner_name": "Learner One",
+            "planned_scheduled_date": None,
+            "completed_date": None,
+            "status": "In Progress",
+            "extraction_status": "complete",
+            "review_data": {
+                "sections": [{
+                    "section_name": "Progress Checks\nIncomplete",
+                    "fields": [{"label": "Attendance", "value": "No"}],
+                    "raw_text": "Attendance\nNo",
+                }, {
+                    "section_name": "Learner Information",
+                    "fields": [{"label": "Manager:", "value": "Manager One"}],
+                }],
+            },
+        }
+
+        result = _serialize_review(row, {})
+
+        self.assertTrue(result["detailsAvailable"])
+        self.assertEqual(result["sections"][0]["name"], "Progress Checks\nIncomplete")
+        self.assertEqual(result["sections"][0]["fields"][0]["value"], "No")
+        self.assertEqual(result["managerName"], "Manager One")
