@@ -1650,6 +1650,11 @@ export function ModuleSessionPreview({
     monthGroups.push({ key, label: monthLabelOf(key), entries: [entry] });
   });
 
+  // Only a holiday that actually blocked a session earns a spot here -- one
+  // whose window merely overlaps the calendar month but caught no session
+  // (a break either side of the delivery day) is not something the reader
+  // needs to act on, so it stays out of the list entirely.
+  const clashDates = new Set(plan.sessions.flatMap(session => session.skippedHolidays || []));
   const holidaysForMonth = (key: string) => {
     const [yearText, monthText] = key.split('-');
     const year = Number(yearText);
@@ -1660,7 +1665,12 @@ export function ModuleSessionPreview({
     return holidays.filter(holiday => {
       const start = new Date(holiday.startDate);
       const end = new Date(holiday.endDate || holiday.startDate);
-      return !Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime()) && start <= monthEnd && end >= monthStart;
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
+      if (start > monthEnd || end < monthStart) return false;
+      return Array.from(clashDates).some(date => {
+        const clash = new Date(date);
+        return !Number.isNaN(clash.getTime()) && clash >= start && clash <= end;
+      });
     });
   };
 

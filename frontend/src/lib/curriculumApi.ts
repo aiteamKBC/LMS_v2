@@ -3358,6 +3358,30 @@ export interface CurriculumArchivedGroup extends CurriculumArchiveStamp {
   cohortArchived: boolean;
 }
 
+export interface CurriculumArchivedModule extends CurriculumArchiveStamp {
+  id: string;
+  catalogueId: string;
+  title: string;
+  programmeId: string;
+  programme: string;
+  cohortId: string;
+  cohort: string;
+  groupId: string;
+  group: string;
+  tutor: string;
+  /** What a restore brings back, and a permanent delete destroys. */
+  weeks: number;
+  sessions: number;
+  components: number;
+  status: 'archived';
+  /**
+   * Its programme is archived too, so the module has nothing to come back to:
+   * every catalogue list is scoped by programme, and a module restored under an
+   * archived one returns invisible. Restore the programme instead.
+   */
+  programmeArchived: boolean;
+}
+
 /**
  * `revalidate` on both reads below: the archive is opened in order to act on it,
  * and the very next thing the reader does is restore or delete something, so a
@@ -3371,6 +3395,10 @@ export function fetchArchivedCurriculumCohorts(signal?: AbortSignal): Promise<Cu
 
 export function fetchArchivedCurriculumGroups(signal?: AbortSignal): Promise<CurriculumArchivedGroup[]> {
   return fetchCollection<CurriculumArchivedGroup>('/curriculum/groups/archived/', { signal, revalidate: true });
+}
+
+export function fetchArchivedCurriculumModules(signal?: AbortSignal): Promise<CurriculumArchivedModule[]> {
+  return fetchCollection<CurriculumArchivedModule>('/curriculum/modules/archived/', { signal, revalidate: true });
 }
 
 export type CurriculumRestoreResult = {
@@ -3390,6 +3418,19 @@ export type CurriculumRestoreResult = {
  */
 export function restoreCurriculumCohort(id: string) {
   return postJson<CurriculumRestoreResult>(`/curriculum/cohorts/${encodeURIComponent(id)}/restore/`, {});
+}
+
+/**
+ * Brings back the weeks, components and KSB mappings archived with the module --
+ * matched on the marker its own archive stamped, so a component deleted by hand
+ * beforehand stays deleted. Refused with 409 while its programme is archived.
+ *
+ * Quizzes are the one thing it cannot return: archiving a module sends the
+ * quizzes only it owned to the Quiz Archive, which is the Quiz Workspace's own
+ * state. The response says so in `message`.
+ */
+export function restoreCurriculumModule(id: string) {
+  return postJson<CurriculumRestoreResult>(`/curriculum/modules/${encodeURIComponent(id)}/restore/`, {});
 }
 
 export function restoreCurriculumGroup(id: string) {
@@ -3417,6 +3458,15 @@ export function permanentlyDeleteCurriculumCohort(id: string) {
 
 export function permanentlyDeleteCurriculumGroup(id: string) {
   return deleteJson<CurriculumPermanentDeleteResult>(`/curriculum/groups/${encodeURIComponent(id)}/?permanent=true`);
+}
+
+/**
+ * Unlike the cohort and group deletes above, this one does destroy authoring:
+ * the module row and every week, component, KSB mapping, completion rule and
+ * advanced detail under it. There is nothing left to restore afterwards.
+ */
+export function permanentlyDeleteCurriculumModule(id: string) {
+  return deleteJson<CurriculumPermanentDeleteResult>(`/curriculum/modules/${encodeURIComponent(id)}/?permanent=true`);
 }
 
 export function fetchFreeProgrammeModules(programmeId: string, signal?: AbortSignal): Promise<FreeProgrammeModule[]> {
@@ -3634,7 +3684,8 @@ export type ReviewFieldType =
   | 'phone'
   | 'postcode_address'
   | 'title_description'
-  | 'text_multiline';
+  | 'text_multiline'
+  | 'action_button';
 
 export const REVIEW_FIELD_TYPE_LABELS: Record<ReviewFieldType, string> = {
   text: 'Text',
@@ -3648,6 +3699,7 @@ export const REVIEW_FIELD_TYPE_LABELS: Record<ReviewFieldType, string> = {
   postcode_address: 'Post code and address',
   title_description: 'Title & description',
   text_multiline: 'Text (multiline)',
+  action_button: 'Action button',
 };
 
 export const REVIEW_FIELD_TYPES: ReviewFieldType[] = Object.keys(REVIEW_FIELD_TYPE_LABELS) as ReviewFieldType[];
@@ -3656,7 +3708,7 @@ export const REVIEW_FIELD_TYPES: ReviewFieldType[] = Object.keys(REVIEW_FIELD_TY
 export const CONDITIONAL_FIELD_TYPE: ReviewFieldType = 'boolean_case_block';
 
 /** Field types with no learner-entered answer -- Required/Optional is not shown for these. */
-export const DISPLAY_ONLY_FIELD_TYPES: ReviewFieldType[] = ['title_description'];
+export const DISPLAY_ONLY_FIELD_TYPES: ReviewFieldType[] = ['title_description', 'action_button'];
 
 export type ReviewParticipantRole = 'advisor' | 'employer' | 'participant' | 'referrer';
 
@@ -3746,6 +3798,8 @@ export interface ReviewSummary {
   recurrence: { interval: number; unit: ReviewRecurrenceUnit };
   /** The date the first occurrence is calculated from -- see the Review Schedule below. */
   scheduleAnchorDate: string;
+  /** How many times this review recurs before it stops; null/undefined means unlimited. */
+  occurrenceCount: number | null;
   applicableStatuses: string[];
   fieldCount: number;
   createdAt: string;
@@ -3756,6 +3810,10 @@ export interface ReviewDetail extends ReviewSummary {
   signatures: ReviewRoleFlags;
   visibleTo: ReviewRoleFlags;
   recordTimeSpent: boolean;
+  /** Hours one occurrence of this review is expected to take. */
+  expectedOtjh: number;
+  /** Whether completing an occurrence adds expectedOtjh to the learner's total OTJH. */
+  countsTowardsOtjh: boolean;
   allowEditingPriorDays: number;
   notifications: ReviewNotificationFlags;
   incompleteMarker: string;
@@ -3773,10 +3831,14 @@ export interface CreateReviewInput {
   recurrence: { interval: number; unit: ReviewRecurrenceUnit };
   /** Optional -- defaults to today on the backend when omitted. */
   scheduleAnchorDate?: string;
+  /** Optional -- omit or leave null for a review that recurs indefinitely. */
+  occurrenceCount?: number | null;
   applicableStatuses: string[];
   signatures: ReviewRoleFlags;
   visibleTo: ReviewRoleFlags;
   recordTimeSpent: boolean;
+  expectedOtjh: number;
+  countsTowardsOtjh: boolean;
   allowEditingPriorDays: number;
   notifications: ReviewNotificationFlags;
   incompleteMarker: string;
