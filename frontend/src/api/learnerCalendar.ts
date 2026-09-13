@@ -2,6 +2,7 @@ import { createCachedResource } from './cachedRequest';
 import { readLearnerJson, invalidateLearnerReads, subscribeLearnerReadInvalidation } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
 import type { CoachMeetingArtifactsResponse } from '@/pages/coach/shared/calendarEvents';
+import type { ImportedReview } from '@/api/reviewHistory';
 
 const BASE = '/learner_api/calendar';
 const calendarResource = createCachedResource<LearnerCalendarResponse>('learner-calendar', key =>
@@ -39,6 +40,8 @@ export interface LearnerCalendarEvent {
   cohort?: string;
   group?: string;
   module?: string;
+  /** Present when this event came from Learner.reviews (Aptem import). */
+  importedReview?: ImportedReview;
 }
 
 export interface LearnerCalendarResponse {
@@ -148,6 +151,8 @@ export function fetchOnboardingReviews(kind: LearnerKind, id: string): Promise<O
 
 export interface BookSessionInput {
   assignmentMonth?: string;
+  /** Imported Aptem review row to mark scheduled after an MCR booking. */
+  reviewId?: string;
   sessionType: BookableSessionType;
   /** Required when booking a generated MCM/Progress Review slot. */
   eventKey?: string;
@@ -197,7 +202,7 @@ export async function bookLearnerCalendarSession(
 export type RescheduleSessionInput = Pick<
   BookSessionInput,
   'scheduledDate' | 'scheduledTime' | 'durationMinutes' | 'timezoneOffsetMinutes'
-> & { eventKey: string };
+> & { eventKey: string; reviewId?: string };
 
 /** Move an existing booking; the backend updates the same Graph/Teams event. */
 export async function rescheduleLearnerCalendarSession(

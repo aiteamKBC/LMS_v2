@@ -150,13 +150,22 @@ export function useFreshUserRedirect(programmeStatus: string | undefined, enable
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const isFresh = enabled && isFreshStatus(programmeStatus);
+  // Matched as a prefix, not an exact string. A signed-in learner is always at
+  // the bare /workspace/learner, but somebody who reaches their own record by
+  // an explicit address — a staff member or administrator who is also a
+  // learner, opened from the workspace switcher — is at
+  // /workspace/learner/commercial/513. An exact match redirected THAT to the
+  // bare route, which strips the id and resolves the page from the signed-in
+  // SESSION instead — landing them on a demo or remembered learner rather than
+  // the account they actually opened.
+  const alreadyThere = pathname === FRESH_ROUTE || pathname.startsWith(`${FRESH_ROUTE}/`);
 
   useEffect(() => {
     // Never redirect away from the destination itself, or it could never render.
-    if (isFresh && pathname !== FRESH_ROUTE) {
+    if (isFresh && !alreadyThere) {
       navigate(FRESH_ROUTE, { replace: true });
     }
-  }, [isFresh, pathname, navigate]);
+  }, [isFresh, alreadyThere, navigate]);
 
   return isFresh;
 }

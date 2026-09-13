@@ -273,6 +273,8 @@ export interface EnrolmentBoard {
     name: string;
     cohort: string;
     status: ProgrammeStatus;
+    learnerStartDate?: string;
+    learnerEndDate?: string;
     startDate: string;
     endDate: string;
     enrolledAt: string;

@@ -82,7 +82,6 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
       {!booked.length && <p className="text-sm text-slate-500">No booked MCM falls between {minDate} and {maxDate}.</p>}
       {selected && <div className="rounded-xl bg-blue-50 p-4 text-sm"><p>Linked meeting: {selected.scheduledDate} at {selected.scheduledTime} with {selected.coachName}.</p>{selected.invited === false && <p className="mt-2 text-amber-800">The meeting is saved, but the calendar invitation has not been sent. Contact your coach.</p>}</div>}
       {selected && <div className="space-y-3">
-        {selected.meetingLink && /^https:\/\//i.test(selected.meetingLink) && <a href={selected.meetingLink} target="_blank" rel="noreferrer" className="inline-flex rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white">Join MCM</a>}
         <p className="text-sm leading-6 text-slate-600">Recording and transcription are enabled automatically using the live-session settings. The recording, transcript and attendance appear here once Teams has processed them after the meeting.</p>
         <CoachMeetingArtifactsPanel event={selected} fetchArtifacts={loadArtifacts} contentUrl={contentUrl} showAttendance />
       </div>}

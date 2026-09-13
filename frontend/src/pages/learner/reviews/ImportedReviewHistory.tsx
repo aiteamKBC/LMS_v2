@@ -162,7 +162,7 @@ export function ImportedReviewHistory({ kind, learnerId, category, hideHeader = 
     });
   }, [month, reviews, search, status, year]);
   const selected = filtered.find((review) => review.id === selectedId) || null;
-  const title = category === 'monthly-coaching' ? 'Imported coaching history' : 'Imported progress review history';
+  const title = category === 'monthly-coaching' ? 'Imported coaching history' : category === 'reviews' ? 'Imported review history' : 'Imported progress review history';
 
   useEffect(() => {
     if (selectedId && !filtered.some((review) => review.id === selectedId)) {
@@ -194,7 +194,7 @@ export function ImportedReviewHistory({ kind, learnerId, category, hideHeader = 
       {loading ? <div className="p-5"><RowsSkeleton rows={4} /></div> : error ? (
         <div className="m-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}</div>
       ) : reviews.length === 0 ? (
-        <div className="p-5 text-center text-sm text-foreground-500">No imported {category === 'monthly-coaching' ? 'coaching meetings' : 'progress reviews'} were found for this learner.</div>
+        <div className="p-5 text-center text-sm text-foreground-500">No imported {category === 'monthly-coaching' ? 'coaching meetings' : category === 'reviews' ? 'reviews' : 'progress reviews'} were found for this learner.</div>
       ) : (
         <>
           <div className="grid gap-2 border-b border-background-200 bg-background-100/45 p-4 sm:grid-cols-2 lg:grid-cols-4">

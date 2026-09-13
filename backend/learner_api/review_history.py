@@ -11,11 +11,18 @@ from login.permissions import learner_self_or_staff
 
 from .learner_detail import SOURCE_MODELS
 from .mappers import _s
+from .student_activity_access import student_activity_available
 
 
 REVIEW_TYPES = {
-    "monthly-coaching": ("Monthly Coaching Meeting",),
+    # Aptem exports have used all three labels over time; they represent the
+    # same MCM record and must be presented together in the learner workspace.
+    "monthly-coaching": ("Monthly Coaching Meeting", "Monthly Coaching", "MCM"),
     "progress-review": ("Progress Review", "Progress Review (+ Skills Radar)"),
+    # The learner Reviews workspace includes every imported review that is
+    # not a Monthly Coaching Meeting. The query intentionally does not
+    # enumerate types because Aptem can add new review templates over time.
+    "reviews": None,
 }
 
 
@@ -24,7 +31,18 @@ def _error(message, status):
 
 
 def _normalise_status(value):
-    return _s(value).strip().lower().replace(" ", "-") or "unknown"
+    normalised = _s(value).strip().lower().replace(" ", "-").replace("_", "-")
+    # Aptem has emitted both workflow wording (Finished/Complete/Planned) and
+    # the platform status wording over different exports. Keep one vocabulary
+    # for the Planned/Finished tabs in the learner UI.
+    return {
+        "finished": "completed",
+        "complete": "completed",
+        "planned": "not-scheduled",
+        "not-booked": "not-scheduled",
+        "inprogress": "in-progress",
+        "awaitingsignature": "awaiting-signature",
+    }.get(normalised, normalised) or "unknown"
 
 
 def _json_value(value, expected_type, fallback):
@@ -106,17 +124,34 @@ def _learner_profile_id(cursor, source, kind):
 
 
 def _review_rows(cursor, learner_id, review_types):
-    cursor.execute(
-        '''
+    select_sql = '''
         SELECT id, aptem_review_id, review_name, review_type, reviewer_name,
+               learner_name,
                planned_scheduled_date, completed_date, status, review_data,
                extraction_status, last_error
         FROM "Learner".reviews
+    '''
+    if review_types is None:
+        # MCM has its own workspace. Keep every other imported template in
+        # Reviews, including templates introduced after this code ships.
+        excluded = [value.casefold() for value in REVIEW_TYPES["monthly-coaching"]]
+        cursor.execute(
+            select_sql + '''
+        WHERE learner_id = %s
+          AND NULLIF(BTRIM(review_type), '') IS NOT NULL
+          AND LOWER(BTRIM(review_type)) <> ALL(%s)
+        ORDER BY COALESCE(completed_date, planned_scheduled_date) DESC NULLS LAST, id DESC
+        ''',
+            [learner_id, excluded],
+        )
+    else:
+        cursor.execute(
+            select_sql + '''
         WHERE learner_id = %s AND review_type = ANY(%s)
         ORDER BY COALESCE(completed_date, planned_scheduled_date) DESC NULLS LAST, id DESC
         ''',
-        [learner_id, list(review_types)],
-    )
+            [learner_id, list(review_types)],
+        )
     columns = [column[0] for column in cursor.description]
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
@@ -172,20 +207,27 @@ def _serialize_review(row, sections):
 @learner_self_or_staff(kwarg="pk")
 def learner_review_history(request, kind, pk):
     category = _s(request.GET.get("category"))
-    review_types = REVIEW_TYPES.get(category)
-    if not review_types:
+    if category not in REVIEW_TYPES:
         return _error("Unknown review category.", 400)
+    review_types = REVIEW_TYPES[category]
     model = SOURCE_MODELS.get(kind)
     if model is None:
         return _error("Learner not found.", 404)
     try:
-        source = model.all_learners.only("id", "email").filter(pk=pk).first()
+        source = model.all_learners.only("id", "email", "aptem_id").filter(pk=pk).first()
         if source is None:
             return _error("Learner not found.", 404)
+        # Imported Aptem reviews are intentionally isolated from the live
+        # programme-cycle data. A learner without a valid Aptem id has no rows
+        # in this source and must continue through the normal calendar path.
+        if not student_activity_available(getattr(source, "aptem_id", None)):
+            return JsonResponse({"learnerId": None, "category": category, "reviews": []})
         with connection.cursor() as cursor:
             learner_id = _learner_profile_id(cursor, source, kind)
             if learner_id is None:
                 return JsonResponse({"learnerId": None, "category": category, "reviews": []})
+            # Review rows are the persisted source of truth. A read must never
+            # infer a booking by matching a date/name to a calendar event.
             rows = _review_rows(cursor, learner_id, review_types)
             sections = _sections_by_review(cursor, [row["id"] for row in rows])
     except DatabaseError:

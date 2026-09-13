@@ -15,6 +15,7 @@ class ImportedReviewSerialisationTests(SimpleTestCase):
     def test_status_is_normalised_for_frontend_filters(self):
         self.assertEqual(_normalise_status("Not Scheduled"), "not-scheduled")
         self.assertEqual(_normalise_status("In Progress"), "in-progress")
+        self.assertEqual(_normalise_status("InProgress"), "in-progress")
 
     def test_serializer_uses_source_metadata_when_date_columns_are_empty(self):
         row = {

@@ -407,3 +407,57 @@ body:has(.dashboard-theme[data-workspace-role="learner"]) :is(.swal2-popup, .wor
   border-color: var(--kbc-border) !important;
   color: var(--kbc-text) !important;
 }
+
+/* Final learner guardrails. Several older dashboard themes are loaded in the
+   same bundle and their dark-mode hero rules are intentionally broad. These
+   learner-scoped rules keep the student palette stable after all compatibility
+   layers have been evaluated. */
+body .dashboard-theme[data-workspace-role="learner"] .workspace-main .learner-super-admin-hero,
+body .dashboard-theme[data-workspace-role="learner"] .workspace-main .workspace-hero-banner {
+  background: var(--learner-navy) !important;
+  background-image: none !important;
+  border-color: rgb(var(--learner-navy-300) / 0.45) !important;
+  box-shadow: var(--kbc-shadow-card) !important;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .workspace-main .learner-super-admin-hero :is(h1, h2, h3, p, dt, dd) {
+  color: inherit;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .workspace-main .workspace-hero-banner :is(h1, h2, h3) {
+  color: #fff !important;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .workspace-main .workspace-hero-banner__identity > div > :is(p, .workspace-hero-description, .workspace-hero-eyebrow) {
+  color: rgb(255 255 255 / 0.78) !important;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] [aria-busy="true"] .kbc-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--learner-soft) 25%,
+    var(--learner-accent-soft) 50%,
+    var(--learner-soft) 75%
+  );
+  background-size: 200% 100%;
+}
+
+[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .workspace-main .learner-super-admin-hero,
+[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .workspace-main .workspace-hero-banner {
+  background: var(--learner-navy) !important;
+  background-image: none !important;
+  border-color: rgb(var(--learner-navy-300) / 0.52) !important;
+}
+
+[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] [aria-busy="true"] .kbc-skeleton {
+  background: linear-gradient(90deg, #263f59 25%, #3a5572 50%, #263f59 75%);
+  background-size: 200% 100%;
+}
+
+@media (max-width: 640px) {
+  body .dashboard-theme[data-workspace-role="learner"] .workspace-main {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: clip !important;
+  }
+}

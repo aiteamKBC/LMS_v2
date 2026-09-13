@@ -40,6 +40,15 @@ export interface AuthUser {
   accessHome?: string | null;
   /** `roleNavMap` key for `access`, chosen server-side (ACCESS_NAV_ROLES). */
   accessNavRole?: string | null;
+  /** This person's own enrolment record, when they have one.
+   *
+   * Set for a staff member or administrator who is ALSO studying a programme.
+   * They keep the single account they already have — a second one on the same
+   * address would make sign-in ambiguous — so this is what tells the workspace
+   * switcher to offer them the learner side as well. */
+  learnerRecordId?: number | null;
+  /** `commercial` or `apprenticeship`, for addressing that record. */
+  learnerRecordKind?: string | null;
   /** Learners only. */
   learnerType?: string | null;
   programme?: string | null;
@@ -47,6 +56,32 @@ export interface AuthUser {
   hasLegacyRecord?: boolean;
   /** Employers only — the organisations they belong to. */
   organisationIds?: number[];
+}
+
+/**
+ * Is this signed-in account genuinely studying `(kind, id)` themselves, rather
+ * than a staff member reviewing somebody else's record?
+ *
+ * A staff member or administrator who is ALSO a learner (see
+ * `login/learner_enrolment.py`) reaches their own record from the workspace
+ * switcher, at their own `learnerRecordId`/`learnerRecordKind` — and there they
+ * need the ordinary learner experience: the fresh/onboarding gates, the
+ * blocked-until-start-date screen, progress that actually saves. The SAME
+ * account browsing a different learner's page from the enrolment workspace
+ * must keep the reviewing behaviour (full menu, no redirects, read-only)
+ * exactly as before.
+ *
+ * Comparing only `account.role` could not tell those two apart — an admin was
+ * always "reviewing", even on the one record that is actually theirs.
+ */
+export function isOwnLearnerRecord(
+  account: Pick<AuthUser, 'learnerRecordId' | 'learnerRecordKind'> | null | undefined,
+  kind: string | null | undefined,
+  id: string | null | undefined,
+): boolean {
+  if (!account?.learnerRecordId || !kind || !id) return false;
+  const recordKind = account.learnerRecordKind || 'commercial';
+  return recordKind === kind && String(account.learnerRecordId) === String(id);
 }
 
 /** An API failure that carries the backend's machine-readable code. */

@@ -6,6 +6,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import { rememberLearner, rememberSignedInLearner } from '@/hooks/useMyLearner';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
+import type { ImportedReview } from '@/api/reviewHistory';
 import { ToastProvider } from '@/hooks/useToast';
 import ProgressReviewPage, { ProgressReviewsListPage } from '../progress-reviews/page';
 import MonthlyCoachingPage, { MonthlyCoachingListPage } from '../monthly-coaching/page';
@@ -16,13 +17,15 @@ vi.mock('@/pages/coach/progress-reviews/page', () => ({ buildProgressReviewSlide
 const detail = { id: '125', name: 'New learner', programme: 'Assigned programme',
   components: [], componentProgress: [], videoProgress: [], quizAttempts: [] };
 const cases = [
-  { source: 'progress-review', path: 'progress-reviews', region: 'Progress Review sessions', Page: ProgressReviewsListPage, Detail: ProgressReviewPage },
+  { source: 'progress-review', path: 'progress-reviews', region: 'Reviews sessions', Page: ProgressReviewsListPage, Detail: ProgressReviewPage },
   { source: 'mcr', path: 'monthly-coaching', region: 'Monthly Coaching Meetings', Page: MonthlyCoachingListPage, Detail: MonthlyCoachingPage },
 ] as const;
 let events: LearnerCalendarEvent[];
 let calendarFails: boolean;
 let detailFails: boolean;
 let archiveFails: boolean;
+let detailActivityAvailable: boolean;
+let historyReviews: ImportedReview[];
 let requests: string[];
 
 function session(source: string, sequence = 1, status = 'not-scheduled'): LearnerCalendarEvent {
@@ -37,7 +40,7 @@ beforeEach(() => {
   rememberSignedInLearner(undefined, undefined);
   localStorage.clear(); rememberLearner('commercial', '19');
   vi.stubGlobal('React', React); vi.stubGlobal('AppIcon', AppIcon);
-  events = []; requests = []; calendarFails = detailFails = archiveFails = false;
+  events = []; historyReviews = []; requests = []; calendarFails = detailFails = archiveFails = detailActivityAvailable = false;
   // jsdom does not load Tailwind. Apply its visibility utilities so the
   // regression fails for a populated but CSS-hidden list, as in the report.
   const style = document.createElement('style'); style.id = 'review-test-style';
@@ -48,12 +51,39 @@ beforeEach(() => {
     if (init?.method && init.method !== 'GET') throw new Error('Unexpected write');
     let body: unknown; let failed = false;
     if (url.includes('/curriculum/cache-epoch/')) body = { epoch: 0, changes: [] };
-    else if (url.includes('/learner-detail/')) { body = detail; failed = detailFails; }
-    else if (url.includes('/review-history/')) { body = { reviews: [] }; failed = archiveFails; }
+    else if (url.includes('/learner-detail/')) { body = { ...detail, studentActivityAvailable: detailActivityAvailable }; failed = detailFails; }
+    else if (url.includes('/review-history/')) { body = { reviews: historyReviews }; failed = archiveFails; }
     else if (url.includes('/calendar/')) { body = { events }; failed = calendarFails; }
     else throw new Error(`Unexpected read: ${url}`);
     return new Response(JSON.stringify(failed ? { error: 'Temporarily unavailable' } : body), { status: failed ? 503 : 200 });
   }));
+});
+
+it('falls back to generated sessions when an Aptem learner has no imported MCM rows', async () => {
+  detailActivityAvailable = true;
+  events = [session('mcr'), session('mcr', 2, 'completed')];
+  mount(cases[1]);
+
+  const region = await screen.findByRole('region', { name: 'Monthly Coaching Meetings' });
+  await waitFor(() => expect(within(region).getAllByRole('link', { name: 'View' })[0]).toBeVisible());
+  expect(metric('Total')).toHaveTextContent('2');
+  expect(within(region).getByRole('link', { name: 'Schedule' })).toBeVisible();
+  expect(within(region).getByRole('tablist')).toBeVisible();
+});
+
+it('shows all imported review types in the Reviews table', async () => {
+  detailActivityAvailable = true;
+  historyReviews = [{
+    id: 'review-1', aptemReviewId: 'A-1', name: 'Eligibility Review & FS Discussion',
+    type: 'Eligibility Review & FS Discussion', reviewerName: 'Review officer',
+    plannedDate: '2026-09-18', plannedTime: null, completedDate: null,
+    status: 'not-scheduled', extractionStatus: 'complete', detailsAvailable: false, sections: [],
+  }];
+  mount(cases[0]);
+
+  const region = await screen.findByRole('region', { name: 'Reviews sessions' });
+  expect((await within(region).findAllByText('Eligibility Review & FS Discussion')).at(-1)).toBeVisible();
+  expect(metric('Total')).toHaveTextContent('1');
 });
 afterEach(() => {
   cleanup(); clearAllCachedResources(); rememberSignedInLearner(undefined, undefined);
@@ -85,11 +115,17 @@ describe.each(cases)('$path programme sessions', item => {
     await waitFor(() => expect(within(region).getAllByRole('link', { name: 'View' })[0]).toBeVisible());
     expect(region).toBeVisible();
     expect(metric('Total')).toHaveTextContent('2'); expect(metric('Completed')).toHaveTextContent('1');
+    fireEvent.click(within(region).getByRole('tab', { name: /Finished/ }));
     expect(within(region).getByRole('link', { name: 'View in calendar' })).toBeVisible();
     expect(requests.filter(url => url.includes('/calendar/'))).toHaveLength(1);
     expect(requests.filter(url => url.startsWith('/learner_api/')).every(url => url.includes('/apprenticeship/125/'))).toBe(true);
+    fireEvent.click(within(region).getByRole('tab', { name: /Planned/ }));
     fireEvent.click(within(region).getByRole('link', { name: 'Schedule' }));
-    expect(await screen.findByText(`/learner/calendar?kind=apprenticeship&learner=125&event=${encodeURIComponent(events[0].eventKey)}`)).toBeVisible();
+    if (item.source === 'mcr') {
+      expect(await screen.findByRole('dialog', { name: 'Schedule monthly coaching' })).toBeVisible();
+    } else {
+      expect(await screen.findByRole('dialog', { name: 'Schedule review' })).toBeVisible();
+    }
   });
 
   it.each(['summary', 'archive'])('keeps current sessions visible when the %s fails', async dependency => {
@@ -135,7 +171,7 @@ describe.each(cases)('$path programme sessions', item => {
     events = [session(item.source)]; mount(item);
     const region = screen.getByRole('region', { name: item.region });
     fireEvent.click(await within(region).findByRole('link', { name: 'View' }));
-    const back = await screen.findByRole('button', { name: item.source === 'mcr' ? 'Back to coaching meetings' : 'Back to Progress Review' });
+    const back = await screen.findByRole('button', { name: item.source === 'mcr' ? 'Back to coaching meetings' : 'Back to Reviews' });
     await waitFor(() => expect(screen.getAllByText('Assigned coach').length).toBeGreaterThan(0));
     fireEvent.click(back);
     expect(await screen.findByRole('region', { name: item.region })).toBeVisible();
@@ -156,6 +192,6 @@ it('never substitutes another review when the requested review no longer exists'
   mount(cases[0], '/missing-review?kind=apprenticeship&learner=125');
   expect(await screen.findByText(/This progress review is no longer available/)).toBeVisible();
   expect(screen.queryByText('DO NOT SHOW ANOTHER REVIEW')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Back to Progress Review' }));
-  expect(await screen.findByRole('region', { name: 'Progress Review sessions' })).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Back to Reviews' }));
+  expect(await screen.findByRole('region', { name: 'Reviews sessions' })).toBeVisible();
 });

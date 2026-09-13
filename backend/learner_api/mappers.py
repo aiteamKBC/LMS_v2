@@ -8,6 +8,9 @@ And two inbound helpers:
   * write_fields -> validates + returns kwargs for create/update (flat columns)
   * validate_choices -> enforces the canonical option lists
 """
+from datetime import date
+import re
+
 from .student_activity_access import student_activity_available
 from .aptem_status import programme_status
 from .constants import (
@@ -317,6 +320,8 @@ def to_board(u):
             # applies when it's set, so the cohort end date is the fallback.
             # Formatted to match enrolledAt and the DOB row above — the panel
             # renders these as plain strings and mixing ISO in reads as a bug.
+            "learnerStartDate": _s(getattr(u, "learner_start_date", None)),
+            "learnerEndDate": _s(getattr(u, "learner_end_date", None)),
             "startDate": fmt_date(u.start_date),
             "endDate": fmt_date(u.apprenticeship_end_date) or fmt_date(u.end_date),
             "enrolledAt": enrolled_at,
@@ -411,6 +416,8 @@ WRITABLE_FIELDS = {
     "dob": "date_of_birth",
     "type": "type",
     "status": "status",
+    "learnerStartDate": "learner_start_date",
+    "learnerEndDate": "learner_end_date",
     "programmeStatus": "programme_status",
     "programme": "programme",
     "cohort": "cohort",
@@ -630,6 +637,29 @@ def _employer_id_field(payload):
         raise ValidationError(f"Invalid employerId: {raw!r}. Expected a whole number.")
 
 
+def validate_learner_dates(fields, existing=None):
+    """Validate ISO text dates, including the stored half of a partial update."""
+    keys = ("learner_start_date", "learner_end_date")
+    if not any(key in fields for key in keys):
+        return
+    for key in keys:
+        if key not in fields:
+            continue
+        value = fields[key]
+        if value in (None, ""):
+            fields[key] = None
+            continue
+        try:
+            if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+                raise ValueError
+            date.fromisoformat(value)
+        except ValueError:
+            raise ValidationError("Start date and end date must be valid dates in YYYY-MM-DD format.")
+    start, end = (fields.get(key, getattr(existing, key, None)) for key in keys)
+    if start and end and start > end:
+        raise ValidationError("End date must be on or after start date.")
+
+
 def write_fields(payload, *, require_create=False):
     """Validate a payload and return {model_attr: value} for the flat columns."""
     if not isinstance(payload, dict):
@@ -655,6 +685,7 @@ def write_fields(payload, *, require_create=False):
     if "trainingPlan" in payload:
         fields["learning_plan"] = _normalize_training_plan(payload["trainingPlan"])
     fields.update(_employer_id_field(payload))
+    validate_learner_dates(fields)
     return fields
 
 

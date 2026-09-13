@@ -111,7 +111,40 @@ export const PORTAL_WORKSPACES: PortalWorkspace[] = [
     demoEmail: 'auditor@kbc.test',
     blurb: 'Evidence audit and the activity ledger',
   },
+  {
+    // Last, and only offered to somebody who actually has a learner record --
+    // staff and administrators can also study a programme, and when they do
+    // they keep the one account they already have rather than a second one
+    // (see login/learner_enrolment.py). `learnerWorkspaces` below is what
+    // filters this out for everyone else.
+    slug: 'learner',
+    label: 'Learner',
+    icon: 'ri-graduation-cap-line',
+    path: '/workspace/learner',
+    demoEmail: null,
+    blurb: 'Your own modules, progress and off-the-job hours',
+  },
 ];
+
+/** The workspaces to offer this account.
+ *
+ * Everything in the list except Learner, which is shown only when the person
+ * has an enrolment record of their own. Without the gate every administrator
+ * would be offered a learner workspace that has nothing behind it. */
+export function workspacesFor(
+  account: { learnerRecordId?: number | null; learnerRecordKind?: string | null } | null,
+): PortalWorkspace[] {
+  const recordId = account?.learnerRecordId;
+  if (!recordId) return PORTAL_WORKSPACES.filter(w => w.slug !== 'learner');
+  // Addressed explicitly, never left to the bare /workspace/learner route.
+  // That route resolves the learner from the SESSION, and this person signs in
+  // as staff — so with no params it falls through to a remembered or demo
+  // learner and would open somebody else's record.
+  const kind = account?.learnerRecordKind || 'commercial';
+  return PORTAL_WORKSPACES.map(w => (
+    w.slug === 'learner' ? { ...w, path: `/workspace/learner/${kind}/${recordId}` } : w
+  ));
+}
 
 /**
  * Which workspace a path belongs to, so the switcher can show where you are.

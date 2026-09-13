@@ -1,20 +1,21 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, signLearnerProgressReview, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { bookLearnerCalendarSession, rescheduleLearnerCalendarSession, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, signLearnerProgressReview, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { fetchEvidence } from '@/api/evidence';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { responsesForSection, type ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
-import { ImportedReviewHistory } from '@/pages/learner/reviews/ImportedReviewHistory';
 import { useReviewSessions } from '@/pages/learner/reviews/useReviewSessions';
+import { bookingDateRestrictionMessage, firstAvailableBookingDate, isoDate } from '@/pages/learner/reviews/bookingDates';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
 import ProgressReviewSlidesModal, { type ProgressReviewSlidesDeck } from '@/pages/coach/progress-reviews/components/ProgressReviewSlidesModal';
 import { buildProgressReviewSlidesDeck } from '@/pages/coach/progress-reviews/page';
 import type { CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
 import ProgressReviewSignModal from './components/ProgressReviewSignModal';
+import styles from './progressReviews.module.css';
 
 const learnerNav = roleNavMap.learner;
 
@@ -43,7 +44,8 @@ function formatTime(value?: string | null): string {
 function calendarEventHref(review: LearnerCalendarEvent, learner: { kind: string; id: string }): string {
   const eventKey = review?.eventKey || review?.id;
   const query = `kind=${encodeURIComponent(learner.kind)}&learner=${encodeURIComponent(learner.id)}`;
-  return `/learner/calendar?${query}${eventKey ? `&event=${encodeURIComponent(eventKey)}` : ''}`;
+  const date = reviewDate(review);
+  return `/learner/calendar?${query}${eventKey ? `&event=${encodeURIComponent(eventKey)}` : ''}${date ? `&date=${encodeURIComponent(date)}` : ''}`;
 }
 
 function reviewDate(review?: LearnerCalendarEvent | null): string | null {
@@ -51,8 +53,34 @@ function reviewDate(review?: LearnerCalendarEvent | null): string | null {
 }
 
 function progressReviewTitle(review?: LearnerCalendarEvent | null): string {
+  if (review?.importedReview) return review.importedReview.name || review.title || 'Review';
   const month = monthLabel(reviewDate(review));
   return `Progress Review${month ? ` — ${month}` : ''}${review?.sequence ? ` #${review.sequence}` : ''}`;
+}
+
+function reviewTypeLabel(review?: LearnerCalendarEvent | null): string {
+  return review?.importedReview?.type || 'Formal progress review';
+}
+
+function importedValue(value: unknown): string {
+  if (value === null || value === undefined) return '-';
+  if (typeof value === 'string') return value === 'EMPTY_STRING' ? '-' : value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try { return JSON.stringify(value); } catch { return String(value); }
+}
+
+function ImportedReviewSections({ review }: { review: NonNullable<LearnerCalendarEvent['importedReview']> }) {
+  if (!review.sections.length) return <Empty>No section details were imported for this review.</Empty>;
+  return <div className="space-y-3">
+    {review.sections.map((section) => <section key={section.id} className="rounded-xl border border-background-200 bg-background-100/45 p-4">
+      <h3 className="text-sm font-bold text-foreground-900">{section.name}</h3>
+      <div className="mt-3 space-y-3">
+        {section.fields.map((field, index) => <div key={`${field.label || 'field'}:${index}`} className="rounded-lg border border-background-200 bg-white p-3"><p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">{field.label || 'Response'}</p><p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-foreground-700">{importedValue(field.value)}</p></div>)}
+        {section.tables.map((table, index) => <div key={index} className="overflow-x-auto rounded-lg border border-background-200 bg-white"><table className="min-w-full text-left text-xs"><tbody className="divide-y divide-background-200">{(table.rows || []).map((row, rowIndex) => <tr key={rowIndex} className={rowIndex === 0 ? 'bg-background-100 font-bold text-foreground-800' : 'text-foreground-700'}>{(Array.isArray(row) ? row : [row]).map((cell, cellIndex) => <td key={cellIndex} className="whitespace-pre-wrap px-3 py-2.5 align-top">{importedValue(cell)}</td>)}</tr>)}</tbody></table></div>)}
+        {section.rawText && section.rawText !== 'EMPTY_STRING' && <p className="whitespace-pre-wrap rounded-lg border border-background-200 bg-white p-3 text-sm leading-6 text-foreground-700">{section.rawText}</p>}
+      </div>
+    </section>)}
+  </div>;
 }
 
 function shouldShowLearnerMeetingPanel(review?: LearnerCalendarEvent | null): boolean {
@@ -64,7 +92,7 @@ function shouldShowLearnerMeetingPanel(review?: LearnerCalendarEvent | null): bo
 
 function statusLabel(status?: string): string {
   const labels: Record<string, string> = {
-    'not-scheduled': 'Planning required',
+    'not-scheduled': 'Not Scheduled',
     scheduled: 'Scheduled',
     'in-progress': 'In progress',
     'awaiting-signature': 'Awaiting signatures',
@@ -76,11 +104,12 @@ function statusLabel(status?: string): string {
 
 function statusStyle(status?: string): string {
   if (status === 'completed') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
-  if (status === 'scheduled') return 'border-primary-200 bg-primary-50 text-primary-700';
+  if (status === 'scheduled') return 'border-blue-200 bg-blue-50 text-blue-700';
   if (status === 'in-progress') return 'border-amber-200 bg-amber-50 text-amber-700';
   if (status === 'awaiting-signature') return 'border-violet-200 bg-violet-50 text-violet-700';
   if (status === 'cancelled') return 'border-red-200 bg-red-50 text-red-700';
-  return 'border-amber-200 bg-amber-50 text-amber-700';
+  if (status === 'not-scheduled') return 'border-amber-200 bg-amber-50 text-amber-700';
+  return 'border-background-200 bg-background-100 text-foreground-700';
 }
 
 function initials(value?: string | null): string {
@@ -191,22 +220,78 @@ export function ProgressReviewsListPage() {
 }
 
 function ProgressReviewsList() {
-  const { myLearner, learner, sessions: reviews, loading, error, refresh } = useReviewSessions('progress-review');
+  const { myLearner, learner, sessions: reviews, setEvents, bookingCalendar, loading, error, refresh } = useReviewSessions('progress-review');
   const [page, setPage] = useState(1);
+  const [view, setView] = useState<'planned' | 'finished'>('planned');
+  const [bookingReview, setBookingReview] = useState<LearnerCalendarEvent | null>(null);
+  const [bookingDate, setBookingDate] = useState('');
+  const [bookingTime, setBookingTime] = useState('09:00');
+  const [bookingSubmitting, setBookingSubmitting] = useState(false);
+  const [bookingError, setBookingError] = useState('');
+  const dateRestriction = bookingDateRestrictionMessage(bookingDate, bookingCalendar);
+
+  function openBooking(review: LearnerCalendarEvent) {
+    setBookingReview(review);
+    setBookingDate(firstAvailableBookingDate(reviewDate(review), bookingCalendar));
+    setBookingTime(review.scheduledTime || '09:00');
+    setBookingError('');
+  }
+
+  async function submitBooking(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!bookingReview || bookingSubmitting || !bookingDate || !bookingTime || dateRestriction) return;
+    setBookingSubmitting(true);
+    setBookingError('');
+    try {
+      const imported = bookingReview.importedReview;
+      const slot = { scheduledDate: bookingDate, scheduledTime: bookingTime, durationMinutes: 60 };
+      const response = !imported && bookingReview.status === 'scheduled'
+        ? await rescheduleLearnerCalendarSession(myLearner.kind, myLearner.id, { ...slot, eventKey: bookingReview.eventKey })
+        : await bookLearnerCalendarSession(myLearner.kind, myLearner.id, {
+            ...slot,
+            sessionType: 'progress-review',
+            reviewId: imported?.id,
+            assignmentMonth: imported ? (reviewDate(bookingReview) || bookingDate).slice(0, 7) : undefined,
+            eventKey: imported ? undefined : bookingReview.eventKey,
+          });
+      const updated = imported ? {
+        ...response.event,
+        id: bookingReview.id,
+        sequence: bookingReview.sequence,
+        title: bookingReview.title,
+        importedReview: { ...imported, status: 'scheduled', plannedDate: bookingDate, plannedTime: bookingTime },
+        date: bookingDate,
+        scheduledDate: bookingDate,
+        scheduledTime: bookingTime,
+      } : response.event;
+      setEvents(current => current.map(review => review.id === bookingReview.id ? updated : review));
+      setBookingReview(null);
+      refresh();
+    } catch (reason) {
+      setBookingError(reason instanceof Error ? reason.message : 'Could not book this review.');
+    } finally {
+      setBookingSubmitting(false);
+    }
+  }
 
   const pageSize = 10;
-  const totalPages = Math.max(1, Math.ceil(reviews.length / pageSize));
+  const finishedReviews = reviews.filter((review) => review.status.toLowerCase() === 'completed');
+  const plannedReviews = reviews.filter((review) => review.status.toLowerCase() !== 'completed');
+  const tabReviews = view === 'finished' ? finishedReviews : plannedReviews;
+  const totalPages = Math.max(1, Math.ceil(tabReviews.length / pageSize));
   const currentPage = Math.min(page, totalPages);
-  const visibleReviews = reviews.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const completedCount = reviews.filter((review) => review.status === 'completed').length;
-  const scheduledCount = reviews.filter((review) => ['scheduled', 'in-progress'].includes(review.status)).length;
-  const planningCount = reviews.filter((review) => review.status === 'not-scheduled').length;
+  const visibleReviews = tabReviews.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const completedCount = finishedReviews.length;
+  const scheduledCount = reviews.filter((review) => ['scheduled', 'in-progress'].includes(review.status.toLowerCase())).length;
+  const planningCount = plannedReviews.filter((review) => ['not-scheduled', 'not scheduled', 'not_scheduled'].includes(review.status.toLowerCase())).length;
+  const awaitingSignatureCount = reviews.filter(review => review.status.toLowerCase() === 'awaiting-signature').length;
   const reviewerName = reviews.find((review) => review.coachName)?.coachName || 'Your reviewer';
   const summaryMetrics = [
     { label: 'Total', value: reviews.length, icon: 'ri-stack-line', tone: 'brand' as const, iconClassName: 'bg-violet-100 text-violet-700' },
     { label: 'Scheduled', value: scheduledCount, icon: 'ri-calendar-check-line', tone: 'info' as const, iconClassName: 'bg-blue-100 text-blue-700' },
     { label: 'Completed', value: completedCount, icon: 'ri-checkbox-circle-line', tone: 'positive' as const, iconClassName: 'bg-emerald-100 text-emerald-700' },
-    { label: 'To plan', value: planningCount, icon: 'ri-time-line', tone: 'neutral' as const, iconClassName: 'bg-amber-100 text-amber-700' },
+    { label: 'Not Scheduled', value: planningCount, icon: 'ri-time-line', tone: 'neutral' as const, iconClassName: 'bg-amber-100 text-amber-700' },
+    { label: 'Awaiting Signature', value: awaitingSignatureCount, icon: 'ri-quill-pen-line', tone: 'brand' as const, iconClassName: 'bg-violet-100 text-violet-700' },
   ];
 
   return (
@@ -215,12 +300,12 @@ function ProgressReviewsList() {
       roleLabel={learnerNav.label}
       navItems={learnerNav.items}
       workspaceLabel={learnerNav.workspaceLabel}
-      pageTitle="Progress Review"
-      pageSubtitle="Your planned and completed progress review sessions"
+      pageTitle="Reviews"
+      pageSubtitle="Your planned and completed review sessions"
       userName={learner?.name || 'Learner'}
       userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}
     >
-      <main className="page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
+      <main className={`page-container ${styles.page} min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6`}>
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}<button type="button" onClick={refresh} className="ml-3 font-bold underline">Try again</button></div>}
 
         <section className="learner-super-admin-hero relative overflow-hidden rounded-2xl p-4 text-primary-800 sm:rounded-3xl sm:p-6 md:p-6 workspace-page-hero">
@@ -228,21 +313,39 @@ function ProgressReviewsList() {
           <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <span className="inline-flex items-center gap-2 rounded-full border border-primary-200/60 bg-primary-100/60 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600"><AppIcon className="ri-team-line text-secondary-300" />Formal review</span>
-              <h1 className="mt-3 text-[22px] font-bold leading-tight text-primary-800 sm:text-2xl md:text-3xl">Progress Review</h1>
+              <h1 className="mt-3 text-[22px] font-bold leading-tight text-primary-800 sm:text-2xl md:text-3xl">Reviews</h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-foreground-500">Review your learning, progress and next actions with {reviewerName} and your line manager.</p>
             </div>
-            <div className="grid grid-cols-2 gap-2 lg:min-w-[520px] lg:grid-cols-4">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:min-w-[650px] xl:grid-cols-5">
               {summaryMetrics.map((metric) => <MetricCard key={metric.label} {...metric} className="progress-review-hero-metric" valuePosition="stacked" />)}
             </div>
           </div>
         </section>
 
-        <section aria-label="Progress Review sessions" className="overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-sm">
+        <section aria-label="Reviews sessions" className="overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-sm">
           <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-            <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><AppIcon className="ri-file-list-3-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Progress Review sessions</h2><p className="mt-0.5 text-xs text-foreground-500">Check each review status and open the full Progress Review record.</p></div></div>
+            <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><AppIcon className="ri-file-list-3-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Reviews sessions</h2><p className="mt-0.5 text-xs text-foreground-500">Check each review status and open the full review record.</p></div></div>
             <Link to={`/learner/calendar?kind=${myLearner.kind}&learner=${myLearner.id}`} className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />Open calendar</Link>
           </div>
-          {loading ? <div className="p-5"><RowsSkeleton rows={4} /></div> : error && reviews.length === 0 ? null : reviews.length === 0 ? <div className="p-5"><Empty>No progress review sessions were found.</Empty></div> : (
+          <div role="tablist" aria-label="Review status" className="flex overflow-x-auto border-b border-background-200 bg-white px-4 pt-3 sm:px-5">
+            {(['planned', 'finished'] as const).map((tab) => {
+              const count = tab === 'planned' ? plannedReviews.length : finishedReviews.length;
+              const active = view === tab;
+              return <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => { setView(tab); setPage(1); }}
+                className={`-mb-px inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-xs font-bold transition ${active ? 'border-primary-600 text-primary-700' : 'border-transparent text-foreground-500 hover:border-primary-200 hover:text-primary-700'}`}
+              >
+                <AppIcon className={tab === 'planned' ? 'ri-calendar-event-line' : 'ri-checkbox-circle-line'} />
+                {tab === 'planned' ? 'Planned' : 'Finished'}
+                <span className={`rounded-full px-2 py-0.5 text-[10px] ${active ? 'bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500'}`}>{count}</span>
+              </button>;
+            })}
+          </div>
+          {loading ? <div className="p-5"><RowsSkeleton rows={4} /></div> : error && reviews.length === 0 ? null : tabReviews.length === 0 ? <div className="p-5"><Empty>{view === 'finished' ? 'No finished reviews were found.' : 'No planned reviews were found.'}</Empty></div> : (
             <>
               <div className="divide-y divide-background-200 md:hidden">
                 {visibleReviews.map((review) => {
@@ -255,7 +358,7 @@ function ProgressReviewsList() {
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div className="min-w-0">
                               <h3 className="text-sm font-bold text-foreground-900">{progressReviewTitle(review)}</h3>
-                              <p className="mt-1 text-[11px] text-foreground-500">Formal progress review</p>
+                              <p className="mt-1 text-[11px] text-foreground-500">{reviewTypeLabel(review)}</p>
                             </div>
                             <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${statusStyle(review.status)}`}>
                               <AppIcon className={review.status === 'completed' ? 'ri-checkbox-circle-line' : review.status === 'cancelled' ? 'ri-close-circle-line' : review.status === 'scheduled' ? 'ri-calendar-check-line' : 'ri-time-line'} />{review.status === 'not-scheduled' ? 'Not Scheduled' : statusLabel(review.status)}
@@ -276,14 +379,14 @@ function ProgressReviewsList() {
                       </div>
 
                       <div className="grid grid-cols-2 gap-2">
-                        <Link to={calendarEventHref(review, myLearner)} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />{['completed', 'cancelled', 'awaiting-signature', 'in-progress'].includes(review.status) ? 'View in calendar' : isBooked ? 'Reschedule' : 'Schedule'}</Link>
+                        <Link to={calendarEventHref(review, myLearner)} onClick={(event) => { if (!['completed', 'cancelled', 'awaiting-signature', 'in-progress'].includes(review.status)) { event.preventDefault(); openBooking(review); } }} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />{['completed', 'cancelled', 'awaiting-signature', 'in-progress'].includes(review.status) ? 'View in calendar' : isBooked ? 'Reschedule' : 'Schedule'}</Link>
                         <Link to={`/learner/progress-reviews/${encodeURIComponent(review.id)}?kind=${myLearner.kind}&learner=${myLearner.id}`} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-3 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700">View review <AppIcon className="ri-arrow-right-line" /></Link>
                       </div>
                     </article>
                   );
                 })}
               </div>
-              <div className="hidden overflow-x-auto md:block">
+              <div className={`${styles.tableWrap} hidden md:block`}>
                 <table className="w-full min-w-[980px] text-left">
                   <thead className="border-b border-primary-100 bg-primary-50/70 text-[10px] font-bold uppercase tracking-wide text-primary-900/60">
                     <tr><th className="px-5 py-3.5">Review Name / Review Type</th><th className="px-5 py-3.5">Reviewer</th><th className="px-5 py-3.5">Planned / Scheduled Date</th><th className="px-5 py-3.5">Status</th><th className="px-5 py-3.5">Scheduling Assistant</th><th className="px-5 py-3.5 text-right">Review Actions</th></tr>
@@ -293,11 +396,11 @@ function ProgressReviewsList() {
                     const isBooked = Boolean(review.scheduledDate) && !['not-scheduled', 'cancelled'].includes(review.status);
                     return (
                       <tr key={review.id} className="group transition-colors hover:bg-primary-50/35">
-                        <td className="px-5 py-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-background-100 text-xs font-extrabold text-primary-700 transition group-hover:bg-primary-100">#{review.sequence}</span><div><p className="text-xs font-bold text-foreground-900">{progressReviewTitle(review)}</p><p className="mt-1 text-[10px] text-foreground-400">Formal progress review</p></div></div></td>
+                        <td className="px-5 py-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-background-100 text-xs font-extrabold text-primary-700 transition group-hover:bg-primary-100">#{review.sequence}</span><div><p className="text-xs font-bold text-foreground-900">{progressReviewTitle(review)}</p><p className="mt-1 text-[10px] text-foreground-400">{reviewTypeLabel(review)}</p></div></div></td>
                         <td className="px-5 py-4"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary-100 text-[9px] font-bold text-secondary-700">{initials(review.coachName)}</span><span className="text-xs font-semibold text-foreground-700">{review.coachName || '-'}</span></div></td>
                         <td className="px-5 py-4"><div className="flex items-center gap-2"><AppIcon className="ri-calendar-line text-primary-500" /><div><p className="text-xs font-semibold text-foreground-700">{formatDate(isBooked ? review.scheduledDate : review.targetDate)}</p>{isBooked && <p className="mt-1 text-[10px] text-foreground-400">at {formatTime(review.scheduledTime)}</p>}</div></div></td>
                         <td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${statusStyle(review.status)}`}><AppIcon className={review.status === 'completed' ? 'ri-checkbox-circle-line' : review.status === 'cancelled' ? 'ri-close-circle-line' : review.status === 'scheduled' ? 'ri-calendar-check-line' : 'ri-time-line'} />{review.status === 'not-scheduled' ? 'Not Scheduled' : statusLabel(review.status)}</span></td>
-                        <td className="px-5 py-4"><Link to={calendarEventHref(review, myLearner)} className="inline-flex h-9 items-center gap-2 rounded-xl px-3 text-xs font-semibold text-foreground-600 transition hover:bg-primary-50 hover:text-primary-700"><AppIcon className="ri-calendar-2-line" />{['completed', 'cancelled', 'awaiting-signature', 'in-progress'].includes(review.status) ? 'View in calendar' : isBooked ? 'Reschedule' : 'Schedule'}</Link></td>
+                        <td className="px-5 py-4"><Link to={calendarEventHref(review, myLearner)} onClick={(event) => { if (!['completed', 'cancelled', 'awaiting-signature', 'in-progress'].includes(review.status)) { event.preventDefault(); openBooking(review); } }} className="inline-flex h-9 items-center gap-2 rounded-xl px-3 text-xs font-semibold text-foreground-600 transition hover:bg-primary-50 hover:text-primary-700"><AppIcon className="ri-calendar-2-line" />{['completed', 'cancelled', 'awaiting-signature', 'in-progress'].includes(review.status) ? 'View in calendar' : isBooked ? 'Reschedule' : 'Schedule'}</Link></td>
                         <td className="px-5 py-4"><div className="flex items-center justify-end"><Link to={`/learner/progress-reviews/${encodeURIComponent(review.id)}?kind=${myLearner.kind}&learner=${myLearner.id}`} className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary-600 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 hover:shadow-md">View <AppIcon className="ri-arrow-right-line" /></Link></div></td>
                       </tr>
                     );
@@ -314,12 +417,34 @@ function ProgressReviewsList() {
                   <button type="button" onClick={() => setPage(totalPages)} disabled={currentPage === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-right-line" /></button>
                   <span className="ml-2 hidden text-[10px] text-foreground-400 sm:inline">10 items per page</span>
                 </div>
-                <p className="text-[10px] text-foreground-500">{(currentPage - 1) * pageSize + 1} - {Math.min(currentPage * pageSize, reviews.length)} of {reviews.length} items</p>
+                <p className="text-[10px] text-foreground-500">{(currentPage - 1) * pageSize + 1} - {Math.min(currentPage * pageSize, tabReviews.length)} of {tabReviews.length} items</p>
               </div>
             </>
           )}
         </section>
-        <ImportedReviewHistory kind={myLearner.kind} learnerId={myLearner.id} category="progress-review" />
+        {bookingReview && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm" role="presentation" onMouseDown={event => { if (event.currentTarget === event.target && !bookingSubmitting) setBookingReview(null); }}>
+            <form onSubmit={submitBooking} role="dialog" aria-modal="true" aria-labelledby="review-booking-title" className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl sm:p-6">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">Scheduling assistant</p>
+                  <h2 id="review-booking-title" className="mt-1 text-lg font-bold text-foreground-900">{bookingReview.status === 'scheduled' ? 'Reschedule review' : 'Schedule review'}</h2>
+                  <p className="mt-1 text-xs text-foreground-500">Choose the day and time for {progressReviewTitle(bookingReview)}.</p>
+                </div>
+                <button type="button" disabled={bookingSubmitting} aria-label="Close booking dialog" onClick={() => setBookingReview(null)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100"><AppIcon className="ri-close-line" /></button>
+              </div>
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <label className="text-xs font-semibold text-foreground-600">Day<input type="date" required min={isoDate(new Date())} value={bookingDate} onChange={event => { setBookingDate(event.target.value); setBookingError(''); }} className="mt-1.5 h-10 w-full rounded-xl border border-background-300 bg-background-50 px-3 text-sm font-normal text-foreground-800 outline-none focus:border-primary-400" /></label>
+                <label className="text-xs font-semibold text-foreground-600">Time<input type="time" required value={bookingTime} onChange={event => setBookingTime(event.target.value)} className="mt-1.5 h-10 w-full rounded-xl border border-background-300 bg-background-50 px-3 text-sm font-normal text-foreground-800 outline-none focus:border-primary-400" /></label>
+              </div>
+              {(dateRestriction || bookingError) && <p role="alert" className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700"><AppIcon className="ri-error-warning-line mr-1" />{dateRestriction || bookingError}</p>}
+              <div className="mt-5 flex gap-2">
+                <button type="button" disabled={bookingSubmitting} onClick={() => setBookingReview(null)} className="flex-1 rounded-xl border border-background-300 px-4 py-2.5 text-sm font-semibold text-foreground-600 hover:bg-background-100">Cancel</button>
+                <button type="submit" disabled={bookingSubmitting || !bookingDate || !bookingTime || Boolean(dateRestriction)} className="flex-1 rounded-xl bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50">{bookingSubmitting ? 'Saving…' : bookingReview.status === 'scheduled' ? 'Save new time' : 'Book meeting'}</button>
+              </div>
+            </form>
+          </div>
+        )}
       </main>
     </WorkspaceShell>
   );
@@ -429,16 +554,16 @@ export default function ProgressReviewsPage() {
       roleLabel={learnerNav.label}
       navItems={learnerNav.items}
       workspaceLabel={learnerNav.workspaceLabel}
-      pageTitle="Progress Review"
+      pageTitle="Reviews"
       pageSubtitle="Formal reviews with your coach and line manager"
       userName={learner?.name || 'Learner'}
       userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}
     >
-      <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
+      <div className={`page-container ${styles.page} min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6`}>
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}<button type="button" onClick={refresh} className="ml-3 font-bold underline">Try again</button></div>}
 
         <button type="button" onClick={() => navigate(`/learner/progress-reviews?kind=${myLearner.kind}&learner=${myLearner.id}`)} className="inline-flex h-9 items-center gap-2 self-start rounded-xl border border-primary-200 bg-primary-50 px-3.5 text-xs font-bold text-primary-700 shadow-sm transition hover:-translate-x-0.5 hover:bg-primary-100">
-          <AppIcon className="ri-arrow-left-line" /> Back to Progress Review
+          <AppIcon className="ri-arrow-left-line" /> Back to Reviews
         </button>
 
         <section className="learner-super-admin-hero relative overflow-hidden rounded-3xl p-5 text-primary-800 sm:p-6 workspace-page-hero">
@@ -448,10 +573,10 @@ export default function ProgressReviewsPage() {
               <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-primary-200/60 bg-primary-100/60 text-xl text-primary-600 shadow-lg"><AppIcon className="ri-team-line" /></span>
               <div>
                 <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">Formal progress review</span>
+                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">Formal review</span>
                   <span className="rounded-full border border-primary-200/60 bg-primary-100/60 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{loading ? 'Loading...' : learner?.programme || '-'}</span>
                 </div>
-                <h1 className="font-heading text-xl font-bold text-primary-800 sm:text-2xl">Your progress review record</h1>
+                <h1 className="font-heading text-xl font-bold text-primary-800 sm:text-2xl">Your review record</h1>
                 <p className="mt-1 max-w-2xl text-sm leading-6 text-foreground-500">Each review brings together you, your coach and line manager to discuss learning, progress and next actions.</p>
               </div>
             </div>
@@ -488,9 +613,9 @@ export default function ProgressReviewsPage() {
                       <p className="mt-1 text-sm text-foreground-500">{formatDate(reviewDate(selected), true)} at {formatTime(selected?.scheduledTime)}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {selected?.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action inline-flex items-center rounded-lg px-4 py-2.5 text-xs font-extrabold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}
-                      <button type="button" onClick={() => void showSlides()} disabled={slidesBusy} className="inline-flex items-center rounded-lg border border-primary-200/60 bg-white px-3.5 py-2 text-xs font-bold text-primary-900 shadow-sm hover:bg-primary-50 disabled:opacity-60"><AppIcon className={slidesBusy ? 'ri-loader-4-line mr-1.5 animate-spin' : 'ri-slideshow-line mr-1.5'} />{slidesBusy ? 'Preparing slides…' : 'Show slides'}</button>
-                      <button type="button" onClick={addToCalendar} disabled={!selected?.scheduledDate || !selected.scheduledTime} className="rounded-lg border border-primary-200/60 bg-primary-100/60 px-3.5 py-2 text-xs font-bold text-primary-800 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-calendar-check-line mr-1.5" />Add to calendar</button>
+                      {selected?.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className={`${styles.primaryButton} meeting-join-action inline-flex items-center rounded-lg px-4 py-2.5 text-xs font-extrabold`}><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}
+                      {!selected.importedReview && <button type="button" onClick={() => void showSlides()} disabled={slidesBusy} className="inline-flex items-center rounded-lg border border-primary-200/60 bg-white px-3.5 py-2 text-xs font-bold text-primary-900 shadow-sm hover:bg-primary-50 disabled:opacity-60"><AppIcon className={slidesBusy ? 'ri-loader-4-line mr-1.5 animate-spin' : 'ri-slideshow-line mr-1.5'} />{slidesBusy ? 'Preparing slides…' : 'Show slides'}</button>}
+                      {!selected.importedReview && <button type="button" onClick={addToCalendar} disabled={!selected?.scheduledDate || !selected.scheduledTime} className="rounded-lg border border-primary-200/60 bg-primary-100/60 px-3.5 py-2 text-xs font-bold text-primary-800 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-calendar-check-line mr-1.5" />Add to calendar</button>}
                     </div>
                   </div>
                 </div>
@@ -500,7 +625,7 @@ export default function ProgressReviewsPage() {
                     <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
                   ) : null}
 
-                  {selected && ['awaiting-signature', 'completed'].includes(selected.status) ? (
+                  {selected && !selected.importedReview && ['awaiting-signature', 'completed'].includes(selected.status) ? (
                     <div className="flex flex-col gap-3 rounded-xl border border-violet-200 bg-violet-50 p-4 sm:flex-row sm:items-center">
                       <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100 text-violet-700"><AppIcon className={selected.learnerSigned ? 'ri-checkbox-circle-line' : 'ri-file-sign-line'} /></span>
                       <div className="flex-1"><p className="text-sm font-bold text-violet-950">{selected.learnerSigned ? 'Slides signed by learner' : 'Your formal acknowledgement is required'}</p><p className="mt-1 text-xs text-violet-700">{selected.learnerSigned ? `Signed ${selected.learnerSignedAt ? formatDate(selected.learnerSignedAt.split('T')[0]) : ''}` : 'Review the slides, then sign to confirm the progress review record.'}</p></div>
@@ -533,6 +658,7 @@ export default function ProgressReviewsPage() {
                 </div>
               </section>
 
+              {selected.importedReview && <Accordion id="imported-review-details" title={`${reviewTypeLabel(selected)} details`} icon="ri-file-list-3-line" open={openSections.includes('imported-review-details')} onToggle={toggleSection}><ImportedReviewSections review={selected.importedReview} /></Accordion>}
               <Accordion id="progress-checks" title="Progress Checks" icon="ri-check-double-line" open={openSections.includes('progress-checks')} onToggle={toggleSection}>
                 <SavedReviewAnswers sectionId="progress-checks" responses={selected?.reviewResponses} emptyMessage="No progress checks have been recorded for this Progress Review." />
               </Accordion>
@@ -558,7 +684,7 @@ export default function ProgressReviewsPage() {
         open={Boolean(slidesDeck)}
         deck={slidesDeck}
         onClose={() => setSlidesDeck(null)}
-        primaryAction={selected && ['awaiting-signature', 'completed'].includes(selected.status) && !selected.learnerSigned ? (
+        primaryAction={selected && !selected.importedReview && ['awaiting-signature', 'completed'].includes(selected.status) && !selected.learnerSigned ? (
           <button type="button" onClick={() => setSigning(true)} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-violet-700 px-4 text-[12px] font-bold text-white shadow-sm transition hover:bg-violet-800">
             <AppIcon className="ri-quill-pen-line" />Sign slides
           </button>

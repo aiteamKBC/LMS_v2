@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { useAuth } from '@/hooks/useAuth';
-import { PORTAL_WORKSPACES, activeWorkspace, type PortalWorkspace } from '@/lib/portalWorkspaces';
+import { activeWorkspace, workspacesFor, type PortalWorkspace } from '@/lib/portalWorkspaces';
 
 /* ═══════════════════════════════════════════════════════
    WORKSPACE SWITCHER — how an administrator changes section.
@@ -35,17 +35,30 @@ export function WorkspaceSwitcher() {
   const menuRef = useRef<HTMLDivElement>(null);
 
   const current = activeWorkspace(pathname);
+  // Learner is offered only to somebody who has a record of their own, so the
+  // rendered list and the keyboard index below are built from the same array.
+  //
+  // Memoised on the two fields it actually depends on: workspacesFor returns a
+  // fresh array each call, and an unmemoised one re-ran the effect that seeds
+  // `highlighted` on every render -- which reset the keyboard selection back to
+  // the current workspace the moment an arrow key moved it.
+  const learnerRecordId = auth.account?.learnerRecordId ?? null;
+  const learnerRecordKind = auth.account?.learnerRecordKind ?? null;
+  const workspaces = useMemo(
+    () => workspacesFor({ learnerRecordId, learnerRecordKind }),
+    [learnerRecordId, learnerRecordKind],
+  );
 
   useEffect(() => {
     if (!open) return;
     // Start on the section you are in, so ↓ then ↵ is a deliberate move rather
     // than a jump to the top of the list.
-    const index = current ? PORTAL_WORKSPACES.findIndex((w) => w.slug === current.slug) : 0;
+    const index = current ? workspaces.findIndex((w) => w.slug === current.slug) : 0;
     setHighlighted(index < 0 ? 0 : index);
     // There is no search field to take focus now, so the menu takes it itself —
     // otherwise the arrow keys would still be talking to the trigger button.
     menuRef.current?.focus();
-  }, [open, current]);
+  }, [open, current, workspaces]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -69,11 +82,11 @@ export function WorkspaceSwitcher() {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       const step = event.key === 'ArrowDown' ? 1 : -1;
-      setHighlighted((index) => (index + step + PORTAL_WORKSPACES.length) % PORTAL_WORKSPACES.length);
+      setHighlighted((index) => (index + step + workspaces.length) % workspaces.length);
       return;
     }
     if (event.key === 'Enter' || event.key === ' ') {
-      const target = PORTAL_WORKSPACES[highlighted];
+      const target = workspaces[highlighted];
       if (!open || !target) return;
       event.preventDefault();
       go(target);
@@ -125,7 +138,7 @@ export function WorkspaceSwitcher() {
           </p>
 
           <div className="px-1.5 pb-1.5">
-            {PORTAL_WORKSPACES.map((workspace, index) => {
+            {workspaces.map((workspace, index) => {
               const isCurrent = current?.slug === workspace.slug;
               const isHighlighted = index === highlighted;
               return (

@@ -93,10 +93,14 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .heroAction {
   display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
   min-height: 3.25rem;
   align-items: center;
   justify-content: center;
@@ -110,6 +114,7 @@
   font-size: 0.875rem;
   font-weight: 600;
   line-height: 1.4;
+  overflow-wrap: anywhere;
   transition: background 150ms, box-shadow 150ms;
 }
 
@@ -253,6 +258,7 @@
   align-items: center;
   column-gap: 1rem;
   row-gap: 0.375rem;
+  min-width: 0;
 }
 
 .metricIcon {
@@ -287,6 +293,7 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.75rem;
+  min-width: 0;
 }
 
 .metricValues > div + div {
@@ -386,4 +393,24 @@
 
 @media (prefers-reduced-motion: reduce) {
   .heroAction, .metric { transition: none; }
+}
+
+/* Keep the dashboard's large hero readable when a long programme or employer
+   name arrives from the live learner record. */
+@container learnerOverview (max-width: 44rem) {
+  .heroTop { gap: 1.25rem; }
+  .identity { flex-basis: 100%; }
+  .heroActions { width: 100%; }
+  .heroAction { flex: 1 1 12rem; }
+}
+
+@container learnerOverview (max-width: 31.99rem) {
+  .hero { padding: 1rem; }
+  .heroTop { gap: 1rem; }
+  .identity { align-items: flex-start; }
+  .identity .avatar { width: 3.5rem; height: 3.5rem; }
+  .overview .hero .name { font-size: clamp(1.35rem, 8vw, 1.75rem); }
+  .description { margin-top: 0.4rem; font-size: 0.75rem; }
+  .facts { gap: 0.5rem; margin-top: 1.25rem; }
+  .fact { min-height: 4.25rem; }
 }

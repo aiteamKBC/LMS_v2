@@ -2,11 +2,12 @@
 
 import inspect
 import json
-from datetime import date, time
+from datetime import date, datetime, time
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from django.test import RequestFactory, SimpleTestCase
+from django.db import DatabaseError
 
 from .booking_calendar import booking_calendar_payload, booking_date_restriction
 
@@ -51,6 +52,36 @@ class BookingDateRestrictionTests(SimpleTestCase):
         self.assertIn("Boxing Day", holiday["title"])
         self.assertIn(2026, payload["coveredYears"])
         self.assertEqual(payload["today"], "2026-09-07")
+
+
+class ImportedReviewBookingTests(SimpleTestCase):
+    def test_sync_targets_the_owned_monthly_review_row(self):
+        from . import calendar as module
+
+        cursor = Mock()
+        cursor.rowcount = 1
+        connection = Mock()
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cursor
+        connection.cursor.return_value = cursor_context
+        with patch.object(module, "connection", connection):
+            module._mark_imported_review_scheduled("62", 272, date(2026, 11, 26), time(9, 0))
+
+        params = cursor.execute.call_args.args[1]
+        self.assertEqual(params[:4], ["scheduled", datetime(2026, 11, 26, 9, 0), 62, 272])
+
+    def test_sync_fails_when_the_review_is_not_owned_by_the_learner(self):
+        from . import calendar as module
+
+        cursor = Mock()
+        cursor.rowcount = 0
+        connection = Mock()
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cursor
+        connection.cursor.return_value = cursor_context
+        with patch.object(module, "connection", connection):
+            with self.assertRaises(DatabaseError):
+                module._mark_imported_review_scheduled("62", 999, date(2026, 11, 26), time(9, 0))
 
 
 class BookingEndpointRestrictionTests(SimpleTestCase):

@@ -11,6 +11,7 @@ import { overviewSchedule } from '@/api/learnerOverview';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { formatHoursMinutes } from '@/utils/learnerJourney';
 import { type LearnerKind } from '@/api/learnerDetail';
+import { isOwnLearnerRecord } from '@/api/auth';
 import { useFreshUserRedirect, useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
 import { syncLearnerStatus } from '@/hooks/useLearnerNavGate';
 import { useLearnerAttendance } from '@/hooks/useLearnerAttendance';
@@ -49,7 +50,14 @@ export default function LearnerOverview() {
   const { kind, id } = useResolvedLearner(urlKind, urlId);
   const { isRealMode, real, loading, loadError, refresh } = useLearnerSummaryParam(kind, id);
   const { auth, canSeeNavItem } = useAuth();
-  const reviewingLearner = auth.account?.role === 'admin' || auth.account?.role === 'staff';
+  // "Reviewing" means somebody else's record, opened by staff from the
+  // enrolment workspace: full menu, no progression gates, nothing saved.
+  // A staff member or administrator who is ALSO a learner reaches their OWN
+  // record the same way any learner would — the switcher sends them to their
+  // own learnerRecordId/Kind — and there they need the real learner experience,
+  // not the reviewing one, or they could never actually study.
+  const isStaffOrAdmin = auth.account?.role === 'admin' || auth.account?.role === 'staff';
+  const reviewingLearner = isStaffOrAdmin && !isOwnLearnerRecord(auth.account, kind, id);
   const knownLearner = real;
   const hasAssignedProgramme = canViewAssignedProgramme(kind, real?.accessGate);
   const learningBlocked = !reviewingLearner && (real?.learningAccess?.blocked

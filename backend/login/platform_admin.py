@@ -643,10 +643,11 @@ def account_action(request, pk):
         "unlock",
         "resend-invitation",
         "send-password-reset",
+        "add-learner-record",
     }:
         return _error(
             "action must be one of: suspend, restore, unlock, resend-invitation, "
-            "send-password-reset.",
+            "send-password-reset, add-learner-record.",
             400,
         )
 
@@ -706,6 +707,53 @@ def account_action(request, pk):
             "sentTo": account.email,
             "account": _account_json(account, timezone.now(), _row_extras([account])),
         })
+    if action == "add-learner-record":
+        # Also a learner. Creates the enrolment record and nothing else: the
+        # account they already have is reused, so there is one password and one
+        # identity, and the Learner workspace appears beside their existing one.
+        #
+        # A SECOND login account on the same address would look tidier and would
+        # break sign-in: identity.account_for_email returns None once an address
+        # has two active accounts, and password login, SSO and password reset
+        # all depend on it. See login.learner_enrolment.
+        from .learner_enrolment import EnrolmentError, add_learner_record
+
+        try:
+            learner = add_learner_record(
+                account,
+                programme=payload.get("programme") or "",
+                cohort=payload.get("cohort") or "",
+                group=payload.get("group") or "",
+                learner_type=payload.get("learnerType") or "",
+                created_by=actor.email if actor else "admin",
+            )
+        except EnrolmentError as exc:
+            return _error(str(exc), 400, code="cannot_add_learner")
+        except DatabaseError as exc:
+            return _error(f"Database error: {exc}", 502)
+
+        # The same trail the other administrative actions leave: this one
+        # creates a person's enrolment record, so who did it is worth keeping.
+        try:
+            with transaction.atomic(using="enrolment"):
+                LoginAudit.objects.create(
+                    event="admin_add_learner_record",
+                    email=account.email,
+                    account_id=account.id,
+                    succeeded=True,
+                    reason=f"enrolment id {learner.pk}"
+                           + (f" by {actor.email}" if actor else " by admin"),
+                    ip_address=client_ip(request),
+                    user_agent=user_agent(request),
+                )
+        except DatabaseError:
+            pass
+
+        return JsonResponse({
+            "account": _account_json(account, timezone.now(), _row_extras([account])),
+            "learnerRecordId": learner.pk,
+        })
+
     if action == "send-password-reset":
         # The counterpart to resend-invitation, and the two are mutually
         # exclusive: an invitation sets the first password, a reset replaces one
