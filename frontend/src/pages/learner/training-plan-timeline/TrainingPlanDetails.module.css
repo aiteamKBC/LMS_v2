@@ -7,7 +7,7 @@
 .filters input, .filters select { min-height: 2.5rem; max-width: 100%; min-width: 0; border: 1px solid var(--kbc-border); border-radius: .625rem; background: var(--kbc-surface); color: var(--kbc-text); padding: .5rem .75rem; font-size: .75rem; }
 .moduleSelect { width: clamp(12rem, 27cqi, 24rem); }
 .refreshing { margin-bottom: .75rem !important; font-size: .75rem; color: var(--kbc-muted); }
-.root .cards { display: grid; grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: 1.25rem; scroll-margin-top: 1.25rem; }
+.root .cards { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 1.25rem; scroll-margin-top: 1.25rem; }
 .root .cards > section { display: flex; flex-direction: column; grid-column: auto; min-width: 0; padding: clamp(1.125rem, 1.65cqi, 1.75rem); border: 1px solid var(--kbc-border); border-radius: 1.125rem; background: var(--kbc-surface); box-shadow: 0 2px 8px rgb(24 45 72 / .04); }
 .root .cards > section.overview { grid-column: auto; }
 .cards h2 { font-size: .9375rem; line-height: 1.4; }
@@ -20,8 +20,26 @@
 .root .cards dd { margin: 0; }
 .root .reviewList { max-height: 16rem; overflow: auto; scrollbar-gutter: stable; }
 .root .support { margin-top: 1.25rem; }
-.root .moduleProgress { margin-top: auto; }
+.root .moduleProgress { margin-top: 1.25rem; }
 .root .overview > span { align-self: flex-start; }
+.moduleContext { margin-top: .75rem; color: var(--kbc-muted); font-size: .75rem; line-height: 1.6; }
+.moduleContext > p { color: var(--kbc-text); font-weight: 600; }
+.moduleContext > div { display: flex; flex-wrap: wrap; column-gap: 1rem; }
+.moduleDescription { margin-top: .75rem !important; font-size: .75rem; color: var(--kbc-muted); line-height: 1.65; overflow-wrap: anywhere; }
+.root .moduleStats { margin: 1.25rem 0; }
+.moduleSection { border-top: 1px solid var(--kbc-border); padding-top: 1rem; margin-top: 1rem; }
+.moduleSection h3 { font-size: .75rem; font-weight: 650; margin-bottom: .625rem; }
+.moduleSection h3 > span { color: var(--kbc-muted); margin-left: .375rem; }
+.activityBreakdown { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem 1rem; list-style: none; padding: 0; margin: 0; font-size: .6875rem; }
+.activityBreakdown li { display: flex; justify-content: space-between; align-items: start; gap: .5rem; color: var(--kbc-muted); }
+.activityBreakdown strong { color: var(--kbc-text); }
+.moduleDisclosure { font-size: .75rem; line-height: 1.6; }
+.moduleDisclosure summary { cursor: pointer; color: var(--learner-purple); font-weight: 600; }
+.moduleDisclosure summary:focus-visible { outline: 2px solid var(--learner-purple); outline-offset: 3px; }
+.moduleDisclosure ul { padding-left: 1.1rem; margin-top: .625rem; }
+.moduleDisclosure li + li { margin-top: .375rem; }
+.ksbCodes { display: flex; flex-wrap: wrap; gap: .375rem; margin-top: .625rem; }
+.ksbCodes span { border-radius: .375rem; padding: .2rem .45rem; font-size: .6875rem; color: var(--learner-purple); background: var(--learner-accent-soft); }
 .cards a, .cards button { flex-shrink: 0; }
 .cards a { overflow-wrap: anywhere; }
 .cards a svg { flex-shrink: 0; }

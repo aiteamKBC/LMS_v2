@@ -1354,7 +1354,7 @@ export function ModuleFormDrawer({
         />
       </FormField>
       {sessionPreviewOpen && plan && (
-        <ModuleSessionPreviewModal
+        <ModuleSessionPreview
           moduleName={name || module?.name || 'Module'}
           plan={plan}
           holidays={cohortHolidays}
@@ -1556,7 +1556,16 @@ function monthLabelOf(key: string): string {
   return parsed.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
 }
 
-function ModuleSessionPreviewModal({
+/**
+ * The module's dated plan, as a timeline: every session, the ones a holiday
+ * closed, and the date each of those moved to.
+ *
+ * Exported because the Course structure rail in the module builder opens the
+ * same thing. That rail already holds the plan and the authored weeks, so the
+ * alternative was a second timeline that would drift from this one; the reader
+ * is looking at the same dates either way, so they get the same view.
+ */
+export function ModuleSessionPreview({
   moduleName,
   plan,
   holidays,
@@ -1564,6 +1573,7 @@ function ModuleSessionPreviewModal({
   sessionNamesLoading,
   sessionNamesError,
   onClose,
+  variant = 'dialog',
 }: {
   moduleName: string;
   plan: CurriculumSessionPlanPreview;
@@ -1573,7 +1583,16 @@ function ModuleSessionPreviewModal({
   sessionNamesLoading: boolean;
   sessionNamesError: boolean;
   onClose: () => void;
+  /**
+   * `dialog` covers the page and has to be dismissed before anything else
+   * can be done -- right for the drawer, where the dates are being checked
+   * before a save. `panel` opens down the right-hand edge and leaves the
+   * page live behind it, which is what the Course structure rail wants: the
+   * weeks and the dates they deliver on are read against each other.
+   */
+  variant?: 'dialog' | 'panel';
 }) {
+  const panel = variant === 'panel';
   const shifted = plan.sessions.filter(session => session.skippedHolidays?.length);
   // No weeks at all: a module being created has none yet, and cannot have any
   // until it is saved. That is one fact about the module, not ten facts about
@@ -1645,15 +1664,45 @@ function ModuleSessionPreviewModal({
     });
   };
 
+  /**
+   * Click anywhere off the panel to close it.
+   *
+   * The dialog dismisses by clicking its backdrop, and a panel has no backdrop
+   * -- it deliberately leaves the page live rather than covering it. So the
+   * document is asked instead, and the click does both things: it closes the
+   * panel and still lands on whatever was clicked, which is the point of a
+   * panel that does not block the page. `mousedown` rather than `click`, so a
+   * drag that starts outside and ends inside cannot count as one.
+   */
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!panel) return undefined;
+    const dismiss = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (target && !panelRef.current?.contains(target)) onClose();
+    };
+    document.addEventListener('mousedown', dismiss);
+    return () => document.removeEventListener('mousedown', dismiss);
+  }, [panel, onClose]);
+
   return (
     <div
-      className="fixed inset-0 z-[120] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm"
+      ref={panelRef}
+      className={panel
+        ? 'fixed inset-y-0 right-0 z-[120] flex w-full max-w-2xl'
+        : 'fixed inset-0 z-[120] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm'}
       role="dialog"
-      aria-modal="true"
+      /* A panel is not modal: the page behind it stays live, and claiming
+         otherwise would tell a screen reader the rest of the screen is inert
+         when it is not. It is dismissed by the document listener above rather
+         than by a backdrop, since there is no backdrop to click. */
+      aria-modal={!panel}
       aria-labelledby="module-session-preview-title"
-      onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}
+      onMouseDown={panel ? undefined : event => { if (event.target === event.currentTarget) onClose(); }}
     >
-      <div className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-background-50 shadow-2xl">
+      <div className={panel
+        ? 'flex h-full w-full flex-col overflow-hidden border-l border-background-200 bg-background-50 shadow-2xl'
+        : 'flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-background-50 shadow-2xl'}>
         <div className="flex shrink-0 items-start justify-between gap-4 border-b border-background-200 px-5 py-4">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-primary-700">Module sessions</p>
@@ -1697,8 +1746,12 @@ function ModuleSessionPreviewModal({
             const skippedCount = group.entries.filter(entry => entry.kind === 'blocked').length;
             const monthHolidays = group.key ? holidaysForMonth(group.key) : [];
             return (
-              <div key={group.key || 'unscheduled'} className="flex flex-col gap-3 border-b border-background-200 py-4 last:border-b-0 sm:flex-row">
-                <div className="w-full shrink-0 sm:w-32">
+              <div key={group.key || 'unscheduled'} className={`flex flex-col gap-3 border-b border-background-200 py-4 last:border-b-0 ${panel ? '' : 'sm:flex-row'}`}>
+                {/* `sm:` asks the window how wide it is, and in panel mode the
+                    window is not the constraint -- the panel is. Three columns
+                    inside 28rem left the session rows about 5rem wide, which is
+                    what broke "07 Aug 2026" across three lines. */}
+                <div className={`w-full shrink-0 ${panel ? '' : 'sm:w-32'}`}>
                   <p className="text-[13px] font-heading font-bold text-foreground-900">{group.label}</p>
                   <p className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-foreground-400">
                     {delivered} delivered
@@ -1714,9 +1767,9 @@ function ModuleSessionPreviewModal({
                       return (
                         <div key={`${entry.sessionNumber}-blocked-${index}`} className="overflow-hidden rounded-lg border border-red-200 bg-red-50">
                           <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
-                            <span className="flex items-center gap-2 text-[12px]">
+                            <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px]">
                               <AppIcon className="ri-close-circle-fill shrink-0 text-sm text-red-600"></AppIcon>
-                              <span className="font-bold text-red-700">{formatDateLabel(entry.date)}</span>
+                              <span className="whitespace-nowrap font-bold text-red-700">{formatDateLabel(entry.date)}</span>
                               {sessionName.text && (
                                 <span className={sessionName.authored ? 'font-semibold text-red-700' : 'italic text-foreground-400'}>
                                   {sessionName.text}
@@ -1741,11 +1794,11 @@ function ModuleSessionPreviewModal({
                           isReplacement ? 'border-emerald-200 bg-emerald-50' : 'border-background-200 bg-background-0'
                         }`}
                       >
-                        <span className="flex items-center gap-2">
-                          <span className={`font-bold ${isReplacement ? 'text-emerald-700' : 'text-foreground-900'}`}>
+                        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+                          <span className={`whitespace-nowrap font-bold ${isReplacement ? 'text-emerald-700' : 'text-foreground-900'}`}>
                             {formatDateLabel(entry.date)}
                           </span>
-                          <span className="text-foreground-400">({entry.day})</span>
+                          <span className="whitespace-nowrap text-foreground-400">({entry.day})</span>
                           {sessionName.text && (
                             <span className={sessionName.authored
                               ? `font-semibold ${isReplacement ? 'text-emerald-700' : 'text-foreground-700'}`
@@ -1764,7 +1817,7 @@ function ModuleSessionPreviewModal({
                     );
                   })}
                 </div>
-                <div className="w-full shrink-0 space-y-1 sm:w-56">
+                <div className={`w-full shrink-0 space-y-1 ${panel ? '' : 'sm:w-56'}`}>
                   {monthHolidays.map(holiday => (
                     <p key={holiday.id} className="text-[11px] leading-5 text-foreground-500">
                       <span className="font-semibold text-foreground-700">{holiday.label}</span>

@@ -4364,21 +4364,41 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
         }
 
     selected_holidays = holiday_date_set(holidays)
+    guard_days = max(3650, session_count * 21)
+
+    # Where the module's WEEKS sit: the delivery days counted from the start
+    # with no closure taken into account. A closure moves the live session out
+    # of its week and into the next open slot; it does not move the week, whose
+    # other components are read, watched and submitted on their own time and so
+    # stay exactly where they were authored. Every session therefore carries two
+    # dates -- the slot its week occupies, and the date the live session runs --
+    # and they differ from the first closure onwards.
+    slots = []
+    slot_cursor = start
+    slot_guard = guard_days
+    while len(slots) < session_count and slot_guard > 0:
+        if slot_cursor.weekday() in days:
+            slots.append(slot_cursor)
+        slot_cursor += timedelta(days=1)
+        slot_guard -= 1
+
     sessions = []
     skipped = []
     pending_skipped = []
     cursor = start
-    guard_days = max(3650, session_count * 21)
     while len(sessions) < session_count and guard_days > 0:
         if cursor.weekday() in days:
             if cursor in selected_holidays:
                 skipped.append(cursor.isoformat())
                 pending_skipped.append(cursor.isoformat())
             else:
+                slot = slots[len(sessions)] if len(sessions) < len(slots) else cursor
                 sessions.append({
                     'sessionNumber': len(sessions) + 1,
                     'date': cursor.isoformat(),
                     'day': cursor.strftime('%A'),
+                    'slotDate': slot.isoformat(),
+                    'slotDay': slot.strftime('%A'),
                     'skippedHolidays': pending_skipped,
                 })
                 pending_skipped = []
@@ -4485,7 +4505,10 @@ def unique_prefixed_id(prefix, value='', existing_values=None):
     values = existing_values() if callable(existing_values) else existing_values
     existing = {clean_str(item) for item in (values or []) if clean_str(item)}
     while True:
-        candidate = f'{prefix}-{datetime.utcnow().strftime("%Y%m%d%H%M%S%f")}'
+        # Multiple unsaved siblings are minted before the bulk insert. Windows
+        # clock resolution can give them the same microsecond timestamp, and
+        # existing_values cannot contain rows that have not been inserted yet.
+        candidate = f'{prefix}-{datetime.utcnow().strftime("%Y%m%d%H%M%S%f")}{uuid.uuid4().hex[:12].upper()}'
         if candidate not in existing:
             return candidate
 
@@ -4493,7 +4516,7 @@ def unique_prefixed_id(prefix, value='', existing_values=None):
 def unique_timestamp_prefixed_id(prefix, existing_values=None):
     existing = {clean_str(value) for value in (existing_values or []) if clean_str(value)}
     while True:
-        candidate = f'{prefix}-{datetime.utcnow().strftime("%Y%m%d%H%M%S%f")}'
+        candidate = f'{prefix}-{datetime.utcnow().strftime("%Y%m%d%H%M%S%f")}{uuid.uuid4().hex[:12].upper()}'
         if candidate not in existing:
             return candidate
 
@@ -5425,12 +5448,13 @@ def programme_config_rows_remaining(candidates):
 
 
 def request_wants_permanent_programme_delete(request):
-    """A permanent delete is opt-in per request; the default DELETE still archives."""
-    return (
-        truthy(request.GET.get('permanent'))
-        or truthy(request.GET.get('hard'))
-        or clean_str(request.GET.get('mode')).lower() in {'permanent', 'hard'}
-    )
+    """A permanent delete is opt-in per request; the default DELETE still archives.
+
+    Cohorts and groups read the same flag off the same query string, so the rule
+    itself lives in ``request_wants_permanent_delete``; this name stays because
+    the programme handlers read better for it.
+    """
+    return request_wants_permanent_delete(request)
 
 
 def permanent_programme_delete_response(identifier, programme=None, config=None):
@@ -8388,6 +8412,10 @@ def module_delivery_session_plan(module, session_count, start, holidays=None):
             'sessionNumber': index + 1,
             'date': (start + timedelta(days=index * 7)).isoformat(),
             'day': (start + timedelta(days=index * 7)).strftime('%A'),
+            # No weekday to skip onto, so nothing is ever displaced: the week's
+            # slot and the session it holds are the same date.
+            'slotDate': (start + timedelta(days=index * 7)).isoformat(),
+            'slotDay': (start + timedelta(days=index * 7)).strftime('%A'),
             'skippedHolidays': [],
         }
         for index in range(session_count)
@@ -8647,7 +8675,7 @@ def cohort_selected_holidays_by_cohort(cohort_ids):
         return {}
     clause, params = curriculum_in_clause('cohort_id', wanted)
     try:
-        rows = authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE, clause, params)
+        rows = authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE, clause, params, ensure_tables=False)
     except (Exception, AssertionError):
         logger.debug('Unable to read cohort holidays for %s.', ', '.join(wanted), exc_info=True)
         return {}
@@ -14953,14 +14981,15 @@ def curriculum_live_session_occurrences(request):
     return JsonResponse({'series': series_payload, 'occurrences': occurrences_payload})
 
 
-def apply_module_session_plan_to_weeks(module, group_row, weeks):
+def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=None):
     """Stamp the module's planned session date/day/time onto its weeks in place.
 
     Shared by the single-module and batched structure readers so the two cannot
     drift: the batched one lacked this entirely, which silently dropped
     sessionDate/sessionDay/sessionStartTime/sessionDurationMinutes from every
-    week it returned. Pure computation over rows the caller already holds --
-    it issues no queries of its own.
+    week it returned. With ``holidays`` supplied it issues no queries;
+    otherwise it reads the cohort's selected holidays through the shared
+    session planner.
 
     A week consumes one planned date per DELIVERY DAY, not one per live-session
     component it happens to hold: a Mon+Fri module spends two of its dates on
@@ -14991,6 +15020,7 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks):
     session_plan = module_session_plan_for_count(
         module,
         max(planned_count, sum(week_slot_counts)),
+        holidays=holidays,
     ).get('sessions') or []
     session_start_time, _session_end_time, session_duration = module_session_clock(module, group_row)
     session_index = 0
@@ -15029,11 +15059,16 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks):
                     planned_settings['sessionDateTimeUtc'] = planned_instant
                     planned_settings['teamsStartDateTimeUtc'] = planned_instant
                 component['settings'] = planned_settings
-        session_date = format_date(first_planned.get('date'))
-        week['sessionDate'] = session_date
-        week['sessionDay'] = clean_str(first_planned.get('day'))
-        week['sessionStartTime'] = session_start_time if session_date else ''
-        week['sessionDurationMinutes'] = session_duration if session_date else 0
+        # The week keeps the slot it was authored into, not the date its live
+        # session was pushed to. A closure takes the session out of the week --
+        # the reading, the assignment and everything else in it stay on the week
+        # they belong to, so dating the week from the shifted session dragged
+        # content that nothing had closed a week later along with it.
+        slot_date = format_date(first_planned.get('slotDate')) or format_date(first_planned.get('date'))
+        week['sessionDate'] = slot_date
+        week['sessionDay'] = clean_str(first_planned.get('slotDay') or first_planned.get('day'))
+        week['sessionStartTime'] = session_start_time if slot_date else ''
+        week['sessionDurationMinutes'] = session_duration if slot_date else 0
     return weeks
 
 
@@ -17423,7 +17458,7 @@ def curriculum_cache_epoch(request):
     on nothing else -- no timestamps, no per-record versions to keep in step.
 
     Deliberately the cheapest read in this module: one Redis GET, no database, no
-    payload build. A tab open in another country polls it every half minute, so
+    payload build. A tab open in another country polls it every few seconds, so
     it has to stay that way. Reading it must never fail a page either --
     `shared_curriculum_epoch()` already answers 0 when Redis is unreachable, and
     a client that sees a frozen epoch simply keeps the data it has and falls back
@@ -17442,7 +17477,8 @@ def curriculum_cache_epoch(request):
     """
     return JsonResponse({
         'epoch': shared_curriculum_epoch(),
-        'changes': recent_curriculum_changes(),
+        'changes': [] if getattr(getattr(request, 'login_account', None), 'role', None) == 'learner'
+        else recent_curriculum_changes(),
     })
 
 
@@ -19218,7 +19254,8 @@ def curriculum_component_detail(request, component_id):
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
-    current = next((item for item in component_builder_rows() if item['id'] == component_id), None)
+    module_id = clean_str(existing[0].get('module_catalogue_id'))
+    current = next((item for item in component_builder_rows([module_id] if module_id else None) if item['id'] == component_id), None)
     merged = {
         **(current or component_builder_response(existing[0])),
         **payload,
@@ -23114,6 +23151,15 @@ def curriculum_cohort_detail(request, identifier):
     cohort_id = clean_str(cohort_row.get('cohort_id'))
 
     if request.method == 'DELETE':
+        # An archived cohort can be removed for good, with the groups archived
+        # alongside it. Archiving stays the default so a delete is never
+        # irreversible by accident -- see permanent_cohort_delete_response.
+        if request_wants_permanent_delete(request):
+            log_curriculum_decision(
+                'cohort.delete', outcome='permanent_requested', entity_id=cohort_id,
+            )
+            return permanent_cohort_delete_response(cohort_row)
+
         for stored_group in authoring_fetch_all(GROUPS_TABLE, 'cohort_id = %s', [cohort_id]):
             stored_group_id = clean_str(stored_group.get('group_id'))
             if not stored_group_id:
@@ -23537,6 +23583,15 @@ def curriculum_group_detail(request, identifier):
     group_id = clean_str(group_row.get('group_id'))
 
     if request.method == 'DELETE':
+        # Same two operations behind one verb as the cohort above: archive by
+        # default, remove for good only when the caller asks and the group is
+        # already archived.
+        if request_wants_permanent_delete(request):
+            log_curriculum_decision(
+                'group.delete', outcome='permanent_requested', entity_id=group_id,
+            )
+            return permanent_group_delete_response(group_row)
+
         cohort_id = clean_str(group_row.get('cohort_id'))
         if cohort_id:
             cohort_row = fetch_cohort_row(cohort_id) or {}
@@ -23685,6 +23740,444 @@ def curriculum_group_detail(request, identifier):
         'teamsCalendarsToUpdate': stale_teams_calendar_modules([
             clean_str(row.get('module_catalogue_id')) for row in previous_module_rows
         ]) if module_delivery_updates else [],
+    })
+
+
+# ============================================================================
+# The cohort/group archive.
+#
+# DELETE on either detail endpoint soft-deletes: the row keeps its place in
+# curriculum.cohorts / curriculum.groups and only picks up a ``deleted_at``
+# stamp, which every list then filters out. Nothing in the app read that state
+# back, so archiving was in practice a delete with no way to undo it and no way
+# to finish it either -- the row was simply gone from the UI while still sitting
+# in the database. These operations are both halves of the way out: list what is
+# archived, put one back, or remove it for good.
+#
+# Deliberately the same shape as the programme archive above (see
+# ``curriculum_programme_restore`` / ``permanent_programme_delete_response``):
+# archiving stays reversible, a permanent delete is refused unless the record is
+# already archived, and refused again while live learners still sit in it, so
+# the irreversible step is never the first one anybody can take.
+# ============================================================================
+
+
+def request_wants_permanent_delete(request):
+    """A permanent delete is opt-in per request; the default DELETE still archives."""
+    return (
+        truthy(request.GET.get('permanent'))
+        or truthy(request.GET.get('hard'))
+        or clean_str(request.GET.get('mode')).lower() in {'permanent', 'hard'}
+    )
+
+
+def curriculum_row_is_archived(row):
+    """Is this cohort/group row one the active lists leave out?
+
+    Deliberately the exact complement of what ``build_cohorts_and_groups`` skips:
+    the soft-delete stamps ``curriculum_row_effectively_deleted`` already covers,
+    plus a legacy row carrying only ``status = 'archived'``. Anything the live
+    list hides has to be reachable from the archive or it is invisible in both,
+    which is the state this whole section exists to end.
+    """
+    return curriculum_row_effectively_deleted(row) or clean_str((row or {}).get('status')).lower() == 'archived'
+
+
+def archived_authoring_rows(table):
+    """Every archived row in one authoring table, most recent archive first.
+
+    Sorted on the *formatted* stamp rather than the column itself: ``deleted_at``
+    comes back tz-aware from Postgres and naive from sqlite, and comparing the
+    two kinds raises. ISO text orders identically either way.
+    """
+    rows = [row for row in authoring_fetch_all(table) if curriculum_row_is_archived(row)]
+    rows.sort(key=lambda row: format_created_at(row.get('deleted_at')), reverse=True)
+    return rows
+
+
+def archive_stamp_fields(row):
+    """How a row came to be archived, in the shape the archive view reads."""
+    return {
+        'archivedAt': format_created_at(row.get('deleted_at')),
+        # 'cohort-delete' / 'group-delete' / 'programme-delete' -- the write
+        # handler that archived it, never a person: no authoring table records
+        # who made the request.
+        'archivedBy': clean_str(row.get('deleted_by')),
+        # Set only where a parent's archive took this row down with it, and then
+        # it holds that parent's id -- which is the record that has to be
+        # restored to bring this one back.
+        'archivedViaParent': clean_str(row.get('deleted_via_parent')),
+    }
+
+
+def archived_parent_programme(programme_id):
+    """The programme config for ``programme_id``, but only while it is archived.
+
+    Used to refuse a restore that would produce an orphan: every cohort list is
+    scoped by programme, so a cohort restored under an archived programme comes
+    back invisible.
+    """
+    identifier = clean_str(programme_id)
+    if not identifier:
+        return None
+    try:
+        ensure_program_config_archive_columns()
+        config = programme_config_by_identifier(identifier)
+    except Exception:
+        logger.warning('Could not read programme %s while checking the archive.', identifier, exc_info=True)
+        return None
+    return config if config and is_archived_program_config(config) else None
+
+
+def archived_cohort_learners(cohort_row, counts=None):
+    """Live learners still placed in an archived cohort, by id or by name."""
+    if counts is None:
+        counts, _group_counts = active_learner_delivery_counts()
+    return delivery_learner_count(counts, clean_str(cohort_row.get('cohort_id')), (
+        normalise(cohort_row.get('programme_name')),
+        normalise(cohort_row.get('cohort_name')),
+    ))
+
+
+def archived_group_learners(group_row, counts=None):
+    """Live learners still placed in an archived group, by id or by name."""
+    if counts is None:
+        _cohort_counts, counts = active_learner_delivery_counts()
+    return delivery_learner_count(counts, clean_str(group_row.get('group_id')), (
+        normalise(group_row.get('programme_name')),
+        normalise(group_row.get('cohort_name')),
+        normalise(group_row.get('group_name')),
+    ))
+
+
+def archived_cohort_payload(row, archived_group_rows, cohort_learner_counts):
+    detail = serialize_cohort_authoring_detail(row)
+    cohort_id = clean_str(row.get('cohort_id'))
+    return {
+        'id': cohort_id,
+        'name': clean_str(row.get('cohort_name')),
+        'programme': clean_str(row.get('programme_name')),
+        'programmeId': clean_str(row.get('programme_id')),
+        'startDate': detail['startDate'],
+        'endDate': detail['endDate'],
+        'practicalEndDate': detail['practicalEndDate'],
+        'apprenticeshipEndDate': detail['apprenticeshipEndDate'],
+        'epaMonths': detail['epaMonths'],
+        'durationMonths': detail['durationMonths'],
+        'color': detail['color'],
+        'status': 'archived',
+        # Archived groups only. These are the rows a restore would bring back
+        # and a permanent delete would remove, so they are the ones worth
+        # counting in front of either button.
+        'groups': len([
+            group for group in archived_group_rows
+            if clean_str(group.get('cohort_id')) == cohort_id
+        ]),
+        'learners': archived_cohort_learners(row, cohort_learner_counts),
+        **archive_stamp_fields(row),
+    }
+
+
+def archived_group_payload(row, cohort_rows_by_id, group_learner_counts):
+    detail = serialize_group_authoring_detail(row)
+    group_id = clean_str(row.get('group_id'))
+    cohort_id = clean_str(row.get('cohort_id'))
+    parent = cohort_rows_by_id.get(cohort_id)
+    return {
+        'id': group_id,
+        'name': clean_str(row.get('group_name')),
+        'cohortId': cohort_id,
+        'cohort': clean_str(row.get('cohort_name')),
+        'programmeId': clean_str(row.get('programme_id')),
+        'programme': clean_str(row.get('programme_name')),
+        'coach': detail['coach'],
+        'weekDays': detail['weekDays'],
+        'startTime': detail['startTime'],
+        'endTime': detail['endTime'],
+        'schedule': detail['schedule'],
+        'color': detail['color'],
+        'status': 'archived',
+        'learners': archived_group_learners(row, group_learner_counts),
+        # Whether the parent cohort is itself archived decides what a restore
+        # can do here: a group cannot come back into a cohort that is not in the
+        # list. A group with no cohort at all has nothing to wait for.
+        'cohortArchived': bool(cohort_id) and (
+            parent is None or curriculum_row_is_archived(parent)
+        ),
+        **archive_stamp_fields(row),
+    }
+
+
+@require_GET
+def curriculum_archived_cohorts(request):
+    """Archived cohorts, each with what a restore or a delete would move."""
+    archived_groups = archived_authoring_rows(GROUPS_TABLE)
+    cohort_learner_counts, _group_learner_counts = active_learner_delivery_counts()
+    results = [
+        archived_cohort_payload(row, archived_groups, cohort_learner_counts)
+        for row in archived_authoring_rows(COHORT_AUTHORING_DETAILS_TABLE)
+        if clean_str(row.get('cohort_id'))
+    ]
+    return JsonResponse({'schema': CURRICULUM_SCHEMA, 'count': len(results), 'results': results})
+
+
+@require_GET
+def curriculum_archived_groups(request):
+    """Archived groups, each with what a restore or a delete would move."""
+    cohort_rows_by_id = {
+        clean_str(row.get('cohort_id')): row
+        for row in authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE)
+        if clean_str(row.get('cohort_id'))
+    }
+    _cohort_learner_counts, group_learner_counts = active_learner_delivery_counts()
+    results = [
+        archived_group_payload(row, cohort_rows_by_id, group_learner_counts)
+        for row in archived_authoring_rows(GROUPS_TABLE)
+        if clean_str(row.get('group_id'))
+    ]
+    return JsonResponse({'schema': CURRICULUM_SCHEMA, 'count': len(results), 'results': results})
+
+
+# What every restore has to say for itself. Archiving a cohort or a group
+# detaches the modules beneath it (``unassign_authoring_modules_from_group``
+# clears group_id/cohort_id on the module rows) and keeps no record of which
+# module sat where, so a restore returns the record but not its timetable. That
+# is the one thing coming back out of the archive cannot undo, so it is said on
+# the way out rather than discovered afterwards.
+ARCHIVE_MODULE_REATTACH_NOTE = (
+    'Modules were detached when it was archived, so they have to be attached again by hand.'
+)
+
+
+@csrf_exempt
+def curriculum_cohort_restore(request, identifier):
+    """Take a cohort back out of the archive, with the groups archived with it."""
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+
+    cohort_row = fetch_cohort_row(identifier) or resolve_cohort_row(identifier)
+    if not cohort_row:
+        log_curriculum_decision('cohort.restore', outcome='rejected', reason='not-found', entity_id=identifier)
+        return json_error('Cohort not found.', status=404)
+    cohort_id = clean_str(cohort_row.get('cohort_id'))
+    if not curriculum_row_is_archived(cohort_row):
+        return json_error(
+            'Cohort is not archived.', status=409,
+            reason='cohort-not-archived', restored=False, id=cohort_id,
+        )
+
+    programme_id = clean_str(cohort_row.get('programme_id'))
+    archived_programme = archived_parent_programme(programme_id)
+    if archived_programme:
+        name = clean_str(archived_programme.get('name')) or 'The programme'
+        return json_error(
+            f'{name} is archived, so this cohort has no programme to come back to. Restore the '
+            'programme instead - it brings back everything archived with it, this cohort included.',
+            status=409, reason='programme-archived', restored=False, id=cohort_id,
+        )
+
+    with transaction.atomic():
+        payload = restore_soft_delete_payload(COHORT_AUTHORING_DETAILS_TABLE)
+        if has_column(COHORT_AUTHORING_DETAILS_TABLE, 'is_archived'):
+            payload['is_archived'] = False
+        if has_column(COHORT_AUTHORING_DETAILS_TABLE, 'status'):
+            # Back to whatever the dates say it is now, not to a blanket
+            # 'active': a cohort archived before it started is still planned.
+            payload['status'] = title_case_status(
+                False, cohort_row.get('start_date'), cohort_row.get('end_date'),
+            )
+        update_rows(
+            COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id], payload,
+            allow_null_columns=RESTORE_NULLABLE_COLUMNS,
+        )
+        # Only the groups this cohort's own archive took down carry it as their
+        # parent marker. A group archived on its own carries none and stays
+        # archived - the same rule ``restore_rows_via_parent`` applies to a
+        # programme, so restoring is never a way to resurrect an unrelated
+        # deletion.
+        groups = restore_rows_via_parent(GROUPS_TABLE, cohort_id)
+    invalidate_curriculum_cache()
+    log_curriculum_decision('cohort.restore', outcome='restored', entity_id=cohort_id, parent_id=programme_id)
+    return JsonResponse({
+        'restored': True,
+        'id': cohort_id,
+        'details': {'groups': len(groups)},
+        'message': f'Cohort restored. {ARCHIVE_MODULE_REATTACH_NOTE}',
+    })
+
+
+@csrf_exempt
+def curriculum_group_restore(request, identifier):
+    """Take a group back out of the archive and back onto its cohort."""
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+
+    group_row = fetch_group_row(identifier) or resolve_group_row(identifier)
+    if not group_row:
+        log_curriculum_decision('group.restore', outcome='rejected', reason='not-found', entity_id=identifier)
+        return json_error('Group not found.', status=404)
+    group_id = clean_str(group_row.get('group_id'))
+    if not curriculum_row_is_archived(group_row):
+        return json_error(
+            'Group is not archived.', status=409,
+            reason='group-not-archived', restored=False, id=group_id,
+        )
+
+    cohort_id = clean_str(group_row.get('cohort_id'))
+    cohort_row = fetch_cohort_row(cohort_id) if cohort_id else None
+    if cohort_id and (not cohort_row or curriculum_row_is_archived(cohort_row)):
+        name = clean_str(group_row.get('cohort_name')) or 'The cohort'
+        return json_error(
+            f'{name} is archived, so this group has no cohort to come back to. Restore the cohort '
+            'first - it brings back the groups archived with it.',
+            status=409, reason='cohort-archived', restored=False, id=group_id,
+        )
+
+    with transaction.atomic():
+        payload = restore_soft_delete_payload(GROUPS_TABLE)
+        if has_column(GROUPS_TABLE, 'is_archived'):
+            payload['is_archived'] = False
+        if has_column(GROUPS_TABLE, 'status') and clean_str(group_row.get('status')).lower() == 'archived':
+            # Only a legacy row carries this: archiving a group stamps
+            # deleted_at and leaves status alone. Left as 'archived' the row
+            # would come back and immediately read as archived again.
+            payload['status'] = 'active'
+        update_rows(
+            GROUPS_TABLE, 'group_id = %s', [group_id], payload,
+            allow_null_columns=RESTORE_NULLABLE_COLUMNS,
+        )
+        # The archive took this id out of the cohort's ``group_ids``; put it
+        # back so the stored child list and the rows agree again.
+        if cohort_row:
+            update_cohort_fields(cohort_id, {
+                'group_ids': json_array_add(cohort_row.get('group_ids'), group_id),
+            })
+    invalidate_curriculum_cache()
+    log_curriculum_decision('group.restore', outcome='restored', entity_id=group_id, parent_id=cohort_id)
+    return JsonResponse({
+        'restored': True,
+        'id': group_id,
+        'message': f'Group restored. {ARCHIVE_MODULE_REATTACH_NOTE}',
+    })
+
+
+def permanent_cohort_delete_response(cohort_row):
+    """HTTP outcome of a permanent cohort delete: the row and its archived groups.
+
+    Module rows are never deleted with a cohort. Module content outlives the
+    delivery it was scheduled into - that is what the plain archive already
+    promises - so only the delivery link is cleared here.
+    """
+    cohort_id = clean_str(cohort_row.get('cohort_id'))
+    if not curriculum_row_is_archived(cohort_row):
+        return json_error(
+            'Archive the cohort before deleting it permanently.',
+            status=409, reason='cohort-not-archived', deleted=False, permanent=False, id=cohort_id,
+        )
+
+    learners = archived_cohort_learners(cohort_row)
+    if learners:
+        return json_error(
+            f'{learners} active learner{"" if learners == 1 else "s"} are still placed in this cohort, '
+            'so it cannot be deleted permanently. Move them to another cohort first.',
+            status=409, reason='cohort-has-learner-delivery', deleted=False, permanent=False,
+            id=cohort_id, blockers={'learners': learners},
+        )
+
+    group_rows = authoring_fetch_all(GROUPS_TABLE, 'cohort_id = %s', [cohort_id])
+    live_groups = [row for row in group_rows if not curriculum_row_is_archived(row)]
+    if live_groups:
+        return json_error(
+            f'{len(live_groups)} group{"" if len(live_groups) == 1 else "s"} under this cohort '
+            'are still active, so it cannot be deleted permanently. Archive them first.',
+            status=409, reason='cohort-has-live-groups', deleted=False, permanent=False,
+            id=cohort_id, blockers={'groups': len(live_groups)},
+        )
+
+    try:
+        with transaction.atomic():
+            for group in group_rows:
+                unassign_authoring_modules_from_group(clean_str(group.get('group_id')))
+            # Any module row still naming this cohort directly, rather than
+            # through one of its groups.
+            update_authoring_rows(AUTHORING_MODULES_TABLE, 'cohort_id = %s', [cohort_id], {
+                'cohort_id': None,
+                'cohort_name': '',
+            })
+            removed = {
+                'groups': len(delete_rows(GROUPS_TABLE, 'cohort_id = %s', [cohort_id])),
+                'cohorts': len(delete_rows(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id])),
+            }
+    except (IntegrityError, DatabaseError) as exc:
+        logger.warning('Permanent delete of cohort %s was refused: %s', cohort_id, exc)
+        return json_error(
+            'The database refused the permanent delete because other rows still reference this cohort.',
+            status=409, reason='cohort-delete-restricted', deleted=False, permanent=False,
+            id=cohort_id, detail=clean_str(str(exc)),
+        )
+
+    invalidate_curriculum_cache()
+    log_curriculum_decision(
+        'cohort.delete', outcome='permanent', entity_id=cohort_id,
+        parent_id=clean_str(cohort_row.get('programme_id')),
+        reason=','.join(f'{table}:{count}' for table, count in sorted(removed.items())),
+    )
+    return JsonResponse({
+        'deleted': True,
+        'permanent': True,
+        'id': cohort_id,
+        'removed': removed,
+        'message': 'Cohort and the groups archived with it were removed from the database. Module content was kept.',
+    })
+
+
+def permanent_group_delete_response(group_row):
+    """HTTP outcome of a permanent group delete. Module content is kept."""
+    group_id = clean_str(group_row.get('group_id'))
+    if not curriculum_row_is_archived(group_row):
+        return json_error(
+            'Archive the group before deleting it permanently.',
+            status=409, reason='group-not-archived', deleted=False, permanent=False, id=group_id,
+        )
+
+    learners = archived_group_learners(group_row)
+    if learners:
+        return json_error(
+            f'{learners} active learner{"" if learners == 1 else "s"} are still placed in this group, '
+            'so it cannot be deleted permanently. Move them to another group first.',
+            status=409, reason='group-has-learner-delivery', deleted=False, permanent=False,
+            id=group_id, blockers={'learners': learners},
+        )
+
+    cohort_id = clean_str(group_row.get('cohort_id'))
+    try:
+        with transaction.atomic():
+            unassign_authoring_modules_from_group(group_id)
+            cohort_row = fetch_cohort_row(cohort_id) if cohort_id else None
+            if cohort_row:
+                update_cohort_fields(cohort_id, {
+                    'group_ids': json_array_remove(cohort_row.get('group_ids'), group_id),
+                })
+            removed = {'groups': len(delete_rows(GROUPS_TABLE, 'group_id = %s', [group_id]))}
+    except (IntegrityError, DatabaseError) as exc:
+        logger.warning('Permanent delete of group %s was refused: %s', group_id, exc)
+        return json_error(
+            'The database refused the permanent delete because other rows still reference this group.',
+            status=409, reason='group-delete-restricted', deleted=False, permanent=False,
+            id=group_id, detail=clean_str(str(exc)),
+        )
+
+    invalidate_curriculum_cache()
+    log_curriculum_decision(
+        'group.delete', outcome='permanent', entity_id=group_id, parent_id=cohort_id,
+        reason=','.join(f'{table}:{count}' for table, count in sorted(removed.items())),
+    )
+    return JsonResponse({
+        'deleted': True,
+        'permanent': True,
+        'id': group_id,
+        'removed': removed,
+        'message': 'Group was removed from the database. Module content was kept.',
     })
 
 

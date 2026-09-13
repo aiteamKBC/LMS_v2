@@ -93,17 +93,22 @@ urlpatterns = [
     path('curriculum/ksb-profiles/<str:identifier>/', views.curriculum_ksb_framework_detail, name='curriculum-ksb-profile-detail'),
     path('curriculum/ksb-sets/', views.curriculum_ksb_sets, name='curriculum-ksb-sets'),
     path('curriculum/cohorts/', views.curriculum_cohort_collection, name='curriculum-cohorts'),
+    # Before the '<str:identifier>' routes below, or 'archived' is read as a cohort id.
+    path('curriculum/cohorts/archived/', views.curriculum_archived_cohorts, name='curriculum-cohorts-archived'),
     path('curriculum/cohorts/<str:cohort_id>/ksb-coverage/', views.curriculum_cohort_ksb_coverage, name='curriculum-cohort-ksb-coverage'),
     path('curriculum/cohorts/<str:cohort_id>/learner-roster/', views.curriculum_cohort_learner_roster, name='curriculum-cohort-learner-roster'),
     path('curriculum/cohorts/<str:cohort_id>/learner-ksb-impact/', views.curriculum_cohort_learner_ksb_impact, name='curriculum-cohort-learner-ksb-impact'),
     path('curriculum/cohorts/<str:cohort_id>/groups/', views.curriculum_cohort_group_collection, name='curriculum-cohort-groups'),
+    path('curriculum/cohorts/<str:identifier>/restore/', views.curriculum_cohort_restore, name='curriculum-cohort-restore'),
     path('curriculum/cohorts/<str:identifier>/', views.curriculum_cohort_detail, name='curriculum-cohort-detail'),
     path('curriculum/groups/', views.curriculum_group_collection, name='curriculum-groups'),
+    path('curriculum/groups/archived/', views.curriculum_archived_groups, name='curriculum-groups-archived'),
     # Declared before the <identifier> route below, which would otherwise
     # capture these as group ids.
     path('curriculum/groups/<str:group_id>/ksb-coverage/', views.curriculum_group_ksb_coverage, name='curriculum-group-ksb-coverage'),
     path('curriculum/groups/<str:group_id>/learner-roster/', views.curriculum_group_learner_roster, name='curriculum-group-learner-roster'),
     path('curriculum/groups/<str:group_id>/learner-ksb-impact/', views.curriculum_group_learner_ksb_impact, name='curriculum-group-learner-ksb-impact'),
+    path('curriculum/groups/<str:identifier>/restore/', views.curriculum_group_restore, name='curriculum-group-restore'),
     path('curriculum/groups/<str:identifier>/', views.curriculum_group_detail, name='curriculum-group-detail'),
     path('curriculum/groups/<str:identifier>/modules/', views.curriculum_group_modules, name='curriculum-group-modules'),
     path('curriculum/group-modules/<str:identifier>/', views.curriculum_module_detail, name='curriculum-group-module-detail'),

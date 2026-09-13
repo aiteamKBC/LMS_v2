@@ -1,0 +1,2565 @@
+{
+  "verified_at": "2026-09-13",
+  "source": "Postgres catalogs read in a READ ONLY transaction against backend/.env database. No credentials or learner records.",
+  "schema": "curriculum",
+  "tables": {
+    "components": [
+      {
+        "column": "id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "week_id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "module_catalogue_id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "type",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "title",
+        "type": "character varying",
+        "nullable": false,
+        "default": "''::character varying"
+      },
+      {
+        "column": "description",
+        "type": "text",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "expected_otjh",
+        "type": "numeric",
+        "nullable": false,
+        "default": "2"
+      },
+      {
+        "column": "points",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "reflection_required",
+        "type": "boolean",
+        "nullable": false,
+        "default": "false"
+      },
+      {
+        "column": "workplace_evidence_required",
+        "type": "boolean",
+        "nullable": false,
+        "default": "false"
+      },
+      {
+        "column": "tutor_validation_required",
+        "type": "boolean",
+        "nullable": false,
+        "default": "false"
+      },
+      {
+        "column": "display_order",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "settings_json",
+        "type": "jsonb",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "created_at",
+        "type": "timestamp without time zone",
+        "nullable": false,
+        "default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column": "updated_at",
+        "type": "timestamp without time zone",
+        "nullable": false,
+        "default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column": "live_sessions_link",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "is_programme_deleted",
+        "type": "boolean",
+        "nullable": false,
+        "default": "false"
+      },
+      {
+        "column": "deleted_at",
+        "type": "timestamp with time zone",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "deleted_by",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "deleted_via_parent",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "ksb_mappings",
+        "type": "jsonb",
+        "nullable": false,
+        "default": "'[]'::jsonb"
+      },
+      {
+        "column": "library_state",
+        "type": "character varying",
+        "nullable": false,
+        "default": "''::character varying"
+      },
+      {
+        "column": "detached_at",
+        "type": "timestamp with time zone",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "origin_module_catalogue_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "origin_module_title",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "origin_week_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "origin_week_label",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "copied_from_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "Reflection_Question",
+        "type": "text",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "coach_validation_required",
+        "type": "boolean",
+        "nullable": false,
+        "default": "true"
+      }
+    ],
+    "free_course_weeks": [
+      {
+        "column": "id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "course_id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "week_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "course_name",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "description",
+        "type": "text",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "cover_image_url",
+        "type": "text",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "week_number",
+        "type": "integer",
+        "nullable": false,
+        "default": "1"
+      },
+      {
+        "column": "week_title",
+        "type": "character varying",
+        "nullable": false,
+        "default": "''::character varying"
+      },
+      {
+        "column": "display_order",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "component_count",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "total_otjh",
+        "type": "numeric",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "created_at",
+        "type": "timestamp without time zone",
+        "nullable": false,
+        "default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column": "updated_at",
+        "type": "timestamp without time zone",
+        "nullable": false,
+        "default": "CURRENT_TIMESTAMP"
+      }
+    ],
+    "free_courses": [
+      {
+        "column": "id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "course_name",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "description",
+        "type": "text",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "display_order",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "component_count",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "total_otjh",
+        "type": "numeric",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "created_at",
+        "type": "timestamp without time zone",
+        "nullable": false,
+        "default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column": "updated_at",
+        "type": "timestamp without time zone",
+        "nullable": false,
+        "default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column": "cover_image_url",
+        "type": "text",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "week_count",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "week_builder_week_ids",
+        "type": "jsonb",
+        "nullable": false,
+        "default": "'[]'::jsonb"
+      }
+    ],
+    "free_programme_components": [
+      {
+        "column": "id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "free_module_id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "week_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "programme_id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "type",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "title",
+        "type": "character varying",
+        "nullable": false,
+        "default": "''::character varying"
+      },
+      {
+        "column": "description",
+        "type": "text",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "expected_otjh",
+        "type": "numeric",
+        "nullable": false,
+        "default": "2"
+      },
+      {
+        "column": "points",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "reflection_required",
+        "type": "boolean",
+        "nullable": false,
+        "default": "false"
+      },
+      {
+        "column": "workplace_evidence_required",
+        "type": "boolean",
+        "nullable": false,
+        "default": "false"
+      },
+      {
+        "column": "tutor_validation_required",
+        "type": "boolean",
+        "nullable": false,
+        "default": "false"
+      },
+      {
+        "column": "display_order",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "settings_json",
+        "type": "jsonb",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "created_at",
+        "type": "timestamp without time zone",
+        "nullable": false,
+        "default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column": "updated_at",
+        "type": "timestamp without time zone",
+        "nullable": false,
+        "default": "CURRENT_TIMESTAMP"
+      }
+    ],
+    "ksb_mappings": [
+      {
+        "column": "id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "module_catalogue_id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "week_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "component_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "ksb_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "ksb_code",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "ksb_description",
+        "type": "text",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "classification",
+        "type": "character varying",
+        "nullable": false,
+        "default": "'secondary'::character varying"
+      },
+      {
+        "column": "created_at",
+        "type": "timestamp without time zone",
+        "nullable": false,
+        "default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column": "updated_at",
+        "type": "timestamp without time zone",
+        "nullable": false,
+        "default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column": "weight",
+        "type": "numeric",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "source_type",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "source_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "is_programme_deleted",
+        "type": "boolean",
+        "nullable": false,
+        "default": "false"
+      },
+      {
+        "column": "deleted_at",
+        "type": "timestamp with time zone",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "deleted_by",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "deleted_via_parent",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "weight_class",
+        "type": "character varying",
+        "nullable": false,
+        "default": "'soft'::character varying"
+      }
+    ],
+    "modules": [
+      {
+        "column": "module_catalogue_id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "programme_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "programme_name",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "title",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "description",
+        "type": "text",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "total_otjh",
+        "type": "numeric",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "quality_score",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "created_at",
+        "type": "timestamp without time zone",
+        "nullable": false,
+        "default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column": "updated_at",
+        "type": "timestamp without time zone",
+        "nullable": false,
+        "default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column": "sessions_number",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "start_date",
+        "type": "date",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "end_date",
+        "type": "date",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "cohort_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "cohort_name",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "group_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "group_name",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "tutor_name",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "color",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "session_week_day",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "session_start_time",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "session_end_time",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "ksb_profile_source_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "source_type",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "source_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "coach_name",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "is_programme_deleted",
+        "type": "boolean",
+        "nullable": false,
+        "default": "false"
+      },
+      {
+        "column": "deleted_at",
+        "type": "timestamp with time zone",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "deleted_by",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "deleted_via_parent",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "weeks_number",
+        "type": "integer",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "tutor_email",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "cover_image_url",
+        "type": "text",
+        "nullable": true,
+        "default": null
+      }
+    ],
+    "programmes": [
+      {
+        "column": "programme_id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "name",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "color",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "created_at",
+        "type": "timestamp with time zone",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "updated_at",
+        "type": "timestamp with time zone",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "is_archived",
+        "type": "boolean",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "level",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "description",
+        "type": "text",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "ksb_profile_source_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "standard",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "owner",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "created_by",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "is_active",
+        "type": "boolean",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "structure_type",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "deleted_at",
+        "type": "timestamp with time zone",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "deleted_by",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "deleted_via_parent",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "status",
+        "type": "character varying",
+        "nullable": false,
+        "default": "'active'::character varying"
+      },
+      {
+        "column": "required_otjh",
+        "type": "numeric",
+        "nullable": true,
+        "default": null
+      }
+    ],
+    "quiz_answers": [
+      {
+        "column": "id",
+        "type": "bigint",
+        "nullable": false,
+        "default": "nextval('curriculum.quiz_answers_id_seq'::regclass)"
+      },
+      {
+        "column": "question_id",
+        "type": "bigint",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "answer_text",
+        "type": "text",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "is_correct",
+        "type": "boolean",
+        "nullable": false,
+        "default": "false"
+      },
+      {
+        "column": "sort_order",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "created_at",
+        "type": "timestamp with time zone",
+        "nullable": false,
+        "default": "now()"
+      }
+    ],
+    "quiz_component_links": [
+      {
+        "column": "id",
+        "type": "bigint",
+        "nullable": false,
+        "default": "nextval('curriculum.quiz_component_links_id_seq'::regclass)"
+      },
+      {
+        "column": "quiz_id",
+        "type": "bigint",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "component_id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "created_at",
+        "type": "timestamp with time zone",
+        "nullable": false,
+        "default": "now()"
+      }
+    ],
+    "quiz_course_links": [
+      {
+        "column": "id",
+        "type": "bigint",
+        "nullable": false,
+        "default": "nextval('curriculum.quiz_course_links_id_seq'::regclass)"
+      },
+      {
+        "column": "quiz_id",
+        "type": "bigint",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "module_catalogue_id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "created_at",
+        "type": "timestamp with time zone",
+        "nullable": false,
+        "default": "now()"
+      },
+      {
+        "column": "week_id",
+        "type": "character varying",
+        "nullable": false,
+        "default": "''::character varying"
+      }
+    ],
+    "quiz_questions": [
+      {
+        "column": "id",
+        "type": "bigint",
+        "nullable": false,
+        "default": "nextval('curriculum.quiz_questions_id_seq'::regclass)"
+      },
+      {
+        "column": "quiz_id",
+        "type": "bigint",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "question_text",
+        "type": "text",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "question_type",
+        "type": "character varying",
+        "nullable": false,
+        "default": "'multiple_choice'::character varying"
+      },
+      {
+        "column": "points",
+        "type": "integer",
+        "nullable": false,
+        "default": "1"
+      },
+      {
+        "column": "sort_order",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "explanation",
+        "type": "text",
+        "nullable": true,
+        "default": "''::text"
+      },
+      {
+        "column": "created_at",
+        "type": "timestamp with time zone",
+        "nullable": false,
+        "default": "now()"
+      },
+      {
+        "column": "is_archived",
+        "type": "boolean",
+        "nullable": false,
+        "default": "false"
+      }
+    ],
+    "quizzes": [
+      {
+        "column": "id",
+        "type": "bigint",
+        "nullable": false,
+        "default": "nextval('curriculum.quizzes_id_seq'::regclass)"
+      },
+      {
+        "column": "programme_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "title",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "module",
+        "type": "character varying",
+        "nullable": true,
+        "default": "''::character varying"
+      },
+      {
+        "column": "programme",
+        "type": "character varying",
+        "nullable": true,
+        "default": "''::character varying"
+      },
+      {
+        "column": "version",
+        "type": "character varying",
+        "nullable": false,
+        "default": "'v1.0'::character varying"
+      },
+      {
+        "column": "questions",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "status",
+        "type": "character varying",
+        "nullable": false,
+        "default": "'draft'::character varying"
+      },
+      {
+        "column": "package_type",
+        "type": "character varying",
+        "nullable": false,
+        "default": "'xml'::character varying"
+      },
+      {
+        "column": "uploaded_file",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "file_name",
+        "type": "character varying",
+        "nullable": true,
+        "default": "''::character varying"
+      },
+      {
+        "column": "file_size",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "schema_valid",
+        "type": "boolean",
+        "nullable": false,
+        "default": "true"
+      },
+      {
+        "column": "validation_message",
+        "type": "text",
+        "nullable": true,
+        "default": "''::text"
+      },
+      {
+        "column": "mapped_components",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "author",
+        "type": "character varying",
+        "nullable": true,
+        "default": "'Curriculum Team'::character varying"
+      },
+      {
+        "column": "linked_courses",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "published_at",
+        "type": "timestamp with time zone",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "created_at",
+        "type": "timestamp with time zone",
+        "nullable": false,
+        "default": "now()"
+      },
+      {
+        "column": "updated_at",
+        "type": "timestamp with time zone",
+        "nullable": false,
+        "default": "now()"
+      },
+      {
+        "column": "default_question_type",
+        "type": "character varying",
+        "nullable": false,
+        "default": "'single_choice'::character varying"
+      },
+      {
+        "column": "short_description",
+        "type": "text",
+        "nullable": false,
+        "default": "''::text"
+      },
+      {
+        "column": "lesson_content",
+        "type": "text",
+        "nullable": false,
+        "default": "''::text"
+      },
+      {
+        "column": "duration",
+        "type": "integer",
+        "nullable": false,
+        "default": "60"
+      },
+      {
+        "column": "time_unit",
+        "type": "character varying",
+        "nullable": false,
+        "default": "'minutes'::character varying"
+      },
+      {
+        "column": "quiz_style",
+        "type": "character varying",
+        "nullable": false,
+        "default": "'default'::character varying"
+      },
+      {
+        "column": "randomize_questions",
+        "type": "boolean",
+        "nullable": false,
+        "default": "true"
+      },
+      {
+        "column": "randomize_answers",
+        "type": "boolean",
+        "nullable": false,
+        "default": "false"
+      },
+      {
+        "column": "show_correct_answer",
+        "type": "boolean",
+        "nullable": false,
+        "default": "true"
+      },
+      {
+        "column": "attempt_history",
+        "type": "boolean",
+        "nullable": false,
+        "default": "false"
+      },
+      {
+        "column": "retake_after_pass",
+        "type": "boolean",
+        "nullable": false,
+        "default": "false"
+      },
+      {
+        "column": "limit_attempts",
+        "type": "boolean",
+        "nullable": false,
+        "default": "false"
+      },
+      {
+        "column": "passing_grade",
+        "type": "integer",
+        "nullable": false,
+        "default": "65"
+      },
+      {
+        "column": "retake_points_cut",
+        "type": "integer",
+        "nullable": false,
+        "default": "5"
+      },
+      {
+        "column": "assessment_type",
+        "type": "character varying",
+        "nullable": false,
+        "default": "'quiz'::character varying"
+      },
+      {
+        "column": "week_id",
+        "type": "character varying",
+        "nullable": false,
+        "default": "''::character varying"
+      }
+    ],
+    "week_template_components": [
+      {
+        "column": "id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "week_template_id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "type",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "title",
+        "type": "character varying",
+        "nullable": false,
+        "default": "''::character varying"
+      },
+      {
+        "column": "description",
+        "type": "text",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "expected_otjh",
+        "type": "numeric",
+        "nullable": false,
+        "default": "2"
+      },
+      {
+        "column": "points",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "reflection_required",
+        "type": "boolean",
+        "nullable": false,
+        "default": "false"
+      },
+      {
+        "column": "workplace_evidence_required",
+        "type": "boolean",
+        "nullable": false,
+        "default": "false"
+      },
+      {
+        "column": "tutor_validation_required",
+        "type": "boolean",
+        "nullable": false,
+        "default": "false"
+      },
+      {
+        "column": "ksb_mappings",
+        "type": "jsonb",
+        "nullable": false,
+        "default": "'[]'::jsonb"
+      },
+      {
+        "column": "settings_json",
+        "type": "jsonb",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "display_order",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "created_at",
+        "type": "timestamp without time zone",
+        "nullable": false,
+        "default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column": "updated_at",
+        "type": "timestamp without time zone",
+        "nullable": false,
+        "default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column": "coach_validation_required",
+        "type": "boolean",
+        "nullable": false,
+        "default": "true"
+      }
+    ],
+    "week_templates": [
+      {
+        "column": "id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "title",
+        "type": "character varying",
+        "nullable": false,
+        "default": "''::character varying"
+      },
+      {
+        "column": "summary",
+        "type": "text",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "learning_outcomes",
+        "type": "jsonb",
+        "nullable": false,
+        "default": "'[]'::jsonb"
+      },
+      {
+        "column": "course_type",
+        "type": "character varying",
+        "nullable": false,
+        "default": "'paid'::character varying"
+      },
+      {
+        "column": "programme_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "programme_name",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "module_catalogue_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "group_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "group_name",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "status",
+        "type": "character varying",
+        "nullable": false,
+        "default": "'draft'::character varying"
+      },
+      {
+        "column": "ksb_mappings",
+        "type": "jsonb",
+        "nullable": false,
+        "default": "'[]'::jsonb"
+      },
+      {
+        "column": "total_otjh",
+        "type": "numeric",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "points",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "component_count",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "author",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "created_at",
+        "type": "timestamp without time zone",
+        "nullable": false,
+        "default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column": "updated_at",
+        "type": "timestamp without time zone",
+        "nullable": false,
+        "default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column": "deleted_at",
+        "type": "timestamp with time zone",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "deleted_by",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "deleted_via_parent",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      }
+    ],
+    "weeks": [
+      {
+        "column": "id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "module_catalogue_id",
+        "type": "character varying",
+        "nullable": false,
+        "default": null
+      },
+      {
+        "column": "week_number",
+        "type": "integer",
+        "nullable": false,
+        "default": "1"
+      },
+      {
+        "column": "title",
+        "type": "character varying",
+        "nullable": false,
+        "default": "''::character varying"
+      },
+      {
+        "column": "summary",
+        "type": "text",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "learning_outcomes",
+        "type": "jsonb",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "display_order",
+        "type": "integer",
+        "nullable": false,
+        "default": "0"
+      },
+      {
+        "column": "created_at",
+        "type": "timestamp without time zone",
+        "nullable": false,
+        "default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column": "updated_at",
+        "type": "timestamp without time zone",
+        "nullable": false,
+        "default": "CURRENT_TIMESTAMP"
+      },
+      {
+        "column": "is_programme_deleted",
+        "type": "boolean",
+        "nullable": false,
+        "default": "false"
+      },
+      {
+        "column": "deleted_at",
+        "type": "timestamp with time zone",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "deleted_by",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "deleted_via_parent",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "library_state",
+        "type": "character varying",
+        "nullable": false,
+        "default": "''::character varying"
+      },
+      {
+        "column": "detached_at",
+        "type": "timestamp with time zone",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "origin_module_catalogue_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "origin_module_title",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "origin_week_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "origin_week_label",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      },
+      {
+        "column": "copied_from_id",
+        "type": "character varying",
+        "nullable": true,
+        "default": null
+      }
+    ]
+  },
+  "constraints": [
+    {
+      "table": "components",
+      "name": "chk_authoring_component_otjh_nonnegative",
+      "definition": "CHECK ((expected_otjh >= (0)::numeric)) NOT VALID"
+    },
+    {
+      "table": "components",
+      "name": "chk_authoring_component_points_nonnegative",
+      "definition": "CHECK ((points >= 0)) NOT VALID"
+    },
+    {
+      "table": "components",
+      "name": "components_coach_validation_required_not_null",
+      "definition": "NOT NULL coach_validation_required"
+    },
+    {
+      "table": "components",
+      "name": "components_is_programme_deleted_not_null",
+      "definition": "NOT NULL is_programme_deleted"
+    },
+    {
+      "table": "components",
+      "name": "components_ksb_mappings_not_null",
+      "definition": "NOT NULL ksb_mappings"
+    },
+    {
+      "table": "components",
+      "name": "components_library_state_not_null",
+      "definition": "NOT NULL library_state"
+    },
+    {
+      "table": "components",
+      "name": "curriculum_components_ksb_mappings_array_chk",
+      "definition": "CHECK ((jsonb_typeof(ksb_mappings) = 'array'::text))"
+    },
+    {
+      "table": "components",
+      "name": "curriculum_components_ksb_weight_class_chk",
+      "definition": "CHECK ((NOT jsonb_path_exists(COALESCE(ksb_mappings, '[]'::jsonb), '$[*]?(!(exists (@.\"weight_class\")) || !((@.\"weight_class\" == \"hard\" || @.\"weight_class\" == \"soft\") || @.\"weight_class\" == \"possible\"))'::jsonpath)))"
+    },
+    {
+      "table": "components",
+      "name": "module_authoring_components_created_at_not_null",
+      "definition": "NOT NULL created_at"
+    },
+    {
+      "table": "components",
+      "name": "module_authoring_components_display_order_not_null",
+      "definition": "NOT NULL display_order"
+    },
+    {
+      "table": "components",
+      "name": "module_authoring_components_expected_otjh_not_null",
+      "definition": "NOT NULL expected_otjh"
+    },
+    {
+      "table": "components",
+      "name": "module_authoring_components_id_not_null",
+      "definition": "NOT NULL id"
+    },
+    {
+      "table": "components",
+      "name": "module_authoring_components_module_catalogue_id_not_null",
+      "definition": "NOT NULL module_catalogue_id"
+    },
+    {
+      "table": "components",
+      "name": "module_authoring_components_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table": "components",
+      "name": "module_authoring_components_points_not_null",
+      "definition": "NOT NULL points"
+    },
+    {
+      "table": "components",
+      "name": "module_authoring_components_reflection_required_not_null",
+      "definition": "NOT NULL reflection_required"
+    },
+    {
+      "table": "components",
+      "name": "module_authoring_components_title_not_null",
+      "definition": "NOT NULL title"
+    },
+    {
+      "table": "components",
+      "name": "module_authoring_components_tutor_validation_required_not_null",
+      "definition": "NOT NULL tutor_validation_required"
+    },
+    {
+      "table": "components",
+      "name": "module_authoring_components_type_not_null",
+      "definition": "NOT NULL type"
+    },
+    {
+      "table": "components",
+      "name": "module_authoring_components_updated_at_not_null",
+      "definition": "NOT NULL updated_at"
+    },
+    {
+      "table": "components",
+      "name": "module_authoring_components_week_id_not_null",
+      "definition": "NOT NULL week_id"
+    },
+    {
+      "table": "components",
+      "name": "module_authoring_components_workplace_evidence_require_not_null",
+      "definition": "NOT NULL workplace_evidence_required"
+    },
+    {
+      "table": "free_course_weeks",
+      "name": "free_course_weeks_component_count_not_null",
+      "definition": "NOT NULL component_count"
+    },
+    {
+      "table": "free_course_weeks",
+      "name": "free_course_weeks_course_id_not_null",
+      "definition": "NOT NULL course_id"
+    },
+    {
+      "table": "free_course_weeks",
+      "name": "free_course_weeks_course_name_not_null",
+      "definition": "NOT NULL course_name"
+    },
+    {
+      "table": "free_course_weeks",
+      "name": "free_course_weeks_created_at_not_null",
+      "definition": "NOT NULL created_at"
+    },
+    {
+      "table": "free_course_weeks",
+      "name": "free_course_weeks_display_order_not_null",
+      "definition": "NOT NULL display_order"
+    },
+    {
+      "table": "free_course_weeks",
+      "name": "free_course_weeks_id_not_null",
+      "definition": "NOT NULL id"
+    },
+    {
+      "table": "free_course_weeks",
+      "name": "free_course_weeks_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table": "free_course_weeks",
+      "name": "free_course_weeks_total_otjh_not_null",
+      "definition": "NOT NULL total_otjh"
+    },
+    {
+      "table": "free_course_weeks",
+      "name": "free_course_weeks_updated_at_not_null",
+      "definition": "NOT NULL updated_at"
+    },
+    {
+      "table": "free_course_weeks",
+      "name": "free_course_weeks_week_number_not_null",
+      "definition": "NOT NULL week_number"
+    },
+    {
+      "table": "free_course_weeks",
+      "name": "free_course_weeks_week_title_not_null",
+      "definition": "NOT NULL week_title"
+    },
+    {
+      "table": "free_courses",
+      "name": "free_courses_week_builder_week_ids_not_null",
+      "definition": "NOT NULL week_builder_week_ids"
+    },
+    {
+      "table": "free_courses",
+      "name": "free_courses_week_count_not_null",
+      "definition": "NOT NULL week_count"
+    },
+    {
+      "table": "free_courses",
+      "name": "free_programme_modules_component_count_not_null",
+      "definition": "NOT NULL component_count"
+    },
+    {
+      "table": "free_courses",
+      "name": "free_programme_modules_created_at_not_null",
+      "definition": "NOT NULL created_at"
+    },
+    {
+      "table": "free_courses",
+      "name": "free_programme_modules_display_order_not_null",
+      "definition": "NOT NULL display_order"
+    },
+    {
+      "table": "free_courses",
+      "name": "free_programme_modules_id_not_null",
+      "definition": "NOT NULL id"
+    },
+    {
+      "table": "free_courses",
+      "name": "free_programme_modules_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table": "free_courses",
+      "name": "free_programme_modules_title_not_null",
+      "definition": "NOT NULL course_name"
+    },
+    {
+      "table": "free_courses",
+      "name": "free_programme_modules_total_otjh_not_null",
+      "definition": "NOT NULL total_otjh"
+    },
+    {
+      "table": "free_courses",
+      "name": "free_programme_modules_updated_at_not_null",
+      "definition": "NOT NULL updated_at"
+    },
+    {
+      "table": "free_programme_components",
+      "name": "free_programme_components_created_at_not_null",
+      "definition": "NOT NULL created_at"
+    },
+    {
+      "table": "free_programme_components",
+      "name": "free_programme_components_display_order_not_null",
+      "definition": "NOT NULL display_order"
+    },
+    {
+      "table": "free_programme_components",
+      "name": "free_programme_components_expected_otjh_not_null",
+      "definition": "NOT NULL expected_otjh"
+    },
+    {
+      "table": "free_programme_components",
+      "name": "free_programme_components_free_module_id_not_null",
+      "definition": "NOT NULL free_module_id"
+    },
+    {
+      "table": "free_programme_components",
+      "name": "free_programme_components_id_not_null",
+      "definition": "NOT NULL id"
+    },
+    {
+      "table": "free_programme_components",
+      "name": "free_programme_components_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table": "free_programme_components",
+      "name": "free_programme_components_points_not_null",
+      "definition": "NOT NULL points"
+    },
+    {
+      "table": "free_programme_components",
+      "name": "free_programme_components_programme_id_not_null",
+      "definition": "NOT NULL programme_id"
+    },
+    {
+      "table": "free_programme_components",
+      "name": "free_programme_components_reflection_required_not_null",
+      "definition": "NOT NULL reflection_required"
+    },
+    {
+      "table": "free_programme_components",
+      "name": "free_programme_components_title_not_null",
+      "definition": "NOT NULL title"
+    },
+    {
+      "table": "free_programme_components",
+      "name": "free_programme_components_tutor_validation_required_not_null",
+      "definition": "NOT NULL tutor_validation_required"
+    },
+    {
+      "table": "free_programme_components",
+      "name": "free_programme_components_type_not_null",
+      "definition": "NOT NULL type"
+    },
+    {
+      "table": "free_programme_components",
+      "name": "free_programme_components_updated_at_not_null",
+      "definition": "NOT NULL updated_at"
+    },
+    {
+      "table": "free_programme_components",
+      "name": "free_programme_components_workplace_evidence_required_not_null",
+      "definition": "NOT NULL workplace_evidence_required"
+    },
+    {
+      "table": "ksb_mappings",
+      "name": "curriculum_ksb_mappings_weight_class_chk",
+      "definition": "CHECK (((weight_class)::text = ANY ((ARRAY['hard'::character varying, 'soft'::character varying, 'possible'::character varying])::text[])))"
+    },
+    {
+      "table": "ksb_mappings",
+      "name": "ksb_mappings_is_programme_deleted_not_null",
+      "definition": "NOT NULL is_programme_deleted"
+    },
+    {
+      "table": "ksb_mappings",
+      "name": "ksb_mappings_weight_class_not_null",
+      "definition": "NOT NULL weight_class"
+    },
+    {
+      "table": "ksb_mappings",
+      "name": "module_authoring_ksb_mappings_classification_not_null",
+      "definition": "NOT NULL classification"
+    },
+    {
+      "table": "ksb_mappings",
+      "name": "module_authoring_ksb_mappings_created_at_not_null",
+      "definition": "NOT NULL created_at"
+    },
+    {
+      "table": "ksb_mappings",
+      "name": "module_authoring_ksb_mappings_id_not_null",
+      "definition": "NOT NULL id"
+    },
+    {
+      "table": "ksb_mappings",
+      "name": "module_authoring_ksb_mappings_ksb_code_not_null",
+      "definition": "NOT NULL ksb_code"
+    },
+    {
+      "table": "ksb_mappings",
+      "name": "module_authoring_ksb_mappings_module_catalogue_id_not_null",
+      "definition": "NOT NULL module_catalogue_id"
+    },
+    {
+      "table": "ksb_mappings",
+      "name": "module_authoring_ksb_mappings_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table": "ksb_mappings",
+      "name": "module_authoring_ksb_mappings_updated_at_not_null",
+      "definition": "NOT NULL updated_at"
+    },
+    {
+      "table": "ksb_mappings",
+      "name": "module_authoring_ksb_mappings_weight_not_null",
+      "definition": "NOT NULL weight"
+    },
+    {
+      "table": "modules",
+      "name": "module_authoring_modules_created_at_not_null",
+      "definition": "NOT NULL created_at"
+    },
+    {
+      "table": "modules",
+      "name": "module_authoring_modules_module_catalogue_id_not_null",
+      "definition": "NOT NULL module_catalogue_id"
+    },
+    {
+      "table": "modules",
+      "name": "module_authoring_modules_pkey",
+      "definition": "PRIMARY KEY (module_catalogue_id)"
+    },
+    {
+      "table": "modules",
+      "name": "module_authoring_modules_quality_score_not_null",
+      "definition": "NOT NULL quality_score"
+    },
+    {
+      "table": "modules",
+      "name": "module_authoring_modules_sessions_number_not_null",
+      "definition": "NOT NULL sessions_number"
+    },
+    {
+      "table": "modules",
+      "name": "module_authoring_modules_title_not_null",
+      "definition": "NOT NULL title"
+    },
+    {
+      "table": "modules",
+      "name": "module_authoring_modules_total_otjh_not_null",
+      "definition": "NOT NULL total_otjh"
+    },
+    {
+      "table": "modules",
+      "name": "module_authoring_modules_updated_at_not_null",
+      "definition": "NOT NULL updated_at"
+    },
+    {
+      "table": "modules",
+      "name": "modules_is_programme_deleted_not_null",
+      "definition": "NOT NULL is_programme_deleted"
+    },
+    {
+      "table": "modules",
+      "name": "modules_programme_id_fkey",
+      "definition": "FOREIGN KEY (programme_id) REFERENCES curriculum.programmes(programme_id) ON UPDATE RESTRICT ON DELETE RESTRICT"
+    },
+    {
+      "table": "programmes",
+      "name": "programmes_status_not_null",
+      "definition": "NOT NULL status"
+    },
+    {
+      "table": "programmes",
+      "name": "training_plan_program_configs_color_not_null",
+      "definition": "NOT NULL color"
+    },
+    {
+      "table": "programmes",
+      "name": "training_plan_program_configs_created_at_not_null",
+      "definition": "NOT NULL created_at"
+    },
+    {
+      "table": "programmes",
+      "name": "training_plan_program_configs_id_not_null",
+      "definition": "NOT NULL programme_id"
+    },
+    {
+      "table": "programmes",
+      "name": "training_plan_program_configs_name_not_null",
+      "definition": "NOT NULL name"
+    },
+    {
+      "table": "programmes",
+      "name": "training_plan_program_configs_pkey",
+      "definition": "PRIMARY KEY (programme_id)"
+    },
+    {
+      "table": "programmes",
+      "name": "training_plan_program_configs_updated_at_not_null",
+      "definition": "NOT NULL updated_at"
+    },
+    {
+      "table": "quiz_answers",
+      "name": "quiz_answers_answer_text_not_null",
+      "definition": "NOT NULL answer_text"
+    },
+    {
+      "table": "quiz_answers",
+      "name": "quiz_answers_created_at_not_null",
+      "definition": "NOT NULL created_at"
+    },
+    {
+      "table": "quiz_answers",
+      "name": "quiz_answers_id_not_null",
+      "definition": "NOT NULL id"
+    },
+    {
+      "table": "quiz_answers",
+      "name": "quiz_answers_is_correct_not_null",
+      "definition": "NOT NULL is_correct"
+    },
+    {
+      "table": "quiz_answers",
+      "name": "quiz_answers_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table": "quiz_answers",
+      "name": "quiz_answers_question_id_fkey",
+      "definition": "FOREIGN KEY (question_id) REFERENCES curriculum.quiz_questions(id) ON DELETE CASCADE"
+    },
+    {
+      "table": "quiz_answers",
+      "name": "quiz_answers_question_id_not_null",
+      "definition": "NOT NULL question_id"
+    },
+    {
+      "table": "quiz_answers",
+      "name": "quiz_answers_sort_order_check",
+      "definition": "CHECK ((sort_order >= 0))"
+    },
+    {
+      "table": "quiz_answers",
+      "name": "quiz_answers_sort_order_not_null",
+      "definition": "NOT NULL sort_order"
+    },
+    {
+      "table": "quiz_component_links",
+      "name": "quiz_component_links_component_id_not_null",
+      "definition": "NOT NULL component_id"
+    },
+    {
+      "table": "quiz_component_links",
+      "name": "quiz_component_links_created_at_not_null",
+      "definition": "NOT NULL created_at"
+    },
+    {
+      "table": "quiz_component_links",
+      "name": "quiz_component_links_id_not_null",
+      "definition": "NOT NULL id"
+    },
+    {
+      "table": "quiz_component_links",
+      "name": "quiz_component_links_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table": "quiz_component_links",
+      "name": "quiz_component_links_quiz_id_component_id_key",
+      "definition": "UNIQUE (quiz_id, component_id)"
+    },
+    {
+      "table": "quiz_component_links",
+      "name": "quiz_component_links_quiz_id_fkey",
+      "definition": "FOREIGN KEY (quiz_id) REFERENCES curriculum.quizzes(id) ON DELETE CASCADE"
+    },
+    {
+      "table": "quiz_component_links",
+      "name": "quiz_component_links_quiz_id_not_null",
+      "definition": "NOT NULL quiz_id"
+    },
+    {
+      "table": "quiz_course_links",
+      "name": "quiz_course_links_created_at_not_null",
+      "definition": "NOT NULL created_at"
+    },
+    {
+      "table": "quiz_course_links",
+      "name": "quiz_course_links_id_not_null",
+      "definition": "NOT NULL id"
+    },
+    {
+      "table": "quiz_course_links",
+      "name": "quiz_course_links_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table": "quiz_course_links",
+      "name": "quiz_course_links_quiz_id_fkey",
+      "definition": "FOREIGN KEY (quiz_id) REFERENCES curriculum.quizzes(id) ON DELETE CASCADE"
+    },
+    {
+      "table": "quiz_course_links",
+      "name": "quiz_course_links_quiz_id_not_null",
+      "definition": "NOT NULL quiz_id"
+    },
+    {
+      "table": "quiz_course_links",
+      "name": "quiz_course_links_quiz_id_training_plan_id_key",
+      "definition": "UNIQUE (quiz_id, module_catalogue_id)"
+    },
+    {
+      "table": "quiz_course_links",
+      "name": "quiz_course_links_training_plan_id_not_null",
+      "definition": "NOT NULL module_catalogue_id"
+    },
+    {
+      "table": "quiz_course_links",
+      "name": "quiz_course_links_week_id_not_null",
+      "definition": "NOT NULL week_id"
+    },
+    {
+      "table": "quiz_questions",
+      "name": "quiz_questions_created_at_not_null",
+      "definition": "NOT NULL created_at"
+    },
+    {
+      "table": "quiz_questions",
+      "name": "quiz_questions_id_not_null",
+      "definition": "NOT NULL id"
+    },
+    {
+      "table": "quiz_questions",
+      "name": "quiz_questions_is_archived_not_null",
+      "definition": "NOT NULL is_archived"
+    },
+    {
+      "table": "quiz_questions",
+      "name": "quiz_questions_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table": "quiz_questions",
+      "name": "quiz_questions_points_check",
+      "definition": "CHECK ((points >= 0))"
+    },
+    {
+      "table": "quiz_questions",
+      "name": "quiz_questions_points_not_null",
+      "definition": "NOT NULL points"
+    },
+    {
+      "table": "quiz_questions",
+      "name": "quiz_questions_question_text_not_null",
+      "definition": "NOT NULL question_text"
+    },
+    {
+      "table": "quiz_questions",
+      "name": "quiz_questions_question_type_check",
+      "definition": "CHECK (((question_type)::text = ANY ((ARRAY['single_choice'::character varying, 'multiple_choice'::character varying, 'true_false'::character varying, 'matching'::character varying, 'image_matching'::character varying, 'keywords'::character varying, 'fill_gap'::character varying, 'ordering'::character varying])::text[])))"
+    },
+    {
+      "table": "quiz_questions",
+      "name": "quiz_questions_question_type_not_null",
+      "definition": "NOT NULL question_type"
+    },
+    {
+      "table": "quiz_questions",
+      "name": "quiz_questions_quiz_id_fkey",
+      "definition": "FOREIGN KEY (quiz_id) REFERENCES curriculum.quizzes(id) ON DELETE CASCADE"
+    },
+    {
+      "table": "quiz_questions",
+      "name": "quiz_questions_quiz_id_not_null",
+      "definition": "NOT NULL quiz_id"
+    },
+    {
+      "table": "quiz_questions",
+      "name": "quiz_questions_sort_order_check",
+      "definition": "CHECK ((sort_order >= 0))"
+    },
+    {
+      "table": "quiz_questions",
+      "name": "quiz_questions_sort_order_not_null",
+      "definition": "NOT NULL sort_order"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_assessment_type_not_null",
+      "definition": "NOT NULL assessment_type"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_attempt_history_not_null",
+      "definition": "NOT NULL attempt_history"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_created_at_not_null",
+      "definition": "NOT NULL created_at"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_default_question_type_check",
+      "definition": "CHECK (((default_question_type)::text = ANY ((ARRAY['single_choice'::character varying, 'multiple_choice'::character varying, 'true_false'::character varying, 'matching'::character varying, 'image_matching'::character varying, 'keywords'::character varying, 'fill_gap'::character varying, 'ordering'::character varying])::text[])))"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_default_question_type_not_null",
+      "definition": "NOT NULL default_question_type"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_duration_not_null",
+      "definition": "NOT NULL duration"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_file_size_check",
+      "definition": "CHECK ((file_size >= 0))"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_file_size_not_null",
+      "definition": "NOT NULL file_size"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_id_not_null",
+      "definition": "NOT NULL id"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_lesson_content_not_null",
+      "definition": "NOT NULL lesson_content"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_limit_attempts_not_null",
+      "definition": "NOT NULL limit_attempts"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_linked_courses_check",
+      "definition": "CHECK ((linked_courses >= 0))"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_linked_courses_not_null",
+      "definition": "NOT NULL linked_courses"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_mapped_components_check",
+      "definition": "CHECK ((mapped_components >= 0))"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_mapped_components_not_null",
+      "definition": "NOT NULL mapped_components"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_package_type_check",
+      "definition": "CHECK (((package_type)::text = ANY ((ARRAY['xml'::character varying, 'scorm'::character varying, 'excel'::character varying, 'csv'::character varying])::text[])))"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_package_type_not_null",
+      "definition": "NOT NULL package_type"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_passing_grade_not_null",
+      "definition": "NOT NULL passing_grade"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_questions_check",
+      "definition": "CHECK ((questions >= 0))"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_questions_not_null",
+      "definition": "NOT NULL questions"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_quiz_style_not_null",
+      "definition": "NOT NULL quiz_style"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_randomize_answers_not_null",
+      "definition": "NOT NULL randomize_answers"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_randomize_questions_not_null",
+      "definition": "NOT NULL randomize_questions"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_retake_after_pass_not_null",
+      "definition": "NOT NULL retake_after_pass"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_retake_points_cut_not_null",
+      "definition": "NOT NULL retake_points_cut"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_schema_valid_not_null",
+      "definition": "NOT NULL schema_valid"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_short_description_not_null",
+      "definition": "NOT NULL short_description"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_show_correct_answer_not_null",
+      "definition": "NOT NULL show_correct_answer"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_status_check",
+      "definition": "CHECK (((status)::text = ANY ((ARRAY['draft'::character varying, 'published'::character varying, 'pending'::character varying, 'validating'::character varying, 'trash'::character varying, 'private'::character varying])::text[])))"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_status_not_null",
+      "definition": "NOT NULL status"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_time_unit_not_null",
+      "definition": "NOT NULL time_unit"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_title_not_null",
+      "definition": "NOT NULL title"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_updated_at_not_null",
+      "definition": "NOT NULL updated_at"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_version_not_null",
+      "definition": "NOT NULL version"
+    },
+    {
+      "table": "quizzes",
+      "name": "quizzes_week_id_not_null",
+      "definition": "NOT NULL week_id"
+    },
+    {
+      "table": "week_template_components",
+      "name": "week_template_components_coach_validation_required_not_null",
+      "definition": "NOT NULL coach_validation_required"
+    },
+    {
+      "table": "week_template_components",
+      "name": "week_template_components_created_at_not_null",
+      "definition": "NOT NULL created_at"
+    },
+    {
+      "table": "week_template_components",
+      "name": "week_template_components_display_order_not_null",
+      "definition": "NOT NULL display_order"
+    },
+    {
+      "table": "week_template_components",
+      "name": "week_template_components_expected_otjh_not_null",
+      "definition": "NOT NULL expected_otjh"
+    },
+    {
+      "table": "week_template_components",
+      "name": "week_template_components_id_not_null",
+      "definition": "NOT NULL id"
+    },
+    {
+      "table": "week_template_components",
+      "name": "week_template_components_ksb_mappings_not_null",
+      "definition": "NOT NULL ksb_mappings"
+    },
+    {
+      "table": "week_template_components",
+      "name": "week_template_components_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table": "week_template_components",
+      "name": "week_template_components_points_not_null",
+      "definition": "NOT NULL points"
+    },
+    {
+      "table": "week_template_components",
+      "name": "week_template_components_reflection_required_not_null",
+      "definition": "NOT NULL reflection_required"
+    },
+    {
+      "table": "week_template_components",
+      "name": "week_template_components_title_not_null",
+      "definition": "NOT NULL title"
+    },
+    {
+      "table": "week_template_components",
+      "name": "week_template_components_tutor_validation_required_not_null",
+      "definition": "NOT NULL tutor_validation_required"
+    },
+    {
+      "table": "week_template_components",
+      "name": "week_template_components_type_not_null",
+      "definition": "NOT NULL type"
+    },
+    {
+      "table": "week_template_components",
+      "name": "week_template_components_updated_at_not_null",
+      "definition": "NOT NULL updated_at"
+    },
+    {
+      "table": "week_template_components",
+      "name": "week_template_components_week_template_id_not_null",
+      "definition": "NOT NULL week_template_id"
+    },
+    {
+      "table": "week_template_components",
+      "name": "week_template_components_workplace_evidence_required_not_null",
+      "definition": "NOT NULL workplace_evidence_required"
+    },
+    {
+      "table": "week_templates",
+      "name": "week_templates_component_count_not_null",
+      "definition": "NOT NULL component_count"
+    },
+    {
+      "table": "week_templates",
+      "name": "week_templates_course_type_chk",
+      "definition": "CHECK (((course_type)::text = ANY ((ARRAY['paid'::character varying, 'free'::character varying])::text[])))"
+    },
+    {
+      "table": "week_templates",
+      "name": "week_templates_course_type_not_null",
+      "definition": "NOT NULL course_type"
+    },
+    {
+      "table": "week_templates",
+      "name": "week_templates_created_at_not_null",
+      "definition": "NOT NULL created_at"
+    },
+    {
+      "table": "week_templates",
+      "name": "week_templates_id_not_null",
+      "definition": "NOT NULL id"
+    },
+    {
+      "table": "week_templates",
+      "name": "week_templates_ksb_mappings_not_null",
+      "definition": "NOT NULL ksb_mappings"
+    },
+    {
+      "table": "week_templates",
+      "name": "week_templates_learning_outcomes_not_null",
+      "definition": "NOT NULL learning_outcomes"
+    },
+    {
+      "table": "week_templates",
+      "name": "week_templates_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table": "week_templates",
+      "name": "week_templates_points_not_null",
+      "definition": "NOT NULL points"
+    },
+    {
+      "table": "week_templates",
+      "name": "week_templates_programme_id_fkey",
+      "definition": "FOREIGN KEY (programme_id) REFERENCES curriculum.programmes(programme_id) ON UPDATE RESTRICT ON DELETE RESTRICT NOT VALID"
+    },
+    {
+      "table": "week_templates",
+      "name": "week_templates_status_not_null",
+      "definition": "NOT NULL status"
+    },
+    {
+      "table": "week_templates",
+      "name": "week_templates_title_not_null",
+      "definition": "NOT NULL title"
+    },
+    {
+      "table": "week_templates",
+      "name": "week_templates_total_otjh_not_null",
+      "definition": "NOT NULL total_otjh"
+    },
+    {
+      "table": "week_templates",
+      "name": "week_templates_updated_at_not_null",
+      "definition": "NOT NULL updated_at"
+    },
+    {
+      "table": "weeks",
+      "name": "chk_authoring_week_order_nonnegative",
+      "definition": "CHECK (((display_order >= 0) AND (week_number >= 1))) NOT VALID"
+    },
+    {
+      "table": "weeks",
+      "name": "module_authoring_weeks_created_at_not_null",
+      "definition": "NOT NULL created_at"
+    },
+    {
+      "table": "weeks",
+      "name": "module_authoring_weeks_display_order_not_null",
+      "definition": "NOT NULL display_order"
+    },
+    {
+      "table": "weeks",
+      "name": "module_authoring_weeks_id_not_null",
+      "definition": "NOT NULL id"
+    },
+    {
+      "table": "weeks",
+      "name": "module_authoring_weeks_module_catalogue_id_not_null",
+      "definition": "NOT NULL module_catalogue_id"
+    },
+    {
+      "table": "weeks",
+      "name": "module_authoring_weeks_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table": "weeks",
+      "name": "module_authoring_weeks_title_not_null",
+      "definition": "NOT NULL title"
+    },
+    {
+      "table": "weeks",
+      "name": "module_authoring_weeks_updated_at_not_null",
+      "definition": "NOT NULL updated_at"
+    },
+    {
+      "table": "weeks",
+      "name": "module_authoring_weeks_week_number_not_null",
+      "definition": "NOT NULL week_number"
+    },
+    {
+      "table": "weeks",
+      "name": "weeks_is_programme_deleted_not_null",
+      "definition": "NOT NULL is_programme_deleted"
+    },
+    {
+      "table": "weeks",
+      "name": "weeks_library_state_not_null",
+      "definition": "NOT NULL library_state"
+    }
+  ]
+}

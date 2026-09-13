@@ -672,7 +672,7 @@ export function buildProgressReviewSlidesDeck(
           items: [
             { title: 'Review status', badge: statusLabel(review.status), tone: toneForStatus(review.status), detail: `Current review window: ${window.label}.` },
             { title: 'Programme position', badge: `${ksbCoverage}% KSB`, tone: ksbCoverage >= 70 ? 'good' : ksbCoverage >= 45 ? 'warn' : 'danger', detail: `${recentActivities.length} activities and ${recentEvidence.length} evidence items found.` },
-            { title: 'OTJ position', badge: displayValue(detail.otjhStatus), tone: toneForStatus(detail.otjhStatus), detail: displayValue(detail.otjhProgressHours) !== '--' ? displayValue(detail.otjhProgressHours) : 'Confirm recorded OTJ hours during the review.' },
+            { title: 'OTJ position', badge: displayValue(detail.otjhStatus), tone: toneForStatus(detail.otjhStatus), detail: displayValue(detail.completedHours) !== '--' ? displayValue(detail.completedHours) : 'Confirm recorded OTJ hours during the review.' },
           ],
         },
         {

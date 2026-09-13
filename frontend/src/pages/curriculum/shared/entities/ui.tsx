@@ -57,6 +57,37 @@ const HERO_STAT_TONES = [
  * The page banner every entity page opens with: what this page manages, the
  * live counts, and the one primary action.
  */
+/**
+ * The class a secondary action in the page hero wears.
+ *
+ * `EntityHero` below paints itself on a dark gradient, but nothing ever renders
+ * it that way: every caller sits inside `WorkspaceShell`, and
+ * `WorkspaceDesign.module.css` repaints the hero `primary-50/0.6` with
+ * `!important`, which beats the inline gradient. The headings and body text in
+ * that stylesheet are recoloured to match; the buttons were missed, so a
+ * secondary action written for the dark hero -- white text on `bg-white/10` --
+ * came out as a white-on-lavender ghost that read as disabled.
+ *
+ * An opaque surface with primary-coloured text is legible either way, and keeps
+ * the hierarchy against the filled primary action next to it.
+ */
+export const HERO_SECONDARY_BUTTON_CLASS = 'inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-white px-4 text-[12px] font-bold text-primary-800 shadow-sm shadow-primary-900/5 transition-smooth hover:border-primary-300 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60';
+
+/** A secondary hero action. Same button on every entity page's hero. */
+export function HeroSecondaryButton({ icon, label, onClick, disabled }: {
+  icon: string;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button type="button" onClick={onClick} disabled={disabled} className={HERO_SECONDARY_BUTTON_CLASS}>
+      <AppIcon className={`${icon} text-base`}></AppIcon>
+      {label}
+    </button>
+  );
+}
+
 export function EntityHero({
   eyebrow,
   title,
@@ -84,13 +115,23 @@ export function EntityHero({
             <h2 className="mt-2 text-2xl font-heading font-bold text-white sm:text-3xl">{title}</h2>
             <p className="mt-2 max-w-2xl text-[13px] leading-6 text-white/75">{description}</p>
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          {/* Wraps, because this section is `overflow-hidden` and the row used to
+              be a single un-wrapping line: a third action, or a long label on
+              the second one, pushed the last button past the right edge and it
+              was clipped away entirely rather than moving to a new line. That is
+              how "View archived" went missing on Cohorts ("Cohort + group +
+              module") while surviving on Groups ("Group + module"). */}
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
             {primaryAction && (
               <button
                 type="button"
                 onClick={primaryAction.onClick}
                 disabled={primaryAction.disabled}
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 text-[12px] font-bold text-primary-900 shadow-lg shadow-black/10 transition-smooth hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"
+                // Filled rather than white-on-gradient, for the same reason as
+                // HERO_SECONDARY_BUTTON_CLASS: the hero the shell actually
+                // renders is light, and a white button on it is only as loud as
+                // the secondary ones beside it.
+                className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm shadow-primary-900/20 transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <AppIcon className={`${primaryAction.icon || 'ri-add-line'} text-base`}></AppIcon>
                 {primaryAction.label}

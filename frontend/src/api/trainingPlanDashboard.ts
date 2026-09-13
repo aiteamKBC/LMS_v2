@@ -7,8 +7,11 @@ export type PlanMonth = { label: string; topics: string[]; planned: number | nul
   activities?: { date: string; title: string; method: string; hours: number }[]; weeklyTarget?: number | null };
 export type PlanSession = { id: string; moduleId: string; title: string; start: string; end: string | null;
   minutes: number; joinUrl: string | null; status: string; attended: boolean | null };
-export type PlanModule = { id: string; title: string; description: string; start_date: string | null; end_date: string | null; tutor_name: string; coach_name: string };
-export type PlanReview = Pick<LearnerCalendarEvent, 'id' | 'eventKey' | 'title' | 'source' | 'sequence' | 'status' | 'date' | 'targetDate' | 'scheduledDate' | 'scheduledTime' | 'durationMinutes' | 'coachName' | 'invited'>;
+export type PlanModule = { id: string; title: string; description: string; start_date: string | null; end_date: string | null; tutor_name: string; coach_name: string;
+  programme_name?: string; cohort_name?: string; group_name?: string; total_otjh?: number | null;
+  weeks_number?: number | null; sessions_number?: number | null;
+  session_week_day?: string; session_start_time?: string; session_end_time?: string; learning_outcomes?: string[] };
+export type PlanReview = Pick<LearnerCalendarEvent, 'id' | 'eventKey' | 'title' | 'source' | 'sequence' | 'status' | 'date' | 'targetDate' | 'scheduledDate' | 'scheduledTime' | 'durationMinutes' | 'coachName' | 'invited'> & { meetingLink?: string | null };
 export type TrainingPlanDashboard = {
   months: Record<string, PlanMonth>;
   actual: { month: string; groupId: string | null; hours: number; count: number }[];

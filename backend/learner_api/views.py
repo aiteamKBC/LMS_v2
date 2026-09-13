@@ -917,6 +917,12 @@ def enrolment_user_detail(request, pk):
                     # change has to reach that row too.
                     mirror_learner_placement(user)
                 advance_learner(user)
+                if 'programme_status' in fields:
+                    # An explicit staff status edit has already changed the
+                    # source before advance_learner runs. Its transition-only
+                    # hook cannot notice Active -> Active, leaving the profile
+                    # in Delivery and hiding coach/review/calendar records.
+                    sync_active_user(user)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
         return JsonResponse(to_board(user))

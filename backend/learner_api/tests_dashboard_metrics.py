@@ -13,6 +13,13 @@ from .attendance import combined_attendance_rows, _summarize_attendance
 
 
 class DashboardMetricsTests(SimpleTestCase):
+    def test_authored_snake_case_ksb_mapping_counts_after_completion(self):
+        native = [{'id': 'reading', 'ksb_mappings': json.dumps([{'ksb_code': 'K1.1', 'weight': 1}])}]
+        before = ksb_totals(native, [])
+        after = ksb_totals(native, [{'componentId': 'reading', 'kind': 'component'}])
+        self.assertEqual((before['completed'], before['total']), (0, 1))
+        self.assertEqual((after['completed'], after['total'], after['percent']), (1, 1, 100))
+
     def test_old_and_new_completions_union_by_exact_activity_identity(self):
         old = [{'group_id': 2, 'activity_id': 10, 'status': 'completed'},
                {'group_id': 2, 'activity_id': 11, 'status': 'notstarted'}]

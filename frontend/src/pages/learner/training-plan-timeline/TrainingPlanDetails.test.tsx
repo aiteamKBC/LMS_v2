@@ -34,6 +34,69 @@ beforeEach(()=>{HTMLElement.prototype.scrollIntoView=vi.fn();vi.useFakeTimers({t
 afterEach(()=>{cleanup();vi.useRealTimers();vi.restoreAllMocks();HTMLElement.prototype.scrollIntoView=originalScrollIntoView;});
 
 describe('Dashboard training plan controls',()=>{
+  it('restores the selected module plan, timetable, activity breakdown and mapped KSBs from compact summaries',()=>{
+    const data=fixture();
+    data.modules[0]={...data.modules[0],programme_name:'Marketing Level 4',cohort_name:'October 2026',group_name:'G1',
+      total_otjh:140,weeks_number:16,sessions_number:16,session_week_day:'Thursday',session_start_time:'09:00',session_end_time:'11:00',
+      coach_name:'Module coach',learning_outcomes:['Plan a campaign','Measure campaign results']};
+    data.sessions=[];
+    render(<MemoryRouter><TrainingPlanDetails data={data} subjects={[{
+      id:'legacy:10',title:'Marketing',source:'legacy',total:345,completed:1,dates:['2026-10-05'],moduleIds:['M10'],sessionTitles:[],
+      activityCounts:{reading:67,powerpoint:48,assignment:6,quiz:48,live_session:16,podcast:48,video:112},ksbCodes:['K1','S2','B3'],ksbMappingMissing:false,
+    }]} kind="commercial" learnerId="125" initialSubjectId="legacy:10" onRefresh={vi.fn()} onRetryContract={vi.fn()} /></MemoryRouter>);
+    const panel=within(screen.getByRole('region',{name:'Module overview'}));
+    for(const value of ['140 hours','Thursday · 09:00–11:00','Cohort: October 2026','Group: G1','Marketing Level 4','Module coach','Assigned tutor','0 booked · 0 attended','Not booked yet','1 of 345 activities completed · 344 remaining']) {
+      expect(panel.getByText(value)).toBeVisible();
+    }
+    expect(panel.getByText('Planned live sessions').nextElementSibling).toHaveTextContent('16');
+    expect(panel.getByText('Videos').parentElement).toHaveTextContent('112');
+    const ksbToggle=panel.getByText('View 3 mapped KSBs');
+    fireEvent.click(ksbToggle);
+    expect(ksbToggle.closest('details')).toHaveAttribute('open');
+    expect(panel.getByText('S2')).toBeVisible();
+    fireEvent.click(panel.getByText('Learning outcomes (2)'));
+    expect(panel.getByText('Measure campaign results')).toBeVisible();
+  });
+
+  it('shows future programme reviews even when none falls within the selected module',()=>{
+    const data=fixture();
+    data.reviews=[review('monthly','2026-11-30','not-scheduled','mcr'),review('progress','2027-03-18')];
+    renderBoard(data);
+    const panel=within(screen.getByRole('region',{name:'Programme reviews'}));
+    expect(panel.getByText('0 of 2 completed · Whole programme')).toBeVisible();
+    expect(panel.getAllByRole('link',{name:'Schedule'})).toHaveLength(2);
+    expect(panel.queryByText('Your reviews will appear here once planned.')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox',{name:'Focus module'}),{target:{value:'current:NEW'}});
+    expect(panel.getAllByRole('article')).toHaveLength(2);
+    fireEvent.click(panel.getAllByRole('link',{name:'Schedule'})[0]);
+    expect(screen.getByTestId('destination')).toHaveTextContent('event=monthly&action=schedule');
+  });
+
+  it('offers Attend only for an active booking with a meeting link and keeps completed reviews viewable',()=>{
+    const data=fixture();
+    data.reviews=[{...review('join','2026-09-15','scheduled'),meetingLink:'https://teams.microsoft.com/l/meetup-join/review',invited:true},
+      {...review('finished','2026-09-01','completed'),meetingLink:'https://teams.microsoft.com/l/meetup-join/old'},
+      {...review('cancelled','2026-09-02','cancelled'),meetingLink:'https://teams.microsoft.com/l/meetup-join/cancelled'},
+      review('pending','2026-09-16','scheduled')];
+    renderBoard(data);
+    const panel=within(screen.getByRole('region',{name:'Programme reviews'}));
+    expect(panel.getAllByRole('article')).toHaveLength(3);
+    expect(panel.getAllByRole('link',{name:'Attend'})).toHaveLength(1);
+    expect(panel.getByRole('link',{name:'Attend'})).toHaveAttribute('href','https://teams.microsoft.com/l/meetup-join/review');
+    expect(panel.getByRole('link',{name:'Attend'})).toHaveAttribute('target','_blank');
+    expect(panel.getByRole('link',{name:'View'})).toHaveAttribute('href','/learner/calendar?kind=commercial&learner=125&event=finished');
+    expect(panel.getByText('Meeting link pending')).toBeVisible();
+    expect(panel.getByRole('link',{name:'View booking'})).toBeVisible();
+  });
+
+  it('keeps the plan visible without activity or meeting links before cohort start',()=>{
+    render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={subjects} kind="commercial" learnerId="499"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} canOpenActivities={false}/></MemoryRouter>);
+    expect(screen.getByRole('region',{name:'Monthly study plan'})).toBeVisible();
+    expect(screen.getByRole('region',{name:'Module timeline'})).toBeVisible();
+    expect([...document.querySelectorAll('a')].filter(link=>link.getAttribute('href')?.startsWith('/learner/modules/'))).toHaveLength(0);
+    expect(screen.queryByRole('link',{name:'Join Teams'})).not.toBeInTheDocument();
+  });
   it('jumps to the timeline below the cards',()=>{
     renderBoard();
     expect(screen.getByRole('link',{name:'View full timeline'})).toHaveAttribute('href','#module-timeline');
@@ -101,9 +164,9 @@ describe('Dashboard training plan controls',()=>{
     fireEvent.click(screen.getAllByRole('link',{name:label})[0]);
     expect(screen.getByTestId('destination')).toHaveTextContent('/learner/modules/commercial/125?subject=legacy%3A10');
   });
-  it.each([['Book now','overdue'],['View booking','booked'],['View','done']])('opens %s on the specific review',(label,id)=>{
+  it.each([['Schedule','overdue'],['View booking','booked'],['View','done']])('opens %s on the specific review',(label,id)=>{
     renderBoard();
-    const panel=within(screen.getByRole('region',{name:'Reviews this period'}));
+    const panel=within(screen.getByRole('region',{name:'Programme reviews'}));
     fireEvent.click(panel.getAllByRole('link',{name:label})[0]);
     expect(screen.getByTestId('destination')).toHaveTextContent(`/learner/calendar?kind=commercial&learner=125&event=${id}`);
   });

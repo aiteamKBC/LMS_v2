@@ -50,12 +50,35 @@ import {
 // The same holiday-shift reading the module sessions drawer shows, reused here
 // so the Course structure rail says a week moved in exactly the words (and the
 // red/green pairing) the sessions timeline already uses.
-import { buildHolidayShiftPlan, holidayCausePhrase, type SessionShift } from '../shared/entities/sessionShiftPreview';
+/**
+ * One live session a holiday closed the day for.
+ *
+ * `slotDate` is its week's own day -- the one the holiday shut -- and
+ * `blockedBy` names the holiday. Where the plan moves the session to is
+ * deliberately not here: the rail states what was closed and leaves the new
+ * date to the session itself, which is where it can be acted on.
+ * The rail only states these; it does not act on them.
+ */
+interface ClashingLiveSession {
+  sessionNumber: number;
+  slotDate: string;
+  blockedBy: string;
+  /**
+   * The closures behind `blockedBy`, each with the whole period it covers.
+   *
+   * The name alone said which holiday moved the session but not how far it
+   * reaches, so a reader could not tell a single closed day from a fortnight
+   * without opening the holidays page. Kept as rows rather than one string
+   * because two holidays can close one day's sessions between them, and
+   * "A, B (01-02 Aug, 10-16 Aug)" cannot say which period belongs to which.
+   */
+  closures: { label: string; startDate: string; endDate: string }[];
+}
 import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
 // Creating a module and moving it between programmes, cohorts and groups is one
 // dedicated form, shared with the Group and Module workspaces. It replaced the
 // six-step structure wizard this page used to open for both jobs.
-import { ModuleFormDrawer, type ModuleFormTarget, type SavedModuleRef } from '../shared/entities/moduleForm';
+import { ModuleFormDrawer, ModuleSessionPreview, type ModuleFormTarget, type SavedModuleRef } from '../shared/entities/moduleForm';
 import { CoverImageControl, EntityDrawer } from '../shared/entities/ui';
 import { ComponentLibraryModal } from './ComponentLibraryModal';
 import {
@@ -76,12 +99,17 @@ import {
   loadModuleStructure,
   loadModuleWeekSessionPlan,
   applyModuleWeekSessionPlan,
+  // The live-session title each planned date carries, keyed by session number.
+  // Read from the weeks in the editor, so the timeline names a session the way
+  // the rail behind it does.
+  liveSessionNamesByNumber,
   // The same weeks-vs-sessions ratio the plan dates weeks by, so "Generate live
   // sessions" tops a week up to exactly the number of dates it was given.
   moduleDeliveryDaysPerWeek,
   // The one walk that pairs weeks with planned dates. A week owns a RUN of
   // dates, not one date, the moment a group delivers more than once a week.
   moduleWeekSessionDates,
+  moduleWeekLiveSessionDates,
   resequenceWeekSessionDates,
   makeAuthoringId,
   recalculateModule,
@@ -1832,6 +1860,12 @@ export default function ModuleBuilder() {
   // Tagged with the module it was read for, so a plan never colours another
   // module's weeks while its own is still loading.
   const [weekSessionPlanState, setWeekSessionPlanState] = useState<{ catalogueId: string; plan: ModuleWeekSessionPlan } | null>(null);
+  // The plan belongs to whichever module produced it, so a rail opened on the
+  // next module must not read the one before it out of state.
+  const workingModuleSessionPlan = weekSessionPlanState?.catalogueId === workingModuleCatalogueId
+    ? weekSessionPlanState.plan
+    : null;
+  const [sessionPreviewOpen, setSessionPreviewOpen] = useState(false);
   useEffect(() => {
     if (!workingModuleCatalogueId || !workingModuleWeekCount) {
       plannedWeekCountRef.current = null;
@@ -1860,30 +1894,83 @@ export default function ModuleBuilder() {
    * ticked holidays, so any stored holiday covering one is the one that moved
    * the session.
    */
-  const holidayLabelFor = useCallback((date: string) => {
+  const holidayClosureFor = useCallback((date: string) => {
     const day = cleanText(date);
-    if (!day) return '';
+    if (!day) return null;
     const match = moduleFormScope.holidays.find(holiday => (
       String(holiday.startDate) <= day && day <= String(holiday.endDate || holiday.startDate)
     ));
-    return cleanText(match?.label);
+    const label = cleanText(match?.label);
+    if (!match || !label) return null;
+    // `endDate` is optional on a stored holiday and means a single day when it
+    // is absent, which is also what the span formatter prints for it.
+    return {
+      label,
+      startDate: cleanText(match.startDate),
+      endDate: cleanText(match.endDate) || cleanText(match.startDate),
+    };
   }, [moduleFormScope.holidays]);
 
   /**
-   * Every session a holiday moved, in date order. Only sessions that hit a
-   * closed date themselves are in here: one merely carried a slot later by an
-   * earlier closure clashed with nothing and is not reported as moved (see
-   * buildHolidayShiftPlan). Handed over as a list rather than keyed by date,
-   * because a week owns one date per delivery day and the clash can be on any
-   * of them -- the rail matches each shift to the week whose run contains it.
+   * Every live session whose own day a holiday closed, in slot order.
+   *
+   * Only a session that hit a closed date itself is here. One merely carried a
+   * slot later because the session in front of it moved clashed with nothing --
+   * saying so against its week was reporting the knock-on of a closure as a
+   * second closure, and it turned one ticked holiday into a red row on every
+   * week below it.
+   *
+   * Nothing here changes the plan. The rail states the clash and where the
+   * session is due to move to; the plan itself, the Teams calendar and the
+   * module's end date are unchanged, and the decision is made on the session.
    */
-  const movedSessionShifts = useMemo(() => {
+  const clashingLiveSessions = useMemo(() => {
     const plan = weekSessionPlanState?.catalogueId === workingModuleCatalogueId ? weekSessionPlanState.plan : null;
-    if (!plan) return [] as SessionShift[];
-    return buildHolidayShiftPlan(plan.sessions || [], holidayLabelFor).shifts
-      .filter(shift => shift.moved && shift.actualDate)
-      .sort((a, b) => a.actualDate.localeCompare(b.actualDate));
-  }, [weekSessionPlanState, workingModuleCatalogueId, holidayLabelFor]);
+    if (!plan) return [] as ClashingLiveSession[];
+    return (plan.sessions || []).flatMap((session, index) => {
+      const slotDate = cleanText(session.slotDate || session.date);
+      const actualDate = cleanText(session.date);
+      const closures = (session.skippedHolidays || [])
+        .map(date => cleanText(date))
+        .filter(Boolean);
+      if (!slotDate || !actualDate || !closures.length) return [];
+      // One holiday closing four days of a week is one closure, not four:
+      // keyed on the period so the same holiday found through each of its days
+      // is listed once.
+      const byPeriod = new Map<string, { label: string; startDate: string; endDate: string }>();
+      closures.forEach(date => {
+        const closure = holidayClosureFor(date);
+        if (closure) byPeriod.set(`${closure.label}|${closure.startDate}|${closure.endDate}`, closure);
+      });
+      const holidays = Array.from(byPeriod.values());
+      return [{
+        sessionNumber: Number(session.sessionNumber) || index + 1,
+        slotDate,
+        blockedBy: holidays.map(holiday => holiday.label).join(', ') || 'a holiday',
+        closures: holidays,
+      }];
+    });
+  }, [weekSessionPlanState, workingModuleCatalogueId, holidayClosureFor]);
+
+  /**
+   * The day each week's live session runs on, keyed by week.
+   *
+   * A live-session component with no date of its own falls back to its week's,
+   * and after a closure the two are different: the week keeps its own slot while
+   * the session it lost runs later. Falling back to the week's date there would
+   * date a new live session onto a day the room is shut, so the fallback reads
+   * the plan's session date rather than the week's.
+   */
+  const liveSessionDateByWeekId = useMemo(() => {
+    const plan = weekSessionPlanState?.catalogueId === workingModuleCatalogueId ? weekSessionPlanState.plan : null;
+    const byWeekId = new Map<string, string>();
+    if (!workingModule || !plan) return byWeekId;
+    moduleWeekLiveSessionDates(workingModule, plan.sessions).forEach((dates, index) => {
+      const week = workingModule.weekStructure[index];
+      if (week && dates[0]) byWeekId.set(week.id, dates[0]);
+    });
+    return byWeekId;
+  }, [workingModule, weekSessionPlanState, workingModuleCatalogueId]);
 
   // Whichever week is selected (directly, or via one of its components) is
   // always expanded in the Course structure accordion — this is the single
@@ -2034,8 +2121,9 @@ export default function ModuleBuilder() {
                 weekStructure: module.weekStructure.map(week => (week.id === weekId ? { ...week, components } : week)),
               }))}
               pointsByType={componentPointsByType}
-              movedSessions={movedSessionShifts}
-              plannedSessions={weekSessionPlanState?.catalogueId === workingModuleCatalogueId ? weekSessionPlanState.plan.sessions : undefined}
+              clashingSessions={clashingLiveSessions}
+              onViewSessions={workingModuleSessionPlan ? () => setSessionPreviewOpen(true) : undefined}
+              plannedSessions={workingModuleSessionPlan?.sessions}
               expandedWeekIds={expandedWeekIds}
               onExpandedWeekIdsChange={setExpandedWeekIds}
               allowMultipleExpanded={ALLOW_MULTIPLE_EXPANDED_WEEKS}
@@ -2072,7 +2160,7 @@ export default function ModuleBuilder() {
                   groupOptions={componentGroupOptions}
                   rulePoints={componentPointsByType[selectedComponent.type]}
                   weekScope={weekScopeForModule}
-                  weekSessionDate={selectedWeek.sessionDate}
+                  weekSessionDate={liveSessionDateByWeekId.get(selectedWeek.id) || selectedWeek.sessionDate}
                   weekSessionTime={selectedWeek.sessionStartTime}
                   uploadResource={uploadComponentForModule}
                   restoreTeamsMeeting={selectedComponent.type === 'live-session' ? restoreTeamsMeetingForWorkingModule : undefined}
@@ -2207,6 +2295,26 @@ export default function ModuleBuilder() {
               setLessonPickerWeekId(null);
               openAddedComponent(week.id, components[components.length - 1].id);
             }}
+          />
+        )}
+        {/* The session names come from the weeks on screen rather than from a
+            read of the saved module, which is what the drawer has to do. The
+            editor is the newer copy: a live session renamed a moment ago should
+            appear in the timeline under the name it now has. */}
+        {sessionPreviewOpen && workingModuleSessionPlan && (
+          <ModuleSessionPreview
+            // A panel down the side rather than the drawer's dialog: the rail
+            // says which week owns which run of days and this says what those
+            // days are, so they are read against each other. A dialog covered
+            // the weeks it was there to explain.
+            variant="panel"
+            moduleName={workingModule?.title || 'Module'}
+            plan={workingModuleSessionPlan}
+            holidays={moduleFormScope.holidays}
+            sessionNames={liveSessionNamesByNumber(workingModule)}
+            sessionNamesLoading={false}
+            sessionNamesError={false}
+            onClose={() => setSessionPreviewOpen(false)}
           />
         )}
         {weekTemplateImportOpen && workingModule && (
@@ -2892,45 +3000,7 @@ function owningMonthKeyOf(mondayKey: string): string {
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-/**
- * One delivery date a closure took, with where it went instead.
- *
- * Rendered by the Course structure rail either directly above the week that
- * re-delivers it, or -- when the closure and the replacement fall in different
- * months -- above that week's month heading, so the lost date stays in the month
- * it was actually lost in.
- */
-function SessionClashRow({ moved, weekLabel }: { moved: SessionShift; weekLabel: string }) {
-  return (
-    <div className="overflow-hidden rounded-xl border border-dashed border-red-200 bg-red-50/70">
-      <div className="flex items-start gap-2 px-2.5 py-2">
-        <AppIcon className="ri-calendar-close-line mt-0.5 shrink-0 text-sm text-red-500"></AppIcon>
-        <div className="min-w-0 flex-1">
-          <p className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[11px] font-bold text-red-700 line-through decoration-red-400">
-              {formatDateLabel(moved.originalDate)}
-            </span>
-            <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-red-600">
-              Clash
-            </span>
-          </p>
-          <p className="mt-0.5 text-[10px] font-medium leading-snug text-red-600">
-            {/* The session, not the week. A week delivering Mon+Fri keeps its
-                Monday when the Friday is closed, so saying the week could not
-                run contradicted the date shown on the very next row. */}
-            Session {moved.sessionNumber} of {weekLabel} could not run — blocked by {holidayCausePhrase(moved)}.
-          </p>
-        </div>
-      </div>
-      <div className="flex items-center gap-1.5 border-t border-red-100 px-2.5 py-1 text-[10px] font-semibold text-red-500">
-        <AppIcon className="ri-corner-left-down-line"></AppIcon>
-        Moved {moved.gapLabel || 'later'} to {formatDateLabel(moved.actualDate)}
-      </div>
-    </div>
-  );
-}
-
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onGenerateLiveSessions, onCreateAllTeamsMeetings, onRestoreAllTeamsMeetings, hasTrackedTeamsMeeting, restoringTeamsMeeting, onDuplicateWeek, onDeleteWeek, onDropReorder, onComponentsChange, onReuseComponents, pointsByType, movedSessions, plannedSessions, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onGenerateLiveSessions, onViewSessions, onCreateAllTeamsMeetings, onRestoreAllTeamsMeetings, hasTrackedTeamsMeeting, restoringTeamsMeeting, onDuplicateWeek, onDeleteWeek, onDropReorder, onComponentsChange, onReuseComponents, pointsByType, clashingSessions, plannedSessions, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -2940,6 +3010,12 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   onAddWeek: () => void;
   onAddWeekFromTemplate: () => void;
   onGenerateLiveSessions: () => void;
+  /**
+   * Open the module's dated plan. Omitted until there is a plan to open -- the
+   * rail can list weeks long before the module is assigned to a group, and
+   * there are no dates to show until it is.
+   */
+  onViewSessions?: () => void;
   onCreateAllTeamsMeetings: () => void;
   onRestoreAllTeamsMeetings: () => void;
   hasTrackedTeamsMeeting: boolean;
@@ -2951,14 +3027,13 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   onReuseComponents: (weekId: string) => void;
   pointsByType: Partial<Record<ModuleComponentType, number>>;
   /**
-   * The sessions a holiday moved, in date order. A week that owns one of them
-   * reads here the way it reads in the module sessions drawer: a red row for
-   * the blocked date it lost, the week itself green as the replacement.
+   * The live sessions a holiday closed the day for, in slot order. Each is
+   * stated on its own week as a single line; the rail does not act on them.
    */
-  movedSessions?: SessionShift[];
+  clashingSessions?: ClashingLiveSession[];
   /**
-   * The module's flat dated plan. A week owns one date per delivery day, so the
-   * rail needs the plan itself to say which run of dates each week delivers --
+   * The module's flat dated plan. A week owns one slot per delivery day, so the
+   * rail needs the plan itself to say which run of days each week occupies --
    * `week.sessionDate` is only the first of them.
    */
   plannedSessions?: ModuleWeekSessionPlan['sessions'];
@@ -2978,6 +3053,15 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   moduleWeekSessionDates(module, plannedSessions).forEach((dates, index) => {
     const week = module.weekStructure[index];
     if (week) sessionDatesByWeekId.set(week.id, dates);
+  });
+  // Where each week's live sessions actually run. Same walk, the other of the
+  // two dates a planned session carries -- a live-session component with no date
+  // of its own is dated from here, not from the week, because after a closure
+  // the week's day is not the session's day.
+  const liveSessionDatesByWeekId = new Map<string, string[]>();
+  moduleWeekLiveSessionDates(module, plannedSessions).forEach((dates, index) => {
+    const week = module.weekStructure[index];
+    if (week) liveSessionDatesByWeekId.set(week.id, dates);
   });
   // Falls back to the single date the week already carries, so a module whose
   // plan has not loaded yet reads exactly as it did before rather than blank.
@@ -3033,14 +3117,6 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
     ).size;
     return [[first.id, { key: group.key, label: group.label, rows: group.weeks.length, calendarWeeks, daysPerWeek, sessions: sessionDates.length, components, otjh }]];
   }));
-  // Each month stretch by its calendar key, so a row that belongs to a month
-  // other than its week's -- a clash lost in December, re-delivered in January --
-  // can be collapsed with the month it happened in.
-  const monthGroupIdByMonthKey = new Map(monthGroups.flatMap(group => {
-    const first = group.weeks[0];
-    return first ? [[group.key, first.id] as const] : [];
-  }));
-
   // Which month heading each week falls under, so collapsing a heading (keyed
   // by its first week's id) can hide every week in that stretch, not just the
   // heading row itself.
@@ -3049,27 +3125,28 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
     if (!first) return [];
     return group.weeks.map(week => [week.id, first.id] as const);
   }));
-  // Which week owns each moved session -- the week whose run of dates the
-  // replacement actually lands in. Read off the runs rather than guessed from
-  // each week's first date, so a clash on a week's SECOND delivery day is
-  // reported against that week and not the one whose date it sat closest to.
-  const shiftsByWeekId = new Map<string, SessionShift[]>();
+  // Which week each clash belongs to -- the week whose own run of days contains
+  // the day the holiday closed. Matched on that day rather than on where the
+  // session is due to move to, because the week that eventually receives it is
+  // not the week it clashed in: it has its own session on its own day, and
+  // reporting the clash there read as the receiving week being the one closed.
+  const clashesByWeekId = new Map<string, ClashingLiveSession[]>();
   const datedWeeks = module.weekStructure.filter(week => sessionDatesOf(week).length);
-  (movedSessions || []).forEach(shift => {
+  (clashingSessions || []).forEach(clash => {
     let ownerId = '';
     datedWeeks.forEach(week => {
       const run = sessionDatesOf(week);
-      if (run.includes(shift.actualDate)) ownerId = week.id;
+      if (run.includes(clash.slotDate)) ownerId = week.id;
     });
     // No run to match against (the plan has not loaded): fall back to the week
-    // that starts last on or before the replacement.
+    // that starts last on or before the closed day.
     if (!ownerId) {
       datedWeeks.forEach(week => {
-        if ((sessionDatesOf(week)[0] || '') <= shift.actualDate) ownerId = week.id;
+        if ((sessionDatesOf(week)[0] || '') <= clash.slotDate) ownerId = week.id;
       });
     }
     if (!ownerId) return;
-    shiftsByWeekId.set(ownerId, [...(shiftsByWeekId.get(ownerId) || []), shift]);
+    clashesByWeekId.set(ownerId, [...(clashesByWeekId.get(ownerId) || []), clash]);
   });
 
   const [collapsedMonthIds, setCollapsedMonthIds] = useState<Set<string>>(new Set());
@@ -3083,12 +3160,6 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
       }
       return next;
     });
-  };
-
-  /** Whether the month a given date falls in is collapsed. */
-  const monthCollapsedFor = (date: string) => {
-    const groupId = monthGroupIdByMonthKey.get(cleanText(date).slice(0, 7));
-    return groupId ? collapsedMonthIds.has(groupId) : false;
   };
 
   const toggleExpanded = (weekId: string) => {
@@ -3117,8 +3188,23 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                 library, which is why it is the only one still called a template. */}
             <button onClick={onAddWeekFromTemplate} title="Add a whole new week, built from a saved week template" className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100">
               <AppIcon className="ri-folder-open-line"></AppIcon>
-              From template
+              From weeks templates
             </button>
+            {/* The same view, and the same words, as the module drawer's
+                "View sessions": the rail says which week owns which run of
+                days, and this says what the dates actually are once the
+                holidays have moved them. */}
+            {onViewSessions && (
+              <button
+                type="button"
+                onClick={onViewSessions}
+                title="The module's dated plan: every session, the ones a holiday closed, and where each of those moved to"
+                className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100"
+              >
+                <AppIcon className="ri-calendar-schedule-line"></AppIcon>
+                View sessions
+              </button>
+            )}
             <button onClick={onAddWeek} className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600">
               <AppIcon className="ri-add-line"></AppIcon>
               Week
@@ -3189,37 +3275,16 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
           // The calendar weeks they spread over is a second, different fact, and
           // it goes in the caption rather than competing with this number.
           const monthHeadingWeeks = monthHeading ? monthHeading.rows : 0;
-          // The sessions this week delivers that a holiday moved here. Same
-          // reading as the module sessions drawer: each lost date is its own red
-          // row, and the week that actually delivers it is green.
-          const weekShifts = shiftsByWeekId.get(week.id) || [];
-          const shift = weekShifts[0];
-          // A closure and its replacement can fall in different months: 25
-          // December is blocked and the session runs on 8 January. The week is
-          // January's, but the date it lost is December's, so the two are split
-          // and the lost one is rendered above this week's month heading.
-          const monthKey = monthGroupId ? (monthHeadings.get(monthGroupId)?.key || '') : '';
-          const shiftsInEarlierMonth = monthKey
-            ? weekShifts.filter(moved => moved.originalDate.slice(0, 7) < monthKey)
-            : [];
-          const shiftsInThisMonth = weekShifts.filter(moved => !shiftsInEarlierMonth.includes(moved));
+          // The live sessions this week lost to a closure. Each one is its own
+          // red row above the week, and the week card below it still runs on its
+          // own day -- everything a closed room does not touch stays here.
+          const weekClashes = clashesByWeekId.get(week.id) || [];
           // The dates this week delivers on. More than one wherever the group
           // runs the module more than once a week.
           const runDates = sessionDatesOf(week);
           const runLabel = formatSessionRunLabel(runDates);
           return (
             <Fragment key={week.id}>
-            {/* The slot this week lost, shown in the month it was lost in.
-                A date crossed off and re-booked, rather than two competing
-                pills — and when the replacement runs in a later month, only the
-                replacement changes months: the closure still happened in
-                December, so it sits above January's heading rather than under
-                it, with the week that delivers the replacement below. */}
-            {shiftsInEarlierMonth.map(moved => (
-              monthCollapsedFor(moved.originalDate) ? null : (
-                <SessionClashRow key={`clash-${moved.originalDate}`} moved={moved} weekLabel={week.title || `Week ${week.weekNumber}`} />
-              )
-            ))}
             {monthHeading && (
               <button
                 type="button"
@@ -3243,10 +3308,8 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                     {' · '}{formatHoursMinutes(monthHeading.otjh)}
                   </span>
                 </span>
-                {/* Says why the session count runs past the week count, and how
-                    far across the calendar those sessions actually reach — a
-                    month whose weeks were pushed apart by a closure spreads over
-                    more calendar weeks than it authors. */}
+                {/* Says why the delivery-day count runs past the week count,
+                    and how far across the calendar those days actually reach. */}
                 {monthHeading.daysPerWeek > 1 && monthHeading.sessions > monthHeading.rows && (
                   <span className="mt-0.5 block pl-5 text-[10px] font-medium leading-snug text-foreground-400">
                     {monthHeading.daysPerWeek} delivery days a week, spread over {monthHeading.calendarWeeks || monthHeading.rows} calendar {(monthHeading.calendarWeeks || monthHeading.rows) === 1 ? 'week' : 'weeks'}
@@ -3254,12 +3317,18 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                 )}
               </button>
             )}
-            {monthCollapsed ? null : shiftsInThisMonth.map(moved => (
-              <SessionClashRow key={`clash-${moved.originalDate}`} moved={moved} weekLabel={week.title || `Week ${week.weekNumber}`} />
-            ))}
             {monthCollapsed ? null : <div
-              className={`overflow-visible rounded-xl border transition-smooth ${dragging ? 'border-primary-300 bg-background-50 shadow-lg ring-2 ring-primary-200' : active ? 'border-primary-300 bg-primary-50/70 shadow-sm shadow-primary-100/60' : shift ? 'border-emerald-200 bg-emerald-50/60 hover:border-emerald-300' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}
+              className={`relative overflow-visible rounded-xl border transition-smooth ${dragging ? 'border-primary-300 bg-background-50 shadow-lg ring-2 ring-primary-200' : active ? 'border-primary-300 bg-primary-50/70 shadow-sm shadow-primary-100/60' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}
             >
+              {/* An edge, not a coat of paint. The line below says what the
+                  clash is; this only makes the week findable without reading
+                  every card in the month -- which is the whole complaint about
+                  stating it and nothing more. A drawn bar rather than a
+                  border-l utility so it cannot lose to the selected and
+                  dragging borders above, and it survives both. */}
+              {weekClashes.length > 0 && (
+                <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-[3px] rounded-l-xl bg-amber-400"></span>
+              )}
               <div
                 draggable
                 onDragStart={event => {
@@ -3278,7 +3347,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                 <button type="button" onClick={() => toggleExpanded(week.id)} aria-label={expanded ? `Collapse ${week.title || `Week ${week.weekNumber}`}` : `Expand ${week.title || `Week ${week.weekNumber}`}`} aria-expanded={expanded} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700">
                   <AppIcon className={expanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'}></AppIcon>
                 </button>
-                <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11px] font-bold shadow-sm ${active ? 'bg-primary-500 text-white ring-4 ring-primary-100' : shift ? 'bg-emerald-100 text-emerald-700' : 'bg-background-200 text-foreground-600'}`}>{index + 1}</span>
+                <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11px] font-bold shadow-sm ${active ? 'bg-primary-500 text-white ring-4 ring-primary-100' : 'bg-background-200 text-foreground-600'}`}>{index + 1}</span>
                 <button onClick={() => onSelectWeek(week.id)} className="min-w-0 flex-1 text-left">
                   <p className="truncate text-[12px] font-bold text-foreground-900">{week.title || `Week ${week.weekNumber}`}</p>
                   <p className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium text-foreground-400">
@@ -3338,17 +3407,33 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                   fourth pushed the components count onto a second row and
                   truncated the date to "2…". Here it also survives selection,
                   which repaints the card primary. */}
-              {shift && (
-                <p className="flex flex-wrap items-center gap-1.5 border-t border-emerald-100 bg-emerald-50/80 px-2.5 py-1.5 text-[10px] font-bold text-emerald-700">
-                  <AppIcon className="ri-check-double-line text-[12px]"></AppIcon>
-                  {weekShifts.length === 1
-                    ? `Session ${weekShifts[0].sessionNumber} re-booked`
-                    : `${weekShifts.length} sessions re-booked`}
-                  <span className="font-medium text-emerald-600">
-                    · {weekShifts.map(moved => `${formatDateLabel(moved.originalDate)} → ${formatDateLabel(moved.actualDate)}`).join(', ')}
+              {/* The clash, stated on the week it belongs to, on the card's
+                  own background. Painting the whole row for it made a single
+                  ticked holiday the loudest thing on a rail whose subject is
+                  the course, so the card stays as it was and the edge above
+                  does the marking instead. Whether the session runs or is
+                  cancelled is still decided on the session, not here. */}
+              {weekClashes.map(clash => (
+                <p key={`clash-${clash.slotDate}`} className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 border-t border-background-200 px-2.5 py-1.5 text-[10px] leading-snug text-foreground-500">
+                  <AppIcon className="ri-error-warning-line self-center text-[12px] text-amber-500"></AppIcon>
+                  <span className="font-semibold text-foreground-700">
+                    Live session {clash.sessionNumber} clashes with{' '}
+                    {/* The holiday's whole period, in the span the rail already
+                        uses for a week's run of dates -- so "10-16 Aug 2026"
+                        here and above mean the same shape of thing. Lighter
+                        than the name: the name is what was hit, the period is
+                        how far it reaches. */}
+                    {clash.closures.length ? clash.closures.map((closure, closureIndex) => (
+                      <Fragment key={`${closure.label}-${closure.startDate}`}>
+                        {closureIndex > 0 && ', '}
+                        {closure.label}
+                        <span className="font-medium text-foreground-500"> ({formatSessionRunLabel([closure.startDate, closure.endDate])})</span>
+                      </Fragment>
+                    )) : clash.blockedBy}
                   </span>
+                  <span>on {formatDateLabel(clash.slotDate)}</span>
                 </p>
-              )}
+              ))}
               {expanded && (
                 <div className="border-t border-background-200 pb-2 pl-11 pr-2 pt-2">
                   <WeekComponentRail
@@ -3359,7 +3444,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                     onChange={next => onComponentsChange(week.id, next)}
                     pointsByType={pointsByType}
                     variant="nested"
-                    weekSessionDate={week.sessionDate}
+                    weekSessionDate={liveSessionDatesByWeekId.get(week.id)?.[0] || week.sessionDate}
                     onReuseComponents={() => onReuseComponents(week.id)}
                   />
                 </div>
@@ -3613,7 +3698,7 @@ function LoadingProgressBar({ tone = 'primary', complete }: { tone?: 'primary' |
 // covers what "Blank set" was for. "Reuse" is the one that is actually
 // different: it copies real authored components out of the library instead
 // of creating empty ones. The only saved-template control on this screen is
-// "From template" in the Course structure rail, which builds a whole new week.
+// "From weeks templates" in the Course structure rail, which builds a whole new week.
 function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson, onReuseComponents, onAddFromTemplate }: {
   week: ModuleWeek;
   onChange: (updates: Partial<ModuleWeek>) => void;
@@ -3644,11 +3729,11 @@ function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson,
               you get follows from where you pressed. */}
           <button onClick={onAddFromTemplate} title="Add a saved week template's components to this week" className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100">
             <AppIcon className="ri-layout-masonry-line"></AppIcon>
-            From template
+            From weeks templates
           </button>
           <button onClick={onReuseComponents} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100">
             <AppIcon className="ri-file-copy-line"></AppIcon>
-            Reuse
+            Reuse existing components
           </button>
           <button onClick={onAddLesson} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-semibold text-white shadow-sm transition-smooth hover:bg-primary-600">
             <AppIcon className="ri-add-line"></AppIcon>

@@ -345,6 +345,7 @@ export function hasComponentContent(c: JourneyComponent): boolean {
   if (c.isQuiz) return c.quizMeta?.quizId != null && (c.quizMeta.questions ?? 0) > 0;
 
   const type = (c.type || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (type === 'quiz') return false; // Unlinked builder placeholders have no quiz to attempt.
   const hasDescription = hasText(c.description);
   if (type === 'video') return hasUrl(c.videoUrl);
   if (type === 'podcast' || type === 'audio') return hasUrl(c.audioUrl) || hasUrl(c.resourceUrl) || hasDescription;
@@ -357,6 +358,13 @@ export function hasComponentContent(c: JourneyComponent): boolean {
   if (type === 'reflection') return true;
   if (type === 'live_session') {
     return hasUrl(c.liveSessionUrl) || hasText(c.sessionDateTimeUtc) || hasText(c.sessionDate) || Boolean(c.teamsLiveSessionId) || hasDescription;
+  }
+  // Builder rows can retain a default reflection question even when reflection
+  // is disabled. That follow-up question is not the assignment's task/brief.
+  if (type === 'assignment') {
+    return hasText(c.assignmentBrief) || hasText(c.assignmentBriefHtml)
+      || hasUrl(c.resourceUrl) || hasText(c.contentHtml)
+      || c.hasReadingContent === true || hasDescription;
   }
   return hasUrl(c.resourceUrl)
     || hasText(c.reflectionPrompt)

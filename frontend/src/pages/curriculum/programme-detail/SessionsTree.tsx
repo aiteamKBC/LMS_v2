@@ -690,7 +690,6 @@ function SessionRow({
           <button
             type="button"
             onClick={onSync}
-            onClick={onSync}
             disabled={syncing}
             className="inline-flex h-7 shrink-0 items-center gap-1 rounded-lg bg-amber-600 px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-amber-700 disabled:opacity-70"
           >

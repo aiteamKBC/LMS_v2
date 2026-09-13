@@ -1138,7 +1138,6 @@ export default function CurriculumTeamsMeetingsPage() {
         attendees,
         presenters,
         coOrganizers,
-        coOrganizers,
       });
       peopleDrawer.close();
       await loadTeamsState();

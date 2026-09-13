@@ -5,7 +5,7 @@ import {
   type CurriculumAuditEvent,
   type CurriculumAuditTrail,
 } from '@/lib/curriculumApi';
-import { EntityEmptyState, EntityFilterBar, EntityHero, InlineError } from '../shared/entities/ui';
+import { EntityEmptyState, EntityFilterBar, EntityHero, HeroSecondaryButton, InlineError } from '../shared/entities/ui';
 
 /**
  * What changed in the curriculum, and when.
@@ -122,14 +122,11 @@ export default function CurriculumAuditTrail() {
           ]}
           loading={loading}
           secondaryActions={(
-            <button
-              type="button"
+            <HeroSecondaryButton
+              icon="ri-refresh-line"
+              label="Refresh"
               onClick={() => setReloadToken(token => token + 1)}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-white/25 bg-white/10 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-white/20"
-            >
-              <AppIcon className="ri-refresh-line text-base"></AppIcon>
-              Refresh
-            </button>
+            />
           )}
         />
 

@@ -1,6 +1,8 @@
 import { type CSSProperties, type FormEvent, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
+import { CalendarEventDialog } from '@/components/feature/CalendarEventDialog';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { curriculumNavItems } from '@/mocks/navigation';
@@ -264,8 +266,9 @@ export default function SessionCalendarPage() {
   const [showUkHolidays, setShowUkHolidays] = useState(true);
 
   useEffect(() => {
-    if (!apiSessions.length) return;
-    setSessions(apiSessions.map(normalizeApiSession));
+    const nextSessions = apiSessions.map(normalizeApiSession);
+    setSessions(nextSessions);
+    setSelectedSession(current => current ? nextSessions.find(session => session.id === current.id) || null : null);
   }, [apiSessions]);
 
   useEffect(() => {
@@ -347,6 +350,7 @@ export default function SessionCalendarPage() {
   };
 
   const openEditSession = (session: CalSession) => {
+    setMeetingTooltip(null);
     setEditingSession(session);
     setSessionForm({ startTime: session.startTime, endTime: session.endTime, tutor: session.tutor });
   };
@@ -358,6 +362,7 @@ export default function SessionCalendarPage() {
     try {
       await updateCurriculumSession(editingSession.id, sessionForm);
       setNotification({ type: 'success', message: `"${editingSession.title}" was updated.` });
+      setSelectedSession(current => current?.id === editingSession.id ? { ...current, ...sessionForm } : current);
       setEditingSession(null);
       reload();
     } catch (err) {
@@ -438,7 +443,7 @@ export default function SessionCalendarPage() {
               {loading ? (
                 <CalendarGridSkeleton view={view} />
               ) : view === 'month' ? (
-                <TeamsMonthView days={visibleDays} currentDate={currentDate} isToday={isToday} isCurrentMonth={isCurrentMonth} getSessionsForDay={getSessionsForDay} getHolidaysForDay={getHolidaysForDay} onPickDate={setCurrentDate} onSelectSession={setSelectedSession} onTooltipChange={setMeetingTooltip} />
+                <TeamsMonthView days={visibleDays} currentDate={currentDate} isToday={isToday} isCurrentMonth={isCurrentMonth} getSessionsForDay={getSessionsForDay} getHolidaysForDay={getHolidaysForDay} onPickDate={setCurrentDate} onSelectSession={session => { setMeetingTooltip(null); setSelectedSession(session); }} onTooltipChange={selectedSession ? () => setMeetingTooltip(null) : setMeetingTooltip} />
               ) : (
                 <TeamsTimelineView
                   days={visibleDays}
@@ -456,14 +461,14 @@ export default function SessionCalendarPage() {
                   }}
                   onDragLeave={() => setDragOverDate(null)}
                   onDrop={handleDropSlot}
-                  onSelectSession={session => setSelectedSession(selectedSession?.id === session.id ? null : session)}
-                  onTooltipChange={setMeetingTooltip}
+                  onSelectSession={session => { setMeetingTooltip(null); setSelectedSession(session); }}
+                  onTooltipChange={selectedSession ? () => setMeetingTooltip(null) : setMeetingTooltip}
                 />
               )}
             </section>
 
-            {selectedSession && (
-              <TeamsSessionPanel session={selectedSession} onClose={() => setSelectedSession(null)} onEdit={() => openEditSession(selectedSession)} />
+            {selectedSession && !editingSession && (
+              <TeamsSessionDialog session={selectedSession} onClose={() => setSelectedSession(null)} onEdit={() => openEditSession(selectedSession)} />
             )}
           </main>
         </div>
@@ -741,20 +746,18 @@ function MeetingTooltipOverlay({ tooltip }: { tooltip: MeetingTooltipState | nul
   );
 }
 
-function TeamsSessionPanel({ session, onClose, onEdit }: { session: CalSession; onClose: () => void; onEdit: () => void }) {
+function TeamsSessionDialog({ session, onClose, onEdit }: { session: CalSession; onClose: () => void; onEdit: () => void }) {
   return (
-    <div className="mx-4 mb-4 rounded-lg border border-slate-200 bg-white p-4 shadow-xl">
-      <div className="mb-4 flex items-start justify-between">
-        <div>
-          <div className="mb-1 flex items-center gap-2">
-            <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-semibold text-primary-700">{session.type}</span>
-            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-semibold text-emerald-700">{session.status}</span>
-          </div>
-          <h3 className="text-sm font-heading font-semibold text-slate-950">{session.title}</h3>
-        </div>
-        <button onClick={onClose} className="grid h-7 w-7 place-items-center rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200"><AppIcon className="ri-close-line text-sm"></AppIcon></button>
-      </div>
-      <div className="grid grid-cols-2 gap-3 text-[12px] sm:grid-cols-4">
+    <CalendarEventDialog
+      title={session.title}
+      onClose={onClose}
+      badges={<>
+        <span className="rounded-full bg-primary-100 px-2.5 py-1 text-primary-700">{session.type}</span>
+        <span className="rounded-full bg-background-100 px-2.5 py-1 capitalize text-foreground-700">{session.status}</span>
+      </>}
+      actions={<button type="button" onClick={onEdit} className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700"><AppIcon className="ri-edit-line" />Edit Session</button>}
+    >
+      <div className="grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
         <TeamsDetail label="Date" value={`${session.date} (${session.day})`} />
         <TeamsDetail label="Time" value={`${session.startTime} - ${session.endTime}`} />
         <TeamsDetail label="Group" value={session.group} />
@@ -764,17 +767,13 @@ function TeamsSessionPanel({ session, onClose, onEdit }: { session: CalSession; 
         <TeamsDetail label="Module / Week" value={`${session.module} - Week ${session.week}`} />
         <TeamsDetail label="Venue" value={session.venue} />
       </div>
-      <div className="mt-4 flex items-center gap-2 border-t border-slate-200 pt-3">
-        <button onClick={onEdit} className="rounded-md bg-primary-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-primary-700"><AppIcon className="ri-edit-line mr-1"></AppIcon>Edit Session</button>
-        <button disabled className="cursor-not-allowed rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-medium text-slate-400"><AppIcon className="ri-delete-bin-line mr-1"></AppIcon>Cancel Session</button>
-      </div>
-    </div>
+    </CalendarEventDialog>
   );
 }
 
 function TeamsDetail({ label, value }: { label: string; value: string }) {
   return (
-    <div>
+    <div className="min-w-0 break-words">
       <span className="text-slate-500">{label}</span>
       <p className="font-semibold text-slate-900">{value}</p>
     </div>

@@ -152,4 +152,29 @@ describe('monthly assignment drafts', () => {
     expect(vi.mocked(saveLearningReflectionSubmission).mock.calls.every(([payload]) => payload.submissionMode === 'draft')).toBe(true);
     expect(sessionStorage.getItem('monthly-assignment-draft:commercial:1:COMP-1')).toBeNull();
   });
+
+  it('does not submit when the final validation returns an incomplete check set', async () => {
+    render(<AssignmentSubmissionWizard {...props} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Coaching & presentation/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Recheck submission requirements' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).not.toBeDisabled());
+    vi.mocked(checkMonthlyAssignment).mockResolvedValueOnce([]);
+    fireEvent.click(screen.getByRole('button', { name: 'Submit assignment' }));
+    await screen.findByText(/Complete the outstanding checks/);
+    expect(props.onSubmitProgress).not.toHaveBeenCalled();
+    expect(screen.queryByText('Submission preview')).not.toBeInTheDocument();
+  });
+
+  it('discards previously passed checks when revalidation fails, and can retry', async () => {
+    render(<AssignmentSubmissionWizard {...props} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Coaching & presentation/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Recheck submission requirements' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).not.toBeDisabled());
+    vi.mocked(checkMonthlyAssignment).mockRejectedValueOnce(new Error('Validation service unavailable'));
+    fireEvent.click(screen.getByRole('button', { name: 'Recheck submission requirements' }));
+    await screen.findByText('Validation service unavailable');
+    expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Recheck submission requirements' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).not.toBeDisabled());
+  });
 });

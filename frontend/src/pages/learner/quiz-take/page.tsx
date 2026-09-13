@@ -50,6 +50,9 @@ export default function QuizTakePage() {
   const [reflectionQuestion, setReflectionQuestion] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [detailLoading, setDetailLoading] = useState(true);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   const [phase, setPhase] = useState<Phase>('intro');
   const [current, setCurrent] = useState(0);
@@ -67,18 +70,24 @@ export default function QuizTakePage() {
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
+    setPhase('intro');
+    setAnswers({});
+    setResult(null);
     fetchQuiz(Number(quizId))
       .then((data) => { if (!cancelled) setQuiz(data); })
       .catch((e) => { if (!cancelled) setLoadError(e instanceof Error ? e.message : 'Could not load quiz'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [quizId]);
+  }, [kind, id, quizId, loadAttempt]);
 
   // Load the learner's KSBs (from their Active_users row) for the reflection window.
   useEffect(() => {
     if (kind !== 'commercial' && kind !== 'apprenticeship') return;
     if (!id) return;
     let cancelled = false;
+    setDetailLoading(true);
+    setDetailError(null);
+    setDetail(null);
     fetchLearnerDetail(kind as LearnerKind, id)
       .then((d) => {
         if (!cancelled) {
@@ -95,9 +104,10 @@ export default function QuizTakePage() {
           setReflectionQuestion(quizComponent?.reflectionQuestion || null);
         }
       })
-      .catch(() => { /* KSBs are optional — window still works without them */ });
+      .catch(error => { if (!cancelled) setDetailError(error instanceof Error ? error.message : 'Could not load your quiz requirements.'); })
+      .finally(() => { if (!cancelled) setDetailLoading(false); });
     return () => { cancelled = true; };
-  }, [kind, id, quizId]);
+  }, [kind, id, quizId, loadAttempt]);
 
   useEffect(() => {
     if (phase !== 'quiz' || !componentAccess.open) return;
@@ -122,7 +132,7 @@ export default function QuizTakePage() {
   const showSidebar = Boolean(placement) && (phase === 'intro' || phase === 'results');
 
   const startQuiz = () => {
-    if (!quiz || !kind || !id || !canUseComponent) return;
+    if (!quiz || !kind || !id || !canUseComponent || detailLoading || detailError) return;
     setSubmitError(null);
     trackingSessionRef.current = null;
     const pending = startTimeTracking(
@@ -205,10 +215,10 @@ export default function QuizTakePage() {
       <div className={`p-3 md:p-6 ${showSidebar ? 'max-w-7xl' : 'max-w-5xl'} mx-auto`}>
         <div className={showSidebar ? 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-6 items-start' : ''}>
         <div className="min-w-0">
-        {loading ? (
+        {loading || detailLoading ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
-        ) : loadError || !quiz ? (
-          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text={loadError || 'Quiz not found.'} /></div>
+        ) : loadError || detailError || !quiz ? (
+          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text={loadError || detailError || 'Quiz not found.'} /><button type="button" onClick={() => setLoadAttempt(value => value + 1)} className="mt-3 text-sm font-semibold underline">Retry quiz</button></div>
         ) : !canProgress ? (
           <ReadOnlyLearnerNotice what="sit their own quizzes" onBack={() => navigate(-1)} />
         ) : !componentAccess.open ? (

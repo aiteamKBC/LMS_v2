@@ -462,7 +462,7 @@ const routes: RouteObject[] = [
     element: <MyLearningPage />,
   },
   {
-    // The learning-plan hub reached from the Learner Workspace header button.
+    // Preserve the learning-plan hub for saved links and its own navigation.
     // Splits into the modules view and the booked-sessions calendar.
     path: "/learner/learning-plan",
     element: <LearnerLearningPlanPage />,

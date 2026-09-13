@@ -99,6 +99,7 @@ class InvitationReadinessTests(SimpleTestCase):
         source = learner()
         with patch.object(EnrolmentUser.all_learners, "only") as query, \
                 patch("learner_api.learner_progression._has_platform_invitation", return_value=False), \
+                patch.object(learner_detail, "learning_access", return_value={"available": True}), \
                 patch.object(learner_detail, "advance_learner") as advance:
             query.return_value.get.return_value = source
             response = learner_detail.learner_summary.__wrapped__(RequestFactory().get("/"), "commercial", 132)

@@ -327,7 +327,7 @@ describe('Programme workspace', { timeout: 15000 }, () => {
 
     const groupRow = screen.getByRole('link', { name: /Group A/ }).parentElement;
     expect(groupRow).not.toBeNull();
-    expect(groupRow?.children[4]).toHaveTextContent('1');
+    expect(groupRow?.children[3]).toHaveTextContent('1');
   });
 
   it('reports zero OTJH when sessions exist but no components have been authored', async () => {
@@ -375,7 +375,7 @@ describe('Programme workspace', { timeout: 15000 }, () => {
 
     await renderWorkspace();
 
-    const otjhCard = screen.getByText('OTJH').closest('.rounded-xl');
+    const otjhCard = screen.getByText('OTJH').parentElement;
     expect(otjhCard).not.toBeNull();
     expect(otjhCard).toHaveTextContent('0h');
   });
@@ -430,7 +430,7 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     await openTab(/Sessions/);
 
     expect(screen.getByText('Intro live session')).toBeInTheDocument();
-    expect(screen.getByText(/Week 1 · Getting started/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Getting started/ })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Join' })).toHaveAttribute('href', 'https://teams.example/meet/1');
   });
 });
