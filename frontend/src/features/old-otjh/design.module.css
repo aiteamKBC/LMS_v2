@@ -52,13 +52,17 @@
 .ringRow p:last-child { color: #777492; }
 .ring { display: grid; place-items: center; width: 80px; height: 80px; flex-shrink: 0; border-radius: 50%; }
 .ring > span { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; background: white; color: #17152d; font-size: 18px; font-weight: 700; }
-.portalGrid { display: grid; align-items: start; gap: 16px; grid-template-columns: minmax(0, .78fr) minmax(0, 1.22fr); }
+.portalGrid { display: grid; align-items: stretch; gap: 16px; grid-template-columns: minmax(0, .78fr) minmax(0, 1.22fr); }
 .portalCard { min-height: 255px; padding: 24px; display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
 .portalCard > p { flex: 0 0 auto; }
 .lmsCard .primaryButton { min-height: 46px; margin-top: auto; padding-inline: 24px; font-size: 14px; background: linear-gradient(135deg, #6d28d9, #4c1d95); }
 .lmsCard .iconSolid { background: linear-gradient(135deg, #6d28d9, #4c1d95); box-shadow: 0 12px 22px -14px rgb(76 29 149 / .6); }
-.recordsCard { position: relative; }
+.recordsCard { position: relative; padding: 26px; gap: 14px; }
 .recordsCard .iconTile { background: #f0ebff; color: #5b21b6; border-color: #ddd3ff; }
+.recordsCard h2 { margin-top: 2px; font-size: 18px; }
+.recordsCard > p:not(.recordPeriod) { margin-top: 0; font-size: 14px; }
+.recordsCard .recordPeriod { margin-top: 2px; }
+.recordsActions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }
 .recordPeriod { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; color: #475569; font-size: 12px; }
 .recordPeriod i { color: #5b21b6; }
 .monthMiniGrid { display: grid; grid-template-columns: repeat(6, minmax(38px, 1fr)); gap: 6px; margin-top: 6px; }
