@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LearnerCalendarContent } from './page';
 import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, rescheduleLearnerCalendarSession, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { fetchReviewHistory } from '@/api/reviewHistory';
 
 vi.mock('@/hooks/useMyLearner', () => ({ useLinkedLearner: () => ({ kind: 'commercial', id: '125' }) }));
 vi.mock('@/pages/coach/shared/CoachMeetingArtifactsPanel', () => ({ CoachMeetingArtifactsPanel: () => <div>Meeting recordings</div> }));
@@ -18,6 +19,7 @@ vi.mock('@/api/learnerCalendar', () => ({
   fetchLearnerMeetingArtifacts: vi.fn(), learnerMeetingArtifactContentUrl: vi.fn(),
   startCalendarOAuth: vi.fn(), connectCredentialCalendar: vi.fn(), disconnectPersonalCalendar: vi.fn(),
 }));
+vi.mock('@/api/reviewHistory', () => ({ fetchReviewHistory: vi.fn(async () => ({ reviews: [] })) }));
 
 const now = new Date();
 const isoDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -34,7 +36,11 @@ function setup(events: LearnerCalendarEvent[] = [event()], search = '') {
   return render(<StrictMode><MemoryRouter initialEntries={['/learner/calendar' + search]}><LearnerCalendarContent /></MemoryRouter></StrictMode>);
 }
 
-beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); });
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(fetchReviewHistory).mockResolvedValue({ learnerId: null, category: 'reviews', reviews: [] });
+  localStorage.clear();
+});
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('calendar event previews', () => {
@@ -176,6 +182,35 @@ describe('calendar event previews', () => {
     expect(await screen.findByRole('heading', { name: 'Schedule Monthly Coaching Meeting' })).toBeVisible();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
+  it('schedules an imported Aptem progress review from its calendar details', async () => {
+    const importedReview = {
+      id: '72', aptemReviewId: 'A72', name: 'Progress Review', type: 'Progress Review',
+      reviewerName: 'Assigned coach', plannedDate: '2026-09-30', plannedTime: null,
+      completedDate: null, status: 'not-scheduled', extractionStatus: 'complete',
+      detailsAvailable: true, sections: [],
+    };
+    vi.mocked(fetchReviewHistory).mockImplementation(async (_kind, _id, category) => ({
+      learnerId: 125,
+      category,
+      reviews: category === 'reviews' ? [importedReview] : [],
+    }));
+    const booked = event({
+      id: 'progress-review:72', eventKey: 'progress-review:72', title: 'Progress Review',
+      source: 'progress-review', status: 'scheduled', bookingStatus: 'scheduled',
+      date: '2026-09-30', targetDate: '2026-09-30', scheduledDate: '2026-09-30', scheduledTime: '10:00',
+    });
+    vi.mocked(bookLearnerCalendarSession).mockResolvedValue({ event: booked });
+    setup([], '?event=imported-review%3A72');
+
+    const details = await screen.findByRole('dialog', { name: 'Progress Review' });
+    await userEvent.setup().click(within(details).getByRole('button', { name: 'Schedule Progress Review' }));
+    expect(await screen.findByRole('heading', { name: 'Schedule Progress Review' })).toBeVisible();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Book Session' }));
+    await waitFor(() => expect(bookLearnerCalendarSession).toHaveBeenCalledWith('commercial', '125', expect.objectContaining({
+      sessionType: 'progress-review', reviewId: '72', assignmentMonth: '2026-09', eventKey: undefined,
+    })));
   });
 
   it('previews the updated appointment after a successful reschedule', async () => {
