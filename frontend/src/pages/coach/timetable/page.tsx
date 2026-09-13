@@ -470,7 +470,8 @@ function statusDot(status: TimetableEvent['status']) {
   if (status === 'in-progress') return 'bg-primary-500';
   if (status === 'awaiting-signature') return 'bg-violet-500';
   if (status === 'cancelled') return 'bg-red-500';
-  return 'bg-rose-500'; // pending / not-scheduled
+  if (status === 'not-scheduled') return 'bg-red-500';
+  return 'bg-rose-500'; // pending
 }
 
 function buildSummaryMetrics(events: TimetableEvent[], referenceDate = new Date()): TimetableSummaryMetrics {
@@ -584,7 +585,7 @@ const STATUS_FILTER_DOTS: Record<StatusFilter, string> = {
   all: 'bg-foreground-400',
   overdue: 'bg-red-500',
   'due-soon': 'bg-rose-500',
-  'needs-schedule': 'bg-rose-500',
+  'needs-schedule': 'bg-red-500',
   scheduled: 'bg-primary-500',
   'in-progress': 'bg-secondary-500',
   'awaiting-signature': 'bg-violet-500',
@@ -2501,7 +2502,7 @@ export default function CoachTimetablePage() {
                           {selectedEvent.status === 'not-scheduled' && (selectedEvent.source === 'catch-up' || selectedEvent.source === 'student-support') ? 'Approve & Schedule' : 'Schedule Meeting'}
                         </h4>
                         {selectedEvent.status === 'not-scheduled' && (
-                          <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[12px] font-bold text-rose-700">Needs scheduling</span>
+                          <span className="rounded-full bg-red-50 px-2.5 py-1 text-[12px] font-bold text-red-700">Needs scheduling</span>
                         )}
                       </div>
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">

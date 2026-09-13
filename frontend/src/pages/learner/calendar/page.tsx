@@ -22,6 +22,7 @@ import {
   type LearnerCalendarEvent, type BookableSessionType, type PersonalCalendarConnection,
   type PersonalCalendarProvider, type CalendarBusySlot, type BookingCalendarRules,
 } from '@/api/learnerCalendar';
+import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
 import { CalendarEventDialog } from '@/components/feature/CalendarEventDialog';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
 
@@ -124,7 +125,7 @@ const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAYS_SHORT = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTH_SHORT_INDEX: Record<string, number> = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
-const BOOKABLE_COACH_SESSION_TYPES = new Set<BookableSessionType>(['catch-up', 'student-support', 'mcr', 'progress-review']);
+const BOOKABLE_COACH_SESSION_TYPES = new Set<BookableSessionType>(['catch-up', 'student-support', 'mcr', 'progress-review', 'gateway', 'other']);
 const PROGRAMME_CYCLE_SESSION_TYPES = new Set<BookableSessionType>(['mcr', 'progress-review']);
 
 const CALENDAR_PROVIDERS: Array<{ provider: PersonalCalendarProvider; title: string; subtitle: string; icon: string }> = [
@@ -291,6 +292,8 @@ function getEventColorClass(type: string, customColor?: string) {
     'Live Session': 'bg-violet-50 text-violet-800 border-l-violet-500',
     'Monthly Coaching Meeting': 'bg-orange-50 text-orange-800 border-l-orange-500',
     'Progress Review': 'bg-teal-50 text-teal-800 border-l-teal-500',
+    Gateway: 'bg-teal-50 text-teal-800 border-l-teal-500',
+    Other: 'bg-orange-50 text-orange-800 border-l-orange-500',
     'Catch-up': 'bg-rose-50 text-rose-800 border-l-rose-500',
     'Student Support': 'bg-blue-50 text-blue-800 border-l-blue-500',
     Workshop: 'bg-primary-100 text-primary-700 border-l-primary-500',
@@ -315,7 +318,7 @@ function getEventDotColor(type: string, customColor?: string) {
     if (color) return color.dot;
   }
   const map: Record<string, string> = {
-    'Live Session': 'bg-violet-500', 'Monthly Coaching Meeting': 'bg-orange-500', 'Progress Review': 'bg-teal-500',
+    'Live Session': 'bg-violet-500', 'Monthly Coaching Meeting': 'bg-orange-500', 'Progress Review': 'bg-teal-500', Gateway: 'bg-teal-500', Other: 'bg-orange-500',
     'Catch-up': 'bg-rose-500', 'Student Support': 'bg-blue-500',
     Workshop: 'bg-primary-500', 'Hands-on Lab': 'bg-secondary-500', Masterclass: 'bg-accent-500',
     'Panel Discussion': 'bg-amber-500', 'Case Study': 'bg-emerald-500', Showcase: 'bg-rose-500',
@@ -404,31 +407,34 @@ function restoreNotifications() {
 }
 
 type ViewMode = 'monthly' | 'weekly' | 'daily';
-type LearnerSourceFilter = 'all' | 'live-session' | 'mcr' | 'progress-review' | 'catch-up' | 'student-support' | 'personal' | 'busy';
-type LearnerStatusFilter = 'all' | 'needs-schedule' | 'scheduled' | 'pending' | 'in-progress' | 'completed';
+type LearnerSourceFilter = 'all' | 'live-session' | 'mcr' | 'progress-review' | 'gateway' | 'other' | 'catch-up' | 'student-support' | 'personal' | 'busy';
+type LearnerStatusFilter = 'all' | 'needs-schedule' | 'scheduled' | 'pending' | 'in-progress' | 'awaiting-signature' | 'completed';
 
-const LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'catch-up', 'student-support', 'personal', 'busy'];
-const VISIBLE_LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'catch-up', 'student-support'];
-const LEARNER_STATUS_FILTERS: LearnerStatusFilter[] = ['all', 'needs-schedule', 'scheduled', 'pending', 'in-progress', 'completed'];
+const LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'gateway', 'other', 'catch-up', 'student-support', 'personal', 'busy'];
+const VISIBLE_LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'gateway', 'catch-up', 'student-support', 'other'];
+const LEARNER_STATUS_FILTERS: LearnerStatusFilter[] = ['all', 'needs-schedule', 'scheduled', 'pending', 'in-progress', 'awaiting-signature', 'completed'];
 
 const LEARNER_SOURCE_META: Record<LearnerSourceFilter, { label: string; short: string; dot: string }> = {
   all: { label: 'All Sources', short: 'All', dot: 'bg-foreground-400' },
   'live-session': { label: 'Live Sessions', short: 'Live Session', dot: 'bg-violet-500' },
   mcr: { label: 'Monthly Coaching Meeting', short: 'Monthly Coaching Meeting', dot: 'bg-orange-500' },
   'progress-review': { label: 'Progress Review', short: 'Progress Review', dot: 'bg-teal-500' },
+  gateway: { label: 'Gateway', short: 'Gateway', dot: 'bg-teal-500' },
+  other: { label: 'Other', short: 'Other', dot: 'bg-orange-500' },
   'catch-up': { label: 'Catch-up', short: 'Catch-up', dot: 'bg-rose-500' },
   'student-support': { label: 'Student Support', short: 'Support', dot: 'bg-blue-500' },
   personal: { label: 'Personal Events', short: 'Personal', dot: 'bg-sky-500' },
   busy: { label: 'Busy Time', short: 'Busy', dot: 'bg-slate-500' },
 };
 
-const LEARNER_STATUS_META: Record<LearnerStatusFilter, { label: string; dot: string }> = {
-  all: { label: 'All', dot: 'bg-foreground-400' },
-  'needs-schedule': { label: 'Needs Booking', dot: 'bg-rose-500' },
-  scheduled: { label: 'Scheduled', dot: 'bg-primary-500' },
-  pending: { label: 'Pending', dot: 'bg-amber-500' },
-  'in-progress': { label: 'In Progress', dot: 'bg-secondary-500' },
-  completed: { label: 'Completed', dot: 'bg-emerald-500' },
+const LEARNER_STATUS_META: Record<LearnerStatusFilter, { label: string; dot: string; badge: string; icon: string }> = {
+  all: { label: 'All', dot: 'bg-foreground-400', badge: 'border-background-200 bg-background-100 text-foreground-700', icon: 'ri-list-check-2-line' },
+  'needs-schedule': { label: 'Not Scheduled', dot: 'bg-red-500', badge: 'border-red-200 bg-red-50 text-red-700', icon: 'ri-time-line' },
+  scheduled: { label: 'Scheduled', dot: 'bg-primary-500', badge: 'border-blue-200 bg-blue-50 text-blue-700', icon: 'ri-calendar-check-line' },
+  pending: { label: 'Pending', dot: 'bg-amber-500', badge: 'border-amber-200 bg-amber-50 text-amber-700', icon: 'ri-time-line' },
+  'in-progress': { label: 'In progress', dot: 'bg-amber-500', badge: 'border-amber-200 bg-amber-50 text-amber-700', icon: 'ri-time-line' },
+  'awaiting-signature': { label: 'Awaiting Signature', dot: 'bg-violet-500', badge: 'border-violet-200 bg-violet-50 text-violet-700', icon: 'ri-file-sign-line' },
+  completed: { label: 'Completed', dot: 'bg-emerald-500', badge: 'border-emerald-200 bg-emerald-50 text-emerald-700', icon: 'ri-checkbox-circle-line' },
 };
 
 function todayISO(): string {
@@ -472,6 +478,10 @@ function sessionTypeLabel(value?: CalendarEvent['bookingSessionType'] | Bookable
       return 'Monthly Coaching Meeting';
     case 'progress-review':
       return 'Progress Review';
+    case 'gateway':
+      return 'Gateway';
+    case 'other':
+      return 'Other';
     case 'student-support':
       return 'Student Support';
     case 'catch-up':
@@ -481,12 +491,58 @@ function sessionTypeLabel(value?: CalendarEvent['bookingSessionType'] | Bookable
   }
 }
 
+/** Turn an imported Aptem review into a dated calendar card. Reviews are
+ * intentionally read-only here; the review history row remains the source of
+ * truth for its status and dates. */
+function mapImportedReview(review: ImportedReview, source: 'mcr' | 'progress-review'): CalendarEvent | null {
+  const iso = review.plannedDate || review.completedDate;
+  if (!iso) return null;
+  const [year, month, day] = iso.split('-').map(Number);
+  if (!year || !month || !day) return null;
+  const date = new Date(year, month - 1, day);
+  if (Number.isNaN(date.getTime())) return null;
+  const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
+  const status = review.status || 'unknown';
+  const hasTime = Boolean(review.plannedTime);
+  const start = review.plannedTime || '09:00';
+  const [hour, minute] = start.split(':').map(Number);
+  const end = new Date(year, month - 1, day, hour || 0, (minute || 0) + 60);
+  return {
+    id: `imported-review:${review.id}`,
+    eventKey: `imported-review:${review.id}`,
+    title: review.name || (source === 'mcr' ? 'Monthly Coaching Meeting' : 'Review'),
+    date: `${day} ${MONTH_NAMES[month - 1].slice(0, 3)}`,
+    dayName,
+    time: `${start}\u2013${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`,
+    club: source === 'mcr' ? 'Coaching' : 'Reviews',
+    clubId: '',
+    type: source === 'mcr' ? 'Monthly Coaching Meeting' : 'Progress Review',
+    format: 'Imported Aptem review',
+    location: hasTime ? 'Online' : 'To be confirmed',
+    host: review.reviewerName || 'Review team',
+    points: 0,
+    status: ['scheduled', 'in-progress', 'awaiting-signature', 'completed'].includes(status) ? 'confirmed' : 'pending',
+    description: `${review.type || 'Review'} imported from Aptem.`,
+    isoDate: iso,
+    source,
+    durationMinutes: 60,
+    bookingStatus: status,
+    // Only an explicitly unbooked review should be shown as needing a
+    // booking. Completed imported reviews often have a completion date but no
+    // time, and must keep their Completed status.
+    timeToBeConfirmed: !hasTime && status === 'not-scheduled',
+    importedReview: review,
+  };
+}
+
 function learnerEventSource(event: CalendarEvent): LearnerSourceFilter {
   if (event.type === 'Busy') return 'busy';
   if (event.club === 'Personal' || event.type === 'Personal') return 'personal';
   if (event.source === 'live-session') return 'live-session';
   if (event.source === 'mcr') return 'mcr';
   if (event.source === 'progress-review') return 'progress-review';
+  if (event.source === 'gateway') return 'gateway';
+  if (event.source === 'other') return 'other';
   if (event.source === 'catch-up') return 'catch-up';
   if (event.source === 'student-support') return 'student-support';
   return 'personal';
@@ -494,9 +550,11 @@ function learnerEventSource(event: CalendarEvent): LearnerSourceFilter {
 
 function learnerEventStatus(event: CalendarEvent): LearnerStatusFilter {
   if (event.timeToBeConfirmed || event.bookingStatus === 'not-scheduled') return 'needs-schedule';
+  if (event.bookingStatus === 'awaiting-signature') return 'awaiting-signature';
   if (event.status === 'pending') return 'pending';
   if (event.bookingStatus === 'in-progress') return 'in-progress';
   if (event.bookingStatus === 'completed') return 'completed';
+  if (event.bookingStatus === 'unknown') return 'pending';
   if (event.bookingStatus === 'scheduled') return 'scheduled';
   return 'scheduled';
 }
@@ -594,11 +652,12 @@ function LearnerCalendarBody() {
   const [showBookModal, setShowBookModal] = useState(false);
   const [rescheduleEvent, setRescheduleEvent] = useState<CalendarEvent | null>(null);
   const [bookingSourceEvent, setBookingSourceEvent] = useState<CalendarEvent | null>(null);
-  const [bookType, setBookType] = useState<BookableSessionType>('catch-up');
+  const [bookType, setBookType] = useState<BookableSessionType>('progress-review');
   const [bookDate, setBookDate] = useState(() => todayISO());
   const [bookTime, setBookTime] = useState('10:00');
   const [bookDuration, setBookDuration] = useState('60');
   const [bookNotes, setBookNotes] = useState('');
+  const [otherSessionType, setOtherSessionType] = useState('');
   const [bookSubmitting, setBookSubmitting] = useState(false);
   const [bookError, setBookError] = useState<string | null>(null);
   const [bookingCalendar, setBookingCalendar] = useState<BookingCalendarRules | null>(null);
@@ -933,19 +992,44 @@ function LearnerCalendarBody() {
     return () => { cancelled = true; };
   }, [showBookModal, calendarConnections.length, bookDate, myLearner.kind, myLearner.id]);
 
-  // Load the learner's coaching sessions from Coach.coach_calendar_event.
+  // Load the learner's coaching sessions and, when Aptem review history is
+  // available, use those persisted review rows for the MCM/review cards. The
+  // review endpoint returns an empty list for learners without an Aptem
+  // activity identity, so the existing generated programme calendar remains
+  // the fallback for those learners.
   useEffect(() => {
     let cancelled = false;
     const writeVersion = calendarWriteVersionRef.current;
-    fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true })
-      .then((res) => {
+    const calendarPromise = fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true });
+    const reviewHistoryPromise = Promise.allSettled([
+      fetchReviewHistory(myLearner.kind, myLearner.id, 'monthly-coaching'),
+      fetchReviewHistory(myLearner.kind, myLearner.id, 'reviews'),
+    ]);
+    Promise.all([calendarPromise, reviewHistoryPromise])
+      .then(([res, historyResults]) => {
         if (cancelled || writeVersion !== calendarWriteVersionRef.current) return;
         const coachEvents = res.events
           .map(mapCoachEvent)
           .filter((ev): ev is CalendarEvent => ev !== null);
+        const monthlyReviews = historyResults[0].status === 'fulfilled' ? historyResults[0].value.reviews : [];
+        const otherReviews = historyResults[1].status === 'fulfilled' ? historyResults[1].value.reviews : [];
+        const importedMonthly = monthlyReviews
+          .map((review) => mapImportedReview(review, 'mcr'))
+          .filter((ev): ev is CalendarEvent => ev !== null);
+        const importedOther = otherReviews
+          .map((review) => mapImportedReview(review, 'progress-review'))
+          .filter((ev): ev is CalendarEvent => ev !== null);
+        // Replace only the programme-cycle source that has imported rows. A
+        // learner can have MCM history while still relying on generated
+        // progress-review slots (or the other way around).
+        const importedSources = new Set<LearnerSourceFilter>();
+        if (importedMonthly.length > 0) importedSources.add('mcr');
+        if (importedOther.length > 0) importedSources.add('progress-review');
+        const reviewEvents = [...importedMonthly, ...importedOther];
+        const persistedEvents = coachEvents.filter((event) => !importedSources.has(learnerEventSource(event)));
         setBookingCalendar(res.bookingCalendar || null);
         // Keep locally-created personal events; replace the DB-backed ones.
-        setMyEvents((prev) => [...coachEvents, ...prev.filter((ev) => ev.id.startsWith('custom-'))]);
+        setMyEvents((prev) => [...persistedEvents, ...reviewEvents, ...prev.filter((ev) => ev.id.startsWith('custom-'))]);
         setCalendarError(null);
       })
       .catch((err: Error) => { if (!cancelled && writeVersion === calendarWriteVersionRef.current) setCalendarError(err.message); })
@@ -990,6 +1074,11 @@ function LearnerCalendarBody() {
   }, [bookDate, bookTime, bookDuration, bookingSourceEvent?.id, myEvents, rescheduleEvent?.id]);
 
   const sameWeekSession = useMemo(() => {
+    // MCM and PR have official calendar slots, but they can also be requested
+    // from this modal. The selected slot (or a direct request) is the
+    // authority; do not block it because a generated placeholder exists in
+    // the same week.
+    if (PROGRAMME_CYCLE_SESSION_TYPES.has(bookType)) return null;
     const requestedWeek = calendarWeekKey(bookDate);
     if (!requestedWeek) return null;
     return myEvents.find((event) => (
@@ -1039,6 +1128,10 @@ function LearnerCalendarBody() {
 
   const handleBookSession = async () => {
     if (bookSubmitting) return;
+    if (!rescheduleEvent && !bookingSourceEvent && bookType === 'other' && !otherSessionType.trim()) {
+      setBookError('Please enter the type of session you need.');
+      return;
+    }
     const restrictedDate = bookingDateRestriction(bookDate);
     if (restrictedDate) {
       setBookError(restrictedDate);
@@ -1066,6 +1159,9 @@ function LearnerCalendarBody() {
     setBookSubmitting(true);
     setBookError(null);
     try {
+      const requestNotes = bookType === 'other'
+        ? [`Requested session type: ${otherSessionType.trim()}`, bookNotes.trim()].filter(Boolean).join('\n')
+        : bookNotes.trim();
       const res = rescheduleEvent
         ? await rescheduleLearnerCalendarSession(myLearner.kind, myLearner.id, {
             eventKey: rescheduleEvent.eventKey || rescheduleEvent.id,
@@ -1080,7 +1176,7 @@ function LearnerCalendarBody() {
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
-            notes: bookNotes.trim() || undefined,
+            notes: requestNotes || undefined,
             timezoneOffsetMinutes: new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
           });
       // A read started before this save must not restore the old appointment.
@@ -1098,6 +1194,7 @@ function LearnerCalendarBody() {
       }
       setShowBookModal(false);
       setBookNotes('');
+      setOtherSessionType('');
       setRescheduleEvent(null);
       setBookingSourceEvent(null);
       setAddToCalendarToast(res.warning
@@ -1208,7 +1305,6 @@ function LearnerCalendarBody() {
   const handleGeneratePublicFeed = () => { const confirmedEvents = myEvents.filter((ev) => ev.status === 'confirmed'); const icsEvents: ICSEvent[] = confirmedEvents.map((ev) => ({ title: ev.title, description: ev.description, date: ev.date, time: ev.time, location: ev.location })); const url = createPublicFeedBlob(icsEvents); setPublicFeedUrl(url); };
   const handleCopyFeedUrl = () => { if (publicFeedUrl) { navigator.clipboard.writeText(publicFeedUrl); setFeedCopied(true); setTimeout(() => setFeedCopied(false), 2000); } };
 
-  const statusConfig: Record<string, { label: string; cls: string }> = { confirmed: { label: 'Confirmed', cls: 'bg-emerald-100 text-emerald-700' }, pending: { label: 'Pending', cls: 'bg-amber-100 text-amber-700' } };
   const now = today;
   const currentHour = now.getHours();
 
@@ -1288,7 +1384,7 @@ function LearnerCalendarBody() {
                 : bookingSourceEvent
                   ? <>Choose a date and time for <strong className="text-foreground-700">{bookingSourceEvent.title}</strong>. This will book the official {sessionTypeLabel(bookingSourceEvent.bookingSessionType)} session for you and your coach.</>
                 : coach
-                  ? <>Choose the support you need. Catch-up and Student Support requests go to <strong className="text-foreground-700">{coach.name}</strong> for approval. Monthly Coaching Meeting and Progress Review sessions are scheduled from their calendar cards.</>
+                  ? <>Choose the session you need. Your request will be sent to <strong className="text-foreground-700">{coach.name}</strong> for approval.</>
                   : 'No coach has been assigned to you yet — please contact your programme team.'}
             </p>
             <div className="space-y-4">
@@ -1303,8 +1399,12 @@ function LearnerCalendarBody() {
                 <label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Session Type <span className="text-red-400">*</span></label>
                 <div className="grid grid-cols-2 gap-3">
                   {([
+                    { value: 'progress-review' as BookableSessionType, label: 'PR', icon: 'ri-line-chart-line', desc: 'Progress Review' },
+                    { value: 'mcr' as BookableSessionType, label: 'MCM', icon: 'ri-calendar-check-line', desc: 'Monthly Coaching Meeting' },
+                    { value: 'gateway' as BookableSessionType, label: 'Gateway', icon: 'ri-flag-line', desc: 'Gateway review or assessment' },
                     { value: 'catch-up' as BookableSessionType, label: 'Catch-up', icon: 'ri-chat-3-line', desc: 'Quick check-in on your progress' },
                     { value: 'student-support' as BookableSessionType, label: 'Student Support', icon: 'ri-heart-2-line', desc: 'Help with challenges or wellbeing' },
+                    { value: 'other' as BookableSessionType, label: 'Other', icon: 'ri-more-line', desc: 'Request another session type' },
                   ]).map((t) => (
                     <button key={t.value} type="button" onClick={() => {
                       setBookType(t.value);
@@ -1317,6 +1417,12 @@ function LearnerCalendarBody() {
                     </button>
                   ))}
                 </div>
+                {bookType === 'other' && (
+                  <div className="mt-3">
+                    <label htmlFor="other-session-type" className="mb-1.5 block text-xs font-semibold text-foreground-500">Other <span className="text-red-400">*</span></label>
+                    <input id="other-session-type" type="text" value={otherSessionType} onChange={(event) => { setOtherSessionType(event.target.value); setBookError(null); }} maxLength={100} placeholder="Write the session type you need" className="w-full rounded-lg border border-background-300 bg-background-100 px-3 py-2 text-sm text-foreground-800 outline-none transition-all placeholder:text-foreground-400 focus:border-primary-300/50 focus:outline-none focus:ring-1 focus:ring-primary-400/40" />
+                  </div>
+                )}
               </div>}
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Date <span className="text-red-400">*</span></label><input type="date" value={bookDate} min={bookingToday} onChange={(e) => setBookDate(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
@@ -1452,7 +1558,7 @@ function LearnerCalendarBody() {
           onClose={() => setShowEventDetails(null)}
           badges={<>
             <span className="rounded-full bg-primary-100 px-2.5 py-1 text-primary-700">{LEARNER_SOURCE_META[learnerEventSource(showEventDetails)].label}</span>
-            <span className="rounded-full bg-background-200 px-2.5 py-1 text-foreground-700">{LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].label}</span>
+            {(() => { const statusMeta = LEARNER_STATUS_META[learnerEventStatus(showEventDetails)]; return <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${statusMeta.badge}`}><AppIcon className={statusMeta.icon} />{statusMeta.label}</span>; })()}
           </>}
           actions={<>
 
@@ -1584,7 +1690,7 @@ function LearnerCalendarBody() {
                           <p className="truncate text-sm font-semibold text-foreground-900 transition-colors group-hover:text-primary-700">{ev.title}</p>
                           <div className="mt-0.5 flex items-center gap-2">
                             <span className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">{ev.type}</span>
-                            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${statusConfig[ev.status].cls}`}>{statusConfig[ev.status].label}</span>
+                            {(() => { const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)]; return <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${statusMeta.badge}`}><AppIcon className={statusMeta.icon} />{statusMeta.label}</span>; })()}
                           </div>
                         </div>
                         <AppIcon className="ri-arrow-right-s-line mt-1 shrink-0 text-foreground-300 transition-colors group-hover:text-primary-500"></AppIcon>
@@ -1831,7 +1937,13 @@ function LearnerCalendarBody() {
                                   <span className={`h-2 w-2 shrink-0 rounded-full ${sourceMeta.dot}`}></span>
                                   <span className="shrink-0 text-[11px] font-bold leading-tight tabular-nums">{ev.timeToBeConfirmed ? 'TBC' : ev.time.split('–')[0]}</span>
                                   <span className="truncate text-[11px] font-bold leading-tight">{ev.title}</span>
-                                  <span className={`ml-auto h-2 w-2 shrink-0 rounded-full border border-white/80 ${LEARNER_STATUS_META[learnerEventStatus(ev)].dot}`} title={LEARNER_STATUS_META[learnerEventStatus(ev)].label}></span>
+                                  {ev.importedReview ? (
+                                    <span className={`ml-auto inline-flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-bold leading-none ${LEARNER_STATUS_META[learnerEventStatus(ev)].badge}`} title={LEARNER_STATUS_META[learnerEventStatus(ev)].label}>
+                                      <AppIcon className={LEARNER_STATUS_META[learnerEventStatus(ev)].icon} />{LEARNER_STATUS_META[learnerEventStatus(ev)].label}
+                                    </span>
+                                  ) : (
+                                    <span className={`ml-auto h-2 w-2 shrink-0 rounded-full border border-white/80 ${LEARNER_STATUS_META[learnerEventStatus(ev)].dot}`} title={LEARNER_STATUS_META[learnerEventStatus(ev)].label}></span>
+                                  )}
                                 </div>
                                 {(ev.host || ev.club) && <p className="mt-0.5 truncate text-[10px] font-medium opacity-75">{ev.host || ev.club}</p>}
                               </button>
@@ -1889,7 +2001,7 @@ function LearnerCalendarBody() {
                               {ev.timeToBeConfirmed ? 'Time to be confirmed' : ev.time} · {ev.club}
                             </p>
                           </div>
-                          <span className="rounded-full bg-white/70 px-2.5 py-1 text-[11px] font-bold text-foreground-700">{statusMeta.label}</span>
+                          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-bold ${statusMeta.badge}`}><AppIcon className={statusMeta.icon} />{statusMeta.label}</span>
                         </button>
                       );
                     })}
@@ -2002,7 +2114,7 @@ function LearnerCalendarBody() {
                                   onClick={() => setShowEventDetails(ev)}>
                                   <div className="flex items-center justify-between mb-1">
                                     <span className="text-sm font-semibold text-foreground-900">{ev.title}</span>
-                                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${statusConfig[ev.status].cls}`}>{statusConfig[ev.status].label}</span>
+                                    {(() => { const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)]; return <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statusMeta.badge}`}><AppIcon className={statusMeta.icon} />{statusMeta.label}</span>; })()}
                                   </div>
                                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-foreground-500">
                                     <span className="flex items-center gap-1"><AppIcon className="ri-time-line text-foreground-400 text-xs"></AppIcon>{ev.time}</span>
@@ -2043,7 +2155,7 @@ function LearnerCalendarBody() {
                       <div className="mb-1 flex flex-wrap items-center gap-1">
                         <span className={`h-1.5 w-1.5 rounded-full ${sourceMeta.dot}`}></span>
                         <span className="rounded-full bg-primary-50 px-1.5 py-0.5 text-[9px] font-bold text-primary-700">{sourceMeta.short}</span>
-                        <span className="rounded-full bg-background-100 px-1.5 py-0.5 text-[9px] font-bold text-foreground-500">{statusMeta.label}</span>
+                        <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[9px] font-bold ${statusMeta.badge}`}><AppIcon className={statusMeta.icon} />{statusMeta.label}</span>
                       </div>
                       <p className="text-sm font-semibold text-foreground-900 group-hover:text-primary-700 transition-colors leading-tight truncate">{ev.title}</p>
                       <div className="flex items-center gap-2 mt-0.5">

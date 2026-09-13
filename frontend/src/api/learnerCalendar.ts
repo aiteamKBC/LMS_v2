@@ -119,6 +119,8 @@ export type BookableSessionType =
   // than filling a scheduled slot.
   | 'mcr'
   | 'progress-review'
+  | 'gateway'
+  | 'other'
   // The three onboarding reviews, bookable while still Onboarding (they go to
   // the learner's case owner rather than a coach, who doesn't exist yet).
   | OnboardingReviewType;

@@ -549,6 +549,8 @@ BOOKED_EVENT_TITLES = {
     "student-support": "Student Support",
     "mcr": "Monthly Coaching",
     "progress-review": "Progress Review",
+    "gateway": "Gateway",
+    "other": "Other",
     "eligibility-review": "Eligibility Review & FS Discussion",
     "workspace": "RPL And Experience",
     "training-plan": "Workplace Health & Safety Declaration",
@@ -560,6 +562,8 @@ BOOKED_EVENT_TITLES = {
 LEARNER_BOOKED_EVENT_TYPES = {
     CATCH_UP_EVENT_TYPE,
     "student-support",
+    "gateway",
+    "other",
     "eligibility-review",
     "workspace",
     "training-plan",
@@ -571,6 +575,8 @@ COACH_BOOKABLE_EVENT_TYPES = ("catch-up", "student-support")
 # Calendar colour/type vocabulary for the booked types above.
 BOOKED_EVENT_JSON_TYPES = {
     "student-support": "welfare",
+    "gateway": "review",
+    "other": "coaching",
     "eligibility-review": "review",
     "workspace": "review",
     "training-plan": "review",
@@ -4471,7 +4477,10 @@ def fetch_standalone_event_records(owner_email: str) -> list[CoachCalendarEvent]
     return normalize_calendar_records(
         list(
             CoachCalendarEvent.objects.filter(owner_email__iexact=owner_email)
-            .filter(~Q(event_type__in=["mcr", "progress-review"]) | Q(event_type="mcr", idempotency_key__startswith="learner-book:mcm:"))
+            .filter(
+                ~Q(event_type__in=["mcr", "progress-review"])
+                | Q(event_type__in=["mcr", "progress-review"], idempotency_key__startswith="learner-book:")
+            )
             .order_by("scheduled_date", "target_date", "scheduled_time", "learner_name")
         )
     )
