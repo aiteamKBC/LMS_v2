@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Component, type ReactNode, type ComponentType } from 'react';
 import * as Router from 'react-router-dom';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -10,6 +10,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { ToastProvider } from '@/hooks/useToast';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import { rememberLearner } from '@/hooks/useMyLearner';
+import { invalidateLearnerReads } from '@/api/learnerRead';
 
 const viewer = vi.hoisted(() => ({ kind: 'commercial', role: 'learner' }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({
@@ -38,6 +39,8 @@ const detail = () => ({ id: '125', name: 'Test learner', email: 'learner@example
   componentProgress: [], activityFeed: [], totalExpectedOtjh: 0, studentActivityAvailable: false });
 
 function payload(url: string): unknown {
+  if (url.includes('/curriculum/cache-epoch/')) return { epoch: 0, changes: [] };
+  if (url.includes('/curriculum/cache-epoch/')) return { epoch: 0, changes: [] };
   if (url.includes('/profile-photo/')) return null;
   if (url.includes('/overview-week/')) return { weekStart: '2026-09-07', weekEnd: '2026-09-13', timezone: 'Europe/London', planSubjects: [], modules: [], deadlines: [], undatedActivities: 0, expectedHours: null, missingExpectedHours: 0, otjh: { actual: 0, historical: 0, new: 0, undatedHistoricalRows: 0 } };
   if (/\/learner-(detail|summary)\//.test(url)) return detail();
@@ -137,7 +140,173 @@ async function renderLearnerPage(file: string) {
   return render(<React.StrictMode><MemoryRouter><ToastProvider><PageBoundary><Page /></PageBoundary></ToastProvider></MemoryRouter></React.StrictMode>);
 }
 
+function NavigationDestination() {
+  const location=Router.useLocation();
+  const navigate=Router.useNavigate();
+  return <><output data-testid="navigation-destination">{location.pathname}{location.search}</output>
+    <button onClick={()=>navigate(-1)}>Return to dashboard</button></>;
+}
+
 describe('learner loading and recovery', () => {
+  it('keeps the learning tab in the URL and follows browser Back and quiz deep links', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(payload(String(input))))));
+    const Page = (await modules['/src/pages/learner/my-learning/page.tsx']()).default;
+    function NavigationControls() {
+      const location = Router.useLocation();
+      const navigate = Router.useNavigate();
+      return <><output data-testid="learning-location">{location.pathname}{location.search}</output>
+        <button onClick={() => navigate(-1)}>Browser Back</button>
+        <Router.Link to="/learner/quizzes/commercial/125">Quiz deep link</Router.Link></>;
+    }
+    render(<MemoryRouter initialEntries={['/learner/modules/commercial/125?subject=current%3AM1']}><ToastProvider>
+      <Page /><NavigationControls />
+    </ToastProvider></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'Assignments' }));
+    expect(screen.getByTestId('learning-location')).toHaveTextContent('subject=current%3AM1&tab=assignments');
+    fireEvent.click(screen.getByRole('button', { name: 'Quizzes' }));
+    expect(await screen.findByText('No quizzes linked yet')).toBeVisible();
+    expect(screen.getByTestId('learning-location')).toHaveTextContent('tab=quizzes');
+    fireEvent.click(screen.getByRole('button', { name: 'Browser Back' }));
+    expect(screen.getByTestId('learning-location')).toHaveTextContent('tab=assignments');
+    expect(screen.queryByText('No quizzes linked yet')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('link', { name: 'Quiz deep link' }));
+    expect(await screen.findByText('No quizzes linked yet')).toBeVisible();
+  });
+
+  it('opens newly assigned work from the My Learning Assignments tab without prior submissions', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return new Response(JSON.stringify(url.includes('/learner-detail/') ? { ...detail(), modules: ['Project'], components: [
+        { componentId: 'NEW-ASSIGNMENT', moduleId: 'M1', module: 'Project', week: 'Week 1', component: 'Assigned project report',
+          type: 'assignment', assignmentBrief: 'Describe the project results.', expectedOtjh: 2 },
+      ] } : payload(url)));
+    }));
+    const Page = (await modules['/src/pages/learner/my-learning/page.tsx']()).default;
+    render(<MemoryRouter><ToastProvider><Routes>
+      <Route path="/" element={<Page />} /><Route path="*" element={<NavigationDestination />} />
+    </Routes></ToastProvider></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: 'Assignments' }));
+    const start = await screen.findByRole('link', { name: 'Start assignment' });
+    expect(screen.getByText('Assigned project report')).toBeVisible();
+    fireEvent.click(start);
+    expect(screen.getByTestId('navigation-destination')).toHaveTextContent('/learner/monthly-submission/commercial/125/NEW-ASSIGNMENT');
+  });
+
+  it.each([false,true])('uses current placement facts and opens the focused module and weekly plan (imported subject: %s)', async imported => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-12T12:00:00Z'));
+    const placement={programme:'Marketing Level 4',cohort:'October 2026',group:'G1'};
+    const module=(id:string,title:string,start_date:string,end_date:string,changes={})=>({id,title,start_date,end_date,
+      programme_name:placement.programme,cohort_name:placement.cohort,group_name:placement.group,description:'',tutor_name:'',coach_name:'Omar',...changes});
+    let plan={...(payload('/training-plan-dashboard/') as Record<string,unknown>),
+      moduleLinks:imported?{'legacy:77':{id:'marketing',title:'Marketing Impact and Planning'}}:{},
+      coach:{name:'Omar Elshafey',bookingUrl:null},modules:[
+      module('social','Social Media','2027-02-15','2027-05-20'),
+      module('old','Aya Modual','2026-08-03','2026-10-23',{cohort_name:'Final Cohort',group_name:'Aya Group',coach_name:'Test Coach'}),
+      module('marketing','Marketing Impact and Planning','2026-10-05','2027-02-11'),
+    ]};
+    vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL)=>{
+      const url=String(input);
+      return new Response(JSON.stringify(url.includes('/learner-summary/') ? {...detail(),...placement}
+        : url.includes('/training-plan-dashboard/') ? plan
+        : url.includes('/overview-week/') ? {...(payload(url) as Record<string,unknown>),latestModuleId:'current:social',modules:[{id:'current:social',title:'Social Media',weekLabels:[],completed:0,total:0,percent:null,ksbCodes:[],ksbMappingMissing:false}]}
+        : payload(url)));
+    }));
+    const Page=(await modules['/src/pages/workspace/learner/page.tsx']()).default;
+    render(<MemoryRouter><ToastProvider><Routes>
+      <Route path="/" element={<Page />} /><Route path="*" element={<NavigationDestination />} />
+    </Routes></ToastProvider></MemoryRouter>);
+    const hero=within(await screen.findByLabelText('Learner programme'));
+    expect(await hero.findByText('Marketing Impact and Planning')).toBeVisible();
+    expect(hero.getByText('Next module')).toBeVisible();
+    expect(hero.getByText('Omar Elshafey')).toBeVisible();
+    expect(hero.queryByText('Social Media')).not.toBeInTheDocument();
+    expect(hero.queryByText('Test Coach')).not.toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.some(([url])=>String(url).includes('/coach/'))).toBe(false);
+    plan={...plan,coach:{name:'Replacement coach',bookingUrl:null},modules:plan.modules.map(item=>item.id==='marketing'?{...item,start_date:'2026-09-10'}:item)};
+    act(()=>invalidateLearnerReads());
+    expect(await hero.findByText('Replacement coach')).toBeVisible();
+    expect(hero.getByText('Current module')).toBeVisible();
+    fireEvent.click(hero.getByRole('button',{name:'Continue learning'}));
+    expect(screen.getByTestId('navigation-destination')).toHaveTextContent(
+      `/learner/modules/commercial/125?subject=${imported?'legacy%3A77':'current%3Amarketing'}`);
+    fireEvent.click(screen.getByRole('button',{name:'Return to dashboard'}));
+    const returnedHero=within(await screen.findByLabelText('Learner programme'));
+    fireEvent.click(returnedHero.getByRole('button',{name:"Learner's Map"}));
+    expect(screen.getByTestId('navigation-destination')).toHaveTextContent('/learner/learning-plan/modules/commercial/125');
+  });
+
+  it('shows unavailable header facts when the schedule fails instead of claiming the coach is unassigned', async () => {
+    vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL)=>{
+      const url=String(input);
+      return url.includes('/training-plan-dashboard/')
+        ? new Response(JSON.stringify({error:'Plan unavailable'}),{status:503})
+        : new Response(JSON.stringify(payload(url)));
+    }));
+    const Page=(await modules['/src/pages/workspace/learner/page.tsx']()).default;
+    render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+    const hero=within(await screen.findByLabelText('Learner programme'));
+    expect(await hero.findAllByText('Unavailable')).toHaveLength(2);
+    expect(hero.queryByText('Not yet assigned')).not.toBeInTheDocument();
+  });
+
+  it('opens the exact review booking form from the dashboard Schedule action without submitting it', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url=String(input);
+      return new Response(JSON.stringify(url.includes('/calendar/commercial/125/')
+        ? {learner:{kind:'commercial',id:125},events:[{
+          id:'monthly-1',eventKey:'mcr:211:1:2026-10-31',title:'Monthly Coaching',source:'mcr',type:'coaching',sequence:1,
+          status:'not-scheduled',date:'2026-10-31',targetDate:'2026-10-31',scheduledDate:null,scheduledTime:null,
+          durationMinutes:60,coachName:'Assigned coach',coachEmail:'coach@example.test',meetingProvider:'',meetingLink:'',notes:'',invited:false,
+        }]}
+        : payload(url)));
+    }));
+    const Page=(await modules['/src/pages/learner/calendar/page.tsx']()).default;
+    render(<MemoryRouter initialEntries={['/learner/calendar?kind=commercial&learner=125&event=mcr%3A211%3A1%3A2026-10-31&action=schedule']}>
+      <ToastProvider><Page /></ToastProvider></MemoryRouter>);
+    expect(await screen.findByRole('heading',{name:'Schedule Monthly Coaching Meeting'})).toBeVisible();
+    expect(vi.mocked(fetch).mock.calls.some(([,init])=>init?.method && init.method!=='GET')).toBe(false);
+  });
+
+  it('shows an assigned programme and plan before cohort start while keeping study closed', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return new Response(JSON.stringify(url.includes('/learner-summary/')
+        ? { ...detail(), name: 'Ayman Learner', programme: 'Marketing Executive Level 4', cohort: 'October 2026',
+          programmeStatus: 'Delivery', programmeStartDate: '2026-10-01',
+          learningAccess: { blocked: true, startDate: '2026-10-01' },
+          accessGate: { blocked: true, reasons: ['start-date-future'], startDate: '2026-10-01', outstandingDocuments: [] } }
+        : payload(url)));
+    }));
+    const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
+    render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Ayman Learner' })).toBeVisible();
+    expect(screen.getByText('Learning starts on 1 October 2026')).toBeVisible();
+    expect(screen.getByText('Marketing Executive Level 4', { exact: false })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Learning opens on your start date' })).toBeDisabled();
+    expect(await screen.findByRole('region', { name: 'Monthly study plan' })).toBeVisible();
+    expect(screen.queryByText('Your programme starts soon')).not.toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method && init.method !== 'GET')).toBe(false);
+  });
+
+  it('opens learning using the cohort date even when the individual date and saved status are still in the future', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return new Response(JSON.stringify(url.includes('/learner-summary/')
+        ? { ...detail(), programmeStatus: 'Delivery', programmeStartDate: '2026-10-01',
+          learningAccess: { blocked: false, startDate: '2026-09-10' },
+          accessGate: { blocked: true, reasons: ['start-date-future'], startDate: '2026-10-01', outstandingDocuments: [] } }
+        : payload(url)));
+    }));
+    const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
+    render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
+    await waitFor(()=>expect(screen.getByRole('button', { name: 'Continue learning' })).toBeEnabled());
+    expect(screen.getByText('10 September 2026')).toBeVisible();
+    expect(screen.queryByText('1 October 2026')).not.toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Monthly study plan' })).toBeVisible();
+  });
+
   it.each(['admin', 'staff'])('lets %s review a prepared learner before any invitation, with no historical learning', async role => {
     viewer.role = role;
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {

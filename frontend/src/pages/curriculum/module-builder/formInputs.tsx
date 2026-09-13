@@ -84,67 +84,31 @@ export function NumberInput({ label, value, onChange, min, max, step, error }: {
   );
 }
 
-/** Decimal hours split into whole hours and minutes, so an author can type "1h 30m" instead of doing the division themselves. */
-function hoursAndMinutesOf(value: number): { hours: number; minutes: number } {
-  if (!Number.isFinite(value) || value < 0) return { hours: 0, minutes: 0 };
-  const hours = Math.floor(value);
-  const minutes = Math.round((value - hours) * 60);
-  return minutes === 60 ? { hours: hours + 1, minutes: 0 } : { hours, minutes };
-}
-
-export function HoursMinutesInput({ label, value, onChange, error }: { label: string; value: number; onChange: (value: number) => void; error?: string }) {
-  const { hours, minutes } = hoursAndMinutesOf(value);
-  const [hoursDraft, setHoursDraft] = useState(String(hours));
-  const [minutesDraft, setMinutesDraft] = useState(String(minutes));
-  const [focused, setFocused] = useState<'hours' | 'minutes' | null>(null);
-
-  useEffect(() => {
-    if (focused !== 'hours') setHoursDraft(String(hours));
-    if (focused !== 'minutes') setMinutesDraft(String(minutes));
-  }, [focused, hours, minutes]);
-
-  const commit = (nextHours: string, nextMinutes: string) => {
-    const parsedHours = Number(nextHours);
-    const parsedMinutes = Number(nextMinutes);
-    const safeHours = nextHours.trim() === '' || !Number.isFinite(parsedHours) || parsedHours < 0 ? 0 : parsedHours;
-    const safeMinutes = nextMinutes.trim() === '' || !Number.isFinite(parsedMinutes) || parsedMinutes < 0 ? 0 : parsedMinutes;
-    onChange(safeHours + safeMinutes / 60);
+/** Edit a duration as whole hours plus minutes while keeping the API value in decimal hours. */
+export function DurationInput({ label, value, onChange, error }: { label: string; value: number; onChange: (value: number) => void; error?: string }) {
+  const totalMinutes = Math.max(0, Math.round((Number(value) || 0) * 60));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const update = (nextHours: number, nextMinutes: number) => {
+    const safeHours = Number.isFinite(nextHours) ? Math.max(0, Math.floor(nextHours)) : 0;
+    const safeMinutes = Number.isFinite(nextMinutes) ? Math.min(59, Math.max(0, Math.floor(nextMinutes))) : 0;
+    onChange((safeHours * 60 + safeMinutes) / 60);
   };
-
   return (
-    <label className="block">
-      <span className="text-[10px] font-semibold text-foreground-400 uppercase">{label}</span>
-      <div className="mt-1 flex items-center gap-2">
-        <div className="flex flex-1 items-center gap-1">
-          <input
-            type="number"
-            min={0}
-            step={1}
-            value={focused === 'hours' ? hoursDraft : String(hours)}
-            onFocus={() => { setFocused('hours'); setHoursDraft(String(hours)); }}
-            onBlur={() => { setFocused(null); commit(hoursDraft, minutesDraft); }}
-            onChange={event => { setHoursDraft(event.target.value); commit(event.target.value, minutesDraft); }}
-            className={`h-10 w-full rounded-lg border bg-background-50 px-3 text-[13px] text-foreground-900 focus:outline-none ${error ? 'border-red-300 focus:border-red-400' : 'border-foreground-200/60 focus:border-primary-300'}`}
-          />
-          <span className="text-[11px] font-semibold text-foreground-400">h</span>
-        </div>
-        <div className="flex flex-1 items-center gap-1">
-          <input
-            type="number"
-            min={0}
-            max={59}
-            step={1}
-            value={focused === 'minutes' ? minutesDraft : String(minutes)}
-            onFocus={() => { setFocused('minutes'); setMinutesDraft(String(minutes)); }}
-            onBlur={() => { setFocused(null); commit(hoursDraft, minutesDraft); }}
-            onChange={event => { setMinutesDraft(event.target.value); commit(hoursDraft, event.target.value); }}
-            className={`h-10 w-full rounded-lg border bg-background-50 px-3 text-[13px] text-foreground-900 focus:outline-none ${error ? 'border-red-300 focus:border-red-400' : 'border-foreground-200/60 focus:border-primary-300'}`}
-          />
-          <span className="text-[11px] font-semibold text-foreground-400">m</span>
-        </div>
+    <div>
+      <span className="text-[10px] font-semibold uppercase text-foreground-400">{label}</span>
+      <div className="mt-1 grid grid-cols-2 gap-2">
+        <label className="relative block">
+          <input type="number" min={0} step={1} value={hours} onChange={event => update(Number(event.target.value), minutes)} className={`w-full rounded-lg border bg-background-50 px-3 py-2 pr-12 text-[13px] text-foreground-900 focus:outline-none ${error ? 'border-red-300' : 'border-foreground-200/60 focus:border-primary-300'}`} />
+          <span className="pointer-events-none absolute right-3 top-2.5 text-[11px] font-semibold text-foreground-400">hours</span>
+        </label>
+        <label className="relative block">
+          <input type="number" min={0} max={59} step={5} value={minutes} onChange={event => update(hours, Number(event.target.value))} className={`w-full rounded-lg border bg-background-50 px-3 py-2 pr-14 text-[13px] text-foreground-900 focus:outline-none ${error ? 'border-red-300' : 'border-foreground-200/60 focus:border-primary-300'}`} />
+          <span className="pointer-events-none absolute right-3 top-2.5 text-[11px] font-semibold text-foreground-400">minutes</span>
+        </label>
       </div>
       {error && <span className="mt-1 block text-[11px] font-semibold text-red-600">{error}</span>}
-    </label>
+    </div>
   );
 }
 

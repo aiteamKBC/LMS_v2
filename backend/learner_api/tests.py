@@ -406,6 +406,12 @@ class LearnerProfileResolutionTests(SimpleTestCase):
     exactly why the explicit column exists.
     """
 
+    def setUp(self):
+        patcher = patch('learner_api.identity.EnrolmentUser.all_learners.filter')
+        self.source_filter = patcher.start()
+        self.source_filter.return_value.exclude.return_value.exists.return_value = False
+        self.addCleanup(patcher.stop)
+
     @staticmethod
     def _returns(*results):
         """Make ``LearnerProfile.objects.filter(...).first()`` yield each result
@@ -447,7 +453,7 @@ class LearnerProfileResolutionTests(SimpleTestCase):
         self.assertIs(result, expected)
         self.assertEqual(calls, [
             {"enrolment_id": 19, "lifecycle_status": "active"},
-            {"email__iexact": "Learner@Example.com", "lifecycle_status": "active"},
+            {"email__iexact": "Learner@Example.com", "enrolment_id__isnull": True, "lifecycle_status": "active"},
         ])
 
     @patch("learner_api.identity.LearnerProfile.objects.filter")
@@ -482,7 +488,7 @@ class LearnerProfileResolutionTests(SimpleTestCase):
         self.assertIs(result, expected)
         self.assertEqual(calls, [
             {"enrolment_id": 19, "lifecycle_status": "active"},
-            {"pk": 19, "lifecycle_status": "active"},
+            {"pk": 19, "enrolment_id__isnull": True, "lifecycle_status": "active"},
         ])
 
     @patch("learner_api.identity.LearnerProfile.objects.filter")
@@ -502,8 +508,16 @@ class LearnerProfileResolutionTests(SimpleTestCase):
         # Never a third, pk-based lookup.
         self.assertEqual(calls, [
             {"enrolment_id": 19, "lifecycle_status": "active"},
-            {"email__iexact": "missing@example.com", "lifecycle_status": "active"},
+            {"email__iexact": "missing@example.com", "enrolment_id__isnull": True, "lifecycle_status": "active"},
         ])
+
+    @patch('learner_api.identity.LearnerProfile.objects.filter')
+    def test_duplicate_source_email_does_not_claim_unlinked_work(self, profile_filter):
+        profile = SimpleNamespace(id=2, enrolment_id=None, save=Mock())
+        profile_filter.side_effect = self._returns(None, profile)[0]
+        self.source_filter.return_value.exclude.return_value.exists.return_value = True
+        self.assertIsNone(learner_profile_for_source(SimpleNamespace(email='shared@example.com'), 500))
+        profile.save.assert_not_called()
 
 
 class AttendanceSummaryTests(SimpleTestCase):
@@ -1227,7 +1241,7 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
 
         self.assertEqual(result, fetch_from_profile_source.return_value)
         resolve_programme_id.assert_called_once_with("Programme A", training_plan=[{"moduleId": "MOD-1"}])
-        fetch_for_programme.assert_called_once_with("PROG-1", "Programme A")
+        fetch_for_programme.assert_not_called()
         resolve_profile_source.assert_called_once_with(
             programme_id="PROG-1",
             programme="Programme A",
@@ -1257,7 +1271,7 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
 
         self.assertEqual(result, fetch_from_profile_source.return_value)
         resolve_programme_id.assert_called_once_with("Programme A", training_plan=[{"moduleId": "MOD-1"}])
-        fetch_for_programme.assert_called_once_with("PROG-1", "Programme A")
+        fetch_for_programme.assert_not_called()
         resolve_profile_source.assert_called_once_with(
             programme_id="PROG-1",
             programme="Programme A",

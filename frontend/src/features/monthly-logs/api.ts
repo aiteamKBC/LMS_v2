@@ -4,7 +4,7 @@ import type { ActivityContent, JournalSummary, MonthDetail, MonthState, Signatur
 
 export type LogMonth = MonthState & { source: 'legacy' | 'lms' };
 export type LogDetail = MonthDetail & { source: 'legacy' | 'lms' };
-export type LogSummary = JournalSummary & {
+export type LogSummary = Omit<JournalSummary, 'months'> & {
   months: LogMonth[]; total_months: number; completed_months: number; read_only: boolean; csrf_token: string;
 };
 export type LogLearner = { id: number; name: string; programme: string };

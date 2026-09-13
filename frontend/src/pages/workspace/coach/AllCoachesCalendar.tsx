@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { CalendarEventDialog } from '@/components/feature/CalendarEventDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import type { DirectoryCoach } from '@/api/coachDirectory';
 import {
@@ -66,6 +67,7 @@ export function AllCoachesCalendar({
 }) {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [selectedCoach, setSelectedCoach] = useState('all');
+  const [selectedEvent, setSelectedEvent] = useState<AggregatedEvent | null>(null);
   const [events, setEvents] = useState<AggregatedEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [failedCoaches, setFailedCoaches] = useState<string[]>([]);
@@ -140,6 +142,23 @@ export function AllCoachesCalendar({
 
   return (
     <section className="rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
+      {selectedEvent && (
+        <CalendarEventDialog
+          title={selectedEvent.event.title}
+          onClose={() => setSelectedEvent(null)}
+          badges={<span className="rounded-full bg-primary-50 px-2.5 py-1 text-primary-700">{statusLabel(selectedEvent.event.status)}</span>}
+          actions={<button type="button" onClick={() => onOpenCoach(selectedEvent.coach, selectedEvent.event)} className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-primary-700"><AppIcon className="ri-calendar-line" />Open coach timetable</button>}
+        >
+          <dl className="grid gap-4 text-sm sm:grid-cols-2">
+            <div><dt className="text-xs text-foreground-500">Date</dt><dd className="mt-1 font-semibold">{parseLocalDate(eventDisplayDate(selectedEvent.event))?.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</dd></div>
+            <div><dt className="text-xs text-foreground-500">Time</dt><dd className="mt-1 font-semibold">{eventTime(selectedEvent.event)}</dd></div>
+            <div><dt className="text-xs text-foreground-500">Coach</dt><dd className="mt-1 font-semibold">{coachLabel(selectedEvent.coach)}</dd></div>
+            {selectedEvent.event.learner && <div><dt className="text-xs text-foreground-500">Learner</dt><dd className="mt-1 font-semibold">{selectedEvent.event.learner}</dd></div>}
+            {selectedEvent.event.programme && <div><dt className="text-xs text-foreground-500">Programme</dt><dd className="mt-1 font-semibold">{selectedEvent.event.programme}</dd></div>}
+          </dl>
+          {selectedEvent.event.notes && <p className="mt-5 whitespace-pre-wrap break-words border-t border-foreground-100 pt-4 text-sm text-foreground-700">{selectedEvent.event.notes}</p>}
+        </CalendarEventDialog>
+      )}
       <div className="flex flex-col gap-4 border-b border-foreground-200/60 p-4 md:flex-row md:items-center md:justify-between md:p-6">
         <div>
           <div className="flex items-center gap-2">
@@ -213,7 +232,8 @@ export function AllCoachesCalendar({
                         <button
                           key={`${coach.email}-${event.eventKey || event.id}-${index}`}
                           type="button"
-                          onClick={() => onOpenCoach(coach, event)}
+                          aria-haspopup="dialog"
+                          onClick={() => setSelectedEvent({ coach, event })}
                           className={`w-full rounded-lg border p-2 text-left transition hover:-translate-y-0.5 hover:shadow-sm ${colour.card}`}
                         >
                           <span className={`block truncate text-[10px] font-bold ${colour.text}`}>{eventTime(event)}</span>

@@ -46,7 +46,7 @@ def point_codes(value):
         return None
     codes = set()
     for entry in entries:
-        code = entry.get('code') or entry.get('ksbCode') if isinstance(entry, dict) else entry
+        code = (entry.get('code') or entry.get('ksbCode') or entry.get('ksb_code')) if isinstance(entry, dict) else entry
         if not isinstance(code, str) or not code.strip():
             return None
         codes.add(code.strip().upper())

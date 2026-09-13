@@ -53,6 +53,9 @@ def _learner(plan=None):
 
 
 class ModuleWindowTests(SimpleTestCase):
+    def setUp(self):
+        self.enterContext(patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='admin')))
+
     def _call(self, learner, method="GET", body=None):
         factory = RequestFactory()
         url = "/learner_api/learning-plan/19/"

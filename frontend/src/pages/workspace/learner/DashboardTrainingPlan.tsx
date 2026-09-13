@@ -7,7 +7,7 @@ import { TrainingPlanDetails } from '@/pages/learner/training-plan-timeline/Trai
 import styles from '@/pages/learner/training-plan-timeline/TrainingPlanDetails.module.css';
 
 /** Independent loading keeps the existing dashboard visible while plan sources resolve. */
-export function DashboardTrainingPlan({ kind, learnerId }: { kind: LearnerKind; learnerId: string }) {
+export function DashboardTrainingPlan({ kind, learnerId, canOpenActivities = true }: { kind: LearnerKind; learnerId: string; canOpenActivities?: boolean }) {
   const { data, subjects: summaries, loading, error, refresh, retryContract } = useDashboardPlan(kind, learnerId);
   const [params] = useSearchParams();
   const { hash } = useLocation();
@@ -29,7 +29,7 @@ export function DashboardTrainingPlan({ kind, learnerId }: { kind: LearnerKind; 
   return <div ref={anchor} className={styles.root}>
     {error && <div role="alert" className={styles.error}><span>Your monthly learning could not refresh. {error}</span><button onClick={refresh}>Retry monthly learning</button></div>}
     {hasSnapshot && data ? <TrainingPlanDetails key={destination} data={data} subjects={subjects} kind={kind} learnerId={learnerId}
-      onRefresh={refresh} refreshing={loading} onRetryContract={retryContract} initialSubjectId={initialSubjectId} initialMonth={initialMonth} />
+      canOpenActivities={canOpenActivities} onRefresh={refresh} refreshing={loading} onRetryContract={retryContract} initialSubjectId={initialSubjectId} initialMonth={initialMonth} />
       : !error && <div role="status" aria-label="Loading monthly learning and coaching" className={styles.loading}>
         {[0, 1, 2].map(item => <div key={item} aria-hidden="true"><span /><span /><span /></div>)}
       </div>}

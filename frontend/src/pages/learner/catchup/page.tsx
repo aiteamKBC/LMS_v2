@@ -1,3 +1,4 @@
+import { WorkspaceMetricContent } from '@/components/ui/WorkspaceMetricContent';
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -37,11 +38,11 @@ export default function CatchUpPage() {
       pageTitle="Catch-Up Learning" pageSubtitle="Complete missed sessions, submit evidence, restore your attendance"
       userName={p.fullName} userRole={`${p.programme} Apprentice`}
     >
-      <div className="p-4 md:p-6 space-y-5">
+      <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
 
         {/* ── HERO — compact gradient + donut + stats + CTA ── */}
-        <section className="learner-super-admin-hero relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-0 pointer-events-none overflow-hidden">
+        <section className="learner-super-admin-hero relative rounded-2xl overflow-hidden workspace-page-hero" >
+          <div className="absolute inset-0 pointer-events-none overflow-hidden hidden">
             <div className="absolute animate-liquid-blob-1 opacity-20" style={{ width: '55%', height: '30%', left: '-8%', top: '-12%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.25) 0%, transparent 70%)', filter: 'blur(60px)' }} />
             <div className="absolute animate-liquid-blob-2 opacity-12" style={{ width: '60%', height: '32%', right: '-12%', top: '18%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.18) 0%, transparent 70%)', filter: 'blur(55px)' }} />
           </div>
@@ -50,12 +51,12 @@ export default function CatchUpPage() {
             <div className="flex flex-col lg:flex-row lg:items-center gap-5">
               {/* Left: Icon + Title + Donut */}
               <div className="flex items-center gap-4 flex-1 min-w-0">
-                <span className="w-12 h-12 rounded-2xl bg-white/10 backdrop-blur-sm flex items-center justify-center shrink-0">
-                  <AppIcon className="ri-timer-flash-line text-white text-xl"></AppIcon>
+                <span className="w-12 h-12 rounded-2xl bg-primary-100/60 backdrop-blur-sm flex items-center justify-center shrink-0">
+                  <AppIcon className="ri-timer-flash-line text-primary-800 text-xl"></AppIcon>
                 </span>
                 <div className="flex-1 min-w-0">
-                  <h2 className="text-lg font-heading font-bold text-white mb-1">Catch-Up Learning Hub</h2>
-                  <p className="text-[12px] text-white/75 leading-relaxed max-w-md">
+                  <h2 className="text-lg font-heading font-bold text-primary-800 mb-1">Catch-Up Learning Hub</h2>
+                  <p className="text-[12px] text-foreground-500 leading-relaxed max-w-md">
                     Complete your missed learning. Watch recordings, submit reflections, and restore your attendance.
                   </p>
                 </div>
@@ -71,30 +72,21 @@ export default function CatchUpPage() {
                     />
                   </svg>
                   <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                    <span className="text-lg font-bold text-white leading-none">{catchUpPct}%</span>
-                    <span className="text-[9px] text-white/60 leading-tight">Complete</span>
+                    <span className="text-lg font-bold text-primary-800 leading-none">{catchUpPct}%</span>
+                    <span className="text-[9px] text-foreground-500 leading-tight">Complete</span>
                   </div>
                 </div>
               </div>
 
               {/* Right: Compact stats + CTA */}
               <div className="flex items-center gap-3 shrink-0 flex-wrap">
-                <div className="learner-hero-kpi bg-white/12 backdrop-blur-sm rounded-xl px-3.5 py-2.5 text-center min-w-[68px]">
-                  <p className={`text-lg font-bold ${outstandingCount > 0 ? 'text-amber-300' : 'text-emerald-300'}`}>{outstandingCount}</p>
-                  <p className="text-[10px] text-white/65 uppercase tracking-wide whitespace-nowrap">Outstanding</p>
-                </div>
-                <div className="learner-hero-kpi bg-white/12 backdrop-blur-sm rounded-xl px-3.5 py-2.5 text-center min-w-[68px]">
-                  <p className="text-lg font-bold text-emerald-300">{completedCount}</p>
-                  <p className="text-[10px] text-white/65 uppercase tracking-wide whitespace-nowrap">Completed</p>
-                </div>
-                <div className="learner-hero-kpi bg-white/12 backdrop-blur-sm rounded-xl px-3.5 py-2.5 text-center min-w-[68px]">
-                  <p className="text-lg font-bold text-white">{s.currentRate}%</p>
-                  <p className="text-[10px] text-white/65 uppercase tracking-wide whitespace-nowrap">Attendance</p>
-                </div>
+                <div className="ui-metric-card coach-metric-card"><WorkspaceMetricContent label="Outstanding" value={<>{outstandingCount}</>} icon="ri-time-line" valuePosition="stacked" /></div>
+                <div className="ui-metric-card coach-metric-card"><WorkspaceMetricContent label="Completed" value={<>{completedCount}</>} icon="ri-check-double-line" valuePosition="stacked" /></div>
+                <div className="ui-metric-card coach-metric-card"><WorkspaceMetricContent label="Attendance" value={<>{s.currentRate}%</>} icon="ri-calendar-check-line" valuePosition="stacked" /></div>
                 {hasUrgent && (
                   <button
                     onClick={() => setPanelView('recording')}
-                    className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-accent-500 text-white text-sm font-semibold hover:bg-accent-600 hover:scale-105 active:scale-95 transition-all duration-200 whitespace-nowrap cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-accent-500 text-primary-800 text-sm font-semibold hover:bg-accent-600 hover:scale-105 active:scale-95 transition-all duration-200 whitespace-nowrap cursor-pointer"
                   >
                     <AppIcon className="ri-play-circle-line"></AppIcon> Start Catch-Up
                   </button>
@@ -103,7 +95,7 @@ export default function CatchUpPage() {
             </div>
 
             {/* Journey progress bar — compact */}
-            <div className="flex items-center gap-1.5 mt-5 pt-4 border-t border-white/10 flex-wrap">
+            <div className="flex items-center gap-1.5 mt-5 pt-4 border-t border-primary-200/60 flex-wrap">
               {CATCH_UP_JOURNEY_STEPS.map((step, i) => (
                 <div key={step.step} className="flex items-center gap-1.5">
                   <div className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium transition-smooth ${
@@ -121,7 +113,7 @@ export default function CatchUpPage() {
                     <span className="whitespace-nowrap">{step.label}</span>
                   </div>
                   {i < CATCH_UP_JOURNEY_STEPS.length - 1 && (
-                    <AppIcon className="ri-arrow-right-s-line text-white/20 text-[9px]"></AppIcon>
+                    <AppIcon className="ri-arrow-right-s-line text-foreground-500 text-[9px]"></AppIcon>
                   )}
                 </div>
               ))}

@@ -10,7 +10,7 @@ from django.core import signing
 from django.test import RequestFactory, SimpleTestCase, override_settings
 from pptx import Presentation
 
-from .monthly_assignment import assignment_checks, booked_coaching, export_presentation, month_bounds, presentation_fingerprint, valid_presentation
+from .monthly_assignment import assignment_checks, coaching_booking_bounds, booked_coaching, export_presentation, month_bounds, presentation_fingerprint, valid_presentation
 
 
 @override_settings(SECRET_KEY="monthly-assignment-test-key")
@@ -138,6 +138,11 @@ class MonthlyAssignmentTests(SimpleTestCase):
         get_record.assert_called_with("commercial", 1, "meeting-1")
         record.scheduled_date = date(2026, 9, 20)
         self.assertFalse(booked_coaching(self.payload()))
+        record.scheduled_date = date(2026, 10, 5)
+        self.assertTrue(booked_coaching(self.payload()))
+        record.scheduled_date = date(2026, 10, 6)
+        self.assertFalse(booked_coaching(self.payload()))
+        self.assertEqual(coaching_booking_bounds("2026-12"), (date(2026, 12, 22), date(2027, 1, 5)))
         record.scheduled_date = date(2026, 9, 30)
         record.status = "cancelled"
         self.assertFalse(booked_coaching(self.payload()))
@@ -148,7 +153,7 @@ class MonthlyAssignmentTests(SimpleTestCase):
         response = unwrap(export_presentation)(request)
         self.assertEqual(response.status_code, 200)
         deck = Presentation(io.BytesIO(response.content))
-        self.assertEqual(deck.slides[0].shapes.title.text, "My work")
+        self.assertEqual(deck.slides[0].shapes.title.text, "MCM Meeting")
         payload["monthlyAssignment"]["presentationToken"] = response["X-Presentation-Token"]
         self.assertTrue(valid_presentation(payload))
 

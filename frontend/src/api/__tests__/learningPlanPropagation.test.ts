@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchLearnerDetail, invalidateLearnerDetailCache } from '../learnerDetail';
 import { saveLearningPlan, saveModuleLearners } from '../learningPlan';
+import { fetchLearnerCalendarEvents } from '../learnerCalendar';
+import { updateEnrolmentUser } from '../enrolmentUsers';
 
 const response = (value: unknown, ok = true) => ({ ok, status: ok ? 200 : 400, json: async () => value, text: async () => JSON.stringify(value) }) as Response;
 const oldDetail = { id: '101', modules: ['Existing'] };
@@ -43,6 +45,20 @@ describe('module assignment propagation', () => {
     finishOld(response(oldDetail));
     await pending;
     expect(await fetchLearnerDetail('commercial', '101')).toEqual(newDetail);
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(['plan', 'roster', 'placement'])('expires calendar snapshots after a successful %s change', async surface => {
+    const before = { events: [{ programme: 'Old programme', status: 'not-scheduled' }] };
+    const after = { events: [{ programme: 'Assigned programme', status: 'scheduled' }] };
+    const fetch = vi.fn().mockResolvedValueOnce(response(before)).mockResolvedValueOnce(response({}))
+      .mockResolvedValueOnce(response(after));
+    vi.stubGlobal('fetch', fetch);
+    await fetchLearnerCalendarEvents('commercial', '101');
+    if (surface === 'plan') await saveLearningPlan('101', ['MOD-NEW']);
+    else if (surface === 'roster') await saveModuleLearners('MOD-NEW', ['101']);
+    else await updateEnrolmentUser('101', { programme: 'Assigned programme' });
+    expect(await fetchLearnerCalendarEvents('commercial', '101')).toEqual(after);
     expect(fetch).toHaveBeenCalledTimes(3);
   });
 });

@@ -1,11 +1,14 @@
 import { createCachedResource } from './cachedRequest';
-import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
+import { readLearnerJson, invalidateLearnerReads, subscribeLearnerReadInvalidation } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
 import type { CoachMeetingArtifactsResponse } from '@/pages/coach/shared/calendarEvents';
 
 const BASE = '/learner_api/calendar';
 const calendarResource = createCachedResource<LearnerCalendarResponse>('learner-calendar', key =>
   readLearnerJson(`${BASE}/${key.replace(':', '/')}/`));
+// Programme, placement and plan saves expire shared reads too. The outer
+// calendar snapshot must not outlive those changes.
+subscribeLearnerReadInvalidation(() => calendarResource.invalidate());
 
 export interface LearnerCalendarEvent {
   id: string;
@@ -78,9 +81,9 @@ export function invalidateLearnerCalendarCache(kind?: LearnerKind, id?: string):
   invalidateLearnerReads();
 }
 
-export function fetchLearnerCalendarEvents(kind: LearnerKind, id: string, options: { force?: boolean } = {}): Promise<LearnerCalendarResponse> {
+export function fetchLearnerCalendarEvents(kind: LearnerKind, id: string, options: { force?: boolean; revalidate?: boolean } = {}): Promise<LearnerCalendarResponse> {
   if (options.force) invalidateLearnerCalendarCache(kind, id);
-  return calendarResource.read(`${kind}:${id}`);
+  return calendarResource.read(`${kind}:${id}`, { revalidate: options.revalidate });
 }
 
 export function fetchLearnerMeetingArtifacts(kind: LearnerKind, learnerId: string, eventKey: string, signal?: AbortSignal): Promise<CoachMeetingArtifactsResponse> {
@@ -144,6 +147,7 @@ export function fetchOnboardingReviews(kind: LearnerKind, id: string): Promise<O
 }
 
 export interface BookSessionInput {
+  assignmentMonth?: string;
   sessionType: BookableSessionType;
   /** Required when booking a generated MCM/Progress Review slot. */
   eventKey?: string;

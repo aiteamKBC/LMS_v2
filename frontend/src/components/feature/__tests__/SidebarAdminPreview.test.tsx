@@ -69,7 +69,7 @@ describe('Super Admin secondary navigation preview', () => {
 
   it.each([
     ['button', 'Platform', 'Documents'],
-    ['link', 'Platform Report', 'Platform Report'],
+    ['link', 'Platform Report', 'Dashboard'],
   ])('clears the hover appearance for %s %s while retaining its panel', (role, label, childLabel) => {
     const { rail, panel } = showSidebar();
     const item = rail.getByRole(role, { name: label });
@@ -106,11 +106,11 @@ describe('Super Admin secondary navigation preview', () => {
     expect(screen.getByTestId('current-path')).toHaveTextContent('/workspace/admin');
   });
 
-  it('opens the panel for a clicked direct link and preserves navigation', () => {
+  it('closes the panel for a clicked direct link and preserves navigation', () => {
     const { rail, panel } = showSidebar('/workspace/admin', false);
     fireEvent.click(rail.getByRole('link', { name: 'Platform Report' }));
-    expect(panel.getByRole('link', { name: 'Platform Report' })).toHaveAttribute('href', '/admin/platform-report');
-    expect(document.getElementById('admin-secondary-navigation')).not.toHaveAttribute('inert');
+    expect(panel.queryByRole('link', { name: 'Platform Report' })).toBeNull();
+    expect(document.getElementById('admin-secondary-navigation')).toHaveAttribute('inert');
     expect(screen.getByTestId('current-path')).toHaveTextContent('/admin/platform-report');
   });
 
@@ -136,14 +136,14 @@ describe('Super Admin secondary navigation preview', () => {
     expect(screen.getByTestId('current-path')).toHaveTextContent('/admin/documents');
   });
 
-  it.each(['Dashboard', 'Platform Report'])('repeats the %s icon and original link when it has no submenu', (label) => {
+  it.each(['Dashboard', 'Platform Report'])('keeps the active preview while hovering direct destination %s', (label) => {
     const { rail, panel } = showSidebar();
     const primary = rail.getByRole('link', { name: label });
     fireEvent.mouseEnter(primary);
-    const secondary = panel.getByRole('link', { name: label });
+    const secondary = panel.getByRole('link', { name: 'Dashboard' });
     expect(panel.getAllByRole('link')).toHaveLength(1);
-    expect(secondary).toHaveAttribute('href', primary.getAttribute('href'));
-    expect(secondary.querySelector('svg')?.innerHTML).toBe(primary.querySelector('svg')?.innerHTML);
+    expect(secondary).toHaveAttribute('href', '/workspace/admin');
+    expect(secondary.querySelector('svg')?.innerHTML).toBe(rail.getByRole('link', { name: 'Dashboard' }).querySelector('svg')?.innerHTML);
   });
 
   it('supports keyboard focus and starts with the current route group', () => {

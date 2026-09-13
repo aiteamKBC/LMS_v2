@@ -96,8 +96,16 @@ def to_list_row(u):
         "learningPlan": True,
         # Whether a plan has actually been saved, so the users table can offer
         # "Add" vs "Edit" without fetching every learner's plan.
-        "hasLearningPlan": has_plan,
-        "programmeStatus": programme_status(u),
+        # The directory queryset supplies a lightweight annotation so it does
+        # not have to hydrate the full JSON training-plan columns for every
+        # learner. Keep the attribute fallback for callers that pass a fully
+        # loaded model instance (detail/create paths and tests).
+        "hasLearningPlan": bool(
+            getattr(u, "_has_learning_plan", None)
+            if hasattr(u, "_has_learning_plan")
+            else (bool(u.learning_plan) or bool(u.training_plan))
+        ),
+        "programmeStatus": _s(u.programme_status),
         # The programme itself, not just its status — the directory shows both.
         # Staff and employer rows have no programme, so their mappers leave it
         # absent and the table renders a dash.

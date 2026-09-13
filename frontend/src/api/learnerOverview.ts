@@ -5,6 +5,7 @@ import { peekLearnerJson, readLearnerJson } from './learnerRead';
 export type PlanSubjectSummary = {
   id: string; title: string; source: 'legacy' | 'current'; completed: number; total: number;
   dates: string[]; moduleIds: string[]; sessionTitles: { date: string; title: string }[];
+  activityCounts?: Record<string, number>; ksbCodes?: string[]; ksbMappingMissing?: boolean;
 };
 
 export type OverviewWeek = {
