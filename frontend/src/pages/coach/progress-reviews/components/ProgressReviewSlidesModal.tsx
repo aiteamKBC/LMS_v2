@@ -3,6 +3,7 @@ import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
 import { useToast } from '@/hooks/useToast';
 import { saveProgressReviewPptx } from '../lib/progressReviewPptx';
+import { reviewDeckMetadata } from '../lib/reviewDeckMetadata';
 
 type SlideTone = 'default' | 'good' | 'warn' | 'danger';
 
@@ -94,13 +95,6 @@ function detailValue(slide: ProgressReviewSlide, label: string) {
   return cleanText(slide.details.find((detail) => detail.label.toLowerCase() === label.toLowerCase())?.value);
 }
 
-function slideMeta(slide: ProgressReviewSlide) {
-  const programme = detailValue(slide, 'Programme') || 'Marketing Executive Level 4 Apprenticeship';
-  const employer = detailValue(slide, 'Employer') || 'KBC LearningOS';
-  const manager = detailValue(slide, 'Line manager');
-  return { programme, employer, manager };
-}
-
 function bullets(items: ProgressReviewSlideListItem[], limit = 5) {
   return items.slice(0, limit).map((item) => (
     <li key={`${item.title}-${item.meta || ''}`} className="leading-snug">
@@ -114,14 +108,15 @@ function bullets(items: ProgressReviewSlideListItem[], limit = 5) {
 
 function SlideShell({
   slide,
+  meta,
   exportMode,
   children,
 }: {
   slide: ProgressReviewSlide;
+  meta: ReturnType<typeof reviewDeckMetadata>;
   exportMode: boolean;
   children: ReactNode;
 }) {
-  const meta = slideMeta(slide);
   return (
     <div className={`relative aspect-video overflow-hidden bg-white text-slate-950 shadow-sm ${exportMode ? '' : 'rounded-xl border border-slate-200'}`}>
       <div className="absolute inset-x-0 top-0 h-14 bg-[#24103f] text-white">
@@ -146,7 +141,7 @@ function SlideShell({
   );
 }
 
-function renderSlideContent(slide: ProgressReviewSlide, exportMode = false) {
+function renderSlideContent(slide: ProgressReviewSlide, meta: ReturnType<typeof reviewDeckMetadata>, exportMode = false) {
   const shellClass = exportMode ? 'h-[640px] w-full' : 'mx-auto w-full max-w-[1120px]';
 
   return (
@@ -177,7 +172,7 @@ function renderSlideContent(slide: ProgressReviewSlide, exportMode = false) {
       ) : null}
 
       {slide.type === 'metrics' ? (
-        <SlideShell slide={slide} exportMode={exportMode}>
+        <SlideShell slide={slide} meta={meta} exportMode={exportMode}>
           <div className="grid grid-cols-4 gap-3">
             {slide.metrics.slice(0, 8).map((metric) => (
               <div key={metric.label} className="min-h-[92px] border-t-4 border-violet-700 bg-slate-50 px-4 py-3">
@@ -204,7 +199,7 @@ function renderSlideContent(slide: ProgressReviewSlide, exportMode = false) {
       ) : null}
 
       {slide.type === 'table' ? (
-        <SlideShell slide={slide} exportMode={exportMode}>
+        <SlideShell slide={slide} meta={meta} exportMode={exportMode}>
           <div className="overflow-hidden border border-slate-200">
             <table className="min-w-full border-collapse text-left text-[11px]">
               <thead className="bg-[#24103f] text-white">
@@ -238,7 +233,7 @@ function renderSlideContent(slide: ProgressReviewSlide, exportMode = false) {
       ) : null}
 
       {slide.type === 'lists' ? (
-        <SlideShell slide={slide} exportMode={exportMode}>
+        <SlideShell slide={slide} meta={meta} exportMode={exportMode}>
           <div className={`grid h-full gap-6 ${slide.columns.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
             {slide.columns.map((column) => (
               <section key={column.title} className="bg-white">
@@ -350,7 +345,7 @@ export default function ProgressReviewSlidesModal({
                 Slide {index + 1} of {deck.slides.length}
               </span>
             </div>
-            {renderSlideContent(slide, true)}
+            {renderSlideContent(slide, reviewDeckMetadata(deck), true)}
           </div>
         ))}
       </div>
@@ -441,7 +436,7 @@ export default function ProgressReviewSlidesModal({
                   {currentSlide + 1} / {deck.slides.length}
                 </span>
               </div>
-              {renderSlideContent(current)}
+              {renderSlideContent(current, reviewDeckMetadata(deck))}
             </div>
           </div>
 

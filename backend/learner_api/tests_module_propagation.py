@@ -55,13 +55,15 @@ class ModuleAssignmentTests(SimpleTestCase):
                 patch('learner_api.learning_plan._all_modules', return_value=[MODULE]), \
                 patch('learner_api.learning_plan._programme_modules', return_value=[MODULE]), \
                 patch('learner_api.learning_plan._group_module_ids', return_value=['MOD-NEW']), \
-                patch('learner_api.learning_plan.advance_learner'):
+                patch('learner_api.learning_plan.advance_learner'), \
+                patch('learner_api.learning_plan.sync_learning_plan_mirror') as sync_mirror:
             model.all_learners.get.return_value = source
             response = learning_plan(request, 101)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.content)['plan'], [])
         self.assertTrue(json.loads(response.content)['saved'])
         source.save.assert_called_once_with(update_fields=['training_plan'])
+        sync_mirror.assert_called_once_with(source)
 
     def test_builder_assignment_uses_the_same_column_and_preserves_other_learners(self):
         source, other = learner(training_plan=[]), learner(id=102, pk=102, learning_plan=[])
@@ -69,13 +71,15 @@ class ModuleAssignmentTests(SimpleTestCase):
         with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='admin')), \
                 patch('learner_api.learning_plan._all_modules', return_value=[MODULE]), \
                 patch('learner_api.learning_plan._picker_learners', return_value=[source, other]), \
-                patch('learner_api.learning_plan.advance_learner'):
+                patch('learner_api.learning_plan.advance_learner'), \
+                patch('learner_api.learning_plan.sync_learning_plan_mirror') as sync_mirror:
             response = module_learners(request, 'MOD-NEW')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(get_training_plan(source), [MODULE])
         self.assertEqual(get_training_plan(other), [])
         source.save.assert_called_once_with(update_fields=['training_plan'])
         other.save.assert_not_called()
+        sync_mirror.assert_called_once_with(source)
 
 
 class LiveAssignedModuleTests(SimpleTestCase):

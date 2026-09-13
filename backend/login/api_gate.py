@@ -146,6 +146,9 @@ ANY = None
 #: ``/django_admin/`` and ``/media/`` are likewise absent: the admin has its own
 #: login, and media is served by the reverse proxy rather than routed here.
 RULES = (
+    # Learner pages subscribe to curriculum changes too. This endpoint returns
+    # only the shared counter for learners, never staff change paths.
+    ("/curriculum_api/curriculum/cache-epoch/", LEARNER_AND_STAFF),
     # Authored learner activities reference PDFs, decks, audio and other files
     # through this stable upload URL. Learners need the file itself after the
     # activity page has authorised and linked it; employers still do not.
@@ -260,7 +263,7 @@ def _unavailable():
     return response
 
 
-def refusal_for(path, account, *, django_user_is_authenticated=False):
+def refusal_for(path, account, *, django_user_is_authenticated=False, method='GET'):
     """The response refusing this caller, or None to let the request through.
 
     Split out from the middleware so ``config.batch`` can apply the same rules to
@@ -297,7 +300,11 @@ def refusal_for(path, account, *, django_user_is_authenticated=False):
     _, roles = rule
     if roles is ANY or account.role in roles:
         from old_otjh.gate import refusal
-        return refusal(path, account)
+        transition_refusal = refusal(path, account)
+        if transition_refusal is not None:
+            return transition_refusal
+        from learner_api.programme_access import refusal as programme_refusal
+        return programme_refusal(path, account, method)
 
     return _forbidden(roles)
 
@@ -323,6 +330,7 @@ class ApiSessionGateMiddleware:
                 request.path_info,
                 account,
                 django_user_is_authenticated=self._django_user(request),
+                method=request.method,
             )
             if refusal is not None:
                 return refusal

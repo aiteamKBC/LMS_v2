@@ -273,16 +273,36 @@ export function resolveModuleContext(
 
 // ---------------------------------------------------------------- cascades
 
+/**
+ * Any record carrying its own programme, narrowed to one programme. `''` means
+ * "every programme".
+ *
+ * Generic because the same two fields identify a cohort, a group and an
+ * archived one of either, and the archive lists are not `CurriculumCohort`s —
+ * an archived row carries the delivery identity and the archive stamp, not the
+ * counts and progress a live one does. Matching on the record's own
+ * programmeId/programme rather than resolving through a parent matters there:
+ * an archived group's cohort is usually archived too, so it is not in the live
+ * cohort list to resolve against.
+ */
+export function recordsForProgramme<T extends { programmeId?: string; programme?: string }>(
+  records: T[],
+  programmes: CurriculumProgramme[],
+  programmeId: string,
+): T[] {
+  if (!programmeId) return records;
+  const programme = findProgramme(programmes, programmeId);
+  const keys = programme ? programmeKeys(programme) : [normaliseKey(programmeId)];
+  return records.filter(record => matchesAny([record.programmeId, record.programme], keys));
+}
+
 /** Cohorts under one programme. `''` means "every programme". */
 export function cohortsForProgramme(
   cohorts: CurriculumCohort[],
   programmes: CurriculumProgramme[],
   programmeId: string,
 ): CurriculumCohort[] {
-  if (!programmeId) return cohorts;
-  const programme = findProgramme(programmes, programmeId);
-  const keys = programme ? programmeKeys(programme) : [normaliseKey(programmeId)];
-  return cohorts.filter(cohort => matchesAny([cohort.programmeId, cohort.programme], keys));
+  return recordsForProgramme(cohorts, programmes, programmeId);
 }
 
 /** Groups under one cohort, or under one programme when no cohort is chosen. */
@@ -565,7 +585,7 @@ export function moduleCohortDateError(
   return null;
 }
 
-export function cohortYear(cohort: CurriculumCohort): string {
+export function cohortYear(cohort: Pick<CurriculumCohort, 'startDate'>): string {
   const match = /(\d{4})/.exec(cleanText(cohort.startDate));
   return match ? match[1] : '';
 }

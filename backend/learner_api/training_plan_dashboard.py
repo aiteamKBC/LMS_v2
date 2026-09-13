@@ -13,7 +13,7 @@ from old_otjh.coach_booking import booking_url
 from .learner_detail import SOURCE_MODELS
 from .models import LearnerProfile
 from .student_activity import CURRENT_SUBJECTS_SQL, _builder_subject_metadata
-from .subject_content import clean_text, safe_url
+from .subject_content import as_list, clean_text, safe_url
 from .training_plan_contract import read_contract, contract_extract_metadata, selected_contract
 
 log = logging.getLogger(__name__)
@@ -49,6 +49,26 @@ def plan_session(row):
             'end': instant(end), 'minutes': minutes,
             'joinUrl': safe_url(row['join_url'] or row['series_join_url']) or None,
             'status': row['status'] or row['series_status'] or 'scheduled', 'attended': row['attended']}
+
+
+def plan_module(row):
+    text_fields = ('title', 'description', 'tutor_name', 'coach_name', 'programme_name',
+                   'cohort_name', 'group_name', 'session_week_day', 'session_start_time', 'session_end_time')
+    return {'id': row['id'], **{key: clean_text(row.get(key)) for key in text_fields},
+            **{key: row[key].isoformat() if row.get(key) else None for key in ('start_date', 'end_date')},
+            **{key: number(row.get(key)) for key in ('total_otjh', 'weeks_number', 'sessions_number')},
+            'learning_outcomes': []}
+
+
+def assigned_group_coach(source, modules):
+    """A different cohort's assigned module must not supply this learner's coach."""
+    placement = [clean_text(getattr(source, key, '')).casefold() for key in ('programme', 'cohort', 'group')]
+    if not all(placement):
+        return ''
+    coaches = {clean_text(module.get('coach_name')) for module in modules
+               if [clean_text(module.get(key)).casefold() for key in ('programme_name', 'cohort_name', 'group_name')] == placement}
+    coaches.discard('')
+    return next(iter(coaches)) if len(coaches) == 1 else ''
 
 
 def find_contract(cursor, aptem_id):
@@ -122,11 +142,26 @@ def read_dashboard(source, section=None):
         _, links = _builder_subject_metadata(cur, refs)
         ids = sorted({item['id'] for item in links.values()})
         if ids:
-            cur.execute('''SELECT module_catalogue_id AS id,title,description,start_date,end_date,tutor_name,coach_name
-                FROM curriculum.modules WHERE module_catalogue_id=ANY(%s) ORDER BY title''', [ids])
-            modules = [{**row, 'title': clean_text(row['title']), 'description': clean_text(row['description']),
-                        'start_date': row['start_date'].isoformat() if row['start_date'] else None,
-                        'end_date': row['end_date'].isoformat() if row['end_date'] else None} for row in rows(cur)]
+            cur.execute('''SELECT m.module_catalogue_id AS id,m.title,m.description,m.start_date,m.end_date,m.tutor_name,
+                coalesce(nullif(btrim(g.coach_name),''),m.coach_name) AS coach_name,
+                m.programme_name,m.cohort_name,m.group_name,m.total_otjh,m.weeks_number,m.sessions_number,
+                coalesce(nullif(m.session_week_day,''),g.session_week_day) AS session_week_day,
+                coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,
+                coalesce(nullif(m.session_end_time,''),g.session_end_time) AS session_end_time
+                FROM curriculum.modules m LEFT JOIN curriculum.groups g ON g.group_id=m.group_id
+                WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title''', [ids])
+            modules = [plan_module(row) for row in rows(cur)]
+            by_id = {module['id']: module for module in modules}
+            cur.execute('''SELECT module_catalogue_id,learning_outcomes FROM curriculum.weeks
+                WHERE module_catalogue_id=ANY(%s) AND (deleted_at IS NULL OR deleted_via_parent IS NOT NULL)
+                ORDER BY display_order,week_number,id''', [ids])
+            for row in rows(cur):
+                module = by_id.get(row['module_catalogue_id'])
+                if module is not None:
+                    for outcome in as_list(row['learning_outcomes']):
+                        text = clean_text(outcome) if isinstance(outcome, str) else ''
+                        if text and text not in module['learning_outcomes']:
+                            module['learning_outcomes'].append(text)
             cur.execute('''SELECT s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,
                 s.start_datetime,s.duration_minutes,s.join_url AS series_join_url,s.repeat_pattern,s.status AS series_status,
                 o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,o.join_url,o.status,
@@ -149,7 +184,8 @@ def read_dashboard(source, section=None):
     # still receive the complete response when no section was requested.
     contract_data = ({'months': {}, 'contractStatus': 'loading'} if section == 'overview'
                      else contract_plan(source, contract))
-    coach_name = (getattr(profile, 'coach_name', '') if profile else '') or (historical or {}).get('coach_name') or ''
+    coach_name = ((getattr(profile, 'coach_name', '') if profile else '')
+                  or (historical or {}).get('coach_name') or assigned_group_coach(source, modules))
     coach_email = (getattr(profile, 'coach_email', '') if profile else '') or (historical or {}).get('coach_email') or ''
     from .calendar import coaching_events_for_learner
     # Use the same active programme cycle as the calendar booking destination.
@@ -157,7 +193,8 @@ def read_dashboard(source, section=None):
     events = coaching_events_for_learner(source, active_profile)
     event_fields = ('id', 'eventKey', 'title', 'source', 'sequence', 'status', 'date', 'targetDate',
                     'scheduledDate', 'scheduledTime', 'durationMinutes', 'coachName', 'invited')
-    reviews = [{key: event.get(key) for key in event_fields} for event in events
+    reviews = [{**{key: event.get(key) for key in event_fields},
+                'meetingLink': safe_url(event.get('meetingLink')) or None} for event in events
                if event.get('source') in ('mcr', 'progress-review', 'student-support')]
     return {**contract_data, 'actual': actual, 'actualAvailable': bool(aptem_id), 'modules': modules, 'moduleLinks': links,
             'sessions': sessions, 'reviews': reviews,

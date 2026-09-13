@@ -5,7 +5,7 @@ import type { TimelineModule } from './model';
 import { dateLabel, hours, moduleStatus, sessionTime } from './presentation';
 import layout from './ModuleTimeline.module.css';
 
-export function TimelineInspector({ module, coach, href, onClose }: { module: TimelineModule; coach: string; href: string; onClose: () => void }) {
+export function TimelineInspector({ module, coach, href, onClose }: { module: TimelineModule; coach: string; href?: string; onClose: () => void }) {
   const close = useRef<HTMLButtonElement>(null);
   useEffect(() => { close.current?.focus({ preventScroll: true }); }, [module.id]);
   return <aside className={layout.inspector} aria-label="Timeline module details">
@@ -25,6 +25,6 @@ export function TimelineInspector({ module, coach, href, onClose }: { module: Ti
       {module.sessions.length ? <ul className={layout.sessions}>{[...module.sessions].sort((a, b) => a.start.localeCompare(b.start)).map(session => <li key={session.id}><CalendarDays size={14} /><div><strong>{session.title}</strong><span>{sessionTime(session.start)} · UK time</span><span>{session.minutes} min{session.attended === true ? ' · Attended' : session.attended === false ? ' · Not attended' : ''}</span></div></li>)}</ul> : <p className={layout.muted}>No live sessions scheduled yet.</p>}
       {!!module.activities.length && <><h4>Activities</h4><ul className={layout.activities}>{module.activities.slice(0, 5).map(activity => <li key={activity.id}><span>{activity.title}</span><small>{activity.completed ? 'Completed' : 'Pending'}</small></li>)}</ul>{module.activityCount > 5 && <p className={layout.muted}>Open the module to view all {module.activityCount} activities.</p>}</>}
     </div>
-    <footer><Link to={href}>Open module<ArrowRight size={15} /></Link></footer>
+    {href && <footer><Link to={href}>Open module<ArrowRight size={15} /></Link></footer>}
   </aside>;
 }

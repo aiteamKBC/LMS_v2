@@ -22,6 +22,20 @@ def native(**changes):
 
 
 class OverviewWeekTests(SimpleTestCase):
+    def test_plan_details_count_merged_activities_and_distinct_ksbs_across_all_dates(self):
+        current = [native(id='linked', type='quiz', ksb_mappings=['K1', 'S2']),
+                   native(id='future', type='live_session', date='2027-01-01', ksb_mappings=['B1', 'S2']),
+                   native(id='undated', type='assignment', date=None, ksb_mappings=None)]
+        subjects = summarise_plan(merged_activities([old()], current, [], set(), {'linked': ('1', '2')}), [('M1', 'Marketing')])
+        old_subject = next(item for item in subjects if item['id'] == 'legacy:1')
+        new_subject = next(item for item in subjects if item['id'] == 'current:M1')
+        self.assertEqual(old_subject['activityCounts'], {'quiz': 1})
+        self.assertEqual(old_subject['ksbCodes'], ['K1', 'S2'])
+        self.assertEqual(new_subject['activityCounts'], {'live_session': 1, 'assignment': 1})
+        self.assertEqual(new_subject['ksbCodes'], ['B1', 'S2'])
+        self.assertTrue(new_subject['ksbMappingMissing'])
+        self.assertEqual(sum(sum(item['activityCounts'].values()) for item in subjects), 3)
+
     def test_plan_summary_keeps_all_dates_and_counts_without_activity_content(self):
         historical = [old(), old(activity_id=3, date=None, status='not_started')]
         current = [native(id='linked'), native(id='new', date='2025-01-08')]

@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { ArrowUpRight, BookOpen, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Layers3, Search } from 'lucide-react';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import type { LearnerMetrics } from '@/api/learnerMetrics';
@@ -67,6 +67,15 @@ function scheduleForDate(value?: string | null): Schedule {
   const week_start = day.toISOString().slice(0, 10);
   day.setUTCDate(day.getUTCDate() + 6);
   return { date, month: date.slice(0, 7), week_start, week_end: day.toISOString().slice(0, 10) };
+}
+
+function nativeActivitySchedule(schedule: Schedule | undefined, sessionDate?: string | null): Schedule {
+  // Older metadata used the upload date. It cannot override a session date or
+  // move a whole future programme into the month its components were created.
+  if (!schedule || ['original_created_at', 'source_date', 'undated'].includes(schedule.date_source || '')) {
+    return scheduleForDate(sessionDate);
+  }
+  return schedule;
 }
 
 function normaliseSubjectTitle(value?: string | null): string {
@@ -174,7 +183,7 @@ export function subjectsFrom(data: StudentActivityResponse | null, real: Learner
     }
     if (!subject.activities.some((entry) => entry.id === id)) subject.activities.push({
       id, title: component.title, category: component.type || 'activity', completed: isComplete, bestScorePercent, position: index,
-      schedule: dates[id] || scheduleForDate(component.sessionDate), week: item.week || undefined, native: component,
+      schedule: nativeActivitySchedule(dates[id], component.sessionDate), week: item.week || undefined, native: component,
     });
     subjects.set(key, subject);
   }
@@ -414,7 +423,9 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   metrics?: LearnerMetrics | null;
 }) {
   const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState<string | null>(() => new URLSearchParams(window.location.search).get('subject'));
+  const { search: routeSearch } = useLocation();
+  const [selected, setSelected] = useState<string | null>(() => new URLSearchParams(routeSearch).get('subject'));
+  useEffect(() => { setSelected(new URLSearchParams(routeSearch).get('subject')); }, [routeSearch]);
   const identity = `${kind}:${learnerId}`;
   const { metadata: incomingMetadata, error: imageError, retry: retryMetadata } = useSubjectMetadata(incomingData, incomingReal, kind, learnerId, !error, true);
   const ready = !loading && !error && (!learnerId || !!incomingMetadata);

@@ -3,16 +3,23 @@ import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
-import { type CurriculumGroup, type CurriculumStaffProfile } from '@/lib/curriculumApi';
+import {
+  fetchArchivedCurriculumGroups,
+  type CurriculumArchivedGroup,
+  type CurriculumGroup,
+  type CurriculumStaffProfile,
+} from '@/lib/curriculumApi';
 import {
   cleanText,
   cohortsForProgramme,
   formatDateLabel,
+  formatDateTimeLabel,
   groupsForScope,
   matchesSearch,
   namedCurriculumWorkspacePath,
   normaliseKey,
   programmeIdentity,
+  recordsForProgramme,
   removeById,
   resolveGroupContext,
   sameIdentifier,
@@ -22,24 +29,29 @@ import {
   GROUP_SORT_OPTIONS,
 } from '../shared/entities/model';
 import { GroupFormDrawer } from '../shared/entities/forms';
-import { archiveGroupWithConfirm } from '../shared/entities/archive';
+import {
+  archiveGroupWithConfirm,
+  permanentlyDeleteGroupWithConfirm,
+  restoreGroupWithConfirm,
+} from '../shared/entities/archive';
+import { ArchiveNotice, ArchiveToggleButton, useCurriculumArchive } from '../shared/entities/archiveView';
 import { CurriculumStructureWizard, withoutDiscardedRecords, type StructureWizardCreated } from '../shared/entities/structureWizard';
 import {
   EntityEmptyState,
   EntityFilterBar,
   EntityHero,
   EntityTable,
+  HeroSecondaryButton,
   InlineError,
+  NamedActions,
   PlainCell,
-  RowActions,
   StackedCell,
 } from '../shared/entities/ui';
-import { AppIcon } from '@/components/feature/AppIcon';
 
 // Every Group in the Curriculum. Programme is offered in the filters and the
 // form purely to narrow the Cohort list — the persisted parent is the Cohort.
 
-const GRID = 'grid grid-cols-[minmax(170px,1.2fr)_minmax(140px,1fr)_minmax(140px,1fr)_minmax(120px,.9fr)_minmax(150px,1fr)_80px_92px]';
+const GRID = 'grid grid-cols-[minmax(170px,1.2fr)_minmax(140px,1fr)_minmax(140px,1fr)_minmax(120px,.9fr)_minmax(150px,1fr)_80px_175px]';
 
 const COLUMNS = [
   { label: 'Group' },
@@ -48,6 +60,23 @@ const COLUMNS = [
   { label: 'Coach' },
   { label: 'Delivery' },
   { label: 'Modules', align: 'center' as const },
+  { label: 'Actions', align: 'right' as const },
+];
+
+// The archive trades the planning columns for the two facts a restore or a
+// delete turns on: when it was archived, and who is still in it. Module count is
+// gone because there is never one -- archiving a group detaches its modules --
+// and the actions are named because "restore" and "delete for ever" are not the
+// obvious edit/archive pair.
+const ARCHIVE_GRID = 'grid grid-cols-[minmax(170px,1.2fr)_minmax(140px,1fr)_minmax(140px,1fr)_minmax(120px,.9fr)_130px_90px_210px]';
+
+const ARCHIVE_COLUMNS = [
+  { label: 'Group' },
+  { label: 'Cohort' },
+  { label: 'Programme' },
+  { label: 'Coach' },
+  { label: 'Archived' },
+  { label: 'Learners', align: 'center' as const },
   { label: 'Actions', align: 'right' as const },
 ];
 
@@ -71,6 +100,10 @@ export default function CurriculumGroupsPage() {
   // The guided run: the same group form, followed straight on by the module one,
   // for a group that is being set up rather than added to a finished cohort.
   const [wizardOpen, setWizardOpen] = useState(false);
+  // Which list this page is showing. Kept in the URL for the same reason the
+  // programme and cohort scopes are: the archive is somewhere a reader is sent
+  // ("it is in the archive"), so the link has to be able to say so.
+  const [showArchived, setShowArchived] = useState(() => searchParams.get('view') === 'archive');
   // The group a save just wrote, marked in the table until it has been seen.
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const highlightTimer = useRef<number | undefined>(undefined);
@@ -80,8 +113,12 @@ export default function CurriculumGroupsPage() {
     const next = new URLSearchParams(searchParams);
     if (programmeFilter) next.set('programme', programmeFilter); else next.delete('programme');
     if (cohortFilter) next.set('cohort', cohortFilter); else next.delete('cohort');
+    if (showArchived) next.set('view', 'archive'); else next.delete('view');
     if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
-  }, [cohortFilter, programmeFilter, searchParams, setSearchParams]);
+  }, [cohortFilter, programmeFilter, searchParams, setSearchParams, showArchived]);
+
+  // Nothing is read until the archive is actually opened; see useCurriculumArchive.
+  const archived = useCurriculumArchive(fetchArchivedCurriculumGroups, showArchived);
 
   // Choosing a programme narrows the cohort list; a cohort outside the new
   // programme is dropped rather than left as a contradictory filter.
@@ -131,6 +168,21 @@ export default function CurriculumGroupsPage() {
     return sortEntities(matched, GROUP_SORT_OPTIONS, sort);
   }, [cohortFilter, coachFilter, cohorts, groups, programmeFilter, programmes, search, sort]);
 
+  // The same programme/cohort/coach/search filters as the live list, applied to
+  // rows that carry their own programme and cohort rather than resolving them
+  // through a parent — an archived group's cohort is usually archived too, so it
+  // is not in the live cohort list to resolve against.
+  const visibleArchivedGroups = useMemo(() => {
+    const scoped = recordsForProgramme(archived.records, programmes, programmeFilter);
+    return scoped.filter(group => {
+      if (cohortFilter && !sameIdentifier(group.cohortId, cohortFilter)) return false;
+      if (coachFilter && normaliseKey(group.coach) !== normaliseKey(coachFilter)) return false;
+      return matchesSearch(search, [
+        group.name, group.id, group.cohort, group.programme, group.coach, scheduleLabel(group),
+      ]);
+    });
+  }, [archived.records, coachFilter, cohortFilter, programmeFilter, programmes, search]);
+
   const archive = async (group: CurriculumGroup) => {
     const moduleCount = modulesByGroup.get(normaliseKey(group.id)) || 0;
     await archiveGroupWithConfirm(group, moduleCount, async () => {
@@ -139,6 +191,24 @@ export default function CurriculumGroupsPage() {
       applyLocal(previous => ({ ...previous, groups: removeById(previous.groups, group.id) }));
       await reload({ silent: true });
     });
+  };
+
+  /**
+   * Coming back out of the archive puts a group into the live list, so the
+   * restore refreshes that list as well as the archive it was run from. The live
+   * refresh is the slow one (the overview is rebuilt server-side), which is why
+   * the archive is re-read on its own rather than waiting behind it.
+   */
+  const restore = async (group: CurriculumArchivedGroup) => {
+    await restoreGroupWithConfirm(group, async () => {
+      await archived.reload();
+      await reload({ silent: true });
+    });
+  };
+
+  const deletePermanently = async (group: CurriculumArchivedGroup) => {
+    // Nothing to put back into the live list here, so only the archive moves.
+    await permanentlyDeleteGroupWithConfirm(group, () => archived.reload());
   };
 
   const programmeOptions = useMemo(
@@ -206,18 +276,34 @@ export default function CurriculumGroupsPage() {
           ]}
           primaryAction={{ label: 'Add Group', onClick: () => { setEditing(null); setDrawerOpen(true); } }}
           secondaryActions={(
-            <button
-              type="button"
-              onClick={() => setWizardOpen(true)}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-white/15"
-            >
-              <AppIcon className="ri-route-line text-base"></AppIcon>
-              Group + module
-            </button>
+            <>
+              <HeroSecondaryButton
+                icon="ri-route-line"
+                label="Group + module"
+                onClick={() => setWizardOpen(true)}
+              />
+              <ArchiveToggleButton
+                active={showArchived}
+                count={archived.loaded ? archived.records.length : null}
+                onToggle={() => setShowArchived(previous => !previous)}
+              />
+            </>
           )}
         />
 
         {error && <InlineError message={error} onRetry={() => void reload()} />}
+        {showArchived && archived.error && (
+          <InlineError message={archived.error} onRetry={() => void archived.reload()} />
+        )}
+
+        {showArchived && (
+          <ArchiveNotice>
+            Archived groups are hidden from planning but still in the database. Restoring one puts it back under its
+            cohort — its modules were detached when it was archived and have to be attached again. Deleting one here
+            removes it for good; module content, learner accounts and learner progress are never touched. A group whose
+            cohort is archived too has to wait for that cohort to be restored first.
+          </ArchiveNotice>
+        )}
 
         <EntityFilterBar
           search={search}
@@ -246,38 +332,36 @@ export default function CurriculumGroupsPage() {
               options: [{ value: '', label: 'All coaches' }, ...coachNames.map(name => ({ value: name, label: name }))],
             },
           ]}
-          sort={{ value: sort, onChange: setSort, options: GROUP_SORT_OPTIONS }}
+          sort={showArchived ? undefined : { value: sort, onChange: setSort, options: GROUP_SORT_OPTIONS }}
           onReset={() => { setSearch(''); setProgrammeFilter(''); setCohortFilter(''); setCoachFilter(''); setSort(''); }}
-          summary={loaded
-            ? `Showing ${visibleGroups.length} of ${groups.length} groups${refreshing ? ' · updating…' : ''}`
-            : undefined}
+          summary={showArchived
+            ? (archived.loaded
+              ? `Showing ${visibleArchivedGroups.length} of ${archived.records.length} archived groups`
+              : undefined)
+            : (loaded
+              ? `Showing ${visibleGroups.length} of ${groups.length} groups${refreshing ? ' · updating…' : ''}`
+              : undefined)}
         />
 
-        <EntityTable
-          columns={COLUMNS}
-          gridClass={GRID}
-          rows={visibleGroups}
-          rowKey={group => group.id}
-          getRowHref={group => namedCurriculumWorkspacePath('groups', group.id, group.name)}
-          loading={loading && !loaded}
-          refreshing={refreshing}
-          highlightKey={highlightId}
-          empty={(
-            <EntityEmptyState
-              icon="ri-team-line"
-              title={groups.length ? 'No groups match these filters' : 'No groups yet'}
-              message={groups.length
-                ? 'Clear a filter, or search for a different group.'
-                : 'Add a group against a cohort to start scheduling delivery.'}
-              action={groups.length ? undefined : { label: 'Add Group', onClick: () => { setEditing(null); setDrawerOpen(true); } }}
-            />
-          )}
-          renderRow={group => {
-            const context = resolveGroupContext(group, cohorts, programmes);
-            return (
+        {showArchived ? (
+          <EntityTable
+            columns={ARCHIVE_COLUMNS}
+            gridClass={ARCHIVE_GRID}
+            rows={visibleArchivedGroups}
+            rowKey={group => group.id}
+            loading={archived.loading && !archived.loaded}
+            empty={(
+              <EntityEmptyState
+                icon="ri-inbox-line"
+                title={archived.records.length ? 'No archived groups match these filters' : 'Nothing in the archive'}
+                message={archived.records.length
+                  ? 'Clear a filter, or search for a different group.'
+                  : 'Groups you archive are kept here until you restore them or delete them for good.'}
+              />
+            )}
+            renderRow={group => (
               <>
                 <StackedCell
-                  href={namedCurriculumWorkspacePath('groups', group.id, group.name)}
                   primary={(
                     <span className="flex items-center gap-2">
                       <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: group.color || '#2563eb' }} />
@@ -287,29 +371,125 @@ export default function CurriculumGroupsPage() {
                   secondary={group.id}
                 />
                 <StackedCell
-                  href={context.cohortId ? `/curriculum/cohorts/${encodeURIComponent(context.cohortId)}` : undefined}
-                  primary={context.cohortName}
-                  // The group's own start date is only set once a module has
-                  // actually been scheduled against it; until then this fell
-                  // back to a blank dash even though the cohort itself has a
-                  // start date. Falling back to the cohort's keeps every row
-                  // showing a date under a column literally labelled "Cohort".
-                  secondary={formatDateLabel(group.startDate || context.cohort?.startDate)}
+                  primary={cleanText(group.cohort, 'Unassigned cohort')}
+                  // Says why Restore is off on this row, next to the cohort it is
+                  // waiting on rather than only inside the disabled button.
+                  secondary={group.cohortArchived ? 'Archived too' : scheduleLabel(group)}
                 />
-                <PlainCell>{context.programmeName}</PlainCell>
+                <PlainCell>{cleanText(group.programme, 'Unassigned programme')}</PlainCell>
                 <PlainCell>{cleanText(group.coach, 'Unassigned')}</PlainCell>
-                <PlainCell>{scheduleLabel(group)}</PlainCell>
-                <PlainCell align="center">{modulesByGroup.get(normaliseKey(group.id)) || 0}</PlainCell>
-                <RowActions
+                <PlainCell>
+                  {formatDateTimeLabel(group.archivedAt)}
+                  {/* Only when a parent's archive brought it here: that parent is
+                      the record to restore. */}
+                  {group.archivedBy === 'programme-delete' && (
+                    <span className="mt-0.5 block text-[11px] font-semibold text-amber-700">With its programme</span>
+                  )}
+                  {group.archivedBy === 'cohort-delete' && (
+                    <span className="mt-0.5 block text-[11px] font-semibold text-amber-700">With its cohort</span>
+                  )}
+                </PlainCell>
+                <PlainCell align="center">{group.learners}</PlainCell>
+                <NamedActions
                   actions={[
-                    { icon: 'ri-edit-line', label: 'Edit group', onClick: () => { setEditing(group); setDrawerOpen(true); } },
-                    { icon: 'ri-archive-line', label: 'Archive group', tone: 'danger', onClick: () => void archive(group) },
+                    {
+                      icon: 'ri-arrow-go-back-line',
+                      label: 'Restore',
+                      // A group cannot come back into a cohort that is not in the
+                      // list; the endpoint refuses it, so the button says so first.
+                      title: group.cohortArchived
+                        ? `${cleanText(group.cohort, 'Its cohort')} is archived too — restore the cohort and this group comes back with it`
+                        : 'Put this group back in the active list',
+                      disabled: group.cohortArchived,
+                      onClick: () => void restore(group),
+                    },
+                    {
+                      icon: 'ri-delete-bin-line',
+                      label: 'Delete',
+                      title: group.learners
+                        ? `${group.learners} learner${group.learners === 1 ? '' : 's'} are still placed here — move them first`
+                        : 'Remove this group from the database for good',
+                      disabled: Boolean(group.learners),
+                      onClick: () => void deletePermanently(group),
+                    },
                   ]}
                 />
               </>
-            );
-          }}
-        />
+            )}
+          />
+        ) : (
+          <EntityTable
+            columns={COLUMNS}
+            gridClass={GRID}
+            rows={visibleGroups}
+            rowKey={group => group.id}
+            getRowHref={group => namedCurriculumWorkspacePath('groups', group.id, group.name)}
+            loading={loading && !loaded}
+            refreshing={refreshing}
+            highlightKey={highlightId}
+            empty={(
+              <EntityEmptyState
+                icon="ri-team-line"
+                title={groups.length ? 'No groups match these filters' : 'No groups yet'}
+                message={groups.length
+                  ? 'Clear a filter, or search for a different group.'
+                  : 'Add a group against a cohort to start scheduling delivery.'}
+                action={groups.length ? undefined : { label: 'Add Group', onClick: () => { setEditing(null); setDrawerOpen(true); } }}
+              />
+            )}
+            renderRow={group => {
+              const context = resolveGroupContext(group, cohorts, programmes);
+              return (
+                <>
+                  <StackedCell
+                    href={namedCurriculumWorkspacePath('groups', group.id, group.name)}
+                    primary={(
+                      <span className="flex items-center gap-2">
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: group.color || '#2563eb' }} />
+                        {group.name}
+                      </span>
+                    )}
+                    secondary={group.id}
+                  />
+                  <StackedCell
+                    href={context.cohortId ? `/curriculum/cohorts/${encodeURIComponent(context.cohortId)}` : undefined}
+                    primary={context.cohortName}
+                    // The group's own start date is only set once a module has
+                    // actually been scheduled against it; until then this fell
+                    // back to a blank dash even though the cohort itself has a
+                    // start date. Falling back to the cohort's keeps every row
+                    // showing a date under a column literally labelled "Cohort".
+                    secondary={formatDateLabel(group.startDate || context.cohort?.startDate)}
+                  />
+                  <PlainCell>{context.programmeName}</PlainCell>
+                  <PlainCell>{cleanText(group.coach, 'Unassigned')}</PlainCell>
+                  <PlainCell>{scheduleLabel(group)}</PlainCell>
+                  <PlainCell align="center">{modulesByGroup.get(normaliseKey(group.id)) || 0}</PlainCell>
+                  {/* Named, like the archive view's pair below: two glyphs in a
+                      row of 105 is a hover away from telling edit from archive,
+                      and the column has the room. The short word goes on the
+                      button, the whole sentence in its title. */}
+                  <NamedActions
+                    actions={[
+                      {
+                        icon: 'ri-edit-line',
+                        label: 'Edit',
+                        title: 'Edit this group, its coach and its delivery slot',
+                        onClick: () => { setEditing(group); setDrawerOpen(true); },
+                      },
+                      {
+                        icon: 'ri-archive-line',
+                        label: 'Archive',
+                        title: 'Hide this group from the active list. Its modules are detached, nothing is deleted, and it can be restored from the archive',
+                        onClick: () => void archive(group),
+                      },
+                    ]}
+                  />
+                </>
+              );
+            }}
+          />
+        )}
       </div>
 
       <GroupFormDrawer

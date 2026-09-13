@@ -38,6 +38,21 @@ function expandMonthAndWeek(month = 'February 2026') {
 describe('learner subject cards', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it.each(['legacy:1','current:MOD-1'])('opens the exact subject from a Continue learning deep link (%s)', async subjectId => {
+    const imported=subjectId.startsWith('legacy:');
+    vi.spyOn(api,'subjectRequest').mockResolvedValue({covers:{},current_subjects:[{id:'MOD-1',title:'Current module'}],
+      builder_subjects:imported?{'legacy:1':{id:'MOD-1',title:'Current module'}}:{}});
+    renderReact(<MemoryRouter initialEntries={[`/learner/modules/commercial/132?subject=${encodeURIComponent(subjectId)}`]}>
+      <StudentActivityPanel data={imported?data:null} real={{modules:['Current module'],components:[{
+        moduleId:'MOD-1',module:'Current module',componentId:'C1',component:'Current reading',type:'reading',week:'Week 1',
+      }]} as LearnerDetail} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />
+    </MemoryRouter>);
+    const workspace=within(await screen.findByRole('region',{name:'Your subjects'}));
+    expect(await workspace.findByRole('heading',{name:'Current module'})).toBeVisible();
+    expect(workspace.getByRole('button',{name:'All subjects'})).toBeVisible();
+    expect(workspace.queryByRole('button',{name:/Open subject/})).not.toBeInTheDocument();
+  });
+
   it('reads the linked Builder title and image without offering uploads in the learner workspace', async () => {
     const image = 'data:image/png;base64,aGVsbG8=';
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({
@@ -200,6 +215,43 @@ describe('subjects shared with Module Builder', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Expand Introduction' }));
     expect(screen.getByText('Welcome')).toBeVisible();
     expect(screen.getByText('First lecture')).not.toBeVisible();
+  });
+
+  it('shows native components in every future month with their completion totals', async () => {
+    const real = { modules: ['New programme'], components: [
+      { componentId: 'READING', moduleId: 'M1', module: 'New programme', week: 'Week 1', component: 'October reading', type: 'reading' },
+      { componentId: 'QUIZ', moduleId: 'M1', module: 'New programme', week: 'Week 5', component: 'November quiz', type: 'quiz' },
+      { componentId: 'ASSIGNMENT', moduleId: 'M1', module: 'New programme', week: 'Week 9', component: 'December assignment', type: 'assignment' },
+      { componentId: 'VIDEO', moduleId: 'M1', module: 'New programme', week: 'Week 13', component: 'January video', type: 'video' },
+    ], componentProgress: [{ componentId: 'READING', kind: 'component' }] } as LearnerDetail;
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {}, activity_dates: {
+      READING: { date: '2026-10-05', month: '2026-10', week_start: '2026-10-05', week_end: '2026-10-11', date_source: 'builder_week' },
+      QUIZ: { date: '2026-11-02', month: '2026-11', week_start: '2026-11-02', week_end: '2026-11-08', date_source: 'builder_week' },
+      ASSIGNMENT: { date: '2026-12-07', month: '2026-12', week_start: '2026-12-07', week_end: '2026-12-13', date_source: 'builder_week' },
+      VIDEO: { date: '2027-01-04', month: '2027-01', week_start: '2027-01-04', week_end: '2027-01-10', date_source: 'builder_week' },
+    } });
+    render(<StudentActivityPanel data={null} real={real} kind="commercial" learnerId="245" loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /New programme/ }));
+    expect(screen.getByText('1 of 4 completed')).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'September 2026' })).not.toBeInTheDocument();
+    for (const [month, title] of [['October 2026', 'October reading'], ['November 2026', 'November quiz'],
+      ['December 2026', 'December assignment'], ['January 2027', 'January video']]) {
+      expect(screen.getByRole('region', { name: month })).toBeVisible();
+      expandMonthAndWeek(month);
+      expect(screen.getByText(title)).toBeVisible();
+    }
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '25');
+  });
+
+  it.each(['original_created_at', 'source_date', 'undated'])('ignores native %s metadata when choosing the delivery month', date_source => {
+    const real = { modules: ['New programme'], components: [
+      { componentId: 'LIVE', moduleId: 'M1', module: 'New programme', component: 'Live session', sessionDate: '2026-12-04' },
+      { componentId: 'READING', moduleId: 'M1', module: 'New programme', component: 'Unscheduled reading' },
+    ] } as LearnerDetail;
+    const stale = { date: '2026-09-12', month: '2026-09', date_source };
+    const [subject] = subjectsFrom(null, real, { covers: {}, activity_dates: { LIVE: stale, READING: stale } });
+    expect(subject.activities[0].schedule.month).toBe('2026-12');
+    expect(subject.activities[1].schedule.month).toBe('undated');
   });
 
   it('loads history and metadata together, publishing cards only when both are ready', async () => {

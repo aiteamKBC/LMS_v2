@@ -15,7 +15,18 @@
 // ============================================================================
 
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
-import { archiveCurriculumCohort, archiveCurriculumGroup, archiveCurriculumModule } from '@/lib/curriculumApi';
+import {
+  archiveCurriculumCohort,
+  archiveCurriculumGroup,
+  archiveCurriculumModule,
+  permanentlyDeleteCurriculumCohort,
+  permanentlyDeleteCurriculumGroup,
+  restoreCurriculumCohort,
+  restoreCurriculumGroup,
+  curriculumErrorMessage,
+  type CurriculumArchivedCohort,
+  type CurriculumArchivedGroup,
+} from '@/lib/curriculumApi';
 
 /**
  * DELETE /curriculum/cohorts/{id}/ archives, it does not delete — the cascade
@@ -98,5 +109,133 @@ export async function archiveModuleWithConfirm(
       await onArchived();
     },
     successTitle: 'Module archived',
+  });
+}
+
+
+// ----------------------------------------------------------------------------
+// The way back out of the archive, and the way through it.
+//
+// The three confirms above put a record *into* the archive. These four take one
+// out again or finish the job, and they carry the same wording wherever the
+// archive is shown. Both pairs are deliberately asymmetric: a restore says what
+// it cannot bring back, and a permanent delete says what it takes with it and
+// that there is no undo.
+// ----------------------------------------------------------------------------
+
+// Said by both restores because it is the one thing coming back out of the
+// archive cannot do. Archiving detaches every module beneath the record and
+// keeps no record of which module sat where, so the record returns without its
+// timetable and the modules have to be attached again.
+const MODULES_RETURN_DETACHED = 'Its modules were detached when it was archived, so they have to be attached again.';
+
+/**
+ * Re-raise an API refusal as the sentence the backend actually wrote.
+ *
+ * `showCurriculumConfirm` puts `error.message` in the dialog, and a raw
+ * `CurriculumApiError` carries the diagnostic form of it ("Curriculum API
+ * returned 409 for /path: …"). Every refusal these four can hit is something
+ * the reader has to act on — restore the programme first, move the learners —
+ * so it has to arrive readable.
+ */
+async function withArchiveError<T>(fallback: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    throw new Error(curriculumErrorMessage(error, fallback));
+  }
+}
+
+/**
+ * POST /curriculum/cohorts/{id}/restore/ — the cohort comes back, and so do the
+ * groups its own archive took down with it. A group that was archived on its
+ * own stays archived, the same way restoring a programme leaves an
+ * independently archived cohort alone.
+ */
+export async function restoreCohortWithConfirm(
+  cohort: Pick<CurriculumArchivedCohort, 'id' | 'name' | 'groups'>,
+  onRestored: () => void | Promise<void>,
+): Promise<boolean> {
+  return showCurriculumConfirm({
+    title: 'Restore cohort?',
+    text: cohort.groups
+      ? `${cohort.name} and the ${cohort.groups} group${cohort.groups === 1 ? '' : 's'} archived with it go back into the active list. ${MODULES_RETURN_DETACHED}`
+      : `${cohort.name} goes back into the active list. ${MODULES_RETURN_DETACHED}`,
+    icon: 'question',
+    confirmButtonText: 'Restore cohort',
+    onConfirm: async () => {
+      await withArchiveError('Unable to restore this cohort.', () => restoreCurriculumCohort(cohort.id));
+      await onRestored();
+    },
+    successTitle: 'Cohort restored',
+  });
+}
+
+/**
+ * POST /curriculum/groups/{id}/restore/ — and the group goes back onto its
+ * cohort's group list. A group whose cohort is still archived is refused by the
+ * endpoint, so the archive view does not offer this for one.
+ */
+export async function restoreGroupWithConfirm(
+  group: Pick<CurriculumArchivedGroup, 'id' | 'name' | 'cohort'>,
+  onRestored: () => void | Promise<void>,
+): Promise<boolean> {
+  return showCurriculumConfirm({
+    title: 'Restore group?',
+    text: `${group.name} goes back into the active list${group.cohort ? ` under ${group.cohort}` : ''}. ${MODULES_RETURN_DETACHED}`,
+    icon: 'question',
+    confirmButtonText: 'Restore group',
+    onConfirm: async () => {
+      await withArchiveError('Unable to restore this group.', () => restoreCurriculumGroup(group.id));
+      await onRestored();
+    },
+    successTitle: 'Group restored',
+  });
+}
+
+/**
+ * DELETE /curriculum/cohorts/{id}/?permanent=true — this one really does delete.
+ *
+ * The row and every group archived with it leave the database for good. Module
+ * content is kept: a module outlives the delivery it was scheduled into, which
+ * is the promise the plain archive already makes. The endpoint refuses while
+ * live learners are still placed in the cohort, and the refusal's own sentence
+ * is what the dialog shows.
+ */
+export async function permanentlyDeleteCohortWithConfirm(
+  cohort: Pick<CurriculumArchivedCohort, 'id' | 'name' | 'groups'>,
+  onDeleted: () => void | Promise<void>,
+): Promise<boolean> {
+  const groups = cohort.groups
+    ? ` The ${cohort.groups} group${cohort.groups === 1 ? '' : 's'} archived with it go too.`
+    : '';
+  return showCurriculumConfirm({
+    title: 'Delete permanently?',
+    text: `${cohort.name} is removed from the database and cannot be restored.${groups} Module content is kept, and learner accounts and progress are never touched.`,
+    icon: 'warning',
+    confirmButtonText: 'Delete permanently',
+    onConfirm: async () => {
+      await withArchiveError('Unable to delete this cohort.', () => permanentlyDeleteCurriculumCohort(cohort.id));
+      await onDeleted();
+    },
+    successTitle: 'Cohort deleted permanently',
+  });
+}
+
+/** DELETE /curriculum/groups/{id}/?permanent=true — same finality as the cohort above. */
+export async function permanentlyDeleteGroupWithConfirm(
+  group: Pick<CurriculumArchivedGroup, 'id' | 'name'>,
+  onDeleted: () => void | Promise<void>,
+): Promise<boolean> {
+  return showCurriculumConfirm({
+    title: 'Delete permanently?',
+    text: `${group.name} is removed from the database and cannot be restored. Module content is kept, and learner accounts and progress are never touched.`,
+    icon: 'warning',
+    confirmButtonText: 'Delete permanently',
+    onConfirm: async () => {
+      await withArchiveError('Unable to delete this group.', () => permanentlyDeleteCurriculumGroup(group.id));
+      await onDeleted();
+    },
+    successTitle: 'Group deleted permanently',
   });
 }

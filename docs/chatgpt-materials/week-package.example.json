@@ -1,0 +1,264 @@
+{
+  "format": "lms-week-handoff-proposal-v1",
+  "isExample": true,
+  "implementationStatus": "No importer for this manifest currently exists.",
+  "packageId": "REPLACE_WITH_STABLE_PACKAGE_ID",
+  "version": 1,
+  "deliveryMode": "prepare_files_and_owner_executed_sql",
+  "target": {
+    "selectionStatus": "unselected",
+    "mode": "module_week",
+    "moduleAction": "use_existing",
+    "programmeId": "REPLACE_WITH_VERIFIED_PROGRAMME_ID",
+    "programmeName": "REPLACE_WITH_VERIFIED_PROGRAMME_NAME",
+    "moduleCatalogueId": "REPLACE_WITH_VERIFIED_MODULE_ID",
+    "moduleTitle": "REPLACE_WITH_VERIFIED_MODULE_TITLE",
+    "cohortId": "REPLACE_WITH_VERIFIED_COHORT_ID_IF_APPLICABLE",
+    "weekAction": "create_new",
+    "weekId": "REPLACE_WITH_VERIFIED_OR_REVIEWED_NEW_WEEK_ID",
+    "weekNumber": 1,
+    "groupId": "REPLACE_WITH_VERIFIED_GROUP_ID_IF_APPLICABLE",
+    "weekTemplateId": null
+  },
+  "learnerVisibility": {
+    "assignmentStatus": "not_verified",
+    "requiresAssignedModuleId": true,
+    "createLearnerAssignmentsAutomatically": false,
+    "databaseAlignmentStatus": "not_verified",
+    "cacheRefreshStatus": "not_performed",
+    "moduleBuilderStatus": "not_verified",
+    "learnerViewStatus": "not_verified"
+  },
+  "week": {
+    "title": "REPLACE_WITH_WEEK_TITLE",
+    "summary": "REPLACE_WITH_WEEK_SUMMARY",
+    "language": "en-GB",
+    "learnerLevel": "REPLACE_WITH_LEARNER_LEVEL",
+    "learningOutcomes": ["REPLACE_WITH_APPROVED_LEARNING_OUTCOME"],
+    "totalOtjh": 4.0,
+    "displayOrder": 0
+  },
+  "assets": [
+    {"id": "reading-pdf", "localPath": "assets/reading.pdf", "contentType": "application/pdf", "sizeBytes": null, "sha256": null, "status": "not_generated", "blobName": null, "lmsUrl": null},
+    {"id": "slides-pptx", "localPath": "assets/slides.pptx", "contentType": "application/vnd.openxmlformats-officedocument.presentationml.presentation", "sizeBytes": null, "sha256": null, "status": "not_generated", "blobName": null, "lmsUrl": null},
+    {"id": "slides-pdf", "localPath": "assets/slides.pdf", "contentType": "application/pdf", "sizeBytes": null, "sha256": null, "status": "not_generated", "blobName": null, "lmsUrl": null},
+    {"id": "podcast-mp3", "localPath": "assets/podcast.mp3", "contentType": "audio/mpeg", "sizeBytes": null, "sha256": null, "status": "not_generated", "blobName": null, "lmsUrl": null},
+    {"id": "video-mp4", "localPath": "assets/video.mp4", "contentType": "video/mp4", "sizeBytes": null, "sha256": null, "status": "not_generated_upload_integration_required", "blobName": null, "lmsUrl": null},
+    {"id": "video-captions", "localPath": "assets/video.vtt", "contentType": "text/vtt", "sizeBytes": null, "sha256": null, "status": "not_generated_caption_integration_required", "blobName": null, "lmsUrl": null},
+    {"id": "assignment-docx", "localPath": "assets/assignment.docx", "contentType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "sizeBytes": null, "sha256": null, "status": "not_generated", "blobName": null, "lmsUrl": null}
+  ],
+  "components": [
+    {
+      "id": "COMP-EXAMPLE-READING",
+      "type": "reading",
+      "title": "Reading",
+      "description": "Replace with the actual reading objective.",
+      "displayOrder": 0,
+      "expectedOtjh": 0.5,
+      "points": 0,
+      "reflectionRequired": false,
+      "coachValidationRequired": true,
+      "tutorValidationRequired": false,
+      "ksbMappings": [],
+      "settings": {
+        "contentStatus": "Draft",
+        "readingSource": "Written in LMS",
+        "readingContent": "<h2>Replace with lesson title</h2><p>Replace with complete lesson text.</p>",
+        "estimatedReadingTime": 30,
+        "resourceUrl": "asset://reading-pdf",
+        "completionConfirmationRequired": true
+      }
+    },
+    {
+      "id": "COMP-EXAMPLE-SLIDES",
+      "type": "powerpoint",
+      "title": "Slide presentation",
+      "description": "Replace with the actual presentation objective.",
+      "displayOrder": 1,
+      "expectedOtjh": 0.5,
+      "points": 0,
+      "reflectionRequired": false,
+      "coachValidationRequired": true,
+      "tutorValidationRequired": false,
+      "ksbMappings": [],
+      "fallbackAssetId": "slides-pdf",
+      "settings": {
+        "contentStatus": "Draft",
+        "presentationUrl": "asset://slides-pptx",
+        "fileName": "slides.pptx",
+        "speakerNotes": "REPLACE_WITH_SPEAKER_NOTES",
+        "downloadAllowed": true,
+        "durationMinutes": 30
+      }
+    },
+    {
+      "id": "COMP-EXAMPLE-PODCAST",
+      "type": "podcast",
+      "title": "Podcast",
+      "description": "Replace with the actual listening objective.",
+      "displayOrder": 2,
+      "expectedOtjh": 0.5,
+      "points": 0,
+      "reflectionRequired": false,
+      "coachValidationRequired": true,
+      "tutorValidationRequired": false,
+      "ksbMappings": [],
+      "settings": {
+        "contentStatus": "Draft",
+        "podcastSource": "Device upload",
+        "podcastUrl": "asset://podcast-mp3",
+        "transcript": "REPLACE_WITH_COMPLETE_TRANSCRIPT",
+        "durationMinutes": 30,
+        "listeningFocus": "REPLACE_WITH_LISTENING_FOCUS"
+      }
+    },
+    {
+      "id": "COMP-EXAMPLE-VIDEO",
+      "type": "video",
+      "title": "Video lesson",
+      "description": "File upload support must be resolved before this component can be delivered.",
+      "displayOrder": 3,
+      "expectedOtjh": 0.5,
+      "points": 0,
+      "reflectionRequired": false,
+      "coachValidationRequired": true,
+      "tutorValidationRequired": false,
+      "ksbMappings": [],
+      "captionAssetId": "video-captions",
+      "transcript": "REPLACE_WITH_COMPLETE_VIDEO_TRANSCRIPT",
+      "settings": {
+        "contentStatus": "Draft",
+        "sourceType": "REPLACE_WITH_VALIDATED_SUPPORTED_VIDEO_SOURCE",
+        "videoUrl": "asset://video-mp4",
+        "shortDescription": "REPLACE_WITH_VIDEO_SUMMARY",
+        "durationMinutes": 30
+      }
+    },
+    {
+      "id": "COMP-EXAMPLE-QUIZ",
+      "type": "quiz",
+      "title": "Knowledge check",
+      "description": "Create a real quiz and link its returned database ID.",
+      "displayOrder": 4,
+      "expectedOtjh": 0.25,
+      "points": 0,
+      "reflectionRequired": false,
+      "coachValidationRequired": true,
+      "tutorValidationRequired": false,
+      "ksbMappings": [],
+      "quizRef": "quiz-example",
+      "settings": {
+        "contentStatus": "Draft",
+        "buildMode": "linked",
+        "linkedQuizId": null,
+        "numberOfQuestions": 2,
+        "passMarkPercentage": 70,
+        "attemptsAllowed": 2,
+        "durationMinutes": 15
+      }
+    },
+    {
+      "id": "COMP-EXAMPLE-ASSIGNMENT",
+      "type": "assignment",
+      "title": "Practical assignment",
+      "description": "Replace with a task that demonstrates the learning outcomes.",
+      "displayOrder": 5,
+      "expectedOtjh": 1.0,
+      "points": 0,
+      "reflectionRequired": false,
+      "coachValidationRequired": true,
+      "tutorValidationRequired": true,
+      "ksbMappings": [],
+      "settings": {
+        "contentStatus": "Draft",
+        "assignmentBrief": "<p>REPLACE_WITH_COMPLETE_ASSIGNMENT_BRIEF</p>",
+        "assignmentFileUrl": "asset://assignment-docx",
+        "assignmentFileName": "assignment.docx",
+        "submissionInstructions": "REPLACE_WITH_SUBMISSION_INSTRUCTIONS",
+        "markingRubric": "REPLACE_WITH_MARKING_RUBRIC",
+        "dueTiming": "End of week",
+        "durationMinutes": 60
+      }
+    },
+    {
+      "id": "COMP-EXAMPLE-REFLECTION",
+      "type": "reflection",
+      "title": "Weekly reflection",
+      "description": "Replace with reflection guidance linked to the week's outcomes.",
+      "displayOrder": 6,
+      "expectedOtjh": 0.75,
+      "points": 0,
+      "reflectionRequired": true,
+      "coachValidationRequired": true,
+      "tutorValidationRequired": true,
+      "reflectionQuestion": "REPLACE_WITH_SPECIFIC_REFLECTION_QUESTION",
+      "ksbMappings": [],
+      "settings": {
+        "contentStatus": "Draft",
+        "reflectionPrompt": "REPLACE_WITH_SPECIFIC_REFLECTION_QUESTION",
+        "minimumWordCount": 250,
+        "learnerGuidance": "REPLACE_WITH_REFLECTION_GUIDANCE",
+        "durationMinutes": 45
+      }
+    }
+  ],
+  "quizzes": [
+    {
+      "ref": "quiz-example",
+      "databaseId": null,
+      "title": "REPLACE_WITH_QUIZ_TITLE",
+      "status": "draft",
+      "assessmentType": "quiz",
+      "defaultQuestionType": "single_choice",
+      "passingGrade": 70,
+      "duration": 15,
+      "timeUnit": "minutes",
+      "componentIds": ["COMP-EXAMPLE-QUIZ"],
+      "questions": [
+        {
+          "text": "REPLACE_WITH_QUESTION_1",
+          "questionType": "single_choice",
+          "points": 1,
+          "explanation": "REPLACE_WITH_EXPLANATION_1",
+          "answers": [
+            {"text": "REPLACE_WITH_CORRECT_ANSWER_1", "isCorrect": true},
+            {"text": "REPLACE_WITH_DISTRACTOR_1", "isCorrect": false}
+          ]
+        },
+        {
+          "text": "REPLACE_WITH_QUESTION_2",
+          "questionType": "single_choice",
+          "points": 1,
+          "explanation": "REPLACE_WITH_EXPLANATION_2",
+          "answers": [
+            {"text": "REPLACE_WITH_DISTRACTOR_2", "isCorrect": false},
+            {"text": "REPLACE_WITH_CORRECT_ANSWER_2", "isCorrect": true}
+          ]
+        }
+      ]
+    }
+  ],
+  "optionalLiveSession": {
+    "includedInWeekTotals": false,
+    "status": "requires_real_schedule_and_authorized_meeting_workflow",
+    "preparationInstructions": "REPLACE_IF_A_LIVE_SESSION_IS_REQUIRED",
+    "liveSessionUrl": null
+  },
+  "handoffRules": [
+    "Write learner-facing content in British English (en-GB), preserving exact API and database identifiers.",
+    "Verify the programme, canonical module catalogue ID and week action before target-specific uploads or SQL.",
+    "For several destination modules, create separate placement manifests with distinct week and component IDs.",
+    "An actual module component must link to the selected module_catalogue_id and a week_id belonging to that same module.",
+    "A new module requires a separately authorised learner assignment; programme and group labels alone do not assign it.",
+    "Reusing a package must preserve its IDs and check ownership and checksums rather than overwrite a conflicting record.",
+    "Every REPLACE value and example component ID must be reviewed before use.",
+    "asset:// is a handoff reference only; replace it with a verified stable LMS URL before saving settings_json.",
+    "fallbackAssetId, captionAssetId, quizRef and the outer envelope are proposed manifest fields, not existing backend fields.",
+    "Do not mark the package ready while an asset, video integration or quiz database link is missing.",
+    "Do not attach draft or incomplete content to a live learner module and assume Draft hides it.",
+    "Quiz answer keys are authoring-only and must not be copied into learner-visible reading content.",
+    "Keep settings_json.reflectionPrompt and components.Reflection_Question consistent for module components.",
+    "No database write by the agent: produce exact SQL for the owner after files and IDs are verified.",
+    "The example contains no real media files and has not been uploaded or imported."
+  ]
+}
