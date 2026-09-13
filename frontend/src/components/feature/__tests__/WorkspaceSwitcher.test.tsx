@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { PORTAL_WORKSPACES } from '@/lib/portalWorkspaces';
+import { PORTAL_WORKSPACES, workspacesFor } from '@/lib/portalWorkspaces';
 
 const authValue = vi.fn();
 const switchRole = vi.fn();
@@ -70,8 +70,12 @@ describe('WorkspaceSwitcher', () => {
 
     // The menu labels each workspace; the trigger keeps its neutral label.
     const menu = within(screen.getByRole('menu'));
-    expect(menu.getAllByRole('menuitem')).toHaveLength(PORTAL_WORKSPACES.length);
-    for (const workspace of PORTAL_WORKSPACES) {
+    // Learner is offered only to an account that has a record of its own, and
+    // this signed-in admin has none -- so the menu is what workspacesFor
+    // returns for them, not the whole curated list.
+    const offered = workspacesFor(null);
+    expect(menu.getAllByRole('menuitem')).toHaveLength(offered.length);
+    for (const workspace of offered) {
       expect(menu.getByText(workspace.label)).toBeTruthy();
     }
     // Named explicitly: the switcher was lifted out of the Super Admin

@@ -308,6 +308,29 @@ export function accountAction(
   }>(`${BASE}/accounts/${id}/`, { method: 'POST', body: JSON.stringify({ action }) });
 }
 
+/**
+ * Also make this person a learner.
+ *
+ * Creates their `enrolment."Created_users"` record and nothing else. The login
+ * account they already have is reused — a SECOND account on the same address
+ * would make `account_for_email` ambiguous and lock them out of password
+ * sign-in, SSO and password reset alike — so they keep one password and reach
+ * the learner side from the workspace switcher.
+ *
+ * The record starts as a draft. It shows up in the user directory, where a
+ * learning plan is assigned; finishing enrolment there is what creates the
+ * `"Learner".learners` row and makes them a live learner.
+ */
+export function addLearnerRecord(
+  id: number,
+  details: { programme?: string; cohort?: string; learnerType?: string } = {},
+): Promise<{ account: PlatformAccount; learnerRecordId: number }> {
+  return request<{ account: PlatformAccount; learnerRecordId: number }>(
+    `${BASE}/accounts/${id}/`,
+    { method: 'POST', body: JSON.stringify({ action: 'add-learner-record', ...details }) },
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 /* Audit trail                                                                 */
 /* -------------------------------------------------------------------------- */
