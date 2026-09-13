@@ -552,6 +552,16 @@ function LearnerCalendarBody() {
   const [viewYear, setViewYear] = useState(() => new Date().getFullYear());
   const [viewMonth, setViewMonth] = useState(() => new Date().getMonth());
   const [selectedDay, setSelectedDay] = useState(() => new Date().getDate());
+  useEffect(() => {
+    const date = new URLSearchParams(location.search).get('date');
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    const [year, month, day] = date.split('-').map(Number);
+    const parsed = new Date(year, month - 1, day, 12);
+    if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) return;
+    setViewYear(year);
+    setViewMonth(month - 1);
+    setSelectedDay(day);
+  }, [location.search]);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterSource, setFilterSource] = useState<LearnerSourceFilter>('all');
   const [filterStatus, setFilterStatus] = useState<LearnerStatusFilter>('all');
@@ -818,15 +828,30 @@ function LearnerCalendarBody() {
   const handledScheduleRef = useRef('');
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    const eventKey = params.get('event');
-    if (params.get('action') !== 'schedule' || !eventKey) {
+    let storedRequest: { eventKey?: string; source?: string; date?: string } | null = null;
+    if (!params.get('event') && !params.get('source')) {
+      try {
+        const raw = window.sessionStorage.getItem('learner-calendar-schedule');
+        storedRequest = raw ? JSON.parse(raw) as typeof storedRequest : null;
+      } catch { storedRequest = null; }
+    }
+    const eventKey = params.get('event') || storedRequest?.eventKey || null;
+    const source = params.get('source') || storedRequest?.source || null;
+    const targetDate = params.get('date') || storedRequest?.date || null;
+    if (params.get('action') !== 'schedule' || (!eventKey && !source)) {
       handledScheduleRef.current = '';
       return;
     }
-    if (handledScheduleRef.current === eventKey) return;
-    const event = myEvents.find(item => item.eventKey === eventKey || item.id === eventKey);
+    const requestKey = eventKey || `${source}:${targetDate || ''}`;
+    if (handledScheduleRef.current === requestKey) return;
+    // Imported Aptem rows do not carry a coach-calendar event key. Resolve
+    // their planned date to the generated programme slot returned by the
+    // learner calendar, then open the same booking dialog.
+    const event = (eventKey ? myEvents.find(item => item.eventKey === eventKey || item.id === eventKey) : undefined)
+      || myEvents.find(item => item.source === source && item.isoDate === targetDate && item.timeToBeConfirmed);
     if (!event || !event.bookingSessionType) return;
-    handledScheduleRef.current = eventKey;
+    handledScheduleRef.current = requestKey;
+    if (storedRequest) window.sessionStorage.removeItem('learner-calendar-schedule');
     if (event.bookingStatus === 'not-scheduled' && event.timeToBeConfirmed) {
       openBookSession(event.isoDate && event.isoDate >= bookingToday ? event.isoDate : bookingToday, event);
     } else {
