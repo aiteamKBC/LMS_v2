@@ -143,10 +143,11 @@ import { fetchComponentPointsDefaults, fetchWeekTemplates, fetchWeekTemplateDeta
 // and imported back. xlsx is dynamically imported inside these helpers, so it
 // stays off this page's initial bundle.
 import { buildKsbMappingPrompt, describeKsbImport, exportModuleKsbWorkbook, importModuleKsbWorkbook, type KsbProfileEntry } from './ksbExcel';
+import { exportModuleTemplate, importModuleTemplate } from './moduleExcel';
 // Shared labelled form atoms and the Teams meeting modal live in their own files
 // so the modal (rendered by the shared week editor, which the Week Builder also
 // uses) can reuse them without importing this page.
-import { Checkbox, NumberInput, ReadOnlyInput, SelectInput, TextArea, TextInput } from './formInputs';
+import { Checkbox, DurationInput, NumberInput, ReadOnlyInput, SelectInput, TextArea, TextInput } from './formInputs';
 import { TeamsMeetingModal } from './TeamsMeetingModal';
 import { KsbExcelPanel } from './KsbExcelPanel';
 import {
@@ -465,6 +466,7 @@ export default function ModuleBuilder() {
   const savedModuleSnapshotRef = useRef('');
   const saveRequestRef = useRef(0);
   const ksbImportInputRef = useRef<HTMLInputElement>(null);
+  const moduleTemplateImportInputRef = useRef<HTMLInputElement>(null);
   // Both revalidate rather than skipCache. The request still goes to the network
   // every time, and every curriculum write calls invalidate_curriculum_cache() on
   // the backend, so a reload after a save still rebuilds and returns our write.
@@ -1633,6 +1635,31 @@ export default function ModuleBuilder() {
     }
   }, [updateWorkingModule, workingModule]);
 
+  const exportTemplate = useCallback(async () => {
+    if (!workingModule) return;
+    setActionMessage(null);
+    try {
+      const { rows, fileName } = await exportModuleTemplate(workingModule);
+      setNoticeAlert({ title: 'Template exported', message: `Downloaded ${fileName} with ${rows} component${rows === 1 ? '' : 's'} across sheets grouped by component type.` });
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : 'Unable to export the module template.');
+    }
+  }, [workingModule]);
+
+  const importTemplate = useCallback(async (file: File) => {
+    if (!workingModule) return;
+    setActionMessage(null);
+    try {
+      const { module: nextModule, summary } = await importModuleTemplate(file, workingModule);
+      updateWorkingModule(() => nextModule);
+      const unmatched = summary.unmatchedIds.length ? ` ${summary.unmatchedIds.length} unmatched row${summary.unmatchedIds.length === 1 ? '' : 's'} were skipped.` : '';
+      const invalid = summary.invalidRows.length ? ` ${summary.invalidRows.length} row warning${summary.invalidRows.length === 1 ? '' : 's'} found (unknown types stay unchanged).` : '';
+      setNoticeAlert({ title: 'Template imported', message: `Updated ${summary.componentsUpdated} component${summary.componentsUpdated === 1 ? '' : 's'} and ${summary.weeksUpdated} week name${summary.weeksUpdated === 1 ? '' : 's'}.${unmatched}${invalid} Review the changes, then save.` });
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : 'Unable to read the module template.');
+    }
+  }, [updateWorkingModule, workingModule]);
+
   const duplicateModule = async (module: ModuleCatalogueItem) => {
     setDuplicatingModule(module);
     setDuplicatingModuleComplete(false);
@@ -2015,6 +2042,8 @@ export default function ModuleBuilder() {
               if (workingModuleScopeLock?.locked) return;
               updateWorkingModule(module => ({ ...module, ksbProfileSourceId: cleanKsbSourceId(sourceId) }));
             }}
+            onExportTemplate={() => { void exportTemplate(); }}
+            onImportTemplate={() => moduleTemplateImportInputRef.current?.click()}
           />
 
           {(saving || (actionMessage && !deletingModuleId)) && (
@@ -2195,6 +2224,17 @@ export default function ModuleBuilder() {
               // Reset first so re-uploading the same file name fires change again.
               event.target.value = '';
               if (file) void importKsbSheet(file);
+            }}
+          />
+          <input
+            ref={moduleTemplateImportInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={event => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (file) void importTemplate(file);
             }}
           />
           </div>
@@ -2804,7 +2844,7 @@ function CurriculumHierarchyNav({ programme, cohort, group, current }: {
   );
 }
 
-function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfileValue, scopeLock, standardsLoading, onBack, onProgrammeChange, onKsbProfileChange }: {
+function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfileValue, scopeLock, standardsLoading, onBack, onProgrammeChange, onKsbProfileChange, onExportTemplate, onImportTemplate }: {
   module: ModuleCatalogueItem;
   programmeOptions: string[];
   ksbProfileOptions: Array<{ id: string; label: string }>;
@@ -2816,6 +2856,8 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
   onBack: () => void;
   onProgrammeChange: (programmeName: string) => void;
   onKsbProfileChange: (sourceId: string) => void;
+  onExportTemplate: () => void;
+  onImportTemplate: () => void;
 }) {
   const moduleMetrics = [
     { label: 'Weeks', value: String(module.weekStructure.length), icon: 'ri-stack-line' },
@@ -2842,6 +2884,17 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
         </div>
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center lg:justify-end">
+          <div className="flex items-center gap-1.5">
+            <button onClick={onExportTemplate} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100" title="Download the editable module template">
+              <AppIcon className="ri-file-excel-2-line text-sm"></AppIcon>
+              <span className="hidden xl:inline">Export Template</span>
+              <span className="xl:hidden">Export</span>
+            </button>
+            <button onClick={onImportTemplate} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100" title="Upload an edited module template">
+              <AppIcon className="ri-file-upload-line text-sm"></AppIcon>
+              <span>Import</span>
+            </button>
+          </div>
           <div className="grid grid-cols-3 gap-2">
             {moduleMetrics.map(metric => (
               <div key={metric.label} className="min-w-[78px] rounded-lg border border-background-200 bg-background-100/50 px-2.5 py-1.5">
@@ -3763,7 +3816,7 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
 
         <EditorSection title="Completion and reward" icon="ri-checkbox-circle-line">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <NumberInput label="Expected OTJH hours" value={component.expectedOtjh} min={0} step={0.25} onChange={value => onChange({ expectedOtjh: value })} error={fieldError('expectedOtjh')} />
+            <DurationInput label="Expected OTJH" value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} error={fieldError('expectedOtjh')} />
             <NumberInput label="Points" value={component.points} min={0} step={1} onChange={value => onChange({ points: value })} error={fieldError('points')} />
           </div>
         </EditorSection>
