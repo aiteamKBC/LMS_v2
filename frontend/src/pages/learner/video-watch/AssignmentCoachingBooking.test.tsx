@@ -67,12 +67,12 @@ it('books directly with the assigned coach when no generated slot exists', async
   await waitFor(() => expect(bookLearnerCalendarSession).toHaveBeenCalledWith('commercial', '1', expect.objectContaining({ assignmentMonth: '2026-09', eventKey: undefined, sessionType: 'mcr', durationMinutes: 60 })));
 });
 
-it('loads own meeting artifacts and shows a Teams join link', async () => {
+it('loads own meeting artifacts without a Teams join link', async () => {
   vi.mocked(fetchLearnerCalendarEvents).mockResolvedValueOnce({ learner: { kind: 'commercial', id: 1 }, events: [{ ...slot, id: 'meeting', status: 'scheduled', scheduledDate: '2026-09-22', meetingLink: 'https://teams.microsoft.com/meeting' }] });
   vi.mocked(fetchLearnerMeetingArtifacts).mockResolvedValue({ artifacts: [] });
   render(<AssignmentCoachingBooking {...props} meetingKey={slot.eventKey} />);
-  expect(await screen.findByRole('link', { name: 'Join MCM' })).toHaveAttribute('href', 'https://teams.microsoft.com/meeting');
   expect(await screen.findByText('Recording, Transcript & Attendance')).toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'Join MCM' })).not.toBeInTheDocument();
   await waitFor(() => expect(fetchLearnerMeetingArtifacts).toHaveBeenCalledWith('commercial', '1', slot.eventKey, expect.any(AbortSignal)));
 });
 
