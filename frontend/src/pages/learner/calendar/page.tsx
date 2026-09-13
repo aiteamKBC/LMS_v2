@@ -491,9 +491,9 @@ function sessionTypeLabel(value?: CalendarEvent['bookingSessionType'] | Bookable
   }
 }
 
-/** Turn an imported Aptem review into a dated calendar card. Reviews are
- * intentionally read-only here; the review history row remains the source of
- * truth for its status and dates. */
+/** Turn an imported Aptem review into a dated calendar card. The review
+ * history row remains the source of truth for its status and dates; unscheduled
+ * rows can be booked through the calendar's normal coach-session flow. */
 function mapImportedReview(review: ImportedReview, source: 'mcr' | 'progress-review'): CalendarEvent | null {
   const iso = review.plannedDate || review.completedDate;
   if (!iso) return null;
@@ -527,6 +527,10 @@ function mapImportedReview(review: ImportedReview, source: 'mcr' | 'progress-rev
     source,
     durationMinutes: 60,
     bookingStatus: status,
+    // Imported Aptem rows use the same booking flow as their programme-cycle
+    // counterparts. The synthetic event key is display-only; handleBookSession
+    // deliberately omits it and sends the durable review id instead.
+    bookingSessionType: source,
     // Only an explicitly unbooked review should be shown as needing a
     // booking. Completed imported reviews often have a completion date but no
     // time, and must keep their Completed status.
@@ -1159,10 +1163,14 @@ function LearnerCalendarBody() {
     setBookSubmitting(true);
     setBookError(null);
     try {
+      const sourceEvent = rescheduleEvent || bookingSourceEvent;
+      const importedReview = sourceEvent?.importedReview;
+      const importedReviewDate = sourceEvent?.isoDate || importedReview?.plannedDate || importedReview?.completedDate || bookDate;
+      const importedReviewBooking = Boolean(importedReview);
       const requestNotes = bookType === 'other'
         ? [`Requested session type: ${otherSessionType.trim()}`, bookNotes.trim()].filter(Boolean).join('\n')
         : bookNotes.trim();
-      const res = rescheduleEvent
+      const res = rescheduleEvent && !importedReviewBooking
         ? await rescheduleLearnerCalendarSession(myLearner.kind, myLearner.id, {
             eventKey: rescheduleEvent.eventKey || rescheduleEvent.id,
             scheduledDate: bookDate,
@@ -1171,8 +1179,13 @@ function LearnerCalendarBody() {
             timezoneOffsetMinutes: new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
           })
         : await bookLearnerCalendarSession(myLearner.kind, myLearner.id, {
+            assignmentMonth: importedReviewBooking ? importedReviewDate.slice(0, 7) : undefined,
+            reviewId: importedReview?.id,
             sessionType: bookType,
-            eventKey: bookingSourceEvent?.eventKey,
+            // Imported review keys only identify the history row and are not
+            // CoachCalendarEvent keys. The backend uses reviewId to update the
+            // imported row and creates/updates the real calendar booking.
+            eventKey: importedReviewBooking ? undefined : bookingSourceEvent?.eventKey,
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
@@ -1183,14 +1196,20 @@ function LearnerCalendarBody() {
       calendarWriteVersionRef.current += 1;
       const mapped = mapCoachEvent(res.event);
       if (mapped) {
-        setMyEvents((prev) => [...prev.filter((ev) => ev.id !== mapped.id), mapped]);
-        const date = parseEventDate(mapped);
+        const updatedImportedReview = importedReview
+          ? { ...importedReview, status: 'scheduled', plannedDate: bookDate, plannedTime: bookTime }
+          : undefined;
+        const updatedEvent = updatedImportedReview
+          ? { ...mapped, importedReview: updatedImportedReview }
+          : mapped;
+        setMyEvents((prev) => [...prev.filter((ev) => ev.id !== mapped.id && ev.id !== sourceEvent?.id), updatedEvent]);
+        const date = parseEventDate(updatedEvent);
         if (date) {
           setViewYear(date.year ?? viewYear);
           setViewMonth(date.month);
           setSelectedDay(date.day);
         }
-        setShowEventDetails(mapped);
+        setShowEventDetails(updatedEvent);
       }
       setShowBookModal(false);
       setBookNotes('');
