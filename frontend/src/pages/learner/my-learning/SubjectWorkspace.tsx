@@ -1,10 +1,12 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowUpRight, BookOpen, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Layers3, Search } from 'lucide-react';
+import { ArrowUpRight, Award, BookOpen, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Layers3, Loader2, Search } from 'lucide-react';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import type { LearnerMetrics } from '@/api/learnerMetrics';
 import { fetchStudentActivity, peekStudentActivity, subjectRequest, type StudentActivityItem, type StudentActivityResponse, type SubjectAttemptResult } from '@/api/studentActivity';
 import { peekLearnerJson } from '@/api/learnerRead';
+import { fetchLearnerCertificateTemplate, fetchLearnerModuleCertificateStatus, issueLearnerModuleCertificate } from '@/api/learnerCertificates';
+import type { CertificateTemplate } from '@/api/platformAdmin';
 import { completedComponentIds, isComponentComplete, hasComponentContent, formatHoursMinutes, type JourneyComponent } from '@/utils/learnerJourney';
 import { DeferredStudentMaterial as StudentMaterial } from './DeferredStudentMaterial';
 import styles from './SubjectWorkspace.module.css';
@@ -341,10 +343,361 @@ function Cover({ title, url, large = false }: { title: string; url?: string; lar
   </div>;
 }
 
-function SubjectCard({ subject, cover, onOpen }: { subject: Subject; cover?: string; onOpen: () => void }) {
+function SubjectCertificateAction({
+  subject,
+  completed,
+  total,
+  template,
+  kind,
+  learnerId,
+}: {
+  subject: Subject;
+  completed: number;
+  total: number;
+  template: CertificateTemplate | null;
+  kind?: string;
+  learnerId?: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [cachedHref, setCachedHref] = useState('');
+  const supportedSubject = subject.id.startsWith('current:') || subject.id.startsWith('unlinked:');
+  const percent = total ? Math.round(completed / total * 10000) / 100 : 0;
+  const ready = !!template && !!kind && !!learnerId && total > 0 && supportedSubject && percent >= Number(template.minimumProgress || 0);
+  const cacheKey = ready && template && kind && learnerId
+    ? `learner-certificate:${kind}:${learnerId}:${subject.id}:v${template.version}`
+    : '';
+  useEffect(() => {
+    let cancelled = false;
+    setCachedHref('');
+    if (!ready || !kind || !learnerId || !cacheKey) return;
+    try {
+      const stored = window.localStorage.getItem(cacheKey);
+      if (stored) {
+        setCachedHref(stored);
+        return;
+      }
+    } catch {
+      // Local storage can be unavailable in private or locked-down contexts.
+    }
+    void fetchLearnerModuleCertificateStatus(kind, learnerId, subject.id)
+      .then((result) => {
+        const href = result.certificate?.verificationUrl || '';
+        if (!href || cancelled) return;
+        setCachedHref(href);
+        try {
+          window.localStorage.setItem(cacheKey, href);
+        } catch {
+          // Non-critical cache.
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setCachedHref('');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, kind, learnerId, subject.id, cacheKey]);
+  if (!ready) return null;
+  const issue = async (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (cachedHref) {
+      window.open(cachedHref, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    const certificateWindow = window.open('about:blank', '_blank');
+    if (certificateWindow) {
+      certificateWindow.document.title = 'Preparing certificate';
+      certificateWindow.document.body.innerHTML = `
+        <style>
+          @keyframes shimmer {
+            0% { background-position: -900px 0; }
+            100% { background-position: 900px 0; }
+          }
+
+          * {
+            box-sizing: border-box;
+          }
+
+          body {
+            min-height: 100vh;
+            margin: 0;
+            display: grid;
+            place-items: center;
+            background: linear-gradient(135deg, #f8fafc 0%, #ffffff 48%, #f3e8ff 100%);
+            color: #0f172a;
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          }
+
+          .shell {
+            width: min(92vw, 1120px);
+          }
+
+          .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 20px;
+          }
+
+          .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-weight: 800;
+            color: #4c1d95;
+          }
+
+          .mark {
+            display: grid;
+            width: 42px;
+            height: 42px;
+            place-items: center;
+            border-radius: 999px;
+            background: #5b21b6;
+            color: white;
+            font-size: 13px;
+            letter-spacing: 0.04em;
+          }
+
+          .status {
+            border: 1px solid #ddd6fe;
+            border-radius: 999px;
+            background: white;
+            padding: 10px 16px;
+            color: #5b21b6;
+            font-size: 12px;
+            font-weight: 900;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+          }
+
+          .certificate {
+            position: relative;
+            aspect-ratio: 1.414 / 1;
+            overflow: hidden;
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            background: white;
+            box-shadow: 0 24px 70px rgba(15, 23, 42, 0.16);
+          }
+
+          .frame {
+            position: absolute;
+            inset: 3%;
+            border: 8px solid #6d28d9;
+            border-radius: 8px;
+            opacity: 0.9;
+          }
+
+          .corner {
+            position: absolute;
+            width: 22%;
+            height: 22%;
+            border: 2px solid #a78bfa;
+            opacity: 0.5;
+          }
+
+          .corner.top {
+            left: 4%;
+            top: 4%;
+            border-right: 0;
+            border-bottom: 0;
+            border-radius: 12px 0 0 0;
+          }
+
+          .corner.bottom {
+            right: 4%;
+            bottom: 4%;
+            border-left: 0;
+            border-top: 0;
+            border-radius: 0 0 12px 0;
+          }
+
+          .line,
+          .block,
+          .seal,
+          .qr {
+            background: linear-gradient(90deg, #f1f5f9 0%, #e9d5ff 45%, #f1f5f9 90%);
+            background-size: 900px 100%;
+            animation: shimmer 1.8s linear infinite;
+          }
+
+          .title {
+            position: absolute;
+            top: 10%;
+            left: 28%;
+            right: 28%;
+            display: grid;
+            gap: 14px;
+          }
+
+          .line {
+            height: 18px;
+            border-radius: 999px;
+          }
+
+          .line.large {
+            height: 38px;
+          }
+
+          .line.short {
+            width: 58%;
+            justify-self: center;
+          }
+
+          .seal {
+            position: absolute;
+            right: 8%;
+            top: 8%;
+            width: 100px;
+            height: 70px;
+            border-radius: 18px;
+          }
+
+          .name {
+            position: absolute;
+            top: 35%;
+            left: 27%;
+            right: 27%;
+          }
+
+          .rule {
+            position: absolute;
+            top: 45%;
+            left: 20%;
+            right: 20%;
+            height: 2px;
+            background: #d6a128;
+          }
+
+          .copy {
+            position: absolute;
+            top: 52%;
+            left: 25%;
+            right: 25%;
+            display: grid;
+            gap: 12px;
+          }
+
+          .qr {
+            position: absolute;
+            left: 7%;
+            bottom: 12%;
+            width: 92px;
+            height: 92px;
+            border-radius: 12px;
+          }
+
+          .signatures {
+            position: absolute;
+            right: 12%;
+            bottom: 14%;
+            left: 28%;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 28px;
+          }
+
+          .signature {
+            display: grid;
+            gap: 10px;
+          }
+
+          .caption {
+            margin-top: 18px;
+            text-align: center;
+            color: #475569;
+            font-size: 14px;
+            font-weight: 700;
+          }
+        </style>
+        <main class="shell" aria-busy="true" aria-label="Preparing certificate">
+          <div class="header">
+            <div class="brand"><span class="mark">KBC</span><span>Kent Business College</span></div>
+            <div class="status">Preparing certificate</div>
+          </div>
+          <section class="certificate">
+            <div class="frame"></div>
+            <div class="corner top"></div>
+            <div class="corner bottom"></div>
+            <div class="seal"></div>
+            <div class="title">
+              <div class="line large"></div>
+              <div class="line short"></div>
+              <div class="line short" style="width: 38%;"></div>
+            </div>
+            <div class="name"><div class="line large"></div></div>
+            <div class="rule"></div>
+            <div class="copy">
+              <div class="line"></div>
+              <div class="line short" style="width: 48%;"></div>
+              <div class="line"></div>
+              <div class="line short" style="width: 42%;"></div>
+            </div>
+            <div class="qr"></div>
+            <div class="signatures">
+              <div class="signature"><div class="line"></div><div class="line short"></div></div>
+              <div class="signature"><div class="line"></div><div class="line short"></div></div>
+              <div class="signature"><div class="line"></div><div class="line short"></div></div>
+            </div>
+          </section>
+          <p class="caption">Preparing your certificate...</p>
+        </main>
+      `;
+    }
+    setBusy(true);
+    setMessage('');
+    try {
+      const result = await issueLearnerModuleCertificate(kind, learnerId, subject.id);
+      const href = result.certificate?.verificationUrl;
+      if (href) {
+        setCachedHref(href);
+        if (cacheKey) {
+          try {
+            window.localStorage.setItem(cacheKey, href);
+          } catch {
+            // Non-critical cache.
+          }
+        }
+      }
+      if (href && certificateWindow) certificateWindow.location.replace(href);
+      else if (href) window.location.assign(href);
+      else {
+        if (certificateWindow) certificateWindow.close();
+        setMessage('Certificate issued, but the verification link was not returned.');
+      }
+    } catch (error) {
+      if (certificateWindow) certificateWindow.close();
+      setMessage(error instanceof Error ? error.message : 'Could not issue certificate.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <div className={styles.certificateAction}>
+    <button type="button" onClick={issue} disabled={busy} className={styles.certificateButton}>
+      {busy ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Award size={14} aria-hidden="true" />}
+      {busy ? 'Issuing certificate' : cachedHref ? 'View certificate' : 'Get certificate'}
+    </button>
+    {message && <p className={styles.certificateError}>{message}</p>}
+  </div>;
+}
+
+function SubjectCard({ subject, cover, onOpen, template, kind, learnerId }: {
+  subject: Subject;
+  cover?: string;
+  onOpen: () => void;
+  template: CertificateTemplate | null;
+  kind?: string;
+  learnerId?: string;
+}) {
   const total = subject.activities.length;
   const completed = subject.activities.filter((activity) => activity.completed).length;
   const isComplete = total > 0 && completed === total;
+  const percent = total ? Math.round(completed / total * 10000) / 100 : 0;
+  const certificateReady = !!template && total > 0 && percent >= Number(template.minimumProgress || 0) && (subject.id.startsWith('current:') || subject.id.startsWith('unlinked:'));
   const status = isComplete ? 'Completed' : completed > 0 ? 'In progress' : total ? 'Not started' : 'No activities yet';
   return <article className={`group ${styles.card}`}>
     <button type="button" onClick={onOpen} className={styles.cardButton}>
@@ -355,12 +708,16 @@ function SubjectCard({ subject, cover, onOpen }: { subject: Subject; cover?: str
         </span>
       </div>
       <div className={styles.cardBody}>
-        <p className={styles.cardEyebrow}><Layers3 size={13} aria-hidden="true" />{total} {total === 1 ? 'activity' : 'activities'}</p>
+        <div className={styles.cardMetaRow}>
+          <p className={styles.cardEyebrow}><Layers3 size={13} aria-hidden="true" />{total} {total === 1 ? 'activity' : 'activities'}</p>
+          {certificateReady && <span className={styles.certificateBadge}><Award size={13} aria-hidden="true" />Ready</span>}
+        </div>
         <h3 className={styles.cardTitle}>{subject.title}</h3>
         <div className={styles.cardProgress}><Progress done={completed} total={total} compact label={`${subject.title} progress`} /></div>
         <span className={styles.cardAction}>Open subject<ArrowUpRight size={16} aria-hidden="true" /></span>
       </div>
     </button>
+    <SubjectCertificateAction subject={subject} completed={completed} total={total} template={template} kind={kind} learnerId={learnerId} />
   </article>;
 }
 
@@ -416,6 +773,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<string | null>(() => new URLSearchParams(window.location.search).get('subject'));
   const identity = `${kind}:${learnerId}`;
+  const [certificateTemplate, setCertificateTemplate] = useState<CertificateTemplate | null>(null);
   const { metadata: incomingMetadata, error: imageError, retry: retryMetadata } = useSubjectMetadata(incomingData, incomingReal, kind, learnerId, !error, true);
   const ready = !loading && !error && (!learnerId || !!incomingMetadata);
   const [snapshot, setSnapshot] = useState<{
@@ -436,6 +794,14 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const plannedOtjh = metrics !== undefined ? metrics?.otjh.planned ?? null : data?.audit_tp_planned ?? data?.planned_total ?? null;
   const hasProgrammeOtjh = data?.audit_lms_actual != null || data?.audit_tp_planned != null;
   const [savedProgress, setSavedProgress] = useState<{ identity: string; activities: Record<string, SubjectAttemptResult> }>({ identity, activities: {} });
+  useEffect(() => {
+    if (!kind || !learnerId) return;
+    let cancelled = false;
+    fetchLearnerCertificateTemplate(kind, learnerId)
+      .then((result) => { if (!cancelled) setCertificateTemplate(result.template); })
+      .catch(() => { if (!cancelled) setCertificateTemplate(null); });
+    return () => { cancelled = true; };
+  }, [kind, learnerId]);
   const updatedData = useMemo(() => {
     if (!data || savedProgress.identity !== identity) return data;
     return { ...data, activities: data.activities.map((item) => {
@@ -476,7 +842,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     {data?.source_status === 'historical' && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">Showing saved previous learning. The latest results could not be verified. <button onClick={onRetry} className="font-semibold underline">Try again</button></p>}
     {!active ? <>
       <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-foreground-500"><span><strong className="text-foreground-900">{subjects.length}</strong> subjects</span><span><strong className="text-foreground-900">{total}</strong> activities</span><span><strong className="text-foreground-900">{done}</strong> completed</span></div>
-      {visible.length ? <div className={styles.grid}>{visible.map((subject) => <SubjectCard key={subject.id} subject={subject} cover={covers[subject.id]} onOpen={() => setSelected(subject.id)} />)}</div> : <div className="rounded-2xl border border-dashed p-10 text-center text-sm text-foreground-500">{subjects.length ? 'No subjects or activities match your search.' : 'Your subjects will appear here when they are assigned.'}</div>}
+      {visible.length ? <div className={styles.grid}>{visible.map((subject) => <SubjectCard key={subject.id} subject={subject} cover={covers[subject.id]} onOpen={() => setSelected(subject.id)} template={certificateTemplate} kind={kind} learnerId={learnerId} />)}</div> : <div className="rounded-2xl border border-dashed p-10 text-center text-sm text-foreground-500">{subjects.length ? 'No subjects or activities match your search.' : 'Your subjects will appear here when they are assigned.'}</div>}
       {(data || metrics) && <><div className="flex flex-wrap gap-6 rounded-xl bg-background-100 px-4 py-3 text-xs"><div><span className="block text-foreground-500">Recorded OTJH</span><strong>{recordedOtjh == null ? 'Unavailable' : formatHoursMinutes(recordedOtjh)}</strong></div><div><span className="block text-foreground-500">Planned OTJH</span><strong>{plannedOtjh == null ? 'Unavailable' : formatHoursMinutes(plannedOtjh)}</strong></div></div>{hasProgrammeOtjh && <p className="text-[12px] text-foreground-500">Programme totals include accepted historical hours and new recorded learning. Planned hours come from your training plan.</p>}</>}
     </> : <>
       <button onClick={() => setSelected(null)} className="flex items-center gap-1.5 text-sm font-semibold text-primary-700"><ChevronLeft size={17} />All subjects</button>

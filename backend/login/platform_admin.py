@@ -70,6 +70,22 @@ MAX_PAGE_SIZE = 200
 DEFAULT_PAGE_SIZE = 50
 
 
+def _sanitized_layout_config(value):
+    """Guard against a client accidentally spreading a JSON string into an
+    object (`{...jsonText}`), which turns each character into its own
+    "0", "1", "2"... key. A real layout config never has more than a
+    handful of fields, so a dict that's mostly numeric-string keys is that
+    corruption, not intentional data — drop it rather than storing and
+    compounding a multi-megabyte blob on every future save.
+    """
+    if not isinstance(value, dict):
+        return {}
+    numeric_keys = sum(1 for key in value if isinstance(key, str) and key.isdigit())
+    if numeric_keys > 20 and numeric_keys >= len(value) - 5:
+        return {}
+    return value
+
+
 @csrf_exempt
 @require_role(ROLE_ADMIN)
 def certificate_template(request):
@@ -94,7 +110,7 @@ def certificate_template(request):
             return _error("Title, body text and a progress value from 0 to 100 are required.", 400)
         publish = bool(payload.get("publish"))
         actor = request.login_account.email
-        layout = payload.get("layoutConfig") if isinstance(payload.get("layoutConfig"), dict) else {}
+        layout = _sanitized_layout_config(payload.get("layoutConfig"))
         try:
             with transaction.atomic(using="enrolment"), connections["enrolment"].cursor() as cursor:
                 cursor.execute('SELECT COALESCE(MAX(version),0)+1 FROM "Learner".certificate_templates WHERE certificate_type=%s', ["progress-achievement"])
@@ -128,7 +144,7 @@ def certificate_template(request):
         with connections["enrolment"].cursor() as cursor:
             cursor.execute('''SELECT id,name,version,status,title,body_text,minimum_progress,require_final_test,layout_config,published_at
                 FROM "Learner".certificate_templates
-                ORDER BY CASE status WHEN 'draft' THEN 0 WHEN 'published' THEN 1 ELSE 2 END, version DESC
+                ORDER BY CASE status WHEN 'published' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END, version DESC
                 LIMIT 1''')
             row = cursor.fetchone()
     except DatabaseError:
