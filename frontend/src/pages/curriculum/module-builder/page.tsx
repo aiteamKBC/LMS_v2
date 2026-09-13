@@ -74,11 +74,14 @@ interface ClashingLiveSession {
    */
   closures: { label: string; startDate: string; endDate: string }[];
 }
+import { fetchArchivedCurriculumModules, type CurriculumArchivedModule } from '@/lib/curriculumApi';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
 // Creating a module and moving it between programmes, cohorts and groups is one
 // dedicated form, shared with the Group and Module workspaces. It replaced the
 // six-step structure wizard this page used to open for both jobs.
 import { ModuleFormDrawer, ModuleSessionPreview, type ModuleFormTarget, type SavedModuleRef } from '../shared/entities/moduleForm';
+import { permanentlyDeleteModuleWithConfirm, restoreModuleWithConfirm } from '../shared/entities/archive';
+import { ArchiveNotice, ArchiveToggleButton, useCurriculumArchive } from '../shared/entities/archiveView';
 import { CoverImageControl, EntityDrawer } from '../shared/entities/ui';
 import { ComponentLibraryModal } from './ComponentLibraryModal';
 import {
@@ -143,10 +146,11 @@ import { fetchComponentPointsDefaults, fetchWeekTemplates, fetchWeekTemplateDeta
 // and imported back. xlsx is dynamically imported inside these helpers, so it
 // stays off this page's initial bundle.
 import { buildKsbMappingPrompt, describeKsbImport, exportModuleKsbWorkbook, importModuleKsbWorkbook, type KsbProfileEntry } from './ksbExcel';
+import { exportModuleTemplate, importModuleTemplate } from './moduleExcel';
 // Shared labelled form atoms and the Teams meeting modal live in their own files
 // so the modal (rendered by the shared week editor, which the Week Builder also
 // uses) can reuse them without importing this page.
-import { Checkbox, NumberInput, ReadOnlyInput, SelectInput, TextArea, TextInput } from './formInputs';
+import { Checkbox, HoursMinutesInput, NumberInput, ReadOnlyInput, SelectInput, TextArea, TextInput } from './formInputs';
 import { TeamsMeetingModal } from './TeamsMeetingModal';
 import { KsbExcelPanel } from './KsbExcelPanel';
 import {
@@ -159,6 +163,7 @@ import {
   providerForVideoSourceType,
   validateComponentAuthoring,
   validateModuleAuthoringStructure,
+  type ComponentSettingValue,
 } from './componentAuthoringModel';
 import { RichTextDraft } from './RichTextEditor';
 
@@ -406,7 +411,6 @@ export default function ModuleBuilder() {
   const [workingModule, setWorkingModule] = useState<ModuleCatalogueItem | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [expandedWeekIds, setExpandedWeekIds] = useState<Set<string>>(new Set());
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [placementModule, setPlacementModule] = useState<ModuleFormTarget | null>(null);
   const [coverModule, setCoverModule] = useState<ModuleCatalogueItem | null>(null);
   const [createOpen, setCreateOpen] = useState(() => searchParams.get('create') === '1');
@@ -418,12 +422,15 @@ export default function ModuleBuilder() {
   // module form, so it is fetched the first time that drawer opens rather than
   // on every Module Builder load.
   const [moduleFormScope, setModuleFormScope] = useState<{ cohorts: CurriculumCohort[]; groups: CurriculumGroup[]; holidays: CurriculumHoliday[] }>({ cohorts: [], groups: [], holidays: [] });
-  const [openingModule, setOpeningModule] = useState<{ title: string; mode: 'builder' | 'settings' } | null>(null);
+  const [openingModule, setOpeningModule] = useState<{ title: string } | null>(null);
   const [openingModuleComplete, setOpeningModuleComplete] = useState(false);
   const [duplicatingModule, setDuplicatingModule] = useState<ModuleCatalogueItem | null>(null);
   const [duplicatingModuleComplete, setDuplicatingModuleComplete] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
   const [deletingModuleId, setDeletingModuleId] = useState<string | null>(null);
+  // Which list the catalogue is showing. Nothing is read until it is opened;
+  // see useCurriculumArchive, which the Cohorts and Groups archives share.
+  const [showArchived, setShowArchived] = useState(false);
+  const [archiveBusyId, setArchiveBusyId] = useState<string | null>(null);
   const [hiddenModuleIds, setHiddenModuleIds] = useState<Set<string>>(new Set());
   const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string } | null>(null);
   const [lessonPickerWeekId, setLessonPickerWeekId] = useState<string | null>(null);
@@ -438,6 +445,8 @@ export default function ModuleBuilder() {
   const [bulkTeamsMeetingOpen, setBulkTeamsMeetingOpen] = useState(false);
   const [ksbTarget, setKsbTarget] = useState<KsbTarget | null>(null);
   const [ksbMapModule, setKsbMapModule] = useState<ModuleBuilderListItem | null>(null);
+  const [previewCatalogueModule, setPreviewCatalogueModule] = useState<ModuleBuilderListItem | null>(null);
+  const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null);
   const [programmeKsbMap, setProgrammeKsbMap] = useState<ProgrammeKsbMapState | null>(null);
   // The module whose learner assignment is open. Holds the catalogue id the
   // plan refers to plus the title, so the modal names the module it is about
@@ -465,6 +474,7 @@ export default function ModuleBuilder() {
   const savedModuleSnapshotRef = useRef('');
   const saveRequestRef = useRef(0);
   const ksbImportInputRef = useRef<HTMLInputElement>(null);
+  const moduleTemplateImportInputRef = useRef<HTMLInputElement>(null);
   // Both revalidate rather than skipCache. The request still goes to the network
   // every time, and every curriculum write calls invalidate_curriculum_cache() on
   // the backend, so a reload after a save still rebuilds and returns our write.
@@ -489,7 +499,7 @@ export default function ModuleBuilder() {
   // the page actually asks for KSB data: the build drawer, a card's KSB map, or
   // the programme-wide KSB map. The plain catalogue list never reads them, so
   // fetching them on every page load bought nothing but three wasted requests.
-  const needsKsbData = Boolean(workingModule) || Boolean(ksbMapModule) || Boolean(programmeKsbMap);
+  const needsKsbData = Boolean(workingModule) || Boolean(ksbMapModule) || Boolean(programmeKsbMap) || Boolean(previewCatalogueModule);
   const { ksbSets, loading: ksbSetsLoading } = useCurriculumKsbSets({ all: true, enabled: needsKsbData });
   const liveCurriculumProgrammes = curriculumProgrammes;
 
@@ -693,7 +703,6 @@ export default function ModuleBuilder() {
   // just to move a module between programmes, cohorts and groups. That is the
   // same job the Add-module drawer does, so it opens that instead.
   const openPlacementForm = useCallback((module: ModuleCatalogueItem) => {
-    setSettingsOpen(false);
     const target = moduleFormTargetFromCatalogue(
       module,
       deliveryUsageForModuleScope(module as ModuleBuilderListItem, programmeFilter, curriculumProgrammes),
@@ -1080,6 +1089,17 @@ export default function ModuleBuilder() {
       deliveryUsages: ksbMapModule.deliveryUsages,
     };
   }, [ksbMapModule, workingModule]);
+  const previewCatalogueDisplayModule = useMemo(() => {
+    if (!previewCatalogueModule || !workingModule) return previewCatalogueModule;
+    const requestedId = moduleStructureIdentifier(previewCatalogueModule);
+    const workingId = moduleStructureIdentifier(workingModule);
+    if (!requestedId || requestedId !== workingId) return previewCatalogueModule;
+    return {
+      ...previewCatalogueModule,
+      ...workingModule,
+      deliveryUsages: previewCatalogueModule.deliveryUsages,
+    };
+  }, [previewCatalogueModule, workingModule]);
   const hasUnsavedWorkingModuleChanges = Boolean(
     workingModule && savedModuleSnapshotRef.current && moduleSnapshot(workingModule) !== savedModuleSnapshotRef.current,
   );
@@ -1089,9 +1109,9 @@ export default function ModuleBuilder() {
     await new Promise(resolve => window.setTimeout(resolve, 120));
   }, []);
 
-  const openModule = useCallback(async (module: ModuleCatalogueItem, openSettings = false) => {
+  const openModule = useCallback(async (module: ModuleCatalogueItem) => {
     const structureId = moduleStructureIdentifier(module);
-    setOpeningModule({ title: module.title, mode: openSettings ? 'settings' : 'builder' });
+    setOpeningModule({ title: module.title });
     setOpeningModuleComplete(false);
     setActionMessage(null);
     setNoticeAlert(null);
@@ -1140,7 +1160,6 @@ export default function ModuleBuilder() {
           ? { kind: 'week', weekId: firstWeek.id }
           : null;
       setSelection(deepLinkTarget.selection || defaultSelection);
-      setSettingsOpen(openSettings || deepLinkTarget.openSettings);
       await finishLoadingProgress(setOpeningModuleComplete);
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : 'Unable to load module structure.');
@@ -1186,6 +1205,39 @@ export default function ModuleBuilder() {
       setKsbMapModule(module);
     } finally {
       setKsbMapLoadingId(null);
+    }
+  }, [workingModule]);
+
+  // Beside "Open delivery" on the catalogue card -- previewing a module used to
+  // require opening its full editor first. The card's own module is compact
+  // (no components until it's opened), so this loads the real structure the
+  // same way the KSB review button does before showing it.
+  const openCataloguePreview = useCallback(async (module: ModuleBuilderListItem) => {
+    const loadingId = module.catalogueId || moduleStructureIdentifier(module) || module.title;
+    const requestedId = moduleStructureIdentifier(module);
+    const workingId = workingModule ? moduleStructureIdentifier(workingModule) : '';
+    setPreviewLoadingId(loadingId);
+    if (!requestedId) {
+      await wait(180);
+      setPreviewCatalogueModule(module);
+      setPreviewLoadingId(null);
+      return;
+    }
+    if (workingModule && requestedId && requestedId === workingId) {
+      await wait(180);
+      setPreviewCatalogueModule({ ...module, ...workingModule, deliveryUsages: module.deliveryUsages });
+      setPreviewLoadingId(null);
+      return;
+    }
+
+    try {
+      const [remote] = await Promise.all([loadModuleStructure(requestedId), wait(180)]);
+      setPreviewCatalogueModule(remote ? { ...module, ...remote, deliveryUsages: module.deliveryUsages } : module);
+    } catch (err) {
+      console.warn('Unable to load full module structure for preview.', err);
+      setPreviewCatalogueModule(module);
+    } finally {
+      setPreviewLoadingId(null);
     }
   }, [workingModule]);
 
@@ -1633,6 +1685,31 @@ export default function ModuleBuilder() {
     }
   }, [updateWorkingModule, workingModule]);
 
+  const exportTemplate = useCallback(async () => {
+    if (!workingModule) return;
+    setActionMessage(null);
+    try {
+      const { rows, fileName } = await exportModuleTemplate(workingModule);
+      setNoticeAlert({ title: 'Template exported', message: `Downloaded ${fileName} with ${rows} component${rows === 1 ? '' : 's'} across sheets grouped by component type.` });
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : 'Unable to export the module template.');
+    }
+  }, [workingModule]);
+
+  const importTemplate = useCallback(async (file: File) => {
+    if (!workingModule) return;
+    setActionMessage(null);
+    try {
+      const { module: nextModule, summary } = await importModuleTemplate(file, workingModule);
+      updateWorkingModule(() => nextModule);
+      const unmatched = summary.unmatchedIds.length ? ` ${summary.unmatchedIds.length} unmatched row${summary.unmatchedIds.length === 1 ? '' : 's'} were skipped.` : '';
+      const invalid = summary.invalidRows.length ? ` ${summary.invalidRows.length} row warning${summary.invalidRows.length === 1 ? '' : 's'} found (unknown types stay unchanged).` : '';
+      setNoticeAlert({ title: 'Template imported', message: `Updated ${summary.componentsUpdated} component${summary.componentsUpdated === 1 ? '' : 's'} and ${summary.weeksUpdated} week name${summary.weeksUpdated === 1 ? '' : 's'}.${unmatched}${invalid} Review the changes, then save.` });
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : 'Unable to read the module template.');
+    }
+  }, [updateWorkingModule, workingModule]);
+
   const duplicateModule = async (module: ModuleCatalogueItem) => {
     setDuplicatingModule(module);
     setDuplicatingModuleComplete(false);
@@ -1678,18 +1755,50 @@ export default function ModuleBuilder() {
     }
   };
 
+  // Read only once the archive is opened, and re-read after every restore or
+  // permanent delete: the list has to lose the row that was just dealt with.
+  const archive = useCurriculumArchive(fetchArchivedCurriculumModules, showArchived);
+
+  const restoreArchivedModule = async (module: CurriculumArchivedModule) => {
+    if (archiveBusyId) return;
+    setArchiveBusyId(module.id);
+    try {
+      await restoreModuleWithConfirm(module, async () => {
+        archive.reload();
+        // The module is back in the catalogue, so the catalogue behind this
+        // view has to hear about it too.
+        await reload({ silent: true });
+      });
+    } finally {
+      setArchiveBusyId(null);
+    }
+  };
+
+  const deleteArchivedModule = async (module: CurriculumArchivedModule) => {
+    if (archiveBusyId) return;
+    setArchiveBusyId(module.id);
+    try {
+      await permanentlyDeleteModuleWithConfirm(module, async () => {
+        archive.reload();
+        await reload({ silent: true });
+      });
+    } finally {
+      setArchiveBusyId(null);
+    }
+  };
+
   const confirmDeleteModule = async (module: ModuleCatalogueItem) => {
     if (deletingModuleId) return;
     const weekCount = module.weekStructure.length || module.weeks || 0;
     const componentCount = module.lessonCount || module.weekStructure.reduce((total, week) => total + week.components.length, 0);
     await showCurriculumConfirm({
-      title: 'Delete this module?',
-      text: `${module.title} and its authoring structure will be removed. This deletes ${weekCount} weeks, ${componentCount} components, KSB mappings, completion criteria and advanced details from Module Builder.`,
+      title: 'Archive this module?',
+      text: `${module.title} leaves the catalogue with its ${weekCount} weeks, ${componentCount} components, KSB mappings, completion criteria and advanced details. Nothing is deleted - it can be brought back from View archive.`,
       icon: 'warning',
-      confirmButtonText: 'Yes, delete module',
+      confirmButtonText: 'Yes, archive module',
       cancelButtonText: 'Cancel',
-      successTitle: 'Module deleted',
-      successText: `${module.title} and all authoring components were deleted.`,
+      successTitle: 'Module archived',
+      successText: `${module.title} is in the archive, with everything authored under it.`,
       onConfirm: async () => {
         await deleteModule(module);
       },
@@ -1700,8 +1809,6 @@ export default function ModuleBuilder() {
     savedModuleSnapshotRef.current = '';
     setWorkingModule(null);
     setSelection(null);
-    setSettingsOpen(false);
-    setPreviewOpen(false);
     setLessonPickerWeekId(null);
     setPendingComponentSelection(null);
     setNoticeAlert(null);
@@ -2015,6 +2122,8 @@ export default function ModuleBuilder() {
               if (workingModuleScopeLock?.locked) return;
               updateWorkingModule(module => ({ ...module, ksbProfileSourceId: cleanKsbSourceId(sourceId) }));
             }}
+            onExportTemplate={() => { void exportTemplate(); }}
+            onImportTemplate={() => moduleTemplateImportInputRef.current?.click()}
           />
 
           {(saving || (actionMessage && !deletingModuleId)) && (
@@ -2179,9 +2288,7 @@ export default function ModuleBuilder() {
           <WorkspaceActionFooter
             saving={saving}
             saved={!hasUnsavedWorkingModuleChanges}
-            onPreview={() => setPreviewOpen(true)}
             onEditModule={() => openPlacementForm(workingModule)}
-            onModuleSettings={() => setSettingsOpen(true)}
             onDelete={() => confirmDeleteModule(workingModule)}
             onSave={() => { void persistWorkingModule(); }}
           />
@@ -2197,26 +2304,20 @@ export default function ModuleBuilder() {
               if (file) void importKsbSheet(file);
             }}
           />
+          <input
+            ref={moduleTemplateImportInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={event => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (file) void importTemplate(file);
+            }}
+          />
           </div>
         </div>
 
-        {settingsOpen && (
-          <ModuleSettingsModal
-            module={workingModule}
-            ksbSourceLabels={ksbSourceLabels}
-            saving={saving}
-            saved={!hasUnsavedWorkingModuleChanges}
-            onClose={() => setSettingsOpen(false)}
-            onSave={() => { void persistWorkingModule(); }}
-            onChange={updates => updateWorkingModule(module => ({ ...module, ...updates }))}
-            onCompletionChange={updates => updateWorkingModule(module => ({ ...module, completionCriteria: { ...module.completionCriteria, ...updates } }))}
-            onAdvancedChange={updates => updateWorkingModule(module => ({ ...module, advancedDetails: { ...module.advancedDetails, ...updates } }))}
-            onAddKsb={() => setKsbTarget({ scope: 'module' })}
-            onRemoveKsb={mappingId => updateWorkingModule(module => removeKsbMapping(module, { scope: 'module' }, mappingId))}
-            onUpdateKsbWeight={(mappingId, weight) => updateWorkingModule(module => updateKsbMappingWeight(module, { scope: 'module' }, mappingId, weight))}
-            onUpdateKsbWeightClass={(mappingId, weightClass) => updateWorkingModule(module => updateKsbMappingWeightClass(module, { scope: 'module' }, mappingId, weightClass))}
-          />
-        )}
         <ModuleFormDrawer
           open={Boolean(placementModule)}
           module={placementModule}
@@ -2231,7 +2332,6 @@ export default function ModuleBuilder() {
             await reload({ silent: true });
           }}
         />
-        {previewOpen && <PreviewModal module={workingModule} onClose={() => setPreviewOpen(false)} />}
         {sessionKsbMappingOpen && (
           <SessionKsbMappingModal
             module={workingModule}
@@ -2340,7 +2440,6 @@ export default function ModuleBuilder() {
         {openingModule && (
           <OpeningModuleAlert
             title={openingModule.title}
-            mode={openingModule.mode}
             complete={openingModuleComplete}
           />
         )}
@@ -2400,10 +2499,21 @@ export default function ModuleBuilder() {
                 </p>
               </div>
             </div>
-            <button onClick={() => setCreateOpen(true)} disabled={saving} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:cursor-wait disabled:opacity-70">
-              <AppIcon className="ri-add-line"></AppIcon>
-              New module
-            </button>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {/* Count only once the archive has been read: until then there is
+                  nothing to count, and a badge claiming 0 would be a number the
+                  page has not checked. */}
+              <ArchiveToggleButton
+                active={showArchived}
+                count={archive.loaded ? archive.records.length : null}
+                onToggle={() => setShowArchived(current => !current)}
+                label="View archive"
+              />
+              <button onClick={() => setCreateOpen(true)} disabled={saving} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:cursor-wait disabled:opacity-70">
+                <AppIcon className="ri-add-line"></AppIcon>
+                New module
+              </button>
+            </div>
           </div>
           <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-background-200 pt-3">
             <BuilderStatChip icon="ri-stack-line" label="Modules" value={catalogueModules.length} />
@@ -2428,6 +2538,16 @@ export default function ModuleBuilder() {
           </div>
         )}
 
+        {showArchived ? (
+          <ArchivedModulesPanel
+            records={archive.records}
+            loading={archive.loading}
+            error={archive.error}
+            busyId={archiveBusyId}
+            onRestore={module => { void restoreArchivedModule(module); }}
+            onDelete={module => { void deleteArchivedModule(module); }}
+          />
+        ) : (
         <div className="rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
           <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="min-w-0">
@@ -2533,6 +2653,8 @@ export default function ModuleBuilder() {
                     teamsSummary={teamsByModule.get(normaliseDeepLinkValue(module.catalogueId))}
                     onKsbMap={() => { void openKsbMap(module); }}
                     ksbMapLoading={ksbMapLoadingId === (module.catalogueId || moduleStructureIdentifier(module) || module.title)}
+                    onPreview={() => { void openCataloguePreview(module); }}
+                    previewLoading={previewLoadingId === (module.catalogueId || moduleStructureIdentifier(module) || module.title)}
                     onAssignLearners={() => openAssignLearners(module)}
                     onBuild={() => openModule(module)}
                     onSettings={() => openPlacementForm(module)}
@@ -2618,6 +2740,7 @@ export default function ModuleBuilder() {
             )}
           </div>
         </div>
+        )}
         <ModuleFormDrawer
           open={createOpen}
           defaults={{
@@ -2672,6 +2795,13 @@ export default function ModuleBuilder() {
             }}
           />
         )}
+        {previewCatalogueDisplayModule && (
+          <PreviewModal
+            module={previewCatalogueDisplayModule}
+            sourceLabels={ksbSourceLabels}
+            onClose={() => setPreviewCatalogueModule(null)}
+          />
+        )}
         {assignLearnersModule && (
           <AssignLearnersModal
             moduleId={assignLearnersModule.moduleId}
@@ -2690,7 +2820,6 @@ export default function ModuleBuilder() {
         {openingModule && (
           <OpeningModuleAlert
             title={openingModule.title}
-            mode={openingModule.mode}
             complete={openingModuleComplete}
           />
         )}
@@ -2804,7 +2933,7 @@ function CurriculumHierarchyNav({ programme, cohort, group, current }: {
   );
 }
 
-function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfileValue, scopeLock, standardsLoading, onBack, onProgrammeChange, onKsbProfileChange }: {
+function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfileValue, scopeLock, standardsLoading, onBack, onProgrammeChange, onKsbProfileChange, onExportTemplate, onImportTemplate }: {
   module: ModuleCatalogueItem;
   programmeOptions: string[];
   ksbProfileOptions: Array<{ id: string; label: string }>;
@@ -2816,6 +2945,8 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
   onBack: () => void;
   onProgrammeChange: (programmeName: string) => void;
   onKsbProfileChange: (sourceId: string) => void;
+  onExportTemplate: () => void;
+  onImportTemplate: () => void;
 }) {
   const moduleMetrics = [
     { label: 'Weeks', value: String(module.weekStructure.length), icon: 'ri-stack-line' },
@@ -2842,6 +2973,17 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
         </div>
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center lg:justify-end">
+          <div className="flex items-center gap-1.5">
+            <button onClick={onExportTemplate} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100" title="Download the editable module template">
+              <AppIcon className="ri-file-excel-2-line text-sm"></AppIcon>
+              <span className="hidden xl:inline">Export Template</span>
+              <span className="xl:hidden">Export</span>
+            </button>
+            <button onClick={onImportTemplate} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100" title="Upload an edited module template">
+              <AppIcon className="ri-file-upload-line text-sm"></AppIcon>
+              <span>Import</span>
+            </button>
+          </div>
           <div className="grid grid-cols-3 gap-2">
             {moduleMetrics.map(metric => (
               <div key={metric.label} className="min-w-[78px] rounded-lg border border-background-200 bg-background-100/50 px-2.5 py-1.5">
@@ -2878,14 +3020,11 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
   );
 }
 
-function WorkspaceActionFooter({ saving, saved, onPreview, onEditModule, onModuleSettings, onDelete, onSave }: {
+function WorkspaceActionFooter({ saving, saved, onEditModule, onDelete, onSave }: {
   saving: boolean;
   saved: boolean;
-  onPreview: () => void;
   /** Name, placement, dates and tutor — the shared module form. */
   onEditModule: () => void;
-  /** Completion criteria, advanced details and module-level KSBs. */
-  onModuleSettings: () => void;
   onDelete: () => void;
   onSave: () => void;
 }) {
@@ -2902,10 +3041,8 @@ function WorkspaceActionFooter({ saving, saved, onPreview, onEditModule, onModul
           {stateText}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <IconButton label="Preview" icon="ri-eye-line" onClick={onPreview} />
           <IconButton label="Edit module" icon="ri-edit-line" onClick={onEditModule} />
-          <IconButton label="Module settings" icon="ri-settings-3-line" onClick={onModuleSettings} />
-          <IconButton label="Delete module" icon="ri-delete-bin-line" tone="danger" onClick={onDelete} />
+          <IconButton label="Archive module" icon="ri-archive-line" tone="danger" onClick={onDelete} />
           <button onClick={onSave} disabled={saving} className={`inline-flex h-10 min-w-[120px] items-center justify-center gap-1.5 rounded-lg px-4 text-[12px] font-semibold text-white shadow-sm transition-smooth disabled:opacity-70 whitespace-nowrap ${saved ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-primary-500 hover:bg-primary-600'}`}>
             <AppIcon className={saveButtonIcon}></AppIcon>{saveButtonLabel}
           </button>
@@ -3540,8 +3677,7 @@ function ComponentTypeModal({ onClose, onAdd, title = 'What do you want to add?'
   );
 }
 
-function OpeningModuleAlert({ title, mode, complete }: { title: string; mode: 'builder' | 'settings'; complete: boolean }) {
-  const isSettings = mode === 'settings';
+function OpeningModuleAlert({ title, complete }: { title: string; complete: boolean }) {
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" aria-live="polite" aria-busy="true">
       <div className="w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-background-50 text-center shadow-2xl">
@@ -3549,16 +3685,14 @@ function OpeningModuleAlert({ title, mode, complete }: { title: string; mode: 'b
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border-4 border-primary-100 bg-primary-50 text-primary-600">
             <AppIcon className="ri-loader-4-line animate-spin text-3xl"></AppIcon>
           </div>
-          <h3 className="mt-4 text-lg font-heading font-bold text-foreground-950">
-            {isSettings ? 'Opening module settings...' : 'Opening module builder...'}
-          </h3>
+          <h3 className="mt-4 text-lg font-heading font-bold text-foreground-950">Opening module builder...</h3>
           <p className="mx-auto mt-2 max-w-xs text-[13px] leading-relaxed text-foreground-500">
             Loading <span className="font-semibold text-foreground-900">{title}</span> and preparing the authoring workspace.
           </p>
           <div className="mt-5 rounded-xl border border-background-200 bg-background-100/70 p-3 text-left">
             <div className="flex items-center gap-2 text-[12px] font-semibold text-foreground-700">
-              <AppIcon className={`${isSettings ? 'ri-settings-3-line' : 'ri-layout-4-line'} text-primary-600`}></AppIcon>
-              {isSettings ? 'Preparing settings panel...' : 'Loading module structure...'}
+              <AppIcon className="ri-layout-4-line text-primary-600"></AppIcon>
+              Loading module structure...
             </div>
             <LoadingProgressBar complete={complete} />
           </div>
@@ -3763,7 +3897,7 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
 
         <EditorSection title="Completion and reward" icon="ri-checkbox-circle-line">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <NumberInput label="Expected OTJH hours" value={component.expectedOtjh} min={0} step={0.25} onChange={value => onChange({ expectedOtjh: value })} error={fieldError('expectedOtjh')} />
+            <DurationInput label="Expected OTJH" value={component.expectedOtjh} onChange={value => onChange({ expectedOtjh: value })} error={fieldError('expectedOtjh')} />
             <NumberInput label="Points" value={component.points} min={0} step={1} onChange={value => onChange({ points: value })} error={fieldError('points')} />
           </div>
         </EditorSection>
@@ -4755,115 +4889,6 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, ksbP
   );
 }
 
-function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, onSave, onChange, onCompletionChange, onAdvancedChange, onAddKsb, onRemoveKsb, onUpdateKsbWeight, onUpdateKsbWeightClass }: {
-  module: ModuleCatalogueItem;
-  ksbSourceLabels: Record<string, string>;
-  saving: boolean;
-  saved: boolean;
-  onClose: () => void;
-  onSave: () => void;
-  onChange: (updates: Partial<ModuleCatalogueItem>) => void;
-  onCompletionChange: (updates: Partial<CompletionCriteria>) => void;
-  onAdvancedChange: (updates: Partial<AdvancedModuleDetails>) => void;
-  onAddKsb: () => void;
-  onRemoveKsb: (mappingId: string) => void;
-  onUpdateKsbWeight: (mappingId: string, weight: number) => void;
-  onUpdateKsbWeightClass: (mappingId: string, weightClass: KsbWeightClass) => void;
-}) {
-  const checklist = calculateQualityChecklist(module);
-  const moduleWeightSummary = ksbWeightSummary(module.moduleKsbMappings);
-  const saveButtonIcon = saving ? 'ri-loader-4-line animate-spin' : saved ? 'ri-check-line' : 'ri-save-3-line';
-  const saveButtonLabel = saving ? 'Saving...' : saved ? 'Saved' : 'Save changes';
-  return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 backdrop-blur-sm p-4" onClick={saving ? undefined : onClose}>
-      <div className="flex w-full max-w-6xl max-h-[92vh] flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
-        <div className="shrink-0 px-5 py-4 bg-primary-950 text-white flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-heading font-bold text-white">Module settings</h3>
-            <p className="mt-1 text-[12px] text-white/70">{module.catalogueId} - {module.qualityScore}% quality</p>
-          </div>
-          <button onClick={onClose} disabled={saving} className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 disabled:opacity-50"><AppIcon className="ri-close-line"></AppIcon></button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-5 space-y-5">
-          <SettingsSection title="Basic details">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <TextInput label="Module title" value={module.title} onChange={value => onChange({ title: value })} />
-              <SelectInput label="Status" value={module.status} options={['draft', 'review', 'published']} onChange={value => onChange({ status: value })} />
-              <NumberInput label="Weeks" value={module.weeks} min={1} step={1} onChange={value => resizeWeeks(module, value, onChange)} />
-              {/* Derived, never typed: the module total is the sum of every
-                  component's Expected OTJH across every week. It was an editable
-                  box, but the save recomputes it from the components anyway, so
-                  anything typed here was discarded on the next save. */}
-              <ReadOnlyInput label="Total OTJH hours" value={formatHoursMinutes(module.totalOtjh)} />
-            </div>
-            <TextArea label="Short description" value={module.description} onChange={value => onChange({ description: value })} rows={3} />
-          </SettingsSection>
-
-          <SettingsSection title="KSBs targeted by this module">
-            <KsbWeightSummary summary={moduleWeightSummary} />
-            <button onClick={onAddKsb} className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-primary-500 px-3 text-[11px] font-semibold text-white transition-smooth hover:bg-primary-600">
-              <AppIcon className="ri-add-line"></AppIcon>
-              Add KSBs
-            </button>
-            <KsbCards title="KSBs" mappings={module.moduleKsbMappings} sourceLabels={ksbSourceLabels} onRemove={onRemoveKsb} onWeightChange={onUpdateKsbWeight} onWeightClassChange={onUpdateKsbWeightClass} />
-          </SettingsSection>
-
-          <SettingsSection title="Compliance/context fields">
-            <TextArea label="Background" value={module.background} onChange={value => onChange({ background: value })} rows={3} />
-            <TextArea label="EPA Requirements Covered" value={module.epaRequirements.join('\n')} onChange={value => onChange({ epaRequirements: lines(value) })} rows={4} />
-            <TextArea label="Professional Qualification Outcomes" value={module.qualificationOutcomes.join('\n')} onChange={value => onChange({ qualificationOutcomes: lines(value) })} rows={4} />
-          </SettingsSection>
-
-          <SettingsSection title="Completion criteria">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              <Checkbox label="Quizzes completed" checked={module.completionCriteria.quizzesCompletedRequired} onChange={value => onCompletionChange({ quizzesCompletedRequired: value })} />
-              <Checkbox label="Checkpoints completed" checked={module.completionCriteria.checkpointsCompletedRequired} onChange={value => onCompletionChange({ checkpointsCompletedRequired: value })} />
-              <Checkbox label="Accepted average score on quizzes and checkpoints" checked={module.completionCriteria.averageScoreRequiredEnabled} onChange={value => onCompletionChange({ averageScoreRequiredEnabled: value })} />
-              <NumberInput label="Average score percentage" value={module.completionCriteria.averageScoreRequired} min={0} max={100} step={1} onChange={value => onCompletionChange({ averageScoreRequired: value })} />
-              <Checkbox label="Accepted total score across quizzes and checkpoints" checked={module.completionCriteria.totalScoreRequiredEnabled} onChange={value => onCompletionChange({ totalScoreRequiredEnabled: value })} />
-              <NumberInput label="Total score points" value={module.completionCriteria.totalScoreRequired} min={0} step={1} onChange={value => onCompletionChange({ totalScoreRequired: value })} />
-            </div>
-            <TextArea label="Additional notes" value={module.completionCriteria.additionalNotes} onChange={value => onCompletionChange({ additionalNotes: value })} rows={3} />
-          </SettingsSection>
-
-          <SettingsSection title="Advanced module details">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <TextArea label="Intent" value={module.advancedDetails.intent} onChange={value => onAdvancedChange({ intent: value })} rows={3} />
-              <TextArea label="Learner benefit" value={module.advancedDetails.learnerBenefit} onChange={value => onAdvancedChange({ learnerBenefit: value })} rows={3} />
-              <TextArea label="Employer benefit" value={module.advancedDetails.employerBenefit} onChange={value => onAdvancedChange({ employerBenefit: value })} rows={3} />
-              <TextArea label="Sequence purpose" value={module.advancedDetails.sequencePurpose} onChange={value => onAdvancedChange({ sequencePurpose: value })} rows={3} />
-            </div>
-          </SettingsSection>
-
-          <SettingsSection title="Quality check">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              {checklist.map(item => (
-                <div key={item.label} className={`rounded-xl border px-3 py-2 flex items-center gap-2 ${item.passed ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'}`}>
-                  <AppIcon className={item.passed ? 'ri-checkbox-circle-line' : 'ri-error-warning-line'}></AppIcon>
-                  <span className="text-[12px] font-semibold">{item.label}</span>
-                </div>
-              ))}
-            </div>
-          </SettingsSection>
-        </div>
-        <div className="shrink-0 border-t border-background-200 bg-background-50 px-5 py-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-[12px] text-foreground-500">Changes here update the draft. Use Save changes to persist them.</p>
-            <div className="flex items-center justify-end gap-2">
-              <button type="button" onClick={onClose} disabled={saving} className="rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-semibold text-foreground-700 transition-smooth hover:bg-background-100 disabled:opacity-60">
-                Close
-              </button>
-              <button type="button" onClick={onSave} disabled={saving} className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold text-white transition-smooth disabled:opacity-70 ${saved ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-primary-500 hover:bg-primary-600'}`}>
-                <AppIcon className={saveButtonIcon}></AppIcon>{saveButtonLabel}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function SessionKsbMappingModal({ module, sourceLabels, onClose }: {
   module: ModuleCatalogueItem;
   sourceLabels: Record<string, string>;
@@ -5833,7 +5858,140 @@ function CreateModuleModal({ programmeOptions, onClose, onCreate }: { programmeO
   );
 }
 
-function PreviewModal({ module, onClose }: { module: ModuleCatalogueItem; onClose: () => void }) {
+/** A component's own KSBs, plus any week-level KSB not already covered at component level -- the same "effective" rule the editor's readiness panel uses. */
+function effectiveComponentKsbMappings(component: ModuleComponent, week: ModuleWeek) {
+  const inheritedWeekMappings = uniqueMappings(week.ksbMappings).filter(weekMapping => (
+    !component.ksbMappings.some(componentMapping => String(componentMapping.code || '').trim().toUpperCase() === String(weekMapping.code || '').trim().toUpperCase())
+  ));
+  return uniqueMappings([...component.ksbMappings, ...inheritedWeekMappings]);
+}
+
+/** "videoUrl" -> "Video url". Settings keys have no shared label map, so this is the fallback for a read-only dump. */
+function settingKeyLabel(key: string): string {
+  const spaced = key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/_/g, ' ').toLowerCase();
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+function settingValueText(value: ComponentSettingValue): string {
+  if (value === null || value === undefined || value === '') return '';
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (Array.isArray(value)) return value.length ? value.map(item => String(item)).join(', ') : '';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+/**
+ * A read-only replay of the same component-editor chrome authors see while
+ * inserting a component -- icon badge, group label, title in the header bar --
+ * so viewing a component's full details feels like the popup that created it,
+ * opened as its own window on top of the Preview rather than swapped in place.
+ */
+function PreviewComponentModal({ component, week, sourceLabels, onClose }: { component: ModuleComponent; week: ModuleWeek; sourceLabels: Record<string, string>; onClose: () => void }) {
+  const mappings = effectiveComponentKsbMappings(component, week);
+  const settingEntries = Object.entries(component.settings || {})
+    .map(([key, value]) => [key, settingValueText(value as ComponentSettingValue)] as const)
+    .filter(([, text]) => text !== '');
+  const flags = [
+    { label: 'Reflection required', on: component.reflectionRequired },
+    { label: 'Workplace evidence required', on: component.workplaceEvidenceRequired },
+    { label: 'Tutor validation required', on: component.tutorValidationRequired },
+    { label: 'Coach validation required', on: component.coachValidationRequired },
+  ];
+  const definition = componentTypes.find(item => item.type === component.type);
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="w-full max-w-2xl rounded-2xl bg-background-50 shadow-2xl overflow-hidden" onClick={event => event.stopPropagation()}>
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-background-200 bg-primary-50">
+          <span className="grid place-items-center w-11 h-11 shrink-0 rounded-xl bg-primary-600 text-white">
+            <AppIcon className={`${definition?.icon || 'ri-file-line'} text-xl`}></AppIcon>
+          </span>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-primary-700">{definition?.group || weekPlacementLabel(week, ': ')}</p>
+            <p className="text-[16px] font-heading font-black text-foreground-950 leading-tight truncate">{readableComponentTitle(component.title)}</p>
+          </div>
+          <button onClick={onClose} className="grid place-items-center w-9 h-9 shrink-0 rounded-lg text-foreground-500 hover:bg-background-100 hover:text-foreground-900 transition-smooth">
+            <AppIcon className="ri-close-line text-lg"></AppIcon>
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
+          <p className="text-[11px] text-foreground-400">{weekPlacementLabel(week, ': ')} · {definition?.label || component.type}</p>
+          {component.description && <p className="text-[13px] text-foreground-700 whitespace-pre-wrap">{component.description}</p>}
+
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <MiniMetric label="OTJH" value={formatHoursMinutes(component.expectedOtjh)} />
+            <MiniMetric label="Points" value={String(component.points)} />
+            <MiniMetric label="KSBs" value={String(mappings.length)} />
+            <MiniMetric label="Settings" value={String(settingEntries.length)} />
+          </div>
+
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400 mb-1">Requirements</p>
+            <div className="flex flex-wrap gap-1.5">
+              {flags.map(flag => (
+                <span key={flag.label} className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${flag.on ? 'bg-emerald-100 text-emerald-700' : 'bg-background-100 text-foreground-400'}`}>
+                  {flag.on ? <AppIcon className="ri-checkbox-circle-fill mr-1"></AppIcon> : <AppIcon className="ri-close-circle-line mr-1"></AppIcon>}
+                  {flag.label}
+                </span>
+              ))}
+            </div>
+            {component.reflectionRequired && component.reflectionQuestion && (
+              <p className="mt-2 text-[12px] text-foreground-600"><span className="font-semibold">Reflection question:</span> {component.reflectionQuestion}</p>
+            )}
+          </div>
+
+          {!!mappings.length && (
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400 mb-1">KSBs applied</p>
+              <div className="space-y-1.5">
+                {mappings.map(mapping => (
+                  <div key={mapping.id} className={`rounded-lg border px-3 py-2 text-[12px] ${ksbCodeChipClass(mapping.code)}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="font-bold">{mapping.code}</span>
+                      <span className="flex items-center gap-1.5 text-[10px] font-semibold">
+                        <span className="rounded-full bg-white/70 px-1.5 py-0.5">{Number(mapping.weight || 0)}%</span>
+                        <span className="rounded-full bg-white/70 px-1.5 py-0.5">{mapping.weightClass}</span>
+                      </span>
+                    </div>
+                    {mapping.description && <p className="mt-1 text-[11px]">{mapping.description}</p>}
+                    <p className="mt-1 text-[10px] font-semibold opacity-80">{ksbSourceLabel(mapping, sourceLabels)}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!!settingEntries.length && (
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400 mb-1">Type settings</p>
+              <div className="rounded-lg border border-background-200 divide-y divide-background-200">
+                {settingEntries.map(([key, text]) => (
+                  <div key={key} className="flex items-start justify-between gap-3 px-3 py-1.5 text-[12px]">
+                    <span className="text-foreground-400">{settingKeyLabel(key)}</span>
+                    <span className="text-right text-foreground-800 break-all">{text}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PreviewModal({ module, sourceLabels, onClose }: { module: ModuleCatalogueItem; sourceLabels: Record<string, string>; onClose: () => void }) {
+  const [collapsedWeekIds, setCollapsedWeekIds] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<{ component: ModuleComponent; week: ModuleWeek } | null>(null);
+  const toggleWeek = (weekId: string) => {
+    setCollapsedWeekIds(previous => {
+      const next = new Set(previous);
+      if (next.has(weekId)) next.delete(weekId); else next.add(weekId);
+      return next;
+    });
+  };
+
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="w-full max-w-3xl rounded-2xl bg-background-50 shadow-2xl overflow-hidden" onClick={event => event.stopPropagation()}>
@@ -5846,17 +6004,47 @@ function PreviewModal({ module, onClose }: { module: ModuleCatalogueItem; onClos
             <h2 className="text-lg font-heading font-bold text-foreground-950">{module.title}</h2>
             <p className="text-[12px] text-foreground-500">{module.description || 'No short description set.'}</p>
           </div>
-          {module.weekStructure.map(week => (
-            <div key={week.id} className="rounded-xl border border-background-200 bg-background-100/50 p-4">
-              <h3 className="text-sm font-bold text-foreground-900">{weekPlacementLabel(week, ': ')}</h3>
-              <p className="text-[11px] text-foreground-500 mt-1">{week.summary}</p>
-              <div className="mt-3 space-y-2">
-                {week.components.map(component => <div key={component.id} className="rounded-lg bg-background-50 border border-background-200 px-3 py-2 text-[12px] text-foreground-700">{readableComponentTitle(component.title)} - {formatHoursMinutes(component.expectedOtjh)} OTJH - {component.points} pts</div>)}
+          {module.weekStructure.map(week => {
+            const collapsed = collapsedWeekIds.has(week.id);
+            return (
+              <div key={week.id} className="rounded-xl border border-background-200 bg-background-100/50 p-4">
+                <button onClick={() => toggleWeek(week.id)} className="flex w-full items-center justify-between gap-2 text-left">
+                  <span>
+                    <h3 className="text-sm font-bold text-foreground-900">{weekPlacementLabel(week, ': ')}</h3>
+                    <p className="text-[11px] text-foreground-500 mt-1">{week.summary}</p>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2 text-[11px] font-semibold text-foreground-400">
+                    {week.components.length} component{week.components.length === 1 ? '' : 's'}
+                    <AppIcon className={collapsed ? 'ri-arrow-down-s-line text-base' : 'ri-arrow-up-s-line text-base'}></AppIcon>
+                  </span>
+                </button>
+                {!collapsed && (
+                  <div className="mt-3 space-y-2">
+                    {week.components.map(component => (
+                      <button
+                        key={component.id}
+                        onClick={() => setSelected({ component, week })}
+                        className="block w-full rounded-lg bg-background-50 border border-background-200 px-3 py-2 text-left text-[12px] text-foreground-700 transition-smooth hover:border-primary-300 hover:bg-primary-50/40"
+                      >
+                        <div>{readableComponentTitle(component.title)} - {formatHoursMinutes(component.expectedOtjh)} OTJH - {component.points} pts</div>
+                        <ComponentKsbChips mappings={effectiveComponentKsbMappings(component, week)} sourceLabels={sourceLabels} />
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
+      {selected && (
+        <PreviewComponentModal
+          component={selected.component}
+          week={selected.week}
+          sourceLabels={sourceLabels}
+          onClose={() => setSelected(null)}
+        />
+      )}
     </div>
   );
 }
@@ -5879,7 +6067,7 @@ function ComponentKsbChips({ mappings, sourceLabels }: { mappings: KsbMapping[];
         >
           {mapping.code} applied
           <span className="rounded-full bg-white/70 px-1 text-[8px]">{Number(mapping.weight || 0)}%</span>
-          <span className="max-w-[120px] truncate rounded-full bg-white/70 px-1 text-[8px] font-semibold">{ksbSourceLabel(mapping, sourceLabels)}</span>
+          <span className="whitespace-nowrap rounded-full bg-white/70 px-1 text-[8px] font-semibold">{ksbSourceLabel(mapping, sourceLabels)}</span>
         </span>
       ))}
     </span>
@@ -6975,11 +7163,139 @@ function PickerFilter({ label, value, options, onChange, optionLabel }: {
   );
 }
 
+/**
+ * The module archive, in the catalogue's own place on the page.
+ *
+ * It replaces the catalogue panel rather than sitting beside it, for the reason
+ * the Cohorts and Groups archives do the same: the filters above belong to the
+ * live list and mean nothing here, and two module lists on one screen is exactly
+ * the confusion the archive is meant to clear up.
+ *
+ * Restore and Delete permanently are deliberately not the matched pair they
+ * look like. One is reversible and the other is the only permanent delete in
+ * Curriculum Studio that destroys authored content, so they are worded and
+ * coloured apart, and the notice above says so once for the whole list.
+ */
+function ArchivedModulesPanel({ records, loading, error, busyId, onRestore, onDelete }: {
+  records: CurriculumArchivedModule[];
+  loading: boolean;
+  error: string | null;
+  /** The module a restore or a delete is currently running for. */
+  busyId: string | null;
+  onRestore: (module: CurriculumArchivedModule) => void;
+  onDelete: (module: CurriculumArchivedModule) => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
+      <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-[13px] font-bold text-foreground-950">Archived modules</p>
+          <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">
+            {records.length} archived
+          </span>
+        </div>
+        <ArchiveNotice>
+          Restoring brings a module back into the catalogue with the weeks and components archived
+          with it. Deleting permanently removes those from the database for good - it is the one
+          delete in Curriculum Studio that destroys authored content. Learner accounts and progress
+          are never touched by either.
+        </ArchiveNotice>
+      </div>
+      <div className="max-h-[calc(100vh-270px)] min-h-[480px] overflow-auto bg-background-100/35 p-3">
+        {loading && !records.length ? (
+          <ModuleListSkeleton />
+        ) : error ? (
+          <div className="rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
+            {error}
+          </div>
+        ) : records.length ? (
+          <div className="space-y-3">
+            {records.map(module => {
+              const busy = busyId === module.id;
+              // Archived because its programme was, rather than on its own: the
+              // programme is what has to come back, and it brings this with it.
+              const viaProgramme = Boolean(module.archivedViaParent) || module.programmeArchived;
+              return (
+                <div key={module.id} className="rounded-xl border border-background-200 bg-background-50 px-4 py-3 shadow-sm">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="min-w-0">
+                      <p className="truncate text-[13px] font-bold text-foreground-900">{module.title || module.id}</p>
+                      <p className="mt-1 truncate text-[11px] text-foreground-500">
+                        {[module.programme, module.cohort, module.group].filter(Boolean).join(' / ') || 'No delivery scope'}
+                      </p>
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">
+                          {module.weeks} week{module.weeks === 1 ? '' : 's'}
+                        </span>
+                        <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">
+                          {module.components} component{module.components === 1 ? '' : 's'}
+                        </span>
+                        {module.archivedAt && (
+                          <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-800">
+                            Archived {formatDateLabel(module.archivedAt)}
+                          </span>
+                        )}
+                      </div>
+                      {viaProgramme && (
+                        <p className="mt-2 text-[11px] font-semibold text-amber-800">
+                          Archived with its programme. Restore the programme and this module comes back with it.
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onRestore(module)}
+                        disabled={busy || module.programmeArchived}
+                        title={module.programmeArchived
+                          ? `${module.programme || 'Its programme'} is archived too - restore the programme and this module comes back with it`
+                          : 'Put this module back in the catalogue, with the weeks and components archived with it'}
+                        className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:border-background-200 disabled:bg-background-100 disabled:text-foreground-300"
+                      >
+                        <AppIcon className={busy ? 'ri-loader-4-line animate-spin' : 'ri-arrow-go-back-line'}></AppIcon>
+                        Restore module
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDelete(module)}
+                        disabled={busy}
+                        title="Remove this module, its weeks and its components from the database for good"
+                        className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 text-[12px] font-bold text-red-700 transition-smooth hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <AppIcon className="ri-delete-bin-line"></AppIcon>
+                        Delete permanently
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center gap-3 px-4 py-16 text-center">
+            <span className="grid h-14 w-14 place-items-center rounded-full bg-primary-50 text-primary-500">
+              <AppIcon className="ri-archive-line text-2xl"></AppIcon>
+            </span>
+            <div>
+              <p className="text-[13px] font-semibold text-foreground-700">Nothing archived</p>
+              <p className="mt-1 max-w-xs text-[12px] text-foreground-400">
+                Archiving a module from the catalogue puts it here, where it can be restored or removed for good.
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ModuleCatalogueCard({
   module,
   teamsSummary,
   onKsbMap,
   ksbMapLoading,
+  onPreview,
+  previewLoading,
   onAssignLearners,
   onBuild,
   onSettings,
@@ -6991,6 +7307,8 @@ function ModuleCatalogueCard({
   teamsSummary?: CurriculumTeamsMeetingSummary;
   onKsbMap: () => void;
   ksbMapLoading: boolean;
+  onPreview: () => void;
+  previewLoading: boolean;
   onAssignLearners: () => void;
   onBuild: () => void;
   onSettings: () => void;
@@ -7067,6 +7385,16 @@ function ModuleCatalogueCard({
               Open delivery
             </Link>
           )}
+          <button
+            type="button"
+            onClick={onPreview}
+            disabled={previewLoading}
+            aria-busy={previewLoading}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-100 focus:ring-offset-1 disabled:cursor-wait disabled:opacity-70"
+          >
+            <AppIcon name={previewLoading ? 'ri-loader-4-line' : 'ri-eye-line'} className={previewLoading ? 'animate-spin' : ''} size={15}></AppIcon>
+            {previewLoading ? 'Loading preview...' : 'Preview'}
+          </button>
           {/* Beside Open delivery, and shown whether or not the module has a
               delivery row: who is taught a module is their learning plan, which
               exists before the module is scheduled anywhere. */}
@@ -7091,10 +7419,30 @@ function ModuleCatalogueCard({
             <AppIcon name="ri-hammer-line" size={15}></AppIcon>
             Edit components
           </button>
-          <ModuleCardActionButton label="Edit module" icon="ri-edit-line" onClick={onSettings} />
-          <ModuleCardActionButton label={coverImage ? 'Change image' : 'Upload image'} icon="ri-image-add-line" onClick={onCover} />
-          <ModuleCardActionButton label="Duplicate module" icon="ri-file-copy-line" onClick={onDuplicate} />
-          <ModuleCardActionButton label="Delete module" icon="ri-delete-bin-line" tone="danger" onClick={onDelete} />
+          <ModuleCardActionButton
+            label="Edit module"
+            icon="ri-edit-line"
+            title="Edit this module, its programme, cohort and group"
+            onClick={onSettings}
+          />
+          <ModuleCardActionButton
+            label={coverImage ? 'Change image' : 'Upload image'}
+            icon="ri-image-add-line"
+            title="Set the cover image learners see on this module"
+            onClick={onCover}
+          />
+          <ModuleCardActionButton
+            label="Duplicate module"
+            icon="ri-file-copy-line"
+            title="Copy this module, its weeks and its components into a new module"
+            onClick={onDuplicate}
+          />
+          <ModuleCardActionButton
+            label="Archive module"
+            icon="ri-archive-line"
+            title="Hide this module from the active list. Nothing is deleted, and it can be restored from the archive"
+            onClick={onDelete}
+          />
         </div>
       </div>
     </article>
@@ -7126,17 +7474,19 @@ function ModuleCoverDrawer({ module, onClose, onSaved }: {
   </EntityDrawer>;
 }
 
-function ModuleCardActionButton({ label, icon, onClick, tone = 'default' }: { label: string; icon: string; onClick: () => void; tone?: 'default' | 'danger' }) {
-  const classes = tone === 'danger'
-    ? 'border-red-100 bg-red-50 text-red-600 hover:border-red-200 hover:bg-red-100 hover:text-red-700 focus:ring-red-100'
-    : 'border-background-200 bg-background-50 text-foreground-700 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:ring-primary-100';
+/** The row's secondary actions, drawn exactly like the Groups list's Edit and
+ *  Archive pair (NamedActions): one neutral shape for all of them, the short
+ *  word on the button and the whole sentence in its title. Archive is not
+ *  painted red here — it hides a module, it does not delete one. */
+function ModuleCardActionButton({ label, icon, title, onClick }: { label: string; icon: string; title: string; onClick: () => void }) {
   return (
     <button
       type="button"
+      title={title}
       onClick={onClick}
-      className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-[11px] font-bold transition-smooth focus:outline-none focus:ring-2 focus:ring-offset-1 ${classes}`}
+      className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
     >
-      <AppIcon name={icon} size={15}></AppIcon>
+      <AppIcon name={icon} className="text-sm"></AppIcon>
       {label}
     </button>
   );
@@ -7909,19 +8259,17 @@ function moduleStructureIdentifier(module: ModuleCatalogueItem) {
   return sourceId.startsWith('training-module-') ? sourceId : module.catalogueId;
 }
 
-function moduleBuilderDeepLinkTarget(module: ModuleCatalogueItem, params: URLSearchParams): { selection: Selection | null; openSettings: boolean } {
-  const focus = String(params.get('focus') || '').trim();
+function moduleBuilderDeepLinkTarget(module: ModuleCatalogueItem, params: URLSearchParams): { selection: Selection | null } {
   const weekId = String(params.get('week') || params.get('weekId') || '').trim();
   const componentId = String(params.get('component') || params.get('componentId') || '').trim();
-  const openSettings = focus === 'module-settings' || params.get('settings') === '1';
   if (componentId) {
     const week = module.weekStructure.find(item => item.components.some(component => component.id === componentId));
-    if (week) return { selection: { kind: 'component', weekId: week.id, componentId }, openSettings };
+    if (week) return { selection: { kind: 'component', weekId: week.id, componentId } };
   }
   if (weekId && module.weekStructure.some(week => week.id === weekId)) {
-    return { selection: { kind: 'week', weekId }, openSettings };
+    return { selection: { kind: 'week', weekId } };
   }
-  return { selection: null, openSettings };
+  return { selection: null };
 }
 
 function sortCatalogueOptionsForPicker(a: ModuleCatalogueItem, b: ModuleCatalogueItem) {
@@ -7994,8 +8342,9 @@ function IconButton({ label, icon, onClick, tone = 'default' }: { label: string;
     ? 'bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-700'
     : 'bg-background-100 text-foreground-600 hover:bg-primary-50 hover:text-primary-700';
   return (
-    <button onClick={onClick} title={label} aria-label={label} className={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition-smooth ${classes}`}>
+    <button onClick={onClick} className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-semibold whitespace-nowrap transition-smooth ${classes}`}>
       <AppIcon name={icon} size={15}></AppIcon>
+      {label}
     </button>
   );
 }

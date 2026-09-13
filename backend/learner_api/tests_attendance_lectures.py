@@ -262,7 +262,7 @@ class AttendanceLectureTests(SimpleTestCase):
 class AttendanceAbsenceTests(SimpleTestCase):
     def test_reason_only_report_saves_without_optional_evidence(self):
         request = RequestFactory().post('/', {'sessionId': 'teams:future', 'sessionTitle': 'Lecture',
-                                             'sessionDate': '2026-10-01', 'reasonCategory': 'illness'})
+                                             'sessionDate': '2026-10-01', 'reasonCategory': 'illness', 'recoveryMethod': 'recorded'})
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         with patch('learner_api.absence_reports._source_learner', return_value=source), \
              patch('learner_api.absence_reports._resolve_absent_attendance', return_value=8000000000000000001), \
@@ -276,10 +276,12 @@ class AttendanceAbsenceTests(SimpleTestCase):
         self.assertEqual(response.status_code, 201)
         self.assertFalse(manager.create.call_args.kwargs['evidence_provided'])
         self.assertEqual(manager.create.call_args.kwargs['evidence_kind'], 'none')
+        self.assertEqual(manager.create.call_args.kwargs['recovery_method'], 'recorded')
+        self.assertIsNone(manager.create.call_args.kwargs['catchup_event_key'])
 
     def test_duplicate_report_is_rejected_before_writing(self):
         request = RequestFactory().post('/', {'sessionId': 'same', 'sessionTitle': 'Lecture',
-                                             'sessionDate': '2026-09-01', 'reasonCategory': 'illness'})
+                                             'sessionDate': '2026-09-01', 'reasonCategory': 'illness', 'recoveryMethod': 'recorded'})
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         with patch('learner_api.absence_reports._source_learner', return_value=source), \
              patch('learner_api.absence_reports._resolve_absent_attendance', return_value=123), \

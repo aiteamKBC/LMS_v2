@@ -160,6 +160,8 @@ Use the existing viewer appropriate to each type. A whole week in one iframe doe
 
 ## Current implementation limits
 
+For the reported SharePoint `CannotVerifyCopySource` error, use `TRANSFER_FIX_EN_GB.md` and the standalone `upload_material_file.py` helper. It uploads a downloaded local file directly and verifies the destination bytes. It does not download from SharePoint itself, import a week, or change the LMS's production upload endpoints.
+
 - The existing upload limit is `300 * 1024 * 1024` bytes, displayed as 300 MB.
 - Reading and assignment uploads accept `.txt`, `.doc`, `.docx`, `.pdf`, `.rtf`, `.odt`. PowerPoint accepts `.ppt`, `.pptx`, `.pps`, `.ppsx`, `.pdf`. Podcast accepts `.mp3`, `.m4a`, `.mp4`, `.wav`, `.aac`, `.ogg`, `.oga`, `.webm`.
 - The current curriculum uploader does not accept the `video` component type or standalone HTML packages. Do not mislabel video as a podcast to bypass it. If tools cannot generate a real media asset, deliver its script and report the asset as missing.
@@ -185,6 +187,8 @@ No target-specific INSERT/UPDATE SQL is supplied yet because the manager has not
 
 ## Companion files and implementation evidence
 
+- `TRANSFER_FIX_EN_GB.md`: instructions for downloading the actual source file and uploading its bytes.
+- `upload_material_file.py`: preview and verified direct-file upload helper; no database access.
 - `week-package.example.json`: proposed manifest and sample component structures.
 - `inspect-target.sql`: read-only module discovery and placement checks.
 - `schema-reference.json`: database catalogue snapshot, containing no learner data or credentials.

@@ -165,13 +165,18 @@ def recurrence_label(interval, unit):
     return f'Every {interval} {noun}{"" if interval == 1 else "s"}'
 
 
-def generate_occurrences(anchor, interval, unit, window_start, window_end, *, max_count=500):
+def generate_occurrences(anchor, interval, unit, window_start, window_end, *, max_count=500, occurrence_limit=None):
     """RAW occurrence dates for one recurrence rule, bounded to a window.
 
     Never an infinite sequence: capped both by the window and by max_count.
     Jumps close to window_start first rather than iterating from the anchor
     one step at a time, so an old anchor date does not cost one loop
     iteration per elapsed interval.
+
+    ``occurrence_limit``, when given, is the total number of occurrences the
+    template ever produces (counted from ``anchor`` as occurrence #1) -- the
+    Nth-and-later occurrence is never projected, even if the window would
+    otherwise include it.
     """
     if not anchor or interval <= 0 or window_start > window_end:
         return []
@@ -183,6 +188,8 @@ def generate_occurrences(anchor, interval, unit, window_start, window_end, *, ma
         occurrences = []
         step = start_step
         while len(occurrences) < max_count:
+            if occurrence_limit is not None and step >= occurrence_limit:
+                break
             occ = anchor + timedelta(days=step_days * step)
             if occ > window_end:
                 break
@@ -197,6 +204,8 @@ def generate_occurrences(anchor, interval, unit, window_start, window_end, *, ma
     occurrences = []
     step = start_step
     while len(occurrences) < max_count:
+        if occurrence_limit is not None and step >= occurrence_limit:
+            break
         occ = add_calendar_months(anchor, interval * step)
         if occ > window_end:
             break
@@ -233,7 +242,8 @@ def _raw_occurrences_for_programme(programme_id, window_start, window_end):
         anchor = curriculum_views.parse_date(row.get('schedule_anchor_date')) or curriculum_views.parse_date(row.get('created_at'))
         interval = curriculum_views.parse_int(row.get('recurrence_interval'), 1)
         unit = row.get('recurrence_unit') or 'weeks'
-        for occ in generate_occurrences(anchor, interval, unit, window_start, window_end):
+        occurrence_limit = row.get('occurrence_count')
+        for occ in generate_occurrences(anchor, interval, unit, window_start, window_end, occurrence_limit=occurrence_limit):
             items.append({
                 'reviewId': row.get('id'),
                 'reviewName': row.get('name') or '',

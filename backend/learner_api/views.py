@@ -21,6 +21,7 @@ import json
 import logging
 
 from django.db import DatabaseError, transaction
+from django.db.models import BooleanField, Case, Q, Value, When
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -706,10 +707,37 @@ def enrolment_users(request):
                 f"Invalid learnerType: {wanted!r}. Allowed: {', '.join(LEARNER_TYPE_CHOICES)}", 400
             )
         try:
-            # Loading the directory must not load everyone's plans or run
-            # hundreds of status checks/writes. Individual record reads,
-            # signing actions and the daily sweep already handle progression.
-            rows = [to_list_row(u) for u in learner_directory_queryset(wanted)]
+            qs = EnrolmentUser.all_learners.all()
+            if wanted == "apprenticeship":
+                # Rows predating the merge have a NULL type and are apprenticeship.
+                qs = qs.exclude(learner_type="commercial")
+            elif wanted == "commercial":
+                qs = qs.filter(learner_type="commercial")
+            # The enrolment table contains many large JSON/text columns. The
+            # directory only needs this small projection; selecting every
+            # column for all learners made the request exceed PostgreSQL's
+            # statement timeout before the rows could be rendered.
+            learners = list(qs.only(
+                "id", "uuid", "username", "type", "email", "group", "status",
+                "programme_status", "programme",
+                "cohort", "learner_type", "organization",
+            ).annotate(
+                _has_learning_plan=Case(
+                    When(
+                        Q(learning_plan__isnull=False) | Q(training_plan__isnull=False),
+                        then=Value(True),
+                    ),
+                    default=Value(False),
+                    output_field=BooleanField(),
+                ),
+            ).order_by("id"))
+            # Keep this collection read bounded: advancing every learner here
+            # performs up to four compliance-document queries per row and can
+            # exceed the database statement timeout on a directory-sized list.
+            # Progression still runs on document/signature and learner updates,
+            # and the scheduled ``advance_learner_statuses`` sweep handles
+            # date-driven transitions between reads.
+            rows = [to_list_row(u) for u in learners]
             # Whether each person already has a sign-in account, so the
             # directory can offer "Send invitation" only where it applies.
             # Batched deliberately: asking per row would be one query per

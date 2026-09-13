@@ -18,6 +18,8 @@ export interface LearnerAbsenceReport {
   evidenceUrl: string;
   evidenceText: string;
   coachNote: string;
+  recoveryMethod?: 'recorded' | 'catch-up' | '';
+  catchupEventKey?: string | null;
   attendanceRate: number | null;
   previousAbsences: number;
   createdAt: string;
@@ -27,7 +29,7 @@ export interface LearnerAbsenceReport {
 export interface MissedAttendanceSession {
   id: string;
   reportId?: string;
-  status?: 'absent' | 'upcoming';
+  status?: 'absent' | 'upcoming' | 'in_progress';
   sessionId: string;
   title: string;
   sessionType: string;

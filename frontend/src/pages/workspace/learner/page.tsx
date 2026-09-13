@@ -27,7 +27,6 @@ import { canViewAssignedProgramme, waitingCopy } from '@/utils/learnerAccessGate
 import { displayValue, EMPTY_VALUE, ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
 import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
 import overviewStyles from './Overview.module.css';
-import { OverviewLearningPanels } from './OverviewLearningPanels';
 import { DashboardTrainingPlan } from './DashboardTrainingPlan';
 import { DashboardActivities } from './DashboardActivities';
 import { learnerHeaderPlan, learnerModuleHref } from './learnerHeaderPlan';
@@ -332,14 +331,6 @@ export default function LearnerOverview() {
               <div className={overviewStyles.heroActions}>
                 <button
                   type="button"
-                  onClick={() => navigate('/learner/messages')}
-                  className={overviewStyles.heroAction}
-                >
-                  <AppIcon className="ri-chat-3-line" />
-                  Message coach
-                </button>
-                <button
-                  type="button"
                   onClick={() => navigate(continueLearningHref)}
                   disabled={learningBlocked || scheduleRead.loading}
                   aria-busy={scheduleRead.loading}
@@ -400,8 +391,8 @@ export default function LearnerOverview() {
         </div>
 
         {isRealMode && real && learnerKind && <DashboardActivities kind={learnerKind} programmeStatus={real.programmeStatus} canSeeNavItem={canSeeNavItem} />}
-        {isRealMode && learnerKind && id && !learningBlocked && <OverviewLearningPanels key={`${learnerKind}:${id}`} kind={learnerKind} learnerId={id} />}
-        {isRealMode && learnerKind && id && <DashboardTrainingPlan key={`plan:${learnerKind}:${id}`} kind={learnerKind} learnerId={id} canOpenActivities={!learningBlocked} />}
+        {isRealMode && learnerKind && id && <DashboardTrainingPlan key={`plan:${learnerKind}:${id}`} kind={learnerKind} learnerId={id} canOpenActivities={!learningBlocked}
+          programmeStartDate={real?.learningAccess?.startDate ?? real?.programmeStartDate} canOpenRewards={!reviewingLearner} />}
       </PageContainer>
     </WorkspaceShell>
   );

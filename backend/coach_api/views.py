@@ -9391,6 +9391,8 @@ def serialize_absence_report(
         "evidenceKind": report.evidence_kind,
         "evidenceType": "Image" if report.evidence_kind == "image" else "Text" if report.evidence_kind == "text" else None,
         "evidenceText": report.evidence_text or None,
+        "recoveryMethod": report.recovery_method,
+        "catchupEventKey": report.catchup_event_key,
         "evidenceImageUrl": evidence_url or None,
         "previousAbsences": previous_absences_override if previous_absences_override is not None else report.previous_absences,
         "attendanceRate": attendance_rate,
