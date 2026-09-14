@@ -195,6 +195,7 @@ urlpatterns = [
     path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/sign/", calendar.learner_progress_review_sign, name="learner-progress-review-sign"),
     # Read-only: the Curriculum Review form behind a scheduled occurrence.
     path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/review/", calendar.learner_calendar_event_review, name="learner-calendar-event-review"),
+    path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/review/pdf/", calendar.learner_calendar_event_review_pdf, name="learner-calendar-event-review-pdf"),
     # Declared before the <path:event_key> route below, which would otherwise
     # never be reached for the bare list URL.
     path("reviews/<str:kind>/<int:pk>/", review_form.enrolment_review_documents, name="enrolment-review-documents"),

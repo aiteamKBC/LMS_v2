@@ -145,7 +145,7 @@ export function tutorConflictMessage(error: unknown): string | null {
 }
 
 /**
- * The backend's own sentence for any refused write, or `fallback`.
+ * The backend's own sentence and validation details for a refused write, or `fallback`.
  *
  * Same reasoning as `tutorConflictMessage` above, generalised: every handler
  * answers a refusal with `{ error: '...' }` saying what to do about it, and
@@ -153,11 +153,23 @@ export function tutorConflictMessage(error: unknown): string | null {
  * for /path: …". A dialog should show the sentence, not the diagnostic.
  */
 export function curriculumErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof CurriculumApiError && error.data && typeof error.data === 'object') {
-    const message = (error.data as { error?: unknown }).error;
-    if (typeof message === 'string' && message.trim()) return message;
-  }
-  return fallback;
+  return error instanceof CurriculumApiError ? curriculumPayloadErrorMessage(error.data) || fallback : fallback;
+}
+
+function curriculumPayloadErrorMessage(data: unknown): string {
+  if (!data || typeof data !== 'object') return '';
+  const payload = data as Record<string, unknown>;
+  const message = typeof payload.error === 'string' && payload.error.trim() ? payload.error : '';
+  const details = [payload.validationErrors, payload.errors]
+    .flatMap(errors => Array.isArray(errors) ? errors : [])
+    .map((item: unknown) => typeof item === 'string'
+      ? item
+      : item && typeof item === 'object' ? (item as { message?: unknown }).message : undefined)
+    .filter((detail): detail is string => typeof detail === 'string' && Boolean(detail.trim()))
+    .map(detail => detail.trim())
+    .filter(detail => detail !== message.trim());
+  const validation = [...new Set(details)].join('; ');
+  return message && validation ? `${message} - ${validation}` : message || validation;
 }
 
 export interface CurriculumProgramme {
@@ -199,6 +211,12 @@ export interface CurriculumProgramme {
   // Off-the-job hours a learner must complete for the whole programme. null means no
   // target has been set, which is different from a target of zero.
   requiredOtjh?: number | null;
+}
+
+export interface CurriculumWeeklySession {
+  day: string;
+  startTime: string;
+  endTime: string;
 }
 
 export interface CurriculumModule {
@@ -244,6 +262,10 @@ export interface CurriculumModule {
    * every edit round-trip multiply the weeks by the delivery days.
    */
   sessionsNumber?: number;
+  weeklySchedule?: CurriculumWeeklySession[];
+  weekDays?: string;
+  startTime?: string;
+  endTime?: string;
   startDate?: string;
   endDate?: string;
   totalOtjh?: number;
@@ -1700,7 +1722,7 @@ export interface CurriculumProgrammeDetail {
 }
 
 export interface CurriculumSessionPlanPreview {
-  sessions: Array<{ sessionNumber: number; date: string; day: string; skippedHolidays: string[] }>;
+  sessions: Array<{ sessionNumber: number; date: string; day: string; startTime?: string; endTime?: string; durationMinutes?: number; skippedHolidays: string[] }>;
   skippedHolidays: string[];
   finalEndDate: string;
   warnings: string[];
@@ -2627,16 +2649,8 @@ async function fetchJsonOnce<T>(path: string, init?: CurriculumRequestInit): Pro
     let payload: unknown;
     try {
       payload = await response.json();
-      const payloadRecord = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
-      const validationErrors = Array.isArray(payloadRecord.validationErrors) ? payloadRecord.validationErrors : [];
-      const validation = validationErrors
-        .map((item: unknown) => item && typeof item === 'object' ? (item as { message?: string }).message : '')
-        .filter(Boolean)
-        .join('; ');
-      const errorText = typeof payloadRecord.error === 'string' ? payloadRecord.error : '';
-      detail = errorText
-        ? `: ${errorText}${validation ? ` - ${validation}` : ''}`
-        : '';
+      const errorText = curriculumPayloadErrorMessage(payload);
+      detail = errorText ? `: ${errorText}` : '';
     } catch {
       detail = '';
     }
@@ -3198,6 +3212,7 @@ export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'wee
   endDate?: string;
   tutor?: string;
   coach?: string;
+  weeklySchedule?: CurriculumWeeklySession[];
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -3233,6 +3248,7 @@ export type CurriculumModuleAttachmentInput = {
   endDate?: string;
   coach?: string;
   tutor?: string;
+  weeklySchedule?: CurriculumWeeklySession[];
   weekDays?: string;
   startTime?: string;
   endTime?: string;
@@ -3603,7 +3619,7 @@ export function previewCohortEndDate(input: {
   return postJson<CurriculumCohortEndDatePreview>('/curriculum/preview/cohort-end-date/', input);
 }
 
-export function previewModuleSessionPlan(input: { startDate?: string; numberOfSessions?: number; sessionsNumber?: number; weekDays?: string | string[]; deliveryDays?: string | string[]; holidays?: unknown[] }) {
+export function previewModuleSessionPlan(input: { startDate?: string; numberOfSessions?: number; sessionsNumber?: number; weeklySchedule?: CurriculumWeeklySession[]; weekDays?: string | string[]; deliveryDays?: string | string[]; holidays?: unknown[] }) {
   return postJson<CurriculumSessionPlanPreview>('/curriculum/preview/module-session-plan/', input);
 }
 
@@ -3611,6 +3627,7 @@ export function previewModuleSessionPlan(input: { startDate?: string; numberOfSe
 export interface CurriculumTutorAvailabilityInput {
   startDate?: string;
   sessionsNumber?: number | string;
+  weeklySchedule?: CurriculumWeeklySession[];
   weekDays?: string;
   startTime?: string;
   endTime?: string;

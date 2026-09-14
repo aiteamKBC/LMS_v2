@@ -1014,7 +1014,13 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
                   <div className="w-72">
                     <SelectControl
                       value={reviewTypeId}
-                      onChange={setReviewTypeId}
+                      onChange={(id) => {
+                        setReviewTypeId(id);
+                        if (reviewTypeOptions.find(type => type.id === id)?.code === 'mcm') {
+                          setSignatures(current => ({ ...current, participant: true }));
+                          setVisibleTo(current => ({ ...current, participant: true }));
+                        }
+                      }}
                       ariaLabel="Review type"
                       disabled={typesLoading}
                       placeholder={typesLoading ? 'Loading review types...' : 'Select a review type'}

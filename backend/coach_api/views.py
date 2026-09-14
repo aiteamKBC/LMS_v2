@@ -10662,7 +10662,10 @@ def coach_review_instance_answers(request, instance_id):
     if not isinstance(answers, dict):
         return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
     owner_email = authenticated_coach_email(request)
-    result = curriculum_review_instances.save_review_instance_answers(instance_row, answers, actor=owner_email)
+    try:
+        result = curriculum_review_instances.save_review_instance_answers(instance_row, answers, actor=owner_email)
+    except ValueError as exc:
+        return JsonResponse({'detail': str(exc)}, status=409)
     return JsonResponse(result)
 
 

@@ -289,6 +289,36 @@ class ReviewInstancesTestCase(TestCase):
         self.assertIsNone(definition['signatures']['advisor']['signature'])
         self.assertIsNone(definition['signatures']['employer']['signature'])
 
+    def test_mcm_pdf_becomes_available_only_after_the_final_signature(self):
+        from .tests_review_pdf import sample_definition, SAMPLE_INFORMATION
+        from .review_pdf import mcm_pdf_response
+        review_id = self._create_review(
+            'PROG-A', name='Monthly learner catch-up', interval=1, unit='months',
+            signatures={'advisor': True, 'participant': True, 'employer': False, 'referrer': False},
+        )
+        instance = review_instances.ensure_review_instance(
+            self._template_row(review_id), learner_id=1, learner_kind='commercial', programme_id='PROG-A',
+            occurrence_number=1, target_date=date(2026, 9, 15), coach_email='coach@example.com',
+        )
+        field_id = reviews.get_review_field_rows(review_id)[0]['id']
+        review_instances.save_review_instance_answers(instance, {field_id: 'Saved coaching notes'})
+        review_instances.complete_review_instance(review_instances.get_review_instance(instance['id']))
+        mark = sample_definition()['signatures']['participant']['signature']
+        coach_signed = review_instances.record_review_instance_signature(
+            review_instances.get_review_instance(instance['id']), 'advisor',
+            signed_by='coach@example.com', signed_name='Sample coach', signature=mark,
+        )
+        self.assertFalse(coach_signed['pdf']['available'])
+        self.assertEqual(mcm_pdf_response(coach_signed, SAMPLE_INFORMATION).status_code, 409)
+        learner_signed = review_instances.record_review_instance_signature(
+            review_instances.get_review_instance(instance['id']), 'participant',
+            signed_by='learner@example.com', signed_name='Sample learner', signature=mark,
+        )
+        self.assertTrue(learner_signed['pdf']['available'])
+        self.assertEqual(mcm_pdf_response(learner_signed, SAMPLE_INFORMATION).status_code, 200)
+        with self.assertRaises(ValueError):
+            review_instances.save_review_instance_answers(review_instances.get_review_instance(instance['id']), {field_id: 'Changed after signing'})
+
     def test_signature_image_is_not_inferred_for_unsigned_or_historical_acknowledgements(self):
         review_id = self._create_review('PROG-A', name='Monthly Coaching Meeting', interval=1, unit='months')
         instance = review_instances.ensure_review_instance(

@@ -3,6 +3,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { ReviewFormRenderer, computeMissingRequiredFields, computeVisibleRequiredFields } from '@/components/reviews/ReviewFormRenderer';
 import {
   completeReviewInstance,
+  downloadMcmReviewPdf,
   fetchReviewInstanceForm,
   flattenReviewFields,
   saveReviewInstanceAnswers,
@@ -14,6 +15,7 @@ import { formatDateLabel } from './calendarEvents';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
 import { useAuth } from '@/hooks/useAuth';
 import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
+import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 
 const isAbortError = (err: unknown): boolean => err instanceof DOMException && err.name === 'AbortError';
 
@@ -243,6 +245,7 @@ export function ReviewInstanceModal({
                     : 'Your part is complete. The review is waiting for the remaining required signatures.'}</p>
               </div>}
               <ReviewSignatures signatures={definition.signatures} />
+              <ReviewPdfDownload availability={definition.pdf} onDownload={() => downloadMcmReviewPdf(definition.instance.id)} />
               {signatureNotice && <p role="status" className="text-sm font-semibold text-emerald-800">{signatureNotice}</p>}
               {coachNeedsToSign && <section aria-label="Your coach signature" aria-busy={signing} className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
                 <h3 className="mb-3 text-sm font-bold text-violet-950">Your coach signature is required</h3>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { Modal } from '@/pages/users/components/Modal';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
@@ -13,7 +13,6 @@ import { InlineError } from '../shared/entities/ui';
 import {
   buildTeamsCalendarInput,
   emptyTeamsCalendarForm,
-  minutesBetween,
   sessionNaiveLocal,
   TeamsCalendarFormBody,
   type TeamsCalendarForm,
@@ -23,6 +22,8 @@ import {
   createTeamsMeeting,
   fetchModuleMeetingInvitees,
   loadTeamsMeetingConfiguration,
+  restoreModuleTeamsMeeting,
+  utcIsoToCalendarParts,
   zonedNaiveToUtcIso,
   type ModuleComponent,
   type TeamsMeetingInput,
@@ -101,11 +102,6 @@ export function TeamsMeetingModal({
   // the "no stored session dates" warning must wait — otherwise it flashes on
   // every open before the sessions arrive and reads as a module with no schedule.
   const [sessionsLoading, setSessionsLoading] = useState(true);
-  // The Duration defaults to the length the group was created with — the gap
-  // between its session start and end — so the meeting matches the schedule
-  // without anyone re-picking it. Only a duration changed here, in this form,
-  // survives that default.
-  const durationTouched = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -122,11 +118,6 @@ export function TeamsMeetingModal({
           .filter(session => cleanText(session.moduleCatalogueId || session.moduleId).toLowerCase() === wanted)
           .sort((left, right) => sessionNaiveLocal(left).localeCompare(sessionNaiveLocal(right)));
         setSessions(filtered);
-        if (!durationTouched.current && filtered.length) {
-          const groupMinutes = minutesBetween(filtered[0].startTime, filtered[0].endTime);
-          if (groupMinutes > 0) patch({ durationMinutes: String(groupMinutes) });
-          durationTouched.current = true;
-        }
       })
       .catch(() => { if (active) setSessions([]); })
       .finally(() => { if (active) setSessionsLoading(false); });
@@ -220,7 +211,21 @@ export function TeamsMeetingModal({
     setSaving(true);
     try {
       const result = await createTeamsMeeting(input);
-      onCreated(result, input);
+      try {
+        await restoreModuleTeamsMeeting(row.catalogueId);
+      } catch {
+        result.warnings.push('The calendar was created, but its component links could not be refreshed. Use Restore Teams sessions & links.');
+      }
+      const selectedIndex = sessions.findIndex(session => session.componentId === component.id || session.date === component.settings.sessionDate);
+      const scheduled = input.scheduledOccurrences?.[Math.max(0, selectedIndex)];
+      const selectedDate = scheduled ? utcIsoToCalendarParts(scheduled.startDateTimeUtc).date : '';
+      const day = selectedDate ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${selectedDate}T12:00:00Z`)) : '';
+      const daySeries = result.meeting.calendarSeries?.find(series => series.day === day);
+      onCreated({ ...result, meeting: {
+        ...result.meeting,
+        ...(daySeries ? { joinUrl: daySeries.joinUrl, eventId: daySeries.eventId, onlineMeetingId: daySeries.onlineMeetingId || '' } : {}),
+        ...(scheduled ? { startDateTimeUtc: scheduled.startDateTimeUtc, durationMinutes: scheduled.durationMinutes } : {}),
+      } }, input);
       onClose();
       // `settingsApplied` false means the calendar is right and the recording is
       // not: Graph refused the meeting options, so the session opens recording

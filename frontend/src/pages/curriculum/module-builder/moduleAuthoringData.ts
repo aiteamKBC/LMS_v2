@@ -180,7 +180,7 @@ function monthLabelOf(key: string) {
  * after it.
  */
 export interface ModuleWeekSessionPlan {
-  sessions: Array<{ sessionNumber: number; date: string; day: string; slotDate?: string; slotDay?: string; skippedHolidays: string[] }>;
+  sessions: Array<{ sessionNumber: number; date: string; day: string; startTime?: string; endTime?: string; durationMinutes?: number; slotDate?: string; slotDay?: string; skippedHolidays: string[] }>;
   /** The curriculum spine: every delivery slot, open or closed. See `ModuleSessionSlot`. */
   slots?: ModuleSessionSlot[];
   skippedHolidays: string[];
@@ -484,6 +484,8 @@ export function applyModuleWeekSessionPlan(
             ...settings,
             sessionDate: planned.date,
             sessionDay: planned.day || '',
+            ...(planned.startTime ? { sessionTime: planned.startTime } : {}),
+            ...(planned.durationMinutes ? { durationMinutes: planned.durationMinutes } : {}),
           },
         };
       });
@@ -569,6 +571,7 @@ export function resequenceWeekSessionDates(weeks: ModuleWeek[]): ModuleWeek[] {
 }
 
 export interface ModuleCatalogueItem {
+  weeklySchedule?: CurriculumModule['weeklySchedule'];
   id: string;
   catalogueId: string;
   programmeId: string;
@@ -1243,9 +1246,13 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     ksbProfileSourceId: module.ksbProfileSourceId || '',
     tutor,
     coach,
+    weeklySchedule: module.weeklySchedule || [],
     deliveryMetadata: {
       tutor,
       coach,
+      weekDays: module.weekDays || '',
+      startTime: module.startTime || '',
+      endTime: module.endTime || '',
       cohortId: module.cohortId || '',
       cohort: module.cohort || '',
       groupId: module.groupId || '',
@@ -1523,6 +1530,7 @@ export async function uploadComponentResource(input: { moduleCatalogueId: string
 }
 
 export interface TeamsMeetingInput {
+  seriesMode?: 'auto' | 'shared' | 'per_day';
   title: string;
   organizerEmail: string;
   attendees: string[];
@@ -1557,6 +1565,7 @@ export interface TeamsMeetingInput {
 export interface TeamsMeetingResult {
   created: boolean;
   meeting: {
+    calendarSeries?: Array<{ day: string; eventId: string; joinUrl: string; onlineMeetingId?: string; sessionNumbers: number[] }>;
     liveSessionId: string;
     eventId: string;
     onlineMeetingId: string;

@@ -655,7 +655,7 @@ def review_instance_form_definition(instance_row):
         for section in snapshot.get('sections', [])
     ]
 
-    return {
+    result = {
         'instance': {
             'id': instance_row.get('id'),
             'reviewTemplateId': instance_row.get('review_template_id'),
@@ -698,6 +698,9 @@ def review_instance_form_definition(instance_row):
             for role in SIGNATURE_ROLES
         },
     }
+    from .review_pdf import pdf_availability
+    result['pdf'] = pdf_availability(result)
+    return result
 
 
 def _visible_required_unanswered_fields(sections, answers_by_field):
@@ -732,6 +735,8 @@ def save_review_instance_answers(instance_row, answers, *, actor='system'):
     stored. A conditional field hidden by its parent's current answer is
     still saved as posted (its previous answer is not corrupted/dropped just
     because it is not visible right now)."""
+    if instance_row.get('status') in (STATUS_AWAITING_SIGNATURE, STATUS_COMPLETED):
+        raise ValueError('Submitted review answers cannot be changed after the signature step begins.')
     snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
     valid_field_ids = {
         field.get('id')

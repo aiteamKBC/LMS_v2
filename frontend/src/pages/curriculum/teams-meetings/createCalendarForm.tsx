@@ -277,6 +277,7 @@ export function ModuleSessionSchedulePreview({
 
 /** Everything the create form holds, and nothing a caller has to reproduce. */
 export interface TeamsCalendarForm {
+  seriesMode?: 'auto' | 'shared' | 'per_day';
   title: string;
   organizerEmail: string;
   attendees: string;
@@ -298,7 +299,8 @@ export function emptyTeamsCalendarForm(): TeamsCalendarForm {
     presenters: '',
     coOrganizers: '',
     details: '',
-    durationMinutes: String(DEFAULT_DURATION_MINUTES),
+    durationMinutes: '',
+    seriesMode: 'auto',
     lobbyBypass: 'invited',
     recording: 'record-transcribe',
     spokenLanguage: 'en-GB',
@@ -323,14 +325,14 @@ export function teamsCalendarOccurrences(row: TeamsCalendarTarget) {
 /**
  * The create payload, built the same way from either door.
  *
- * The chosen duration applies to every occurrence, and the dates are the
+ * Durations follow each session unless explicitly overridden. The dates are the
  * module's own — a holiday-shifted plan included, which is what the backend
  * moves each Graph instance onto.
  */
 export function buildTeamsCalendarInput(row: TeamsCalendarTarget, form: TeamsCalendarForm): TeamsMeetingInput {
   const meetingTitle = cleanText(row.name) || 'Live session';
   const duration = Math.max(15, Number(form.durationMinutes) || row.durationMinutes || DEFAULT_DURATION_MINUTES);
-  const occurrences = teamsCalendarOccurrences(row).map(occurrence => ({ ...occurrence, durationMinutes: duration }));
+  const occurrences = teamsCalendarOccurrences(row).map(occurrence => form.durationMinutes ? { ...occurrence, durationMinutes: duration } : occurrence);
   return {
     title: meetingTitle,
     organizerEmail: form.organizerEmail.trim(),
@@ -341,7 +343,8 @@ export function buildTeamsCalendarInput(row: TeamsCalendarTarget, form: TeamsCal
     moduleTitle: meetingTitle,
     localStartDateTime: sessionNaiveLocal(row.sessions[0]),
     startDateTimeUtc: occurrences[0].startDateTimeUtc,
-    durationMinutes: duration,
+    durationMinutes: occurrences[0]?.durationMinutes || duration,
+    seriesMode: form.seriesMode || 'auto',
     repeat: occurrences.length > 1 ? 'weekly' : 'none',
     repeatOccurrences: occurrences.length,
     scheduledOccurrences: occurrences,
@@ -426,6 +429,13 @@ export function TeamsCalendarFormBody({
             holidayLabelFor={holidayLabelFor}
           />
 
+          <FormField label="Teams series and links" hint="Different start times or durations need a separate weekly series for each day. Each day's link repeats every week.">
+            <SelectControl value={form.seriesMode || 'auto'} onChange={value => patch({ seriesMode: value as TeamsCalendarForm['seriesMode'] })} options={[
+              { value: 'auto', label: 'Automatic: share a link when times match' },
+              { value: 'per_day', label: 'Separate series and link for each day' },
+              ...(new Set(teamsCalendarOccurrences(row).map(item => `${naiveLocalFromUtc(item.startDateTimeUtc).slice(11)}:${form.durationMinutes || item.durationMinutes}`)).size <= 1 ? [{ value: 'shared', label: 'One series and link for all days' }] : []),
+            ]} />
+          </FormField>
           <div className="grid gap-4 sm:grid-cols-2">
             <FormField
               label="Organizer Microsoft 365 email"
@@ -444,7 +454,7 @@ export function TeamsCalendarFormBody({
               <SelectControl
                 value={form.durationMinutes}
                 onChange={value => patch({ durationMinutes: value })}
-                options={durationOptions(form.durationMinutes, row.durationMinutes)}
+                options={[{ value: '', label: 'Use scheduled duration for each session' }, ...durationOptions(form.durationMinutes, row.durationMinutes)]}
               />
             </FormField>
             <FormField label="Who can bypass the lobby?">

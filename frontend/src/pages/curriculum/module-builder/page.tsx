@@ -133,6 +133,7 @@ import {
   type ModuleComponentType,
   type ModuleWeek,
   type ModuleWeekSessionPlan,
+  type TeamsMeetingResult,
 } from './moduleAuthoringData';
 // The shared week-authoring UI arrives through curriculum/shared/components rather
 // than from week-builder/page directly: these three components only render once a
@@ -206,6 +207,9 @@ type ModuleDeliveryUsage = {
   startDate?: string;
   endDate?: string;
   sessions: number;
+  weekDays?: string;
+  startTime?: string;
+  endTime?: string;
 };
 
 type ModuleBuilderListItem = ModuleCatalogueItem & {
@@ -1898,6 +1902,8 @@ export default function ModuleBuilder() {
                         && updatedSettings
                         && Object.prototype.hasOwnProperty.call(updatedSettings, 'liveSessionUrl');
                       const sharedTeamsUrl = sharesTeamsLink ? updatedSettings.liveSessionUrl : undefined;
+                      let calendarSeries: NonNullable<TeamsMeetingResult['meeting']['calendarSeries']> = [];
+                      try { calendarSeries = JSON.parse(String(updatedSettings?.teamsCalendarSeries || '[]')); } catch { /* Legacy manual links have no series manifest. */ }
                       return {
                         ...module,
                         weekStructure: module.weekStructure.map(week => ({
@@ -1905,9 +1911,21 @@ export default function ModuleBuilder() {
                           components: week.components.map(component => {
                             if (component.id === selectedComponent.id) return { ...component, ...updates };
                             if (sharesTeamsLink && component.type === 'live-session') {
+                              const date = String(component.settings.sessionDate || week.sessionDate || '');
+                              const day = /^\d{4}-\d{2}-\d{2}$/.test(date)
+                                ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`)) : '';
+                              const daySeries = calendarSeries.find(series => series.day === day);
+                              if (calendarSeries.length && !daySeries) return component;
                               return {
                                 ...component,
-                                settings: { ...component.settings, liveSessionUrl: sharedTeamsUrl },
+                                settings: { ...component.settings, liveSessionUrl: daySeries?.joinUrl || sharedTeamsUrl,
+                                  ...(daySeries ? {
+                                    teamsMeetingUrl: daySeries.joinUrl, teamsEventId: daySeries.eventId,
+                                    teamsOnlineMeetingId: daySeries.onlineMeetingId || '',
+                                    teamsLiveSessionId: updatedSettings.teamsLiveSessionId,
+                                    teamsCalendarSeries: updatedSettings.teamsCalendarSeries,
+                                  } : {}),
+                                },
                               };
                             }
                             return component;
@@ -3608,6 +3626,8 @@ function TypeSpecificFields({
             onCreated={(result, input) => {
               const meeting = result.meeting;
               onSettingChange('liveSessionUrl', meeting.joinUrl || meeting.webLink);
+              onSettingChange('teamsCalendarSeries', JSON.stringify(meeting.calendarSeries || []));
+              onSettingChange('teamsOnlineMeetingId', meeting.onlineMeetingId);
               onSettingChange('teamsEventId', meeting.eventId);
               onSettingChange('teamsLiveSessionId', meeting.liveSessionId);
               onSettingChange('teamsMeetingOptionsUrl', meeting.meetingOptionsUrl);
@@ -4179,6 +4199,9 @@ function moduleDeliveryUsageFallback(module: ModuleCatalogueItem): ModuleDeliver
     startDate: module.startDate || module.sourceModule?.startDate,
     endDate: module.endDate || module.sourceModule?.endDate,
     sessions: module.sourceModule?.sessionsNumber || module.sourceModule?.weeks || module.sessionsNumber || module.weeks || 0,
+    weekDays: String(module.deliveryMetadata?.weekDays || module.sourceModule?.weekDays || ''),
+    startTime: String(module.deliveryMetadata?.startTime || module.sourceModule?.startTime || ''),
+    endTime: String(module.deliveryMetadata?.endTime || module.sourceModule?.endTime || ''),
   };
 }
 
@@ -6925,6 +6948,9 @@ function moduleDeliveryUsage(module: ModuleCatalogueItem): ModuleDeliveryUsage |
     startDate: module.startDate || module.sourceModule?.startDate,
     endDate: module.endDate || module.sourceModule?.endDate,
     sessions: module.sourceModule?.sessionsNumber || module.sourceModule?.weeks || module.sessionsNumber || module.weeks || 0,
+    weekDays: String(module.deliveryMetadata?.weekDays || module.sourceModule?.weekDays || ''),
+    startTime: String(module.deliveryMetadata?.startTime || module.sourceModule?.startTime || ''),
+    endTime: String(module.deliveryMetadata?.endTime || module.sourceModule?.endTime || ''),
   };
 }
 
@@ -7047,6 +7073,10 @@ function moduleFormTargetFromCatalogue(module: ModuleCatalogueItem, usage?: Modu
     cohortId: usage?.cohortId || module.cohortId,
     groupId: usage?.groupId || module.groupId,
     sessionsNumber: module.sessionsNumber || usage?.sessions,
+    weeklySchedule: module.weeklySchedule || module.sourceModule?.weeklySchedule || [],
+    weekDays: usage?.weekDays || String(module.deliveryMetadata?.weekDays || module.sourceModule?.weekDays || ''),
+    startTime: usage?.startTime || String(module.deliveryMetadata?.startTime || module.sourceModule?.startTime || ''),
+    endTime: usage?.endTime || String(module.deliveryMetadata?.endTime || module.sourceModule?.endTime || ''),
     weeks: module.weeks || module.weekStructure?.length,
     startDate: module.startDate || usage?.startDate,
     endDate: module.endDate || usage?.endDate,
