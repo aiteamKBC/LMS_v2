@@ -1484,15 +1484,6 @@ function LearnerCalendarBody() {
                   <p className={`text-sm ${selectedDateRestriction ? 'max-w-xs font-semibold text-amber-800' : 'text-foreground-500'}`}>
                     {selectedDateRestriction || 'No events scheduled'}
                   </p>
-                  {!selectedDateRestriction && (
-                    <button
-                      type="button"
-                      onClick={() => openBookSession(selectedIso)}
-                      className="inline-flex items-center gap-1.5 rounded-xl bg-primary-500 px-4 py-2 text-xs font-semibold text-white transition-smooth hover:bg-primary-600 cursor-pointer whitespace-nowrap"
-                    >
-                      <AppIcon className="ri-user-star-line text-sm"></AppIcon>Book Session
-                    </button>
-                  )}
                 </div>
               ) : (
                 <div className="space-y-2">
