@@ -466,6 +466,29 @@ def _learner_booking_record(kind, pk, event_key):
 
 
 @learner_self_or_staff(kwarg="pk")
+def learner_calendar_event_review(request, kind, pk, event_key):
+    """Return the read-only Curriculum form for a learner calendar event.
+
+    The endpoint never creates a review instance. Scheduling (or the coach's
+    first open) owns that lifecycle; an event without a linked instance simply
+    returns ``instance: null``.
+    """
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    record = _learner_calendar_record(kind, pk, event_key)
+    if not record:
+        return _error("Calendar event not found for this learner.", 404)
+    instance_id = _s(getattr(record, "review_instance_id", ""))
+    if not instance_id:
+        return JsonResponse({"instance": None})
+    from curriculum_api import review_instances
+    instance = review_instances.get_review_instance(instance_id)
+    if not instance:
+        return _error("Review instance not found.", 404)
+    return JsonResponse(review_instances.review_instance_form_definition(instance))
+
+
+@learner_self_or_staff(kwarg="pk")
 def learner_calendar_event_artifacts(request, kind, pk, event_key):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
