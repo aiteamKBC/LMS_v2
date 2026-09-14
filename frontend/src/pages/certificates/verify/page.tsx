@@ -305,10 +305,6 @@ export default function CertificateVerificationPage() {
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-500">Verification link</p>
-                  <p className="mt-2 break-all text-sm font-semibold text-slate-700">{verificationUrl}</p>
-                </div>
               </div>
             ) : null}
           </div>
