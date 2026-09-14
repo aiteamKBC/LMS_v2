@@ -3987,6 +3987,25 @@ def component_expected_otjh(component, default=2):
     return default
 
 
+def otjh_rounded_minutes(value):
+    number = parse_float(value, 0)
+    if number <= 0:
+        return 0
+    return int((number * 60) + 0.5)
+
+
+def otjh_hours_from_minutes(total_minutes):
+    try:
+        minutes = int(total_minutes)
+    except (TypeError, ValueError):
+        minutes = 0
+    return round(minutes / 60, 2)
+
+
+def component_expected_otjh_minutes(component, default=2):
+    return otjh_rounded_minutes(component_expected_otjh(component, default))
+
+
 def parse_date(value):
     if isinstance(value, datetime):
         return value.date()
@@ -4110,13 +4129,17 @@ def extend_end_date_for_holidays(base_end_value, holidays, period_start):
 
 
 def cohort_applied_holidays(holiday_ids, holiday_rows, period_start, period_end):
-    """The holidays that actually apply to a cohort over its base period.
+    """The holidays that apply to a cohort over its base period.
 
-    An empty ``holiday_ids`` means *no* holiday applies. Module schedules only
-    skip dates from the explicit cohort selection, so a cohort nobody has picked
-    holidays for keeps the plain delivery pattern.
+    Every bank holiday that falls inside ``period_start``..``period_end``, and
+    nothing else. A cohort's holidays are its dates: picking the start and end
+    date picks the holidays, so there is no ticking and no cohort that runs
+    through Christmas Day because nobody remembered to tick it.
 
-    ``holiday_rows`` may be omitted, in which case the stored holidays are read.
+    ``holiday_ids`` is ignored and kept only so the stored ids on older cohort
+    rows -- numeric keys into the authored table that is no longer read -- cannot
+    change the answer. ``holiday_rows`` may be omitted, in which case the bank
+    holidays are read.
     """
     if holiday_rows is None:
         try:
@@ -4124,15 +4147,66 @@ def cohort_applied_holidays(holiday_ids, holiday_rows, period_start, period_end)
         except (Exception, AssertionError):
             holiday_rows = []
 
+    return holidays_within_period(holiday_rows, period_start, period_end)
+
+
+def holidays_within_period(holiday_rows, period_start, period_end):
+    """The bank holidays landing inside a period, in date order.
+
+    The "which holidays does this cohort have" question: what the cohort drawer
+    lists and what the cohort row records. Inclusive at both ends, and an
+    unknown end of the period means nothing is in it rather than everything --
+    a cohort half way through being typed has no period yet.
+
+    This is *not* the set a session plan skips. A plan is free to run past the
+    cohort's practical end date -- that is what a holiday does to it -- so
+    scheduling asks ``scheduling_holidays_from`` instead.
+    """
     serialized = [serialize_holiday_row(row) for row in (holiday_rows or [])]
     in_period = [
         item for item in serialized
         if date_ranges_overlap(period_start, period_end, item.get('startDate'), item.get('endDate'))
     ]
-    selected = {clean_str(item) for item in parse_notes_id_list(holiday_ids)}
-    if not selected:
-        return []
-    return [item for item in in_period if clean_str(item.get('id')) in selected]
+    return sorted_holidays(in_period)
+
+
+def scheduling_holidays_from(holiday_rows, start_value, excluded_ids=None):
+    """The bank holidays a session plan starting on ``start_value`` must skip.
+
+    Open at the far end, deliberately. Every holiday a plan steps over pushes it
+    a delivery slot later, so a plan routinely finishes after the cohort's
+    practical end date -- and a set bounded at that date would then let the very
+    last sessions land on Good Friday or Easter Monday, which is the bug this
+    exists to prevent. A holiday after the plan's final session is inert: the
+    set is only ever tested for membership against a session date.
+
+    Bounded below by the cohort start because nothing delivers before it. A
+    cohort with no usable start date gets the whole calendar rather than none of
+    it: a session must never be planned onto a bank holiday, and an imported
+    cohort missing its dates is not a reason to schedule one on Christmas Day.
+
+    ``excluded_ids`` is the cohort's own deny-list -- the holidays a human
+    unticked in the cohort drawer -- so a plan stops skipping exactly those
+    dates. It is applied after the start-date bound, not instead of it: a
+    holiday outside the cohort's own period was never offered as a checkbox in
+    the first place, so it cannot be named here, and stays skipped either way.
+    """
+    serialized = [serialize_holiday_row(row) for row in (holiday_rows or [])]
+    start = parse_date(start_value)
+    if start:
+        serialized = [
+            item for item in serialized
+            if (parse_date(item.get('endDate') or item.get('startDate')) or start) >= start
+        ]
+    excluded_set = {clean_str(value) for value in (excluded_ids or []) if clean_str(value)}
+    if excluded_set:
+        serialized = [item for item in serialized if clean_str(item.get('id')) not in excluded_set]
+    return sorted_holidays(serialized)
+
+
+def sorted_holidays(items):
+    """Holidays in date order, ties broken by name so the order is total."""
+    return sorted(items, key=lambda item: (clean_str(item.get('startDate')), clean_str(item.get('label'))))
 
 
 def cohort_practical_end_date(start_value, duration_months, holiday_ids=None, holiday_rows=None):
@@ -4343,6 +4417,23 @@ def holiday_date_set(holidays):
     return dates
 
 
+def holiday_details_by_date(holidays):
+    """Every closed calendar date mapped to the holidays that close it.
+
+    The values are the holidays exactly as ``serialize_holiday_row`` already
+    presents them -- id, label, start/end, type and any notes -- so a closed
+    delivery slot can name the holiday that took it without a second store of
+    holiday data to keep in step. A date closed by two overlapping holidays
+    carries both, in the order they were given.
+    """
+    by_date = {}
+    for item in holidays or []:
+        entry = serialize_holiday_row(item) if isinstance(item, dict) else serialize_holiday_row({'date': item})
+        for day in sorted(holiday_date_set([item])):
+            by_date.setdefault(day, []).append(entry)
+    return by_date
+
+
 def build_module_session_plan(start_value, number_of_sessions, delivery_days, holidays=None):
     start = parse_date(start_value)
     session_count = parse_int(number_of_sessions, 0)
@@ -4358,21 +4449,25 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
     if warnings:
         return {
             'sessions': [],
+            'slots': [],
             'skippedHolidays': [],
             'finalEndDate': '',
+            'originalEndDate': '',
             'warnings': warnings,
         }
 
     selected_holidays = holiday_date_set(holidays)
+    holidays_by_date = holiday_details_by_date(holidays)
     guard_days = max(3650, session_count * 21)
 
-    # Where the module's WEEKS sit: the delivery days counted from the start
-    # with no closure taken into account. A closure moves the live session out
-    # of its week and into the next open slot; it does not move the week, whose
-    # other components are read, watched and submitted on their own time and so
-    # stay exactly where they were authored. Every session therefore carries two
-    # dates -- the slot its week occupies, and the date the live session runs --
-    # and they differ from the first closure onwards.
+    # The delivery days counted from the start with no closure taken into
+    # account: where each session was DUE before any holiday touched the run.
+    # A session keeps that date as `slotDate` so a screen can say which day was
+    # closed under it, and the last of them is the end date the module would
+    # have had with nothing shut. It is not where the session runs, and from the
+    # first closure onwards it is not where its week sits either -- the closed
+    # slot becomes a reading week of its own and everything behind it moves down
+    # one open slot.
     slots = []
     slot_cursor = start
     slot_guard = guard_days
@@ -4382,6 +4477,15 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
         slot_cursor += timedelta(days=1)
         slot_guard -= 1
 
+    # The curriculum spine: EVERY delivery slot the module passes through, open
+    # or closed, in calendar order. A closed slot keeps its place in the
+    # curriculum -- it is a reading week caused by a holiday, and it names the
+    # holiday that took it -- but it consumes no live session, so the session
+    # that was due there and every session behind it move down one open slot.
+    # The spine is therefore longer than the session list by exactly the number
+    # of closures the plan stepped over, which is what moves the delivery end
+    # date out by one slot per closure without any date arithmetic of its own.
+    curriculum_slots = []
     sessions = []
     skipped = []
     pending_skipped = []
@@ -4391,6 +4495,15 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
             if cursor in selected_holidays:
                 skipped.append(cursor.isoformat())
                 pending_skipped.append(cursor.isoformat())
+                curriculum_slots.append({
+                    'slotNumber': len(curriculum_slots) + 1,
+                    'date': cursor.isoformat(),
+                    'day': cursor.strftime('%A'),
+                    'type': 'reading-week',
+                    'cause': 'holiday',
+                    'sessionNumber': None,
+                    'holidays': holidays_by_date.get(cursor) or [],
+                })
             else:
                 slot = slots[len(sessions)] if len(sessions) < len(slots) else cursor
                 sessions.append({
@@ -4401,6 +4514,15 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
                     'slotDay': slot.strftime('%A'),
                     'skippedHolidays': pending_skipped,
                 })
+                curriculum_slots.append({
+                    'slotNumber': len(curriculum_slots) + 1,
+                    'date': cursor.isoformat(),
+                    'day': cursor.strftime('%A'),
+                    'type': 'live-session',
+                    'cause': '',
+                    'sessionNumber': len(sessions),
+                    'holidays': [],
+                })
                 pending_skipped = []
         cursor += timedelta(days=1)
         guard_days -= 1
@@ -4410,8 +4532,14 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
 
     return {
         'sessions': sessions,
+        'slots': curriculum_slots,
         'skippedHolidays': skipped,
         'finalEndDate': sessions[-1]['date'] if sessions else '',
+        # Where the run would have ended with nothing closed: the last of the
+        # holiday-blind slots. Stated rather than derived, because "one delivery
+        # slot later" is only "seven days later" for a module that delivers once
+        # a week -- a Mon+Thu module loses three or four days per closure.
+        'originalEndDate': slots[-1].isoformat() if slots else '',
         'warnings': warnings,
     }
 
@@ -4434,22 +4562,38 @@ def cohort_delivery_window(cohort):
     return start, end
 
 
+def shift_date_by_months(value, delta_months):
+    parsed = parse_date(value)
+    if not parsed:
+        return None
+    month_index = parsed.month - 1 + delta_months
+    year = parsed.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(parsed.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def module_soft_start_date(cohort_start):
+    return shift_date_by_months(cohort_start, -1)
+
+
 def module_cohort_date_error(module_name, start_value, end_value, cohort):
     """Refuse a module whose dates fall outside its cohort's delivery window.
 
-    Three ways out of the window, one message each: starting before the cohort
-    opens, starting after it has finished, and -- the case a generated session
-    plan reaches on its own -- running past the end. Returns
+    Three ways out of the window, one message each: starting before the allowed
+    soft-start month, starting after it has finished, and -- the case a
+    generated session plan reaches on its own -- running past the end. Returns
     ``(message, field)`` or ``None``.
     """
     cohort_start, cohort_end = cohort_delivery_window(cohort)
+    soft_start = module_soft_start_date(cohort_start) or cohort_start
     module_start = parse_date(start_value)
     module_end = parse_date(end_value)
     label = f'Module "{clean_str(module_name)}"' if clean_str(module_name) else 'The module'
 
-    if module_start and cohort_start and module_start < cohort_start:
+    if module_start and soft_start and module_start < soft_start:
         return (
-            f'{label} cannot start before the cohort start date ({format_date(cohort_start)}).',
+            f'{label} cannot start more than one month before the cohort start date ({format_date(cohort_start)}).',
             'startDate',
         )
     if module_start and cohort_end and module_start > cohort_end:
@@ -6644,20 +6788,127 @@ def get_program_config_rows():
     return get_program_config_rows_raw()
 
 
-def get_holiday_rows():
-    source_table = holiday_table_name()
-    if not source_table:
+def get_holiday_rows(include_archived=False):
+    """Every holiday the curriculum knows about, in date order.
+
+    Two sources, one calendar:
+
+    ``curriculum.england_holidays``
+        England's bank holidays exactly as GOV.UK publishes them -- one date per
+        row, nobody here authors them, and they are kept current by
+        ``england_holidays.run_sync`` (see that module).
+    ``curriculum.holidays``
+        This organisation's own closure periods -- the Christmas shutdown, a
+        staff training day, an exam week. These *are* authored here, on the
+        Holidays page, and unlike a bank holiday one of them can span a range of
+        dates rather than a single day.
+
+    Both are serialized by ``serialize_holiday_row`` into the same start/end
+    shape, so everything downstream -- session plans, cohort periods, calendar
+    bands -- treats them identically. Which is the point: a delivery day is
+    closed or it is not, and why it is closed does not change the arithmetic.
+
+    Archived authored holidays are left out unless asked for: archiving one is
+    how a closure period stops shifting future session dates.
+    """
+    rows = []
+    if table_exists(ENGLAND_HOLIDAYS_TABLE):
+        rows.extend(fetch_all(f'''
+            select *
+            from {table_name(ENGLAND_HOLIDAYS_TABLE)}
+            order by holiday_date, title
+        '''))
+    authored_table = authored_holiday_table_name()
+    if authored_table:
+        authored = fetch_all(f'''
+            select *
+            from {table_name(authored_table)}
+            order by start_date, label
+        ''')
+        if not include_archived:
+            authored = [row for row in authored if not holiday_row_archived(row)]
+        rows.extend(authored)
+    # One order over both sources. The pickers and the cohort range filters read
+    # these as a single calendar, so they must not arrive in two runs of dates.
+    return sorted(rows, key=holiday_row_sort_key)
+
+
+def holiday_row_sort_key(row):
+    row = row or {}
+    return (
+        format_date(row.get('holiday_date') or row.get('start_date')) or '',
+        clean_str(row.get('title') or row.get('label')),
+    )
+
+
+def holiday_row_archived(row):
+    """Whether an authored holiday has been archived, however it was recorded.
+
+    ``archive_payload`` sets whichever of ``is_archived``/``status``/``notes``
+    the table happens to carry, so the read side has to accept all three.
+    """
+    row = row or {}
+    return bool(
+        truthy(row.get('is_archived'))
+        or truthy(row.get('archived'))
+        or clean_str(row.get('status')).lower() == 'archived'
+        or truthy(extract_notes_meta(row.get('notes')).get('archived'))
+    )
+
+
+def get_holiday_rows_safe():
+    """``get_holiday_rows`` for a caller that is doing something else.
+
+    A missing or unreadable holiday table reads as an empty calendar rather than
+    raising: the caller is serializing a cohort, not answering a question about
+    holidays, and a cohort with no holidays is a worse answer than no cohort at
+    all only if you are the holiday table.
+
+    Deliberately not cached. Serializing a page of cohorts reads once and passes
+    the rows down (see ``cohort_authoring_detail_rows``), so the only callers
+    left are single-row ones, and a cached copy here would go stale behind a
+    ``fetch_england_holidays --apply`` for the rest of its TTL.
+    """
+    try:
+        return get_holiday_rows()
+    except (Exception, AssertionError):
+        logger.debug('Unable to read the holiday calendar.', exc_info=True)
         return []
-    return fetch_all(f'''
-        select *
-        from {table_name(source_table)}
-        order by start_date, label
-    ''')
 
 
 def holiday_table_name():
-    if table_exists('holidays'):
-        return 'holidays'
+    """The one table holidays come from: ``curriculum.england_holidays``.
+
+    Curriculum used to read authored closure periods out of ``holidays`` (and,
+    before that, ``training_plan_holidays``). Neither is consulted any more:
+    GOV.UK's published bank holidays are the calendar, loaded by
+    sql/2026-09-13_curriculum_england_holidays.sql and kept current by the
+    fetch_england_holidays command.
+
+    An environment that has not applied that SQL yet reads as "no holidays"
+    rather than falling back to the old table, so a half-migrated database can
+    never quietly schedule against closure periods nobody picked.
+    """
+    if table_exists(ENGLAND_HOLIDAYS_TABLE):
+        return ENGLAND_HOLIDAYS_TABLE
+    return ''
+
+
+#: The organisation's own closure periods -- the ones a curriculum designer adds
+#: on the Holidays page, each with its own start and end date. Bank holidays
+#: live in ENGLAND_HOLIDAYS_TABLE and are not authored here; these are the other
+#: half of the calendar, and the only half anything writes to.
+AUTHORED_HOLIDAYS_TABLE = 'holidays'
+
+
+def authored_holiday_table_name():
+    """The table the Holidays page writes to, or '' if it is not provisioned.
+
+    ``training_plan_holidays`` is still accepted as the older name for the same
+    thing, because some environments have not been through the rename.
+    """
+    if table_exists(AUTHORED_HOLIDAYS_TABLE):
+        return AUTHORED_HOLIDAYS_TABLE
     if table_exists('training_plan_holidays'):
         return 'training_plan_holidays'
     return ''
@@ -7907,6 +8158,7 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
             'sessions': session_total(cohort_modules),
             'color': detail.get('color') or '#6941c6',
             'holidayIds': [clean_str(value) for value in (detail.get('holidayIds') or []) if clean_str(value)],
+            'excludedHolidayIds': [clean_str(value) for value in (detail.get('excludedHolidayIds') or []) if clean_str(value)],
             'createdAt': clean_str(detail.get('createdAt')),
             'updatedAt': clean_str(detail.get('updatedAt')),
             'progress': 0,
@@ -8230,15 +8482,14 @@ def build_sessions(training_rows, module_rows, program_configs=None, authoring_m
         )
         module_title = (authoring_module or {}).get('title') or row.get('module_name') or ''
         ksb_entries = parse_json_value(row.get('session_ksb_json'), [])
-        holiday_info = cohort_holiday_details(
+        # The bank holidays this delivery has to step over, from the cohort's
+        # start with no end bound: a plan pushed later by the holidays it
+        # skipped keeps skipping them past the cohort's own end date. The cohort
+        # contract dates stay fixed either way.
+        applied_holidays = scheduling_holidays_from(
             holiday_rows or [],
-            meta.get('holiday_ids') or row.get('holiday_ids'),
             row.get('Starting_date_lable') or row.get('start_date'),
-            meta.get('cohort_end_date') or row.get('end_date'),
         )
-        # Only the holidays ticked on the cohort, never every holiday in range:
-        # cohort dates stay fixed, while module sessions skip this selection.
-        applied_holidays = holiday_info.get('selectedHolidays') or []
         session_plan = build_module_session_plan(
             row.get('start_date'),
             session_count,
@@ -8328,19 +8579,15 @@ def build_sessions_basic(training_rows, module_rows, program_configs=None, holid
         # buckets among them -- on days the college is shut, and on the wrong
         # weekday whenever delivery is not on the module's start day.
         #
-        # The cohort's own selection is asked first, and is trusted even when it
-        # is empty: that is the same list the module's Schedule tab skips days
-        # from, and a delivery row that never carried holiday ids of its own
-        # (the common case) would otherwise plan straight through a closure.
+        # The cohort's own set is asked first -- that is the same list the
+        # module's Schedule tab skips days from, so the two cannot disagree.
+        # Failing that, resolve it here the same way, off the cohort start.
         applied_holidays = (holidays_by_cohort or {}).get(clean_str(cohort['id']))
         if applied_holidays is None:
-            holiday_info = cohort_holiday_details(
+            applied_holidays = scheduling_holidays_from(
                 holiday_rows or [],
-                meta.get('holiday_ids') or row.get('holiday_ids'),
                 row.get('Starting_date_lable') or row.get('start_date'),
-                meta.get('cohort_end_date') or row.get('end_date'),
             )
-            applied_holidays = holiday_info.get('selectedHolidays') or []
         session_plan = build_module_session_plan(
             row.get('start_date'),
             session_count,
@@ -8406,7 +8653,7 @@ def module_delivery_session_plan(module, session_count, start, holidays=None):
         return plan
     warnings = plan.get('warnings') or []
     if not start:
-        return {'sessions': [], 'skippedHolidays': [], 'finalEndDate': '', 'warnings': warnings}
+        return {'sessions': [], 'slots': [], 'skippedHolidays': [], 'finalEndDate': '', 'originalEndDate': '', 'warnings': warnings}
     sessions = [
         {
             'sessionNumber': index + 1,
@@ -8422,8 +8669,24 @@ def module_delivery_session_plan(module, session_count, start, holidays=None):
     ]
     return {
         'sessions': sessions,
+        # No weekday to skip onto means no slot can ever be closed, so the
+        # curriculum spine is the session list: one open slot each, no reading
+        # weeks, and an end date that never moves.
+        'slots': [
+            {
+                'slotNumber': index + 1,
+                'date': session['date'],
+                'day': session['day'],
+                'type': 'live-session',
+                'cause': '',
+                'sessionNumber': session['sessionNumber'],
+                'holidays': [],
+            }
+            for index, session in enumerate(sessions)
+        ],
         'skippedHolidays': [],
         'finalEndDate': sessions[-1]['date'] if sessions else '',
+        'originalEndDate': sessions[-1]['date'] if sessions else '',
         'warnings': warnings,
     }
 
@@ -8433,31 +8696,52 @@ def module_delivery_plan(module, session_count, start, holidays=None):
 
 
 def cohort_selected_holidays_by_id(cohorts, holiday_rows):
-    """Each cohort's ticked holidays, keyed by cohort id.
+    """Each cohort's holidays, keyed by cohort id.
 
     The authoring module rows carry a ``cohort_id`` and nothing about holidays,
     so this is the lookup that lets their session dates skip the same days the
-    cohort selected. Built once per payload: the alternative is a holiday read
-    per module.
-    """
-    serialized = {}
-    for row in holiday_rows or []:
-        item = serialize_holiday_row(row)
-        holiday_id = clean_str(item.get('id'))
-        if holiday_id:
-            serialized[holiday_id] = item
+    cohort does. Built once per payload: the alternative is a holiday read per
+    module.
 
+    A cohort's holidays are England's bank holidays from its own start date
+    onwards -- see ``scheduling_holidays_from``: these dates are what a session
+    plan steps over, and a plan that steps over enough of them finishes after
+    the cohort's practical end date. ``excludedHolidayIds`` narrows that set to
+    the ones the cohort has not unticked.
+    """
     holidays_by_cohort = {}
     for cohort in cohorts or []:
         cohort_id = clean_str(cohort.get('id'))
         if not cohort_id:
             continue
-        holidays_by_cohort[cohort_id] = [
-            serialized[clean_str(value)]
-            for value in parse_notes_id_list(cohort.get('holidayIds') or cohort.get('holiday_ids'))
-            if clean_str(value) in serialized
-        ]
+        holidays_by_cohort[cohort_id] = scheduling_holidays_from(
+            holiday_rows,
+            cohort.get('startDate') or cohort.get('start_date'),
+            cohort.get('excludedHolidayIds') or cohort.get('excluded_holiday_ids'),
+        )
     return holidays_by_cohort
+
+
+def cohort_holiday_period_end(cohort):
+    """The last date a cohort's holidays are drawn from.
+
+    The practical end date -- the end of the delivery period, not the end of the
+    EPA window that follows it. A cohort row that has lost its end date falls
+    back to the contracted duration, which is the same rule
+    ``cohort_authoring_payload`` writes the stored row with, so the two agree.
+    """
+    cohort = cohort or {}
+    end_date = format_date(
+        cohort.get('practicalEndDate') or cohort.get('practical_end_date')
+        or cohort.get('endDate') or cohort.get('end_date')
+    )
+    if end_date:
+        return end_date
+    start_date = format_date(cohort.get('startDate') or cohort.get('start_date'))
+    months = parse_int(cohort.get('durationMonths') or cohort.get('duration_months'), 0)
+    if not start_date or months <= 0:
+        return ''
+    return format_date(calculate_cohort_end_date(start_date, months))
 
 
 def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_cohort=None):
@@ -8647,19 +8931,22 @@ def module_session_dates(module, holiday_cache=None):
 
 
 def cohort_selected_holidays_by_cohort(cohort_ids):
-    """The ticked holidays of many cohorts at once, keyed by cohort id.
+    """The holidays of many cohorts at once, keyed by cohort id.
 
-    ``holiday_ids`` is the selection; ``selected_holidays`` is only a cache of
-    what those ids pointed at when the cohort was last written, and it does go
-    stale -- a cohort ticking eight holidays has been seen carrying one in that
-    column, which silently left a module's sessions running straight through a
-    closed Christmas. So the ids are resolved against the holiday table, exactly
-    as ``cohort_selected_holidays_by_id`` does for the whole calendar, and the
-    cached copy is only a fallback for a row that has no ids at all.
+    These are the dates a session plan skips, so they are resolved from the
+    cohort's start date with no end bound (``scheduling_holidays_from``): a plan
+    pushed later by the holidays it stepped over has to keep skipping them after
+    the cohort's practical end date, not stop at it. The cohort's *own* holidays
+    -- what the drawer lists and the row records -- are the narrower in-period
+    set, and ``cohort_holiday_details`` answers for those.
 
-    No period filter: the ticked selection applies to the module's own dates,
-    which are free to run past the cohort's stored base period. An empty
-    selection skips nothing, which is the cohort holiday rule.
+    The stored ``holiday_ids`` and ``selected_holidays`` columns are
+    deliberately not read: both were written against the authored holiday table
+    that is no longer a source, and ``selected_holidays`` went stale besides --
+    a cohort with eight holidays has been seen carrying one there, which left a
+    module's sessions running straight through a closed Christmas.
+    ``excluded_holiday_ids`` is different: it is the human's own deny-list, not
+    a derived cache, so it is read and honoured.
 
     Two reads for any number of cohorts -- the cohort rows in one ``in (...)``
     and the holiday table once -- because every module in a cohort shares that
@@ -8681,33 +8968,22 @@ def cohort_selected_holidays_by_cohort(cohort_ids):
         return {}
     if not rows:
         return {}
-    by_id = {}
     try:
-        for row in get_holiday_rows():
-            holiday = serialize_holiday_row(row)
-            by_id[clean_str(holiday.get('id'))] = holiday
+        holiday_rows = get_holiday_rows()
     except (Exception, AssertionError):
         logger.debug('Unable to read holidays for %s.', ', '.join(wanted), exc_info=True)
-        by_id = {}
+        holiday_rows = []
 
     grouped = {}
     for cohort in rows:
         cohort_id = clean_str(cohort.get('cohort_id'))
         if not cohort_id:
             continue
-        # The column is JSON, so it is decoded before the ids are read: splitting
-        # the raw text would hand back '["1090"' and match no holiday at all.
-        ticked = [
-            clean_str(value)
-            for value in parse_notes_id_list(as_json_value(cohort.get('holiday_ids'), []))
-            if clean_str(value)
-        ]
-        resolved = [by_id[value] for value in ticked if value in by_id] if ticked else []
-        if resolved:
-            grouped[cohort_id] = resolved
-            continue
-        cached = as_json_value(cohort.get('selected_holidays'), [])
-        grouped[cohort_id] = cached if isinstance(cached, list) else []
+        grouped[cohort_id] = scheduling_holidays_from(
+            holiday_rows,
+            cohort.get('start_date'),
+            parse_json_value(cohort.get('excluded_holiday_ids'), []),
+        )
     return grouped
 
 
@@ -8744,7 +9020,7 @@ def module_session_plan_for_count(module_row, session_count, holidays=None):
     count = max(0, parse_int(session_count, 0))
     start = parse_date((module_row or {}).get('start_date'))
     if count <= 0 or not start:
-        return {'sessions': [], 'skippedHolidays': [], 'finalEndDate': '', 'warnings': []}
+        return {'sessions': [], 'slots': [], 'skippedHolidays': [], 'finalEndDate': '', 'originalEndDate': '', 'warnings': []}
     applied_holidays = (
         module_cohort_selected_holidays(module_row) if holidays is None else (holidays or [])
     )
@@ -9386,10 +9662,9 @@ def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=
     # `is_active` above is the intended soft-delete for a profile.
     frameworks, ksb_profiles = build_ksb_data(ksb_profiles, modules, training_rows)
 
-    holiday_rows = rows['holidays'] if visibility == 'all' else [
-        item for item in rows['holidays']
-        if not truthy(item.get('is_archived')) and not truthy(item.get('archived')) and not truthy(extract_notes_meta(item.get('notes')).get('archived'))
-    ]
+    # Bank holidays have no archived state -- nobody authors or retires them --
+    # so every visibility sees the same calendar.
+    holiday_rows = rows['holidays']
 
     payload = {
         'schema': CURRICULUM_SCHEMA,
@@ -9961,14 +10236,106 @@ def validate_mapping_duplicates(mappings, path):
     return errors
 
 
+#: What a bank holiday's ``type`` reads as everywhere a holiday carries one.
+#: Holidays used to be authored with a free-text type per row; there is only one
+#: kind now, so the value is fixed rather than stored.
+BANK_HOLIDAY_TYPE = 'Bank holiday'
+#: The colour the old authored calendar gave its bank-holiday rows. Kept so the
+#: chips and calendar bands stay the colour staff already read as "holiday".
+BANK_HOLIDAY_COLOR = '#91d64c'
+
+
+#: The two kinds of holiday, and the word each one is reported under. A reader
+#: needs to be able to tell them apart for one reason: a GOV.UK row cannot be
+#: edited or deleted here, and an authored one can.
+HOLIDAY_SOURCE_GOVUK = 'gov.uk'
+HOLIDAY_SOURCE_AUTHORED = 'authored'
+#: The colour an authored holiday takes when its type carries none.
+AUTHORED_HOLIDAY_COLOR = '#dc2626'
+
+
+def holiday_row_source(row):
+    """Which of the two tables a holiday row came from.
+
+    ``division`` and ``holiday_date`` are columns only the GOV.UK mirror has, so
+    they identify a bank holiday without the caller having to say. An already
+    serialized row states its own source and is believed.
+    """
+    row = row or {}
+    stated = clean_str(row.get('source')).lower()
+    if stated in {HOLIDAY_SOURCE_GOVUK, HOLIDAY_SOURCE_AUTHORED}:
+        return stated
+    if row.get('division') or row.get('holiday_date'):
+        return HOLIDAY_SOURCE_GOVUK
+    return HOLIDAY_SOURCE_AUTHORED
+
+
 def serialize_holiday_row(row):
+    """One holiday in the shape the whole curriculum reads.
+
+    Two tables arrive here. ``curriculum.england_holidays`` gives a single dated
+    bank holiday with a ``title``; ``curriculum.holidays`` gives an authored
+    closure period with a ``label`` and its own start and end date. Both come out
+    as a ``label`` plus a ``startDate``/``endDate`` pair -- a bank holiday simply
+    has the two dates equal -- so ``holiday_date_set``, ``date_ranges_overlap``
+    and the day arithmetic treat a one-day national holiday and a fortnight's
+    closure the same way, which is the only way they should be treated.
+
+    Rows that already arrived serialized are passed straight back through. A
+    caller previewing an unsaved cohort sends holidays as JSON, and it sends
+    them in this shape, not the database one.
+    """
+    row = row or {}
+    source = holiday_row_source(row)
+    holiday_date = format_date(
+        row.get('holiday_date') or row.get('date')
+        or row.get('start_date') or row.get('startDate')
+    )
+    end_date = format_date(row.get('end_date') or row.get('endDate')) or holiday_date
+    label = clean_str(row.get('title') or row.get('label') or row.get('name'))
+    bank_holiday = source == HOLIDAY_SOURCE_GOVUK
+    item = {
+        'id': row.get('id'),
+        'label': label,
+        'startDate': holiday_date,
+        'endDate': end_date,
+        # A bank holiday's type is not stored -- being in the GOV.UK mirror is
+        # what makes it one -- while an authored holiday's type is whatever was
+        # typed on it, including nothing at all.
+        'type': clean_str(row.get('type')) or (BANK_HOLIDAY_TYPE if bank_holiday else ''),
+        'color': clean_str(row.get('color')) or (BANK_HOLIDAY_COLOR if bank_holiday else AUTHORED_HOLIDAY_COLOR),
+        'source': source,
+    }
+    if bank_holiday:
+        # Only GOV.UK rows carry these, and only 'Substitute day' ever appears in
+        # notes. Passed through so a picker can say why Boxing Day moved. An
+        # authored row's notes column is internal bookkeeping (see
+        # append_notes_meta) and is deliberately not published.
+        notes = clean_str(row.get('notes'))
+        if notes:
+            item['notes'] = notes
+        if row.get('bunting') is not None:
+            item['bunting'] = bool(row.get('bunting'))
+    return item
+
+
+#: GOV.UK's bank holidays, mirrored into the curriculum schema. Reference data
+#: with its own table because it is not authored here: see
+#: sql/2026-09-13_curriculum_england_holidays.sql.
+ENGLAND_HOLIDAYS_TABLE = 'england_holidays'
+
+
+def serialize_england_holiday_row(row):
     return {
         'id': row.get('id'),
-        'label': row.get('label'),
-        'startDate': format_date(row.get('start_date') or row.get('startDate')),
-        'endDate': format_date(row.get('end_date') or row.get('endDate')),
-        'type': row.get('type'),
-        'color': row.get('color'),
+        'division': clean_str(row.get('division')),
+        'title': clean_str(row.get('title')),
+        'date': format_date(row.get('holiday_date')),
+        # Only ever 'Substitute day' -- the holiday was moved because the real
+        # date fell on a weekend.
+        'notes': clean_str(row.get('notes')),
+        'bunting': bool(row.get('bunting')),
+        'fetchedAt': format_created_at(row.get('fetched_at')),
     }
 
 
@@ -10042,26 +10409,41 @@ def canonical_programme_id(value='', programme_name=''):
     return candidate
 
 
-def cohort_holiday_details(holiday_rows, holiday_ids, start_date, end_date):
-    selected_ids = parse_notes_id_list(holiday_ids)
-    selected_id_set = {clean_str(item) for item in selected_ids}
+def cohort_holiday_details(holiday_rows, excluded_ids, start_date, end_date):
+    """What one cohort's holidays are, given its dates and what it has unticked.
+
+    Every bank holiday inside ``start_date``..``end_date`` applies by default --
+    that in-range list is ``holidaysInRange``, the full set of options the
+    cohort drawer offers a checkbox for. ``excluded_ids`` is a deny-list: the
+    ids a human unticked, subtracted from that set to get ``selectedHolidays``
+    and the ``holidayIds`` module session planning skips. It is not the
+    selection itself, so an id that matches nothing in range -- a stale id from
+    the authored table this no longer reads, or a holiday that has since moved
+    out of the period -- simply has nothing to remove.
+
+    An empty or omitted ``excluded_ids`` means nothing is excluded: every
+    holiday in the period applies, which is both the default for a cohort
+    nobody has touched and the previous, all-or-nothing behaviour this
+    replaces.
+    """
     serialized = [serialize_holiday_row(row) for row in (holiday_rows or [])]
-    in_range = [
-        item for item in serialized
-        if date_ranges_overlap(start_date, end_date, item.get('startDate'), item.get('endDate'))
-    ]
-    selected = [
-        item for item in serialized
-        if clean_str(item.get('id')) in selected_id_set
+    in_range = holidays_within_period(holiday_rows, start_date, end_date)
+    excluded_set = {clean_str(value) for value in (excluded_ids or []) if clean_str(value)}
+    selected = [item for item in in_range if clean_str(item.get('id')) not in excluded_set]
+    selected_ids = [clean_str(item.get('id')) for item in selected if clean_str(item.get('id'))]
+    excluded_in_range = [
+        clean_str(item.get('id')) for item in in_range
+        if clean_str(item.get('id')) in excluded_set
     ]
     return {
         'holidayIds': selected_ids,
         'selectedHolidays': selected,
         'holidaysInRange': in_range,
+        'excludedHolidayIds': excluded_in_range,
         'summary': {
             'global': len(serialized),
             'inRange': len(in_range),
-            'selected': len(selected_ids),
+            'selected': len(selected),
         },
     }
 
@@ -10107,9 +10489,27 @@ def cohort_authoring_payload(cohort, rows=None, groups=None, holiday_rows=None, 
     holiday_period_end = format_date(
         calculate_cohort_end_date(start_date, holiday_period_months) or end_date
     )
+    # excludedHolidayIds is the one holiday input that IS honoured -- it is a
+    # human's own choice in the cohort drawer, not derived data. Unsent keeps
+    # whatever is already stored, the same guard as epa_months/override above:
+    # a sync/repair rebuild from training-plan rows carries no opinion on which
+    # holidays were unticked, and must not silently restore them all.
+    excluded_holiday_ids_sent = (
+        'excludedHolidayIds' in cohort or 'excluded_holiday_ids' in cohort or 'excluded_holiday_ids' in meta
+    )
+    if excluded_holiday_ids_sent:
+        excluded_holiday_ids = (
+            cohort.get('excludedHolidayIds') if 'excludedHolidayIds' in cohort
+            else cohort.get('excluded_holiday_ids') if 'excluded_holiday_ids' in cohort
+            else meta.get('excluded_holiday_ids')
+        )
+    else:
+        if not stored_cohort:
+            stored_cohort = fetch_cohort_row(clean_str(cohort.get('id') or meta.get('cohort_id'))) or {}
+        excluded_holiday_ids = parse_json_value(stored_cohort.get('excluded_holiday_ids'), [])
     holiday_info = cohort_holiday_details(
         holiday_rows or [],
-        cohort.get('holidayIds') or meta.get('holiday_ids'),
+        excluded_holiday_ids,
         start_date,
         holiday_period_end,
     )
@@ -10147,6 +10547,7 @@ def cohort_authoring_payload(cohort, rows=None, groups=None, holiday_rows=None, 
         'holiday_ids': json_db_value(holiday_info['holidayIds']),
         'selected_holidays': json_db_value(holiday_info['selectedHolidays']),
         'holidays_in_range': json_db_value(holiday_info['holidaysInRange']),
+        'excluded_holiday_ids': json_db_value(holiday_info['excludedHolidayIds']),
         'holiday_summary': json_db_value(holiday_info['summary']),
         'notes': next((clean_str(row.get('notes')) for row in rows if clean_str(row.get('notes'))), ''),
         'source_type': 'curriculum_authoring',
@@ -10194,13 +10595,28 @@ def persist_cohort_authoring_detail(cohort, rows=None, groups=None, holiday_rows
         return None
 
 
-def serialize_cohort_authoring_detail(row):
+def serialize_cohort_authoring_detail(row, holiday_rows=None):
     epa_months = parse_epa_months(row.get('epa_months'))
     apprenticeship_end_override = format_date(row.get('apprenticeship_end_override'))
     practical_end_date, apprenticeship_end_date = cohort_epa_dates(
         row.get('end_date'),
         epa_months,
         apprenticeship_end_override,
+    )
+    # The holidayIds/selectedHolidays/holidaysInRange columns on the row are a
+    # record of what the dates (and the exclusions below) resolved to when it
+    # was last written, not an input in their own right. They are recomputed
+    # here instead of read back: a row written before holidays became England's
+    # bank holidays still carries ids into the authored table nobody reads any
+    # more, and a row whose dates were changed elsewhere would otherwise answer
+    # for the old period. excluded_holiday_ids is the one column that IS read
+    # back -- it is the human's own choice, not a derived cache, so there is
+    # nothing to recompute it from.
+    holiday_info = cohort_holiday_details(
+        get_holiday_rows_safe() if holiday_rows is None else holiday_rows,
+        parse_json_value(row.get('excluded_holiday_ids'), []),
+        format_date(row.get('start_date')),
+        cohort_holiday_period_end(row),
     )
     return {
         'cohortId': row.get('cohort_id'),
@@ -10232,10 +10648,11 @@ def serialize_cohort_authoring_detail(row):
         'trainingPlanIds': as_json_value(row.get('training_plan_ids'), []),
         'groupIds': as_json_value(row.get('group_ids'), []),
         'moduleNames': as_json_value(row.get('module_names'), []),
-        'holidayIds': as_json_value(row.get('holiday_ids'), []),
-        'selectedHolidays': as_json_value(row.get('selected_holidays'), []),
-        'holidaysInRange': as_json_value(row.get('holidays_in_range'), []),
-        'holidaySummary': as_json_value(row.get('holiday_summary'), {}),
+        'holidayIds': holiday_info['holidayIds'],
+        'selectedHolidays': holiday_info['selectedHolidays'],
+        'holidaysInRange': holiday_info['holidaysInRange'],
+        'excludedHolidayIds': holiday_info['excludedHolidayIds'],
+        'holidaySummary': holiday_info['summary'],
         'notes': row.get('notes') or '',
         'sourceType': row.get('source_type') or 'curriculum_authoring',
         'sourceId': row.get('source_id') or '',
@@ -10245,9 +10662,13 @@ def serialize_cohort_authoring_detail(row):
 
 
 def cohort_authoring_detail_rows():
+    # One holiday read for the whole page: every cohort resolves its own
+    # holidays from its own dates, but they all resolve them against the same
+    # calendar.
+    holiday_rows = get_holiday_rows_safe()
     try:
         return [
-            serialize_cohort_authoring_detail(row)
+            serialize_cohort_authoring_detail(row, holiday_rows)
             for row in authoring_fetch_all(
                 COHORT_AUTHORING_DETAILS_TABLE,
                 order_sql='programme_name, cohort_name, start_date',
@@ -11471,6 +11892,13 @@ def provision_module_authoring_tables():
                 selected_holidays {json_type},
                 holidays_in_range {json_type},
                 holiday_summary {json_type},
+                -- The holidays a human unticked in the cohort drawer, from the
+                -- holidays_in_range list above. A deny-list, not the selection
+                -- itself: empty means nothing excluded, so a fresh cohort and
+                -- one whose period later grows to include a new holiday both
+                -- default to every holiday applying, same as before this
+                -- column existed.
+                excluded_holiday_ids {json_type},
                 notes text,
                 source_type varchar(64) not null default 'training_plan',
                 source_id varchar(128),
@@ -11487,6 +11915,7 @@ def provision_module_authoring_tables():
             cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column if not exists epa_months integer')
             cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column if not exists apprenticeship_end_date date')
             cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column if not exists apprenticeship_end_override date')
+            cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column if not exists excluded_holiday_ids {json_type}')
         else:
             cursor.execute(f'pragma table_info({quote_ident(COHORT_AUTHORING_DETAILS_TABLE)})')
             cohort_columns = {row[1] for row in cursor.fetchall()}
@@ -11496,6 +11925,8 @@ def provision_module_authoring_tables():
                 cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column apprenticeship_end_date date')
             if 'apprenticeship_end_override' not in cohort_columns:
                 cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column apprenticeship_end_override date')
+            if 'excluded_holiday_ids' not in cohort_columns:
+                cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column excluded_holiday_ids {json_type}')
         cursor.execute(f'''
             create table if not exists {authoring_table_name(GROUPS_TABLE)} (
                 group_id varchar(128) primary key,
@@ -11930,6 +12361,118 @@ def programme_archived_for_authoring(programme_id):
         logger.debug('Unable to resolve programme %s for delete-flag derivation.', identifier, exc_info=True)
         return False
     return bool(config) and is_archived_program_config(config)
+
+
+def module_withdrawn_on_its_own(row):
+    """Was this module withdrawn by the module DELETE, rather than by a parent?
+
+    A programme or group archive stamps its children with ``deleted_via_parent``
+    (and ``deleted_by='programme-delete'``); a module archived on its own
+    carries neither. The difference matters because the two are undone
+    differently: a parent's children come back with the parent, while a module
+    withdrawn deliberately stays withdrawn until someone restores it.
+    """
+    return (
+        row_has_deleted_at(row)
+        and not clean_str((row or {}).get('deleted_via_parent'))
+        and clean_str((row or {}).get('deleted_by')) == 'module-delete'
+    )
+
+
+def module_recovered_by_move_to_live(existing_module_row, programme_id):
+    """Is this save moving an already-withdrawn module onto a live programme?
+
+    That move is the recovery route, and the backend owns its outcome rather
+    than reading it back off the payload. The drawer PATCH rebuilds its body
+    from ``get_authoring_structure_payload``, which reports
+    ``isProgrammeDeleted``, so a module being rescued sent its own stale
+    ``true`` straight back and pinned itself withdrawn: ``programme_id`` moved
+    to the live programme and the module stayed hidden from every list. The
+    Builder's structure PATCH sends the same key from the same source, so both
+    paths carried the same stale flag -- derived here, once, they recover a
+    module identically.
+
+    Not for a module withdrawn on its own: restoring that stays an explicit
+    operation, and re-parenting it must not quietly undo it.
+    """
+    if not programme_deleted_row(existing_module_row):
+        return False
+    target = clean_str(programme_id)
+    # Only a real move. Saving a withdrawn module where it already sits changes
+    # nothing about why it was withdrawn -- under an archived programme it must
+    # stay withdrawn, which is what keeps it editable there without reviving it.
+    if not target or target == clean_str((existing_module_row or {}).get('programme_id')):
+        return False
+    if programme_archived_for_authoring(target):
+        return False
+    return not module_withdrawn_on_its_own(existing_module_row)
+
+
+def authoring_programme_config_for_save(programme_id, programme_name=''):
+    """The programme row a module save would attach the module to.
+
+    Mirrors how ``ensure_programme_config_for_authoring`` picks its row -- id
+    first, then name -- minus the write. A payload that carries only a programme
+    *name* (an id that no longer resolves, or a module left unassigned) is still
+    attached by name on save, so anything judging that save has to resolve it
+    the same way or it judges a different programme than the one written.
+    """
+    identifier = persistable_programme_id(programme_id)
+    name = clean_str(programme_name)
+    try:
+        configs = get_program_config_rows()
+    except (Exception, AssertionError):
+        logger.debug('Unable to resolve the programme a module save would attach to.', exc_info=True)
+        return None
+    if identifier:
+        match = next((
+            config for config in configs if programme_config_identity(config) == identifier
+        ), None)
+        if match:
+            return match
+    if name and normalise(name) not in {'unassignedprogramme', 'unassigned'}:
+        return next((
+            config for config in configs if normalise(config.get('name')) == normalise(name)
+        ), None)
+    return None
+
+
+def archived_programme_module_edit_error(existing_module_row, *, title, programme_id, programme_name=''):
+    """The one archived-programme rule, shared by both module edit paths.
+
+    Saving re-derives ``modules.is_programme_deleted`` from the programme the
+    module is attached to, so a module sitting under an archived programme is
+    flagged as deleted the moment anything about it is saved -- and it
+    disappears from every list while the response still reads ``updated: True``.
+    That is the "I edited it and it vanished" report. Refused outright rather
+    than saved-and-warned: the edit is not what the person wanted if its effect
+    is to withdraw the module.
+
+    Applied identically by the drawer PATCH (``curriculum_module_detail``) and
+    the Module Builder's structure PATCH (``curriculum_module_structure``), so
+    the two cannot drift into two slightly different rules -- the Builder used
+    to save happily and leave the module hidden.
+
+    Only for a module that is still visible. One already withdrawn is left
+    editable on purpose -- moving it onto a live programme is how it is brought
+    back, and blocking that would strand it.
+
+    Returns a ready-to-send 400 response, or ``None`` when the save may proceed.
+    """
+    if programme_deleted_row(existing_module_row):
+        return None
+    target_programme = authoring_programme_config_for_save(programme_id, programme_name)
+    if not target_programme or not is_archived_program_config(target_programme):
+        return None
+    name = clean_str(title)
+    label = f'"{name}"' if name else 'This module'
+    return json_error(
+        f'{label} belongs to an archived programme, so saving it '
+        'would withdraw it from every list. Restore the programme, or move the module to a live '
+        'one, before editing it.',
+        fields=['programmeId'],
+        status=400,
+    )
 
 
 @scoped_curriculum_read
@@ -15059,16 +15602,19 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                     planned_settings['sessionDateTimeUtc'] = planned_instant
                     planned_settings['teamsStartDateTimeUtc'] = planned_instant
                 component['settings'] = planned_settings
-        # The week keeps the slot it was authored into, not the date its live
-        # session was pushed to. A closure takes the session out of the week --
-        # the reading, the assignment and everything else in it stay on the week
-        # they belong to, so dating the week from the shifted session dragged
-        # content that nothing had closed a week later along with it.
-        slot_date = format_date(first_planned.get('slotDate')) or format_date(first_planned.get('date'))
-        week['sessionDate'] = slot_date
-        week['sessionDay'] = clean_str(first_planned.get('slotDay') or first_planned.get('day'))
-        week['sessionStartTime'] = session_start_time if slot_date else ''
-        week['sessionDurationMinutes'] = session_duration if slot_date else 0
+        # The week runs on the day its live session is delivered on. A closed
+        # delivery slot is not this week -- it is a reading week of its own,
+        # which the plan's `slots` spine keeps in the curriculum at the closed
+        # date -- so the authored week and everything in it moves down to the
+        # next open slot together with the session it holds. Dating the week
+        # from `slotDate` instead put the week on a day the module is shut and
+        # disagreed with the frontend's `applyModuleWeekSessionPlan`, which has
+        # walked the delivered date all along.
+        session_date = format_date(first_planned.get('date'))
+        week['sessionDate'] = session_date
+        week['sessionDay'] = clean_str(first_planned.get('day'))
+        week['sessionStartTime'] = session_start_time if session_date else ''
+        week['sessionDurationMinutes'] = session_duration if session_date else 0
     return weeks
 
 
@@ -15360,6 +15906,10 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
             })
         module_mappings = module_mappings_by_module.get(catalogue_id, [])
         module_components = component_rows_by_module.get(catalogue_id, [])
+        module_total_otjh = otjh_hours_from_minutes(sum(
+            otjh_rounded_minutes(row.get('expected_otjh'))
+            for row in module_components
+        ))
         group_row = group_rows_by_id.get(clean_str(module.get('group_id')), {})
         group_coach_name = clean_str(group_row.get('coach_name'))
         is_programme_deleted = programme_deleted_row(module) or programme_deleted_row(group_row)
@@ -15400,8 +15950,8 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
             'endTime': module.get('session_end_time') or group_row.get('session_end_time') or schedule_time_parts(group_row.get('schedule'))[1],
             'weeks': module_stored_week_count(module, len(weeks)),
             'weeksNumber': module_stored_week_count(module, len(weeks)),
-            'totalOtjh': float(module.get('total_otjh') or 0),
-            'declaredTotalOtjh': float(module.get('total_otjh') or 0),
+            'totalOtjh': module_total_otjh,
+            'declaredTotalOtjh': module_total_otjh,
             'ksbCount': len({mapping['code'] for mapping in module_mappings + [m for week in weeks for m in week['ksbMappings']] + [m for week in weeks for component in week['components'] for m in component['ksbMappings']]}),
             'lessonCount': len(module_components),
             'quizCount': len([row for row in module_components if normalise_component_type(row.get('type')) == 'quiz']),
@@ -15538,6 +16088,8 @@ def authoring_catalogue_summaries(include_programme_deleted=False):
             'ksbCount': 0,
             'lessonCount': 0,
             'quizCount': 0,
+            'totalOtjh': 0,
+            'totalOtjhMinutes': 0,
             'sessionNames': [],
             'ksbCodes': set(),
         }
@@ -15566,6 +16118,8 @@ def authoring_catalogue_summaries(include_programme_deleted=False):
         week_id = clean_str(row.get('week_id'))
         component_type = normalise_component_type(row.get('type'))
         summary['lessonCount'] += 1
+        summary['totalOtjhMinutes'] += otjh_rounded_minutes(row.get('expected_otjh'))
+        summary['totalOtjh'] = otjh_hours_from_minutes(summary['totalOtjhMinutes'])
         if component_type == 'quiz':
             summary['quizCount'] += 1
         if component_type == 'live_session':
@@ -15651,6 +16205,8 @@ def authoring_summary_catalogue_item(summary):
         'groupId': summary.get('groupId') or '',
         'group': summary.get('group') or '',
         'weeks': summary['weeks'],
+        'totalOtjh': summary['totalOtjh'],
+        'declaredTotalOtjh': summary['totalOtjh'],
         'ksbCount': summary['ksbCount'],
         'lessons': summary['lessonCount'],
         'quizzes': summary['quizCount'],
@@ -15855,6 +16411,8 @@ def enrich_modules_with_authoring(modules, include_programme_deleted=False):
                     'programmeId': module.get('programmeId') or saved.get('programmeId') or '',
                     'weeks': saved['weeks'] or module.get('weeks'),
                     'weekStructure': saved.get('weekStructure') or module.get('weekStructure') or [],
+                    'totalOtjh': saved.get('totalOtjh') or module.get('totalOtjh') or 0,
+                    'declaredTotalOtjh': saved.get('declaredTotalOtjh') or saved.get('totalOtjh') or module.get('declaredTotalOtjh') or 0,
                     'ksbCount': ksb_count,
                     'lessons': saved['lessonCount'],
                     'quizzes': saved['quizCount'],
@@ -16488,7 +17046,7 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
         weeks = []
     checklist, quality_score = module_authoring_quality_check({**payload, 'weekStructure': weeks})
     all_components = [component for week in weeks for component in (week.get('components') or [])]
-    total_otjh = sum(component_expected_otjh(component) for component in all_components)
+    total_otjh = otjh_hours_from_minutes(sum(component_expected_otjh_minutes(component) for component in all_components))
     # total_otjh is the persisted aggregate used by catalogue/list views.
     # Keep it derived from components so stale frontend payloads cannot pin it to 0.
     declared_total = total_otjh
@@ -16524,7 +17082,13 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
     # with attached modules read as having none. A row that *is* stamped
     # deleted keeps its state — saving must never resurrect curriculum that was
     # withdrawn on purpose, so restoring stays an explicit operation.
-    if has_programme_deleted_flag:
+    # Moving a withdrawn module onto a live programme restores it, whatever the
+    # payload says: that move *is* the recovery, and the frontend echoes back
+    # the stale `isProgrammeDeleted: true` it was given, which used to pin the
+    # module hidden under its new, perfectly live programme.
+    if module_recovered_by_move_to_live(existing_module_row, programme_id):
+        is_programme_deleted = False
+    elif has_programme_deleted_flag:
         is_programme_deleted = truthy(payload.get('isProgrammeDeleted') or payload.get('is_programme_deleted'))
     elif row_has_deleted_at(existing_module_row):
         is_programme_deleted = True
@@ -16978,7 +17542,11 @@ def save_free_programme_modules(programme_id, payload):
             week_payload = free_programme_week_payload(course_id, module, module_index)
             week_id = week_payload['id']
             components = active_components_payload(module.get('components') if isinstance(module.get('components'), list) else [])
-            total_otjh = sum(component_expected_otjh(component) for component in components if isinstance(component, dict))
+            total_otjh = otjh_hours_from_minutes(sum(
+                component_expected_otjh_minutes(component)
+                for component in components
+                if isinstance(component, dict)
+            ))
             authoring_upsert(AUTHORING_WEEKS_TABLE, ['id'], week_payload)
             free_programme_upsert(FREE_PROGRAMME_MODULES_TABLE, ['id'], {
                 'id': module_id,
@@ -18305,13 +18873,17 @@ def save_tree_cohort(cohort, programme_id, programme_name, preserve_missing_grou
         'holidayIds': holiday_ids,
         'groups': group_ids,
     }
+    # Only set when the tree save actually carries an opinion: an omitted key
+    # leaves cohort_authoring_payload to keep whatever exclusions are already
+    # stored, the same as an unsent EPA period or apprenticeship override above.
+    if 'excludedHolidayIds' in cohort or 'excluded_holiday_ids' in cohort:
+        payload['excludedHolidayIds'] = parse_notes_id_list(
+            cohort.get('excludedHolidayIds') if 'excludedHolidayIds' in cohort else cohort.get('excluded_holiday_ids')
+        )
     holiday_rows = cohort.get('holidays') or cohort.get('holidayDetails')
     if holiday_rows is None:
         try:
-            if not table_exists('holidays'):
-                holiday_rows = []
-            else:
-                holiday_rows = get_holiday_rows()
+            holiday_rows = [] if not holiday_table_name() else get_holiday_rows()
         except (Exception, AssertionError):
             holiday_rows = []
     row = persist_cohort_authoring_detail(
@@ -19060,6 +19632,47 @@ def curriculum_module_structure(request, module_catalogue_id):
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
+    # An identifier that names an existing module but did not resolve to one must
+    # not fall through to the save: ``unique_module_catalogue_id`` mints a fresh
+    # MOD id for anything it cannot recognise, so the whole structure would be
+    # written to a brand new ghost module while the one the person was editing
+    # kept its old content -- the save reports success and the work is nowhere.
+    # A fresh canonical MOD id (the builder's own local draft) and a training
+    # alias are the two cases that legitimately provision on write.
+    if (
+        not stored_catalogue_id
+        and not module_catalogue_id.startswith('training-module-')
+        and not is_canonical_module_catalogue_id(module_catalogue_id)
+    ):
+        return json_error('Module not found.', status=404)
+    # The same archived-programme rule the drawer PATCH applies, checked before
+    # anything is written. Without it the Builder saved the structure happily
+    # and the module stayed hidden, because the save re-derived
+    # `is_programme_deleted` from the archived programme underneath it: blocked
+    # in the drawer, saved-and-vanished in the Builder, for the same edit.
+    #
+    # Only for a module that already exists -- a fresh canonical draft and a
+    # training alias provision on write, so there is nothing yet to withdraw.
+    # The programme is resolved the way save_module_authoring_structure resolves
+    # it, so the row the guard judges is the row the save would attach.
+    existing_structure_row = authoring_module_exists(resolved_catalogue_id) if stored_catalogue_id else None
+    if existing_structure_row:
+        archived_error = archived_programme_module_edit_error(
+            existing_structure_row,
+            title=payload.get('title') or payload.get('name') or existing_structure_row.get('title'),
+            programme_id=(
+                payload.get('programmeId')
+                or payload.get('programme_id')
+                or existing_structure_row.get('programme_id')
+            ),
+            programme_name=(
+                payload.get('programmeName')
+                or payload.get('programme')
+                or existing_structure_row.get('programme_name')
+            ),
+        )
+        if archived_error:
+            return archived_error
     try:
         if module_catalogue_id.startswith('training-module-'):
             training_id = module_catalogue_id.replace('training-module-', '', 1)
@@ -19113,24 +19726,17 @@ def curriculum_module_settings(request, module_catalogue_id):
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
-    module_catalogue_id = clean_str(module_catalogue_id)
+    # Resolved the same way every other module write resolves its target. Reading
+    # the raw identifier meant a legacy or aliased id found nothing, and the
+    # blank shell below was then saved as a brand new module: the real one kept
+    # its old settings while a titleless ghost appeared in the catalogue.
+    module_catalogue_id = resolve_stored_module_catalogue_id(module_catalogue_id) or clean_str(module_catalogue_id)
     existing = get_authoring_structure_payload(module_catalogue_id)
     if not existing:
-        existing = {
-            'catalogueId': module_catalogue_id,
-            'programmeId': payload.get('programmeId') or payload.get('programmeName') or '',
-            'programmeName': payload.get('programmeName') or payload.get('programme') or 'Unassigned programme',
-            'title': payload.get('title') or payload.get('name') or f'Module {module_catalogue_id}',
-            'description': payload.get('description') or '',
-            'status': payload.get('status') or 'draft',
-            'weekStructure': [],
-            'moduleKsbMappings': [],
-            'completionCriteria': default_completion_payload(),
-            'advancedDetails': {},
-            'background': '',
-            'epaRequirements': [],
-            'qualificationOutcomes': [],
-        }
+        # This endpoint only ever edits settings on a module that exists. A
+        # missing one is a 404, never a create -- saving a shell here would
+        # blank the weeks and components of whatever the id was meant to name.
+        return json_error('Module not found.', status=404)
     updates = {
         **existing,
         'programmeId': payload.get('programmeId') or existing.get('programmeId'),
@@ -22512,17 +23118,25 @@ def curriculum_module_detail(request, identifier):
         # (that is the structure-save endpoint's job) -- so a `weeks` edit here
         # has to resize the stored weeks itself, or the count changes while the
         # actual week rows silently stay whatever they were. Growing appends
-        # empty weeks after the last one; shrinking drops from the end, so
-        # already-authored weeks are never rewritten or lost to a weeks edit.
-        resolved_weeks_number = parse_int(
+        # empty weeks after the last one; shrinking only ever drops trailing
+        # week shells that hold nothing, so no scalar sent from a form can
+        # delete authored weeks and the components inside them.
+        requested_weeks_number = parse_int(
             payload.get('weeks') or payload.get('weeksNumber') or current.get('weeksNumber') or current.get('weeks'),
             len(current_week_structure),
         )
-        resolved_week_structure = (
-            payload.get('weekStructure')
-            if payload.get('weekStructure') is not None
-            else resize_authoring_week_structure(current_week_structure, resolved_weeks_number)
-        )
+        if payload.get('weekStructure') is not None:
+            resolved_week_structure = payload.get('weekStructure')
+            resolved_weeks_number = requested_weeks_number
+        else:
+            resolved_week_structure = resize_authoring_week_structure_preserving_content(
+                current_week_structure, requested_weeks_number,
+            )
+            # Re-derived from what survived: storing the requested number while
+            # keeping more week rows than that is what left `weeks_number` at 1
+            # on a twelve-week module, and every later save then tried to shrink
+            # to it again.
+            resolved_weeks_number = len(resolved_week_structure) or requested_weeks_number
         structure_payload = {
             **current,
             'catalogueId': module_catalogue_id,
@@ -22564,6 +23178,15 @@ def curriculum_module_detail(request, identifier):
             'advancedDetails': payload.get('advancedDetails') or current.get('advancedDetails') or {},
             'weekStructure': resolved_week_structure,
         }
+        # One authoritative rule, shared with the Builder's structure PATCH.
+        archived_error = archived_programme_module_edit_error(
+            existing_authoring,
+            title=structure_payload.get('title'),
+            programme_id=structure_payload.get('programmeId'),
+            programme_name=structure_payload.get('programmeName'),
+        )
+        if archived_error:
+            return archived_error
         # The cohort window is only re-checked when the request actually touches
         # the dates or the placement: a PATCH that just cascades a KSB profile or
         # renames the module must not fail on a stored date it never sent.
@@ -22825,6 +23448,7 @@ def curriculum_cohort_from_authoring_detail(detail):
         'durationMonths': detail.get('durationMonths') or detail.get('duration_months') or 0,
         'color': detail.get('color') or '',
         'holidayIds': detail.get('holidayIds') or detail.get('holiday_ids') or [],
+        'excludedHolidayIds': detail.get('excludedHolidayIds') or detail.get('excluded_holiday_ids') or [],
         'status': detail.get('status') or 'planned',
         'createdAt': detail.get('createdAt') or detail.get('created_at') or '',
         'updatedAt': detail.get('updatedAt') or detail.get('updated_at') or '',
@@ -22956,6 +23580,13 @@ def create_curriculum_cohort(payload):
         cohort_apprenticeship_end_date(end_date, epa_months, apprenticeship_end_override)
     )
     holiday_ids = parse_notes_id_list(payload.get('holidayIds') or payload.get('holiday_ids'))
+    # The holidays unticked in the cohort drawer -- explicit key presence, not
+    # ``or``, so an explicit empty list (nothing excluded, i.e. select all) is
+    # never confused with the key simply being absent from an older caller.
+    excluded_holiday_ids_sent = 'excludedHolidayIds' in payload or 'excluded_holiday_ids' in payload
+    excluded_holiday_ids = parse_notes_id_list(
+        payload.get('excludedHolidayIds') if 'excludedHolidayIds' in payload else payload.get('excluded_holiday_ids')
+    ) if excluded_holiday_ids_sent else []
 
     # A cohort with the same canonical id, or the same name within the same
     # programme, is treated as the same cohort. Rather than failing the save,
@@ -23029,6 +23660,8 @@ def create_curriculum_cohort(payload):
         ) or None
         if 'holidayIds' in payload or 'holiday_ids' in payload:
             updates['holiday_ids'] = json_db_value(holiday_ids)
+        if excluded_holiday_ids_sent:
+            updates['excluded_holiday_ids'] = json_db_value(excluded_holiday_ids)
         nullable = ['apprenticeship_end_date', 'apprenticeship_end_override']
         if 'epaMonths' in payload or 'epa_months' in payload:
             nullable.append('epa_months')
@@ -23052,6 +23685,7 @@ def create_curriculum_cohort(payload):
             'durationMonths': duration_months,
             'color': payload.get('color') or '',
             'holidayIds': holiday_ids,
+            'excludedHolidayIds': excluded_holiday_ids if excluded_holiday_ids_sent else (duplicate.get('excludedHolidayIds') or []),
             'status': updates['status'],
         })})
 
@@ -23067,6 +23701,7 @@ def create_curriculum_cohort(payload):
         'status': title_case_status(False, payload.get('startDate'), end_date),
         'color': payload.get('color') or '',
         'holidayIds': holiday_ids,
+        'excludedHolidayIds': excluded_holiday_ids,
         'groups': [],
         'modules': [],
     }
@@ -23121,6 +23756,7 @@ def create_curriculum_cohort(payload):
         'durationMonths': duration_months,
         'color': payload.get('color') or '',
         'holidayIds': holiday_ids,
+        'excludedHolidayIds': excluded_holiday_ids,
         'status': cohort['status'],
     })}, status=201)
 
@@ -23230,6 +23866,14 @@ def curriculum_cohort_detail(request, identifier):
     if 'holidayIds' in payload or 'holiday_ids' in payload:
         updates['holiday_ids'] = json_db_value(parse_notes_id_list(
             payload.get('holidayIds') if 'holidayIds' in payload else payload.get('holiday_ids')
+        ))
+    # The holidays unticked in the cohort drawer. Unsent leaves the stored
+    # exclusions alone -- checked the same way as holidayIds above, by key
+    # presence rather than truthiness, so an explicit empty list (nothing
+    # excluded, i.e. "Select all") is written rather than ignored.
+    if 'excludedHolidayIds' in payload or 'excluded_holiday_ids' in payload:
+        updates['excluded_holiday_ids'] = json_db_value(parse_notes_id_list(
+            payload.get('excludedHolidayIds') if 'excludedHolidayIds' in payload else payload.get('excluded_holiday_ids')
         ))
     # Programme reassignment is only honoured when an explicit canonical id or a
     # resolvable programme name is supplied; otherwise the stored parent stands.
@@ -24506,6 +25150,48 @@ def resize_authoring_week_structure(weeks, target_count):
     return weeks[:target]
 
 
+def week_holds_authored_content(week):
+    """Whether a week holds anything somebody actually put there.
+
+    An untouched week shell -- the thing a week-count change creates -- is a
+    default title and nothing else. Everything past that is authored work.
+    """
+    if not isinstance(week, dict):
+        return False
+    if week.get('components') or week.get('ksbMappings') or week.get('learningOutcomes'):
+        return True
+    if clean_str(week.get('summary')):
+        return True
+    title = clean_str(week.get('title'))
+    if not title:
+        return False
+    week_number = parse_int(week.get('weekNumber') or week.get('week_number'), 0)
+    return normalise(title) != normalise(f'Week {week_number}')
+
+
+def resize_authoring_week_structure_preserving_content(weeks, target_count):
+    """Resize a week list from a scalar count, but never delete authored weeks.
+
+    The module PATCH carries the week *count* and never the week *list* -- the
+    list belongs to the Module Builder. Shrinking straight to that number let a
+    single scalar delete whole weeks and every component in them while the
+    response still said ``updated: True``: the drawer seeds its Weeks box from
+    the module's stored count and falls back to 1 when the module has none, so
+    simply opening an imported module and pressing Save could cut it down to one
+    week. Trailing shells hold nothing and are safe to drop; a week with
+    authored content stops the shrink where it is, and the stored count is
+    re-derived from what survived so the number and the rows never disagree.
+    """
+    weeks = list(weeks or [])
+    target = max(0, parse_int(target_count, len(weeks)))
+    if target >= len(weeks):
+        return resize_authoring_week_structure(weeks, target)
+    kept = list(weeks)
+    while len(kept) > target and not week_holds_authored_content(kept[-1]):
+        kept.pop()
+    return kept
+
+
 def attachment_week_structure(item, current_structure=None, week_count=None, session_count=0, schedule=''):
     """Pick the authored week structure for a module attachment.
 
@@ -25051,45 +25737,89 @@ def curriculum_staff_profile_detail(request, role, identifier):
 
 @require_GET
 def curriculum_holidays(request):
+    """The curriculum's holiday calendar, both halves of it.
+
+    England's bank holidays, mirrored from GOV.UK, plus this organisation's own
+    authored closure periods -- in one list, in the one label/start/end shape
+    every caller already reads. See ``get_holiday_rows``.
+
+    ``/curriculum/england-holidays/`` serves the GOV.UK half on its own, in the
+    feed's raw shape (title, notes, bunting), for the page that lists it.
+    """
     visibility = curriculum_visibility(request)
+    include_archived = visibility == 'all'
 
     def build_holidays():
-        rows = get_holiday_rows()
-        if visibility != 'all':
-            rows = [
-                item for item in rows
-                if not truthy(item.get('is_archived'))
-                and not truthy(item.get('archived'))
-                and not truthy(extract_notes_meta(item.get('notes')).get('archived'))
-            ]
-        return [serialize_holiday_row(item) for item in rows]
+        return [
+            serialize_holiday_row(item)
+            for item in get_holiday_rows(include_archived=include_archived)
+        ]
 
+    # Keyed on visibility again now that authored holidays are back: an archived
+    # closure period is in one answer and not the other, and a single cache key
+    # would serve whichever was asked for first to both.
     holidays = cached_curriculum_value(f'holidays:{visibility}', build_holidays)
+    # Any read of the calendar is a chance to notice GOV.UK has moved a date.
+    # Costs this request nothing: it starts a thread at most once per interval,
+    # and does nothing at all in the overwhelmingly common case. Imported here
+    # rather than at module load: england_holidays imports this module, the way
+    # reviews.py does, so the cycle is broken by deferring to call time.
+    from . import england_holidays
+    england_holidays.auto_sync_if_due()
     return curriculum_results_response(holidays)
+
+
+HOLIDAY_READ_ONLY_MESSAGE = (
+    'That holiday is one of the published England and Wales bank holidays, '
+    'mirrored from GOV.UK. It cannot be edited here -- it changes when GOV.UK '
+    'changes it.'
+)
 
 
 @csrf_exempt
 def curriculum_holiday_collection(request):
+    """Read the whole calendar; write the authored half of it.
+
+    A POST here creates one of this organisation's own closure periods -- a
+    Christmas shutdown, an exam week, a staff training day -- with its own start
+    and end date. It never touches the GOV.UK mirror: nobody here gets to invent
+    a national holiday, and ``curriculum_holiday_detail`` refuses to edit one for
+    the same reason.
+    """
     if request.method == 'GET':
         return curriculum_holidays(request)
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
-    source_table = holiday_table_name()
+
+    source_table = authored_holiday_table_name()
     if not source_table:
-        return json_error('Holiday table not found.', status=404)
+        return json_error(
+            'The holidays table is not provisioned. Apply '
+            'sql/2026-09-14_curriculum_authored_holidays.sql first.',
+            status=404,
+        )
+
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
     missing = require_fields(payload, ['label', 'startDate'])
     if missing:
         return json_error('Missing required fields.', fields=missing)
+
+    dates = holiday_date_payload(payload)
+    if isinstance(dates, JsonResponse):
+        return dates
+
     row = insert_row(source_table, {
-        'label': payload.get('label'),
-        'start_date': payload.get('startDate'),
-        'end_date': payload.get('endDate') or payload.get('startDate'),
-        'type': payload.get('type'),
-        'color': payload.get('color'),
-        'notes': payload.get('notes'),
+        'label': clean_str(payload.get('label')),
+        'start_date': dates['start'],
+        # A holiday with no end date is a single day, stored as such rather than
+        # left null: every reader downstream measures a period, and "one day" is
+        # a period whose two ends are the same date.
+        'end_date': dates['end'],
+        'type': clean_str(payload.get('type')),
+        'color': clean_str(payload.get('color')) or AUTHORED_HOLIDAY_COLOR,
+        'notes': clean_str(payload.get('notes')),
         'created_at': datetime.utcnow(),
         'updated_at': datetime.utcnow(),
         'is_archived': False,
@@ -25100,14 +25830,33 @@ def curriculum_holiday_collection(request):
 
 @csrf_exempt
 def curriculum_holiday_detail(request, identifier):
+    """One holiday: read either kind, edit or archive only an authored one."""
+    identifier = clean_str(identifier)
+
+    if request.method == 'GET':
+        rows = [
+            item for item in get_holiday_rows(include_archived=True)
+            if clean_str(item.get('id')) == identifier
+        ]
+        if not rows:
+            return json_error('Holiday not found.', status=404)
+        return JsonResponse(serialize_holiday_row(rows[0]))
+
     if request.method not in {'PATCH', 'DELETE'}:
         return json_error('Method not allowed.', status=405)
-    source_table = holiday_table_name()
+
+    source_table = authored_holiday_table_name()
     if not source_table:
-        return json_error('Holiday table not found.', status=404)
+        return json_error('The holidays table is not provisioned.', status=404)
+
     rows = fetch_all(f'select * from {table_name(source_table)} where id = %s', [identifier])
     if not rows:
+        # A GOV.UK id reaching a write is a client that has not noticed the two
+        # kinds apart, so say which it is rather than "not found".
+        if england_holiday_exists(identifier):
+            return json_error(HOLIDAY_READ_ONLY_MESSAGE, status=405)
         return json_error('Holiday not found.', status=404)
+
     if request.method == 'DELETE':
         payload = archive_payload(source_table, rows[0].get('notes'))
         if payload:
@@ -25116,20 +25865,142 @@ def curriculum_holiday_detail(request, identifier):
             delete_rows(source_table, 'id = %s', [identifier])
         invalidate_curriculum_cache()
         return JsonResponse({'archived': True, 'id': identifier})
+
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
-    update_rows(source_table, 'id = %s', [identifier], {
-        'label': payload.get('label'),
-        'start_date': payload.get('startDate'),
-        'end_date': payload.get('endDate'),
-        'type': payload.get('type'),
-        'color': payload.get('color'),
-        'notes': payload.get('notes'),
-        'updated_at': datetime.utcnow(),
-    })
+
+    updates = {'updated_at': datetime.utcnow()}
+    # Only what was sent is written. The Holidays page saves a type rename by
+    # PATCHing the type alone across every holiday that carries it, and a patch
+    # that also blanked the dates would move every one of those holidays.
+    if 'label' in payload:
+        updates['label'] = clean_str(payload.get('label'))
+    if 'type' in payload:
+        updates['type'] = clean_str(payload.get('type'))
+    if 'color' in payload:
+        updates['color'] = clean_str(payload.get('color'))
+    if 'notes' in payload:
+        updates['notes'] = clean_str(payload.get('notes'))
+    if 'startDate' in payload or 'endDate' in payload:
+        dates = holiday_date_payload(payload, existing=rows[0])
+        if isinstance(dates, JsonResponse):
+            return dates
+        updates['start_date'] = dates['start']
+        updates['end_date'] = dates['end']
+
+    update_rows(source_table, 'id = %s', [identifier], updates)
     invalidate_curriculum_cache()
     return JsonResponse({'updated': True, 'id': identifier})
+
+
+def holiday_date_payload(payload, existing=None):
+    """The start/end pair to store, or the 400 explaining why there is not one.
+
+    An end date is optional -- most closures are a single day -- and an omitted
+    one is stored as the start date rather than as null, so a holiday is always
+    a period and never a special case. An end before the start is rejected here
+    rather than silently swapped: a fortnight typed backwards is a typo, and
+    quietly reinterpreting it would close the wrong fortnight.
+    """
+    existing = existing or {}
+    start = format_date(payload.get('startDate')) or format_date(existing.get('start_date'))
+    if not start:
+        return json_error('Give the holiday a start date.')
+    if 'endDate' in payload:
+        end = format_date(payload.get('endDate')) or start
+    else:
+        end = format_date(existing.get('end_date')) or start
+    if end < start:
+        return json_error('The end date cannot be before the start date.')
+    return {'start': start, 'end': end}
+
+
+def england_holiday_exists(identifier):
+    if not table_exists(ENGLAND_HOLIDAYS_TABLE):
+        return False
+    rows = fetch_all(
+        f'select 1 from {table_name(ENGLAND_HOLIDAYS_TABLE)} where id = %s limit 1',
+        [clean_str(identifier)],
+    )
+    return bool(rows)
+
+
+@require_GET
+def curriculum_england_holidays(request):
+    """England's bank holidays as GOV.UK publishes them.
+
+    Reference data, not the authored half of the calendar above: nobody here
+    edits these, so the route is read-only. The table is loaded by
+    sql/2026-09-13_curriculum_england_holidays.sql and kept current by
+    ``england_holidays.run_sync`` -- automatically on the interval, by the
+    refresh route below on demand, or by the fetch_england_holidays command.
+
+    Deliberately uncached. It is one indexed read of well under a hundred rows,
+    and caching it would pin an empty list for the whole TTL on any environment
+    where the table has not been created yet.
+    """
+    # Reading the page is the most likely moment for the mirror to be checked,
+    # and the least costly: the check runs behind the response.
+    from . import england_holidays
+    england_holidays.auto_sync_if_due()
+    rows = []
+    if table_exists(ENGLAND_HOLIDAYS_TABLE):
+        rows = fetch_all(f'''
+            select *
+            from {table_name(ENGLAND_HOLIDAYS_TABLE)}
+            order by holiday_date
+        ''')
+    results = [serialize_england_holiday_row(row) for row in rows]
+    # The sync state rides along with the list rather than costing the page a
+    # second request: "these are the dates" and "this is when they were last
+    # checked" are one answer, and the page shows them together.
+    return JsonResponse({
+        'schema': CURRICULUM_SCHEMA,
+        'count': len(results),
+        'results': results,
+        'syncStatus': england_holidays.sync_status(),
+    })
+
+
+@require_GET
+def curriculum_england_holiday_syncs(request):
+    """Every recent check against GOV.UK, and what each one found.
+
+    This is the "which holidays changed on the website?" answer. A check that
+    found nothing is listed too -- without it, the last real change reads as the
+    last time anyone looked, which is the one wrong conclusion available here.
+    """
+    from . import england_holidays
+    limit = parse_int(request.GET.get('limit'), 20) or 20
+    return JsonResponse({
+        'schema': CURRICULUM_SCHEMA,
+        'status': england_holidays.sync_status(),
+        'results': england_holidays.recent_syncs(min(limit, 100)),
+    })
+
+
+@csrf_exempt
+def curriculum_england_holidays_refresh(request):
+    """Check GOV.UK now, and report what moved.
+
+    The button behind this exists because "it will refresh itself within a day"
+    is not an answer when someone has just read that a bank holiday changed and
+    needs the cohorts under it rescheduled today.
+
+    ``?dryRun=1`` reports what would change without writing it.
+    """
+    from . import england_holidays
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+    payload = json_body(request) or {}
+    dry_run = truthy(request.GET.get('dryRun')) or truthy(payload.get('dryRun'))
+    summary = england_holidays.run_sync(source='manual', apply=not dry_run)
+    # The next automatic check is a full interval from this one, and the latch
+    # holding that answer in memory was set before this check happened.
+    england_holidays.reset_auto_sync_state()
+    status = 200 if summary.get('status') == 'ok' else 502
+    return JsonResponse({'summary': summary, 'status': england_holidays.sync_status()}, status=status)
 
 
 @csrf_exempt

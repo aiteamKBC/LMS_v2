@@ -27,21 +27,26 @@ import { useDrawerState } from '../shared/entities/useDrawerState';
 import { HolidayTypeControl, type HolidayTypeOption } from './HolidayTypeControl';
 import { DatePickerField } from '@/components/feature/DatePickerField';
 
-// Holidays used to be reachable only from inside the structure wizard, which
-// made a calendar-wide concern a side effect of editing one programme. They are
-// their own records, so they get their own page.
+// The whole holiday calendar, both halves of it.
 //
-// A holiday changes dates by being *selected on a cohort*: the cohort's session
-// plan then skips it. This page therefore shows which cohorts have selected each
-// holiday, so the effect of deleting one is visible before it happens.
+// England's bank holidays come from GOV.UK and are read-only here: they are
+// mirrored, they keep themselves current (see the England Holidays page), and
+// nobody in this building gets to move one. Everything else on this page is a
+// closure period this college decides for itself — the Christmas shutdown, a
+// half term, an exam week — and those are authored right here, each with its own
+// START and END date, because a college closure is almost never a single day.
+//
+// Both kinds close the same delivery days. A cohort takes every holiday inside
+// its own start and end date, and its module session plans step over them.
 
-const GRID = 'grid grid-cols-[minmax(190px,1.4fr)_130px_130px_100px_minmax(160px,1.1fr)_120px_92px]';
+const GRID = 'grid grid-cols-[minmax(180px,1.4fr)_124px_124px_84px_120px_minmax(150px,1fr)_112px_92px]';
 
 const COLUMNS = [
   { label: 'Holiday' },
   { label: 'Start' },
   { label: 'End' },
   { label: 'Days', align: 'center' as const },
+  { label: 'Source' },
   { label: 'Used by cohorts' },
   { label: 'Type' },
   { label: 'Actions', align: 'right' as const },
@@ -63,6 +68,11 @@ const TYPE_SUGGESTIONS: Array<{ name: string; color: string }> = [
 ];
 
 const DEFAULT_TYPE_COLOR = '#dc2626';
+
+/** GOV.UK's rows are mirrored, so nothing on this page may write to one. */
+function isBankHoliday(holiday: CurriculumHoliday): boolean {
+  return holiday.source === 'gov.uk';
+}
 
 interface HolidayForm {
   id: string;
@@ -93,11 +103,19 @@ export default function CurriculumHolidaysPage() {
   const { cohorts, holidays, loading, loaded, error, reload } = useCurriculumEntities({ includeHolidays: true });
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
+  const [sourceFilter, setSourceFilter] = useState('');
   // Types added in the drawer but not saved against a holiday yet. They live
   // here rather than in the form so a type stays offered while the user fills
   // the rest of the holiday in.
   const [draftTypes, setDraftTypes] = useState<Array<{ name: string; color: string }>>([]);
   const drawer = useDrawerState<HolidayForm>(EMPTY_FORM);
+
+  // The half of the calendar this page owns. Every type operation below is
+  // scoped to it: a type is the text on a holiday row, and a GOV.UK row's type
+  // is not stored — it is what being a bank holiday means — so renaming or
+  // removing one would be a write the server rightly refuses.
+  const authoredHolidays = useMemo(() => holidays.filter(holiday => !isBankHoliday(holiday)), [holidays]);
+  const bankHolidays = useMemo(() => holidays.filter(isBankHoliday), [holidays]);
 
   const cohortsByHoliday = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -116,13 +134,13 @@ export default function CurriculumHolidaysPage() {
     [holidays],
   );
 
-  // The Type list in the drawer: every type the saved holidays carry — the most
-  // used first, since that is the one a new holiday most likely needs — then
-  // anything added here and not saved yet. The stored spelling and colour are
-  // used as they are; they are what the calendar already shows.
+  // The Type list in the drawer: every type the authored holidays carry — the
+  // most used first, since that is the one a new holiday most likely needs —
+  // then anything added here and not saved yet. The stored spelling and colour
+  // are used as they are; they are what the calendar already shows.
   const typeOptions = useMemo<HolidayTypeOption[]>(() => {
     const byKey = new Map<string, HolidayTypeOption>();
-    holidays.forEach(holiday => {
+    authoredHolidays.forEach(holiday => {
       const name = cleanText(holiday.type);
       if (!name) return;
       const key = normaliseKey(name);
@@ -140,7 +158,7 @@ export default function CurriculumHolidaysPage() {
       .filter(draft => !byKey.has(normaliseKey(draft.name)))
       .map<HolidayTypeOption>(draft => ({ ...draft, usedBy: 0, draft: true }));
     return [...saved, ...drafts];
-  }, [draftTypes, holidays]);
+  }, [authoredHolidays, draftTypes]);
 
   // Only names the calendar has not used yet are worth suggesting.
   const typeSuggestions = useMemo(
@@ -150,7 +168,7 @@ export default function CurriculumHolidaysPage() {
     [typeOptions],
   );
 
-  const holidaysWithType = (name: string) => holidays.filter(
+  const holidaysWithType = (name: string) => authoredHolidays.filter(
     holiday => normaliseKey(holiday.type) === normaliseKey(name),
   );
 
@@ -158,9 +176,11 @@ export default function CurriculumHolidaysPage() {
     const sorted = [...holidays].sort((a, b) => String(a.startDate).localeCompare(String(b.startDate)));
     return sorted.filter(holiday => {
       if (typeFilter && normaliseKey(holiday.type) !== normaliseKey(typeFilter)) return false;
+      if (sourceFilter === 'gov.uk' && !isBankHoliday(holiday)) return false;
+      if (sourceFilter === 'authored' && isBankHoliday(holiday)) return false;
       return matchesSearch(search, [holiday.label, holiday.type, holiday.startDate, holiday.endDate]);
     });
-  }, [holidays, search, typeFilter]);
+  }, [holidays, search, sourceFilter, typeFilter]);
 
   // A new type is only a piece of text until a holiday carries it, so adding one
   // selects it on the open form and waits for the save.
@@ -195,7 +215,7 @@ export default function CurriculumHolidaysPage() {
       text: `${affected.length} holiday${affected.length === 1 ? '' : 's'} carry "${type.name}"`
         + `${renamed ? ` and will be saved as "${name}"` : ''}`
         + `${recoloured ? `${renamed ? ', and take' : ' and will take'} the new colour` : ''}.`
-        + ' Their dates and the cohorts that selected them do not change.',
+        + ' Their dates and the cohorts they apply to do not change.',
       icon: 'warning',
       confirmButtonText: renamed ? 'Rename type' : 'Recolour type',
       onConfirm: async () => {
@@ -224,7 +244,7 @@ export default function CurriculumHolidaysPage() {
     await showCurriculumConfirm({
       title: 'Remove this type?',
       text: `${affected.length} holiday${affected.length === 1 ? '' : 's'} carry "${type.name}".`
-        + ' Removing the type leaves those holidays, their dates and the cohorts that selected them exactly as they are —'
+        + ' Removing the type leaves those holidays and their dates exactly as they are —'
         + ' they simply show no type until one is set.',
       icon: 'warning',
       confirmButtonText: 'Remove type',
@@ -255,6 +275,8 @@ export default function CurriculumHolidaysPage() {
       const payload = {
         label: form.label.trim(),
         startDate: form.startDate,
+        // Blank means a single day, and a single day is stored as a period whose
+        // two ends are the same date — every reader downstream measures a period.
         endDate: form.endDate || form.startDate,
         type: form.type,
         color: form.color,
@@ -263,9 +285,12 @@ export default function CurriculumHolidaysPage() {
       else await createCurriculumHoliday(payload);
       drawer.close();
       await reload({ silent: true });
+      const days = payload.endDate === payload.startDate
+        ? '1 day'
+        : `${Math.max(1, Math.round((new Date(payload.endDate).getTime() - new Date(payload.startDate).getTime()) / 86_400_000) + 1)} days`;
       await showCurriculumAlert({
         title: form.id ? 'Holiday updated' : 'Holiday added',
-        text: `${payload.label} is saved. Cohorts that select it will skip these dates.`,
+        text: `${payload.label} closes ${days}. Cohorts running across these dates will skip them.`,
         timer: 1800,
       });
     } catch (err) {
@@ -280,8 +305,8 @@ export default function CurriculumHolidaysPage() {
     await showCurriculumConfirm({
       title: 'Archive holiday?',
       text: users.length
-        ? `${holiday.label} is selected by ${users.length} cohort${users.length === 1 ? '' : 's'} (${users.slice(0, 3).join(', ')}${users.length > 3 ? '…' : ''}). Archiving it stops it shifting future session dates. Sessions already generated keep their dates.`
-        : `${holiday.label} will be archived. No cohort currently selects it.`,
+        ? `${holiday.label} applies to ${users.length} cohort${users.length === 1 ? '' : 's'} (${users.slice(0, 3).join(', ')}${users.length > 3 ? '…' : ''}). Archiving it stops it shifting future session dates. Sessions already generated keep their dates.`
+        : `${holiday.label} will be archived. No cohort currently runs across it.`,
       icon: 'warning',
       confirmButtonText: 'Archive holiday',
       onConfirm: async () => {
@@ -299,7 +324,7 @@ export default function CurriculumHolidaysPage() {
       navItems={curriculumNavItems}
       workspaceLabel="Curriculum Studio"
       pageTitle="Holidays"
-      pageSubtitle="Non-delivery dates that shift generated sessions for the cohorts that select them"
+      pageSubtitle="Non-delivery dates: England's bank holidays, plus this college's own closure periods"
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
@@ -307,13 +332,27 @@ export default function CurriculumHolidaysPage() {
         <EntityHero
           eyebrow="Curriculum Studio"
           title="Holidays"
-          description="Maintain the holiday calendar once, here. A cohort selects the holidays that apply to it, and its modules' session dates skip them."
+          description="England's bank holidays arrive from GOV.UK and keep themselves current. Add your own closure periods here — a Christmas shutdown, a half term, an exam week — with the dates they run between. A cohort takes every holiday inside its own dates, and its module sessions skip them."
           loading={loading && !loaded}
           stats={[
             { icon: 'ri-calendar-close-line', label: 'Holidays', value: holidays.length },
-            { icon: 'ri-time-line', label: 'Non-delivery days', value: holidays.reduce((sum, holiday) => sum + inclusiveDays(holiday), 0) },
-            { icon: 'ri-price-tag-3-line', label: 'Types', value: types.length },
-            { icon: 'ri-calendar-event-line', label: 'Cohorts using them', value: cohortsByHoliday.size ? cohorts.filter(cohort => (cohort.holidayIds || []).length).length : 0 },
+            {
+              icon: 'ri-time-line',
+              label: 'Non-delivery days',
+              value: holidays.reduce((sum, holiday) => sum + inclusiveDays(holiday), 0),
+            },
+            {
+              icon: 'ri-flag-line',
+              label: 'Bank holidays',
+              value: bankHolidays.length,
+              detail: 'From GOV.UK',
+            },
+            {
+              icon: 'ri-building-line',
+              label: 'Your closures',
+              value: authoredHolidays.length,
+              detail: `${types.length} type${types.length === 1 ? '' : 's'}`,
+            },
           ]}
           primaryAction={{ label: 'Add Holiday', onClick: () => drawer.openWith(EMPTY_FORM) }}
         />
@@ -326,13 +365,23 @@ export default function CurriculumHolidaysPage() {
           placeholder="Search holidays..."
           selects={[
             {
+              label: 'Source',
+              value: sourceFilter,
+              onChange: setSourceFilter,
+              options: [
+                { value: '', label: 'All holidays' },
+                { value: 'authored', label: 'Added here' },
+                { value: 'gov.uk', label: 'Bank holidays' },
+              ],
+            },
+            {
               label: 'Type',
               value: typeFilter,
               onChange: setTypeFilter,
               options: [{ value: '', label: 'All types' }, ...types.map(type => ({ value: type, label: type }))],
             },
           ]}
-          onReset={() => { setSearch(''); setTypeFilter(''); }}
+          onReset={() => { setSearch(''); setTypeFilter(''); setSourceFilter(''); }}
           summary={loaded ? `Showing ${visibleHolidays.length} of ${holidays.length} holidays` : undefined}
         />
 
@@ -354,39 +403,50 @@ export default function CurriculumHolidaysPage() {
           )}
           renderRow={holiday => {
             const users = cohortsByHoliday.get(normaliseKey(holiday.id)) || [];
+            const bankHoliday = isBankHoliday(holiday);
             return (
               <>
                 <StackedCell
                   primary={(
                     <span className="flex items-center gap-2">
-                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: holiday.color || '#dc2626' }} />
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: holiday.color || DEFAULT_TYPE_COLOR }} />
                       {holiday.label}
                     </span>
                   )}
-                  secondary={`ID ${holiday.id}`}
+                  secondary={bankHoliday ? cleanText(holiday.notes) || 'England and Wales' : `ID ${holiday.id}`}
                 />
                 <PlainCell>{formatDateLabel(holiday.startDate)}</PlainCell>
                 <PlainCell>{formatDateLabel(holiday.endDate || holiday.startDate)}</PlainCell>
                 <PlainCell align="center">{inclusiveDays(holiday)}</PlainCell>
-                <PlainCell>{users.length ? users.join(', ') : 'Not selected by any cohort'}</PlainCell>
+                <PlainCell>{bankHoliday ? 'GOV.UK' : 'Added here'}</PlainCell>
+                <PlainCell>{users.length ? users.join(', ') : 'No cohort runs across it'}</PlainCell>
                 <PlainCell>{cleanText(holiday.type, '—')}</PlainCell>
-                <RowActions
-                  actions={[
-                    {
-                      icon: 'ri-edit-line',
-                      label: 'Edit holiday',
-                      onClick: () => drawer.openWith({
-                        id: String(holiday.id),
-                        label: holiday.label || '',
-                        startDate: holiday.startDate || '',
-                        endDate: holiday.endDate || '',
-                        type: cleanText(holiday.type),
-                        color: holiday.color || '#dc2626',
-                      }),
-                    },
-                    { icon: 'ri-archive-line', label: 'Archive holiday', tone: 'danger', onClick: () => void archive(holiday) },
-                  ]}
-                />
+                {bankHoliday ? (
+                  // Mirrored from GOV.UK, so there is nothing to offer here: it
+                  // changes when GOV.UK changes it. The England Holidays page is
+                  // where that is checked and reported.
+                  <PlainCell align="right">
+                    <span className="text-[11px] text-foreground-400">Read-only</span>
+                  </PlainCell>
+                ) : (
+                  <RowActions
+                    actions={[
+                      {
+                        icon: 'ri-edit-line',
+                        label: 'Edit holiday',
+                        onClick: () => drawer.openWith({
+                          id: String(holiday.id),
+                          label: holiday.label || '',
+                          startDate: holiday.startDate || '',
+                          endDate: holiday.endDate || '',
+                          type: cleanText(holiday.type),
+                          color: holiday.color || DEFAULT_TYPE_COLOR,
+                        }),
+                      },
+                      { icon: 'ri-archive-line', label: 'Archive holiday', tone: 'danger', onClick: () => void archive(holiday) },
+                    ]}
+                  />
+                )}
               </>
             );
           }}
@@ -396,7 +456,7 @@ export default function CurriculumHolidaysPage() {
       <EntityDrawer
         open={drawer.open}
         title={drawer.form.id ? 'Edit holiday' : 'Add holiday'}
-        subtitle="Holidays only change dates for cohorts that select them — set that on the cohort."
+        subtitle="A holiday closes every date between its start and end, for every cohort running across it."
         onClose={drawer.close}
         onSubmit={save}
         submitLabel={drawer.form.id ? 'Save holiday' : 'Add holiday'}

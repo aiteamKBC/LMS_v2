@@ -8,9 +8,15 @@ import type {
 import {
   cohortsForProgramme,
   cohortYear,
+  findByIdentifierThenName,
+  findCohort,
+  findGroup,
+  findProgramme,
   groupsForScope,
+  holidaysForScheduling,
   matchesSearch,
   moduleCohortDateError,
+  moduleSoftStartDate,
   modulesForScope,
   namedCurriculumWorkspacePath,
   resolveGroupContext,
@@ -19,6 +25,63 @@ import {
   scheduleLabel,
   visibleNotes,
 } from '../model';
+
+/**
+ * Names are not unique in this data: the same module title is authored in two
+ * programmes, two cohorts are both called "October 2026". Whenever an identifier
+ * could be either an id or a name, every id has to be tried before any name --
+ * otherwise the answer is decided by list order, which is a sort concern.
+ */
+describe('resolving a record by identifier before name', () => {
+  it('prefers the id match even when a namesake is listed first', () => {
+    const items = [
+      { id: 'B', name: 'A' },
+      { id: 'A', name: 'Second' },
+    ];
+    expect(findByIdentifierThenName(items, 'A', item => [item.id], item => [item.name]))
+      .toEqual({ id: 'A', name: 'Second' });
+  });
+
+  it('still falls back to the name when no id matches at all', () => {
+    const items = [{ id: 'B', name: 'A' }];
+    expect(findByIdentifierThenName(items, 'A', item => [item.id], item => [item.name]))
+      .toEqual({ id: 'B', name: 'A' });
+  });
+
+  it('answers undefined for a blank identifier rather than the first record', () => {
+    const items = [{ id: 'B', name: '' }];
+    expect(findByIdentifierThenName(items, '  ', item => [item.id], item => [item.name])).toBeUndefined();
+  });
+
+  it('does not let a blank field match a blank candidate', () => {
+    const items = [{ id: '', name: '' }, { id: 'REAL', name: 'Real' }];
+    expect(findByIdentifierThenName(items, 'REAL', item => [item.id], item => [item.name]))
+      .toEqual({ id: 'REAL', name: 'Real' });
+  });
+
+  it('resolves a programme by id past a namesake, and by name when no id matches', () => {
+    const programmes = [
+      { id: 'p1', sourceId: 'PROG-B', name: 'PROG-A' },
+      { id: 'p2', sourceId: 'PROG-A', name: 'Marketing Executive Level 4' },
+    ] as CurriculumProgramme[];
+    expect(findProgramme(programmes, 'PROG-A')?.sourceId).toBe('PROG-A');
+    expect(findProgramme(programmes, 'Marketing Executive Level 4')?.sourceId).toBe('PROG-A');
+  });
+
+  it('resolves a cohort and a group by id past a namesake', () => {
+    const cohorts = [
+      { id: 'COHORT-2', name: 'COHORT-1' },
+      { id: 'COHORT-1', name: 'October 2026' },
+    ] as CurriculumCohort[];
+    expect(findCohort(cohorts, 'COHORT-1')?.name).toBe('October 2026');
+
+    const groups = [
+      { id: 'GROUP-2', name: 'GROUP-1' },
+      { id: 'GROUP-1', name: 'G1' },
+    ] as CurriculumGroup[];
+    expect(findGroup(groups, 'GROUP-1')?.name).toBe('G1');
+  });
+});
 
 describe('named curriculum workspace paths', () => {
   it('keeps the canonical id and carries the group name for immediate rendering', () => {
@@ -164,10 +227,13 @@ describe('a module has to fit inside its cohort', () => {
     expect(moduleCohortDateError(cohort, '2026-09-02', '2027-08-25')).toBeNull();
     // The boundaries themselves are inside it.
     expect(moduleCohortDateError(cohort, '2026-09-01', '2027-08-31')).toBeNull();
+    // Soft start can begin one calendar month before the cohort opens.
+    expect(moduleCohortDateError(cohort, '2026-08-01', '2026-10-01')).toBeNull();
   });
 
-  it('refuses a start date before the cohort opens', () => {
-    expect(moduleCohortDateError(cohort, '2026-08-31', '2026-10-01')).toMatch(/cannot start before/);
+  it('refuses a start date before the soft-start month', () => {
+    expect(moduleSoftStartDate(cohort.startDate)).toBe('2026-08-01');
+    expect(moduleCohortDateError(cohort, '2026-07-31', '2026-10-01')).toMatch(/more than one month/);
   });
 
   it('refuses a start date after the cohort has finished', () => {
@@ -248,5 +314,41 @@ describe('notes the reader is meant to see', () => {
 
   it('only drops a line that starts with the marker', () => {
     expect(visibleNotes('Use the __init__ helper.')).toBe('Use the __init__ helper.');
+  });
+});
+
+
+describe('the bank holidays a module has to step over', () => {
+  // England's bank holidays, in the shape `/curriculum/holidays/` serves them:
+  // one day each, so start and end are the same date.
+  const HOLIDAYS = [
+    { id: 'england-and-wales:2026-08-31', startDate: '2026-08-31', endDate: '2026-08-31' },
+    { id: 'england-and-wales:2026-12-25', startDate: '2026-12-25', endDate: '2026-12-25' },
+    { id: 'england-and-wales:2027-03-29', startDate: '2027-03-29', endDate: '2027-03-29' },
+  ];
+
+  it('starts at the cohort start date, because nothing delivers before it', () => {
+    expect(holidaysForScheduling(HOLIDAYS, '2026-12-01').map(holiday => holiday.startDate))
+      .toEqual(['2026-12-25', '2027-03-29']);
+  });
+
+  it('keeps a holiday falling exactly on the start date', () => {
+    expect(holidaysForScheduling(HOLIDAYS, '2026-08-31').map(holiday => holiday.startDate))
+      .toEqual(['2026-08-31', '2026-12-25', '2027-03-29']);
+  });
+
+  it('has no end bound, so a plan that overshoots its cohort still skips', () => {
+    // A cohort ending 2027-03-25 still carries Easter Monday for scheduling:
+    // every holiday a plan steps over pushes it a slot later, so the sessions
+    // that land past the cohort end must keep stepping over the ones they meet.
+    expect(holidaysForScheduling(HOLIDAYS, '2026-12-01').map(holiday => holiday.startDate))
+      .toContain('2027-03-29');
+  });
+
+  it('gives an undated cohort the whole calendar rather than none of it', () => {
+    // A session must never be planned onto a bank holiday, and an imported
+    // cohort missing its dates is not a reason to schedule one on Christmas Day.
+    expect(holidaysForScheduling(HOLIDAYS, '')).toEqual(HOLIDAYS);
+    expect(holidaysForScheduling(HOLIDAYS, undefined)).toEqual(HOLIDAYS);
   });
 });

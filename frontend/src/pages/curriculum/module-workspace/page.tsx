@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
@@ -14,6 +14,7 @@ import {
 } from '@/lib/curriculumApi';
 import {
   formatCalendarDateTime,
+  holidayReadingWeeksByWeekId,
   liveSessionNamesByNumber,
   moduleWeekSessionSlots,
   loadModuleStructure,
@@ -34,6 +35,7 @@ import {
   findModule,
   formatDateLabel,
   formatDateTimeLabel,
+  holidaysForScheduling,
   moduleIdentity,
   namedCurriculumWorkspacePath,
   normaliseKey,
@@ -44,7 +46,7 @@ import {
 } from '../shared/entities/model';
 import { ModuleFormDrawer } from '../shared/entities/moduleForm';
 import { ScopeAchievementPanel } from '../shared/entities/scopeAchievement';
-import { buildHolidayShiftPlan, CompactSchedulePreview } from '../shared/entities/sessionShiftPreview';
+import { buildHolidayShiftPlan, CompactSchedulePreview, HolidayReadingWeekCard } from '../shared/entities/sessionShiftPreview';
 import {
   DetailRow,
   EntityEmptyState,
@@ -294,12 +296,16 @@ export default function ModuleWorkspacePage() {
     return Array.from(names).sort((a, b) => a.localeCompare(b));
   }, [modules, tutors]);
 
-  // The holidays that apply here are the ones the parent cohort selected — the
-  // same set the backend uses when it generates this module's session dates.
-  const cohortHolidays = useMemo(() => {
-    const ids = new Set((cohort?.holidayIds || []).map(holidayId => normaliseKey(holidayId)));
-    return holidays.filter(holiday => ids.has(normaliseKey(holiday.id)));
-  }, [cohort, holidays]);
+  // The holidays that move this module's sessions: every England bank holiday
+  // from the parent cohort's start date onwards, minus the ones the cohort has
+  // unticked, which is the set the backend plans with. Not the cohort's own
+  // in-period list -- a plan pushed past the cohort's end date by the holidays
+  // it stepped over still has to step over the ones it lands on after it. It
+  // also names them below, so a session that moved says which holiday moved it.
+  const cohortHolidays = useMemo(
+    () => holidaysForScheduling(holidays, cohort?.startDate, cohort?.excludedHolidayIds),
+    [cohort, holidays],
+  );
 
   // ------------------------------------------------------------- structure
 
@@ -435,7 +441,10 @@ export default function ModuleWorkspacePage() {
   // timeline the Teams Meetings page uses, so a holiday-moved date reads the
   // same way in both places.
   const scheduleShiftPlan = useMemo(
-    () => buildHolidayShiftPlan(plan?.sessions || [], holidayLabelFor),
+    // The planner states where the run would have ended with nothing closed,
+    // so the "moved by" reading is right for a module delivering more than once
+    // a week too.
+    () => buildHolidayShiftPlan(plan?.sessions || [], holidayLabelFor, plan?.originalEndDate),
     [plan, holidayLabelFor],
   );
   // One row per session, and the date printed once. The Teams calendar's own
@@ -542,14 +551,17 @@ export default function ModuleWorkspacePage() {
   // is one live session short consume one date rather than two, and every week
   // below it slid a day early.
   //
-  // The date read here is the week's SLOT -- the delivery day it was authored
-  // into, before any holiday was ticked. A closure moves the live session out
-  // of the week and nothing else, so the week is still grouped under, and read
-  // in, the month it runs in. Taking the session's own date instead slid every
-  // week after a closure into a month it does not teach in, and disagreed with
-  // the Course structure rail, which reads the same slots.
-  const planSessionDates = (plan?.sessions || []).map(session => session.slotDate || session.date);
+  // The date read here is the day the week is DELIVERED on. A closed delivery
+  // slot is not this week: it stays in the curriculum as a reading week of its
+  // own (rendered from `plan.slots` below), and the authored week moves down to
+  // the next open slot with the session it holds. Reading `slotDate` instead
+  // dated the week to a day the module is shut, and disagreed with the Course
+  // structure rail, which has read the delivered date all along.
+  const planSessionDates = (plan?.sessions || []).map(session => session.date);
   const weekSlotCounts = moduleWeekSessionSlots(structure, planSessionDates.length);
+  // Which closed delivery slots sit above which authored week. Each is a
+  // curriculum position with a holiday in it and no live session to attend.
+  const readingWeeks = holidayReadingWeeksByWeekId(structure, plan);
   const weekDateByNumber = new Map<number, string>();
   let planDateCursor = 0;
   weekStructure.forEach((week, weekIndex) => {
@@ -848,7 +860,7 @@ export default function ModuleWorkspacePage() {
               )}
               {!cohortHolidays.length && cohort && (
                 <p className="mt-4 text-[11px] text-foreground-400">
-                  This cohort has no holidays selected, so no dates are skipped.
+                  No bank holidays fall on or after this cohort's start date, so no dates are skipped.
                 </p>
               )}
             </WorkspacePanel>
@@ -900,7 +912,12 @@ export default function ModuleWorkspacePage() {
                     {group.label}
                   </p>
                   <div className="space-y-6">
-                    {group.weeks.map(week => {
+                    {group.weeks.map(week => (
+                      <Fragment key={`week-group-${week.id}`}>
+                      {(readingWeeks.before.get(week.id) || []).map(slot => (
+                        <HolidayReadingWeekCard key={`reading-week-${slot.date}`} slot={slot} />
+                      ))}
+                      {(() => {
                       const components = week.components || [];
                       const weekOtjh = components.reduce((sum, component) => sum + (component.expectedOtjh || 0), 0);
                       const isCollapsed = collapsedWeeks.has(week.id);
@@ -1006,7 +1023,9 @@ export default function ModuleWorkspacePage() {
                           )}
                         </div>
                       );
-                    })}
+                      })()}
+                      </Fragment>
+                    ))}
                   </div>
                 </div>
               ))}

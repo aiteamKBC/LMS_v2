@@ -5,6 +5,19 @@ import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 
+export function isReviewSession(event: LearnerCalendarEvent, source: 'mcr' | 'progress-review') {
+  const code = source === 'mcr' ? 'mcm' : 'progress_review';
+  return event.reviewTypeCode ? event.reviewTypeCode === code : !event.reviewTemplateId && event.source === source;
+}
+
+/** Imported completed records remain history; Curriculum owns upcoming work. */
+export function mergeCompletedReviewHistory(events: LearnerCalendarEvent[], history: LearnerCalendarEvent[]) {
+  const linkedIds = new Set(events.map(event => event.reviewId).filter(Boolean));
+  const keys = new Set(events.map(event => event.eventKey));
+  return [...events, ...history.filter(event => event.status === 'completed'
+    && !keys.has(event.eventKey) && !linkedIds.has(event.importedReview?.id))];
+}
+
 /** Programme sessions remain usable if the learning summary is unavailable. */
 export function useReviewSessions(source: 'mcr' | 'progress-review') {
   const myLearner = useLinkedLearner();
@@ -29,98 +42,38 @@ export function useReviewSessions(source: 'mcr' | 'progress-review') {
 
   useEffect(() => {
     let cancelled = false;
-    let importedMode = false;
+    setLoading(true);
     setCalendarError('');
     setDetailError('');
-
-    // Aptem's imported review history is authoritative for learners that have
-    // a migrated activity identity. Do not mix generated calendar rows beside
-    // imported records. Learners without Aptem activity continue to use the
-    // generated programme cycle and coach calendar.
-    if (source === 'mcr' || source === 'progress-review') {
-      // Resolve the fallback calendar in parallel with the learner identity.
-      // Its rows are discarded when the learner is Aptem-backed, so imported
-      // MCM data still comes exclusively from reviews/review_sections.
-      const calendarPromise = fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true });
-      void calendarPromise.catch(() => undefined);
-      void calendarPromise.then(calendar => {
-        if (!cancelled) setBookingCalendar(calendar.bookingCalendar || null);
-      }).catch(() => undefined);
-      void fetchLearnerDetail(myLearner.kind, myLearner.id, { revalidate: true })
-        .then(async detail => {
-          if (cancelled) return;
-          setLearner(detail);
-          if (detail.studentActivityAvailable) {
-            importedMode = true;
-            setUsingImportedReviews(true);
-            const history = await fetchReviewHistory(
-              myLearner.kind,
-              myLearner.id,
-              source === 'mcr' ? 'monthly-coaching' : 'reviews',
-            );
-            if (history.reviews.length > 0) {
-              const importedEvents = importedReviewsToEvents(history.reviews, source);
-              // Imported review rows are the durable source of truth. Matching
-              // a live calendar event by date can attach another review (or a
-              // stale event) and make the UI claim a booking that is not in
-              // Learner.reviews. Booking POST updates that row explicitly.
-              if (!cancelled) setEvents(importedEvents);
-              return;
-            }
-            // An Aptem identity can exist before its review rows have been
-            // imported. Keep the learner's generated programme sessions
-            // visible in that case instead of rendering an empty table.
-            const calendar = await calendarPromise;
-            if (!cancelled) {
-              setUsingImportedReviews(false);
-              setBookingCalendar(calendar.bookingCalendar || null);
-              setEvents(calendar.events);
-            }
-            return;
-          }
-          const calendar = await calendarPromise;
-          if (!cancelled) {
-            setBookingCalendar(calendar.bookingCalendar || null);
-            setEvents(calendar.events);
-          }
-        })
-        .catch(async (reason: unknown) => {
-          if (cancelled) return;
-          if (importedMode) {
-            setCalendarError(reason instanceof Error ? reason.message : 'Could not load imported coaching history. Please try again.');
-          } else {
-            setDetailError('Could not load the learner summary. Please try again.');
-            // A summary outage must not hide the programme sessions. This is
-            // also the safe fallback when the learner's Aptem flag cannot be
-            // read at all.
-            try {
-              const calendar = await calendarPromise;
-              if (!cancelled) setEvents(calendar.events);
-            } catch {
-              if (!cancelled) setCalendarError('Could not load programme sessions. Please try again.');
-            }
-          }
-        })
-        .finally(() => { if (!cancelled) setLoading(false); });
-    } else {
-      void fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true })
-        .then(calendar => {
-          if (!cancelled) {
-            setBookingCalendar(calendar.bookingCalendar || null);
-            setEvents(calendar.events);
-          }
-        })
-        .catch(() => { if (!cancelled) setCalendarError('Could not load programme sessions. Please try again.'); })
-        .finally(() => { if (!cancelled) setLoading(false); });
-      void fetchLearnerDetail(myLearner.kind, myLearner.id, { revalidate: true })
-        .then(detail => { if (!cancelled) setLearner(detail); })
-        .catch(() => { if (!cancelled) setDetailError('Could not load the learner summary. Please try again.'); });
-    }
+    void fetchLearnerDetail(myLearner.kind, myLearner.id, { revalidate: true })
+      .then(detail => { if (!cancelled) setLearner(detail); })
+      .catch(() => { if (!cancelled) setDetailError('Could not load the learner summary. Please try again.'); });
+    const historyPromise = fetchReviewHistory(myLearner.kind, myLearner.id,
+      source === 'mcr' ? 'monthly-coaching' : 'reviews')
+      .then(history => importedReviewsToEvents(history.reviews, source))
+      .catch(() => {
+        if (!cancelled) setDetailError('Could not load archived reviews. Please try again.');
+        return [];
+      });
+    void fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true })
+      .then(async calendar => {
+        if (cancelled) return;
+        setBookingCalendar(calendar.bookingCalendar || null);
+        setEvents(calendar.events);
+        setLoading(false);
+        const history = await historyPromise;
+        if (!cancelled) {
+          setEvents(current => mergeCompletedReviewHistory(current, history));
+          setUsingImportedReviews(history.some(event => event.status === 'completed'));
+        }
+      })
+      .catch(() => { if (!cancelled) setCalendarError('Could not load programme sessions. Please try again.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [myLearner.kind, myLearner.id, revision, source]);
 
-  const sessions = useMemo(() => events.filter(event => event.source === source)
-    .sort((a, b) => a.sequence - b.sequence), [events, source]);
+  const sessions = useMemo(() => events.filter(event => isReviewSession(event, source))
+    .sort((a, b) => (a.date || a.targetDate || '').localeCompare(b.date || b.targetDate || '') || a.sequence - b.sequence || a.eventKey.localeCompare(b.eventKey)), [events, source]);
   return { myLearner, learner, sessions, setEvents, bookingCalendar, loading, error: calendarError || detailError, refresh, usingImportedReviews };
 }
 
@@ -145,6 +98,10 @@ export function importedReviewsToEvents(
       eventKey: `imported-review:${review.id}`,
       title: review.name || (source === 'mcr' ? 'Monthly Coaching Meeting' : 'Review'),
       source,
+      reviewTypeId: source === 'mcr' ? 'REVT-MCM' : 'REVT-PROGRESS_REVIEW',
+      reviewTypeCode: source === 'mcr' ? 'mcm' : 'progress_review',
+      reviewTypeName: source === 'mcr' ? 'Monthly Coaching Meeting' : 'Progress Review',
+      reviewTypeIsSystem: true,
       type: source === 'mcr' ? 'coaching' : 'review',
       sequence: index + 1,
       status,

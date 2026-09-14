@@ -22,6 +22,9 @@ import {
   createReviewType,
   fetchReviewDetail,
   fetchReviewTypes,
+  fetchCurriculumProgrammeDetail,
+  type ReviewApplicability,
+  type CurriculumProgrammeDetail,
   updateReviewTemplate,
   type CreateReviewInput,
   type ListItemConfiguration,
@@ -679,6 +682,10 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
   const [typesError, setTypesError] = useState('');
   const [addingType, setAddingType] = useState(false);
   const [statuses, setStatuses] = useState<string[]>([]);
+  const [applicability, setApplicability] = useState<ReviewApplicability>({ scope: 'programme', ids: [] });
+  const [placement, setPlacement] = useState<CurriculumProgrammeDetail | null>(null);
+  const [placementError, setPlacementError] = useState('');
+  const [placementRevision, setPlacementRevision] = useState(0);
   const [signatures, setSignatures] = useState<ReviewRoleFlags>(emptyRoleFlags());
   const [visibleTo, setVisibleTo] = useState<ReviewRoleFlags>({ advisor: true, employer: true, participant: true, referrer: true });
   const [recordTimeSpent, setRecordTimeSpent] = useState(false);
@@ -705,6 +712,7 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
         setOccurrenceCount(detail.occurrenceCount != null ? String(detail.occurrenceCount) : '');
         setReviewTypeId(detail.reviewTypeId || '');
         setStatuses(detail.applicableStatuses);
+        setApplicability(detail.applicability || { scope: 'programme', ids: [] });
         setSignatures(detail.signatures);
         setVisibleTo(detail.visibleTo);
         setRecordTimeSpent(detail.recordTimeSpent);
@@ -719,6 +727,21 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [review]);
+
+  useEffect(() => {
+    if (applicability.scope === 'programme') return;
+    const controller = new AbortController();
+    setPlacementError('');
+    fetchCurriculumProgrammeDetail(programmeId, controller.signal)
+      .then(value => { if (!controller.signal.aborted) setPlacement(value); })
+      .catch(error => { if (!controller.signal.aborted) setPlacementError(error instanceof Error ? error.message : 'Could not load cohorts and groups.'); });
+    return () => controller.abort();
+  }, [programmeId, applicability.scope, placementRevision]);
+
+  const placementOptions = useMemo(() => applicability.scope === 'cohort'
+    ? (placement?.flat.cohorts || []).map(cohort => ({ value: cohort.id, label: cohort.name }))
+    : (placement?.flat.groups || []).map(group => ({ value: group.id, label: `${group.cohort} / ${group.name}` })),
+  [placement, applicability.scope]);
 
   // The type catalogue is shared by every programme, so it loads once when
   // the editor opens rather than per Review.
@@ -764,6 +787,7 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
     occurrenceCount: occurrenceCount.trim() ? Number(occurrenceCount) : null,
     reviewTypeId,
     applicableStatuses: statuses,
+    applicability,
     signatures,
     visibleTo,
     recordTimeSpent,
@@ -801,6 +825,7 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
     const next: Record<string, string> = {};
     if (!name.trim()) next.name = 'Review name is required.';
     if (!reviewTypeId.trim()) next.reviewTypeId = 'Review type is required.';
+    if (applicability.scope !== 'programme' && !applicability.ids.length) next.applicability = 'Select at least one cohort or group.';
     const intervalNumber = Number(interval);
     if (!Number.isFinite(intervalNumber) || intervalNumber <= 0) next.recurrenceInterval = 'Repeat interval must be a positive number.';
     if (!scheduleAnchorDate || Number.isNaN(new Date(scheduleAnchorDate).getTime())) next.scheduleAnchorDate = 'First occurrence date must be a valid date.';
@@ -826,7 +851,7 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
     switch (s) {
       case 'General': return ['name', 'reviewTypeId'];
       case 'Schedule': return ['recurrenceInterval', 'recurrenceUnit', 'scheduleAnchorDate', 'occurrenceCount'];
-      case 'Eligibility': return ['applicableStatuses'];
+      case 'Eligibility': return ['applicableStatuses', 'applicability'];
       case 'Participants & Permissions': return ['allowEditingPriorDays', 'expectedOtjh'];
       case 'Form Builder': return [];
       default: return [];
@@ -984,7 +1009,6 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
                 required
                 as="group"
                 error={errors.reviewTypeId || typesError}
-                hint="What kind of review this is. It classifies the review for the coach calendar only — the schedule and the form below are yours to set however you like."
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="w-72">
@@ -1035,9 +1059,25 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
           )}
 
           {section === 'Eligibility' && (
+            <div className="space-y-5">
+            <FormField label="Applies to" error={errors.applicability}>
+              <SelectControl value={applicability.scope} onChange={value => setApplicability({ scope: value as ReviewApplicability['scope'], ids: [] })} options={[
+                { value: 'programme', label: 'Whole programme' },
+                { value: 'cohort', label: 'Selected cohorts' },
+                { value: 'group', label: 'Selected groups' },
+              ]} />
+            </FormField>
+            {applicability.scope !== 'programme' && (
+              <FormField label={applicability.scope === 'cohort' ? 'Cohorts' : 'Groups'} as="group">
+                {placementError ? <div role="alert" className="text-sm text-red-600">{placementError}<button type="button" aria-label="Reload cohorts and groups" title="Reload cohorts and groups" onClick={() => setPlacementRevision(value => value + 1)} className="ml-2 p-2"><AppIcon className="ri-refresh-line" /></button></div>
+                  : !placement ? <p role="status" className="text-sm text-foreground-500">Loading...</p>
+                  : <MultiSelectControl value={applicability.ids} onChange={ids => setApplicability(current => ({ ...current, ids }))} options={placementOptions} selectAllLabel={applicability.scope === 'cohort' ? 'cohorts' : 'groups'} />}
+              </FormField>
+            )}
             <FormField label="Programme statuses" hint="Leave empty to apply this review to every status." as="group" error={errors.applicableStatuses}>
               <MultiSelectControl value={statuses} onChange={setStatuses} options={statusOptions} selectAllLabel="statuses" />
             </FormField>
+            </div>
           )}
 
           {section === 'Participants & Permissions' && (

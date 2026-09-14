@@ -4,6 +4,7 @@ import {
   createEmptyComponent,
   createLocalModuleDraft,
   recalculateModule,
+  weekExpectedOtjhTotal,
   type ModuleCatalogueItem,
 } from '../moduleAuthoringData';
 
@@ -35,6 +36,18 @@ function moduleWithOtjh(weekHours: number[][]): ModuleCatalogueItem {
 }
 
 describe('module OTJH total', () => {
+  it('calculates each week from the Expected OTJH of components inside that week only', () => {
+    const module = moduleWithOtjh([[0.6, 0, 0.38], [2, 0.25]]);
+    expect(weekExpectedOtjhTotal(module.weekStructure[0])).toBeCloseTo(59 / 60, 5);
+    expect(weekExpectedOtjhTotal(module.weekStructure[1])).toBeCloseTo(2.25, 5);
+  });
+
+  it('adds the rounded component minutes instead of letting stored decimal hours lose a minute', () => {
+    const module = moduleWithOtjh([[0.33, 0.33, 0.33]]);
+    expect(weekExpectedOtjhTotal(module.weekStructure[0])).toBe(1);
+    expect(module.totalOtjh).toBe(1);
+  });
+
   it('adds every component in every week', () => {
     // Week 1: 2h + 3h. Week 2: 4h. The module is 9h.
     const module = moduleWithOtjh([[2, 3], [4]]);

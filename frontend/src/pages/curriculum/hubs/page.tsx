@@ -256,7 +256,12 @@ function hubCards(kind: HubKind, counts: {
       { title: 'Groups', description: 'Assign coaches, delivery days and group schedules.', href: '/curriculum/groups', icon: 'ri-team-line', meta: `${counts.groups} groups`, tone: 'sky' },
       { title: 'Module Builder', description: 'Build reusable module content with weeks and components.', href: '/curriculum/module-builder', icon: 'ri-layout-4-line', meta: `${counts.modules} modules`, tone: 'primary' },
       { title: 'Teams Meetings', description: 'Review and restore the meetings attached to live sessions.', href: '/curriculum/teams-meetings', icon: 'ri-vidicon-line', tone: 'primary' },
-      { title: 'Holidays', description: 'Control the dates session plans should skip.', href: '/curriculum/holidays', icon: 'ri-calendar-close-line', tone: 'amber' },
+      // Two entries, because the calendar has two halves and they are managed
+      // differently: the closures this college decides for itself are authored
+      // on the first, and the national bank holidays are mirrored from GOV.UK
+      // and only ever read on the second.
+      { title: 'Holidays', description: 'Every non-delivery date, and where you add your own closure periods with the dates they run between.', href: '/curriculum/holidays', icon: 'ri-calendar-close-line', tone: 'amber' },
+      { title: 'Bank Holidays', description: 'The England bank holidays session plans skip, mirrored from GOV.UK with a record of what the site has changed.', href: '/curriculum/england-holidays', icon: 'ri-flag-line', tone: 'amber' },
       { title: 'Session Calendar', description: 'See every curriculum session in one chronological view.', href: '/curriculum/session-calendar', icon: 'ri-calendar-schedule-line', meta: `${counts.sessions} sessions`, tone: 'emerald' },
     ];
   }

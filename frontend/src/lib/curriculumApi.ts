@@ -246,6 +246,8 @@ export interface CurriculumModule {
   sessionsNumber?: number;
   startDate?: string;
   endDate?: string;
+  totalOtjh?: number;
+  declaredTotalOtjh?: number;
   ksbCount: number;
   ksbProfileSourceId?: string;
   lessons: number;
@@ -1127,7 +1129,10 @@ export interface CurriculumCohort {
   color: string;
   progress: number;
   attendance: number;
+  /** The holidays that actually apply: every one in the cohort's period, less excludedHolidayIds. */
   holidayIds?: Array<string | number>;
+  /** The holidays a human unticked in the cohort drawer, from the same in-period list. */
+  excludedHolidayIds?: Array<string | number>;
   /** When the record was first written. Blank on rows predating the column. */
   createdAt?: string;
   updatedAt?: string;
@@ -1350,6 +1355,21 @@ export function onCalendarOccurrences<T extends { status?: string }>(
   ));
 }
 
+/**
+ * One holiday on the curriculum calendar, from either of its two sources.
+ *
+ * `/curriculum/holidays/` serves both in this one shape:
+ *
+ * - `source: 'gov.uk'` — an England and Wales bank holiday, mirrored from
+ *   https://www.gov.uk/bank-holidays.json. A single day, so `startDate` and
+ *   `endDate` are equal. Read-only: it changes when GOV.UK changes it.
+ * - `source: 'authored'` — one of this college's own closure periods, added on
+ *   the Holidays page. These usually span a *range*, which is why every holiday
+ *   carries a start and an end.
+ *
+ * Everything downstream measures the period and does not care which it is: a day
+ * is closed or it is not.
+ */
 export interface CurriculumHoliday {
   id: string | number;
   label: string;
@@ -1357,6 +1377,77 @@ export interface CurriculumHoliday {
   endDate: string;
   type?: string;
   color?: string;
+  /** Which of the two calendars this came from. Only an authored one can be edited. */
+  source?: 'gov.uk' | 'authored';
+  /** GOV.UK rows only, and only ever 'Substitute day' — the holiday moved off a weekend. */
+  notes?: string;
+  /** GOV.UK rows only: whether the day is marked as a flag-flying one. */
+  bunting?: boolean;
+}
+
+/** The fields the Holidays page writes. Only an authored holiday accepts them. */
+export type CurriculumHolidayInput = Partial<Pick<CurriculumHoliday, 'label' | 'startDate' | 'endDate' | 'type' | 'color'>>;
+
+/** One holiday as a recorded GOV.UK check reports it. */
+export interface EnglandHolidayChange {
+  id: string;
+  title: string;
+  date: string;
+  notes?: string;
+  bunting?: boolean;
+  /** Moves only: the date this holiday used to fall on. */
+  previousDate?: string;
+  /** Changes only: the title, note and bunting flag as they were before. */
+  previous?: { title?: string; notes?: string; bunting?: boolean };
+}
+
+/**
+ * One recorded check against GOV.UK — the answer to "what changed on the site?".
+ *
+ * A check that found nothing is recorded too, and matters: without it the last
+ * real change reads as the last time anyone looked.
+ */
+export interface EnglandHolidaySync {
+  id: string;
+  checkedAt: string;
+  /** 'auto' (the background refresh), 'manual' (the button), 'command' (the CLI). */
+  source: string;
+  status: 'ok' | 'error' | string;
+  feedCount: number;
+  added: EnglandHolidayChange[];
+  changed: EnglandHolidayChange[];
+  /** Holidays GOV.UK moved to a different date. */
+  moved: EnglandHolidayChange[];
+  /** Holidays GOV.UK withdrew. They are removed here too. */
+  withdrawn: EnglandHolidayChange[];
+  /** Dates that fell off the back of GOV.UK's rolling window. Kept, not removed. */
+  agedOut: EnglandHolidayChange[];
+  /** Why a failed check failed. */
+  message: string;
+}
+
+/** How current the GOV.UK mirror is, and when it refreshes itself next. */
+export interface EnglandHolidaySyncStatus {
+  autoSync: boolean;
+  intervalHours: number;
+  lastCheckedAt: string;
+  lastSuccessAt: string;
+  nextCheckDueAt: string;
+  source: string;
+}
+
+// GOV.UK's published bank holidays, mirrored into the curriculum schema. Read
+// only: these are not authored here, unlike CurriculumHoliday above.
+export interface EnglandHoliday {
+  id: string;
+  division: string;
+  title: string;
+  date: string;
+  // Only ever 'Substitute day' — the holiday moved because the real date fell
+  // on a weekend.
+  notes: string;
+  bunting: boolean;
+  fetchedAt?: string;
 }
 
 export interface CurriculumCohortAuthoringDetail {
@@ -1380,6 +1471,7 @@ export interface CurriculumCohortAuthoringDetail {
   holidayIds: string[];
   selectedHolidays: CurriculumHoliday[];
   holidaysInRange: CurriculumHoliday[];
+  excludedHolidayIds: string[];
   holidaySummary: {
     global?: number;
     inRange?: number;
@@ -2984,6 +3076,10 @@ export function fetchCurriculumHolidays(signal?: AbortSignal, options: { skipCac
   return fetchCollection<CurriculumHoliday>('/curriculum/holidays/', { signal, skipCache: options.skipCache, revalidate: options.revalidate });
 }
 
+export function fetchEnglandHolidays(signal?: AbortSignal, options: { skipCache?: boolean; revalidate?: boolean } = {}): Promise<EnglandHoliday[]> {
+  return fetchCollection<EnglandHoliday>('/curriculum/england-holidays/', { signal, skipCache: options.skipCache, revalidate: options.revalidate });
+}
+
 export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact?: boolean; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number } = {}): Promise<CurriculumOverview> {
   return fetchJson<CurriculumOverview>(`/curriculum/overview/${options.compact ? '?compact=true' : ''}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs });
 }
@@ -3120,11 +3216,10 @@ export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'wee
   allowTutorConflict?: boolean;
 };
 export type CurriculumComponentInput = Partial<Omit<CurriculumComponent, 'lastEdited'>>;
-export type CurriculumCohortInput = { id?: string; cohortId?: string; name?: string; programme?: string; programmeId?: string; startDate?: string; endDate?: string; durationMonths?: number; epaMonths?: number | null; /** null clears the manual apprenticeship end date and restores the calculated one. */ apprenticeshipEndOverride?: string | null; color?: string; moduleName?: string; sessionsNumber?: number; holidayIds?: Array<string | number> };
+export type CurriculumCohortInput = { id?: string; cohortId?: string; name?: string; programme?: string; programmeId?: string; startDate?: string; endDate?: string; durationMonths?: number; epaMonths?: number | null; /** null clears the manual apprenticeship end date and restores the calculated one. */ apprenticeshipEndOverride?: string | null; color?: string; moduleName?: string; sessionsNumber?: number; /** The ticked ids -- the holidays this cohort's module sessions must skip. */ holidayIds?: Array<string | number>; /** The unticked ids, from the same in-period list. Sent alongside `holidayIds` so an explicit empty array ("Select all") is never mistaken for the key being omitted. */ excludedHolidayIds?: Array<string | number> };
 export type CurriculumGroupInput = { id?: string; groupId?: string; name?: string; cohortId?: string; programmeId?: string; tutor?: string; coach?: string; color?: string; weekDays?: string; startTime?: string; endTime?: string; startDate?: string; endDate?: string; moduleName?: string; sessionsNumber?: number; /** Honoured by PATCH /curriculum/groups/<id>/ only. */ status?: string; /** See CurriculumModuleInput.allowTutorConflict. */ allowTutorConflict?: boolean };
 export type CurriculumSessionInput = Partial<Pick<CurriculumSession, 'date' | 'startTime' | 'endTime' | 'tutor'>>;
 export type CurriculumStaffingInput = { groupId?: string; tutor?: string; coach?: string; /** See CurriculumModuleInput.allowTutorConflict. */ allowTutorConflict?: boolean };
-export type CurriculumHolidayInput = Partial<Pick<CurriculumHoliday, 'label' | 'startDate' | 'endDate' | 'type' | 'color'>>;
 export type CurriculumModuleAttachmentInput = {
   moduleName: string;
   programmeId?: string;
@@ -3639,6 +3734,9 @@ export function deleteStaffingAssignment(id: string) {
   return deleteJson(`/curriculum/staffing/${encodeURIComponent(id)}/`);
 }
 
+// Holidays: the authored half of the calendar is written through these three.
+// A GOV.UK bank holiday is not — the endpoint answers 405 for one, because it
+// changes when GOV.UK changes it and not before. See `refreshEnglandHolidays`.
 
 export function createCurriculumHoliday(input: CurriculumHolidayInput) {
   return postJson('/curriculum/holidays/', input);
@@ -3650,6 +3748,38 @@ export function updateCurriculumHoliday(id: string | number, input: CurriculumHo
 
 export function archiveCurriculumHoliday(id: string | number) {
   return deleteJson(`/curriculum/holidays/${encodeURIComponent(String(id))}/`);
+}
+
+/**
+ * Every recent check against GOV.UK, newest first, with the current state.
+ *
+ * The England Holidays page reads this to show what the site changed and when it
+ * was last looked at. Deliberately a separate call from the holidays themselves:
+ * it is a log, it is only read on that one page, and it must never be cached
+ * alongside the dates.
+ */
+export function fetchEnglandHolidaySyncs(signal?: AbortSignal, limit = 20): Promise<{
+  status: EnglandHolidaySyncStatus;
+  results: EnglandHolidaySync[];
+}> {
+  return fetchJson(`/curriculum/england-holidays/syncs/?limit=${encodeURIComponent(String(limit))}`, {
+    signal,
+    skipCache: true,
+  });
+}
+
+/**
+ * Check GOV.UK now and report what moved.
+ *
+ * The mirror refreshes itself on an interval; this is the "I have just read that
+ * a bank holiday changed and need it today" path. `dryRun` reports without
+ * writing.
+ */
+export function refreshEnglandHolidays(options: { dryRun?: boolean } = {}): Promise<{
+  summary: EnglandHolidaySync & { applied: boolean; unchanged: number };
+  status: EnglandHolidaySyncStatus;
+}> {
+  return postJson('/curriculum/england-holidays/refresh/', { dryRun: Boolean(options.dryRun) });
 }
 
 // ---------------------------------------------------------------------------
@@ -3807,6 +3937,11 @@ export interface ReviewType {
   isActive: boolean;
 }
 
+export interface ReviewApplicability {
+  scope: 'programme' | 'cohort' | 'group';
+  ids: string[];
+}
+
 export interface ReviewSummary {
   id: string;
   programmeId: string;
@@ -3824,6 +3959,7 @@ export interface ReviewSummary {
   reviewTypeCode: string;
   reviewTypeName: string;
   applicableStatuses: string[];
+  applicability?: ReviewApplicability;
   fieldCount: number;
   createdAt: string;
   updatedAt: string;
@@ -3859,6 +3995,7 @@ export interface CreateReviewInput {
   /** Required -- a Review cannot be saved without a Review Type. */
   reviewTypeId: string;
   applicableStatuses: string[];
+  applicability?: ReviewApplicability;
   signatures: ReviewRoleFlags;
   visibleTo: ReviewRoleFlags;
   recordTimeSpent: boolean;

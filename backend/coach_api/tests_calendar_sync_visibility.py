@@ -89,6 +89,7 @@ class CalendarSyncVisibilityTests(SimpleTestCase):
                     "fetch_owner_active_learner_profiles": [learner],
                     "coach_staff_display_name": "Coach",
                     "fetch_source_schedule_rows": ({}, {}),
+                    "resolve_curriculum_programme_id": None,
                     "resolve_schedule_window": (record.target_date - (views.TIMETABLE_MCR_INTERVAL if event_type == 'mcr' else views.TIMETABLE_PROGRESS_REVIEW_INTERVAL), date(2027, 10, 1)),
                     "resolve_caseload_source_row": None,
                     "learner_employer_attendee": None,
