@@ -478,6 +478,13 @@ export default function CertificateBuilderPage() {
         />
 
         {notice ? <div className="rounded-xl border border-primary-100 bg-primary-50 p-3 text-sm font-semibold text-primary-800">{notice}</div> : null}
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-foreground-100 bg-white px-4 py-3 text-xs font-bold text-foreground-600 shadow-sm">
+          <span className={`rounded-full px-3 py-1 ${form.status === 'published' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+            {form.status === 'published' ? 'Published template' : form.status === 'draft' ? 'Draft template' : 'New template'}
+          </span>
+          <span>Version {form.version ?? 'new'}</span>
+          {form.publishedAt ? <span>Published {new Date(form.publishedAt).toLocaleDateString('en-GB')}</span> : null}
+        </div>
 
         <div className="grid min-w-0 gap-5 2xl:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
           <section className="space-y-4 rounded-2xl border border-[var(--kbc-border)] bg-[var(--kbc-surface)] p-5">

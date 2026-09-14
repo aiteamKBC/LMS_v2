@@ -33,6 +33,8 @@ export interface LearnerCertificate {
     layoutConfig?: CertificateTemplate['layoutConfig'];
     learner?: LearnerCertificateEligibility['learner'];
     programme?: string;
+    moduleRef?: string;
+    moduleTitle?: string;
     progressPercent?: number;
     minimumProgress?: number;
     finalTestPassed?: boolean;
@@ -41,6 +43,8 @@ export interface LearnerCertificate {
   pdfBlobUrl: string;
   verificationToken: string;
   verificationUrl: string;
+  moduleRef?: string;
+  moduleTitle?: string;
 }
 
 export interface LearnerCertificateStatus {
@@ -69,6 +73,20 @@ export async function fetchLearnerCertificateStatus(kind: string, id: number | s
 
 export async function issueLearnerCertificate(kind: string, id: number | string) {
   const response = await fetch(`/learner_api/certificates/${kind}/${id}/issue/`, {
+    method: 'POST',
+    credentials: 'include',
+  });
+  return readJson<LearnerCertificateStatus & { issued: boolean }>(response);
+}
+
+export async function fetchLearnerModuleCertificateStatus(kind: string, id: number | string, subjectRef: string) {
+  return readLearnerJson<LearnerCertificateStatus>(
+    `/learner_api/certificates/${kind}/${id}/modules/${encodeURIComponent(subjectRef)}/`,
+  );
+}
+
+export async function issueLearnerModuleCertificate(kind: string, id: number | string, subjectRef: string) {
+  const response = await fetch(`/learner_api/certificates/${kind}/${id}/modules/${encodeURIComponent(subjectRef)}/issue/`, {
     method: 'POST',
     credentials: 'include',
   });

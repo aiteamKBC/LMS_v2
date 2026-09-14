@@ -1,10 +1,12 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, BookOpen, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Layers3, Map as MapIcon, Search } from 'lucide-react';
+import { ArrowRight, Award, BookOpen, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Layers3, Loader2, Map as MapIcon, Search } from 'lucide-react';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import type { LearnerMetrics } from '@/api/learnerMetrics';
 import { fetchStudentActivity, peekStudentActivity, subjectRequest, type StudentActivityItem, type StudentActivityResponse, type SubjectAttemptResult } from '@/api/studentActivity';
 import { peekLearnerJson } from '@/api/learnerRead';
+import { fetchLearnerCertificateTemplate, fetchLearnerModuleCertificateStatus, issueLearnerModuleCertificate } from '@/api/learnerCertificates';
+import type { CertificateTemplate } from '@/api/platformAdmin';
 import { completedComponentIds, isComponentComplete, hasComponentContent, formatHoursMinutes, type JourneyComponent } from '@/utils/learnerJourney';
 import { DeferredStudentMaterial as StudentMaterial } from './DeferredStudentMaterial';
 import styles from './SubjectWorkspace.module.css';
@@ -362,10 +364,129 @@ function Cover({ title, url, large = false }: { title: string; url?: string; lar
   </div>;
 }
 
-function SubjectCard({ subject, cover, tone = 'purple', onOpen }: { subject: Subject; cover?: string; tone?: SubjectCardTone; onOpen: () => void }) {
+function SubjectCertificateAction({
+  subject,
+  completed,
+  total,
+  template,
+  kind,
+  learnerId,
+}: {
+  subject: Subject;
+  completed: number;
+  total: number;
+  template: CertificateTemplate | null;
+  kind?: string;
+  learnerId?: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  const [cachedHref, setCachedHref] = useState('');
+  const supportedSubject = subject.id.startsWith('current:') || subject.id.startsWith('unlinked:');
+  const percent = total ? Math.round(completed / total * 10000) / 100 : 0;
+  const ready = !!template && !!kind && !!learnerId && total > 0 && supportedSubject && percent >= Number(template.minimumProgress || 0);
+  const cacheKey = ready && template && kind && learnerId
+    ? `learner-certificate:${kind}:${learnerId}:${subject.id}:v${template.version}`
+    : '';
+
+  useEffect(() => {
+    let cancelled = false;
+    setCachedHref('');
+    if (!ready || !kind || !learnerId || !cacheKey) return;
+    try {
+      const stored = window.localStorage.getItem(cacheKey);
+      if (stored) {
+        setCachedHref(stored);
+        return;
+      }
+    } catch {
+      // Local storage can be unavailable in private or locked-down contexts.
+    }
+    void fetchLearnerModuleCertificateStatus(kind, learnerId, subject.id)
+      .then((result) => {
+        const href = result.certificate?.verificationUrl || '';
+        if (!href || cancelled) return;
+        setCachedHref(href);
+        try {
+          window.localStorage.setItem(cacheKey, href);
+        } catch {
+          // Non-critical cache.
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setCachedHref('');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, kind, learnerId, subject.id, cacheKey]);
+
+  if (!ready) return null;
+
+  const issue = async (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (cachedHref) {
+      window.open(cachedHref, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    const certificateWindow = window.open('about:blank', '_blank');
+    if (certificateWindow) {
+      certificateWindow.document.title = 'Preparing certificate';
+      certificateWindow.document.body.innerHTML = '<main style="min-height:100vh;display:grid;place-items:center;font-family:Inter,system-ui,sans-serif;color:#0f172a;background:#f8fafc"><section style="width:min(92vw,760px);padding:32px;border:1px solid #e2e8f0;border-radius:16px;background:white;box-shadow:0 24px 70px rgba(15,23,42,.16);text-align:center"><h1 style="margin:0 0 8px;font-size:24px">Preparing certificate</h1><p style="margin:0;color:#475569">Your certificate is being generated...</p></section></main>';
+    }
+    setBusy(true);
+    setMessage('');
+    try {
+      const result = await issueLearnerModuleCertificate(kind, learnerId, subject.id);
+      const href = result.certificate?.verificationUrl;
+      if (href) {
+        setCachedHref(href);
+        if (cacheKey) {
+          try {
+            window.localStorage.setItem(cacheKey, href);
+          } catch {
+            // Non-critical cache.
+          }
+        }
+      }
+      if (href && certificateWindow) certificateWindow.location.replace(href);
+      else if (href) window.location.assign(href);
+      else {
+        if (certificateWindow) certificateWindow.close();
+        setMessage('Certificate issued, but the verification link was not returned.');
+      }
+    } catch (error) {
+      if (certificateWindow) certificateWindow.close();
+      setMessage(error instanceof Error ? error.message : 'Could not issue certificate.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <div className={styles.certificateAction}>
+    <button type="button" onClick={issue} disabled={busy} className={styles.certificateButton}>
+      {busy ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Award size={14} aria-hidden="true" />}
+      {busy ? 'Issuing certificate' : cachedHref ? 'View certificate' : 'Get certificate'}
+    </button>
+    {message && <p className={styles.certificateError}>{message}</p>}
+  </div>;
+}
+
+function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, kind, learnerId }: {
+  subject: Subject;
+  cover?: string;
+  tone?: SubjectCardTone;
+  onOpen: () => void;
+  template: CertificateTemplate | null;
+  kind?: string;
+  learnerId?: string;
+}) {
   const total = subject.activities.length;
   const completed = subject.activities.filter((activity) => activity.completed).length;
   const isComplete = total > 0 && completed === total;
+  const percent = total ? Math.round(completed / total * 10000) / 100 : 0;
+  const certificateReady = !!template && total > 0 && percent >= Number(template.minimumProgress || 0) && (subject.id.startsWith('current:') || subject.id.startsWith('unlinked:'));
   const status = isComplete ? 'Completed' : completed > 0 ? 'In progress' : total ? 'Not started' : 'No activities yet';
   const next = nextLearningWeek(subject)?.activities.find(entry => !entry.completed);
   return <article className={`group ${styles.card} ${styles.subjectTheme}`} data-tone={tone}>
@@ -377,14 +498,18 @@ function SubjectCard({ subject, cover, tone = 'purple', onOpen }: { subject: Sub
         </span>
       </div>
       <div className={styles.cardBody}>
+        <div className={styles.cardMetaRow}>
+          <p className={styles.cardEyebrow}><Layers3 size={13} aria-hidden="true" />{total} {total === 1 ? 'activity' : 'activities'}</p>
+          {certificateReady && <span className={styles.certificateBadge}><Award size={13} aria-hidden="true" />Ready</span>}
+        </div>
         <h3 className={styles.cardTitle}>{subject.title}</h3>
         <p className={styles.cardDescription}>Explore your learning materials and activities.</p>
-        <p className={styles.cardEyebrow}><Layers3 size={14} aria-hidden="true" />{total} {total === 1 ? 'activity' : 'activities'}</p>
         <div className={styles.cardProgress}><Progress done={completed} total={total} compact label={`${subject.title} progress`} /></div>
         <span className={styles.nextActivity}>{isComplete ? <CheckCircle2 size={20} /> : <BookOpen size={20} />}<span><small>{isComplete ? 'Well done' : 'Next up'}</small><strong>{isComplete ? 'All activities complete' : next?.title || 'Explore this subject'}</strong></span><ChevronRight size={16} /></span>
         <span className={styles.cardAction}>Open subject<ArrowRight size={16} aria-hidden="true" /></span>
       </div>
     </button>
+    <SubjectCertificateAction subject={subject} completed={completed} total={total} template={template} kind={kind} learnerId={learnerId} />
   </article>;
 }
 
@@ -455,6 +580,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     navigate({ pathname: location.pathname, search: params.toString() });
   };
   const identity = `${kind}:${learnerId}`;
+  const [certificateTemplate, setCertificateTemplate] = useState<CertificateTemplate | null>(null);
   const { metadata: incomingMetadata, error: imageError, retry: retryMetadata } = useSubjectMetadata(incomingData, incomingReal, kind, learnerId, !error, true);
   const ready = !loading && !error && (!learnerId || !!incomingMetadata);
   const [snapshot, setSnapshot] = useState<{
@@ -475,6 +601,14 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const plannedOtjh = metrics !== undefined ? metrics?.otjh.planned ?? null : data?.audit_tp_planned ?? data?.planned_total ?? null;
   const hasProgrammeOtjh = data?.audit_lms_actual != null || data?.audit_tp_planned != null;
   const [savedProgress, setSavedProgress] = useState<{ identity: string; activities: Record<string, SubjectAttemptResult> }>({ identity, activities: {} });
+  useEffect(() => {
+    if (!kind || !learnerId) return;
+    let cancelled = false;
+    fetchLearnerCertificateTemplate(kind, learnerId)
+      .then((result) => { if (!cancelled) setCertificateTemplate(result.template); })
+      .catch(() => { if (!cancelled) setCertificateTemplate(null); });
+    return () => { cancelled = true; };
+  }, [kind, learnerId]);
   const updatedData = useMemo(() => {
     if (!data || savedProgress.identity !== identity) return data;
     return { ...data, activities: data.activities.map((item) => {
@@ -560,7 +694,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
       <LearningCatalogue summary={summary} search={search} onSearch={setSearch} current={currentSubject} total={total} done={done} percent={percent} kind={kind} learnerId={learnerId}
         deadlines={deadlines} deadlinesLoading={deadlinesLoading} deadlinesError={deadlinesError} onRetryDeadlines={onRetryDeadlines}
         onContinue={subject => { setSearch(''); select(subject.id, 'current'); }}
-        renderCard={subject => <SubjectCard key={subject.id} subject={subject} cover={covers[subject.id]} tone={subjectTones.get(subject.id)} onOpen={() => select(subject.id)} />} />
+        renderCard={subject => <SubjectCard key={subject.id} subject={subject} cover={covers[subject.id]} tone={subjectTones.get(subject.id)} onOpen={() => select(subject.id)} template={certificateTemplate} kind={kind} learnerId={learnerId} />} />
       {(data || metrics) && <><div className="flex flex-wrap gap-6 rounded-xl bg-background-100 px-4 py-3 text-xs"><div><span className="block text-foreground-500">Recorded OTJH</span><strong>{recordedOtjh == null ? 'Unavailable' : formatHoursMinutes(recordedOtjh)}</strong></div><div><span className="block text-foreground-500">Planned OTJH</span><strong>{plannedOtjh == null ? 'Unavailable' : formatHoursMinutes(plannedOtjh)}</strong></div></div>{hasProgrammeOtjh && <p className="text-[12px] text-foreground-500">Programme totals include accepted historical hours and new recorded learning. Planned hours come from your training plan.</p>}</>}
     </> : <>
       <div className="flex flex-wrap items-center justify-between gap-3"><button onClick={() => select()} className="flex items-center gap-1.5 text-sm font-semibold text-primary-700"><ChevronLeft size={17} />All subjects</button><Link to={learningHref('map', kind, learnerId, active.id)} className={styles.textLink}><MapIcon size={17} />View learning map<ArrowRight size={16} /></Link></div>

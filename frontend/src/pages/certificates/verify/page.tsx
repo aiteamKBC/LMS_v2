@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { CertificateDocument } from '@/components/feature/CertificateDocument';
 import type { CertificateTemplate } from '@/api/platformAdmin';
@@ -17,6 +17,8 @@ interface VerificationCertificate {
       email?: string;
     };
     programme?: string;
+    moduleTitle?: string;
+    moduleRef?: string;
     minimumProgress?: number;
     finalTestPassed?: boolean;
   };
@@ -50,6 +52,9 @@ export default function CertificateVerificationPage() {
   const [data, setData] = useState<VerificationResponse | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState('');
+  const pdfSourceRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -83,15 +88,123 @@ export default function CertificateVerificationPage() {
   const title = certificate?.snapshot?.certificateTitle || 'Certificate of Achievement';
   const bodyText = certificate?.snapshot?.bodyText || 'has successfully completed the requirements and passed the LMS final examination for';
   const layoutConfig = certificate?.snapshot?.layoutConfig || {};
-  const programme = learner?.programme || certificate?.snapshot?.programme || 'Programme not recorded';
+  const moduleTitle = certificate?.snapshot?.moduleTitle || '';
+  const programme = learner?.programme || certificate?.snapshot?.programme || '';
+  const awardTarget = moduleTitle || programme || 'Programme not recorded';
+  const awardTargetLabel = moduleTitle ? 'Module' : 'Programme';
   const verificationUrl = useMemo(() => {
     if (typeof window === 'undefined') return `/verify-certificate/${token}`;
     return `${window.location.origin}/verify-certificate/${token}`;
   }, [token]);
 
+  const downloadCertificatePdf = async () => {
+    if (!certificate || !pdfSourceRef.current || pdfBusy) return;
+    setPdfBusy(true);
+    setPdfError('');
+    try {
+      const [{ toPng }, { jsPDF }] = await Promise.all([
+        import('html-to-image'),
+        import('jspdf'),
+      ]);
+      const image = await toPng(pdfSourceRef.current, {
+        backgroundColor: '#ffffff',
+        cacheBust: true,
+        pixelRatio: 2,
+      });
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+      pdf.addImage(image, 'PNG', 0, 0, 297, 210);
+      pdf.save(`${filenameSafe(certificate.certificateNumber)}.pdf`);
+    } catch (err) {
+      setPdfError(err instanceof Error ? err.message : 'Could not generate the certificate PDF.');
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
   return (
-    <main className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-primary-50/40 px-6 py-10 text-slate-950">
-      <div className="mx-auto max-w-5xl">
+    <main className="certificate-verify-page min-h-screen bg-gradient-to-br from-slate-50 via-white to-primary-50/40 px-6 py-10 text-slate-950">
+      <style>
+        {`
+          @media print {
+            @page {
+              size: A4 landscape;
+              margin: 0;
+            }
+
+            html,
+            body,
+            #root {
+              width: 100% !important;
+              height: 100% !important;
+              margin: 0 !important;
+              overflow: hidden !important;
+              background: #fff !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+
+            .certificate-verify-page {
+              min-height: 0 !important;
+              padding: 0 !important;
+              background: #fff !important;
+            }
+
+            .certificate-screen-content {
+              display: none !important;
+            }
+
+            #certificate-print-area {
+              position: fixed !important;
+              inset: 0 !important;
+              display: flex !important;
+              align-items: center !important;
+              justify-content: center !important;
+              width: 100% !important;
+              height: 100% !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              background: #fff !important;
+              break-after: avoid !important;
+              break-before: avoid !important;
+              break-inside: avoid !important;
+              page-break-after: avoid !important;
+              page-break-before: avoid !important;
+              page-break-inside: avoid !important;
+            }
+
+            #certificate-print-area .certificate-print-document {
+              width: 267mm !important;
+              max-width: 267mm !important;
+              border: 0 !important;
+              border-radius: 0 !important;
+              box-shadow: none !important;
+              break-inside: avoid !important;
+              page-break-inside: avoid !important;
+            }
+          }
+
+          @media screen {
+            #certificate-print-area {
+              position: fixed !important;
+              left: -200vw !important;
+              top: 0 !important;
+              width: 1123px !important;
+              height: 794px !important;
+              overflow: hidden !important;
+              pointer-events: none !important;
+            }
+
+            #certificate-print-area .certificate-print-document {
+              width: 1123px !important;
+              max-width: 1123px !important;
+              border: 0 !important;
+              border-radius: 0 !important;
+              box-shadow: none !important;
+            }
+          }
+        `}
+      </style>
+      <div className="certificate-screen-content mx-auto max-w-5xl">
         <div className="mb-8 flex items-center justify-between gap-4">
           <Link to="/" className="inline-flex items-center gap-3 text-sm font-black text-primary-700">
             <span className="grid h-10 w-10 place-items-center rounded-full bg-primary-700 text-white">KBC</span>
@@ -105,7 +218,7 @@ export default function CertificateVerificationPage() {
         <section className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-2xl">
           <div className="bg-gradient-to-r from-primary-900 via-primary-700 to-primary-300 p-8 text-white">
             <p className="text-xs font-black uppercase tracking-[0.24em] text-white/70">Verification result</p>
-            <h1 className="mt-3 text-4xl font-black">{loading ? 'Checking certificate…' : error ? 'Certificate not verified' : 'Certificate verified'}</h1>
+            <h1 className="mt-3 text-4xl font-black text-white">{loading ? 'Checking certificate...' : error ? 'Certificate not verified' : 'Certificate verified'}</h1>
             <p className="mt-3 max-w-2xl text-sm font-semibold text-white/80">
               This page confirms whether a certificate was issued by Kent Business College through the LMS certificate system.
             </p>
@@ -139,40 +252,42 @@ export default function CertificateVerificationPage() {
                   </div>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  <FieldCard label="Learner" value={learner?.name || 'Learner not recorded'} />
-                  <FieldCard label="Programme" value={programme} />
+                <div className="grid gap-4 md:grid-cols-2">
+                  <FieldCard label={awardTargetLabel} value={awardTarget} />
                   <FieldCard label="Certificate number" value={certificate.certificateNumber} />
-                  <FieldCard label="Issued date" value={formatDate(certificate.issuedAt)} />
+                  <FieldCard label="Awarded date" value={formatDate(certificate.issuedAt)} />
                   <FieldCard label="Progress" value={`${certificate.progressPercent}%`} />
-                  <FieldCard label="Template version" value={`Version ${certificate.templateVersion}`} />
                 </div>
 
                 <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 shadow-inner">
                   <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-500">Official certificate</p>
-                      <p className="mt-1 text-sm font-semibold text-slate-600">Rendered from the certificate snapshot issued by the LMS.</p>
+                      <p className="mt-1 text-sm font-semibold text-slate-600">Rendered from the certificate record awarded by the LMS.</p>
                     </div>
                     <button
                       type="button"
-                      onClick={() => window.print()}
-                      className="rounded-xl bg-primary-700 px-4 py-2 text-sm font-bold text-white shadow-lg shadow-primary-700/20"
+                      onClick={() => void downloadCertificatePdf()}
+                      disabled={pdfBusy}
+                      className="rounded-xl bg-primary-700 px-4 py-2 text-sm font-bold text-white shadow-lg shadow-primary-700/20 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      Print / save PDF
+                      {pdfBusy ? 'Preparing PDF...' : 'Download PDF'}
                     </button>
                   </div>
-                  <CertificateDocument
-                    title={title}
-                    bodyText={bodyText}
-                    learnerName={learner?.name || 'Learner'}
-                    programmeName={programme}
-                    progressLabel={`${certificate.progressPercent}%`}
-                    certificateNumber={certificate.certificateNumber}
-                    awardedOn={formatDate(certificate.issuedAt)}
-                    verificationUrl={verificationUrl}
-                    layoutConfig={layoutConfig}
-                  />
+                  {pdfError ? <p className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{pdfError}</p> : null}
+                  <div ref={pdfSourceRef}>
+                    <CertificateDocument
+                      title={title}
+                      bodyText={bodyText}
+                      learnerName={learner?.name || 'Learner'}
+                      programmeName={awardTarget}
+                      progressLabel={`${certificate.progressPercent}%`}
+                      certificateNumber={certificate.certificateNumber}
+                      awardedOn={formatDate(certificate.issuedAt)}
+                      verificationUrl={verificationUrl}
+                      layoutConfig={layoutConfig}
+                    />
+                  </div>
                 </div>
 
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -184,6 +299,26 @@ export default function CertificateVerificationPage() {
           </div>
         </section>
       </div>
+      {certificate ? (
+        <div id="certificate-print-area" aria-hidden="true">
+          <CertificateDocument
+            className="certificate-print-document"
+            title={title}
+            bodyText={bodyText}
+            learnerName={learner?.name || 'Learner'}
+            programmeName={awardTarget}
+            progressLabel={`${certificate.progressPercent}%`}
+            certificateNumber={certificate.certificateNumber}
+            awardedOn={formatDate(certificate.issuedAt)}
+            verificationUrl={verificationUrl}
+            layoutConfig={layoutConfig}
+          />
+        </div>
+      ) : null}
     </main>
   );
+}
+
+function filenameSafe(value: string) {
+  return value.trim().replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '') || 'certificate';
 }
