@@ -13,7 +13,6 @@ from .models import TrainingPlanDocument
 from .progress_rules import progress_counts_as_achieved
 from .student_activity_access import student_activity_available
 from .student_activity import CURRENT_SUBJECTS_SQL, _direct_progress_records, _direct_progress_otjh
-from . import subject_source
 from .training_plan_dashboard import find_contract, number, rows
 
 log = logging.getLogger(__name__)
@@ -212,9 +211,11 @@ def read_metrics(source, kind):
                         AND ph.ref=ga.activity_id::text AND ph.kind=CASE lower(coalesce(a.activity_type,r.activity_type))
                             WHEN 'video' THEN 'video' WHEN 'audio' THEN 'audio' WHEN 'reading+quiz' THEN 'reading_quiz' END
                     WHERE l.aptem_id=%s''', [aptem_id])
+                # Dashboard totals use the verified audit snapshot as their
+                # stable baseline. The external LMS inventory is a separate
+                # view and can contain newly published, unmapped activities;
+                # mixing it here changes both the denominator and KSB status.
                 historical = rows(cursor)
-                live = subject_source.read_learner(cursor, aptem_id, source.email)
-                historical = subject_source.overlay_progress_rows(historical, live)
                 cursor.execute('''SELECT DISTINCT group_id,activity_id FROM "Learner".subject_activity_attempts
                     WHERE enrolment_id=%s AND aptem_id=%s AND completed=true
                       AND submitted_at IS NOT NULL''', [source.pk, aptem_id])

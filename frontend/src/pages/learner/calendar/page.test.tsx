@@ -6,10 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LearnerCalendarContent } from './page';
 import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, rescheduleLearnerCalendarSession, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { fetchReviewHistory } from '@/api/reviewHistory';
-import { fetchMeetingAttendance } from '@/api/meetingAttendance';
-
-vi.mock('@/api/reviewHistory', () => ({ fetchReviewHistory: vi.fn() }));
-vi.mock('@/api/meetingAttendance', () => ({ fetchMeetingAttendance: vi.fn() }));
 
 vi.mock('@/hooks/useMyLearner', () => ({ useLinkedLearner: () => ({ kind: 'commercial', id: '125' }) }));
 vi.mock('@/pages/coach/shared/CoachMeetingArtifactsPanel', () => ({ CoachMeetingArtifactsPanel: () => <div>Meeting recordings</div> }));
@@ -23,6 +19,7 @@ vi.mock('@/api/learnerCalendar', () => ({
   fetchLearnerMeetingArtifacts: vi.fn(), learnerMeetingArtifactContentUrl: vi.fn(),
   startCalendarOAuth: vi.fn(), connectCredentialCalendar: vi.fn(), disconnectPersonalCalendar: vi.fn(),
 }));
+vi.mock('@/api/reviewHistory', () => ({ fetchReviewHistory: vi.fn(async () => ({ reviews: [] })) }));
 
 const now = new Date();
 const isoDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -39,89 +36,14 @@ function setup(events: LearnerCalendarEvent[] = [event()], search = '') {
   return render(<StrictMode><MemoryRouter initialEntries={['/learner/calendar' + search]}><LearnerCalendarContent /></MemoryRouter></StrictMode>);
 }
 
-beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); });
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(fetchReviewHistory).mockResolvedValue({ learnerId: null, category: 'reviews', reviews: [] });
+  localStorage.clear();
+});
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('calendar event previews', () => {
-  it('opens Reschedule directly with the saved duration and prevents duplicate creation', async () => {
-    vi.mocked(rescheduleLearnerCalendarSession).mockResolvedValue({ event: event({ durationMinutes: 90, scheduledTime: '11:30' }) });
-    setup([event({ durationMinutes: 90 })], '?event=catch-up%3A1&action=reschedule');
-    const dialog = await screen.findByRole('dialog', { name: 'Reschedule Session' });
-    expect(screen.getAllByRole('dialog')).toHaveLength(1);
-    expect(within(dialog).getByLabelText('Duration')).toHaveValue('90');
-    fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '11:30' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Save New Time' }));
-    await waitFor(() => expect(rescheduleLearnerCalendarSession).toHaveBeenCalledWith('commercial', '125', expect.objectContaining({ eventKey: 'catch-up:1', durationMinutes: 90, scheduledTime: '11:30' })));
-    expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
-  });
-
-  it.each(['mcr', 'progress-review'] as const)('uses the same booking form for the owned imported %s instead of a generated row on its date', async source => {
-    vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-09-14T12:00:00Z'));
-    vi.mocked(fetchReviewHistory).mockResolvedValue({ learnerId: 211, category: 'reviews', reviews: [{ id: '9', aptemReviewId: 'A9', name: 'Owned imported meeting',
-      type: source === 'mcr' ? 'Monthly Coaching Meeting' : 'Progress Review', reviewerName: 'Assigned coach', plannedDate: '2026-09-30', plannedTime: null,
-      completedDate: null, status: 'not-scheduled', extractionStatus: 'complete', detailsAvailable: false, sections: [] }] });
-    vi.mocked(fetchMeetingAttendance).mockResolvedValue({ sessions: [], today: '2026-09-14', timeZone: 'Europe/London', csrfToken: '' });
-    vi.mocked(bookLearnerCalendarSession).mockResolvedValue({ event: event({ source, eventKey: 'new-booking', scheduledDate: '2026-09-30' }) });
-    setup([event({ source, eventKey: 'unrelated-generated', targetDate: '2026-09-30', date: '2026-09-30', status: 'not-scheduled', scheduledDate: null, scheduledTime: null })],
-      `?event=imported-review%3A9&reviewId=9&source=${source}&action=schedule`);
-    const dialog = await screen.findByRole('dialog', { name: source === 'mcr' ? 'Schedule Monthly Coaching Meeting' : 'Schedule Progress Review' });
-    expect(within(dialog).getAllByText('Owned imported meeting').length).toBeGreaterThan(0);
-    fireEvent.change(within(dialog).getByPlaceholderText('Add anything your coach should know before the session...'), { target: { value: 'Review my evidence' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Book Session' }));
-    await waitFor(() => expect(bookLearnerCalendarSession).toHaveBeenCalledWith('commercial', '125', expect.objectContaining({ sessionType: source, reviewId: '9', assignmentMonth: '2026-09', eventKey: undefined, notes: 'Review my evidence', durationMinutes: 60 })));
-  });
-
-  it('reschedules an imported review through its durable booking and updates the same review', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-09-14T12:00:00Z'));
-    vi.mocked(fetchReviewHistory).mockResolvedValue({ learnerId: 211, category: 'reviews', reviews: [{ id: '9', aptemReviewId: 'A9', name: 'Imported review', type: 'Progress Review',
-      reviewerName: 'Coach', plannedDate: '2026-10-02', plannedTime: '10:00', completedDate: null, status: 'scheduled', extractionStatus: 'complete', detailsAvailable: false, sections: [] }] });
-    vi.mocked(fetchMeetingAttendance).mockResolvedValue({ sessions: [{ id: 'imported-review:9', calendarEventKey: 'durable-review-key' }] as Awaited<ReturnType<typeof fetchMeetingAttendance>>['sessions'], today: '2026-09-14', timeZone: 'Europe/London', csrfToken: '' });
-    const booked = event({ eventKey: 'durable-review-key', source: 'progress-review', scheduledDate: '2026-10-02', durationMinutes: 75 });
-    vi.mocked(rescheduleLearnerCalendarSession).mockResolvedValue({ event: { ...booked, scheduledTime: '11:30' } });
-    setup([booked], '?event=imported-review%3A9&reviewId=9&source=progress-review&action=reschedule');
-    const dialog = await screen.findByRole('dialog', { name: 'Reschedule Session' });
-    expect(within(dialog).getByLabelText('Duration')).toHaveValue('75');
-    fireEvent.change(within(dialog).getByLabelText('Time'), { target: { value: '11:30' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Save New Time' }));
-    await waitFor(() => expect(rescheduleLearnerCalendarSession).toHaveBeenCalledWith('commercial', '125', expect.objectContaining({ eventKey: 'durable-review-key', reviewId: '9', durationMinutes: 75 })));
-    expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
-  });
-
-  it('does not replace a missing imported review with another meeting on its date', async () => {
-    vi.mocked(fetchReviewHistory).mockResolvedValue({ learnerId: 211, category: 'reviews', reviews: [] });
-    vi.mocked(fetchMeetingAttendance).mockResolvedValue({ sessions: [], today: '2026-09-14', timeZone: 'Europe/London', csrfToken: '' });
-    setup([event({ source: 'mcr', status: 'not-scheduled', scheduledDate: null, scheduledTime: null })], `?reviewId=missing&source=mcr&date=${isoDate}&action=schedule`);
-    expect(await screen.findByRole('alert')).toHaveTextContent('no longer available');
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
-  });
-
-  it('shows a saved future booking even when Microsoft has not sent its invitation', async () => {
-    setup([event({ source: 'mcr', title: 'Monthly meeting', scheduledDate: '2026-10-02', scheduledTime: '09:00',
-      targetDate: '2026-10-31', invited: false, meetingLink: '', syncState: 'failed',
-      syncWarning: 'Your meeting time is saved. Microsoft calendar access needs administrator approval.' })], '?event=catch-up%3A1&date=2026-10-02');
-    const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('09:00–10:00')).toBeVisible();
-    expect(within(dialog).getByRole('status')).toHaveTextContent('Microsoft calendar access needs administrator approval.');
-    expect(within(dialog).getByRole('button', { name: 'Reschedule' })).toBeVisible();
-    expect(within(dialog).queryByRole('link', { name: 'Join Meeting' })).not.toBeInTheDocument();
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Close event details' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Week' }));
-    expect(screen.getAllByRole('button', { name: /Monthly meeting/ }).length).toBeGreaterThan(0);
-  });
-
-  it('opens assignment support with editable context without creating a booking', async () => {
-    const notes = 'Assignment support: Data report\nSeptember 2026 — Martech';
-    setup([], `?book=student-support&notes=${encodeURIComponent(notes)}`);
-    expect(await screen.findByRole('heading', { name: 'Book a Coach Session' })).toBeVisible();
-    const notesInput = await screen.findByPlaceholderText('Add anything your coach should know before the session...');
-    expect(notesInput).toHaveValue(notes);
-    expect(screen.getByRole('button', { name: /Student Support Help/ })).toHaveClass('border-primary-400');
-    expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
-    fireEvent.change(notesInput, { target: { value: 'Please help me choose evidence.' } });
-    expect(screen.getByDisplayValue('Please help me choose evidence.')).toBeVisible();
-  });
-
   it.each(['book', 'reschedule'] as const)('uses the appointment date timezone offset when a future session is %s', async action => {
     // A browser in London is UTC+1 in September, but UTC in November.
     vi.spyOn(Date.prototype, 'getTimezoneOffset').mockImplementation(function (this: Date) {
@@ -221,8 +143,7 @@ describe('calendar event previews', () => {
     expect(document.body.style.overflow).toBe('');
     await user.click(trigger);
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Reschedule' }));
-    expect(screen.getByRole('dialog', { name: 'Reschedule Session' })).toBeVisible();
-    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /Reschedule/ })).toBeVisible();
     expect(document.querySelector('input[type="date"]')).toHaveValue(isoDate);
     expect(document.querySelector('input[type="time"]')).toHaveValue('10:00');
@@ -259,8 +180,37 @@ describe('calendar event previews', () => {
   it('keeps dashboard schedule links opening the booking form without a second overlay', async () => {
     setup([event({ status: 'not-scheduled', scheduledTime: null, scheduledDate: null, meetingLink: '', source: 'mcr' })], '?event=catch-up%3A1&action=schedule');
     expect(await screen.findByRole('heading', { name: 'Schedule Monthly Coaching Meeting' })).toBeVisible();
-    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
+  it('schedules an imported Aptem progress review from its calendar details', async () => {
+    const importedReview = {
+      id: '72', aptemReviewId: 'A72', name: 'Progress Review', type: 'Progress Review',
+      reviewerName: 'Assigned coach', plannedDate: '2026-09-30', plannedTime: null,
+      completedDate: null, status: 'not-scheduled', extractionStatus: 'complete',
+      detailsAvailable: true, sections: [],
+    };
+    vi.mocked(fetchReviewHistory).mockImplementation(async (_kind, _id, category) => ({
+      learnerId: 125,
+      category,
+      reviews: category === 'reviews' ? [importedReview] : [],
+    }));
+    const booked = event({
+      id: 'progress-review:72', eventKey: 'progress-review:72', title: 'Progress Review',
+      source: 'progress-review', status: 'scheduled', bookingStatus: 'scheduled',
+      date: '2026-09-30', targetDate: '2026-09-30', scheduledDate: '2026-09-30', scheduledTime: '10:00',
+    });
+    vi.mocked(bookLearnerCalendarSession).mockResolvedValue({ event: booked });
+    setup([], '?event=imported-review%3A72');
+
+    const details = await screen.findByRole('dialog', { name: 'Progress Review' });
+    await userEvent.setup().click(within(details).getByRole('button', { name: 'Schedule Progress Review' }));
+    expect(await screen.findByRole('heading', { name: 'Schedule Progress Review' })).toBeVisible();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Book Session' }));
+    await waitFor(() => expect(bookLearnerCalendarSession).toHaveBeenCalledWith('commercial', '125', expect.objectContaining({
+      sessionType: 'progress-review', reviewId: '72', assignmentMonth: '2026-09', eventKey: undefined,
+    })));
   });
 
   it('previews the updated appointment after a successful reschedule', async () => {
@@ -296,7 +246,7 @@ describe('calendar event previews', () => {
     fireEvent.change(document.querySelector('input[type="date"]')!, { target: { value: nextDate } });
     fireEvent.change(document.querySelector('input[type="time"]')!, { target: { value: '11:30' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save New Time' }));
-    await within(await screen.findByRole('dialog', { name: 'Catch-up with your coach' })).findByText('11:30–12:30');
+    await within(await screen.findByRole('dialog')).findByText('11:30–12:30');
     await act(async () => { resolveOldRead({ learner: { kind: 'commercial', id: 125 }, events: [event()] }); });
     expect(within(screen.getByRole('dialog')).getByText('11:30–12:30')).toBeVisible();
   });

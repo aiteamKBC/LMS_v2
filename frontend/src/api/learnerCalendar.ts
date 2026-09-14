@@ -1,8 +1,9 @@
-import { createCachedResource } from './cachedRequest';
+﻿import { createCachedResource } from './cachedRequest';
 import { readLearnerJson, invalidateLearnerReads, subscribeLearnerReadInvalidation } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
 import type { CoachMeetingArtifactsResponse } from '@/pages/coach/shared/calendarEvents';
 import type { ImportedReview } from '@/api/reviewHistory';
+import type { ReviewInstanceFormDefinition } from '@/api/reviewInstances';
 
 const BASE = '/learner_api/calendar';
 const calendarResource = createCachedResource<LearnerCalendarResponse>('learner-calendar', key =>
@@ -18,6 +19,14 @@ export interface LearnerCalendarEvent {
   source: 'mcr' | 'progress-review' | string;
   type: 'coaching' | 'review' | string;
   sequence: number;
+  reviewTemplateId?: string | null;
+  reviewInstanceId?: string | null;
+  reviewTypeId?: string | null;
+  reviewTypeCode?: string | null;
+  reviewTypeName?: string | null;
+  reviewTypeIsSystem?: boolean;
+  occurrenceNumber?: number | null;
+  bookingStatus?: string;
   status: 'not-scheduled' | 'scheduled' | 'in-progress' | 'completed' | 'cancelled' | string;
   date: string | null;
   targetDate: string | null;
@@ -93,6 +102,16 @@ export function fetchLearnerCalendarEvents(kind: LearnerKind, id: string, option
   return calendarResource.read(`${kind}:${id}`, { revalidate: options.revalidate });
 }
 
+/** Fetch the Curriculum-authored review form for an existing calendar occurrence. */
+export function fetchLearnerEventReviewInstance(
+  kind: LearnerKind,
+  learnerId: string,
+  eventKey: string,
+  signal?: AbortSignal,
+): Promise<ReviewInstanceFormDefinition | { instance: null }> {
+  return request<ReviewInstanceFormDefinition | { instance: null }>(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/review/`, { signal, credentials: 'include' });
+}
+
 export function fetchLearnerMeetingArtifacts(kind: LearnerKind, learnerId: string, eventKey: string, signal?: AbortSignal): Promise<CoachMeetingArtifactsResponse> {
   return request<CoachMeetingArtifactsResponse>(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/artifacts/`, { signal, credentials: 'include' });
 }
@@ -123,6 +142,9 @@ export type BookableSessionType =
   // than filling a scheduled slot.
   | 'mcr'
   | 'progress-review'
+  | 'review'
+  | 'gateway'
+  | 'other'
   // The three onboarding reviews, bookable while still Onboarding (they go to
   // the learner's case owner rather than a coach, who doesn't exist yet).
   | OnboardingReviewType;

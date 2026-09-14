@@ -237,6 +237,7 @@ function ProgressReviewsList() {
   const pageSize = 10;
   const finishedReviews = reviews.filter((review) => review.status.toLowerCase() === 'completed');
   const plannedReviews = reviews.filter((review) => review.status.toLowerCase() !== 'completed');
+  const firstBookableReview = reviews.find((review) => review.status.toLowerCase() === 'not-scheduled');
   const tabReviews = view === 'finished' ? finishedReviews : plannedReviews;
   const totalPages = Math.max(1, Math.ceil(tabReviews.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -292,7 +293,7 @@ function ProgressReviewsList() {
         <section aria-label="Reviews sessions" className="overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-sm">
           <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
             <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><AppIcon className="ri-file-list-3-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Reviews sessions</h2><p className="mt-0.5 text-xs text-foreground-500">Check each review status and open the full review record.</p></div></div>
-            <Link to={`/learner/calendar?kind=${myLearner.kind}&learner=${myLearner.id}`} className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />Open calendar</Link>
+            <div className="flex flex-wrap items-center gap-2"><button type="button" disabled={!firstBookableReview} onClick={() => firstBookableReview && openBooking(firstBookableReview)} className="inline-flex h-9 items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-xs font-bold text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"><AppIcon className="ri-calendar-check-line" />Book review</button><Link to={`/learner/calendar?kind=${myLearner.kind}&learner=${myLearner.id}`} className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />Open calendar</Link></div>
           </div>
           <div role="tablist" aria-label="Review status" className="flex overflow-x-auto border-b border-background-200 bg-white px-4 pt-3 sm:px-5">
             {(['planned', 'finished'] as const).map((tab) => {
@@ -320,7 +321,6 @@ function ProgressReviewsList() {
                   return (
                     <article key={review.id} className="space-y-4 p-4">
                       <div className="flex items-start gap-3">
-                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-xs font-extrabold text-primary-700">#{review.sequence}</span>
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div className="min-w-0">
@@ -367,7 +367,7 @@ function ProgressReviewsList() {
                     const isBooked = Boolean(review.scheduledDate) && !['not-scheduled', 'cancelled'].includes(review.status);
                     return (
                       <tr key={review.id} className="group transition-colors hover:bg-primary-50/35">
-                        <td className="px-5 py-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-background-100 text-xs font-extrabold text-primary-700 transition group-hover:bg-primary-100">#{review.sequence}</span><div><p className="text-xs font-bold text-foreground-900">{progressReviewTitle(review)}</p><p className="mt-1 text-[10px] text-foreground-400">{reviewTypeLabel(review)}</p></div></div></td>
+                        <td className="px-5 py-4"><div><p className="text-xs font-bold text-foreground-900">{progressReviewTitle(review)}</p><p className="mt-1 text-[10px] text-foreground-400">{reviewTypeLabel(review)}</p></div></td>
                         <td className="px-5 py-4"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary-100 text-[9px] font-bold text-secondary-700">{initials(review.coachName)}</span><span className="text-xs font-semibold text-foreground-700">{review.coachName || '-'}</span></div></td>
                         <td className="px-5 py-4"><div className="flex items-center gap-2"><AppIcon className="ri-calendar-line text-primary-500" /><div><p className="text-xs font-semibold text-foreground-700">{formatDate(isBooked ? review.scheduledDate : review.targetDate)}</p>{isBooked && <p className="mt-1 text-[10px] text-foreground-400">at {formatTime(review.scheduledTime)}</p>}</div></div></td>
                         <td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${statusStyle(review.status)}`}><AppIcon className={review.status === 'completed' ? 'ri-checkbox-circle-line' : review.status === 'cancelled' ? 'ri-close-circle-line' : review.status === 'scheduled' ? 'ri-calendar-check-line' : 'ri-time-line'} />{review.status === 'not-scheduled' ? 'Not Scheduled' : statusLabel(review.status)}</span></td>

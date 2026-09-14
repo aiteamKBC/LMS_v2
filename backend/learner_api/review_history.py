@@ -181,18 +181,60 @@ def _sections_by_review(cursor, review_ids):
     return sections
 
 
+def _review_data_sections(data):
+    """Normalise sections embedded in the imported review payload.
+
+    Older imports predate ``Learner.review_sections`` and keep the same
+    extracted content under ``reviews.review_data.sections``. Keep that data
+    available to the learner page when the normalised rows are absent.
+    """
+    result = []
+    for index, section in enumerate(data.get("sections", [])):
+        if not isinstance(section, dict):
+            continue
+        fields = section.get("fields")
+        tables = section.get("tables")
+        result.append({
+            "id": f"review-data-{index}",
+            "name": _s(section.get("section_name") or section.get("name")) or "Review section",
+            "order": index,
+            "fields": fields if isinstance(fields, list) else [],
+            "tables": tables if isinstance(tables, list) else [],
+            "rawText": _s(section.get("raw_text") or section.get("rawText")),
+        })
+    return result
+
+
+def _field_value(sections, label):
+    expected = label.casefold()
+    for section in sections:
+        for field in section.get("fields", []):
+            if isinstance(field, dict) and _s(field.get("label")).strip().rstrip(":").casefold() == expected:
+                value = field.get("value")
+                if value not in (None, "", "EMPTY_STRING"):
+                    return _s(value)
+    return ""
+
+
 def _serialize_review(row, sections):
     data = _json_value(row.get("review_data"), dict, {})
     metadata = _json_value(data.get("source_metadata"), dict, {})
     planned_raw = row.get("planned_scheduled_date") or metadata.get("Planned / Scheduled Date")
     completed_raw = row.get("completed_date") or metadata.get("Completed Date")
     review_sections = sections.get(row["id"], [])
+    if not review_sections:
+        review_sections = _review_data_sections(data)
+    manager_name = _field_value(review_sections, "Manager")
+    if not manager_name:
+        manager_name = _field_value(_review_data_sections(data), "Manager")
     return {
         "id": str(row["id"]),
         "aptemReviewId": _s(row.get("aptem_review_id")),
         "name": _s(row.get("review_name")) or _s(row.get("review_type")) or "Review",
         "type": _s(row.get("review_type")),
         "reviewerName": _s(row.get("reviewer_name")) or _s(metadata.get("Reviewer")),
+        "learnerName": _s(row.get("learner_name")),
+        "managerName": manager_name,
         "plannedDate": _iso_date(planned_raw),
         "plannedTime": _iso_time(planned_raw),
         "completedDate": _iso_date(completed_raw),

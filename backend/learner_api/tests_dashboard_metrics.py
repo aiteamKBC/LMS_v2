@@ -168,6 +168,39 @@ class DashboardMetricsTests(SimpleTestCase):
                 self.assertIn('c.deleted_at IS NULL OR c.deleted_via_parent IS NOT NULL', query)
                 self.assertEqual(params, [['module-one', 'module-two']])
 
+    def test_migrated_metrics_keep_audited_inventory_and_refresh_saved_progress(self):
+        source = SimpleNamespace(pk=125, aptem_id=92, email='test@example.com')
+        historical = [
+            {'group_id': 2, 'activity_id': 10, 'status': 'completed', 'ksb_mappings': ['K1', 'S1']},
+            {'group_id': 2, 'activity_id': 11, 'ksb_mappings': ['K1']},
+            {'group_id': 2, 'activity_id': 12, 'ksb_mappings': ['S2']},
+        ]
+        native = [{'id': 'imported', 'ksb_mappings': ['K1', 'S1']},
+                  {'id': 'new', 'ksb_mappings': ['B1']}]
+        progress = [{'componentId': 'imported', 'kind': 'component'},
+                    {'componentId': 'new', 'kind': 'component'}]
+        # An external inventory refresh used to replace the audited target,
+        # changing programme totals and introducing activities with no KSB map.
+        with patch('learner_api.subject_source.read_learner',
+                   side_effect=AssertionError('Metrics must use the saved audit')) as live:
+            for saved_attempts, expected in (([(2, 11)], (3, 4, 75, 4, 5, 80)),
+                                             ([(2, 11), (2, 12)], (4, 4, 100, 5, 5, 100))):
+                with self.subTest(attempts=saved_attempts), \
+                     patch('learner_api.dashboard_metrics.connections') as connections, \
+                     patch('learner_api.dashboard_metrics._direct_progress_records', return_value=[]), \
+                     patch('learner_api.dashboard_metrics.rows', side_effect=[native, progress, historical]), \
+                     patch('learner_api.dashboard_metrics.read_planned_hours', return_value=867):
+                    cursor = connections.__getitem__.return_value.cursor.return_value.__enter__.return_value
+                    cursor.fetchone.side_effect = [(source.email,), (1171.34,)]
+                    cursor.fetchall.side_effect = [[('module-one',)], saved_attempts, [(2, '10', 'imported')]]
+                    result = read_metrics(source, 'commercial')
+                    self.assertEqual(tuple(result[metric][key] for metric in ('programme', 'ksb')
+                                           for key in ('completed', 'total', 'percent')), expected)
+                    self.assertEqual(result['ksb']['historicalCompleted'], 2)
+                    self.assertEqual(result['otjh'], {'historical': 1171.34, 'new': 0,
+                                                     'actual': 1171.34, 'planned': 867})
+            live.assert_not_called()
+
     def test_endpoint_scopes_identity_and_returns_retryable_error(self):
         source = SimpleNamespace(pk=125, aptem_id=92, email='test@example.com')
         model = MagicMock()

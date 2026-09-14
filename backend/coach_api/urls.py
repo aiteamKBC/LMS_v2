@@ -14,6 +14,11 @@ from .views import (
     coach_evidence_awaiting_review,
     coach_marking_queue,
     coach_monthly_activity,
+    coach_review_instance_answers,
+    coach_review_instance_complete,
+    coach_review_instance_detail,
+    coach_review_instance_for_event,
+    coach_review_instance_signature,
     coach_timetable_event_artifact_content,
     coach_timetable_event_artifacts,
     coach_timetable_event_summary,
@@ -50,4 +55,12 @@ urlpatterns = [
     path('coach/timetable/events/<str:event_key>/artifacts', coach_timetable_event_artifacts, name='coach-timetable-event-artifacts'),
     path('coach/timetable/events/<str:event_key>/artifacts/<str:artifact_type>/<str:artifact_id>/content', coach_timetable_event_artifact_content, name='coach-timetable-event-artifact-content'),
     path('coach/timetable/events/<str:event_key>/summary', coach_timetable_event_summary, name='coach-timetable-event-summary'),
+    # Curriculum-driven Review instances: opening a scheduled MCM/Progress
+    # Review, saving its answers, signing and completing it -- the question
+    # set/signature rules were resolved by Curriculum, not hard-coded here.
+    path('coach/reviews/open', coach_review_instance_for_event, name='coach-review-instance-open'),
+    path('coach/reviews/<str:instance_id>', coach_review_instance_detail, name='coach-review-instance-detail'),
+    path('coach/reviews/<str:instance_id>/answers', coach_review_instance_answers, name='coach-review-instance-answers'),
+    path('coach/reviews/<str:instance_id>/complete', coach_review_instance_complete, name='coach-review-instance-complete'),
+    path('coach/reviews/<str:instance_id>/signatures', coach_review_instance_signature, name='coach-review-instance-signature'),
 ]
