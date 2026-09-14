@@ -19,11 +19,7 @@ vi.mock('@/hooks/useMyLearner', () => ({ rememberLearner: vi.fn() }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: session.account }, isInitialized: session.isInitialized }) }));
 vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true, outsideWorkingHours: true, currentTimeLabel: 'Sunday, 14:02 BST' }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children, pageSubtitle }: { children: ReactNode; pageSubtitle: string }) => <main><p>{pageSubtitle}</p>{children}</main> }));
-vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: () => <div data-testid="assignment-wizard">Assignment workspace</div> }));
-vi.mock('@/api/evidence', async importOriginal => ({
-  ...await importOriginal<typeof import('@/api/evidence')>(),
-  fetchEvidence: async () => [],
-}));
+vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: () => null }));
 
 const component = (id: string, weekId: string, date: string) => ({
   componentId: id, component: 'Live Session · Live Teams Session 1', type: 'live_session',
@@ -41,10 +37,7 @@ const detail = (done = false) => ({
   components: [first, empty, second], quizAttempts: [], videoProgress: [], componentProgress: done ? [progress] : [], ksbs: [],
 }) as unknown as LearnerDetail;
 
-function Location() {
-  const location = useLocation();
-  return <span data-testid="location">{location.pathname}{location.search}</span>;
-}
+function Location() { return <span data-testid="location">{useLocation().pathname}</span>; }
 function mount(id = 'C1') {
   return render(<MemoryRouter initialEntries={[`/learner/component/apprenticeship/1/${id}`]}>
     <Location /><Routes><Route path="/learner/component/:kind/:id/:componentId" element={<ComponentViewPage />} /></Routes>
@@ -147,39 +140,4 @@ it('keeps a failed save open for retry without marking it complete', async () =>
   expect(screen.queryByRole('status')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Confirm', exact: true })).toBeEnabled();
   expect(screen.getByTestId('location')).toHaveTextContent('/C1');
-});
-
-it.each([
-  {
-    entry: '/learner/monthly-submission/commercial/125/A1?month=2026-09',
-    button: 'Back to monthly assignments',
-    destination: '/learner/monthly-submission/commercial/125?month=2026-09',
-    destinationText: 'Monthly assignments destination',
-  },
-  {
-    entry: '/learner/component/commercial/125/A1?month=2026-09',
-    button: 'Back to training plan',
-    destination: '/workspace/learner/commercial/125/dashboard',
-    destinationText: 'Training plan destination',
-  },
-])('returns from $entry to the correct parent workspace', async ({ entry, button, destination, destinationText }) => {
-  Object.assign(session.account, { subjectId: 125 });
-  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [
-    { ...first, componentId: 'A1', component: 'Assignment 1', type: 'assignment',
-      assignmentBrief: 'Explain how you used your learning in the workplace.' },
-  ] });
-  render(<MemoryRouter initialEntries={[entry]}>
-    <Location />
-    <Routes>
-      <Route path="/learner/monthly-submission/:kind/:id/:componentId" element={<ComponentViewPage />} />
-      <Route path="/learner/component/:kind/:id/:componentId" element={<ComponentViewPage />} />
-      <Route path="/learner/monthly-submission/:kind/:id" element={<p>Monthly assignments destination</p>} />
-      <Route path="/workspace/learner/:kind/:id/dashboard" element={<p>Training plan destination</p>} />
-    </Routes>
-  </MemoryRouter>);
-  expect(await screen.findByTestId('assignment-wizard')).toBeVisible();
-  expect(fetchLearnerDetail).toHaveBeenCalledWith('commercial', '125', { componentId: 'A1' });
-  fireEvent.click(screen.getByRole('button', { name: button }));
-  expect(await screen.findByText(destinationText)).toBeVisible();
-  expect(screen.getByTestId('location').textContent).toBe(destination);
 });

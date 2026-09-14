@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import DOMPurify from 'dompurify';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -206,7 +206,6 @@ export default function ComponentViewPage() {
   const timerStorageKey = activityTimerStorageKey(kind, id, componentId);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { pathname } = useLocation();
   useEffect(() => { rememberLearner(kind, id); }, [kind, id]);
   // Reachable by URL even now the plan rows are inert for a staff viewer.
   // Completing the component here would be recorded as the learner's own work.
@@ -364,12 +363,7 @@ export default function ComponentViewPage() {
   const moduleTitle = ctx?.moduleTitle ?? searchParams.get('module') ?? '';
   const weekTitle = ctx?.weekTitle ?? searchParams.get('week') ?? '';
   const weekLabel = ctx?.weekLabel ?? weekTitle;
-  const fromMonthlySubmission = pathname.startsWith('/learner/monthly-submission/');
-  const assignmentMonth = searchParams.get('month');
-  const monthlyBackQuery = assignmentMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(assignmentMonth) ? `?month=${assignmentMonth}` : '';
-  const backHref = fromMonthlySubmission && kind && id
-    ? `/learner/monthly-submission/${kind}/${encodeURIComponent(id)}${monthlyBackQuery}`
-    : kind && id ? `/workspace/learner/${kind}/${id}/dashboard` : '/workspace/learner/dashboard';
+  const backHref = kind && id ? `/workspace/learner/${kind}/${id}/dashboard` : '/workspace/learner/dashboard';
 
 
   // A quiz component has nowhere to show its questions — the quiz page owns
@@ -658,7 +652,7 @@ export default function ComponentViewPage() {
           <span className="grid h-6 w-6 place-items-center rounded-lg bg-primary-50 text-primary-700">
             <AppIcon className="ri-arrow-left-line text-sm" />
           </span>
-          {fromMonthlySubmission ? 'Back to monthly assignments' : 'Back to training plan'}
+          Back to training plan
         </button>
 
         {component && canProgress && recordingAttempt && componentAccess.outsideWorkingHours && (

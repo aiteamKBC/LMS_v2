@@ -33,10 +33,6 @@ const EMPTY_ANSWERS: AssignmentAnswers = {
 };
 
 const STEP_META = MONTHLY_STEPS.map(label => ({ label }));
-// Keep the persisted section IDs stable. Only the learner's navigation changes.
-const GUIDED_ORDER = [0, 1, 2, 3, 4, 5, 7, 6];
-const PHASES = ['Read the task', 'Prepare your work', 'Meeting & presentation', 'Check & submit'];
-const WORK_PARTS = ['Your answer & learning', 'Supporting evidence (optional)', 'Skills & learning hours', 'This month’s reflection', 'Your impact at work', 'Your next steps'];
 
 function londonDate(): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -47,17 +43,6 @@ function londonDate(): string {
   }).formatToParts(new Date());
   const value = Object.fromEntries(parts.map(part => [part.type, part.value]));
   return `${value.year}-${value.month}-${value.day}`;
-}
-
-function submissionDateLabel(value: string | null): string | null {
-  // Stored submissions use timestamptz. Do not guess a zone for malformed or
-  // old values with no offset, or substitute the learner's current device time.
-  if (!value || !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)) return null;
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return null;
-  return new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Europe/London', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
-  }).format(date);
 }
 
 export function AssignmentSubmissionWizard({
@@ -124,7 +109,6 @@ export function AssignmentSubmissionWizard({
   historicalContent?: HistoricalAssignmentContent;
 }) {
   const [step, setStep] = useState(0);
-  const [showBrief, setShowBrief] = useState(!historicalReadOnly && !historicalContent);
   const [answers, setAnswers] = useState<AssignmentAnswers>(EMPTY_ANSWERS);
   // The Training Plan month seeds a new assignment; a saved draft always wins.
   const [defaultMonth] = useState(() => initialMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(initialMonth) ? initialMonth : londonDate().slice(0, 7));
@@ -136,7 +120,6 @@ export function AssignmentSubmissionWizard({
   const [savedTimeSeconds, setSavedTimeSeconds] = useState<number | null>(null);
   const [recoveredDraft, setRecoveredDraft] = useState(false);
   const [status, setStatus] = useState('');
-  const [recordedSubmittedAt, setRecordedSubmittedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingDraft, setSavingDraft] = useState(false);
   const [draftSaved, setDraftSaved] = useState(false);
@@ -152,23 +135,14 @@ export function AssignmentSubmissionWizard({
   const lockedRef = useRef(false);
   const mountedRef = useRef(true);
   const onRestoreTimeRef = useRef(onRestoreTime);
-  const contentHeadingRef = useRef<HTMLHeadingElement>(null);
-  const confirmationRef = useRef<HTMLDivElement>(null);
   const recoveryKey = `monthly-assignment-draft:${kind}:${learnerId}:${componentId}`;
 
   useEffect(() => { onRestoreTimeRef.current = onRestoreTime; }, [onRestoreTime]);
 
   const locked = historicalReadOnly || imported || status === 'submitted_for_tutor_review' || status === 'accepted';
   const readOnly = locked || loadFailed || submittingProgress;
-  const historical = historicalReadOnly || imported || Boolean(historicalContent);
-  const briefVisible = showBrief && !historical;
-  const phase = briefVisible ? 0 : step === 7 ? 2 : step === 6 ? 3 : 1;
-  const navigationOrder = historical ? STEP_META.map((_, index) => index) : GUIDED_ORDER;
-  const navigationIndex = navigationOrder.indexOf(step);
-  const lastStep = navigationIndex === navigationOrder.length - 1 && !briefVisible;
-  const submittedDate = submissionDateLabel(recordedSubmittedAt);
   const learningGeneration = useLearningStatements(
-    answers.assignmentAnswer, learnerId, kind, componentId, !readOnly && !loading && !briefVisible && step === 0,
+    answers.assignmentAnswer, learnerId, kind, componentId, !readOnly && !loading && step === 0,
     { whatYouLearned: answers.whatYouLearned, understood: monthly.understood, gainedSkills: monthly.gainedSkills },
     result => {
       if (!Object.keys(result).length || submittingRef.current) return;
@@ -270,14 +244,12 @@ export function AssignmentSubmissionWizard({
           } else if (serverLocked) sessionStorage.removeItem(recoveryKey);
         } catch { /* Storage is optional; the server draft is authoritative. */ }
         if (!submission) return;
-        setShowBrief(false);
         setAnswers({
           assignmentAnswer: submission.assignmentAnswer || '',
           whatYouLearned: submission.whatYouLearned || submission.learningReflection || '',
           businessImpact: submission.businessImpact || submission.benefitExplanation || '',
         });
         setStatus(submission.status || '');
-        setRecordedSubmittedAt(submission.submittedAt || null);
         setImported(['imported_legacy', 'classified_legacy'].includes(submission.submissionOrigin || ''));
         if (submission.monthlyAssignment) {
           const restored = { ...emptyMonthlyAssignment(ksbMappings.map(m => m.code), defaultMonth), ...submission.monthlyAssignment };
@@ -365,27 +337,6 @@ export function AssignmentSubmissionWizard({
     } catch (e) { setSaveError(e instanceof Error ? e.message : 'Could not check your submission.'); return false; }
     finally { setChecking(false); }
   };
-  const runChecksRef = useRef(runChecks);
-  runChecksRef.current = runChecks;
-  useEffect(() => {
-    // Run once on entering the final phase, including a restored final draft.
-    // A failed request waits for an explicit retry instead of looping.
-    if (!loading && !locked && !loadFailed && !historical && !briefVisible && step === 6) {
-      void runChecksRef.current();
-    }
-  }, [loading, locked, loadFailed, historical, briefVisible, step]);
-
-  const navigateTo = (nextStep: number, brief = false) => {
-    setShowBrief(brief);
-    setStep(nextStep);
-    window.requestAnimationFrame(() => {
-      contentHeadingRef.current?.focus({ preventScroll: true });
-      contentHeadingRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-    });
-  };
-  const navigatePhase = (nextPhase: number) => {
-    navigateTo(nextPhase === 0 ? step : nextPhase === 1 ? (step <= 5 ? step : 0) : nextPhase === 2 ? 7 : 6, nextPhase === 0);
-  };
 
   const setAnswer = (key: keyof AssignmentAnswers, value: string) => {
     setChecks([]);
@@ -403,9 +354,7 @@ export function AssignmentSubmissionWizard({
   };
 
   const goNext = async () => {
-    if (locked || await saveDraft()) {
-      navigateTo(briefVisible ? 0 : navigationOrder[Math.min(navigationOrder.length - 1, navigationIndex + 1)]);
-    }
+    if (locked || await saveDraft()) setStep(current => Math.min(7, current + 1));
   };
 
   const submit = async () => {
@@ -437,14 +386,8 @@ export function AssignmentSubmissionWizard({
       setSavedTimeSeconds(timeSeconds);
       await onSubmitProgress(answers);
       setStatus('submitted_for_tutor_review');
-      // The completion callback does not return a timestamp. A later reload
-      // can display the recorded server value, never the earlier draft date.
-      setRecordedSubmittedAt(null);
       try { sessionStorage.removeItem(recoveryKey); } catch { /* Optional recovery copy. */ }
-      window.requestAnimationFrame(() => {
-        confirmationRef.current?.focus({ preventScroll: true });
-        confirmationRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
-      });
+      setPreviewOpen(true);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : 'Could not submit the assignment.');
     } finally {
@@ -482,7 +425,7 @@ export function AssignmentSubmissionWizard({
 
   return (
     <>
-      <section className="rounded-2xl border border-slate-200 bg-white font-sans text-base shadow-sm">
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white font-sans shadow-sm">
         <div className="border-b border-slate-200 bg-sky-50/50 px-5 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -490,16 +433,16 @@ export function AssignmentSubmissionWizard({
               <h2 className="mt-1 font-heading text-lg font-bold text-foreground-950">{title}</h2>
             </div>
             <div className="flex items-center gap-2">
-              {!locked && <button type="button" disabled={savingDraft || loadFailed || submittingProgress} onClick={() => void saveDraft()} className="min-h-12 rounded-lg border border-slate-200 bg-white px-4 py-3 text-base font-semibold shadow-sm">Save draft</button>}
+              {!locked && <button type="button" disabled={savingDraft || loadFailed || submittingProgress} onClick={() => void saveDraft()} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold shadow-sm">Save draft</button>}
               {(savingDraft || draftSaved) && !locked && !saveError && (
-                <span role="status" className="text-sm font-semibold text-slate-700">
+                <span className="text-[11px] font-semibold text-foreground-500">
                   <AppIcon className={savingDraft ? 'ri-loader-4-line mr-1 animate-spin' : 'ri-check-line mr-1 text-emerald-600'} />
-                  {savingDraft ? 'Saving…' : 'Saved'}
+                  {savingDraft ? 'Saving…' : 'Draft saved'}
                 </span>
               )}
               {locked && (
                 <span className="rounded-full bg-emerald-100 px-3 py-1.5 text-[11px] font-bold text-emerald-700">
-                  <AppIcon className="ri-checkbox-circle-line mr-1" />{imported ? 'Historical submission' : status === 'accepted' ? 'Accepted' : 'Submitted'}
+                  <AppIcon className="ri-checkbox-circle-line mr-1" />{imported ? 'Historical submission' : 'Submitted'}
                 </span>
               )}
               {locked && (
@@ -514,16 +457,18 @@ export function AssignmentSubmissionWizard({
             </div>
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-base text-slate-700">
-            <label>Submission month <input aria-label="Submission month" type="month" value={monthly.month} disabled={readOnly || savingDraft} onChange={e => { if (e.target.value) changeMonthly(m => ({ ...m, month: e.target.value, meetingKey: '', presentationToken: '' })); }} className="ml-2 min-h-12 rounded-lg border border-slate-300 px-3 py-2" /></label>
-            <span>{historical ? `Step ${step + 1} of 8 — ${MONTHLY_STEPS[step]}` : `Stage ${phase + 1} of 4`}</span>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-700">
+            <label>Submission month <input aria-label="Submission month" type="month" value={monthly.month} disabled={readOnly || savingDraft} onChange={e => { if (e.target.value) changeMonthly(m => ({ ...m, month: e.target.value, meetingKey: '', presentationToken: '' })); }} className="ml-2 rounded-lg border border-slate-200 px-2 py-1" /></label>
+            <span>Step {step + 1} of 8 — {MONTHLY_STEPS[step]}</span>
+            <span>{imported ? 'Historical record — new submission checks do not apply' : checks.length ? `${checks.filter(c => c.passed).length}/13 checks passed at last check` : 'Quality checks not run yet'}</span>
           </div>
-          {historical ? <div className="mt-4 flex flex-wrap gap-2">
+          <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full bg-slate-900 transition-all" style={{ width: `${(step + 1) / 8 * 100}%` }} /></div>
+          <div className="mt-4 flex flex-wrap gap-2">
             {STEP_META.map((item, index) => (
               <button
                 key={item.label}
                 type="button"
-                onClick={() => navigateTo(index)}
+                onClick={() => setStep(index)}
                 className={`rounded-lg border px-3 py-2 text-left text-xs shadow-sm transition-colors ${step === index ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-sky-50'}`}
               >
                 <span className="flex items-center gap-2 text-[11px] font-bold">
@@ -532,43 +477,22 @@ export function AssignmentSubmissionWizard({
                 </span>
               </button>
             ))}
-          </div> : <><label className="mt-4 block text-sm font-semibold text-slate-700 sm:hidden">Assignment stage
-            <select aria-label="Assignment stage" value={phase} disabled={savingDraft || checking || submittingProgress} onChange={event => navigatePhase(Number(event.target.value))} className="mt-2 min-h-12 w-full rounded-xl border border-slate-300 bg-white px-3 py-3 text-base font-semibold text-slate-900">
-              {PHASES.map((label, index) => <option key={label} value={index}>{index + 1}. {label}</option>)}
-            </select>
-          </label><nav aria-label="Assignment stages" className="mt-5 hidden gap-2 sm:grid sm:grid-cols-2 xl:grid-cols-4">
-            {PHASES.map((label, index) => <button key={label} type="button" aria-current={phase === index ? 'step' : undefined} disabled={savingDraft || checking || submittingProgress}
-              onClick={() => navigatePhase(index)}
-              className={`flex min-h-14 items-center gap-3 rounded-xl border px-4 py-3 text-left text-base font-semibold ${phase === index ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-300 bg-white text-slate-700 hover:bg-sky-50'} disabled:opacity-50`}>
-              <span aria-hidden="true" className={`grid h-8 w-8 shrink-0 place-items-center rounded-full ${phase === index ? 'bg-white/15' : 'bg-slate-100'}`}>{index + 1}</span>{label}
-            </button>)}
-          </nav></>}
+          </div>
         </div>
 
         <div className="p-5 sm:p-6">
-          {locked && !historical && <div ref={confirmationRef} tabIndex={-1} role="status" className="mb-6 scroll-mt-6 rounded-2xl border border-emerald-300 bg-emerald-50 p-5 text-emerald-950 focus:outline-none sm:p-6">
-            <h3 className="flex items-center gap-3 text-xl font-bold"><AppIcon className="ri-checkbox-circle-line text-2xl" />{status === 'accepted' ? 'Your assignment has been accepted' : 'Assignment submitted'}</h3>
-            <p className="mt-3 text-lg leading-8">{status === 'accepted' ? 'Your coach has accepted this assignment. You can still view your submitted work.' : 'Your assignment has been sent to your coach. You are now waiting for their review.'}</p>
-            {submittedDate && <p className="mt-2 text-base">Submitted {submittedDate} (Europe/London)</p>}
-            <button type="button" onClick={() => setPreviewOpen(true)} className="mt-4 inline-flex min-h-12 items-center gap-2 rounded-xl border border-emerald-700 bg-white px-5 py-3 text-base font-semibold text-emerald-900 hover:bg-emerald-100"><AppIcon className="ri-eye-line" />View submission</button>
-          </div>}
-          <h3 ref={contentHeadingRef} tabIndex={-1} className="mb-4 scroll-mt-6 text-xl font-bold text-slate-900 focus:outline-none">{historical ? MONTHLY_STEPS[step] : briefVisible ? 'What you need to do' : phase === 1 ? WORK_PARTS[step] : PHASES[phase]}</h3>
-          {!historical && !briefVisible && phase === 1 && <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-slate-50 p-4">
-            <p className="text-base text-slate-700">Part {step + 1} of 6. You can save and return at any time.</p>
-            <label className="w-full text-sm font-semibold text-slate-700 sm:w-auto">Go to part <select aria-label="Part of your work" value={step} disabled={savingDraft || submittingProgress} onChange={event => navigateTo(Number(event.target.value))} className="mt-2 block min-h-12 w-full max-w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-base font-normal sm:ml-2 sm:mt-0 sm:inline-block sm:w-auto">{WORK_PARTS.map((label, index) => <option key={label} value={index}>{index + 1}. {label}</option>)}</select></label>
-          </div>}
           {recoveredDraft && <p role="status" className="mb-4 rounded-xl bg-blue-50 p-3 text-sm text-blue-900">Recovered your most recent unsaved changes from this tab. Use Save draft to confirm they are stored on the server.</p>}
-          {locked && historical && (
+          {locked && (
             <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
               {imported ? (historicalContent ? 'Original assignment content is organised into the eight sections below. Extracts retain their source; tutor observations are labelled separately. This remains a historical submission.' : 'Historical assignment. Original files and assessment reports are preserved in Preview. Sections not captured in the original record are left blank; new submission requirements do not apply.') : 'This assignment has been submitted for tutor review. Your saved answers and evidence remain available in Preview.'}
             </div>
           )}
 
-          {historicalContent ? <HistoricalAssignmentCards content={historicalContent} step={step} files={evidenceFiles} onPreviewFile={file => { setPreviewOpen(true); void openEvidence(file); }} /> : (briefVisible || step === 0) && (
+          {historicalContent ? <HistoricalAssignmentCards content={historicalContent} step={step} files={evidenceFiles} onPreviewFile={file => { setPreviewOpen(true); void openEvidence(file); }} /> : step === 0 && (
             <div className="space-y-5">
               <div>
                 <p className="text-[10px] font-black uppercase tracking-[0.14em] text-primary-600">Assignment question</p>
-                <div className="mt-2 rounded-xl border border-background-200 bg-background-50 p-4 text-lg leading-8 text-foreground-800">
+                <div className="mt-2 rounded-xl border border-background-200 bg-background-50 p-4 text-sm leading-6 text-foreground-800">
                   {cleanQuestionHtml ? (
                     <div className="max-w-none [&_p]:mb-3 [&_ul]:list-disc [&_ul]:pl-5" dangerouslySetInnerHTML={{ __html: cleanQuestionHtml }} />
                   ) : (
@@ -577,11 +501,7 @@ export function AssignmentSubmissionWizard({
                 </div>
               </div>
               {questionFileUrl && <AssignmentAttachment key={questionFileUrl} url={questionFileUrl} fileName={questionFileName} title={title} />}
-              {briefVisible ? <div className="rounded-xl bg-sky-50 p-5 text-base leading-7 text-slate-800">
-                <p className="font-semibold">You will work through this assignment in small parts.</p>
-                <ol className="mt-3 list-inside list-decimal space-y-2"><li>Write your answer and review what you learned.</li><li>Record your skills, learning hours, reflections and next steps. Supporting files are optional.</li><li>Choose your coaching meeting and prepare your presentation.</li><li>Check your work and send it to your coach.</li></ol>
-                <p className="mt-4">Your work saves as a draft. It is only sent when you choose Submit assignment.</p>
-              </div> : <><MonthlyAnswerField title={title} label="Your answer (at least 120 words; one point per line)" value={answers.assignmentAnswer} onChange={value => setAnswer('assignmentAnswer', value)} disabled={readOnly || submittingRef.current} rows={10} minimumWords={120} onePointPerLine generation={{ enabled: learningGeneration.canGenerate, busy: learningGeneration.generating, onGenerate: () => { if (!(answers.whatYouLearned || monthly.understood || monthly.gainedSkills) || window.confirm('Replace the three learning statements with new drafts from your answer?')) void learningGeneration.generate(); } }} />
+              <MonthlyAnswerField title={title} label="Your answer (at least 120 words; one point per line)" value={answers.assignmentAnswer} onChange={value => setAnswer('assignmentAnswer', value)} disabled={readOnly || submittingRef.current} rows={10} minimumWords={120} onePointPerLine generation={{ enabled: learningGeneration.canGenerate, busy: learningGeneration.generating, onGenerate: () => { if (!(answers.whatYouLearned || monthly.understood || monthly.gainedSkills) || window.confirm('Replace the three learning statements with new drafts from your answer?')) void learningGeneration.generate(); } }} />
               <p className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">Write at least 120 words, then click Generate learning statements to draft the three fields below. Review and edit the generated text before submitting.</p>
               {learningGeneration.status && <div
                 className={`mt-4 flex items-start gap-3 rounded-xl border p-4 sm:p-5 ${learningGeneration.phase === 'error' ? 'border-amber-300 bg-amber-50 text-amber-950' : learningGeneration.phase === 'success' ? 'border-emerald-300 bg-emerald-50 text-emerald-950' : 'border-blue-300 bg-blue-50 text-blue-950'}`}
@@ -593,42 +513,41 @@ export function AssignmentSubmissionWizard({
                   <p className="text-sm font-bold sm:text-base">{learningGeneration.phase === 'loading' ? 'Preparing your learning statements' : learningGeneration.phase === 'success' ? 'Your learning statements have been updated' : 'Learning statements could not be generated'}</p>
                   <p className="mt-1 text-sm leading-relaxed">{learningGeneration.status}</p>
                 </div>
-              </div>}</>}
+              </div>}
             </div>
           )}
 
-          {!historicalContent && !briefVisible && !(locked && !historical && step === 6) && <div className="mt-5">
+          {!historicalContent && <div className="mt-5">
             {historicalReadOnly && step === 6 ? <p className="text-sm text-slate-600">This historical submission keeps its original assessment status. New-form completeness checks do not apply.</p> : <MonthlyAssignmentSteps question={questionHtml || questionText || ''} activityId={componentId} step={step} data={monthly} onChange={changeMonthly} answers={answers} onAnswer={setAnswer}
               kind={kind} learnerId={learnerId} title={title} plannedOtjh={plannedOtjh} mappings={ksbMappings}
               evidenceFiles={evidenceFiles} timeControl={timeControl} disabled={readOnly || submittingRef.current} historical={historicalReadOnly}
               evidenceUploader={historicalReadOnly ? <button type="button" className="text-sm font-semibold text-primary-700" onClick={() => setPreviewOpen(true)}>View original files and assessment reports in Preview</button> : <AssignmentEvidence kind={kind} learnerId={learnerId} componentId={componentId} trainingPlanDetails={evidenceDetails} onUploaded={onEvidenceChanged} readOnly={readOnly} />}
-              payload={() => payload('draft')} checks={checks} checking={checking} onCheck={runChecks} onSave={saveDraft} onGoToStep={navigateTo}
+              payload={() => payload('draft')} checks={checks} checking={checking} onCheck={runChecks} onSave={saveDraft}
             />}
           </div>}
 
           {saveError && (
-            <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-base font-semibold text-red-700">{saveError}</p>
+            <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{saveError}</p>
           )}
           {loadFailed && <button type="button" onClick={() => window.location.reload()} className="mt-3 rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold">Reload saved submission</button>}
 
-          <div className="sticky bottom-0 z-20 -mx-5 mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-5 py-4 shadow-sm sm:-mx-6 sm:px-6">
+          <div className="mt-6 flex items-center justify-between gap-3 border-t border-background-200 pt-4">
             <button
               type="button"
-              onClick={() => navigateTo(navigationOrder[Math.max(0, navigationIndex - 1)], !historical && navigationIndex === 0)}
-              disabled={briefVisible || (historical && step === 0) || savingDraft || checking || submittingProgress}
-              className="inline-flex min-h-12 items-center gap-2 rounded-xl border border-slate-300 bg-white px-5 py-3 text-base font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-40"
+              onClick={() => setStep(current => Math.max(0, current - 1))}
+              disabled={step === 0}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-background-300 bg-white px-4 py-2.5 text-sm font-semibold text-foreground-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <AppIcon className="ri-arrow-left-line" />Back
             </button>
-            {(!locked && !saveError) && <span role="status" className="text-sm text-slate-700">{savingDraft ? 'Saving…' : draftSaved ? 'Saved' : 'Changes save automatically'}</span>}
-            {!lastStep ? (
+            {step < 7 ? (
               <button
                 type="button"
                 onClick={() => void goNext()}
                 disabled={loadFailed || savingDraft || submittingProgress}
-                className="inline-flex min-h-12 items-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-base font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {locked ? 'Next' : savingDraft ? 'Saving…' : 'Save and continue'}<AppIcon className="ri-arrow-right-line" />
+                Next<AppIcon className="ri-arrow-right-line" />
               </button>
             ) : locked ? (
               <button type="button" onClick={() => setPreviewOpen(true)} className="inline-flex items-center gap-1.5 rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-bold text-white">
@@ -639,7 +558,7 @@ export function AssignmentSubmissionWizard({
                 type="button"
                 onClick={() => void submit()}
                 disabled={loadFailed || checking || savingDraft || submittingProgress || checks.length !== 13 || checks.some(check => !check.passed)}
-                className="inline-flex min-h-12 items-center gap-2 rounded-xl bg-emerald-700 px-5 py-3 text-base font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <AppIcon className={savingDraft || submittingProgress ? 'ri-loader-4-line animate-spin' : 'ri-send-plane-fill'} />
                 {savingDraft || submittingProgress ? 'Submitting…' : 'Submit assignment'}
