@@ -380,6 +380,37 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     expect(otjhCard).toHaveTextContent('0h');
   });
 
+  it('uses the same component Expected OTJH total as Module Builder in the Modules tab', async () => {
+    const api = await import('@/lib/curriculumApi');
+    const authoredComponents = [
+      { ...components[0], id: 'COMP-A', type: 'Reading Material', expectedOtjh: 0.33 },
+      { ...components[0], id: 'COMP-B', type: 'Quiz', title: 'Knowledge check', expectedOtjh: 0.33 },
+      { ...components[0], id: 'COMP-C', type: 'PowerPoint', title: 'Slides', expectedOtjh: 0.33 },
+      { ...components[0], id: 'COMP-OLD', moduleCatalogueId: '', moduleId: '', title: 'Old same-title row', expectedOtjh: 200 },
+    ] as unknown as CurriculumComponent[];
+    vi.mocked(api.fetchCurriculumProgrammeDetail).mockResolvedValueOnce({
+      schema: 'test',
+      programme,
+      cohorts: [],
+      flat: {
+        cohorts,
+        groups,
+        groupIds: ['GROUP-1'],
+        modules: [modules[0]],
+        sessions: [],
+        components: authoredComponents,
+      },
+    });
+    vi.mocked(api.fetchCurriculumComponents).mockResolvedValueOnce(authoredComponents);
+
+    await renderWorkspace();
+    await openTab(/Modules/);
+
+    const moduleRow = screen.getByRole('link', { name: /^Data Foundations/ }).parentElement;
+    expect(moduleRow).not.toBeNull();
+    expect(moduleRow).toHaveTextContent('1h');
+  });
+
   it('keeps empty table structure visible and disables filters until records exist', async () => {
     const api = await import('@/lib/curriculumApi');
     vi.mocked(api.fetchCurriculumProgrammeDetail).mockResolvedValueOnce({

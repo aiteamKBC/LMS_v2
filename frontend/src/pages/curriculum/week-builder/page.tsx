@@ -11,6 +11,7 @@ import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
+import { formatHoursMinutes, hoursMinutesToHours, splitHoursMinutes } from '@/lib/format';
 // Deck preview below: the same one the learner's page uses, so an author sees
 // what the learner will (see UploadedDeckPreview).
 import { resolveDocEmbed } from '@/lib/docEmbed';
@@ -874,7 +875,7 @@ function RailNodeCard({ component, index, selected, issues, weekSessionDate, dra
           </span>
           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-foreground-400">
             <span className={`font-semibold ${tone.text}`}>{weekTypeLabel(component.type)}</span>
-            <span className="tabular-nums">{component.expectedOtjh}h</span>
+            <span className="tabular-nums">{formatHoursMinutes(component.expectedOtjh)}</span>
             <span className="tabular-nums">{component.points}pts</span>
             {component.ksbMappings.length > 0 && <span className="tabular-nums">{component.ksbMappings.length} KSB</span>}
             {scheduledDate && <span className="tabular-nums">{formatDateLabel(scheduledDate)}</span>}
@@ -2701,7 +2702,9 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
         const moduleCatalogueId = placedModuleCatalogueIds[placementIndex];
         const weekId = placedWeekIds[placementIndex];
         const componentId = placedComponentIds[placementIndex];
-        const structure = await loadModuleStructure(moduleCatalogueId);
+        // Fresh, not cached: the save below replaces the whole structure, so a
+        // stale read would revert everything else edited since.
+        const structure = await loadModuleStructure(moduleCatalogueId, { skipCache: true });
         if (structure) {
           const nextWeekStructure = structure.weekStructure.map(week => (
             week.id === weekId ? { ...week, components: week.components.filter(item => item.id !== componentId) } : week
@@ -2828,17 +2831,9 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
 
 const inputClass = 'w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2 text-[12px] focus:border-primary-300 focus:ring-2 focus:ring-primary-100 outline-none transition-shadow';
 
-/** Decimal hours split into whole hours and minutes, so an author can type "1h 30m" instead of doing the division themselves. */
-function hoursAndMinutesOf(value: number): { hours: number; minutes: number } {
-  if (!Number.isFinite(value) || value < 0) return { hours: 0, minutes: 0 };
-  const hours = Math.floor(value);
-  const minutes = Math.round((value - hours) * 60);
-  return minutes === 60 ? { hours: hours + 1, minutes: 0 } : { hours, minutes };
-}
-
 /** Expected OTJH, entered as separate hours/minutes fields but stored as the same decimal-hours number the rest of the app reads. */
 function OtjhHoursMinutesInput({ value, onChange }: { value: number; onChange: (value: number) => void }) {
-  const { hours, minutes } = hoursAndMinutesOf(value);
+  const { hours, minutes } = splitHoursMinutes(value);
   const [hoursDraft, setHoursDraft] = useState(String(hours));
   const [minutesDraft, setMinutesDraft] = useState(String(minutes));
   const [focused, setFocused] = useState<'hours' | 'minutes' | null>(null);
@@ -2853,7 +2848,7 @@ function OtjhHoursMinutesInput({ value, onChange }: { value: number; onChange: (
     const parsedMinutes = Number(nextMinutes);
     const safeHours = nextHours.trim() === '' || !Number.isFinite(parsedHours) || parsedHours < 0 ? 0 : parsedHours;
     const safeMinutes = nextMinutes.trim() === '' || !Number.isFinite(parsedMinutes) || parsedMinutes < 0 ? 0 : parsedMinutes;
-    onChange(safeHours + safeMinutes / 60);
+    onChange(hoursMinutesToHours(safeHours, safeMinutes));
   };
 
   return (
@@ -2990,13 +2985,9 @@ function Field({ label, children, className = '' }: { label: string; children: R
 }
 
 function DurationFields({ value, onChange, label = 'Expected OTJH' }: { value: number; onChange: (value: number) => void; label?: string }) {
-  const totalMinutes = Math.max(0, Math.round((Number(value) || 0) * 60));
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
+  const { hours, minutes } = splitHoursMinutes(value);
   const update = (nextHours: number, nextMinutes: number) => {
-    const safeHours = Number.isFinite(nextHours) ? Math.max(0, Math.floor(nextHours)) : 0;
-    const safeMinutes = Number.isFinite(nextMinutes) ? Math.min(59, Math.max(0, Math.floor(nextMinutes))) : 0;
-    onChange((safeHours * 60 + safeMinutes) / 60);
+    onChange(hoursMinutesToHours(nextHours, nextMinutes));
   };
   return (
     <div>

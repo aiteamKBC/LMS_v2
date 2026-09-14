@@ -30,6 +30,8 @@ const detail: ReviewDetail = {
   signatures: { advisor: true, employer: false, participant: true, referrer: false },
   visibleTo: { advisor: true, employer: true, participant: true, referrer: false },
   recordTimeSpent: true,
+  expectedOtjh: 0,
+  countsTowardsOtjh: false,
   allowEditingPriorDays: 7,
   notifications: { employer: false, participant: true },
   incompleteMarker: 'Overdue',
@@ -82,6 +84,7 @@ const api = vi.hoisted(() => ({
   archiveReviewTemplate: vi.fn(),
   cloneReviewTemplates: vi.fn(),
   fetchCurriculumProgrammes: vi.fn(),
+  fetchCurriculumProgrammeDetail: vi.fn(),
   fetchReviewSchedule: vi.fn(),
   resolveReviewClash: vi.fn(),
 }));
@@ -102,6 +105,10 @@ beforeEach(() => {
   api.fetchProgrammeReviews.mockResolvedValue([]);
   api.fetchReviewTypes.mockResolvedValue(reviewTypes);
   api.fetchCurriculumProgrammes.mockResolvedValue(programmes);
+  api.fetchCurriculumProgrammeDetail.mockResolvedValue({ flat: {
+    cohorts: [{ id: 'C-1', name: 'September cohort' }],
+    groups: [{ id: 'G-1', name: 'Group A', cohort: 'September cohort' }],
+  } });
   api.fetchReviewSchedule.mockResolvedValue({
     programmeId: 'PROG-DATA', windowStart: '2026-09-01', windowEnd: '2027-08-31', monthsPreviewed: 12, months: [],
   });
@@ -112,6 +119,34 @@ afterEach(() => {
 });
 
 describe('ReviewsTab', () => {
+  it('saves group applicability by stable ID', async () => {
+    api.fetchReviewDetail.mockResolvedValue(detail);
+    api.updateReviewTemplate.mockResolvedValue(detail);
+    render(<ReviewFormModal programmeId="PROG-DATA" review={summary} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await screen.findByDisplayValue('Progress Review');
+    await userEvent.click(screen.getByRole('tab', { name: 'Eligibility' }));
+    await userEvent.click(screen.getByRole('combobox', { name: 'Applies to' }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Selected groups' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'September cohort / Group A' }));
+    await userEvent.click(screen.getByRole('tab', { name: /Form Builder/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(api.updateReviewTemplate).toHaveBeenCalledWith(summary.id, expect.objectContaining({
+      applicability: { scope: 'group', ids: ['G-1'] },
+    }));
+  });
+
+  it('blocks a restricted review with no selected placement', async () => {
+    api.fetchReviewDetail.mockResolvedValue(detail);
+    render(<ReviewFormModal programmeId="PROG-DATA" review={summary} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await screen.findByDisplayValue('Progress Review');
+    await userEvent.click(screen.getByRole('tab', { name: 'Eligibility' }));
+    await userEvent.click(screen.getByRole('combobox', { name: 'Applies to' }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Selected cohorts' }));
+    await userEvent.click(screen.getByRole('tab', { name: /Form Builder/ }));
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+    expect(api.updateReviewTemplate).not.toHaveBeenCalled();
+  });
+
   it('loads and shows the programme empty state when there are no reviews', async () => {
     render(<ReviewsTab programmeId="PROG-DATA" programmeName="Data Analyst" />);
     expect(await screen.findByText('No reviews have been configured yet')).toBeInTheDocument();

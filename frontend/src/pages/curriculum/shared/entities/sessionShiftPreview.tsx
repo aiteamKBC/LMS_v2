@@ -42,6 +42,98 @@ export interface SessionShift {
   detail: string;
 }
 
+/** A holiday as the curriculum stores it, in the shape every plan serves. */
+export interface ReadingWeekHoliday {
+  id?: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+  type?: string;
+  notes?: string;
+}
+
+/** A closed delivery slot: a curriculum position with no live session in it. */
+export interface HolidayReadingWeekSlot {
+  slotNumber: number;
+  date: string;
+  day?: string;
+  holidays: ReadingWeekHoliday[];
+}
+
+/**
+ * The card for a reading week a holiday caused.
+ *
+ * Deliberately not the neutral card a manually authored reading week would get:
+ * a reader looking at a week with nothing to attend needs to know whether the
+ * course intended that or the building was shut, and those are different
+ * answers. So this states the closure first -- the holiday's own name, its own
+ * date, its own type and any note the GOV.UK feed carried -- and says plainly
+ * that no live session is scheduled. Every word of it is read off the holiday
+ * record the scheduler already skipped; nothing here is a second copy of
+ * holiday data.
+ *
+ * The amber edge and icon are the same ones the Course structure rail already
+ * uses to mark a week a closure touched, so this reads as more of that
+ * language rather than a new kind of card.
+ */
+export function HolidayReadingWeekCard({
+  slot,
+  weekLabel,
+  compact = false,
+}: {
+  slot: HolidayReadingWeekSlot;
+  /** What to call this curriculum position, e.g. `Week 5`. Defaults to the slot number. */
+  weekLabel?: string;
+  /** Tighter type and spacing, for the narrow Course structure rail. */
+  compact?: boolean;
+}) {
+  const holidays = (slot.holidays || []).filter(holiday => cleanText(holiday.label) || cleanText(holiday.startDate));
+  return (
+    <div
+      data-testid="holiday-reading-week"
+      className="relative overflow-hidden rounded-xl border border-amber-200 bg-amber-50/70"
+    >
+      <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-[3px] bg-amber-400"></span>
+      <div className={`flex flex-wrap items-center gap-x-2 gap-y-1 ${compact ? 'px-2.5 py-2' : 'px-3 py-2.5'}`}>
+        <AppIcon className="ri-calendar-close-line shrink-0 text-sm text-amber-600"></AppIcon>
+        <span className={`font-heading font-bold text-foreground-900 ${compact ? 'text-[12px]' : 'text-[13px]'}`}>
+          {cleanText(weekLabel) || `Week ${slot.slotNumber}`}
+        </span>
+        <span className={`font-semibold text-foreground-500 ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
+          {formatDateLabel(slot.date)} {weekdayLabel(slot.date)}
+        </span>
+        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
+          Reading week
+        </span>
+      </div>
+      <div className={`border-t border-amber-100 ${compact ? 'px-2.5 py-1.5' : 'px-3 py-2'}`}>
+        {holidays.map((holiday, index) => (
+          <p
+            key={`${holiday.id || holiday.label}-${holiday.startDate}-${index}`}
+            className={`leading-snug text-amber-900 ${compact ? 'text-[10px]' : 'text-[11px]'}`}
+          >
+            <span className="font-bold">Holiday: </span>
+            <span className="font-semibold">{cleanText(holiday.label) || 'Holiday'}</span>
+            {' · '}
+            {formatDateLabel(holiday.startDate)}
+            {cleanText(holiday.endDate) && holiday.endDate !== holiday.startDate && ` – ${formatDateLabel(holiday.endDate)}`}
+            {cleanText(holiday.type) && ` · ${cleanText(holiday.type)}`}
+            {cleanText(holiday.notes) && ` · ${cleanText(holiday.notes)}`}
+          </p>
+        ))}
+        {!holidays.length && (
+          <p className={`leading-snug text-amber-900 ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
+            <span className="font-bold">Holiday</span> closure on this delivery day.
+          </p>
+        )}
+        <p className={`mt-0.5 font-semibold text-foreground-500 ${compact ? 'text-[10px]' : 'text-[11px]'}`}>
+          No live session scheduled
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export interface HolidayShiftPlan {
   shifts: SessionShift[];
   closures: Array<{ date: string; label: string }>;
@@ -74,6 +166,7 @@ function shiftByWeeks(iso: string, weeks: number): string {
 export function buildHolidayShiftPlan<S extends HolidayShiftSessionLike>(
   sessions: S[],
   holidayLabelFor?: (date: string) => string,
+  plannedOriginalEndDate?: string,
 ): HolidayShiftPlan {
   const shifts: SessionShift[] = sessions.map((session, index) => {
     const actualDate = cleanText(session.date);
@@ -125,11 +218,13 @@ export function buildHolidayShiftPlan<S extends HolidayShiftSessionLike>(
         : contiguous
           ? `Sessions ${movedNumbers[0]}–${movedNumbers[movedNumbers.length - 1]}`
           : `Sessions ${movedNumbers.join(', ')}`,
-    // Every closed date delays the series by exactly one week (a closure only
-    // ever blocks a candidate on the module's own delivery weekday), so
-    // stepping the actual end date back by the closure count recovers where
-    // it would have landed with none of them.
-    originalEndDate: shiftedEndDate ? shiftByWeeks(shiftedEndDate, -closedDates.length) : '',
+    // Where the run would have ended with nothing closed. The planner states
+    // it -- the last of its holiday-blind slots -- so a module delivering more
+    // than once a week is right too. The week arithmetic below is only the
+    // fallback for a caller with no planned value to pass, and it holds solely
+    // for a module that delivers on one weekday.
+    originalEndDate: cleanText(plannedOriginalEndDate)
+      || (shiftedEndDate ? shiftByWeeks(shiftedEndDate, -closedDates.length) : ''),
     shiftedEndDate,
   };
 }

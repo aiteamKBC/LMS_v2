@@ -1,27 +1,13 @@
-"""The learner's calendar shows the same coaching cycle their coach sees.
-
-Monthly coaching and progress reviews are generated, not stored: the coach
-timetable derives them from the learner's delivery window every time it loads,
-and a row exists only once somebody schedules one. The learner calendar read
-stored rows alone, so a learner whose coach had not booked yet saw an empty
-calendar while their coach saw a column of "Not Scheduled" slots.
-
-These cover the two halves of the fix: the cycle is generated with the coach's
-own generator (same intervals, same window, same keys), and stored rows win
-where they exist.
-"""
-from datetime import date
+"""Learner calendar projects Curriculum reviews and preserves stored bookings."""
+from datetime import date, timedelta
 import inspect
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from django.test import SimpleTestCase
 
-from coach_api.views import (
-    TIMETABLE_MCR_INTERVAL,
-    TIMETABLE_PROGRESS_REVIEW_INTERVAL,
-    build_timetable_event_key,
-)
+from curriculum_api.review_instances import review_calendar_event_key
+
 
 from .calendar import _belongs_to_current_cycle, _generated_cycle_events, coaching_events_for_learner
 
@@ -51,7 +37,7 @@ def _learner(**kwargs):
     fields = {
         'pk': 101,
         'email': 'aya.khater@example.com',
-        'start_date': None,
+        'start_date': START,
         'end_date': None,
         'practical_period_end_date': '',
         'apprenticeship_end_date': '',
@@ -66,10 +52,30 @@ def _record(event_type='mcr', learner_id=248, event_key='mcr:248:1:2026-09-02', 
         learner_id=learner_id,
         event_key=event_key,
         idempotency_key=idempotency_key,
+        status='scheduled',
     )
 
 
-class GeneratedCycleTests(SimpleTestCase):
+class CurriculumCycleFixture:
+    def setUp(self):
+        super().setUp()
+        self.programme = patch('coach_api.views.resolve_curriculum_programme_id', return_value='PROG-1').start()
+        self.occurrences = patch('coach_api.views.resolve_curriculum_review_occurrences', return_value=[
+            {'reviewTemplateId': 'REV-MCM', 'reviewName': 'Coaching conversation',
+             'reviewTypeCode': 'mcm', 'reviewTypeId': 'REVT-MCM',
+             'reviewTypeName': 'Monthly Coaching Meeting', 'reviewTypeIsSystem': True,
+             'occurrenceNumber': sequence, 'targetDate': START + timedelta(weeks=6 * sequence)}
+            for sequence in (1, 2)
+        ] + [
+            {'reviewTemplateId': 'REV-PR', 'reviewName': 'Progress conversation',
+             'reviewTypeCode': 'progress_review', 'reviewTypeId': 'REVT-PROGRESS_REVIEW',
+             'reviewTypeName': 'Progress Review', 'reviewTypeIsSystem': True,
+             'occurrenceNumber': 1, 'targetDate': START + timedelta(weeks=8)}
+        ]).start()
+        self.addCleanup(patch.stopall)
+
+
+class GeneratedCycleTests(CurriculumCycleFixture, SimpleTestCase):
     def test_shared_coaching_source_rejects_another_email_with_a_colliding_numeric_id(self):
         mine=_record();mine.learner_email='AYA.KHATER@example.com'
         foreign=_record(event_key='someone-else');foreign.learner_email='another@example.com'
@@ -81,7 +87,7 @@ class GeneratedCycleTests(SimpleTestCase):
              patch('learner_api.calendar._generated_cycle_events',return_value=[]) as generate:
             events=coaching_events_for_learner(_learner(),_mirror())
         self.assertEqual([row['eventKey'] for row in events],[mine.event_key,blank.event_key])
-        self.assertEqual(generate.call_args.args[2],{mine.event_key,blank.event_key})
+        self.assertEqual(generate.call_args.args[2], set())
 
     def test_the_cycle_is_generated_from_the_learners_window(self):
         events = _generated_cycle_events(_learner(), _mirror(), set())
@@ -91,9 +97,9 @@ class GeneratedCycleTests(SimpleTestCase):
         self.assertTrue(monthly)
         self.assertTrue(reviews)
         # Counted from the start date at the coach's own intervals.
-        self.assertEqual(monthly[0]['date'], (START + TIMETABLE_MCR_INTERVAL).isoformat())
+        self.assertEqual(monthly[0]['date'], (START + timedelta(weeks=6)).isoformat())
         self.assertEqual(
-            reviews[0]['date'], (START + TIMETABLE_PROGRESS_REVIEW_INTERVAL).isoformat(),
+            reviews[0]['date'], (START + timedelta(weeks=8)).isoformat(),
         )
 
     def test_every_slot_carries_the_key_the_coach_timetable_builds(self):
@@ -104,7 +110,7 @@ class GeneratedCycleTests(SimpleTestCase):
 
         self.assertEqual(
             first['eventKey'],
-            build_timetable_event_key(248, 'mcr', 1, START + TIMETABLE_MCR_INTERVAL),
+            review_calendar_event_key(248, 'REV-MCM', 1),
         )
 
     def test_a_generated_slot_reads_as_not_scheduled_with_no_time(self):
@@ -120,7 +126,7 @@ class GeneratedCycleTests(SimpleTestCase):
         self.assertEqual(first['coachEmail'], 'coach21@g.com')
 
     def test_a_slot_that_is_already_booked_is_left_to_its_stored_row(self):
-        booked = build_timetable_event_key(248, 'mcr', 1, START + TIMETABLE_MCR_INTERVAL)
+        booked = review_calendar_event_key(248, 'REV-MCM', 1)
 
         events = _generated_cycle_events(_learner(), _mirror(), {booked})
 
@@ -140,16 +146,25 @@ class GeneratedCycleTests(SimpleTestCase):
     def test_a_learner_with_no_window_has_no_cycle_to_show(self):
         # Nothing to count from — the coach timetable skips them too.
         self.assertEqual(
-            _generated_cycle_events(_learner(), _mirror(start_date=None, end_date=None), set()), [],
+            _generated_cycle_events(_learner(start_date=None), _mirror(start_date=None, end_date=None), set()), [],
         )
 
     def test_an_end_date_before_the_start_generates_nothing(self):
         mirror = _mirror(start_date=END, end_date=START)
 
-        self.assertEqual(_generated_cycle_events(_learner(), mirror, set()), [])
+        self.assertEqual(_generated_cycle_events(_learner(start_date=END, end_date=START), mirror, set()), [])
 
     def test_a_learner_with_no_delivery_record_has_no_cycle(self):
         self.assertEqual(_generated_cycle_events(_learner(), None, set()), [])
+
+    def test_no_configured_reviews_means_no_fallback_cycle(self):
+        self.occurrences.return_value = []
+        self.assertEqual(_generated_cycle_events(_learner(), _mirror(), set()), [])
+
+    def test_placement_is_forwarded_to_the_shared_engine(self):
+        _generated_cycle_events(_learner(), _mirror(cohort_id='C-1', group_id='G-1'), set())
+        self.assertEqual(self.occurrences.call_args.kwargs['learner_scope']['group_id'], 'G-1')
+        self.assertEqual(self.occurrences.call_args.kwargs['learner_start_date'], START)
 
 
 class StoredRowOwnershipTests(SimpleTestCase):
@@ -202,7 +217,7 @@ class StoredRowOwnershipTests(SimpleTestCase):
         self.assertTrue(_belongs_to_current_cycle(_record(learner_id=2), None))
 
 
-class CalendarResponseTests(SimpleTestCase):
+class CalendarResponseTests(CurriculumCycleFixture, SimpleTestCase):
     """The endpoint hands the page one calendar in date order."""
 
     def _call(self, records, mirror, live_events=None):

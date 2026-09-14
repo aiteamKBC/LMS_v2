@@ -4,7 +4,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
-import { findModule, formatProgrammeLevel, namedCurriculumWorkspacePath, programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entities/model';
+import { findByIdentifierThenName, findModule, formatProgrammeLevel, namedCurriculumWorkspacePath, programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entities/model';
 // Editing the programme, or adding a cohort or group from this page,
 // opens the same drawer that record's own page opens. One form per record type in
 // the whole studio, so nothing behaves differently depending on the door taken.
@@ -38,7 +38,7 @@ import {
 } from '@/pages/curriculum/shared/entities/ui';
 import { archiveCohortWithConfirm, archiveGroupWithConfirm, archiveModuleWithConfirm } from '@/pages/curriculum/shared/entities/archive';
 import { curriculumNavItems } from '@/mocks/navigation';
-import { formatHoursMinutes, formatSystemTimestamp, systemTimeZoneName } from '@/lib/format';
+import { formatHoursMinutes, formatSystemTimestamp, hoursToRoundedMinutes, roundedMinutesToHours, systemTimeZoneName } from '@/lib/format';
 import type {
   CurriculumCohort,
   CurriculumComponent,
@@ -214,10 +214,10 @@ function moduleBuilderUrl(
   const params = new URLSearchParams();
   const moduleId = moduleBuilderIdentifier(module);
   if (moduleId) params.set('module', moduleId);
-  // A genuine second attempt, not only the id's last resort: the delivery
-  // side and Module Builder's own catalogue sometimes disagree on which id is
-  // canonical for the same module, so a guessed id that Module Builder cannot
-  // match still gets found by name rather than reporting the module missing.
+  // A label, not a second lookup key. Module Builder opens the module the id
+  // names and nothing else; if that id matches nothing, this is the name it
+  // reports as missing. Resolving by title instead used to open a namesake from
+  // another programme -- same name, different weeks, different OTJH.
   const moduleName = clean(module.name);
   if (moduleName) params.set('moduleTitle', moduleName);
   const programmeId = clean(programme?.sourceId || programme?.id || programme?.name);
@@ -902,12 +902,16 @@ function belongsToProgramme(programme: CurriculumProgramme, item: { programmeId?
 
 function findProgramme(data: CurriculumOverview | null, routeId: string) {
   if (!data) return null;
-  const routeKey = normalise(routeId);
-  return data.programmes.find(programme => (
-    normalise(programme.id) === routeKey ||
-    normalise(programme.sourceId) === routeKey ||
-    normalise(programme.name) === routeKey
-  )) ?? null;
+  // Ids before names: a programme named the same as another programme's id used
+  // to win the route purely by sitting earlier in the list. See
+  // findByIdentifierThenName.
+  return findByIdentifierThenName(
+    data.programmes,
+    routeId,
+    programme => [programme.id, programme.sourceId],
+    programme => [programme.name],
+    normalise,
+  ) ?? null;
 }
 
 /** Staff roster plus anyone already named on a record, de-duplicated and sorted. */
@@ -1099,6 +1103,9 @@ function isComponentForModule(component: CurriculumComponent, liveModule: { id: 
   if (componentIdentifierKeys.length) {
     return moduleIdentifierKeys.some(key => componentIdentifierKeys.includes(key));
   }
+  if (moduleIdentifierKeys.length) {
+    return false;
+  }
   const componentModuleKeys = [component.module].map(normalise);
   const moduleKeys = [liveModule.name].map(normalise);
   return moduleKeys.some(key => key && componentModuleKeys.includes(key));
@@ -1143,15 +1150,13 @@ function buildModuleWeeks(
     const sorted = [...weekSessions].sort((a, b) => clean(a.date).localeCompare(clean(b.date)));
     const first = sorted[0];
     const last = sorted[sorted.length - 1];
-    // Programme OTJH is authored curriculum: only a non-quiz component's
-    // explicit expected OTJH contributes. Generated timetable sessions, quiz
-    // components and generic duration must not invent planned OTJH.
-    const componentOtjh = weekComponents.reduce(
-      (sum, component) => normalise(component.type) === 'quiz'
-        ? sum
-        : sum + Math.max(0, Number(component.expectedOtjh) || 0),
+    // Programme OTJH follows the Module Builder: every component's explicit
+    // Expected OTJH contributes, summed as whole minutes so 20m + 20m + 20m
+    // reads as 1h here exactly as it does in the builder.
+    const componentOtjh = roundedMinutesToHours(weekComponents.reduce(
+      (sum, component) => sum + Math.max(0, hoursToRoundedMinutes(Number(component.expectedOtjh) || 0)),
       0,
-    );
+    ));
     const weekTitle = clean(weekComponents.find(component => clean(component.weekTitle))?.weekTitle);
 
     return {
@@ -1315,9 +1320,11 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     const ksbRollup = componentRollup.length ? componentRollup : fallbackKsbRollup(fallbackKsbCodes, liveModule.name);
     const ksbTags = ksbRollup.map(item => item.ksb);
     // The module's OTJH is the sum of every component's Expected OTJH across
-    // every week -- the same rule the Module Builder header uses. Rounded to the
-    // nearest hundredth only to shed floating-point dust.
-    const moduleOtjh = Math.round(weeksData.reduce((sum, week) => sum + Number(week.otjh || 0), 0) * 100) / 100;
+    // every week -- the same minute-based rule the Module Builder header uses.
+    const moduleOtjh = roundedMinutesToHours(weeksData.reduce(
+      (sum, week) => sum + hoursToRoundedMinutes(Number(week.otjh || 0)),
+      0,
+    ));
     const archived = Boolean(liveModule.isProgrammeDeleted)
       || normalise(liveModule.status) === 'archived'
       || normalise(liveModule.deliveryStatus) === 'archived';
@@ -2252,7 +2259,7 @@ export default function ProgrammeDetailPage() {
   const [programmeKsbSets, setProgrammeKsbSets] = useState<CurriculumKsbSet[]>([]);
   const [skillsStandards, setSkillsStandards] = useState<CurriculumStandard[]>([]);
   // Completed hours come from learner records. Their comparison value is kept
-  // separate: planned OTJH is authored by non-quiz curriculum components.
+  // separate: planned OTJH is authored by curriculum components.
   const [learnerOtjh, setLearnerOtjh] = useState<{ completed: number; learners: number } | null>(null);
   const [learnerOtjhLoading, setLearnerOtjhLoading] = useState(false);
   const coverageRequestKeyRef = useRef('');
@@ -3141,8 +3148,10 @@ export default function ProgrammeDetailPage() {
   );
   const publishedComponents = allComponents.filter(component => component.status === 'published').length;
   const contentReadiness = allComponents.length ? Math.round((publishedComponents / allComponents.length) * 100) : 0;
-  const totalOtjh = activeModules.reduce((total, mod) => total + mod.otjh, 0);
-  // Programme OTJH is the non-quiz component plan. Since completed hours below
+  const totalOtjh = roundedMinutesToHours(activeModules.reduce((total, mod) => (
+    total + hoursToRoundedMinutes(mod.otjh)
+  ), 0));
+  // Programme OTJH is the component plan. Since completed hours below
   // are aggregated across learners, multiply the per-learner plan by the number
   // of placed learners before calculating progress.
   const learnerOtjhCompleted = Math.max(0, Number(learnerOtjh?.completed || 0));
@@ -3585,8 +3594,8 @@ export default function ProgrammeDetailPage() {
                         : !learnerOtjhLearners
                           ? 'No learners are placed on this programme yet, so no hours have been completed.'
                           : otjhDenominator
-                            ? `${formatHours(learnerOtjhCompleted)}h of ${formatHours(otjhDenominator)}h completed across ${learnerOtjhLearners} ${learnerOtjhLearners === 1 ? 'learner' : 'learners'}, based on ${formatHours(totalOtjh)}h planned per learner from non-quiz components.`
-                            : `${formatHours(learnerOtjhCompleted)}h completed across ${learnerOtjhLearners} ${learnerOtjhLearners === 1 ? 'learner' : 'learners'}. No non-quiz components carry planned OTJH yet, so there is nothing to measure against.`}
+                            ? `${formatHours(learnerOtjhCompleted)}h of ${formatHours(otjhDenominator)}h completed across ${learnerOtjhLearners} ${learnerOtjhLearners === 1 ? 'learner' : 'learners'}, based on ${formatHours(totalOtjh)}h planned per learner from authored components.`
+                            : `${formatHours(learnerOtjhCompleted)}h completed across ${learnerOtjhLearners} ${learnerOtjhLearners === 1 ? 'learner' : 'learners'}. No authored components carry planned OTJH yet, so there is nothing to measure against.`}
                   />
                   <div className="grid grid-cols-2 gap-2 border-t border-background-200 pt-4 sm:grid-cols-4">
                     {[

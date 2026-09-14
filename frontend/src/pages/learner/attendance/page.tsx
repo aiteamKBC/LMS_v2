@@ -127,7 +127,7 @@ export default function AttendancePage() {
           <div className={styles.mainColumn}>
             <Panel className={styles.overview}>
               <label className={styles.moduleField}><span>Select Module</span>
-                <select aria-label="Module" value={selectedModule} onChange={event => { setModuleId(event.target.value); setFilter('all'); }}>
+                <select className={styles.moduleSelect} aria-label="Module" value={selectedModule} onChange={event => { setModuleId(event.target.value); setFilter('all'); }}>
                   <option value="all">All modules</option>
                   {data.modules.map(module => <option key={module.id} value={module.id}>{module.title}</option>)}
                 </select>

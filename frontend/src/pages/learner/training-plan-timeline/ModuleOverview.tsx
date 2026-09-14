@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { ArrowRight, CalendarDays, Clock3, GraduationCap, Layers3, Target, Users, type LucideIcon } from 'lucide-react';
 import type { TimelineModule } from './model';
+import { CurriculumTimeline } from './CurriculumTimeline';
 import { dateLabel, hours, Meter, moduleStatus, State } from './presentation';
 import styles from './trainingPlan.module.css';
 import layout from './TrainingPlanDetails.module.css';
@@ -19,6 +20,7 @@ export function ModuleOverview({ module, hasModules, coachName, href, canOpenAct
     ? `${detail.session_start_time}${detail.session_end_time ? `–${detail.session_end_time}` : ''}` : ''].filter(Boolean).join(' · ');
   const outcomes = detail?.learning_outcomes || [];
   const codes = module?.ksbCodes || [];
+  const deliveryEnd = (detail?.effectiveEndDate || '').slice(0, 10);
   return <section className={`${styles.panel} ${layout.overview}`} aria-label="Module overview">
     <div className={styles.panelHeading}>
       <div><p className={styles.eyebrow}>In focus</p><h2>Module overview</h2></div>
@@ -35,6 +37,16 @@ export function ModuleOverview({ module, hasModules, coachName, href, canOpenAct
         <div className={layout.overviewGroup}><h3>Schedule</h3><dl className={layout.factGrid}>
           <OverviewFact icon={CalendarDays} label="Start date">{module.start ? dateLabel(module.start) : 'To be confirmed'}</OverviewFact>
           <OverviewFact icon={CalendarDays} label="Planned end">{module.end ? dateLabel(module.end) : 'To be confirmed'}</OverviewFact>
+          {/* Only when a holiday has actually moved the run. The scheduler
+              states this date -- it is the last DELIVERED session -- so the
+              learner reads the same delivery end the Module Builder does,
+              rather than a stored date that stopped describing the run when
+              the closure was ticked. Hidden when the two agree: repeating the
+              same date under two labels reads as two different facts. */}
+          {deliveryEnd && deliveryEnd !== module.end && (
+            <OverviewFact icon={CalendarDays} label="Delivery ends">{dateLabel(deliveryEnd)}
+              <small>Moved by a holiday closure</small></OverviewFact>
+          )}
           <OverviewFact icon={Layers3} label="Teaching weeks">{detail?.weeks_number ?? (module.weeks || 'To be confirmed')}</OverviewFact>
           <OverviewFact icon={Clock3} label="Weekly timetable">{timetable || 'To be confirmed'}{detail?.session_start_time && <small>UK time</small>}</OverviewFact>
         </dl></div>
@@ -47,6 +59,11 @@ export function ModuleOverview({ module, hasModules, coachName, href, canOpenAct
           <OverviewFact icon={Clock3} label="Hours recorded">{module.actual == null ? 'Unavailable' : `${hours(module.actual)} hours`}<small>Accepted study hours</small></OverviewFact>
         </dl></div>
       </div>
+      {/* The curriculum as the Module Builder holds it: the taught weeks on the
+          dates they are delivered, and the delivery days a cohort holiday
+          closed still present as Reading Weeks. Without these the learner sees
+          an unexplained gap where a bank holiday was. */}
+      <CurriculumTimeline slots={detail?.curriculumSlots} sessions={module.sessions} />
       {Object.keys(module.activityCounts).length > 0 && <div className={layout.moduleSection}>
         <h3>Learning activities <span>{module.activityCount}</span></h3>
         <ul className={layout.activityBreakdown}>{Object.entries(module.activityCounts).map(([type, count]) =>

@@ -367,3 +367,26 @@ class WeekTemplateComponent(models.Model):
     class Meta:
         db_table = 'curriculum"."week_template_components'
         managed = False
+
+
+class EnglandHoliday(models.Model):
+    # Bank holidays as gov.uk publishes them, loaded by the
+    # fetch_england_holidays command. This is the curriculum's whole holiday
+    # calendar: the authored 'holidays' table that used to hold the college's
+    # own closure periods is no longer read by anything. Reference data nobody
+    # here edits, so every route onto it is read-only.
+    id = models.CharField(max_length=128, primary_key=True)
+    division = models.CharField(max_length=64, default='england-and-wales')
+    title = models.CharField(max_length=255)
+    holiday_date = models.DateField(db_index=True)
+    notes = models.CharField(max_length=255, blank=True, default='')
+    bunting = models.BooleanField(default=False)
+    # Last time the feed still listed this date, which is how a stale load is
+    # spotted: updated_at only moves when the holiday itself changed.
+    fetched_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'curriculum"."england_holidays'
+        managed = False

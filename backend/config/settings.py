@@ -240,6 +240,12 @@ if "test" in sys.argv:
     # suite runs with warming off. `setdefault` keeps an explicit
     # CURRICULUM_WARM=1 working for the tests that cover warming itself.
     os.environ.setdefault("CURRICULUM_WARM", "0")
+    # The GOV.UK bank holiday refresh runs on a background thread that reads the
+    # database and reaches the network, for the same reason as warming above: it
+    # must not race the per-test rollback, and no test run should call gov.uk.
+    # The tests that cover the refresh itself drive england_holidays.run_sync()
+    # directly against a stubbed feed.
+    os.environ.setdefault("ENGLAND_HOLIDAY_AUTO_SYNC", "0")
 
 CHAT_DEMO_BOOTSTRAP_ENABLED = os.environ.get(
     "CHAT_DEMO_BOOTSTRAP_ENABLED",

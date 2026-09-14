@@ -198,6 +198,7 @@ def resolve_programme_review_occurrences(
     window_end,
     *,
     template_cache=None,
+    learner_scope=None,
 ):
     """Every Curriculum Review occurrence due for one learner in a window,
     across ALL of their programme's enabled Review templates.
@@ -217,6 +218,8 @@ def resolve_programme_review_occurrences(
 
     occurrences = []
     for template_row in template_cache[programme_id]:
+        if not review_applies_to_placement(template_row, learner_scope):
+            continue
         type_row = type_index.get(curriculum_views.clean_str(template_row.get('review_type_id')))
         for occurrence in resolve_learner_occurrences(
             template_row, learner_id, learner_status, learner_start_date, window_start, window_end,
@@ -238,6 +241,75 @@ def resolve_programme_review_occurrences(
             occurrence['reviewTypeIsSystem'] = bool((type_row or {}).get('is_system'))
             occurrences.append(occurrence)
     return occurrences
+
+
+def review_applies_to_placement(template_row, learner_scope=None):
+    applicability = curriculum_views.as_json_value(template_row.get('applicability'), {})
+    scope = applicability.get('scope', 'programme')
+    if scope == 'programme':
+        return True
+    if scope not in ('cohort', 'group') or not learner_scope:
+        return False
+    identifiers = set(applicability.get('ids') or [])
+    placement_id = curriculum_views.clean_str(learner_scope.get(f'{scope}_id'))
+    if placement_id:
+        return placement_id in identifiers
+    # Older learner mirrors carry names only. Resolve within this programme,
+    # and within the cohort for groups; ambiguous names never grant access.
+    table = curriculum_views.COHORT_AUTHORING_DETAILS_TABLE if scope == 'cohort' else curriculum_views.GROUPS_TABLE
+    if '_placement_rows' not in template_row:
+        template_row['_placement_rows'] = curriculum_views.authoring_fetch_all(
+            table, 'programme_id = %s', [template_row['programme_id']],
+        )
+    name = curriculum_views.clean_str(learner_scope.get(scope)).casefold()
+    if not name:
+        return False
+    matches = []
+    for row in template_row['_placement_rows']:
+        if curriculum_views.clean_str(row.get(f'{scope}_name')).casefold() != name:
+            continue
+        if scope == 'group':
+            cohort_id = curriculum_views.clean_str(learner_scope.get('cohort_id'))
+            cohort_name = curriculum_views.clean_str(learner_scope.get('cohort')).casefold()
+            if cohort_id and curriculum_views.clean_str(row.get('cohort_id')) != cohort_id:
+                continue
+            if not cohort_id and (not cohort_name or curriculum_views.clean_str(row.get('cohort_name')).casefold() != cohort_name):
+                continue
+        matches.append(curriculum_views.clean_str(row.get(f'{scope}_id')))
+    return len(matches) == 1 and matches[0] in identifiers
+
+
+def review_calendar_event_key(learner_id, template_id, occurrence_number):
+    """An occurrence survives renames, reclassification and target-date edits."""
+    return f'review:{learner_id}:{template_id}:{occurrence_number}'
+
+
+def reconcile_review_event_keys(events, records):
+    """Keep existing booking keys, matching legacy keys only when unambiguous."""
+    by_identity = {}
+    by_key = {record.event_key: record for record in records}
+    legacy_candidates = {}
+    for event in events:
+        legacy_key = f"{event['source']}:{event['learnerId']}:{event['sequence']}:{event['targetDate']}"
+        legacy_candidates.setdefault(legacy_key, []).append(event)
+    for record in records:
+        template_id = getattr(record, 'review_template_id', '')
+        if template_id:
+            identity = (str(record.learner_id), template_id, getattr(record, 'occurrence_number', None) or record.sequence)
+            by_identity[identity] = record
+    matched = {}
+    for event in events:
+        identity = (str(event['learnerId']), event.get('reviewTemplateId'), event['sequence'])
+        record = by_identity.get(identity) or by_key.get(event['eventKey'])
+        if record is None:
+            legacy_key = f"{event['source']}:{event['learnerId']}:{event['sequence']}:{event['targetDate']}"
+            candidate = by_key.get(legacy_key)
+            if candidate and not getattr(candidate, 'review_template_id', '') and len(legacy_candidates[legacy_key]) == 1:
+                record = candidate
+        if record is not None:
+            event['id'] = event['eventKey'] = record.event_key
+            matched[record.event_key] = record
+    return matched
 
 
 def programme_review_template_identifiers(programme_id, *, template_cache=None):
@@ -556,8 +628,10 @@ def review_instance_form_definition(instance_row):
     rules come from the FROZEN definition_snapshot (historical integrity);
     the display title/status/target date are read live."""
     snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
-    live_template = reviews.get_review_template_row(instance_row.get('review_template_id'))
+    live_template = reviews.get_review_template_row(instance_row.get('review_template_id'), include_deleted=True)
     live_name = (live_template or {}).get('name') or snapshot.get('name') or ''
+    type_row = next((row for row in review_types.review_type_index().values()
+                     if row.get('id') == (live_template or {}).get('review_type_id')), None)
 
     answers_by_field = get_review_instance_answers(instance_row.get('id'))
     signatures_by_role = get_review_instance_signatures(instance_row.get('id'))
@@ -596,6 +670,9 @@ def review_instance_form_definition(instance_row):
         'template': {
             'id': instance_row.get('review_template_id'),
             'name': live_name,
+            'reviewTypeId': (live_template or {}).get('review_type_id') or snapshot.get('reviewTypeId'),
+            'reviewTypeCode': (type_row or {}).get('code') or snapshot.get('reviewTypeCode'),
+            'reviewTypeName': (type_row or {}).get('name') or snapshot.get('reviewTypeName'),
             'signatures': snapshot.get('signatures', {}),
             'visibleTo': snapshot.get('visibleTo', {}),
             'recurrence': snapshot.get('recurrence', {}),
@@ -651,8 +728,7 @@ def save_review_instance_answers(instance_row, answers, *, actor='system'):
     snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
     valid_field_ids = {
         field.get('id')
-        for section in snapshot.get('sections', [])
-        for field in _flatten_snapshot_fields(section.get('fields'))
+        for field in _flatten_snapshot_fields(snapshot.get('sections', []))
     }
 
     with transaction.atomic():
@@ -687,7 +763,7 @@ def save_review_instance_answers(instance_row, answers, *, actor='system'):
         if instance_row.get('status') == STATUS_NOT_SCHEDULED or not instance_row.get('started_at'):
             set_review_instance_status(
                 instance_row.get('id'),
-                instance_row.get('status') or STATUS_IN_PROGRESS,
+                STATUS_IN_PROGRESS,
                 actor=actor,
                 extra={'started_at': instance_row.get('started_at') or datetime.utcnow()},
             )

@@ -23,6 +23,7 @@ same-origin dev API behind the Vite proxy.
 import logging
 
 from django.db import DatabaseError
+from django.core.exceptions import ValidationError
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -30,6 +31,7 @@ from django.views.decorators.csrf import csrf_exempt
 from login.permissions import employer_or_staff
 
 from .learner_detail import SOURCE_MODELS
+from .identity import learner_profile_for_source
 from .mappers import _s, to_employer_row
 from .models import Employer, EnrolmentReview
 from .review_form import (
@@ -38,6 +40,8 @@ from .review_form import (
     sections_for,
 )
 from .views import _error, _parse_body
+from coach_api.models import CoachCalendarEvent
+from curriculum_api import review_instances
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +98,61 @@ def _review_signing_rows(kind, learner_id, *, employer_only=True):
             # employer can see they are not the only one outstanding.
             "learnerSigned": bool(_s(review.learner_signature)),
             "adminSigned": bool(_s(review.admin_signature)),
+        })
+    # Curriculum instances are the canonical review records. Keep them in the
+    # existing employer queue shape while the old EnrolmentReview records drain.
+    # Instances are normally keyed by the internal LearnerProfile id, while
+    # this portal is addressed by the source enrolment id. Read both identities
+    # so a valid review cannot disappear from the employer queue.
+    instance_learner_ids = [str(learner_id)]
+    source_model = SOURCE_MODELS.get(kind)
+    if source_model is not None:
+        try:
+            source_learner = source_model.all_learners.get(pk=learner_id)
+            profile = learner_profile_for_source(source_learner, learner_id, active_only=True)
+            if profile is not None and str(profile.pk) not in instance_learner_ids:
+                instance_learner_ids.append(str(profile.pk))
+        except (source_model.DoesNotExist, DatabaseError):
+            pass
+    instance_rows = []
+    seen_instance_ids = set()
+    for instance_learner_id in instance_learner_ids:
+        try:
+            candidates = review_instances.list_review_instances_for_learner(instance_learner_id)
+        except DatabaseError:
+            candidates = []
+        for instance in candidates:
+            instance_id = _s(instance.get('id'))
+            if instance_id and instance_id in seen_instance_ids:
+                continue
+            if instance_id:
+                seen_instance_ids.add(instance_id)
+            instance_rows.append(instance)
+    for instance in instance_rows:
+        definition = review_instances.review_instance_form_definition(instance)
+        if employer_only and not definition['template']['visibleTo'].get('employer', False):
+            continue
+        employer_state = definition['signatures'].get('employer', {})
+        if not employer_state.get('required'):
+            continue
+        signatures = definition['signatures']
+        calendar_record = CoachCalendarEvent.objects.filter(pk=instance.get('calendar_event_id')).first() if instance.get('calendar_event_id') else None
+        rows.append({
+            "kind": "review",
+            "eventKey": _s(getattr(calendar_record, 'event_key', '')) or _s(instance.get('id')),
+            "reviewInstanceId": _s(instance.get('id')),
+            "reviewType": _s(definition['template'].get('reviewTypeCode')) or 'review',
+            "label": _s(definition['template'].get('name')) or 'Review',
+            "scheduledDate": _s(instance.get('target_date')),
+            "signable": instance.get('status') in ('awaiting-signature', 'completed'),
+            "completed": instance.get('status') in ('awaiting-signature', 'completed'),
+            "sectionsTotal": len(definition.get('sections') or []),
+            "employerSignatureRequired": True,
+            "signed": bool(employer_state.get('signed')),
+            "signedName": _s(employer_state.get('signedName')),
+            "signedAt": employer_state.get('signedAt'),
+            "learnerSigned": bool(signatures.get('participant', {}).get('signed')),
+            "adminSigned": bool(signatures.get('advisor', {}).get('signed')),
         })
     return rows
 
@@ -424,6 +483,56 @@ def employer_portal_learner(request, employer_id, kind, learner_id):
             i for i in (*reviews, *documents) if i["signable"] and not i["signed"]
         ]),
     })
+
+
+@csrf_exempt
+@employer_or_staff()
+def employer_review_instance(request, employer_id, kind, learner_id, event_key):
+    """Read or sign the same Curriculum Review instance used by coach/learner."""
+    if request.method not in ("GET", "POST"):
+        return _error("Method not allowed.", 405)
+    employer, err = _employer_or_404(employer_id)
+    if err:
+        return err
+    model = SOURCE_MODELS.get(kind)
+    if model is None:
+        return _error("Unknown learner kind.", 404)
+    try:
+        learner = model.all_learners.get(pk=learner_id)
+    except model.DoesNotExist:
+        return _error("Learner not found.", 404)
+    if learner.employer_id != employer.pk:
+        return _error("That learner does not belong to this employer.", 403)
+    record = CoachCalendarEvent.objects.filter(event_key=event_key).first()
+    if record and str(record.learner_id or '') != str(learner_id) and _s(record.learner_email).casefold() != _s(learner.email).casefold():
+        record = None
+    instance = review_instances.get_review_instance(getattr(record, 'review_instance_id', '')) if record else review_instances.get_review_instance(event_key)
+    if not instance:
+        return _error("Review instance not found.", 404)
+    definition = review_instances.review_instance_form_definition(instance)
+    if not definition['template']['visibleTo'].get('employer', False):
+        return _error("This review is not visible to the employer.", 403)
+    if request.method == "GET":
+        return JsonResponse(definition)
+    try:
+        payload = _parse_body(request)
+    except (TypeError, ValueError, ValidationError):
+        return _error("Invalid JSON body.", 400)
+    signature = _s(payload.get('signature'))
+    name = _s(payload.get('name'))
+    if not signature.startswith('data:image/'):
+        return _error("A valid employer signature is required.", 400)
+    if not name:
+        return _error("Name is required when signing.", 400)
+    try:
+        updated = review_instances.record_review_instance_signature(
+            instance, 'employer', signed_by=_s(getattr(request.login_account, 'email', '')),
+            signed_name=name, signature=signature,
+            actor=_s(getattr(request.login_account, 'email', '')) or 'employer',
+        )
+    except ValueError as exc:
+        return _error(str(exc), 409)
+    return JsonResponse(updated)
 
 
 @csrf_exempt

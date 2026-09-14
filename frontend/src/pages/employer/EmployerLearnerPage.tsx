@@ -11,6 +11,7 @@ import {
   signTrainingPlanAsEmployer,
   signWrittenAgreementAsEmployer,
   signReviewAsEmployer,
+  fetchEmployerReviewInstance,
   type EmployerLearnerDetail,
   type SignableItem,
 } from '@/api/employerPortal';
@@ -25,6 +26,7 @@ import type { LearnerDetail } from '@/api/learnerDetail';
 import { LearnerPlanBody } from '@/components/feature/RealLearnerPlanView';
 import { OtjhBody } from '@/components/feature/RealOtjhView';
 import { KsbProgressBody } from '@/components/feature/RealKsbView';
+import { LearnerReviewInstanceForm } from '@/pages/learner/reviews/LearnerReviewInstanceForm';
 
 // ============================================================================
 // One learner, as their employer sees them.
@@ -60,11 +62,13 @@ function fmt(value: string | null | undefined) {
 function SignModal({
   item,
   employerName,
+  reviewDefinition,
   onClose,
   onSign,
 }: {
   item: SignableItem;
   employerName: string;
+  reviewDefinition?: any;
   onClose: () => void;
   onSign: (name: string, signature: string) => Promise<void>;
 }) {
@@ -100,6 +104,7 @@ function SignModal({
         </header>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {reviewDefinition?.template ? <LearnerReviewInstanceForm definition={reviewDefinition} /> : null}
           <SignaturePad
             signatoryName={employerName}
             onCommit={(url) => { void submit(url); }}
@@ -272,6 +277,7 @@ export default function EmployerLearnerPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [signing, setSigning] = useState<SignableItem | null>(null);
+  const [reviewDefinition, setReviewDefinition] = useState<any>(null);
   const [tab, setTab] = useState<TabKey>('overview');
   // The learner's own workspace payload, behind the three progress tabs. Fetched
   // once, on first use: an employer who only came to sign a document never pays
@@ -293,6 +299,18 @@ export default function EmployerLearnerPage() {
   };
 
   useEffect(load, [employerId, kind, learnerId]);
+
+  useEffect(() => {
+    if (!signing || signing.kind !== 'review' || !signing.reviewInstanceId) {
+      setReviewDefinition(null);
+      return;
+    }
+    let active = true;
+    fetchEmployerReviewInstance(employerId, kind, learnerId, signing.eventKey)
+      .then(value => { if (active) setReviewDefinition(value); })
+      .catch(() => { if (active) setReviewDefinition(null); });
+    return () => { active = false; };
+  }, [employerId, kind, learnerId, signing]);
 
   const loadPlan = () => {
     setPlanLoading(true);
@@ -319,7 +337,7 @@ export default function EmployerLearnerPage() {
   const handleSign = async (name: string, signature: string) => {
     if (!signing) return;
     if (signing.kind === 'review') {
-      await signReviewAsEmployer(kind, learnerId, signing.eventKey, { name, signature });
+      await signReviewAsEmployer(employerId, kind, learnerId, signing.eventKey, { name, signature });
     } else if (signing.kind === 'written-agreement') {
       await signWrittenAgreementAsEmployer(learnerId, { name, signature });
     } else if (signing.kind === 'training-plan') {
@@ -555,6 +573,7 @@ export default function EmployerLearnerPage() {
         <SignModal
           item={signing}
           employerName={data.employer.name}
+          reviewDefinition={reviewDefinition}
           onClose={() => setSigning(null)}
           onSign={handleSign}
         />

@@ -25,6 +25,10 @@ export function LeaderboardTab() {
   const myLearner = useMyLearner();
   const [rankingType, setRankingType] = useState<RankingType>('monthly');
   const [myCohort, setMyCohort] = useState<string | null>(null);
+  // The summary response is the server's canonical learner identity. This is
+  // useful after the enrolment-table merge, where a legacy client fallback can
+  // differ from the id returned by the learner endpoint.
+  const [resolvedLearnerId, setResolvedLearnerId] = useState(myLearner.id);
   const [entries, setEntries] = useState<RankedEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -32,7 +36,12 @@ export function LeaderboardTab() {
   useEffect(() => {
     let cancelled = false;
     fetchLearnerSummary(myLearner.kind, myLearner.id)
-      .then(detail => { if (!cancelled) setMyCohort(detail.cohort || null); })
+      .then(detail => {
+        if (!cancelled) {
+          setResolvedLearnerId(detail.id || myLearner.id);
+          setMyCohort(detail.cohort || null);
+        }
+      })
       .catch(() => { /* leaderboard still works without cohort scoping */ });
     return () => { cancelled = true; };
   }, [myLearner.id, myLearner.kind]);
@@ -52,7 +61,7 @@ export function LeaderboardTab() {
     return () => { cancelled = true; };
   }, [rankingType, myCohort]);
 
-  const myEntry = useMemo(() => entries.find(e => e.learnerId === myLearner.id) ?? null, [entries, myLearner.id]);
+  const myEntry = useMemo(() => entries.find(e => e.learnerId === resolvedLearnerId) ?? null, [entries, resolvedLearnerId]);
   const podium = entries.slice(0, 3);
 
   return (
@@ -137,7 +146,7 @@ export function LeaderboardTab() {
           <div className="bg-background-50 rounded-xl border border-background-200/50 overflow-hidden mb-6">
             <div className="divide-y divide-background-200/30">
               {entries.map((entry) => {
-                const highlight = entry.learnerId === myLearner.id;
+                const highlight = entry.learnerId === resolvedLearnerId;
                 return (
                   <div
                     key={entry.learnerId}

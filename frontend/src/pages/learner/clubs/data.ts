@@ -723,6 +723,7 @@ export interface CalendarEvent {
    *  the calendar can bucket review events by type. See
    *  pages/learner/calendar/reviewTypeFilters.ts. */
   reviewTypeId?: string | null;
+  reviewTemplateId?: string | null;
   reviewTypeCode?: string | null;
   reviewTypeName?: string | null;
   reviewTypeIsSystem?: boolean;

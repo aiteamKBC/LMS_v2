@@ -17,7 +17,8 @@ import ProgressReviewsPage from '../../progress-reviews/page';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { ToastProvider } from '@/hooks/useToast';
 import { clearAllCachedResources } from '@/api/cachedRequest';
-import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
+import type { LearnerCalendarEvent, LearnerReviewDefinition } from '@/api/learnerCalendar';
+import { LearnerReviewInstanceForm } from '../LearnerReviewInstanceForm';
 import type { ReviewInstanceFormDefinition } from '@/api/reviewInstances';
 
 vi.mock('@/hooks/useMyLearner', () => ({
@@ -121,7 +122,7 @@ const LEGACY_PR_HEADINGS = [
 ];
 
 let events: LearnerCalendarEvent[];
-let reviewDefinition: ReviewInstanceFormDefinition;
+let reviewDefinition: LearnerReviewDefinition;
 let requested: string[];
 
 beforeEach(() => {
@@ -228,26 +229,24 @@ describe('Learner Review View opens the generic Curriculum form', () => {
         }],
       }],
     });
-    mountMcm(SCHEDULED_MCM);
+    render(<LearnerReviewInstanceForm definition={reviewDefinition} />);
 
     await screen.findByTestId('learner-review-instance-form');
-    // Nothing about the path is MCM-specific: a custom type's own sections
+    // A custom type's own sections
     // render through the identical renderer.
     expect(screen.getByText('Where next?')).toBeInTheDocument();
     expect(await screen.findByText('What role are you aiming for?')).toBeInTheDocument();
   });
 
-  it('an unscheduled occurrence never asks for a Review instance', async () => {
+  it('an unscheduled occurrence reads a template preview without creating an instance', async () => {
+    reviewDefinition = { ...definition(), instance: null, occurrenceNumber: 2 };
     mountMcm(UNSCHEDULED_MCM);
 
-    // The legacy detail rendering is what a not-yet-scheduled occurrence keeps,
-    // so nothing already recorded is lost...
-    expect(await screen.findByText(LEGACY_MCM_HEADINGS[0])).toBeInTheDocument();
-    expect(screen.queryByTestId('learner-review-instance-form')).toBeNull();
-    // ...and, crucially, the page issues no review request at all -- looking at
-    // an occurrence must never create a durable review_instance.
-    await waitFor(() => expect(requested.length).toBeGreaterThan(0));
-    expect(requested.some((url) => url.includes('/review/'))).toBe(false);
+    expect(await screen.findByTestId('learner-review-instance-form')).toBeInTheDocument();
+    expect(screen.getByTestId('learner-review-instance-title')).toHaveTextContent('#2');
+    expect(screen.queryByText(LEGACY_MCM_HEADINGS[0])).toBeNull();
+    await waitFor(() => expect(requested.some(url => url.includes('/review/'))).toBe(true));
+    for (const call of vi.mocked(fetch).mock.calls) expect(call[1]?.method || 'GET').toBe('GET');
   });
 
   it('the Review Template name is the title and nothing matches on it', async () => {

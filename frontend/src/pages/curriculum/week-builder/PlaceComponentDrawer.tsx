@@ -108,7 +108,7 @@ export function GroupPlacementPanel({ component, groupName, programmeId, onClose
       // take a while, and this module's *other* weeks/components may have
       // been edited (by this tutor elsewhere, or someone else) in that time.
       // Saving the stale snapshot would silently revert those.
-      const freshStructure = await loadModuleStructure(catalogueId);
+      const freshStructure = await loadModuleStructure(catalogueId, { skipCache: true });
       if (!freshStructure) { setError('That module no longer exists.'); return; }
       const freshWeek = freshStructure.weekStructure.find(week => week.id === targetWeek.id);
       if (!freshWeek) { setError('That week no longer exists — go back and pick another.'); return; }

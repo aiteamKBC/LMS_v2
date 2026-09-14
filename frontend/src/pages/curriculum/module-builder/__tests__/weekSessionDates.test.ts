@@ -4,6 +4,7 @@ import {
   createEmptyComponent,
   createEmptyWeek,
   createLocalModuleDraft,
+  moduleWeekSessionDates,
   recalculateModule,
   resequenceWeekSessionDates,
   type ModuleCatalogueItem,
@@ -25,12 +26,18 @@ const SATURDAY_DATES = [
   '2027-01-23', '2027-01-30', '2027-02-06',
 ];
 
-function planFor(dates: string[], skippedBefore: Record<string, string[]> = {}): ModuleWeekSessionPlan {
+function planFor(
+  dates: string[],
+  skippedBefore: Record<string, string[]> = {},
+  slotDates: Record<string, string> = {},
+): ModuleWeekSessionPlan {
   return {
     sessions: dates.map((date, index) => ({
       sessionNumber: index + 1,
       date,
       day: 'Saturday',
+      slotDate: slotDates[date],
+      slotDay: slotDates[date] ? 'Saturday' : undefined,
       skippedHolidays: skippedBefore[date] || [],
     })),
     skippedHolidays: Object.values(skippedBefore).flat(),
@@ -128,6 +135,20 @@ describe('dating a week added in the builder', () => {
     );
 
     expect(dated.weekStructure[6].sessionDate).toBe('2027-04-03');
+  });
+
+  it('shows the week on the delivered replacement date when a holiday moved it', () => {
+    const module = sixWeekModule({ weekStructure: [sixWeekModule().weekStructure[0]] });
+    const plan = planFor(
+      ['2027-01-08'],
+      { '2027-01-08': ['2026-12-25', '2027-01-01'] },
+      { '2027-01-08': '2026-12-25' },
+    );
+
+    const dated = applyModuleWeekSessionPlan(module, plan);
+
+    expect(dated.weekStructure[0].sessionDate).toBe('2027-01-08');
+    expect(moduleWeekSessionDates(dated, plan.sessions)[0]).toEqual(['2027-01-08']);
   });
 
   it('moves the end date out when it was the plan’s own last session', () => {

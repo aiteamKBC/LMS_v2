@@ -7,8 +7,11 @@ import { useLocation } from 'react-router-dom';
  * The server remains responsible for authorising every request.
  */
 // Current source id for the default demo learner after the enrolment-table
-// merge. Explicitly selected learners still override this value.
-const MY_LEARNER: { kind: LearnerKind; id: string } = { kind: 'commercial', id: '19' };
+// merge. Explicitly selected learners still override this value. The previous
+// fallback (19) belonged to the pre-merge table and no longer exists in the
+// current enrolment source, so every overview read for a fresh browser would
+// otherwise return 404.
+const MY_LEARNER: { kind: LearnerKind; id: string } = { kind: 'commercial', id: '125' };
 const STORAGE_KEY = 'my_learner';
 // Keep session identity independent of shared browser storage: another tab or
 // an old deep link must not switch a learner onto somebody else's record.

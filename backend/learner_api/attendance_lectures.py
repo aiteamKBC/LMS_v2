@@ -275,6 +275,19 @@ def read_native_components(source, module_refs=None):
     return components, progress
 
 
+def read_assigned_modules(source):
+    """Return the learner's current assigned catalogue modules.
+
+    Attendance rows are historical/source data and may not exist yet for every
+    module on the learner's training plan. The module selector still needs to
+    expose those assignments so the learner can select an empty module and see
+    its zero/upcoming state.
+    """
+    with connections['enrolment'].cursor() as cur:
+        cur.execute(CURRENT_SUBJECTS_SQL, [source.id])
+        return [{'id': row[0], 'title': row[1]} for row in cur.fetchall()]
+
+
 def _component_for(row, components):
     candidates = []
     for component in components:
@@ -420,6 +433,9 @@ def read_workspace(source, kind):
     native_modules = {row['module_catalogue_id'] for row in register if row.get('source') == 'microsoft-teams'}
     components, progress = read_native_components(source, native_modules)
     lectures = build_lectures(register, metadata, activities, components, kind, source.id)
+    # Include every current assignment, even when it has no attendance row yet.
+    # Historical/source-only modules remain available through the lecture list.
+    assigned_modules = read_assigned_modules(source)
     mode = read_mode(source, kind)
     with connections['enrolment'].cursor() as cur:
         cur.execute('''SELECT coach_name,coach_email FROM "Learner".learners
@@ -477,9 +493,14 @@ def read_workspace(source, kind):
     mode['unmappedPlannedLectures'] = sum(r['durationMinutes'] is None for r in lectures if r['status'] == 'upcoming')
     mode['plannedLiveHours'] = round(planned, 2) if mode['mode'] == 'live' else 0
     mode['plannedRecordedHours'] = round(planned, 2) if mode['mode'] == 'lazy' else 0
+    module_options = {(r['moduleId'], r['module']) for r in lectures}
+    module_options.update(
+        (f"native:{row['id']}", row['title'])
+        for row in assigned_modules if row.get('id') and row.get('title')
+    )
     return {'lectures': lectures, 'totals': lecture_totals(lectures),
             'summary': _summarize_attendance(register), 'mode': mode, 'timeZone': settings.TIME_ZONE,
-            'modules': [{'id': key, 'title': title} for key, title in sorted({(r['moduleId'], r['module']) for r in lectures}, key=lambda v: v[1])],
+            'modules': [{'id': key, 'title': title} for key, title in sorted(module_options, key=lambda v: v[1].casefold())],
             'recentActivity': sorted(recent, key=lambda r: r['at'], reverse=True)[:30]}
 
 

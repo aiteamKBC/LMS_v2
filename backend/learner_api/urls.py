@@ -112,6 +112,11 @@ urlpatterns = [
         employer_portal.employer_portal_learner_plan,
         name="employer-portal-learner-plan",
     ),
+    path(
+        "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/events/<path:event_key>/review/",
+        employer_portal.employer_review_instance,
+        name="employer-review-instance",
+    ),
     path("employers/<int:pk>/", employers.employer_detail, name="employer-detail"),
     path("learner-detail/<str:kind>/<int:pk>/", learner_detail.learner_detail, name="learner-detail"),
     path("learner-summary/<str:kind>/<int:pk>/", learner_detail.learner_summary, name="learner-summary"),

@@ -222,7 +222,10 @@ export function CohortFormDrawer({
   const [epaMonths, setEpaMonths] = useState('');
   const [apprenticeshipEndOverride, setApprenticeshipEndOverride] = useState('');
   const [color, setColor] = useState('#6d28d9');
-  const [holidayIds, setHolidayIds] = useState<string[]>([]);
+  // The holidays a human has unticked, from the period's own list below. Every
+  // holiday is selected until someone turns one off, matching the "every
+  // England bank holiday in this period applies" rule this replaces.
+  const [excludedHolidayIds, setExcludedHolidayIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<CurriculumCohortEndDatePreview | null>(null);
@@ -242,7 +245,7 @@ export function CohortFormDrawer({
     epaMonths,
     apprenticeshipEndOverride,
     color,
-    holidayIds,
+    excludedHolidayIds: [...excludedHolidayIds].sort(),
   }, baseline.current);
   // `programmes` is in the seeding effect's dependencies and gets a new identity
   // on every background refresh; without this the list landing mid-edit reset the
@@ -267,7 +270,7 @@ export function CohortFormDrawer({
         epaMonths: cohort.epaMonths == null ? '' : String(cohort.epaMonths),
         apprenticeshipEndOverride: cohort.apprenticeshipEndOverride || '',
         color: cohort.color || '#6d28d9',
-        holidayIds: (cohort.holidayIds || []).map(String),
+        excludedHolidayIds: [...new Set((cohort.excludedHolidayIds || []).map(normaliseKey).filter(Boolean))].sort(),
       };
       baseline.current = initial;
       setName(initial.name);
@@ -279,7 +282,7 @@ export function CohortFormDrawer({
       setEpaMonths(initial.epaMonths);
       setApprenticeshipEndOverride(initial.apprenticeshipEndOverride);
       setColor(initial.color);
-      setHolidayIds(initial.holidayIds);
+      setExcludedHolidayIds(initial.excludedHolidayIds);
       return;
     }
     const initial = {
@@ -292,7 +295,7 @@ export function CohortFormDrawer({
       epaMonths: '',
       apprenticeshipEndOverride: '',
       color: '#6d28d9',
-      holidayIds: [] as string[],
+      excludedHolidayIds: [] as string[],
     };
     baseline.current = initial;
     setName(initial.name);
@@ -304,7 +307,7 @@ export function CohortFormDrawer({
     setEpaMonths(initial.epaMonths);
     setApprenticeshipEndOverride(initial.apprenticeshipEndOverride);
     setColor(initial.color);
-    setHolidayIds(initial.holidayIds);
+    setExcludedHolidayIds(initial.excludedHolidayIds);
   }, [allowSeed, cohort, defaults?.programmeId, open, programmes]);
 
   // `authoredPracticalEnd` above is also what the preview is given: in automatic
@@ -362,32 +365,68 @@ export function CohortFormDrawer({
   };
 
   // The cohort period the holidays below are measured against: start date ->
-  // the practical end from the contracted duration. Holidays are shown inside
-  // that fixed window, then used later by module session planning when a
-  // generated session clashes with one of the selected dates.
+  // the practical end from the contracted duration. Holidays are read off that
+  // fixed window, then used later by module session planning when a generated
+  // session clashes with one of them.
   const periodStart = startDate;
   const periodEnd = preview?.baseEndDate || practicalEndDate || preview?.practicalEndDate || preview?.endDate || cohort?.practicalEndDate || cohort?.endDate || '';
   const periodLabel = periodStart && periodEnd ? `${formatDateLabel(periodStart)} – ${formatDateLabel(periodEnd)}` : '';
+
+  // Every bank holiday inside the period is offered as a checkbox, ticked by
+  // default. The same inclusive overlap the backend applies in
+  // `holidays_within_period`, so this is exactly the candidate list the drawer
+  // and the save agree on.
+  const periodHolidays = useMemo(() => {
+    if (!periodStart || !periodEnd) return [] as CurriculumHoliday[];
+    return holidays
+      .filter(holiday => {
+        const holidayStart = cleanText(holiday.startDate);
+        const holidayEnd = cleanText(holiday.endDate) || holidayStart;
+        return Boolean(holidayStart) && holidayStart <= periodEnd && holidayEnd >= periodStart;
+      })
+      .sort((left, right) => cleanText(left.startDate).localeCompare(cleanText(right.startDate)));
+  }, [holidays, periodEnd, periodStart]);
+
+  const excludedHolidaySet = useMemo(
+    () => new Set(excludedHolidayIds.map(normaliseKey)),
+    [excludedHolidayIds],
+  );
+  // The holidays that actually apply -- what module session planning skips,
+  // and what "Weeks in this cohort" below measures. Unticking one does not
+  // move the cohort's own contract dates; it only stops that day from
+  // clashing with a module's delivery.
+  const selectedPeriodHolidays = useMemo(
+    () => periodHolidays.filter(holiday => !excludedHolidaySet.has(normaliseKey(holiday.id))),
+    [excludedHolidaySet, periodHolidays],
+  );
+
+  // Sent with the save and stored on the cohort: the ticked ids, alongside
+  // excludedHolidayIds for the ones turned off.
+  const holidayIds = useMemo(() => selectedPeriodHolidays.map(holiday => String(holiday.id)), [selectedPeriodHolidays]);
+
+  const toggleHoliday = (holidayId: string | number) => {
+    const key = normaliseKey(holidayId);
+    setExcludedHolidayIds(current => (
+      current.some(id => normaliseKey(id) === key)
+        ? current.filter(id => normaliseKey(id) !== key)
+        : [...current, key]
+    ));
+  };
+  const selectAllHolidays = () => setExcludedHolidayIds([]);
+  const clearAllHolidays = () => setExcludedHolidayIds(periodHolidays.map(holiday => normaliseKey(holiday.id)));
 
   const programmeOptions = useMemo(
     () => programmes.map(programme => ({ value: programmeIdentity(programme), label: programme.name })),
     [programmes],
   );
 
-  // The ticked holidays themselves, so the week count below can say which weeks
-  // of the period one of them lands in.
-  const selectedHolidays = useMemo(() => {
-    const ids = new Set(holidayIds.map(String));
-    return holidays.filter(holiday => ids.has(String(holiday.id)));
-  }, [holidayIds, holidays]);
-
   // The floor and the ceiling on how many weeks this cohort has to deliver in.
   // The period itself never moves, so the two numbers bracket the same window:
-  // every week when nothing is ticked, and the weeks left once each week holding
-  // a ticked holiday is taken out.
+  // every week of it, and the weeks left once each week holding a *selected*
+  // bank holiday is taken out -- an unticked one costs nothing here either.
   const weekCapacity = useMemo(
-    () => cohortWeekCapacity(periodStart, periodEnd, selectedHolidays),
-    [periodEnd, periodStart, selectedHolidays],
+    () => cohortWeekCapacity(periodStart, periodEnd, selectedPeriodHolidays),
+    [periodEnd, selectedPeriodHolidays, periodStart],
   );
 
   const submit = async () => {
@@ -414,6 +453,7 @@ export function CohortFormDrawer({
         apprenticeshipEndOverride: apprenticeshipEndOverride || null,
         color,
         holidayIds,
+        excludedHolidayIds,
       };
       // What the list should show straight away. A create gets the stored row
       // back from the endpoint; an edit merges the payload over the record the
@@ -435,6 +475,7 @@ export function CohortFormDrawer({
           apprenticeshipEndOverride: apprenticeshipEndOverride || '',
           color,
           holidayIds,
+          excludedHolidayIds,
         };
       } else {
         saved = (await createCurriculumCohort(payload)).cohort || null;
@@ -568,13 +609,13 @@ export function CohortFormDrawer({
                   </>
                 )}
                 {!weekCapacity.holidayWeeks && (
-                  <span className="text-[11px] text-foreground-500">no holidays ticked</span>
+                  <span className="text-[11px] text-foreground-500">no holidays in this period</span>
                 )}
               </div>
             )}
             {holidayIds.length > 0 && (
               <p className="text-[11px] text-foreground-500">
-                Selected holidays are saved for module scheduling. If a module session clashes with one, that module plan is extended; these cohort contract dates stay fixed.
+                These holidays are saved for module scheduling. If a module session clashes with one, that module plan is extended; these cohort contract dates stay fixed.
               </p>
             )}
             {(preview?.warnings || []).map(warning => (
@@ -591,18 +632,20 @@ export function CohortFormDrawer({
       </FormField>
 
       <FormField
+        as="group"
         label={periodLabel ? `Holidays in this cohort's period (${periodLabel})` : 'Holidays'}
         hint={periodLabel
-          ? `Only holidays that fall inside ${periodLabel} are listed. Tick the ones that apply to this cohort: when a generated module session lands on one of those dates, that session is skipped and the module end date extends by the clash. The cohort practical and apprenticeship end dates stay fixed.`
-          : "Set the start date and duration to narrow this list to the holidays inside the cohort's own period. Ticked holidays are used by module scheduling only: clashing sessions are skipped and the affected module end date extends, while cohort dates stay fixed."}
+          ? `Every holiday inside ${periodLabel} applies to this cohort by default — England's bank holidays and the college's own closure periods alike. Untick one to keep it from clashing with module sessions; when a ticked one lands on a generated session, that session is skipped and the module end date extends by the clash. Either way, the cohort's practical and apprenticeship end dates stay fixed.`
+          : "Set the start date and duration. Every holiday inside the cohort's own period — bank holidays and the college's own closures — is then ticked by default: a clashing module session is skipped and the affected module end date extends, while cohort dates stay fixed."}
       >
-        <HolidayPicker
-          holidays={holidays}
-          selected={holidayIds}
-          onChange={setHolidayIds}
-          periodStart={periodStart}
-          periodEnd={periodEnd}
+        <HolidayPeriodList
+          holidays={periodHolidays}
+          hasCalendar={holidays.length > 0}
           periodLabel={periodLabel}
+          excludedIds={excludedHolidaySet}
+          onToggle={toggleHoliday}
+          onSelectAll={selectAllHolidays}
+          onClearAll={clearAllHolidays}
         />
       </FormField>
 
@@ -627,18 +670,18 @@ export function CohortFormDrawer({
           </div>
           <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11px] leading-5 text-foreground-500">
             <span className="inline-flex items-center gap-1 rounded-full bg-primary-100 px-2 py-0.5 font-bold text-primary-800">{weekCapacity.totalWeeks} weeks</span>
-            <span>with no holiday ticked{periodLabel ? ` (${periodLabel})` : ''}.</span>
+            <span>before any holiday{periodLabel ? ` (${periodLabel})` : ''}.</span>
             {weekCapacity.holidayWeeks ? (
               <>
                 <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 font-bold text-amber-800">
-                  {weekCapacity.holidayDays} ticked {weekCapacity.holidayDays === 1 ? 'holiday day' : 'holiday days'} (~{weekCapacity.holidayWeeks} {weekCapacity.holidayWeeks === 1 ? 'week' : 'weeks'})
+                  {weekCapacity.holidayDays} {weekCapacity.holidayDays === 1 ? 'holiday day' : 'holiday days'} (~{weekCapacity.holidayWeeks} {weekCapacity.holidayWeeks === 1 ? 'week' : 'weeks'})
                 </span>
                 <span>push a clashing module out by that much, up to roughly</span>
                 <span className="inline-flex items-center gap-1 rounded-full bg-foreground-900 px-2 py-0.5 font-bold text-white">~{weekCapacity.maxWeeks} weeks</span>
                 <span>— the cohort's own contract dates stay fixed either way.</span>
               </>
             ) : (
-              <span>Tick a holiday to see the maximum grow.</span>
+              <span>No holiday falls inside this period, so nothing pushes a module out.</span>
             )}
           </div>
         </div>
@@ -647,147 +690,123 @@ export function CohortFormDrawer({
   );
 }
 
-/** How many days a holiday itself spans, start to end inclusive -- shown so a 2-day and a 5-day holiday read differently rather than both just being "a holiday". */
-function holidayDaySpan(holiday: CurriculumHoliday): number {
-  const start = Date.parse(`${cleanText(holiday.startDate)}T00:00:00Z`);
-  const end = Date.parse(`${cleanText(holiday.endDate) || cleanText(holiday.startDate)}T00:00:00Z`);
-  if (Number.isNaN(start) || Number.isNaN(end) || end < start) return 0;
-  return Math.round((end - start) / 86400000) + 1;
+/** The weekday a holiday starts on -- the thing that decides which delivery day it takes out. */
+function holidayWeekday(value: string): string {
+  const parsed = new Date(`${cleanText(value)}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'UTC' });
 }
 
-function HolidayPicker({
+/**
+ * The holidays a cohort's own dates put inside its delivery period, each one a
+ * checkbox: ticked applies to the cohort, unticked does not. Both kinds are
+ * here -- England's bank holidays and the college's own closure periods -- and
+ * they behave identically, because a closed delivery day is a closed delivery
+ * day. Every holiday is ticked by default, so an untouched cohort behaves
+ * exactly as it always did.
+ */
+function HolidayPeriodList({
   holidays,
-  selected,
-  onChange,
-  periodStart,
-  periodEnd,
+  hasCalendar,
   periodLabel,
+  excludedIds,
+  onToggle,
+  onSelectAll,
+  onClearAll,
 }: {
+  /** Already narrowed to the cohort's period, in date order. */
   holidays: CurriculumHoliday[];
-  selected: string[];
-  onChange: (value: string[]) => void;
-  /** Cohort start date. Empty until the form has one. */
-  periodStart: string;
-  /** Practical end date of the cohort. Empty until the form has one. */
-  periodEnd: string;
+  /** False when no holidays could be read at all -- a different problem from a quiet period. */
+  hasCalendar: boolean;
   /** Human-readable period, empty when the period is not known yet. */
   periodLabel: string;
+  /** Normalised ids of the holidays currently unticked. */
+  excludedIds: Set<string>;
+  onToggle: (holidayId: string | number) => void;
+  onSelectAll: () => void;
+  onClearAll: () => void;
 }) {
-  const selectedKeys = useMemo(() => new Set(selected.map(String)), [selected]);
-  // The same inclusive overlap test the backend uses (date_ranges_overlap): a
-  // holiday belongs to this cohort when it touches the period at all. A holiday
-  // already selected but now outside the period keeps its own heading instead of
-  // disappearing, so editing the dates can never hide a stored selection.
-  const { inPeriod, outsidePeriod } = useMemo(() => {
-    if (!periodStart || !periodEnd) return { inPeriod: holidays, outsidePeriod: [] as CurriculumHoliday[] };
-    const inside: CurriculumHoliday[] = [];
-    const outside: CurriculumHoliday[] = [];
-    holidays.forEach(holiday => {
-      const holidayStart = cleanText(holiday.startDate);
-      const holidayEnd = cleanText(holiday.endDate) || holidayStart;
-      if (holidayStart && holidayStart <= periodEnd && holidayEnd >= periodStart) inside.push(holiday);
-      else if (selectedKeys.has(String(holiday.id))) outside.push(holiday);
-    });
-    return { inPeriod: inside, outsidePeriod: outside };
-  }, [holidays, periodEnd, periodStart, selectedKeys]);
+  if (!hasCalendar) {
+    return (
+      <p className="rounded-lg border border-background-200 bg-background-100 px-3 py-2.5 text-[12px] text-foreground-500">
+        No holidays could be read. Bank holidays are mirrored from GOV.UK; closure periods are added on the Holidays page.
+      </p>
+    );
+  }
 
   if (!holidays.length) {
     return (
       <p className="rounded-lg border border-background-200 bg-background-100 px-3 py-2.5 text-[12px] text-foreground-500">
-        No holidays recorded yet. Add them on the Holidays page.
+        {periodLabel
+          ? `No holidays fall inside ${periodLabel}.`
+          : "Set the start date and duration to see the holidays inside this cohort's period."}
       </p>
     );
   }
-  const inPeriodIds = inPeriod.map(holiday => String(holiday.id));
-  const selectedInPeriodCount = inPeriodIds.filter(id => selectedKeys.has(id)).length;
-  const allInPeriodSelected = inPeriodIds.length > 0 && selectedInPeriodCount === inPeriodIds.length;
-  const selectAllInPeriod = () => {
-    const next = Array.from(new Set([...selected.map(String), ...inPeriodIds]));
-    onChange(next);
-  };
-  const clearInPeriod = () => {
-    const inPeriodSet = new Set(inPeriodIds);
-    onChange(selected.map(String).filter(id => !inPeriodSet.has(id)));
-  };
-  const toggle = (id: string) => {
-    onChange(selected.includes(id) ? selected.filter(item => item !== id) : [...selected, id]);
-  };
-  const holidayRow = (holiday: CurriculumHoliday, outside: boolean) => {
-    const id = String(holiday.id);
-    const active = selectedKeys.has(id);
-    const dayCount = holidayDaySpan(holiday);
-    return (
-      <button
-        key={id}
-        type="button"
-        onClick={() => toggle(id)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-smooth ${
-          active ? 'border-primary-300 bg-primary-50' : 'border-transparent hover:bg-background-100'
-        }`}
-      >
-        <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${active ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300'}`}>
-          {active && <AppIcon className="ri-check-line text-[10px]"></AppIcon>}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-[12px] font-semibold text-foreground-900">{holiday.label}</span>
-            {outside && (
-              <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700">
-                Outside period
-              </span>
-            )}
-            {dayCount > 0 && (
-              <span className="shrink-0 rounded-full bg-background-200 px-1.5 py-0.5 text-[9px] font-bold text-foreground-600">
-                {dayCount} {dayCount === 1 ? 'day' : 'days'}
-              </span>
-            )}
-          </span>
-          <span className="block text-[11px] text-foreground-400">
-            {formatDateLabel(holiday.startDate)} – {formatDateLabel(holiday.endDate || holiday.startDate)}
-          </span>
-        </span>
-      </button>
-    );
-  };
+
+  const selectedCount = holidays.length - excludedIds.size;
 
   return (
     <div className="space-y-2">
-      {inPeriod.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-[11px] font-semibold text-foreground-500">
-            {selectedInPeriodCount} of {inPeriod.length} selected
-          </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold text-foreground-500">
+          {holidays.length} {holidays.length === 1 ? 'holiday' : 'holidays'} in this period
+          {selectedCount !== holidays.length ? ` — ${selectedCount} selected` : ''}
+        </p>
+        <div className="flex items-center gap-2">
           <button
             type="button"
-            aria-label={allInPeriodSelected ? 'Clear selected holidays' : 'Select all holidays'}
-            onClick={allInPeriodSelected ? clearInPeriod : selectAllInPeriod}
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100"
+            onClick={onSelectAll}
+            disabled={excludedIds.size === 0}
+            className="text-[11px] font-bold text-primary-700 transition-smooth hover:text-primary-800 hover:underline disabled:cursor-not-allowed disabled:text-foreground-300 disabled:no-underline"
           >
-            <AppIcon className={allInPeriodSelected ? 'ri-checkbox-blank-line text-sm' : 'ri-checkbox-multiple-line text-sm'}></AppIcon>
-            {allInPeriodSelected ? 'Clear selected holidays' : 'Select all holidays'}
+            Select all
+          </button>
+          <span className="text-[11px] text-foreground-300">·</span>
+          <button
+            type="button"
+            onClick={onClearAll}
+            disabled={selectedCount === 0}
+            className="text-[11px] font-bold text-primary-700 transition-smooth hover:text-primary-800 hover:underline disabled:cursor-not-allowed disabled:text-foreground-300 disabled:no-underline"
+          >
+            Clear all
           </button>
         </div>
-      )}
-      <div className="max-h-56 space-y-1.5 overflow-y-auto rounded-lg border border-background-200 bg-background-50 p-2">
-        {inPeriod.length ? inPeriod.map(holiday => holidayRow(holiday, false)) : (
-          <p className="px-1 py-2 text-[12px] text-foreground-500">
-            None of the {holidays.length} recorded holidays fall inside {periodLabel || "this cohort's period"}.
-          </p>
-        )}
-        {outsidePeriod.length > 0 && (
-          <>
-            <p className="px-1 pt-2 text-[10px] font-bold uppercase tracking-wider text-amber-700">
-              Selected, but outside this period
-            </p>
-            {outsidePeriod.map(holiday => holidayRow(holiday, true))}
-          </>
-        )}
       </div>
-      {periodLabel && inPeriod.length > 0 && !selected.length && (
-        <p className="text-[11px] font-semibold text-amber-700">
-          Nothing ticked: none of the {inPeriod.length} holidays in this period is skipped when module sessions are generated.
-        </p>
-      )}
+      <div className="max-h-56 space-y-1.5 overflow-y-auto rounded-lg border border-background-200 bg-background-50 p-2">
+        {holidays.map(holiday => {
+          const weekday = holidayWeekday(holiday.startDate);
+          const checked = !excludedIds.has(normaliseKey(holiday.id));
+          return (
+            <label
+              key={String(holiday.id)}
+              className="flex w-full cursor-pointer items-center gap-2 rounded-lg border border-transparent px-2.5 py-2 text-left transition-smooth hover:bg-background-100"
+            >
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => onToggle(holiday.id)}
+                className="h-3.5 w-3.5 shrink-0 rounded border-background-300 text-primary-600 focus:ring-primary-500"
+              />
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: holiday.color || '#91d64c' }} />
+              <span className={`min-w-0 flex-1 ${checked ? '' : 'opacity-50'}`}>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate text-[12px] font-semibold text-foreground-900">{holiday.label}</span>
+                  {/* Only ever 'Substitute day': the real date fell on a weekend and the holiday moved. */}
+                  {cleanText(holiday.notes) && (
+                    <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700">
+                      {holiday.notes}
+                    </span>
+                  )}
+                </span>
+                <span className="block text-[11px] text-foreground-400">
+                  {weekday ? `${weekday} ` : ''}{formatDateLabel(holiday.startDate)}
+                </span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
     </div>
   );
 }
