@@ -42,7 +42,30 @@ class MonthlyAssignmentTests(SimpleTestCase):
         self.assertTrue(all(checks.values()))
 
     def test_empty_draft_is_safe_to_check_but_not_ready(self):
-        self.assertFalse(any(self.checks({}, meeting_booked=False).values()))
+        checks = self.checks({}, meeting_booked=False)
+        self.assertTrue(checks.pop("evidence"))
+        self.assertFalse(any(checks.values()))
+
+    def test_submission_without_evidence_passes_all_checks(self):
+        payload = self.payload()
+        monthly = payload['monthlyAssignment']
+        monthly['evidence'] = []
+        monthly['claims'][0]['evidenceIds'] = []
+        monthly['presentationToken'] = signing.dumps(presentation_fingerprint(payload), salt='monthly-assignment-pptx')
+        self.assertTrue(all(self.checks(payload).values()))
+
+    def test_ksb_evidence_selection_is_optional_even_with_attachments(self):
+        payload = self.payload()
+        payload['monthlyAssignment']['claims'][0]['evidenceIds'] = []
+        self.assertTrue(self.checks(payload)['ksbs'])
+
+    def test_optional_evidence_does_not_accept_invalid_items_or_dangling_references(self):
+        payload = self.payload()
+        payload['monthlyAssignment']['evidence'].append({'id': 'link:bad', 'url': 'javascript:alert(1)'})
+        self.assertFalse(self.checks(payload)['evidence'])
+        payload = self.payload()
+        payload['monthlyAssignment']['claims'][0]['evidenceIds'].append('missing-file')
+        self.assertFalse(self.checks(payload)['ksbs'])
 
     def test_import_flag_from_a_client_does_not_bypass_checks(self):
         for payload in [{"submissionOrigin": "imported_legacy"}, {"monthlyAssignment": {"version": 1, "imported": True}}]:

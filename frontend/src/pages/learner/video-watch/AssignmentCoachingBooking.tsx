@@ -16,7 +16,10 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
   const [notice, setNotice] = useState('');
   const [slotKey, setSlotKey] = useState('');
   const [date, setDate] = useState('');
-  const [time, setTime] = useState('09:00');
+  const [time, setTime] = useState('');
+  const [availableTimes, setAvailableTimes] = useState<string[]>([]);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const [availabilityError, setAvailabilityError] = useState('');
   const [busy, setBusy] = useState(false);
   const booking = useRef(false);
   const mounted = useRef(true);
@@ -55,8 +58,25 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
     return '';
   };
   const dateError = restriction();
+  const bookingOffset = date ? (12 - Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', hourCycle: 'h23' }).format(new Date(`${date}T12:00:00Z`)))) * 60 : 0;
+  useEffect(() => {
+    setTime(''); setAvailableTimes([]); setAvailabilityError('');
+    if (!date || dateError) { setAvailabilityLoading(false); return; }
+    const controller = new AbortController();
+    setAvailabilityLoading(true);
+    const query = new URLSearchParams({ date, timezoneOffsetMinutes: String(bookingOffset) });
+    fetch(`/learner_api/calendar/${kind}/${learnerId}/coach-availability/?${query}`, { signal: controller.signal })
+      .then(async response => {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Could not load coach availability.');
+        if (!controller.signal.aborted) setAvailableTimes(result.times || []);
+      })
+      .catch(error => { if (!controller.signal.aborted) setAvailabilityError(error.message || 'Could not load coach availability.'); })
+      .finally(() => { if (!controller.signal.aborted) setAvailabilityLoading(false); });
+    return () => controller.abort();
+  }, [date, dateError, bookingOffset, kind, learnerId, reload]);
   const book = async () => {
-    if (disabled || booking.current || (slots.length > 0 && !slot) || !date || !time || dateError) return;
+    if (disabled || booking.current || (slots.length > 0 && !slot) || !date || !time || dateError || availabilityLoading || !availableTimes.includes(time)) return;
     booking.current = true; setBusy(true); setError(''); setNotice('');
     const identity = { kind, learnerId, month };
     try {
@@ -64,11 +84,11 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
       if (!mounted.current || Object.keys(identity).some(k => identity[k as keyof typeof identity] !== latest.current[k as keyof typeof identity])) return;
       const result = await bookLearnerCalendarSession(kind, learnerId, {
         sessionType: 'mcr', eventKey: slot?.eventKey, assignmentMonth: month, scheduledDate: date, scheduledTime: time,
-        durationMinutes: 60, timezoneOffsetMinutes: new Date(`${date}T${time}`).getTimezoneOffset(), notes: `Monthly assignment: ${title}`,
+        durationMinutes: 60, timezoneOffsetMinutes: bookingOffset, notes: `Monthly assignment: ${title}`,
       });
       if (!mounted.current || Object.keys(identity).some(k => identity[k as keyof typeof identity] !== latest.current[k as keyof typeof identity])) return;
       setCalendar(current => current ? { ...current, events: [...current.events.filter(e => e.eventKey !== result.event.eventKey), result.event] } : current);
-      latest.current.onSelect(result.event.eventKey); setSlotKey('');
+      latest.current.onSelect(result.event.eventKey); setSlotKey(''); setDate(''); setTime(''); setAvailableTimes([]);
       setNotice(result.warning ? `Booking saved. ${result.warning}` : result.event.invited === false ? 'Booking saved, but the calendar invitation has not been sent. Contact your coach.' : 'Your Monthly Coaching Meeting is booked and linked to this assignment.');
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not book your meeting.'); }
     finally { booking.current = false; setBusy(false); }
@@ -85,16 +105,18 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
         <p className="text-sm leading-6 text-slate-600">Recording and transcription are enabled automatically using the live-session settings. The recording, transcript and attendance appear here once Teams has processed them after the meeting.</p>
         <CoachMeetingArtifactsPanel event={selected} fetchArtifacts={loadArtifacts} contentUrl={contentUrl} showAttendance />
       </div>}
-      {(slots.length > 0 || booked.length === 0) && <fieldset disabled={disabled || busy || !calendar} className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:p-5">
+      <fieldset disabled={disabled || busy || !calendar} className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:p-5">
         <legend className="px-2 text-sm font-semibold">Schedule an official MCM</legend>
         <>
-          {slots.length > 0 && <label className="block">Monthly Coaching Meeting slot<select className={input} value={slotKey} onChange={e => setSlotKey(e.target.value)}><option value="">Select your programme MCM</option>{slots.map(e => <option key={e.eventKey} value={e.eventKey}>{e.title} ? target {e.targetDate || e.date} ? {e.coachName}</option>)}</select></label>}
-          <p className="text-sm leading-6 text-slate-600">Choose a weekday between {minDate} and {maxDate}. Times use your browser's timezone. Calendar conflicts and bank holidays are checked by the same MCM booking service.</p>
-          <div className="grid gap-4 sm:grid-cols-2"><label>Date<input type="date" className={input} min={minDate} max={maxDate} value={date} onChange={e => setDate(e.target.value)} /></label><label>Time<input type="time" className={input} value={time} onChange={e => setTime(e.target.value)} /></label></div>
+          {slots.length > 0 && <label className="block">Monthly Coaching Meeting slot<select className={input} value={slotKey} onChange={e => setSlotKey(e.target.value)}><option value="">Select your programme MCM</option>{slots.map(e => <option key={e.eventKey} value={e.eventKey}>MCM {month} | Booking window: {minDate} to {maxDate} | {e.coachName}</option>)}</select></label>}
+          <p className="text-sm leading-6 text-slate-600">Choose a weekday between {minDate} and {maxDate}. Available times come from your coach's calendar and working hours, shown in UK time (Europe/London). Availability is checked again when you book.</p>
+          <div className="grid gap-4 sm:grid-cols-2"><label>Date<input type="date" className={input} min={minDate} max={maxDate} value={date} onChange={e => setDate(e.target.value)} /></label><label>Time<select className={input} value={time} disabled={availabilityLoading || !availableTimes.length} onChange={e => setTime(e.target.value)}><option value="">{availabilityLoading ? 'Loading available times...' : 'Select an available time'}</option>{availableTimes.map(value => <option key={value} value={value}>{value}</option>)}</select></label></div>
+          {availabilityError && <p role="alert" className="text-sm text-red-700">{availabilityError}</p>}
+          {date && !dateError && !availabilityLoading && !availabilityError && !availableTimes.length && <p className="text-sm text-slate-600">Your coach has no available 60-minute appointments on this date. Choose another date.</p>}
           {dateError && <p role="alert" className="text-sm text-red-700">{dateError}</p>}
-          <button type="button" className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-40" disabled={(slots.length > 0 && !slot) || !date || !time || Boolean(dateError)} onClick={() => void book()}>{busy && <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />}{busy ? 'Booking MCM...' : 'Book 60-minute MCM'}</button>
+          <button type="button" className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-40" disabled={(slots.length > 0 && !slot) || !date || !time || Boolean(dateError) || availabilityLoading || !availableTimes.includes(time)} onClick={() => void book()}>{busy && <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />}{busy ? 'Booking MCM...' : 'Book 60-minute MCM'}</button>
         </>
-      </fieldset>}
+      </fieldset>
       <button type="button" disabled={busy} className="text-sm font-medium text-blue-700 underline" onClick={() => setReload(n => n + 1)}>Refresh meetings</button>
     </>}
     {notice && <p role="status" className="rounded-xl bg-blue-50 p-4 text-sm">{notice}</p>}

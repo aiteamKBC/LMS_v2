@@ -4,6 +4,8 @@ import { AssignmentSubmissionWizard } from './AssignmentSubmissionWizard';
 import { checkMonthlyAssignment, emptyMonthlyAssignment } from '@/api/monthlyAssignment';
 import { loadLearningReflectionSubmission, saveLearningReflectionSubmission } from '@/api/reflectionSubmission';
 
+vi.mock('./page', () => ({ InlineAttachmentPreview: ({ url }: { url: string }) => <div data-testid="question-preview" data-url={url}>Question preview</div> }));
+
 vi.mock('@/api/reflectionSubmission', () => ({
   loadLearningReflectionSubmission: vi.fn(), saveLearningReflectionSubmission: vi.fn(),
 }));
@@ -196,4 +198,13 @@ describe('monthly assignment drafts', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Recheck submission requirements' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Submit assignment' })).not.toBeDisabled());
   });
+});
+
+
+it('previews a question attachment inside the answer step without downloading it', async () => {
+  render(<AssignmentSubmissionWizard {...props} questionText="" questionFileUrl="/curriculum_api/curriculum/uploads/brief.pdf" questionFileName="brief.pdf" />);
+  expect(await screen.findByText('Preview the attached file for your assignment question.')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'View file' }));
+  expect(await screen.findByTestId('question-preview')).toHaveAttribute('data-url', '/curriculum_api/curriculum/uploads/brief.pdf');
+  expect(screen.getByRole('button', { name: 'Hide preview' })).toHaveAttribute('aria-expanded', 'true');
 });
