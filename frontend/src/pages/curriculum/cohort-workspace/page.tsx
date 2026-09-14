@@ -355,11 +355,11 @@ export default function CohortWorkspacePage() {
             description="Every holiday inside this cohort's dates — England's bank holidays and the college's own closure periods. Session dates generated for its modules skip them."
             actions={(
               <Link
-                to="/curriculum/holidays"
+                to="/curriculum/england-holidays"
                 className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
               >
                 <AppIcon className="ri-calendar-close-line text-sm"></AppIcon>
-                View holidays
+                View bank holidays
               </Link>
             )}
           >

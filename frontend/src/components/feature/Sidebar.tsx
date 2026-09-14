@@ -36,6 +36,7 @@ import {
   Heart,
   HeartPulse,
   History,
+  Home as HomeIcon,
   KeyRound,
   LayoutDashboard,
   LifeBuoy,
@@ -139,7 +140,13 @@ function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   if (id === 'learner-onboarding') return Users;
   if (id === 'learner-compliance-documents') return ShieldCheck;
   if (/clipboard/.test(sourceIcon.toLowerCase())) return ClipboardList;
-  if (/dashboard|overview|\bhome\b/.test(key)) return LayoutDashboard;
+  // Home is a house; Dashboard is the grid. They shared one branch, so the two
+  // rows sat one above the other drawing the identical icon -- different
+  // destinations with the same picture, which defeats having an icon at all.
+  // Home is tested first: `key` concatenates id + label + sourceIcon, so
+  // 'learner-home ... ri-home-line' would otherwise never be reached.
+  if (/\bhome\b/.test(key)) return HomeIcon;
+  if (/dashboard|overview/.test(key)) return LayoutDashboard;
   // Curriculum workspace groups get distinct icons so the sidebar is scannable.
   if (/programme\s*-?\s*design|programme-design/.test(key)) return Presentation;
   if (/curriculum\s*-?\s*builder|curriculum-builder/.test(key)) return Workflow;

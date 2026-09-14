@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -448,11 +448,20 @@ export default function MonthlyCoachingPage() {
   // preserving the existing learning-summary default for legacy meetings.
   const [openSections, setOpenSections] = useState<string[]>(['learning', 'imported-review']);
   const selected = sessions.find((session) => session.id === sessionId) || null;
+  const [monthlyLogPromptOpen, setMonthlyLogPromptOpen] = useState(false);
   const reviewInstance = useLearnerReviewInstance(
     myLearner.kind,
     myLearner.id,
     selected?.reviewTemplateId || selected?.reviewInstanceId ? (selected.eventKey || selected.id) : '',
   );
+  const meetingMonth = dateOf(selected)?.slice(0, 7) || '';
+  const completedMcm = Boolean(
+    selected && meetingMonth && (selected.source === 'mcr' || selected.reviewTypeCode === 'mcm') &&
+    ['completed', 'awaiting-signature'].includes(reviewInstance.definition?.instance?.status || selected.status),
+  );
+  useEffect(() => {
+    if (completedMcm) setMonthlyLogPromptOpen(true);
+  }, [completedMcm]);
   const signLearnerReview = useCallback((signature: string) => signLearnerProgressReview(
     myLearner.kind,
     myLearner.id,
@@ -502,6 +511,13 @@ export default function MonthlyCoachingPage() {
   return (
     <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel} pageTitle="Monthly Coaching Meeting" pageSubtitle="Coaching meeting" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
       <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
+        {monthlyLogPromptOpen && completedMcm && meetingMonth && <div className="fixed inset-0 z-50 flex items-center justify-center bg-primary-950/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="monthly-log-prompt-title">
+          <div className="w-full max-w-lg rounded-2xl border border-background-200 bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">Meeting completed</p><h2 id="monthly-log-prompt-title" className="mt-1 text-xl font-bold text-foreground-900">Review and sign your monthly log</h2></div><button type="button" className="flex h-9 w-9 items-center justify-center rounded-lg bg-background-100 text-foreground-600" onClick={() => setMonthlyLogPromptOpen(false)} aria-label="Close"><AppIcon className="ri-close-line" /></button></div>
+            <p className="mt-3 text-sm leading-6 text-foreground-600">Your coach has completed this Monthly Coaching Meeting. Open the {monthLabel(meetingMonth)} record to review the activities and add your signature. Your coach can sign the same record from their account.</p>
+            <div className="mt-5 flex flex-wrap justify-end gap-2"><button type="button" className="rounded-lg border border-background-300 px-4 py-2 text-xs font-bold text-foreground-700" onClick={() => setMonthlyLogPromptOpen(false)}>Later</button><button type="button" className="rounded-lg bg-primary-700 px-4 py-2 text-xs font-bold text-white" onClick={() => navigate(`/learner/monthly-logs/${myLearner.kind}/${myLearner.id}/${meetingMonth}?workflow=mcm&source=mcm`)}><AppIcon className="ri-file-list-3-line mr-1.5" />Open monthly log</button></div>
+          </div>
+        </div>}
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}<button type="button" onClick={refresh} className="ml-3 font-bold underline">Try again</button></div>}
         <button type="button" onClick={() => navigate(`/learner/monthly-coaching?kind=${myLearner.kind}&learner=${myLearner.id}`)} className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-600 hover:text-primary-800"><AppIcon className="ri-arrow-left-line" />Back to coaching meetings</button>
         {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}</p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} signatoryName={learner?.name || 'Learner'} onSign={signLearnerReview} /> : selected.reviewTemplateId ? <Empty>This review form is not available.</Empty> : selected.importedReview ? <ImportedMcmView selected={selected} learner={learner} openSections={openSections} toggle={toggle} onBack={() => navigate(`/learner/monthly-coaching?kind=${myLearner.kind}&learner=${myLearner.id}`)} /> : (

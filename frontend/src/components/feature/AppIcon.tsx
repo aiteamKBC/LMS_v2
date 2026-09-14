@@ -85,6 +85,7 @@ import {
   IndentIncrease,
   Info,
   Inbox,
+  Home,
   Italic,
   KeyRound,
   Layers3,
@@ -195,7 +196,13 @@ function resolveIcon(name: string): LucideIcon {
   // wrong picture: it invited a click that does nothing.
   if (/drag|grip/.test(key)) return GripVertical;
   if (/dashboard|layout/.test(key)) return LayoutDashboard;
-  if (/home/.test(key)) return LayoutDashboard;
+  // Home is a house, not the dashboard grid. Both used to return
+  // LayoutDashboard, so every sidebar drew "Home" and the "Dashboard" item
+  // directly beneath it with the identical 2x2 grid -- two different
+  // destinations sharing one picture, which is exactly what an icon is for
+  // distinguishing. Renaming the nav entry could not fix it: every ri-home-*
+  // spelling lands on this one branch.
+  if (/home/.test(key)) return Home;
   // High-frequency workspace actions should never fall back to a generic circle.
   if (/task|todo|to-do/.test(key)) return ClipboardList;
   if (/notification|notification-3|bell/.test(key)) return Bell;
@@ -260,7 +267,9 @@ function resolveIcon(name: string): LucideIcon {
   if (/history|audit/.test(key)) return History;
   if (/more|ellipsis/.test(key)) return MoreHorizontal;
   if (/menu/.test(key)) return MoreHorizontal;
-  if (/home/.test(key)) return LayoutDashboard;
+  // Unreachable -- the /home/ branch above claims these first. Kept in step
+  // with it anyway, so moving either one cannot resurrect the grid.
+  if (/home/.test(key)) return Home;
   if (/user-star/.test(key)) return UserCheck;
   if (/user-settings|user-cog/.test(key)) return UserCog;
   if (/user-add|user-received/.test(key)) return UserPlus;
