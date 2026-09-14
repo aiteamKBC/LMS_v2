@@ -3807,6 +3807,11 @@ export interface ReviewType {
   isActive: boolean;
 }
 
+export interface ReviewApplicability {
+  scope: 'programme' | 'cohort' | 'group';
+  ids: string[];
+}
+
 export interface ReviewSummary {
   id: string;
   programmeId: string;
@@ -3824,6 +3829,7 @@ export interface ReviewSummary {
   reviewTypeCode: string;
   reviewTypeName: string;
   applicableStatuses: string[];
+  applicability?: ReviewApplicability;
   fieldCount: number;
   createdAt: string;
   updatedAt: string;
@@ -3859,6 +3865,7 @@ export interface CreateReviewInput {
   /** Required -- a Review cannot be saved without a Review Type. */
   reviewTypeId: string;
   applicableStatuses: string[];
+  applicability?: ReviewApplicability;
   signatures: ReviewRoleFlags;
   visibleTo: ReviewRoleFlags;
   recordTimeSpent: boolean;

@@ -571,15 +571,15 @@ class GraphParityTests(ReviewSchedulingSyncTestCase):
         # silently renaming the Teams meeting.
         self.assertEqual(coach_payload['subject'], learner_payload['subject'])
         self.assertIn('Quarterly Progress Conversation', coach_payload['subject'])
-        # Employer attendee survives a learner-side write.
-        self.assertEqual(attendees(coach_payload), attendees(learner_payload))
-        self.assertIn('employer@example.com', attendees(learner_payload))
-        self.assertIn(LEARNER_EMAIL, attendees(learner_payload))
+        # Rescheduling preserves the existing attendee list and Teams body.
+        self.assertIn('employer@example.com', attendees(coach_payload))
+        self.assertIn(LEARNER_EMAIL, attendees(coach_payload))
+        self.assertNotIn('attendees', learner_payload)
         # Same organizer mailbox (the coach), same timezone, same meeting type.
         self.assertEqual(coach_organizer, learner_organizer)
         self.assertEqual(coach_payload['start']['timeZone'], learner_payload['start']['timeZone'])
-        self.assertTrue(learner_payload['isOnlineMeeting'])
-        self.assertEqual(learner_payload['onlineMeetingProvider'], 'teamsForBusiness')
+        self.assertNotIn('isOnlineMeeting', learner_payload)
+        self.assertNotIn('onlineMeetingProvider', learner_payload)
 
     def test_17_the_graph_subject_follows_a_template_rename(self):
         """No title matching: the Teams subject is whatever Curriculum calls

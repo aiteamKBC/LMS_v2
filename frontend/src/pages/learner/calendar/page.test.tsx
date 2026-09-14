@@ -11,6 +11,7 @@ vi.mock('@/hooks/useMyLearner', () => ({ useLinkedLearner: () => ({ kind: 'comme
 vi.mock('@/pages/coach/shared/CoachMeetingArtifactsPanel', () => ({ CoachMeetingArtifactsPanel: () => <div>Meeting recordings</div> }));
 vi.mock('@/api/learnerCalendar', () => ({
   fetchLearnerCalendarEvents: vi.fn(),
+  fetchLearnerEventReviewInstance: vi.fn(async () => ({ instance: null })),
   bookLearnerCalendarSession: vi.fn(),
   rescheduleLearnerCalendarSession: vi.fn(),
   fetchLearnerCoach: vi.fn(async () => ({ coachName: 'Assigned coach', coachEmail: 'coach@example.test' })),
@@ -184,33 +185,23 @@ describe('calendar event previews', () => {
     expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
   });
 
-  it('schedules an imported Aptem progress review from its calendar details', async () => {
-    const importedReview = {
-      id: '72', aptemReviewId: 'A72', name: 'Progress Review', type: 'Progress Review',
-      reviewerName: 'Assigned coach', plannedDate: '2026-09-30', plannedTime: null,
-      completedDate: null, status: 'not-scheduled', extractionStatus: 'complete',
-      detailsAvailable: true, sections: [],
-    };
-    vi.mocked(fetchReviewHistory).mockImplementation(async (_kind, _id, category) => ({
-      learnerId: 125,
-      category,
-      reviews: category === 'reviews' ? [importedReview] : [],
-    }));
-    const booked = event({
-      id: 'progress-review:72', eventKey: 'progress-review:72', title: 'Progress Review',
-      source: 'progress-review', status: 'scheduled', bookingStatus: 'scheduled',
-      date: '2026-09-30', targetDate: '2026-09-30', scheduledDate: '2026-09-30', scheduledTime: '10:00',
+  it('shows Curriculum reviews instead of imported upcoming schedules', async () => {
+    vi.mocked(fetchReviewHistory).mockResolvedValue({
+      learnerId: 125, category: 'reviews', reviews: [{
+        id: '72', aptemReviewId: '72', name: 'Old Aptem schedule',
+        type: 'Progress Review', status: 'not-scheduled', plannedDate: isoDate,
+        plannedTime: null, completedDate: null, reviewerName: '', extractionStatus: 'complete',
+        detailsAvailable: false, sections: [],
+      }],
     });
-    vi.mocked(bookLearnerCalendarSession).mockResolvedValue({ event: booked });
-    setup([], '?event=imported-review%3A72');
-
-    const details = await screen.findByRole('dialog', { name: 'Progress Review' });
-    await userEvent.setup().click(within(details).getByRole('button', { name: 'Schedule Progress Review' }));
-    expect(await screen.findByRole('heading', { name: 'Schedule Progress Review' })).toBeVisible();
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Book Session' }));
-    await waitFor(() => expect(bookLearnerCalendarSession).toHaveBeenCalledWith('commercial', '125', expect.objectContaining({
-      sessionType: 'progress-review', reviewId: '72', assignmentMonth: '2026-09', eventKey: undefined,
-    })));
+    setup([event({
+      source: 'progress-review', title: 'Configured progress conversation',
+      reviewTemplateId: 'REV-72', reviewTypeId: 'REVT-PROGRESS_REVIEW',
+      reviewTypeCode: 'progress_review', reviewTypeName: 'Progress Review',
+    })]);
+    expect((await screen.findAllByRole('button', { name: /Configured progress conversation/ }))[0]).toBeVisible();
+    expect(screen.queryByText('Old Aptem schedule')).not.toBeInTheDocument();
+    expect(screen.getByTitle('Progress Review (1)')).toBeVisible();
   });
 
   it('previews the updated appointment after a successful reschedule', async () => {

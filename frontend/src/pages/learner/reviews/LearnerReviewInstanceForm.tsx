@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { ReviewFormRenderer } from '@/components/reviews/ReviewFormRenderer';
-import { fetchLearnerEventReviewInstance } from '@/api/learnerCalendar';
+import { fetchLearnerEventReviewInstance, type LearnerReviewDefinition } from '@/api/learnerCalendar';
 import type { LearnerKind } from '@/api/learnerDetail';
-import { flattenReviewFields, type ReviewInstanceFormDefinition, type ReviewParticipantRole } from '@/api/reviewInstances';
+import { flattenReviewFields, type ReviewParticipantRole } from '@/api/reviewInstances';
+import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
 
 /**
  * The learner's half of the ONE Curriculum-driven Review form.
@@ -27,24 +28,21 @@ const SIGNATURE_LABELS: Record<ReviewParticipantRole, string> = {
 };
 
 export interface LearnerReviewInstanceState {
-  definition: ReviewInstanceFormDefinition | null;
+  definition: LearnerReviewDefinition | null;
   loading: boolean;
   error: string;
 }
 
 /**
- * Loads the Review instance behind one calendar event.
- *
- * `eventKey` empty (or an occurrence with no `reviewInstanceId`) means there is
- * nothing to load: an unscheduled occurrence has no durable instance, and this
- * hook must never create one -- it only ever issues a GET.
+ * Loads a booked instance or an unscheduled occurrence's template preview.
+ * This hook only issues a GET; opening a form never creates an instance.
  */
 export function useLearnerReviewInstance(
   kind: LearnerKind,
   learnerId: string,
   eventKey: string,
 ): LearnerReviewInstanceState {
-  const [definition, setDefinition] = useState<ReviewInstanceFormDefinition | null>(null);
+  const [definition, setDefinition] = useState<LearnerReviewDefinition | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -57,11 +55,12 @@ export function useLearnerReviewInstance(
     }
     const controller = new AbortController();
     setLoading(true);
+    setDefinition(null);
     setError('');
     fetchLearnerEventReviewInstance(kind, learnerId, eventKey, controller.signal)
       .then((data) => {
         if (controller.signal.aborted) return;
-        setDefinition(data.instance ? (data as ReviewInstanceFormDefinition) : null);
+        setDefinition('template' in data ? data : null);
       })
       .catch((reason: unknown) => {
         if (controller.signal.aborted) return;
@@ -75,7 +74,7 @@ export function useLearnerReviewInstance(
   return { definition, loading, error };
 }
 
-export function LearnerReviewInstanceForm({ definition }: { definition: ReviewInstanceFormDefinition }) {
+export function LearnerReviewInstanceForm({ definition, onSign, signatoryName = 'Learner' }: { definition: LearnerReviewDefinition; onSign?: (signature: string) => Promise<void>; signatoryName?: string }) {
   const [openSectionId, setOpenSectionId] = useState('');
 
   useEffect(() => {
@@ -105,7 +104,7 @@ export function LearnerReviewInstanceForm({ definition }: { definition: ReviewIn
         {/* The Review Template's own name is the title. The Review Type only
             classifies/routes the occurrence and is never displayed here. */}
         <h2 className="mt-0.5 text-sm font-bold text-foreground-900" data-testid="learner-review-instance-title">
-          {definition.template.name} #{definition.instance.occurrenceNumber}
+          {definition.template.name} #{definition.instance?.occurrenceNumber || definition.occurrenceNumber}
         </h2>
         <p className="mt-1 text-xs text-primary-800">
           <AppIcon className="ri-information-line mr-1.5" />
@@ -138,6 +137,19 @@ export function LearnerReviewInstanceForm({ definition }: { definition: ReviewIn
               </div>
             ))}
           </div>
+          {onSign && definition.signatures.participant?.required && !definition.signatures.participant.signed &&
+            !['awaiting-signature', 'completed'].includes(definition.instance?.status || '') ? (
+            <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-semibold text-amber-800">
+              The coach must complete this review before you can sign it.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {onSign && definition.signatures.participant?.required && !definition.signatures.participant.signed &&
+        ['awaiting-signature', 'completed'].includes(definition.instance?.status || '') ? (
+        <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
+          <p className="mb-3 text-sm font-bold text-violet-950">Your signature is required</p>
+          <SignaturePad signatoryName={signatoryName} onCommit={(signature) => { void onSign(signature); }} onCancel={() => undefined} />
         </div>
       ) : null}
     </section>

@@ -57,12 +57,13 @@ function reviewDate(review?: LearnerCalendarEvent | null): string | null {
 
 function progressReviewTitle(review?: LearnerCalendarEvent | null): string {
   if (review?.importedReview) return review.importedReview.name || review.title || 'Review';
+  if (review?.reviewTemplateId) return `${review.title} #${review.occurrenceNumber || review.sequence}`;
   const month = monthLabel(reviewDate(review));
   return `Progress Review${month ? ` — ${month}` : ''}${review?.sequence ? ` #${review.sequence}` : ''}`;
 }
 
 function reviewTypeLabel(review?: LearnerCalendarEvent | null): string {
-  return review?.importedReview?.type || 'Formal progress review';
+  return review?.reviewTypeName || review?.importedReview?.type || 'Formal progress review';
 }
 
 function importedValue(value: unknown): string {
@@ -504,7 +505,7 @@ export default function ProgressReviewsPage() {
   const reviewInstance = useLearnerReviewInstance(
     myLearner.kind,
     myLearner.id,
-    selected?.reviewInstanceId ? (selected.eventKey || selected.id) : '',
+    selected?.reviewTemplateId || selected?.reviewInstanceId ? (selected.eventKey || selected.id) : '',
   );
   const selectedIndex = selected ? reviews.findIndex((review) => review.id === selected.id) : -1;
   const previousReview = selectedIndex > 0 ? reviews[selectedIndex - 1] : null;
@@ -685,7 +686,7 @@ export default function ProgressReviewsPage() {
                 </div>
               </section>
 
-              {reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}</p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} /> : <>
+              {reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}</p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} onSign={saveSignature} signatoryName={learner?.name || 'Learner'} /> : selected.reviewTemplateId ? <p className="p-4 text-sm text-foreground-500">This review form is not available.</p> : <>
               {selected.importedReview ? <div className="space-y-3">
                 {selected.importedReview.sections.map((section, index) => <Accordion key={section.id} id={`imported-section:${section.id}`} title={section.name.replace(/\s+(completed|incomplete)$/i, '').trim()} icon="ri-file-list-3-line" open={openSections.includes(`imported-section:${section.id}`) || (!openSections.some((id) => id.startsWith('imported-section:')) && index === 0)} onToggle={toggleSection}>
                   <ImportedReviewSections review={{ ...selected.importedReview, sections: [section] }} />

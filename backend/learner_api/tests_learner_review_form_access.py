@@ -153,8 +153,13 @@ class UnscheduledOccurrenceTests(LearnerReviewFormAccessTestCase):
         )
 
         # No stored row at all -- what a never-scheduled occurrence actually is.
-        status, _payload = self._view(None, event_key=occurrence['eventKey'])
-        self.assertEqual(status, 404)
+        with patch('learner_api.calendar.SOURCE_MODELS') as models, \
+                patch('learner_api.calendar.learner_profile_for_source', return_value=self._profile()):
+            models.get.return_value.all_learners.filter.return_value.first.return_value = self._enrolment_row()
+            status, payload = self._view(None, event_key=occurrence['eventKey'])
+        self.assertEqual(status, 200)
+        self.assertIsNone(payload['instance'])
+        self.assertEqual(payload['sections'][0]['title'], 'Curriculum-authored section')
 
         # A stored row with no instance (booked before the Curriculum Review
         # architecture, say) answers "no instance", not an error.
@@ -173,6 +178,37 @@ class UnscheduledOccurrenceTests(LearnerReviewFormAccessTestCase):
 
 
 class ScheduledOccurrenceTests(LearnerReviewFormAccessTestCase):
+    def test_learner_finds_coach_draft_when_no_calendar_row_is_linked_yet(self):
+        template = self._authored_template(
+            name='Progress Review Draft',
+            review_type_id=self._system_type_id(review_types.REVIEW_TYPE_CODE_PROGRESS_REVIEW),
+        )
+        occurrence = self._occurrence('progress-review')
+        instance = review_instances.ensure_review_instance(
+            template,
+            learner_id=LEARNER_MIRROR_ID,
+            learner_kind='commercial',
+            programme_id=PROGRAMME_ID,
+            occurrence_number=occurrence['occurrenceNumber'],
+            target_date=date.fromisoformat(occurrence['targetDate']),
+            coach_email='coach@example.com',
+        )
+        field_id = reviews.get_review_field_rows(template['id'])[0]['id']
+        review_instances.save_review_instance_answers(instance, {field_id: 'Saved by coach'}, actor='coach@example.com')
+
+        # The coach opened a generated occurrence, so no CoachCalendarEvent
+        # exists to carry review_instance_id. The learner must still resolve
+        # the same durable instance by template/learner/occurrence identity.
+        with patch('learner_api.calendar._learner_calendar_record', return_value=None), \
+                patch('learner_api.calendar.SOURCE_MODELS') as models, \
+                patch('learner_api.calendar.learner_profile_for_source', return_value=self._profile()):
+            models.get.return_value.all_learners.filter.return_value.first.return_value = self._enrolment_row()
+            status, payload = self._view(None, event_key=occurrence['eventKey'])
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload['instance']['id'], instance['id'])
+        self.assertEqual(payload['sections'][0]['fields'][0]['answer'], 'Saved by coach')
+
     def test_scheduled_mcm_view_opens_the_generic_review_instance_form(self):
         template = self._authored_template(
             name='Monthly Learner Catch-up',

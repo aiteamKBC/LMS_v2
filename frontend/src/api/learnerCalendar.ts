@@ -103,13 +103,18 @@ export function fetchLearnerCalendarEvents(kind: LearnerKind, id: string, option
 }
 
 /** Fetch the Curriculum-authored review form for an existing calendar occurrence. */
+export type LearnerReviewDefinition = Omit<ReviewInstanceFormDefinition, 'instance'> & {
+  instance: ReviewInstanceFormDefinition['instance'] | null;
+  occurrenceNumber?: number;
+};
+
 export function fetchLearnerEventReviewInstance(
   kind: LearnerKind,
   learnerId: string,
   eventKey: string,
   signal?: AbortSignal,
-): Promise<ReviewInstanceFormDefinition | { instance: null }> {
-  return request<ReviewInstanceFormDefinition | { instance: null }>(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/review/`, { signal, credentials: 'include' });
+): Promise<LearnerReviewDefinition | { instance: null }> {
+  return request<LearnerReviewDefinition | { instance: null }>(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/review/`, { signal, credentials: 'include' });
 }
 
 export function fetchLearnerMeetingArtifacts(kind: LearnerKind, learnerId: string, eventKey: string, signal?: AbortSignal): Promise<CoachMeetingArtifactsResponse> {

@@ -133,6 +133,7 @@ def provision_review_template_tables():
                 occurrence_count integer,
                 review_type_id varchar(128),
                 applicable_statuses {json_type},
+                applicability {json_type},
                 signature_advisor boolean not null default false,
                 signature_employer boolean not null default false,
                 signature_participant boolean not null default false,
@@ -175,6 +176,12 @@ def provision_review_template_tables():
                 updated_at timestamp not null default current_timestamp
             )
         ''')
+        if connection.vendor == 'postgresql':
+            cursor.execute(f'alter table {curriculum_views.authoring_table_name(REVIEW_TEMPLATES_TABLE)} add column if not exists applicability {json_type}')
+        else:
+            cursor.execute(f'pragma table_info({curriculum_views.quote_ident(REVIEW_TEMPLATES_TABLE)})')
+            if 'applicability' not in {row[1] for row in cursor.fetchall()}:
+                cursor.execute(f'alter table {curriculum_views.authoring_table_name(REVIEW_TEMPLATES_TABLE)} add column applicability {json_type}')
         cursor.execute(f'''
             create table if not exists {curriculum_views.authoring_table_name(REVIEW_FIELDS_TABLE)} (
                 id varchar(128) primary key,
@@ -344,6 +351,7 @@ def review_template_summary_payload(row, *, type_index=None):
         'reviewTypeCode': (type_row or {}).get('code') or '',
         'reviewTypeName': (type_row or {}).get('name') or '',
         'applicableStatuses': curriculum_views.as_json_value(row.get('applicable_statuses'), []),
+        'applicability': curriculum_views.as_json_value(row.get('applicability'), {'scope': 'programme', 'ids': []}),
         'fieldCount': curriculum_views.parse_int(row.get('field_count'), 0),
         'createdAt': row.get('created_at'),
         'updatedAt': row.get('updated_at'),
@@ -664,7 +672,31 @@ def _sections_payload_from(payload):
     return None
 
 
-def validate_review_payload(payload, *, partial=False):
+def validate_applicability(value, programme_id, errors):
+    if not isinstance(value, dict) or value.get('scope') not in ('programme', 'cohort', 'group'):
+        errors['applicability'] = 'Choose programme, cohort or group applicability.'
+        return None
+    scope, identifiers = value['scope'], value.get('ids', [])
+    if not isinstance(identifiers, list) or any(not isinstance(item, str) or not item.strip() for item in identifiers):
+        errors['applicability'] = 'Select valid cohort or group identifiers.'
+        return None
+    identifiers = list(dict.fromkeys(item.strip() for item in identifiers))
+    if scope == 'programme':
+        if identifiers:
+            errors['applicability'] = 'Programme applicability cannot include cohort or group identifiers.'
+        return {'scope': scope, 'ids': []}
+    if not identifiers:
+        errors['applicability'] = 'Select at least one cohort or group.'
+        return None
+    table = curriculum_views.COHORT_AUTHORING_DETAILS_TABLE if scope == 'cohort' else curriculum_views.GROUPS_TABLE
+    rows = curriculum_views.authoring_fetch_all(table, 'programme_id = %s', [programme_id])
+    allowed = {curriculum_views.clean_str(row.get(f'{scope}_id')) for row in rows}
+    if not set(identifiers).issubset(allowed):
+        errors['applicability'] = 'Selected cohorts or groups must belong to this programme.'
+    return {'scope': scope, 'ids': identifiers}
+
+
+def validate_review_payload(payload, *, partial=False, programme_id=None):
     """Returns (cleaned, errors). ``partial`` allows PATCH to omit unset fields."""
     errors = {}
     cleaned = {}
@@ -699,6 +731,11 @@ def validate_review_payload(payload, *, partial=False):
 
     if not partial or 'applicableStatuses' in payload:
         cleaned['applicable_statuses'] = validate_statuses(payload, errors)
+
+    if not partial or 'applicability' in payload:
+        cleaned['applicability'] = validate_applicability(
+            payload.get('applicability', {'scope': 'programme', 'ids': []}), programme_id, errors,
+        )
 
     signatures = payload.get('signatures') if isinstance(payload.get('signatures'), dict) else {}
     if not partial or 'signatures' in payload:
@@ -812,7 +849,7 @@ def existing_review_ids():
 
 
 def create_review(programme_id, payload, *, actor='system'):
-    cleaned, errors = validate_review_payload(payload, partial=False)
+    cleaned, errors = validate_review_payload(payload, partial=False, programme_id=programme_id)
     if errors:
         return None, errors
 
@@ -825,6 +862,7 @@ def create_review(programme_id, payload, *, actor='system'):
             'programme_id': programme_id,
             **{k: v for k, v in cleaned.items()},
             'applicable_statuses': curriculum_views.json_db_value(cleaned['applicable_statuses']),
+            'applicability': curriculum_views.json_db_value(cleaned['applicability']),
             'field_count': 0,
             'created_by': actor,
             'updated_by': actor,
@@ -845,7 +883,7 @@ def update_review(review_id, payload, *, actor='system'):
     if not row:
         return None, {'_': 'Review not found.'}
 
-    cleaned, errors = validate_review_payload(payload, partial=True)
+    cleaned, errors = validate_review_payload(payload, partial=True, programme_id=row['programme_id'])
     if errors:
         return None, errors
 
@@ -853,6 +891,8 @@ def update_review(review_id, payload, *, actor='system'):
     updates = dict(cleaned)
     if 'applicable_statuses' in updates:
         updates['applicable_statuses'] = curriculum_views.json_db_value(updates['applicable_statuses'])
+    if 'applicability' in updates:
+        updates['applicability'] = curriculum_views.json_db_value(updates['applicability'])
     updates['updated_by'] = actor
     updates['updated_at'] = datetime.utcnow()
 
@@ -907,6 +947,14 @@ def clone_review(source_row, destination_programme_id, *, actor='review-clone'):
         'incomplete_marker', 'field_count',
     )
     insert_payload = {column: source_row.get(column) for column in copy_columns}
+    applicability = curriculum_views.as_json_value(source_row.get('applicability'), {'scope': 'programme', 'ids': []})
+    if source_row.get('programme_id') == destination_programme_id:
+        insert_payload['applicability'] = curriculum_views.json_db_value(applicability)
+    elif applicability.get('scope') != 'programme':
+        # The destination has different placement IDs. Require an explicit
+        # applicability choice before a restricted clone starts generating.
+        insert_payload['enabled'] = False
+        insert_payload['applicability'] = curriculum_views.json_db_value({'scope': 'programme', 'ids': []})
     curriculum_views.insert_row(REVIEW_TEMPLATES_TABLE, {
         'id': new_id,
         'programme_id': destination_programme_id,

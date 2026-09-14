@@ -8,8 +8,8 @@ import { type CalendarEvent } from '@/pages/learner/clubs/data';
 import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from '@/utils/ics-generator';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
-import { fetchLearnerDetail } from '@/api/learnerDetail';
 import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
+import { buildSourceFilters, countBySource, filterBySource, learnerEventSource, learnerSourceMeta, type LearnerSourceFilter } from './reviewTypeFilters';
 import { moveCalendarDate } from './navigation';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -28,7 +28,8 @@ import { CalendarEventDialog } from '@/components/feature/CalendarEventDialog';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
 import { meetingBookingWarning } from '../reviews/meetingBooking';
 import { useImportedMeetingBooking } from '../reviews/useImportedMeetingBooking';
-import { importedReviewsToEvents } from '../reviews/useReviewSessions';
+import { importedReviewsToEvents, mergeCompletedReviewHistory } from '../reviews/useReviewSessions';
+import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
 import { firstAvailableBookingDate } from '../reviews/bookingDates';
 
 /** The header's secondary-actions menu — everything that isn't booking a
@@ -130,8 +131,8 @@ const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAYS_SHORT = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTH_SHORT_INDEX: Record<string, number> = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
-const BOOKABLE_COACH_SESSION_TYPES = new Set<BookableSessionType>(['catch-up', 'student-support', 'mcr', 'progress-review', 'gateway', 'other']);
-const PROGRAMME_CYCLE_SESSION_TYPES = new Set<BookableSessionType>(['mcr', 'progress-review']);
+const BOOKABLE_COACH_SESSION_TYPES = new Set<BookableSessionType>(['catch-up', 'student-support', 'mcr', 'progress-review', 'review', 'gateway', 'other']);
+const PROGRAMME_CYCLE_SESSION_TYPES = new Set<BookableSessionType>(['mcr', 'progress-review', 'review']);
 
 const CALENDAR_PROVIDERS: Array<{ provider: PersonalCalendarProvider; title: string; subtitle: string; icon: string }> = [
   { provider: 'google', title: 'Continue with Google', subtitle: 'OAuth access to free/busy availability', icon: 'ri-google-fill' },
@@ -153,15 +154,6 @@ function parseEventDate(ev: CalendarEvent): { day: number; month: number; year: 
   return { day, month, year: null };
 }
 
-function eventMonthLabel(isoDate?: string | null): string {
-  if (!isoDate) return '';
-  const [year, month, day] = isoDate.split('-').map(Number);
-  if (!year || !month || !day) return '';
-  const date = new Date(year, month - 1, day);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
-}
-
 /** Map a Coach.coach_calendar_event row (backend JSON) to the page's display shape. */
 function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
   if (ev.status === 'cancelled') return null;
@@ -180,19 +172,15 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
     time = `${ev.scheduledTime}–${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`;
   }
   const isLiveSession = ev.source === 'live-session';
-  const eventSourceType = BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
+  const eventSourceType = ev.reviewTypeName || (BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
     ? sessionTypeLabel(ev.source as BookableSessionType)
-    : ev.type === 'review' ? 'Progress Review' : ev.type === 'welfare' ? 'Student Support' : 'Coaching';
+    : ev.type === 'review' ? 'Review' : ev.type === 'welfare' ? 'Student Support' : 'Coaching');
   const confirmed = (
     ev.status === 'scheduled' || ev.status === 'in-progress' || ev.status === 'completed'
   ) && (isLiveSession || ev.invited !== false);
   return {
     id: ev.id,
-    title: ev.source === 'mcr' && ev.sequence
-      ? `Monthly Coaching Meeting — ${eventMonthLabel(iso)} #${ev.sequence}`
-      : ev.source === 'progress-review' && ev.sequence
-        ? `Progress Review — ${eventMonthLabel(iso)} #${ev.sequence}`
-        : !isLiveSession && ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title,
+    title: !isLiveSession && ev.sequence ? `${ev.title} #${ev.sequence}` : ev.title,
     date: `${d} ${MONTH_NAMES[m - 1].substring(0, 3)}`,
     dayName,
     time,
@@ -211,6 +199,12 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
     meetingLink: ev.meetingLink || undefined,
     eventKey: ev.eventKey || ev.id,
     source: ev.source,
+    reviewTemplateId: ev.reviewTemplateId,
+    reviewTypeId: ev.reviewTypeId,
+    reviewTypeCode: ev.reviewTypeCode,
+    reviewTypeName: ev.reviewTypeName,
+    reviewTypeIsSystem: ev.reviewTypeIsSystem,
+    importedReview: ev.importedReview,
     durationMinutes: ev.durationMinutes || 60,
     bookingStatus: ev.status,
     bookingSessionType: BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
@@ -220,46 +214,6 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
     syncWarning: meetingBookingWarning(ev),
     bookingReviewId: ev.reviewId,
     assignmentMonth: ev.assignmentMonth,
-  };
-}
-
-/** Map an Aptem review to the calendar shape without changing its identity. */
-function mapImportedReview(review: ImportedReview, source: 'mcr' | 'progress-review'): CalendarEvent | null {
-  const iso = review.plannedDate || review.completedDate;
-  if (!iso) return null;
-  const [year, month, day] = iso.split('-').map(Number);
-  if (!year || !month || !day) return null;
-  const date = new Date(year, month - 1, day);
-  if (Number.isNaN(date.getTime())) return null;
-  const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
-  const status = review.status || 'unknown';
-  const hasTime = Boolean(review.plannedTime);
-  const start = review.plannedTime || '09:00';
-  const [hour, minute] = start.split(':').map(Number);
-  const end = new Date(year, month - 1, day, hour || 0, (minute || 0) + 60);
-  return {
-    id: `imported-review:${review.id}`,
-    eventKey: `imported-review:${review.id}`,
-    title: review.name || (source === 'mcr' ? 'Monthly Coaching Meeting' : 'Review'),
-    date: `${day} ${MONTH_NAMES[month - 1].slice(0, 3)}`,
-    dayName,
-    time: `${start}\u2013${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`,
-    club: source === 'mcr' ? 'Coaching' : 'Reviews',
-    clubId: '',
-    type: source === 'mcr' ? 'Monthly Coaching Meeting' : 'Progress Review',
-    format: 'Imported Aptem review',
-    location: hasTime ? 'Online' : 'To be confirmed',
-    host: review.reviewerName || 'Review team',
-    points: 0,
-    status: ['scheduled', 'in-progress', 'awaiting-signature', 'completed'].includes(status) ? 'confirmed' : 'pending',
-    description: `${review.type || 'Review'} imported from Aptem.`,
-    isoDate: iso,
-    source,
-    durationMinutes: 60,
-    bookingStatus: status,
-    bookingSessionType: source,
-    timeToBeConfirmed: !hasTime && status === 'not-scheduled',
-    importedReview: review,
   };
 }
 
@@ -453,25 +407,9 @@ function restoreNotifications() {
 }
 
 type ViewMode = 'monthly' | 'weekly' | 'daily';
-type LearnerSourceFilter = 'all' | 'live-session' | 'mcr' | 'progress-review' | 'gateway' | 'catch-up' | 'student-support' | 'other' | 'personal' | 'busy';
 type LearnerStatusFilter = 'all' | 'needs-schedule' | 'scheduled' | 'pending' | 'in-progress' | 'completed';
 
-const LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'gateway', 'catch-up', 'student-support', 'other', 'personal', 'busy'];
-const VISIBLE_LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'gateway', 'catch-up', 'student-support', 'other'];
 const LEARNER_STATUS_FILTERS: LearnerStatusFilter[] = ['all', 'needs-schedule', 'scheduled', 'pending', 'in-progress', 'completed'];
-
-const LEARNER_SOURCE_META: Record<LearnerSourceFilter, { label: string; short: string; dot: string }> = {
-  all: { label: 'All Sources', short: 'All', dot: 'bg-foreground-400' },
-  'live-session': { label: 'Live Sessions', short: 'Live Session', dot: 'bg-violet-500' },
-  mcr: { label: 'Monthly Coaching Meeting', short: 'Monthly Coaching Meeting', dot: 'bg-orange-500' },
-  'progress-review': { label: 'Progress Review', short: 'Progress Review', dot: 'bg-teal-500' },
-  gateway: { label: 'Gateway', short: 'Gateway', dot: 'bg-indigo-500' },
-  'catch-up': { label: 'Catch-up', short: 'Catch-up', dot: 'bg-rose-500' },
-  'student-support': { label: 'Student Support', short: 'Support', dot: 'bg-blue-500' },
-  other: { label: 'Other', short: 'Other', dot: 'bg-slate-500' },
-  personal: { label: 'Personal Events', short: 'Personal', dot: 'bg-sky-500' },
-  busy: { label: 'Busy Time', short: 'Busy', dot: 'bg-slate-500' },
-};
 
 const LEARNER_STATUS_META: Record<LearnerStatusFilter, { label: string; dot: string }> = {
   all: { label: 'All', dot: 'bg-foreground-400' },
@@ -534,19 +472,6 @@ function sessionTypeLabel(value?: CalendarEvent['bookingSessionType'] | Bookable
     default:
       return 'Coach Session';
   }
-}
-
-function learnerEventSource(event: CalendarEvent): LearnerSourceFilter {
-  if (event.type === 'Busy') return 'busy';
-  if (event.club === 'Personal' || event.type === 'Personal') return 'personal';
-  if (event.source === 'live-session') return 'live-session';
-  if (event.source === 'mcr') return 'mcr';
-  if (event.source === 'progress-review') return 'progress-review';
-  if (event.source === 'gateway') return 'gateway';
-  if (event.source === 'catch-up') return 'catch-up';
-  if (event.source === 'student-support') return 'student-support';
-  if (event.source === 'other') return 'other';
-  return 'personal';
 }
 
 function learnerEventStatus(event: CalendarEvent): LearnerStatusFilter {
@@ -633,6 +558,8 @@ function LearnerCalendarBody() {
   useLiveRefresh(refreshCalendar);
   const [addToCalendarToast, setAddToCalendarToast] = useState<string | null>(null);
   const [showEventDetails, setShowEventDetails] = useState<CalendarEvent | null>(null);
+  const selectedReview = useLearnerReviewInstance(myLearner.kind, myLearner.id,
+    showEventDetails?.reviewTemplateId ? showEventDetails.eventKey || showEventDetails.id : '');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showDayDrawer, setShowDayDrawer] = useState(false);
   const [customTitle, setCustomTitle] = useState('');
@@ -757,19 +684,12 @@ function LearnerCalendarBody() {
       sessionTypeLabel(event.bookingSessionType),
     ].some((value) => value.toLowerCase().includes(term)));
   }, [searchTerm, visibleRangeEvents]);
-  const sourceFilterCounts = useMemo(() => {
-    const counts = Object.fromEntries(LEARNER_SOURCE_FILTERS.map((source) => [source, 0])) as Record<LearnerSourceFilter, number>;
-    searchedVisibleRangeEvents.forEach((event) => {
-      counts.all += 1;
-      counts[learnerEventSource(event)] += 1;
-    });
-    return counts;
-  }, [searchedVisibleRangeEvents]);
-  const sourceFilteredVisibleRangeEvents = useMemo(() => (
-    filterSource === 'all'
-      ? searchedVisibleRangeEvents
-      : searchedVisibleRangeEvents.filter((event) => learnerEventSource(event) === filterSource)
-  ), [filterSource, searchedVisibleRangeEvents]);
+  const sourceFilters = useMemo(() => buildSourceFilters(displayedEvents), [displayedEvents]);
+  const sourceFilterCounts = useMemo(() => countBySource(searchedVisibleRangeEvents, sourceFilters), [searchedVisibleRangeEvents, sourceFilters]);
+  const sourceFilteredVisibleRangeEvents = useMemo(() => filterBySource(searchedVisibleRangeEvents, filterSource), [filterSource, searchedVisibleRangeEvents]);
+  useEffect(() => {
+    if (!sourceFilters.some(option => option.key === filterSource)) setFilterSource('all');
+  }, [sourceFilters, filterSource]);
   const statusFilterCounts = useMemo(() => {
     const counts = Object.fromEntries(LEARNER_STATUS_FILTERS.map((status) => [status, 0])) as Record<LearnerStatusFilter, number>;
     sourceFilteredVisibleRangeEvents.forEach((event) => {
@@ -1020,55 +940,30 @@ function LearnerCalendarBody() {
     return () => { cancelled = true; };
   }, [showBookModal, calendarConnections.length, bookDate, myLearner.kind, myLearner.id]);
 
-  // Non-Aptem learners use the Review-Coach generated/calendar flow. Aptem
-  // learners keep their imported review rows as the source of truth for MCM
-  // and Progress Review bookings.
   useEffect(() => {
     let cancelled = false;
     const writeVersion = calendarWriteVersionRef.current;
-    const calendarPromise = fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true });
-    // Keep the calendar load independent of the optional Aptem identity
-    // lookup. A failed detail request falls back to the review endpoint,
-    // whose empty result is the normal response for learners without Aptem.
-    const detailPromise = fetchLearnerDetail(myLearner.kind, myLearner.id, { revalidate: true }).catch(() => null);
-    calendarPromise
+    fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true })
       .then(async (res) => {
         if (cancelled || writeVersion !== calendarWriteVersionRef.current) return;
-        const coachEvents = res.events
-          .map(mapCoachEvent)
-          .filter((ev): ev is CalendarEvent => ev !== null);
-        let events = coachEvents;
-        // Calendar data remains usable if the detail endpoint is unavailable;
-        // the flag only determines whether Aptem review rows should replace
-        // the generated MCM/Progress Review cards.
-        const detail = await detailPromise;
-        if (detail?.studentActivityAvailable || detail === null) {
-          const histories = await Promise.allSettled([
-            fetchReviewHistory(myLearner.kind, myLearner.id, 'monthly-coaching'),
-            fetchReviewHistory(myLearner.kind, myLearner.id, 'reviews'),
-          ]);
-          if (cancelled || writeVersion !== calendarWriteVersionRef.current) return;
-          const monthly = histories[0].status === 'fulfilled' ? histories[0].value.reviews : [];
-          const progress = histories[1].status === 'fulfilled' ? histories[1].value.reviews : [];
-          const importedMonthly = monthly
-            .map((review) => mapImportedReview(review, 'mcr'))
-            .filter((ev): ev is CalendarEvent => ev !== null);
-          const importedProgress = progress
-            .map((review) => mapImportedReview(review, 'progress-review'))
-            .filter((ev): ev is CalendarEvent => ev !== null);
-          const importedSources = new Set<LearnerSourceFilter>();
-          if (importedMonthly.length) importedSources.add('mcr');
-          if (importedProgress.length) importedSources.add('progress-review');
-          events = [
-            ...coachEvents.filter((event) => !importedSources.has(learnerEventSource(event))),
-            ...importedMonthly,
-            ...importedProgress,
-          ];
-        }
+        const mapEvents = (rows: LearnerCalendarEvent[]) => rows.map(mapCoachEvent).filter((event): event is CalendarEvent => event !== null);
+        setMyEvents(prev => [...mapEvents(res.events), ...prev.filter(event => event.id.startsWith('custom-'))]);
+        setCalendarLoading(false);
+        const histories = await Promise.allSettled([
+          fetchReviewHistory(myLearner.kind, myLearner.id, 'monthly-coaching'),
+          fetchReviewHistory(myLearner.kind, myLearner.id, 'reviews'),
+        ]);
+        if (cancelled || writeVersion !== calendarWriteVersionRef.current) return;
+        const monthly = histories[0].status === 'fulfilled' ? histories[0].value.reviews : [];
+        const progress = histories[1].status === 'fulfilled' ? histories[1].value.reviews : [];
+        const events = mapEvents(mergeCompletedReviewHistory(res.events, [
+          ...importedReviewsToEvents(monthly, 'mcr'),
+          ...importedReviewsToEvents(progress, 'progress-review'),
+        ]));
         setBookingCalendar(res.bookingCalendar || null);
         // Keep locally-created personal events; replace the DB-backed ones.
         setMyEvents((prev) => [...events, ...prev.filter((ev) => ev.id.startsWith('custom-'))]);
-        setCalendarError(null);
+        setCalendarError(histories.some(result => result.status === 'rejected') ? 'Could not load archived reviews. Please try again.' : null);
       })
       .catch((err: Error) => {
         if (!cancelled && writeVersion === calendarWriteVersionRef.current) setCalendarError(err.message);
@@ -1114,6 +1009,7 @@ function LearnerCalendarBody() {
   }, [bookDate, bookTime, bookDuration, bookingSourceEvent?.id, myEvents, rescheduleEvent?.id]);
 
   const sameWeekSession = useMemo(() => {
+    if (rescheduleEvent?.reviewTemplateId || bookingSourceEvent?.reviewTemplateId) return null;
     const requestedWeek = calendarWeekKey(bookDate);
     if (!requestedWeek) return null;
     return myEvents.find((event) => (
@@ -1125,7 +1021,7 @@ function LearnerCalendarBody() {
       && Boolean(event.isoDate)
       && calendarWeekKey(event.isoDate!) === requestedWeek
     )) || null;
-  }, [bookDate, bookType, bookingSourceEvent?.id, myEvents, rescheduleEvent?.id]);
+  }, [bookDate, bookType, bookingSourceEvent?.id, bookingSourceEvent?.reviewTemplateId, myEvents, rescheduleEvent?.id, rescheduleEvent?.reviewTemplateId]);
 
   const canRescheduleTimeConflict = Boolean(
     !rescheduleEvent
@@ -1610,7 +1506,7 @@ function LearnerCalendarBody() {
           title={showEventDetails.title}
           onClose={() => setShowEventDetails(null)}
           badges={<>
-            <span className="rounded-full bg-primary-100 px-2.5 py-1 text-primary-700">{LEARNER_SOURCE_META[learnerEventSource(showEventDetails)].label}</span>
+            <span className="rounded-full bg-primary-100 px-2.5 py-1 text-primary-700">{learnerSourceMeta(showEventDetails).label}</span>
             <span className="rounded-full bg-background-200 px-2.5 py-1 text-foreground-700">{LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].label}</span>
           </>}
           actions={<>
@@ -1651,6 +1547,7 @@ function LearnerCalendarBody() {
           </dl>
           {showEventDetails.description && <div className="mb-5 border-t border-foreground-100 pt-4"><h3 className="mb-2 text-xs font-semibold text-foreground-500">About this event</h3><p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground-700">{showEventDetails.description}</p></div>}
             {showEventDetails.syncWarning && <p role="status" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-relaxed text-amber-800">{showEventDetails.syncWarning}</p>}
+            {selectedReview.loading ? <RowsSkeleton rows={3} /> : selectedReview.error ? <p role="alert" className="mb-4 text-sm text-red-600">{selectedReview.error}</p> : selectedReview.definition ? <LearnerReviewInstanceForm definition={selectedReview.definition} /> : null}
             {shouldShowMeetingArtifacts(showEventDetails) ? (
               <CoachMeetingArtifactsPanel event={{ id: showEventDetails.id, eventKey: showEventDetails.eventKey, source: showEventDetails.source, meetingLink: showEventDetails.meetingLink }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="mb-5 border-primary-100 bg-primary-50/30" />
             ) : null}
@@ -1850,8 +1747,9 @@ function LearnerCalendarBody() {
               <div className="rounded-xl bg-background-50/70 p-2">
                 <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-foreground-500">Source</p>
                 <div className="flex flex-wrap gap-2">
-                  {VISIBLE_LEARNER_SOURCE_FILTERS.map((source) => {
-                    const meta = LEARNER_SOURCE_META[source];
+                  {sourceFilters.map((option) => {
+                    const source = option.key;
+                    const meta = { label: option.longLabel, short: option.label, dot: option.dot };
                     const isActive = filterSource === source;
                     return (
                       <button
@@ -1968,8 +1866,7 @@ function LearnerCalendarBody() {
                                 </div>
                               );
                             }
-                            const eventSource = learnerEventSource(ev);
-                            const sourceMeta = LEARNER_SOURCE_META[eventSource];
+                            const sourceMeta = learnerSourceMeta(ev);
                             return (
                               <button
                                 type="button"
@@ -1977,7 +1874,7 @@ function LearnerCalendarBody() {
                                 key={ev.id}
                                 onClick={(event) => { event.stopPropagation(); setShowEventDetails(ev); }}
                                 className={`w-full rounded-lg border px-2 py-1 text-left shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:brightness-95 ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
-                                title={`${LEARNER_SOURCE_META[eventSource].label} · ${ev.title}`}
+                                title={`${learnerSourceMeta(ev).label} · ${ev.title}`}
                               >
                                 <div className="flex min-w-0 items-center gap-1.5">
                                   <span className={`h-2 w-2 shrink-0 rounded-full ${sourceMeta.dot}`}></span>
@@ -2019,8 +1916,8 @@ function LearnerCalendarBody() {
                 {selectedDaySorted.length > 0 ? (
                   <div className="space-y-2">
                     {selectedDaySorted.map((ev) => {
-                      const eventSource = learnerEventSource(ev);
-                      const sourceMeta = LEARNER_SOURCE_META[eventSource];
+                      const eventSource = ev.source;
+                      const sourceMeta = learnerSourceMeta(ev);
                       const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)];
                       return (
                         <button
@@ -2030,7 +1927,7 @@ function LearnerCalendarBody() {
                           className={`group flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition-all duration-150 hover:-translate-y-0.5 hover:shadow-sm cursor-pointer ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
                         >
                           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/75 shadow-sm">
-                            <AppIcon className={`${eventSource === 'live-session' ? 'ri-video-chat-line' : eventSource === 'mcr' ? 'ri-calendar-check-line' : eventSource === 'progress-review' ? 'ri-line-chart-line' : eventSource === 'student-support' ? 'ri-heart-2-line' : eventSource === 'other' ? 'ri-more-line' : eventSource === 'busy' ? 'ri-lock-line' : 'ri-chat-3-line'} text-primary-600`}></AppIcon>
+                            <AppIcon className={`${eventSource === 'live-session' ? 'ri-video-chat-line' : ev.reviewTemplateId ? 'ri-file-list-3-line' : eventSource === 'student-support' ? 'ri-heart-2-line' : eventSource === 'other' ? 'ri-more-line' : ev.type === 'Busy' ? 'ri-lock-line' : 'ri-chat-3-line'} text-primary-600`}></AppIcon>
                           </span>
                           <div className="min-w-0 flex-1">
                             <div className="mb-1 flex min-w-0 items-center gap-1.5">
@@ -2183,7 +2080,7 @@ function LearnerCalendarBody() {
               <SectionHeader title="Next 7 days" icon="ri-calendar-todo-line" />
               <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                 {upcomingEvents.slice(0, 8).map((ev) => {
-                  const sourceMeta = LEARNER_SOURCE_META[learnerEventSource(ev)];
+                  const sourceMeta = learnerSourceMeta(ev);
                   const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)];
                   return (
                   <button type="button" aria-haspopup="dialog" key={ev.id} className="w-full text-left flex items-start gap-3 rounded-xl border border-background-200 bg-background-50 p-2.5 transition-smooth hover:border-primary-200 hover:bg-primary-50/20 cursor-pointer group" onClick={() => setShowEventDetails(ev)}>
