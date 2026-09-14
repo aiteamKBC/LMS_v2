@@ -165,10 +165,23 @@ describe('postLoginRouteFor', () => {
     ).toBe('/workspace/admin');
   });
 
-  it('keeps explicit learner drill-down links for staff review', () => {
+  it('starts staff at home even when an explicit learner link was open before sign-in', () => {
     expect(
       postLoginRouteFor({ role: 'staff', accessHome: '/workspace/coach', subjectId: 1 }, '/workspace/learner/commercial/19'),
-    ).toBe('/workspace/learner/commercial/19');
+    ).toBe('/workspace/coach');
+  });
+
+  it.each([
+    [{ role: 'admin' as const, accessHome: '/workspace/admin' }, '/workspace/admin'],
+    [{ role: 'staff' as const, accessHome: '/workspace/curriculum' }, '/workspace/curriculum'],
+    [{ role: 'staff' as const, accessHome: '/workspace/tutor' }, '/workspace/tutor'],
+    [{ role: 'staff' as const, accessHome: '/access-required' }, '/access-required'],
+    [{ role: 'employer' as const, subjectId: 42 }, '/employers/42'],
+    [{ role: 'employer' as const }, '/workspace/employer'],
+  ])('always uses the account home %s instead of stale destinations', (account, home) => {
+    for (const requested of ['/notifications?unread=1', '/curriculum/programmes', '/employers/99', '//example.test', undefined]) {
+      expect(postLoginRouteFor(account, requested)).toBe(home);
+    }
   });
 
   it('falls back to the account home when there is no return target', () => {

@@ -55,6 +55,8 @@ export interface ReviewSignatureState {
   signedBy?: string | null;
   signedName?: string | null;
   signedAt?: string | null;
+  /** The original saved mark, never regenerated from the displayed name. */
+  signature?: string | null;
 }
 
 export interface ReviewInstanceFormDefinition {

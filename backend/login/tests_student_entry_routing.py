@@ -1,4 +1,4 @@
-"""Exercise the SSO callback's student destination without external services."""
+"""Exercise SSO home routing, including old saved paths, without services."""
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -41,9 +41,13 @@ class StudentEntryRoutingTests(SimpleTestCase):
                 self.assertEqual(response["Location"], "http://localhost:3000/learner/home")
                 self.assertIn("kbc_session", response.cookies)
 
-    def test_other_roles_keep_their_requested_destination(self):
-        for role, requested in (("staff", "/workspace/coach"), ("admin", "/workspace/admin"),
-                                ("employer", "/workspace/employer")):
-            with self.subTest(role=role):
-                response = self.callback(role, requested)
-                self.assertEqual(response["Location"], f"http://localhost:3000{requested}")
+    def test_other_roles_resolve_their_home_instead_of_restoring_a_saved_page(self):
+        for role in ("staff", "admin", "employer"):
+            for requested in ("", "/coach/timetable", "/users?tab=archived",
+                              "/learner/monthly-coaching?kind=commercial&learner=19",
+                              "//other.example/path"):
+                with self.subTest(role=role, requested=requested):
+                    response = self.callback(role, requested)
+                    self.assertEqual(response.status_code, 302)
+                    self.assertEqual(response["Location"], "http://localhost:3000/")
+                    self.assertIn("kbc_session", response.cookies)

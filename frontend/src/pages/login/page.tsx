@@ -5,7 +5,7 @@ import { AuthError, apiAuthHealth, apiMicrosoftStart } from '@/api/auth';
 import { AppIcon } from '@/components/feature/AppIcon';
 // Shared with RequireAuth, so the page you are sent to after signing in and
 // the page you are sent back to when refused are decided by one definition.
-import { isBareLearnerWorkspacePath, postLoginRouteFor } from '@/lib/routeAccess';
+import { postLoginRouteFor } from '@/lib/routeAccess';
 import styles from './page.module.css';
 
 const CAMPUS_IMAGE_URL = '/kent-business-college-campus.png';
@@ -22,9 +22,6 @@ export default function LoginPage() {
   // Undefined until the health check answers, so the button is not flashed in
   // and then taken away on a deployment that has no provider configured.
   const [ssoAvailable, setSsoAvailable] = useState<boolean | undefined>(undefined);
-
-  // Where the user was heading before RequireAuth sent them here.
-  const from = (location.state as { from?: string } | null)?.from;
 
   // A refused Microsoft sign-in comes back with ?sso_error=... . Lift it into
   // the form's error box, then strip it so a refresh cannot resurrect it.
@@ -57,8 +54,8 @@ export default function LoginPage() {
   // and round again.
   useEffect(() => {
     if (!isInitialized || !auth.account) return;
-    navigate(postLoginRouteFor(auth.account, from), { replace: true });
-  }, [isInitialized, auth.account, from, navigate]);
+    navigate(postLoginRouteFor(auth.account), { replace: true });
+  }, [isInitialized, auth.account, navigate]);
 
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -81,7 +78,7 @@ export default function LoginPage() {
     setIsLoading(true);
     try {
       const account = await login(email, password, rememberMe);
-      navigate(postLoginRouteFor(account, from), { replace: true });
+      navigate(postLoginRouteFor(account), { replace: true });
     } catch (err) {
       setError(
         err instanceof AuthError
@@ -98,7 +95,7 @@ export default function LoginPage() {
     try {
       // This is a full navigation so Microsoft can return to the callback that
       // creates the server session cookie.
-      window.location.href = await apiMicrosoftStart(isBareLearnerWorkspacePath(from) ? undefined : from);
+      window.location.href = await apiMicrosoftStart();
     } catch (err) {
       setError(
         err instanceof AuthError

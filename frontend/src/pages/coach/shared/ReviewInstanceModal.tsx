@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { ReviewFormRenderer, computeMissingRequiredFields, computeVisibleRequiredFields } from '@/components/reviews/ReviewFormRenderer';
 import {
@@ -13,6 +13,7 @@ import { ModalHeader, ModalShell } from './ModalHeader';
 import { formatDateLabel } from './calendarEvents';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
 import { useAuth } from '@/hooks/useAuth';
+import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
 
 const isAbortError = (err: unknown): boolean => err instanceof DOMException && err.name === 'AbortError';
 
@@ -31,19 +32,16 @@ export function ReviewInstanceModal({
   event,
   instanceId,
   onClose,
-  onCompleted,
+  onStatusChange,
 }: {
   /** Only what the header shows -- deliberately structural so the timetable,
    *  meetings and progress-review pages can each pass their own event type. */
   event: { learner?: string | null; programme?: string | null };
   instanceId: string;
   onClose: () => void;
-  /** Called with the instance's resulting status after a successful
-   *  "Complete review" -- 'awaiting-signature' when the Curriculum template
-   *  requires a signature, 'completed' when it requires none. Callers mirror
-   *  this onto their own CoachCalendarEvent state rather than assuming which
-   *  one it landed on. */
-  onCompleted: (status: string) => void;
+  /** Update the calendar after submission/signing without closing the form:
+   * the next signature step must stay available in this same visit. */
+  onStatusChange: (status: string) => void;
 }) {
   const { auth } = useAuth();
   const [definition, setDefinition] = useState<ReviewInstanceFormDefinition | null>(null);
@@ -53,13 +51,26 @@ export function ReviewInstanceModal({
   const [error, setError] = useState<string | null>(null);
   const [openSectionId, setOpenSectionId] = useState('');
   const [showErrors, setShowErrors] = useState(false);
+  const [signing, setSigning] = useState(false);
+  const [signatureError, setSignatureError] = useState('');
+  const [signatureNotice, setSignatureNotice] = useState('');
+  const signingInFlight = useRef(false);
+  const focusSignatureStep = useRef(false);
+  const signatureStep = useRef<HTMLDivElement>(null);
+  const coachName = auth.user?.fullName?.trim() || '';
+  const submitted = ['awaiting-signature', 'completed'].includes(definition?.instance.status || '');
+  const coachNeedsToSign = Boolean(submitted && definition?.signatures.advisor?.required && !definition.signatures.advisor.signed);
 
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
     setError(null);
+    setDefinition(null);
+    setSignatureError('');
+    setSignatureNotice('');
     fetchReviewInstanceForm(instanceId, controller.signal)
       .then((data) => {
+        if (controller.signal.aborted) return;
         setDefinition(data);
         const initialAnswers: Record<string, unknown> = {};
         for (const field of flattenReviewFields(data.sections)) {
@@ -75,9 +86,17 @@ export function ReviewInstanceModal({
         if (isAbortError(err)) return;
         setError(err instanceof Error ? err.message : 'Unable to load this review.');
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [instanceId]);
+
+  useEffect(() => {
+    if (focusSignatureStep.current && submitted && signatureStep.current) {
+      focusSignatureStep.current = false;
+      signatureStep.current.focus();
+      signatureStep.current.scrollIntoView?.({ block: 'nearest' });
+    }
+  }, [definition, submitted]);
 
   const missingFieldIds = useMemo(
     () => (definition ? computeMissingRequiredFields(definition.sections, answers) : new Set<string>()),
@@ -97,7 +116,7 @@ export function ReviewInstanceModal({
   };
 
   const saveDraft = async () => {
-    if (!definition) return;
+    if (!definition || submitted || saving || signing) return;
     setSaving(true);
     setError(null);
     try {
@@ -115,7 +134,7 @@ export function ReviewInstanceModal({
   };
 
   const complete = async () => {
-    if (!definition) return;
+    if (!definition || submitted || saving || signing) return;
     if (missingFieldIds.size > 0) {
       setShowErrors(true);
       const containsMissingField = (fields: typeof definition.sections[number]['fields']): boolean => (
@@ -132,7 +151,9 @@ export function ReviewInstanceModal({
     try {
       await saveReviewInstanceAnswers(definition.instance.id, answers);
       const completed = await completeReviewInstance(definition.instance.id);
-      onCompleted(completed.instance.status);
+      focusSignatureStep.current = true;
+      setDefinition(completed);
+      onStatusChange(completed.instance.status);
     } catch (err) {
       if (isAbortError(err)) return;
       setError(err instanceof Error ? err.message : 'This review cannot be completed yet.');
@@ -141,15 +162,34 @@ export function ReviewInstanceModal({
     }
   };
 
-  const busy = saving;
+  const saveSignature = async (signature: string) => {
+    if (!definition || !coachNeedsToSign || !coachName || signingInFlight.current) return;
+    signingInFlight.current = true;
+    setSigning(true);
+    setSignatureError('');
+    setSignatureNotice('');
+    try {
+      const signed = await signReviewInstance(definition.instance.id, 'advisor', coachName, signature);
+      setDefinition(signed);
+      setSignatureNotice('Your coach signature has been saved.');
+      onStatusChange(signed.instance.status);
+    } catch (err) {
+      setSignatureError(err instanceof Error ? err.message : 'Could not save your signature. Please try again.');
+    } finally {
+      signingInFlight.current = false;
+      setSigning(false);
+    }
+  };
+
+  const busy = saving || signing;
 
   return (
     <ModalShell busy={busy} onClose={onClose}>
       <ModalHeader
-        eyebrow="Complete review"
+        eyebrow={submitted ? 'Review signatures' : 'Complete review'}
         icon="ri-chat-check-line"
         title={definition ? `${event.learner || 'Learner'} · ${definition.template.name} #${definition.instance.occurrenceNumber}` : 'Loading review...'}
-        subtitle="Complete the Curriculum-defined review before closing it."
+        subtitle={submitted ? 'Check the saved review and the required signatures.' : 'Complete the review, then confirm the required signatures.'}
         busy={busy}
         onClose={onClose}
         progressPercent={requiredCount ? Math.round((answeredCount / requiredCount) * 100) : undefined}
@@ -189,37 +229,43 @@ export function ReviewInstanceModal({
               answers={answers}
               onAnswerChange={handleAnswerChange}
               errors={showErrors ? { missingFieldIds } : undefined}
-              readOnly={definition.instance.status === 'completed'}
+              readOnly={submitted}
               openSectionId={openSectionId}
               onOpenSectionChange={setOpenSectionId}
             />
-            {definition.signatures.advisor?.required && !definition.signatures.advisor.signed &&
-              ['awaiting-signature', 'completed'].includes(definition.instance.status) ? (
-              <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
-                <p className="mb-3 text-sm font-bold text-violet-950">Your coach signature is required</p>
-                <SignaturePad
-                  signatoryName={auth.user?.fullName || event.learner || 'Coach'}
-                  onCommit={(signature) => {
-                    void signReviewInstance(definition.instance.id, 'advisor', auth.user?.fullName || 'Coach', signature)
-                      .then(setDefinition);
-                  }}
-                  onCancel={() => undefined}
-                />
-              </div>
-            ) : null}
+            <div ref={signatureStep} tabIndex={-1} aria-label="Review signature step" className="space-y-4 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500">
+              {submitted && <div className="rounded-xl border border-violet-200 bg-violet-50 p-4" role="status">
+                <p className="text-sm font-bold text-violet-950">{definition.instance.status === 'completed' ? 'Review completed' : 'Review submitted — signatures pending'}</p>
+                <p className="mt-1 text-sm text-violet-900">{definition.instance.status === 'completed'
+                  ? 'All required steps are complete. The saved review and signatures are shown below.'
+                  : coachNeedsToSign
+                    ? 'Review the saved answers and confirm your signature below. The review completes when every required person has signed.'
+                    : 'Your part is complete. The review is waiting for the remaining required signatures.'}</p>
+              </div>}
+              <ReviewSignatures signatures={definition.signatures} />
+              {signatureNotice && <p role="status" className="text-sm font-semibold text-emerald-800">{signatureNotice}</p>}
+              {coachNeedsToSign && <section aria-label="Your coach signature" aria-busy={signing} className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
+                <h3 className="mb-3 text-sm font-bold text-violet-950">Your coach signature is required</h3>
+                {coachName ? <fieldset disabled={signing} className="min-w-0 disabled:opacity-70">
+                  <SignaturePad signatoryName={coachName} onCommit={(signature) => { void saveSignature(signature); }} onCancel={onClose} />
+                </fieldset> : <p role="alert" className="text-sm text-red-700">Your account has no name on record. Add your name before signing this review.</p>}
+                {signing && <p role="status" className="mt-3 text-sm text-violet-900">Saving your signature...</p>}
+                {signatureError && <p role="alert" className="mt-3 text-sm font-semibold text-red-700">{signatureError} Your signature has not been saved. Please try signing again.</p>}
+              </section>}
+            </div>
           </>
         ) : null}
 
         {error ? (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">
+          <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">
             <AppIcon className="ri-error-warning-line mr-2"></AppIcon>{error}
           </div>
         ) : null}
       </div>
 
       <footer className="flex shrink-0 flex-col-reverse gap-2 border-t border-background-200 bg-background-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
-        <button type="button" onClick={onClose} disabled={busy} className="h-10 rounded-lg px-4 text-xs font-semibold text-foreground-500 transition hover:bg-background-100 disabled:opacity-50">Cancel</button>
-        <div className="flex gap-2">
+        <button type="button" onClick={onClose} disabled={busy} className="h-10 rounded-lg px-4 text-xs font-semibold text-foreground-500 transition hover:bg-background-100 disabled:opacity-50">{submitted ? 'Close' : 'Cancel'}</button>
+        {!submitted && <div className="flex gap-2">
           <button type="button" onClick={saveDraft} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-background-300 bg-white px-5 text-xs font-bold text-foreground-700 shadow-sm transition hover:bg-background-100 disabled:opacity-60">
             <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-save-line'}></AppIcon>Save draft
           </button>
@@ -227,7 +273,7 @@ export function ReviewInstanceModal({
             <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'}></AppIcon>
             {saving ? 'Saving...' : 'Complete review'}
           </button>
-        </div>
+        </div>}
       </footer>
     </ModalShell>
   );

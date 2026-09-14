@@ -85,6 +85,57 @@ class ImportedReviewBookingTests(SimpleTestCase):
 
 
 class BookingEndpointRestrictionTests(SimpleTestCase):
+    def test_new_booking_uses_current_assignment_instead_of_stale_profile(self):
+        from . import calendar as module
+
+        learner = SimpleNamespace(pk=101, username='Test Learner', email='learner@example.com',
+                                  case_owner='Test curriculum', coach_name='Test curriculum',
+                                  coach_email='curriculum@example.com')
+        mirror = SimpleNamespace(id=248, coach_email='old@example.com', coach_name='Old coach',
+                                 full_name='Test Learner', email='learner@example.com')
+        source_model = Mock()
+        source_model.all_learners.filter.return_value.first.return_value = learner
+        record = SimpleNamespace(event_key='catch-up:248:1:2026-09-15')
+        with patch.object(module, 'SOURCE_MODELS', {'commercial': source_model}), \
+                patch.object(module, 'learner_profile_for_source', return_value=mirror), \
+                patch('learner_api.booking_calendar.timezone.localdate', return_value=date(2026, 9, 14)), \
+                patch.object(module.CoachCalendarEvent.objects, 'filter') as events, \
+                patch('learner_api.calendar_connections.booking_conflicts', return_value=False), \
+                patch('coach_api.views.reserve_coach_calendar_booking', return_value=(record, True)) as reserve, \
+                patch('coach_api.views.synchronize_reserved_calendar_event') as sync, \
+                patch.object(module, '_serialize_event', return_value={'eventKey': record.event_key}):
+            events.return_value.first.return_value = None
+            request = RequestFactory().post('/book/', data=json.dumps({
+                'sessionType': 'catch-up', 'scheduledDate': '2026-09-15',
+                'scheduledTime': '11:00', 'durationMinutes': 60,
+            }), content_type='application/json')
+            response = inspect.unwrap(module.learner_calendar_book)(request, 'commercial', 101)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(reserve.call_args.kwargs['owner_name'], 'Test curriculum')
+        self.assertEqual(reserve.call_args.kwargs['owner_email'], 'curriculum@example.com')
+        # This existing approval flow must still wait for the coach.
+        self.assertTrue(json.loads(response.content)['approvalRequired'])
+        sync.assert_not_called()
+
+    def test_new_booking_rejects_explicitly_cleared_assignment(self):
+        from . import calendar as module
+
+        learner = SimpleNamespace(case_owner='', coach_name='', coach_email='')
+        mirror = SimpleNamespace(coach_email='old@example.com', coach_name='Old coach')
+        source_model = Mock()
+        source_model.all_learners.filter.return_value.first.return_value = learner
+        with patch.object(module, 'SOURCE_MODELS', {'commercial': source_model}), \
+                patch.object(module, 'learner_profile_for_source', return_value=mirror), \
+                patch('coach_api.views.reserve_coach_calendar_booking') as reserve:
+            request = RequestFactory().post('/book/', data=json.dumps({
+                'sessionType': 'catch-up', 'scheduledDate': '2026-09-15', 'scheduledTime': '11:00',
+            }), content_type='application/json')
+            response = inspect.unwrap(module.learner_calendar_book)(request, 'commercial', 101)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('No coach has been assigned', json.loads(response.content)['error'])
+        reserve.assert_not_called()
+
     def test_every_coach_session_type_is_rejected_on_a_weekend(self):
         from . import calendar as module
 
@@ -214,6 +265,9 @@ class RescheduleEndpointTests(SimpleTestCase):
         self.assertEqual(record.scheduled_date, date(2026, 9, 9))
         self.assertEqual(record.scheduled_time.strftime("%H:%M"), "11:30")
         self.assertEqual(record.duration_minutes, 45)
+        self.assertEqual(record.owner_name, 'Coach Example')
+        self.assertEqual(record.owner_email, 'coach@example.com')
+        self.assertEqual(record.meeting_link, 'https://teams.microsoft.com/l/meetup-join/test')
         persist.assert_called_once_with(record)
         build_event.assert_called_once_with(record)
         sync.assert_called_once_with(record.pk, {})

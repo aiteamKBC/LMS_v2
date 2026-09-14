@@ -1571,12 +1571,13 @@ class MicrosoftSsoStartTests(SimpleTestCase):
         stored credential with nothing to gain from holding it."""
         self.assertNotIn("offline_access", self._authorize_url())
 
-    def test_state_is_signed_and_round_trips_the_return_path(self):
+    def test_state_is_signed_without_a_saved_return_path(self):
         from urllib.parse import parse_qs, urlparse
 
         state = parse_qs(urlparse(self._authorize_url(next="/workspace/admin")).query)["state"][0]
         payload = signing.loads(state, salt=microsoft_sso.STATE_SALT, max_age=microsoft_sso.STATE_MAX_AGE)
-        self.assertEqual(payload["next"], "/workspace/admin")
+        self.assertNotIn("next", payload)
+        self.assertTrue(payload["n"])
 
     def test_state_from_a_different_flow_is_rejected(self):
         """The calendar connection flow signs its own state; salts must not be
@@ -1592,4 +1593,4 @@ class MicrosoftSsoStartTests(SimpleTestCase):
         for hostile in ("https://evil.test/steal", "//evil.test/steal", "javascript:alert(1)"):
             state = parse_qs(urlparse(self._authorize_url(next=hostile)).query)["state"][0]
             payload = signing.loads(state, salt=microsoft_sso.STATE_SALT)
-            self.assertEqual(payload["next"], "", f"{hostile} survived the path check")
+            self.assertNotIn("next", payload, f"{hostile} survived in the state")

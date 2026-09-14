@@ -1200,10 +1200,10 @@ class MicrosoftSsoCallbackTests(LoginTestBase):
         ).latest("id")
         self.assertEqual(row.reason, "microsoft_sso")
 
-    def test_the_return_path_is_honoured(self):
+    def test_a_previous_return_path_is_replaced_by_account_home_routing(self):
         self.make_account()
         response = self._callback(signed_in_as=self.email, next_path="/workspace/admin")
-        self.assertTrue(response["Location"].endswith("/workspace/admin"))
+        self.assertEqual(response["Location"], f"{microsoft_sso.frontend_base_url()}/")
 
     def test_an_account_that_never_set_a_password_may_still_sign_in(self):
         """Deliberate: their tenant account is the credential. The password form

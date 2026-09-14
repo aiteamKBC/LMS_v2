@@ -35,6 +35,7 @@ from .identity import learner_profile_for_source
 from .mappers import _s
 from .models import EnrolmentReview, LearnerProfile, StaffUser
 from .booking_calendar import booking_calendar_payload, booking_date_restriction
+from .coach_assignment import current_coach
 from login.permissions import learner_self_or_staff
 
 logger = logging.getLogger(__name__)
@@ -272,6 +273,7 @@ def _generated_cycle_events(learner, mirror, stored_by_key):
     if mirror is None:
         return []
 
+    coach = current_coach(learner, mirror)
     programme_id = resolve_curriculum_programme_id(
         getattr(mirror, 'programme_id', None) or getattr(mirror, 'programme', None),
     )
@@ -328,8 +330,8 @@ def _generated_cycle_events(learner, mirror, stored_by_key):
                 "scheduledDate": None,
                 "scheduledTime": None,
                 "durationMinutes": 60,
-                "coachName": _s(mirror.coach_name),
-                "coachEmail": _s(mirror.coach_email),
+                "coachName": coach["coach_name"],
+                "coachEmail": coach["coach_email"],
                 "meetingProvider": "",
                 "meetingLink": "",
                 "notes": "",
@@ -375,8 +377,8 @@ def _generated_cycle_events(learner, mirror, stored_by_key):
                 'scheduledDate': None,
                 'scheduledTime': None,
                 'durationMinutes': 60,
-                'coachName': _s(mirror.coach_name),
-                'coachEmail': _s(mirror.coach_email),
+                'coachName': coach['coach_name'],
+                'coachEmail': coach['coach_email'],
                 'meetingProvider': '',
                 'meetingLink': '',
                 'notes': '',
@@ -750,6 +752,13 @@ def learner_progress_review_sign(request, kind, pk, event_key):
             )
         except ValueError as exc:
             return _error(str(exc), 409)
+        # The final required signature completes the instance. Keep the
+        # calendar's projection in step, just as the coach signing path does.
+        from coach_api.views import _sync_calendar_record_to_review_instance_status
+        _sync_calendar_record_to_review_instance_status(
+            review_instances.get_review_instance(record.review_instance_id),
+        )
+        record.refresh_from_db()
         return JsonResponse({"event": _serialize_event(record), "review": definition})
     try:
         payload = json.loads(request.body or b"{}")
@@ -827,6 +836,7 @@ def learner_calendar(request, kind, pk):
         # active_users.sync_active_user), and coach events store that mirror's
         # id + email — so the mirror email is the authoritative one here.
         mirror = learner_profile_for_source(learner, pk, active_only=True)
+        coach = current_coach(learner, mirror)
     except DatabaseError as exc:
         logger.exception("learner_calendar: mirror lookup failed")
         return _error(f"Database error: {exc}", 502)
@@ -844,6 +854,7 @@ def learner_calendar(request, kind, pk):
     if not match:
         return JsonResponse({
             "learner": {"kind": kind, "id": pk},
+            "currentCoach": {"name": coach["coach_name"], "email": coach["coach_email"]},
             "events": [],
             "bookingCalendar": booking_calendar_payload(),
         })
@@ -891,6 +902,10 @@ def learner_calendar(request, kind, pk):
     return JsonResponse(
         {
             "learner": {"kind": kind, "id": pk, "email": email},
+            # The current assignment is separate from each stored meeting's
+            # original organiser. Changing a case owner cannot transfer a
+            # Microsoft meeting or rewrite the learner's review history.
+            "currentCoach": {"name": coach["coach_name"], "email": coach["coach_email"]},
             "events": events,
             "bookingCalendar": booking_calendar_payload(),
         }
@@ -971,8 +986,13 @@ def learner_calendar_book(request, kind, pk):
     else:
         if mirror is None:
             return _error("Only Active learners can book coach sessions.", 400)
-        owner_email = _s(mirror.coach_email)
-        owner_name = _s(mirror.coach_name) or "Coach"
+        try:
+            coach = current_coach(learner, mirror)
+        except DatabaseError as exc:
+            logger.exception("learner_calendar_book: coach lookup failed")
+            return _error(f"Database error: {exc}", 502)
+        owner_email = coach["coach_email"]
+        owner_name = coach["coach_name"] or "Coach"
         if not owner_email:
             return _error("No coach has been assigned to you yet. Please contact your programme team.", 400)
 
@@ -1058,7 +1078,6 @@ def learner_calendar_book(request, kind, pk):
             or _s(selected_event.get("coachEmail")).strip().casefold() != owner_email.strip().casefold()
         ):
             return _error("Programme-cycle calendar event not found for this learner. Refresh meetings and select a current session.", 404)
-        owner_name = _s(mirror.coach_name) or "Coach"
         base_event = {**selected_event, "learnerId": int(mirror.id),
                       "learner": learner_name, "email": learner_email,
                       "ownerEmail": owner_email, "ownerName": owner_name}
@@ -1094,7 +1113,7 @@ def learner_calendar_book(request, kind, pk):
                 event_key=event_key,
                 defaults={
                     "owner_email": owner_email,
-                    "owner_name": owner_name or _s(mirror.coach_name) or "Coach",
+                    "owner_name": owner_name,
                     "learner_id": int(mirror.id),
                     "learner_name": _s(base_event.get("learner")) or learner_name,
                     "learner_email": _s(base_event.get("email")) or learner_email,
@@ -1104,7 +1123,7 @@ def learner_calendar_book(request, kind, pk):
                 },
             )
             record.owner_email = owner_email
-            record.owner_name = owner_name or _s(mirror.coach_name) or record.owner_name or "Coach"
+            record.owner_name = owner_name
             record.learner_id = int(mirror.id)
             record.learner_name = _s(base_event.get("learner")) or learner_name
             record.learner_email = _s(base_event.get("email")) or learner_email

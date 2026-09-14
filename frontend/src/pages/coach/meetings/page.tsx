@@ -581,9 +581,8 @@ export default function CoachMeetings() {
             event={completionEvent}
             instanceId={completionEvent.reviewInstanceId}
             onClose={() => setCompletionEvent(null)}
-            onCompleted={(status) => {
+            onStatusChange={(status) => {
               updateEvent({ ...completionEvent, status: status as CoachCalendarEvent['status'] });
-              setCompletionEvent(null);
             }}
           />
         ) : null}

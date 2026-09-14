@@ -55,16 +55,8 @@ export function RequireAuth() {
   const account = auth.account;
 
   if (!account) {
-    // `from` is what LoginPage reads to return here after signing in, so a
-    // pasted deep link still lands where it was aimed — it just asks who you
-    // are first. Search is kept; a bare pathname would drop the filters.
-    return (
-      <Navigate
-        to="/login"
-        state={{ from: `${location.pathname}${location.search}` }}
-        replace
-      />
-    );
+    // A fresh sign-in starts at the account home, without a remembered page.
+    return <Navigate to="/login" replace />;
   }
 
   if (!mayAccessRoute(location.pathname, account)) {

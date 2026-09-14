@@ -27,6 +27,7 @@ try {
     await expect(page.getByRole('heading', { name: 'My coaching' })).toBeVisible({ timeout: 30000 });
     await expect(page.getByRole('link', { name: 'Review & sign' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Prepare for meeting' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Open meeting link' })).toHaveAttribute('href', 'https://teams.microsoft.com/example');
     await expect(page.getByRole('tab')).toHaveCount(0);
     await page.screenshot({ path: resolve(output, `current-${viewport.width}.png`), fullPage: true });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -49,8 +50,15 @@ try {
     await expect(page.getByRole('heading', { name: 'My coaching' })).toBeFocused();
     await page.goto(`${base}/__coaching_ux?scenario=today`);
     await expect(page.getByRole('link', { name: 'Join meeting' })).toHaveAttribute('href', 'https://teams.microsoft.com/example');
+    await page.goto(`${base}/__coaching_ux?scenario=absence`);
+    await expect(page.getByText('Test curriculum', { exact: true })).toBeVisible();
+    await expect(page.getByText('This meeting is booked with Rewan Yasser.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Reschedule meeting' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Open meeting link' })).toHaveAttribute('href', 'https://teams.microsoft.com/example');
+    await page.screenshot({ path: resolve(output, `absence-${viewport.width}.png`), fullPage: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     expect(errors).toEqual([]);
-    console.log(`PASS ${viewport.width}x${viewport.height}: current, signatures, archive, booking, keyboard, return navigation, join, no overflow`);
+    console.log(`PASS ${viewport.width}x${viewport.height}: current coach, booking host, future/absence links, archive, booking, keyboard, no overflow`);
     await page.close();
   }
   console.log(`Screenshots: ${output}`);

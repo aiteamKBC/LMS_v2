@@ -687,6 +687,13 @@ def review_instance_form_definition(instance_row):
                 'signedBy': signatures_by_role.get(role, {}).get('signed_by'),
                 'signedName': signatures_by_role.get(role, {}).get('signed_name'),
                 'signedAt': curriculum_views.format_created_at(signatures_by_role.get(role, {}).get('signed_at')),
+                # Return the recorded mark as well as the sign-off metadata.
+                # Old sign-offs may contain a non-image acknowledgement; clients
+                # must only render supported image data URIs, never infer a mark.
+                'signature': (
+                    signatures_by_role.get(role, {}).get('signature') or None
+                    if signatures_by_role.get(role, {}).get('signed_at') else None
+                ),
             }
             for role in SIGNATURE_ROLES
         },

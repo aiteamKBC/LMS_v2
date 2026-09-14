@@ -214,15 +214,14 @@ export async function apiLogout(): Promise<void> {
  * full page navigation, not a fetch: the whole point is to hand the browser to
  * Microsoft and let it come back with a `Set-Cookie`.
  *
- * `next` is a path to return to after signing in; the server ignores anything
- * that is not a same-site path.
+ * Successful sign-in opens the account home; no previous-page destination is
+ * sent to the provider flow.
  *
  * Throws `AuthError` with code `sso_unconfigured` (503) when the deployment has
  * no Microsoft app registration wired up.
  */
-export async function apiMicrosoftStart(next?: string): Promise<string> {
-  const query = next ? `?next=${encodeURIComponent(next)}` : '';
-  const data = await request<{ authorizationUrl: string }>(`/microsoft/start/${query}`);
+export async function apiMicrosoftStart(): Promise<string> {
+  const data = await request<{ authorizationUrl: string }>('/microsoft/start/');
   return data.authorizationUrl;
 }
 

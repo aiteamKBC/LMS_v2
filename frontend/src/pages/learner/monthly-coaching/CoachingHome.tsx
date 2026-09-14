@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, CalendarDays, Check, CheckCheck, ChevronDown, Clock3, FileText, List, PenLine, UserRound, Video } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CalendarDays, Check, CheckCheck, ChevronDown, Clock3, ExternalLink, FileText, List, PenLine, UserRound, Video } from 'lucide-react';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
 import { meetingBookingWarning, meetingCalendarHref } from '../reviews/meetingBooking';
@@ -11,6 +11,7 @@ export interface CoachingHomeProps {
   sessions: LearnerCalendarEvent[];
   attendance: MeetingAttendance[];
   reviews?: CoachingReviewDefinitions;
+  currentCoach?: { name: string; email: string } | null;
   learner: { kind: string; id: string };
   today: string;
   timeZone?: string;
@@ -71,6 +72,13 @@ export default function CoachingHome(props: CoachingHomeProps) {
   const otherActions = overview.needsAction.filter(item => item.session.id !== overview.current?.session.id);
   const lastMeeting = overview.past.find(item => item.date && item.date <= today && item.statusLabel !== 'Cancelled');
   const current = overview.current;
+  const assignedCoach = props.currentCoach;
+  const currentCoachName = assignedCoach?.name.trim() || (assignedCoach ? 'Not yet assigned' : 'To be confirmed');
+  const bookedHost = current?.booked ? current.session.coachName.trim() : '';
+  const hostDiffers = Boolean(bookedHost && (!assignedCoach
+    || (assignedCoach.email && current?.session.coachEmail
+      ? assignedCoach.email.toLowerCase() !== current.session.coachEmail.toLowerCase()
+      : assignedCoach.name.trim().toLowerCase() !== bookedHost.toLowerCase())));
   const duration = current?.attendance ? current.attendance.durationMinutes : current?.session.durationMinutes;
   const provider = current?.attendance ? current.attendance.meetingProvider : current?.session.meetingProvider;
   const currentCaption = current?.action === 'sign' ? 'YOUR NEXT STEP'
@@ -90,6 +98,13 @@ export default function CoachingHome(props: CoachingHomeProps) {
 
   function renderStatus(state: CoachingSessionState) {
     return <span className={styles.badge} data-tone={state.needsAction ? 'attention' : state.group === 'past' ? 'muted' : state.isToday ? 'today' : 'booked'}>{state.isToday && <span className={styles.statusDot}/>} {state.statusLabel}</span>;
+  }
+
+  function renderMeetingLink(state: CoachingSessionState) {
+    if (!state.joinUrl || state.action === 'join') return null;
+    return <a className={styles.meetingLink} href={state.joinUrl} target="_blank" rel="noopener noreferrer">
+      <Video size={17}/>Open meeting link<ExternalLink size={15}/>
+    </a>;
   }
 
   function renderOptions(state: CoachingSessionState) {
@@ -129,7 +144,7 @@ export default function CoachingHome(props: CoachingHomeProps) {
             : <ul className={styles.meetingList}>{rows.slice((currentPage - 1) * 8, currentPage * 8).map(state => <li key={state.session.id}>
               <div className={styles.listDate}><CalendarDays size={19}/><span>{dateLabel(state.date, true)}</span></div>
               <div className={styles.listIdentity}><Link aria-label="View meeting" to={detailHref(state)}>{titleOf(state)}</Link><p>{state.session.coachName || 'Coach to be confirmed'}{state.booked && <> · {timeLabel(state)}</>}</p><p className={styles.listDescription}>{state.description}</p></div>
-              <div className={styles.listAction}>{renderStatus(state)}{renderAction(state, true)}{renderOptions(state)}</div>
+              <div className={styles.listAction}>{renderStatus(state)}{renderAction(state, true)}{renderMeetingLink(state)}{renderOptions(state)}</div>
             </li>)}</ul>}
         </div>
         {rows.length > 8 && <nav className={styles.pagination} aria-label="Meeting pages"><span>Page {currentPage} of {pages} · {rows.length} meetings</span><div>{[-1, 1].map(direction => <button type="button" key={direction} disabled={direction < 0 ? currentPage === 1 : currentPage === pages} onClick={() => {
@@ -146,11 +161,13 @@ export default function CoachingHome(props: CoachingHomeProps) {
             <h2>{titleOf(overview.current)}</h2>
             <div className={styles.appointment}><span className={styles.dateIcon}><CalendarDays size={28}/></span><div><p>{dateLabel(overview.current.date)}</p><span>{dateCaption}</span>
               {overview.current.booked && <span className={styles.timeZone}>{props.timeZone || 'Europe/London'}{duration != null && duration > 0 && <> · {duration} minutes</>}</span>}</div></div>
-            <div className={styles.coach}><span><UserRound size={20}/></span><div><small>Your coach for this meeting</small><strong>{overview.current.session.coachName || 'To be confirmed'}</strong></div>
+            <div className={styles.coach}><span><UserRound size={20}/></span><div><small>Your current coach</small><strong>{currentCoachName}</strong>
+              {hostDiffers && <p className={styles.bookedHost}>This meeting is booked with {bookedHost}.</p>}</div>
               {overview.current.booked && <span className={styles.provider}><Video size={17}/>{provider || 'Location to be confirmed'}</span>}</div>
             <p className={styles.nextStep}>{overview.current.description}</p>
             {meetingBookingWarning(overview.current.session, overview.current.attendance?.syncWarning) && <div className={styles.warning} role="status"><strong>Calendar sync pending</strong><p>{meetingBookingWarning(overview.current.session, overview.current.attendance?.syncWarning)}</p></div>}
-            <div className={styles.currentActions}>{renderAction(overview.current)}{renderOptions(overview.current)}</div>
+            <div className={styles.currentActions}>{renderAction(overview.current)}{renderMeetingLink(overview.current)}{renderOptions(overview.current)}</div>
+            {overview.current.booked && !overview.current.joinUrl && <p className={styles.linkUnavailable}>Meeting link is not available yet.</p>}
             {overview.current.attendance?.canAttend && !overview.current.attendance.attendanceConfirmed && !overview.current.attendance.absenceReported && <div className={styles.attendanceConfirm}><p>Already attended this meeting?</p><button type="button" disabled={!props.canAct || props.busy} onClick={() => props.onAttend(overview.current!.attendance!.id)}><Check size={16}/>{props.busy ? 'Saving…' : 'Confirm attendance'}</button></div>}
           </article> : <article className={`${styles.current} ${styles.empty}`} aria-label="Current coaching meeting"><span className={styles.emptyIcon}><CheckCheck size={30}/></span><h2>No current meeting</h2><p>Your next appointment will appear here. You can still open your previous meeting records.</p><Link className={styles.secondaryButton} to={linkToView(true)}>View your meetings<ArrowRight size={17}/></Link></article>}
           <aside className={styles.sideColumn} aria-label="Meeting preparation"><section className={styles.preparation}><span className={styles.preparationIcon}><FileText size={22}/></span><h2>A little preparation helps</h2><p>Bring a few notes to make the most of your time together.</p><ol><li><span>1</span><div><strong>Your progress</strong><p>What have you learned or put into practice?</p></div></li><li><span>2</span><div><strong>Anything you need help with</strong><p>Bring your questions or challenges.</p></div></li><li><span>3</span><div><strong>Your next steps</strong><p>Think about what you want to work on next.</p></div></li></ol></section>

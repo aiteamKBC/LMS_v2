@@ -162,33 +162,15 @@ export function isBareLearnerWorkspacePath(path: string | null | undefined): boo
 }
 
 /**
- * Where LoginPage should send a successfully authenticated account.
- *
- * Learners always start at Student Home, including when signing in from an old
- * Dashboard or activity link. The entry gate verifies previous-record signing
- * before the page is shown. Navigation after sign-in still uses the normal
- * routes. Record monitors always start at their monitoring dashboard.
- *
- * `from` is helpful for pasted deep links, but `/workspace/learner` without a
- * learner id is the learner self-workspace. Staff can open learner pages for
- * read-only review, so route access deliberately allows it; as a post-login
- * return target, though, it often means "the browser happened to be looking at
- * the remembered learner". In that case a coach/admin should land in their own
- * workspace instead of inheriting `localStorage.my_learner`.
+ * Every successful sign-in starts at the account's own home. A route left in
+ * browser history or old login state must never choose the new session's page.
+ * Keep the optional legacy argument so older callers cannot restore that route.
  */
 export function postLoginRouteFor(
   account: Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord'>,
-  requestedPath?: string | null,
+  _requestedPath?: string | null,
 ): string {
-  if (account.access === 'record-monitor' || account.role === 'learner') {
-    return homeRouteFor(account);
-  }
-  const requested = String(requestedPath || '').trim();
-  if (!requested) return homeRouteFor(account);
-  if (isBareLearnerWorkspacePath(requested)) {
-    return homeRouteFor(account);
-  }
-  return requested;
+  return homeRouteFor(account);
 }
 
 const HOME_BY_ROLE: Record<Role, string> = {

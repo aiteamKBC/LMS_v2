@@ -50,6 +50,66 @@ function mount(overrides: Partial<CoachingHomeProps> = {}, search = '') {
 afterEach(cleanup);
 
 describe('coaching learner navigation and actions', () => {
+  it('shows the current assignment separately from the existing host and keeps an absence-reported meeting link visible', () => {
+    const next = session('mcr:211:2:2026-11-30', '2026-09-15', {
+      coachName: 'Rewan Yasser', coachEmail: 'rewan@example.com', scheduledTime: '11:00',
+    });
+    const props = mount({ sessions: [next], currentCoach: { name: 'Test curriculum', email: 'curriculum@example.com' },
+      attendance: [attendance(next.id, { date: '2026-09-15', startTime: '11:00', absenceReported: true, canAttend: false })] });
+    const current = within(screen.getByRole('article', { name: 'Current coaching meeting' }));
+    expect(current.getByText('Your current coach').nextElementSibling).toHaveTextContent('Test curriculum');
+    expect(current.getByText('This meeting is booked with Rewan Yasser.')).toBeInTheDocument();
+    expect(current.getByText('Absence reported')).toBeInTheDocument();
+    expect(current.getByRole('button', { name: 'Reschedule meeting' })).toBeEnabled();
+    const meetingLink = current.getByRole('link', { name: 'Open meeting link' });
+    expect(meetingLink).toHaveAttribute('href', 'https://teams.microsoft.com/meet/123');
+    expect(meetingLink).toHaveAttribute('target', '_blank');
+    expect(meetingLink).toHaveAttribute('rel', 'noopener noreferrer');
+    fireEvent.click(meetingLink);
+    expect(props.onSchedule).not.toHaveBeenCalled();
+    expect(props.onAttend).not.toHaveBeenCalled();
+    expect(props.onReport).not.toHaveBeenCalled();
+    expect(current.queryByRole('button', { name: 'Confirm attendance' })).not.toBeInTheDocument();
+    expect(next.coachName).toBe('Rewan Yasser');
+  });
+
+  it('keeps future meeting preparation and the real meeting link accessible in read-only preview', () => {
+    const props = mount({ sessions: [session('future', '2026-09-15')], canAct: false });
+    const current = within(screen.getByRole('article', { name: 'Current coaching meeting' }));
+    expect(current.getByRole('link', { name: 'Prepare for meeting' })).toBeInTheDocument();
+    const link = current.getByRole('link', { name: 'Open meeting link' });
+    expect(link).toHaveAttribute('href', 'https://teams.microsoft.com/meet/123');
+    fireEvent.click(link);
+    expect(props.onAttend).not.toHaveBeenCalled();
+    expect(props.onSchedule).not.toHaveBeenCalled();
+    expect(props.onReport).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { currentCoach: { name: '', email: '' }, expected: 'Not yet assigned' },
+    { currentCoach: null, expected: 'To be confirmed' },
+  ])('does not substitute the old meeting host when current assignment is $expected', ({ currentCoach, expected }) => {
+    mount({ sessions: [session('future', '2026-09-15', { coachName: 'Rewan Yasser' })], currentCoach });
+    const current = within(screen.getByRole('article', { name: 'Current coaching meeting' }));
+    expect(current.getByText('Your current coach').nextElementSibling).toHaveTextContent(expected);
+    expect(current.getByText('Your current coach').nextElementSibling).not.toHaveTextContent('Rewan Yasser');
+    expect(current.getByText('This meeting is booked with Rewan Yasser.')).toBeInTheDocument();
+  });
+
+  it('shows when the confirmed booking has no meeting link instead of using a stale calendar URL', () => {
+    mount({ sessions: [session('future', '2026-09-15')], attendance: [attendance('future', {
+      date: '2026-09-15', meetingLink: '', canAttend: false,
+    })] });
+    expect(screen.getByText('Meeting link is not available yet.')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Open meeting link|Join meeting/ })).not.toBeInTheDocument();
+  });
+
+  it.each(['cancelled', 'completed', 'failed'])('does not render an online meeting link for a %s booking', status => {
+    mount({ sessions: [session('closed', '2026-09-15', { status })] }, `&view=all&tab=${status === 'failed' ? 'needs-action' : 'past'}`);
+    expect(screen.getByText('September 2026 coaching')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Open meeting link|Join meeting/ })).not.toBeInTheDocument();
+  });
+
   it('keeps a pending learner signature and the next appointment visible together', () => {
     const signedMeeting = session('summary:1', '2026-09-01', { status: 'awaiting-signature', reviewTemplateId: 'template-1', coachName: 'Previous coach' });
     const next = session('next:2', '2026-09-15');

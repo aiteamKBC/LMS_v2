@@ -36,6 +36,12 @@
 .coach strong { display: block; font-size: 14px; font-weight: 650; }
 .coach .provider { margin-left: auto; display: flex; gap: 6px; font-size: 12px; color: #637289; align-items: center; }
 .nextStep { color: #56667d; font-size: 14px; max-width: 55ch; }
+.coach .bookedHost { color: #65758a; font-size: 12px; margin-top: 5px; }
+.meetingLink { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 46px; padding: 10px 13px; border: 1px solid #d8e0eb; border-radius: 10px; font-size: 13px; font-weight: 600; color: #6843a4; background: #fff; }
+.meetingLink:hover { background: #f6f3fc; border-color: #bca7dd; }
+.linkUnavailable { margin-top: 13px !important; color: #65758a; font-size: 13px; }
+:global(:is(.dark, [data-theme="dark"])) .meetingLink { background: #192a40; border-color: #35465f; color: #c4a5fa; }
+:global(:is(.dark, [data-theme="dark"])) .coach .bookedHost, :global(:is(.dark, [data-theme="dark"])) .linkUnavailable { color: #b0bdd0; }
 .currentActions { display: flex; align-items: flex-start; gap: 12px; margin-top: 24px; flex-wrap: wrap; }
 .options { position: relative; }
 .options summary { list-style: none; cursor: pointer; min-height: 46px; padding: 11px 9px; display: flex; align-items: center; gap: 8px; font-size: 13px; color: #56667d; border-radius: 8px; }

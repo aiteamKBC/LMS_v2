@@ -87,9 +87,14 @@ export function coachingSessionState(
     && !['not-scheduled', 'planned', 'unknown'].includes(bookingStatus);
   const isToday = booked && scheduledDate === today;
   const signature = cancelled ? 'none' : signatureState(session, review);
+  // Link availability is separate from the next action. A future booking or
+  // an absence report must not hide the URL of the existing appointment.
+  const joinUrl = booked && !attendance?.attendanceConfirmed
+    ? meetingJoinUrl({ ...session, meetingLink: attendance ? attendance.meetingLink : session.meetingLink })
+    : null;
   const base = {
     session, attendance, date, booked, isToday, signature,
-    joinUrl: null,
+    joinUrl,
   };
   const result = (
     group: CoachingGroup, statusLabel: string, description: string,
@@ -130,12 +135,10 @@ export function coachingSessionState(
     return result('past', 'Awaiting update', 'Open this meeting to check the attendance and next steps.', 'view', 'View meeting');
   }
   if (booked) {
-    const link = meetingJoinUrl({ ...session, meetingLink: attendance ? attendance.meetingLink : session.meetingLink });
-    const canJoin = isToday && Boolean(link);
-    const state = result('upcoming', isToday ? 'Today' : 'Scheduled',
+    const canJoin = isToday && Boolean(joinUrl);
+    return result('upcoming', isToday ? 'Today' : 'Scheduled',
       isToday ? 'Have your learning updates and questions ready for your coach.' : 'Make a note of your progress and anything you want to discuss.',
       canJoin ? 'join' : 'prepare', canJoin ? 'Join meeting' : 'Prepare for meeting');
-    return { ...state, joinUrl: canJoin ? link : null };
   }
   if (['not-scheduled', 'planned'].includes(status)) {
     const remaining = daysFromToday(targetDate, today);

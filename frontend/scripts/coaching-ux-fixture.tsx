@@ -5,6 +5,7 @@ import '../src/index.css';
 import '../src/learner-theme.css';
 import CoachingHome from '../src/pages/learner/monthly-coaching/CoachingHome';
 import type { LearnerCalendarEvent, LearnerReviewDefinition } from '../src/api/learnerCalendar';
+import type { MeetingAttendance } from '../src/api/meetingAttendance';
 
 // Isolated visual smoke fixture. Not imported by the application router.
 const makeMeeting = (id: string, date: string, status = 'scheduled'): LearnerCalendarEvent => ({
@@ -20,10 +21,18 @@ const reviews = { signature: { instance: { status: 'awaiting-signature' }, signa
 } } as LearnerReviewDefinition };
 const params = new URLSearchParams(window.location.search);
 const today = params.get('scenario') === 'today' ? '2026-09-15' : '2026-09-14';
+const absenceScenario = params.get('scenario') === 'absence';
+const currentCoach = { name: absenceScenario ? 'Test curriculum' : 'Alex Taylor', email: 'current@example.test' };
+const displayedSessions = absenceScenario ? sessions.filter(session => session.id !== 'signature').map(session => session.id === 'next'
+  ? { ...session, coachName: 'Rewan Yasser', coachEmail: 'host@example.test' } : session) : sessions;
+const attendance: MeetingAttendance[] = absenceScenario ? [{ id: 'next', title: 'Monthly coaching', date: '2026-09-15',
+  status: 'scheduled', startTime: '11:00', durationMinutes: 60, meetingLink: 'https://teams.microsoft.com/example',
+  meetingProvider: 'Microsoft Teams', canAttend: false, attendanceConfirmed: false, creditedMinutes: null,
+  canReportAbsence: false, absenceReported: true, absenceSessionId: 'example-absence', missed: false }] : [];
 function Fixture() {
   const [notice, setNotice] = React.useState('');
   return <div style={{ background: '#f7f9fc', minHeight: '100vh', padding: 'clamp(16px, 3vw, 40px)', fontFamily: 'Arial, sans-serif' }}>
-    <CoachingHome sessions={sessions} attendance={[]} reviews={reviews} learner={{ kind: 'apprenticeship', id: 'test' }}
+    <CoachingHome sessions={displayedSessions} attendance={attendance} reviews={reviews} learner={{ kind: 'apprenticeship', id: 'test' }} currentCoach={currentCoach}
       today={today} loading={false} error="" canAct busy={false} onSchedule={session => setNotice(`Booking opened: ${session.id}`)}
       onAttend={id => setNotice(`Attendance: ${id}`)} onReport={session => setNotice(`Absence: ${session.id}`)}/>
     {notice && <p role="status">{notice}</p>}

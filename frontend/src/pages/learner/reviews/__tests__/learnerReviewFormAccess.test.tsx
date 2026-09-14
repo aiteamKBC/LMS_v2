@@ -205,6 +205,69 @@ const mountProgressReview = (id: string) => render(
 );
 
 describe('Learner Review View opens the generic Curriculum form', () => {
+  it('shows the saved learner image and points to the pending coach without asking the learner to sign again', () => {
+    reviewDefinition.instance!.status = 'awaiting-signature';
+    reviewDefinition.signatures.participant = { required: true, signed: true, signedName: 'Aya Khater', signature: 'data:image/png;base64,c2F2ZWQ=', signedAt: '2026-09-14T15:38:56Z' };
+    const onSign = vi.fn();
+    render(<LearnerReviewInstanceForm definition={reviewDefinition} onSign={onSign} signatoryName="Aya Khater" />);
+    expect(screen.getByRole('img', { name: 'Learner signature' })).toHaveAttribute('src', 'data:image/png;base64,c2F2ZWQ=');
+    expect(screen.getByText('Your signature is saved')).toBeVisible();
+    expect(screen.getByText('The coach still needs to sign this review.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Sign', exact: true })).not.toBeInTheDocument();
+    const scroll = vi.fn();
+    const step = screen.getByLabelText('Signature step');
+    step.scrollIntoView = scroll;
+    fireEvent.click(screen.getByRole('button', { name: 'View signatures' }));
+    expect(scroll).toHaveBeenCalled();
+    expect(step).toHaveFocus();
+    expect(onSign).not.toHaveBeenCalled();
+  });
+
+  it('lets the learner leave and reopen signature capture without saving', () => {
+    reviewDefinition.instance!.status = 'awaiting-signature';
+    const onSign = vi.fn();
+    render(<LearnerReviewInstanceForm definition={reviewDefinition} onSign={onSign} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel', exact: true }));
+    expect(screen.queryByRole('button', { name: 'Sign', exact: true })).not.toBeInTheDocument();
+    screen.getByLabelText('Signature step').scrollIntoView = vi.fn();
+    fireEvent.click(screen.getByRole('button', { name: 'Review & sign' }));
+    expect(screen.getByRole('button', { name: 'Sign', exact: true })).toBeVisible();
+    expect(onSign).not.toHaveBeenCalled();
+  });
+
+  it('explains that the coach must submit first and blocks learner signing of a draft', () => {
+    render(<LearnerReviewInstanceForm definition={reviewDefinition} onSign={vi.fn()} />);
+    expect(screen.getByText('Your coach is preparing this review')).toBeVisible();
+    expect(screen.getByText('The coach must complete this review before you can sign it.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Sign', exact: true })).not.toBeInTheDocument();
+  });
+
+  it('reloads the saved learner signature after signing a monthly coaching review and keeps the coach pending', async () => {
+    reviewDefinition.instance!.status = 'awaiting-signature';
+    const savedMark = 'data:image/png;base64,c2F2ZWQ=';
+    vi.spyOn(typedSignature, 'createTypedSignature').mockResolvedValue(savedMark);
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    let signatureWrites = 0;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).endsWith('/sign/')) {
+        signatureWrites += 1;
+        expect(init?.method).toBe('POST');
+        expect(JSON.parse(String(init?.body))).toEqual({ name: 'Aya Khater', signature: savedMark });
+        reviewDefinition = structuredClone(reviewDefinition);
+        reviewDefinition.signatures.participant = { required: true, signed: true, signature: savedMark, signedName: 'Aya Khater', signedAt: '2026-09-14T15:38:56Z' };
+        return new Response(JSON.stringify({ event: { ...events[0], status: 'awaiting-signature' }, review: reviewDefinition }));
+      }
+      return originalFetch(input, init);
+    });
+    mountMcm(SCHEDULED_MCM);
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign', exact: true }));
+    expect(await screen.findByRole('img', { name: 'Learner signature' })).toHaveAttribute('src', savedMark);
+    expect(screen.getByText('Your signature is saved')).toBeVisible();
+    expect(screen.getByText('The coach still needs to sign this review.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Sign', exact: true })).not.toBeInTheDocument();
+    expect(signatureWrites).toBe(1);
+  });
+
   it('keeps a staff preview readable without offering the learner signature', async () => {
     access.canProgress = false;
     reviewDefinition.instance!.status = 'awaiting-signature';

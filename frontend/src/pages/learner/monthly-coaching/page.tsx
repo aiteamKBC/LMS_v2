@@ -271,7 +271,7 @@ export function MonthlyCoachingListPage() {
 }
 
 function MonthlyCoachingList() {
-  const { myLearner, learner, sessions, setEvents, bookingCalendar, loading, error, refresh } = useReviewSessions('mcr');
+  const { myLearner, learner, currentCoach, sessions, setEvents, bookingCalendar, loading, error, refresh } = useReviewSessions('mcr');
   const attendance = useMeetingAttendance(myLearner);
   const reviews = useCoachingReviewDefinitions(myLearner.kind, myLearner.id, sessions);
   const [absence, setAbsence] = useState<MeetingAttendance | null>(null);
@@ -289,7 +289,7 @@ function MonthlyCoachingList() {
         {attendance.notice && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-sm text-emerald-700">{attendance.notice}</p>}
         {reviews.error && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{reviews.error}<button type="button" disabled={reviews.loading} onClick={reviews.refresh} className="ml-2 underline">Retry signature details</button></p>}
         {reviews.loading && <p role="status" className="text-sm text-foreground-500">Checking meeting signatures...</p>}
-        <CoachingHome sessions={sessions} attendance={attendance.data?.sessions || []} reviews={reviews.definitions} learner={myLearner}
+        <CoachingHome sessions={sessions} attendance={attendance.data?.sessions || []} reviews={reviews.definitions} learner={myLearner} currentCoach={currentCoach}
           today={attendance.data?.today || bookingCalendar?.today || isoDate(new Date())} timeZone={attendance.data?.timeZone}
           loading={loading} error={error} canAct={attendance.canAct} busy={Boolean(attendance.busy)}
           onSchedule={booking.openBooking} onAttend={attendance.attend} onReport={setAbsence}/>

@@ -298,10 +298,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        // `navigate` rather than a reload: it keeps the SPA mounted, and the
-        // `from` state is what returns the person to the page they were on once
-        // they sign in again.
-        const from = `${window.location.pathname}${window.location.search}`;
+        // Re-authentication starts at the account home after the login form.
         localStorage.removeItem(AUTH_STORAGE_KEY);
         clearCoachViewAs();
         clearTutorViewAs();
@@ -310,9 +307,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAuth(signedOutState());
         toast?.warning(
           'Your session has ended',
-          'Please sign in again to continue where you left off.',
+          'Please sign in again to continue.',
         );
-        navigate('/login', { state: { from }, replace: true });
+        navigate('/login', { replace: true });
       })();
     });
 

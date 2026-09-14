@@ -113,13 +113,13 @@ describe('monthly coaching overview', () => {
     expect(coachingSessionState(malformed, undefined, today)).toMatchObject({ group: 'upcoming', date: null });
   });
 
-  it('makes the nearest absence-reported appointment a reschedule step without a join link', () => {
+  it('keeps the nearest absence-reported appointment link available while prioritising rescheduling', () => {
     const absent = session('absent', '2026-09-15');
     const result = coachingOverview([session('later', '2026-10-01'), absent], [attendance('absent', {
       date: '2026-09-15', canAttend: false, absenceReported: true,
     })], today);
     expect(result.current?.session).toBe(absent);
-    expect(result.current).toMatchObject({ action: 'reschedule', group: 'needs-action', joinUrl: null });
+    expect(result.current).toMatchObject({ action: 'reschedule', group: 'needs-action', joinUrl: 'https://teams.microsoft.com/meet/123' });
   });
 
   it('only calls past attendance missed when the attendance source says so', () => {
@@ -163,10 +163,34 @@ describe('monthly coaching overview', () => {
     });
   });
 
-  it('offers join only on the meeting date and rejects unsafe URLs', () => {
+  it('prioritises joining on the meeting date while keeping future meeting links available', () => {
     expect(coachingSessionState(session('now'), undefined, today)).toMatchObject({ action: 'join', joinUrl: 'https://teams.microsoft.com/meet/123' });
-    expect(coachingSessionState(session('future', '2026-09-15'), undefined, today)).toMatchObject({ action: 'prepare', joinUrl: null });
-    expect(coachingSessionState(session('bad', today, { meetingLink: 'javascript:alert(1)' }), undefined, today)).toMatchObject({ action: 'prepare', joinUrl: null });
+    expect(coachingSessionState(session('future', '2026-09-15'), undefined, today)).toMatchObject({ action: 'prepare', joinUrl: 'https://teams.microsoft.com/meet/123' });
+  });
+
+  it.each(['javascript:alert(1)', 'http://teams.microsoft.com/meet/123', '/meeting/123', 'not a URL'])(
+    'never exposes an unsafe meeting URL: %s', meetingLink => {
+      expect(coachingSessionState(session('bad', today, { meetingLink }), undefined, today)).toMatchObject({ action: 'prepare', joinUrl: null });
+      expect(coachingSessionState(session('absent', '2026-09-15'), attendance('absent', {
+        date: '2026-09-15', absenceReported: true, meetingLink,
+      }), today)).toMatchObject({ action: 'reschedule', joinUrl: null });
+    },
+  );
+
+  it.each(['cancelled', 'deleted', 'superseded', 'completed', 'awaiting-signature', 'failed'])(
+    'does not expose a stale meeting link when the booking is %s', status => {
+      const row = session('closed', '2026-09-15', { status });
+      expect(coachingSessionState(row, undefined, today).joinUrl).toBeNull();
+      expect(coachingSessionState(session('closed', '2026-09-15'), attendance('closed', {
+        date: '2026-09-15', status,
+      }), today).joinUrl).toBeNull();
+    },
+  );
+
+  it('does not offer joining again after attendance has been confirmed', () => {
+    expect(coachingSessionState(session('attended'), attendance('attended', { attendanceConfirmed: true }), today)).toMatchObject({
+      action: 'view', joinUrl: null, statusLabel: 'Attended',
+    });
   });
 
   it('partitions every occurrence into one tab and keeps recent history first without mutating inputs', () => {

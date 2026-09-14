@@ -59,6 +59,8 @@ export interface LearnerCalendarEvent {
 
 export interface LearnerCalendarResponse {
   learner: { kind: LearnerKind; id: number; email?: string };
+  /** Current assignment; event.coachName remains the saved meeting host. */
+  currentCoach?: { name: string; email: string };
   events: LearnerCalendarEvent[];
   bookingCalendar?: BookingCalendarRules;
 }

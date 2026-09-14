@@ -125,6 +125,24 @@ class GeneratedCycleTests(CurriculumCycleFixture, SimpleTestCase):
         # Named as the learner's own coach, since that is who they would meet.
         self.assertEqual(first['coachEmail'], 'coach21@g.com')
 
+    def test_new_slots_use_current_assignment_even_when_profile_is_stale(self):
+        learner = _learner(case_owner='Test curriculum', coach_name='Test curriculum',
+                           coach_email='curriculum@example.com')
+        for programme_id in ('PROG-1', None):
+            with self.subTest(programme_id=programme_id):
+                self.programme.return_value = programme_id
+                events = _generated_cycle_events(learner, _mirror(), set())
+                self.assertTrue(events)
+                self.assertTrue(all(event['coachName'] == 'Test curriculum' for event in events))
+                self.assertTrue(all(event['coachEmail'] == 'curriculum@example.com' for event in events))
+
+    def test_explicitly_cleared_assignment_does_not_reuse_profile_coach(self):
+        events = _generated_cycle_events(
+            _learner(case_owner='', coach_name='', coach_email=''), _mirror(), set(),
+        )
+        self.assertTrue(events)
+        self.assertTrue(all(event['coachName'] == event['coachEmail'] == '' for event in events))
+
     def test_a_slot_that_is_already_booked_is_left_to_its_stored_row(self):
         booked = review_calendar_event_key(248, 'REV-MCM', 1)
 
@@ -220,7 +238,7 @@ class StoredRowOwnershipTests(SimpleTestCase):
 class CalendarResponseTests(CurriculumCycleFixture, SimpleTestCase):
     """The endpoint hands the page one calendar in date order."""
 
-    def _call(self, records, mirror, live_events=None, module_ids=None):
+    def _call(self, records, mirror, live_events=None, module_ids=None, learner=None):
         from django.test import RequestFactory
 
         from . import calendar as module
@@ -234,10 +252,43 @@ class CalendarResponseTests(CurriculumCycleFixture, SimpleTestCase):
                 patch.object(module.connections['enrolment'], 'cursor') as cursor, \
                 patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='staff', id=-1)):
             cursor.return_value.__enter__.return_value.fetchall.return_value = [(key,) for key in (module_ids if module_ids is not None else ['MOD-1'])]
-            models['commercial'].all_learners.filter.return_value.first.return_value = _learner()
+            models['commercial'].all_learners.filter.return_value.first.return_value = learner or _learner()
             response = inspect.unwrap(module.learner_calendar)(RequestFactory().get('/x'), 'commercial', 101)
         import json
         return json.loads(response.content), collect_live
+
+    def test_current_coach_is_separate_from_existing_meeting_organiser_and_link(self):
+        from .tests_booking_calendar import RescheduleEndpointTests
+        record = RescheduleEndpointTests.scheduled_record()
+        record.event_type = 'mcr'
+        record.learner_id = 248
+        record.learner_email = 'aya.khater@example.com'
+        record.owner_name = 'Rewan Yasser'
+        record.owner_email = 'rewan@example.com'
+        learner = _learner(case_owner='Test curriculum', coach_name=None, coach_email=None)
+        for status in ('scheduled', 'completed', 'awaiting-signature'):
+            with self.subTest(status=status), patch('learner_api.coach_assignment.StaffUser.objects.filter') as staff:
+                record.status = status
+                staff.return_value.only.return_value.__getitem__.return_value = [
+                    SimpleNamespace(email='curriculum@example.com')]
+                body, _ = self._call([record], _mirror(), module_ids=[], learner=learner)
+                self.assertEqual(body['currentCoach'], {
+                    'name': 'Test curriculum', 'email': 'curriculum@example.com',
+                })
+                stored = next(event for event in body['events'] if event['eventKey'] == record.event_key)
+                self.assertEqual(stored['coachName'], 'Rewan Yasser')
+                self.assertEqual(stored['coachEmail'], 'rewan@example.com')
+                self.assertEqual(stored['meetingLink'], 'https://teams.microsoft.com/l/meetup-join/test')
+                self.assertEqual(record.owner_name, 'Rewan Yasser')
+
+    def test_empty_calendar_still_returns_current_assignment(self):
+        learner = _learner(email='', case_owner='Test curriculum', coach_name='Test curriculum',
+                           coach_email='curriculum@example.com')
+        body, _ = self._call([], None, learner=learner)
+        self.assertEqual(body['events'], [])
+        self.assertEqual(body['currentCoach'], {
+            'name': 'Test curriculum', 'email': 'curriculum@example.com',
+        })
 
     def test_generated_slots_are_returned_in_date_order(self):
         # No coach email: live curriculum sessions are folded in through the

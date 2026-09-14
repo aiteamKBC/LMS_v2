@@ -227,9 +227,8 @@ def _nonce_matches(request, expected_hash):
 def start(request):
     """Return the Microsoft authorization URL for the SPA to navigate to.
 
-    ``next`` is carried through the signed state so a visitor who was bounced to
-    the sign-in page from somewhere deeper lands back there. Only a path is
-    accepted — an absolute URL here would make this an open redirect.
+    Every successful sign-in starts at the account's home. A previous page or
+    an old client's ``next`` parameter must not be restored after authentication.
     """
     settings = config()
     if missing_settings():
@@ -238,14 +237,10 @@ def start(request):
             status=503,
         )
 
-    next_path = request.GET.get("next") or ""
-    if not next_path.startswith("/") or next_path.startswith("//"):
-        next_path = ""
-
     # Only the hash goes into the state; the value itself stays in the cookie.
     nonce = generate_token()
     state = signing.dumps(
-        {"next": next_path, "n": hash_token(nonce)}, salt=STATE_SALT, compress=True
+        {"n": hash_token(nonce)}, salt=STATE_SALT, compress=True
     )
     query = urlencode(
         {
@@ -395,8 +390,10 @@ def callback(request):
     )
 
     # Student Home verifies the previous-record signature before showing the
-    # landing page, even when sign-in started from a saved Dashboard link.
-    destination = "/learner/home" if account.role == "learner" else payload.get("next") or "/"
+    # landing page. The SPA's signed-in root resolves every other account's home
+    # from its current access grant. Ignore `next` in older in-flight states too,
+    # so all sign-in methods have the same landing behaviour.
+    destination = "/learner/home" if account.role == "learner" else "/"
     response = HttpResponseRedirect(f"{frontend_base_url()}{destination}")
     # Deliberately not remembered. There is no checkbox on this route to read a
     # preference from, and inventing one in the person's favour is the wrong

@@ -15,8 +15,17 @@ import { CheckCircle2, Circle, Loader2, Info, AlertCircle } from 'lucide-react';
 import { startLiveDictation } from '@/utils/liveDictation';
 import { Modal } from '@/pages/users/components/Modal';
 
-const inputClass = 'mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50';
-const buttonClass = 'rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-blue-50 disabled:opacity-40';
+const inputClass = 'mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-base leading-7 text-slate-900 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50';
+const buttonClass = 'min-h-12 rounded-lg border border-slate-300 bg-white px-4 py-3 text-base font-semibold text-slate-800 shadow-sm hover:bg-blue-50 disabled:opacity-40';
+const CHECK_DESTINATIONS: Record<string, { step: number; action: string }> = {
+  answer: { step: 0, action: 'Complete your answer' }, learning: { step: 0, action: 'Review your learning' },
+  evidence: { step: 1, action: 'Review attached evidence' }, ksbs: { step: 2, action: 'Review skills' },
+  planned: { step: 2, action: 'Review planned learning' }, declarations: { step: 2, action: 'Confirm your learning' },
+  hours: { step: 2, action: 'Add your learning hours' }, reflection: { step: 3, action: 'Complete your reflections' },
+  benefit: { step: 4, action: 'Review your impact' }, impact: { step: 4, action: 'Review your impact' },
+  action: { step: 5, action: 'Complete your next steps' }, meeting: { step: 7, action: 'Choose your meeting' },
+  presentation: { step: 7, action: 'Finish your presentation' },
+};
 
 /** AI never silently replaces a learner's answer: suggestions require acceptance. */
 export function MonthlyAnswerField({ label, value, onChange, disabled, title, rows = 5, minimumWords = 0, onePointPerLine = false, generation }: {
@@ -98,7 +107,7 @@ export function MonthlyAnswerField({ label, value, onChange, disabled, title, ro
     finally { if (active.current) setBusy(false); }
   };
   return <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-    <label className="block text-sm font-semibold leading-6 text-slate-900">{label}
+    <label className="block text-base font-semibold leading-7 text-slate-900">{label}
       <textarea className={inputClass} rows={rows} value={value} disabled={disabled || busy || recording} onChange={e => { setSuggestion(''); onChange(e.target.value); }} />
     </label>
     <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3 [&>button]:min-h-10">
@@ -118,13 +127,14 @@ export function MonthlyAnswerField({ label, value, onChange, disabled, title, ro
   </div>;
 }
 
-export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer, kind, learnerId, title, plannedOtjh, mappings, evidenceFiles, evidenceUploader, timeControl, disabled, payload, checks, checking, onCheck, onSave, historical = false, question = '', activityId = '' }: {
+export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer, kind, learnerId, title, plannedOtjh, mappings, evidenceFiles, evidenceUploader, timeControl, disabled, payload, checks, checking, onCheck, onSave, onGoToStep, historical = false, question = '', activityId = '' }: {
   step: number; data: MonthlyAssignment; onChange: Dispatch<SetStateAction<MonthlyAssignment>>;
   answers: AssignmentAnswers; onAnswer: (key: keyof AssignmentAnswers, value: string) => void;
   kind: LearnerKind; learnerId: string; title: string; plannedOtjh: number | null;
   mappings: ComponentKsbMapping[]; evidenceFiles: EvidenceRecord[]; evidenceUploader: ReactNode; timeControl: ReactNode;
   disabled: boolean; payload: () => LearningReflectionSubmissionInput;
   checks: AssignmentQualityCheck[]; checking: boolean; onCheck: () => Promise<boolean>; onSave: () => Promise<boolean>;
+  onGoToStep?: (step: number) => void;
   historical?: boolean; question?: string; activityId?: string;
 }) {
   useEffect(() => {
@@ -174,10 +184,6 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
   const patch = (value: Partial<MonthlyAssignment>) => onChange(current => ({ ...current, ...value }));
   const field = (key: keyof MonthlyAssignment, label: string, minimumWords = 0) => <MonthlyAnswerField label={label} title={title} value={String(data[key] || '')} onChange={value => patch({ [key]: value })} disabled={disabled || busy} minimumWords={minimumWords} />;
   const check = (key: keyof MonthlyAssignment, label: string) => <label className="flex min-h-14 cursor-pointer items-center gap-3 rounded-xl bg-slate-50 px-4 py-3"><input type="checkbox" checked={data[key] === true} disabled={disabled || busy} onChange={e => patch({ [key]: e.target.checked })} className="m-0 h-4 w-4 shrink-0 accent-blue-600 disabled:cursor-not-allowed" /><span className="min-w-0 text-sm font-medium leading-6 tracking-normal text-slate-800">{label}</span></label>;
-  const monthEnd = /^\d{4}-\d{2}$/.test(data.month) ? new Date(Number(data.month.slice(0, 4)), Number(data.month.slice(5)), 0).getDate() : 0;
-  const minBooking = `${data.month}-${String(monthEnd - 9).padStart(2, '0')}`;
-  const nextMonth = new Date(Number(data.month.slice(0, 4)), Number(data.month.slice(5)), 5);
-  const maxBooking = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-05`;
   useEffect(() => {
     let active = true;
     if (historical) return;
@@ -419,14 +425,26 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
         </div>}
       </section>
       {field('actionPlan', 'Your action plan for next month (at least 20 words)')}{field('epaPreparedness', 'How has this prepared you for EPA? (at least 20 words)')}</>}
-    {step === 6 && <><h3 className="text-lg font-semibold">Submission quality checks</h3><p className="text-sm text-slate-600">All checks must be green before you can submit your assignment. Complete the coaching meeting booking and presentation in Step 8 (Coaching & presentation), then run the checks again.</p><button type="button" className={buttonClass} disabled={checking || disabled} onClick={() => void onCheck()}>{checking ? 'Checking…' : 'Run quality checks'}</button>{checks.map(c => <div key={c.key} className={`rounded-xl border p-3 text-sm ${c.passed ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>{c.passed ? <CheckCircle2 aria-hidden="true" className="mr-1 inline h-4 w-4 align-[-0.2em]" /> : <Circle aria-hidden="true" className="mr-1 inline h-4 w-4 align-[-0.2em]" />}{c.label}</div>)}</>}
+    {step === 6 && <>
+      <p className="text-base leading-7 text-slate-700">Check your answers, learning hours, meeting and presentation before sending this assignment to your coach.</p>
+      <div role="status" className={`rounded-xl border p-5 text-base ${checks.length === 13 && checks.every(c => c.passed) ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-slate-200 bg-slate-50 text-slate-800'}`}>
+        {checking ? 'Checking your work…' : checks.length === 13 && checks.every(c => c.passed) ? 'Your assignment is ready. Choose Submit assignment to send it to your coach.' : checks.length ? `${checks.filter(c => !c.passed).length} items need your attention. Your draft is saved when you continue.` : 'Your assignment has not been checked yet.'}
+      </div>
+      <button type="button" className={buttonClass} disabled={checking || disabled} onClick={() => void onCheck()}>{checking ? 'Checking…' : 'Check again'}</button>
+      <div className="space-y-3">{checks.filter(c => !c.passed).map(c => <div key={c.key} className="flex flex-col items-start justify-between gap-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-base leading-7 text-amber-950 sm:flex-row sm:items-center">
+        <p className="min-w-0 flex-1"><Circle aria-hidden="true" className="mr-2 inline h-5 w-5" /><span className="font-semibold">Needs attention: </span>{c.label}</p>
+        {onGoToStep && CHECK_DESTINATIONS[c.key] && <button type="button" className={`${buttonClass} w-full sm:w-auto sm:shrink-0`} disabled={checking || disabled} onClick={() => onGoToStep(CHECK_DESTINATIONS[c.key].step)}>{CHECK_DESTINATIONS[c.key].action}</button>}
+      </div>)}</div>
+      {checks.some(c => c.passed) && <details className="rounded-xl border border-slate-200 p-4"><summary className="min-h-12 cursor-pointer py-3 text-base font-semibold text-slate-700">{checks.filter(c => c.passed).length} requirements met</summary><ul className="mt-3 space-y-3">{checks.filter(c => c.passed).map(c => <li key={c.key} className="text-base leading-7 text-emerald-900"><CheckCircle2 aria-hidden="true" className="mr-2 inline h-5 w-5" />{c.label}</li>)}</ul></details>}
+    </>}
     {step === 7 && <>
       <h3 className="text-lg font-semibold">Coaching & presentation</h3>
-      <p className="text-sm text-slate-600">Book coaching between {minBooking} and {maxBooking}. You can finish both tasks here and keep the whole submission as a draft until ready.</p>
+      <p className="text-base leading-7 text-slate-700">Choose a coaching meeting, then prepare and export your slides. The final check comes next. You can save and return before submitting.</p>
       <AssignmentCoachingBooking kind={kind} learnerId={learnerId} month={data.month} title={title} meetingKey={data.meetingKey} disabled={disabled || historical} onSave={onSave} onSelect={meetingKey => patch({ meetingKey })} />
       <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
         <div className="flex items-start gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-bold text-primary-700">2</span><div><h4 className="text-base font-semibold text-slate-900">Prepare your presentation</h4><p className="mt-1 text-sm text-slate-600">Generate slides from your answers, edit and review them, then export your PowerPoint.</p></div></div>
-      <section className="space-y-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
+      <details className="space-y-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
+        <summary className="min-h-12 cursor-pointer py-3 text-base font-semibold text-slate-800">Presentation options (optional)</summary>
         <div>
           <p className="text-sm font-semibold">PowerPoint design reference (optional)</p>
           <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -442,12 +460,12 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
         {data.presentationDesign && !data.presentationDesign.evidenceId && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">This older reference saved colours only. Upload the original PPTX again to use its full template.</p>}
         {data.presentationDesign?.evidenceId && <div className="grid gap-3 sm:grid-cols-2">{(['coverSlide', 'contentSlide'] as const).map(key => <label key={key} className="block text-sm">{key === 'coverSlide' ? 'Reference cover slide' : 'Reference content slide'}<select className={inputClass} disabled={disabled || busy} value={data.presentationDesign?.[key] || 1} onChange={e => patch({ presentationDesign: { ...data.presentationDesign!, [key]: Number(e.target.value) }, presentationReviewed: false, presentationToken: '' })}>{Array.from({ length: data.presentationDesign?.slideCount || 1 }, (_, i) => <option key={i} value={i + 1}>Slide {i + 1}</option>)}</select></label>)}</div>}
         {busy && <p role="status" className="flex items-center gap-2 text-sm"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />Preparing your presentation...</p>}
-      </section>
+      </details>
       <div role="note" className="flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
         <Info aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" />
         <div>
           <p className="font-semibold">Keep your slides up to date</p>
-          <p className="mt-1">Empty learning, reflection, impact and action-plan slides are filled automatically from your saved answers when you open this step. Slides that already contain text are preserved. Complete any missing answers in Steps 4?6. To rebuild the whole presentation from your latest answers, click Generate full-month presentation.</p>
+          <p className="mt-1">Empty slides are filled from your saved answers. Review the slides and add any missing information. To rebuild the presentation from your latest answers, choose Generate full-month presentation.</p>
           <p className="mt-2 font-medium">Generating again replaces all current slides, including your manual slide edits. Review the updated slides before exporting.</p>
         </div>
       </div>
@@ -462,10 +480,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       {data.presentationToken && <p className="text-sm text-emerald-700">PowerPoint export complete. Editing your submission content or slides requires another reviewed export.</p>}
       </div>
       </section>
-      <section className="flex flex-col gap-4 rounded-2xl border border-primary-100 bg-primary-50 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
-        <div><h4 className="text-base font-semibold text-slate-900">Ready to submit?</h4><p className="mt-1 text-sm text-slate-600">Recheck after completing your meeting booking and presentation. All 13 checks must be green before you can submit.</p></div>
-      <button type="button" className={buttonClass + ' shrink-0'} disabled={checking || disabled} onClick={() => void onCheck()}>Recheck submission requirements</button>
-      </section>
+      <p className="rounded-xl bg-sky-50 p-4 text-base leading-7 text-slate-800">When your meeting and presentation are ready, choose Save and continue. We will check for anything missing before you submit.</p>
     </>}
     {notice && <p role="status" className="rounded-xl bg-blue-50 p-3 text-sm text-blue-900">{notice}</p>}
     {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}

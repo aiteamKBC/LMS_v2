@@ -3249,10 +3249,8 @@ export default function CoachTimetablePage() {
           event={reviewFormEvent}
           instanceId={reviewFormInstanceId}
           onClose={() => { setReviewFormEvent(null); setReviewFormInstanceId(''); }}
-          onCompleted={(status) => {
+          onStatusChange={(status) => {
             updateSingleEvent({ ...reviewFormEvent, status: status as TimetableEvent['status'] });
-            setReviewFormEvent(null);
-            setReviewFormInstanceId('');
           }}
         />
       )}
