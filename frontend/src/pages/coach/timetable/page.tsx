@@ -360,6 +360,15 @@ function eventConfig(event: TimetableEvent) {
     dot: 'bg-red-500',
     barBg: 'bg-red-500',
   };
+  const otherTheme = {
+    label: 'Other',
+    bg: 'bg-slate-50',
+    border: 'border-slate-300',
+    text: 'text-slate-800',
+    icon: 'ri-more-line',
+    dot: 'bg-slate-500',
+    barBg: 'bg-slate-500',
+  };
   const sourceTheme = event.source === 'mcr'
     ? mcrTheme
     : event.source === 'progress-review'
@@ -367,7 +376,9 @@ function eventConfig(event: TimetableEvent) {
       : event.source === 'catch-up'
         ? catchUpTheme
         : event.source === 'student-support' || event.type === 'welfare'
-          ? supportTheme
+        ? supportTheme
+        : event.source === 'other'
+          ? otherTheme
           : null;
   return sourceTheme || typeConfig(event.type);
 }
@@ -602,7 +613,7 @@ const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
   all: 'All',
   overdue: 'Overdue',
   'due-soon': 'Due Soon',
-  'needs-schedule': 'Needs Schedule',
+  'needs-schedule': 'Not Scheduled',
   scheduled: 'Scheduled',
   'in-progress': 'In Progress',
   'awaiting-signature': 'Awaiting Signature',

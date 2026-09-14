@@ -128,7 +128,7 @@ const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAYS_SHORT = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTH_SHORT_INDEX: Record<string, number> = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
-const BOOKABLE_COACH_SESSION_TYPES = new Set<BookableSessionType>(['catch-up', 'student-support', 'mcr', 'progress-review']);
+const BOOKABLE_COACH_SESSION_TYPES = new Set<BookableSessionType>(['catch-up', 'student-support', 'mcr', 'progress-review', 'gateway', 'other']);
 const PROGRAMME_CYCLE_SESSION_TYPES = new Set<BookableSessionType>(['mcr', 'progress-review']);
 
 const CALENDAR_PROVIDERS: Array<{ provider: PersonalCalendarProvider; title: string; subtitle: string; icon: string }> = [
@@ -411,11 +411,11 @@ function restoreNotifications() {
 }
 
 type ViewMode = 'monthly' | 'weekly' | 'daily';
-type LearnerSourceFilter = 'all' | 'live-session' | 'mcr' | 'progress-review' | 'catch-up' | 'student-support' | 'personal' | 'busy';
+type LearnerSourceFilter = 'all' | 'live-session' | 'mcr' | 'progress-review' | 'gateway' | 'catch-up' | 'student-support' | 'other' | 'personal' | 'busy';
 type LearnerStatusFilter = 'all' | 'needs-schedule' | 'scheduled' | 'pending' | 'in-progress' | 'completed';
 
-const LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'catch-up', 'student-support', 'personal', 'busy'];
-const VISIBLE_LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'catch-up', 'student-support'];
+const LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'gateway', 'catch-up', 'student-support', 'other', 'personal', 'busy'];
+const VISIBLE_LEARNER_SOURCE_FILTERS: LearnerSourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'gateway', 'catch-up', 'student-support', 'other'];
 const LEARNER_STATUS_FILTERS: LearnerStatusFilter[] = ['all', 'needs-schedule', 'scheduled', 'pending', 'in-progress', 'completed'];
 
 const LEARNER_SOURCE_META: Record<LearnerSourceFilter, { label: string; short: string; dot: string }> = {
@@ -423,15 +423,17 @@ const LEARNER_SOURCE_META: Record<LearnerSourceFilter, { label: string; short: s
   'live-session': { label: 'Live Sessions', short: 'Live Session', dot: 'bg-violet-500' },
   mcr: { label: 'Monthly Coaching Meeting', short: 'Monthly Coaching Meeting', dot: 'bg-orange-500' },
   'progress-review': { label: 'Progress Review', short: 'Progress Review', dot: 'bg-teal-500' },
+  gateway: { label: 'Gateway', short: 'Gateway', dot: 'bg-indigo-500' },
   'catch-up': { label: 'Catch-up', short: 'Catch-up', dot: 'bg-rose-500' },
   'student-support': { label: 'Student Support', short: 'Support', dot: 'bg-blue-500' },
+  other: { label: 'Other', short: 'Other', dot: 'bg-slate-500' },
   personal: { label: 'Personal Events', short: 'Personal', dot: 'bg-sky-500' },
   busy: { label: 'Busy Time', short: 'Busy', dot: 'bg-slate-500' },
 };
 
 const LEARNER_STATUS_META: Record<LearnerStatusFilter, { label: string; dot: string }> = {
   all: { label: 'All', dot: 'bg-foreground-400' },
-  'needs-schedule': { label: 'Needs Booking', dot: 'bg-rose-500' },
+  'needs-schedule': { label: 'Not Scheduled', dot: 'bg-rose-500' },
   scheduled: { label: 'Scheduled', dot: 'bg-primary-500' },
   pending: { label: 'Pending', dot: 'bg-amber-500' },
   'in-progress': { label: 'In Progress', dot: 'bg-secondary-500' },
@@ -483,6 +485,10 @@ function sessionTypeLabel(value?: CalendarEvent['bookingSessionType'] | Bookable
       return 'Student Support';
     case 'catch-up':
       return 'Catch-up';
+    case 'other':
+      return 'Other';
+    case 'gateway':
+      return 'Gateway';
     default:
       return 'Coach Session';
   }
@@ -494,8 +500,10 @@ function learnerEventSource(event: CalendarEvent): LearnerSourceFilter {
   if (event.source === 'live-session') return 'live-session';
   if (event.source === 'mcr') return 'mcr';
   if (event.source === 'progress-review') return 'progress-review';
+  if (event.source === 'gateway') return 'gateway';
   if (event.source === 'catch-up') return 'catch-up';
   if (event.source === 'student-support') return 'student-support';
+  if (event.source === 'other') return 'other';
   return 'personal';
 }
 
@@ -608,6 +616,7 @@ function LearnerCalendarBody() {
   const [bookTime, setBookTime] = useState('10:00');
   const [bookDuration, setBookDuration] = useState('60');
   const [bookNotes, setBookNotes] = useState('');
+  const [otherSessionType, setOtherSessionType] = useState('');
   const [bookSubmitting, setBookSubmitting] = useState(false);
   const [bookError, setBookError] = useState<string | null>(null);
   const [bookingCalendar, setBookingCalendar] = useState<BookingCalendarRules | null>(null);
@@ -838,6 +847,7 @@ function LearnerCalendarBody() {
     setBookTime('09:00');
     setBookDuration(String(sourceEvent?.durationMinutes || 60));
     setBookNotes('');
+    setOtherSessionType('');
     setBookError(null);
     setShowDayDrawer(false);
     setShowEventDetails(null);
@@ -856,6 +866,7 @@ function LearnerCalendarBody() {
     setBookTime(event.time.split('\u2013')[0].trim());
     setBookDuration(String(event.durationMinutes || calculatedDuration || 60));
     setBookNotes('');
+    setOtherSessionType('');
     setBookError(null);
     setShowDayDrawer(false);
     setShowEventDetails(null);
@@ -1098,6 +1109,10 @@ function LearnerCalendarBody() {
       setBookError('This time overlaps an event in your connected personal calendar. Please choose another time.');
       return;
     }
+    if (!rescheduleEvent && !bookingSourceEvent && bookType === 'other' && !otherSessionType.trim()) {
+      setBookError('Please enter the type of session you need.');
+      return;
+    }
     setBookSubmitting(true);
     setBookError(null);
     try {
@@ -1118,7 +1133,7 @@ function LearnerCalendarBody() {
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
-            notes: bookNotes.trim() || undefined,
+            notes: [bookType === 'other' ? `Requested session type: ${otherSessionType.trim()}` : '', bookNotes.trim()].filter(Boolean).join('\n') || undefined,
             timezoneOffsetMinutes: new Date(`${bookDate}T${bookTime}:00`).getTimezoneOffset(),
           });
       // A read started before this save must not restore the old appointment.
@@ -1138,6 +1153,7 @@ function LearnerCalendarBody() {
       }
       setShowBookModal(false);
       setBookNotes('');
+      setOtherSessionType('');
       setRescheduleEvent(null);
       setBookingSourceEvent(null);
       setAddToCalendarToast(res.warning
@@ -1345,6 +1361,10 @@ function LearnerCalendarBody() {
                   {([
                     { value: 'catch-up' as BookableSessionType, label: 'Catch-up', icon: 'ri-chat-3-line', desc: 'Quick check-in on your progress' },
                     { value: 'student-support' as BookableSessionType, label: 'Student Support', icon: 'ri-heart-2-line', desc: 'Help with challenges or wellbeing' },
+                    { value: 'progress-review' as BookableSessionType, label: 'PR', icon: 'ri-line-chart-line', desc: 'Progress Review' },
+                    { value: 'mcr' as BookableSessionType, label: 'MCM', icon: 'ri-calendar-check-line', desc: 'Monthly Coaching Meeting' },
+                    { value: 'gateway' as BookableSessionType, label: 'Gateway', icon: 'ri-flag-line', desc: 'Gateway review or assessment' },
+                    { value: 'other' as BookableSessionType, label: 'Other', icon: 'ri-more-line', desc: 'Request another session type' },
                   ]).map((t) => (
                     <button key={t.value} type="button" onClick={() => {
                       setBookType(t.value);
@@ -1357,6 +1377,7 @@ function LearnerCalendarBody() {
                     </button>
                   ))}
                 </div>
+                {bookType === 'other' && <div className="mt-3"><label htmlFor="other-session-type" className="text-xs font-semibold text-foreground-500">Other <span className="text-red-400">*</span></label><input id="other-session-type" type="text" value={otherSessionType} onChange={(e) => { setOtherSessionType(e.target.value); setBookError(null); }} maxLength={100} placeholder="Write the session type you need" className="mt-1.5 w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>}
               </div>}
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Date <span className="text-red-400">*</span></label><input aria-label="Date" type="date" value={bookDate} min={bookingToday} onChange={(e) => setBookDate(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
@@ -1451,7 +1472,7 @@ function LearnerCalendarBody() {
             <div className="flex gap-2 mt-5">
               <button onClick={() => setShowBookModal(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
               <button onClick={handleBookSession} disabled={bookSubmitting || availabilityLoading || selectedSlotConflicts || Boolean(sameWeekSession) || Boolean(selectedLmsConflict) || Boolean(bookDateRestriction) || !bookDate || !bookTime} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
-                {bookSubmitting ? <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon>{rescheduleEvent ? 'Rescheduling...' : bookingSourceEvent ? 'Booking...' : 'Sending...'}</> : <><AppIcon className="ri-calendar-check-line mr-1"></AppIcon>{rescheduleEvent ? 'Save New Time' : bookingSourceEvent ? 'Book Session' : 'Send Request'}</>}
+                {bookSubmitting ? <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon>{rescheduleEvent ? 'Rescheduling...' : bookingSourceEvent ? 'Booking...' : 'Sending...'}</> : <><AppIcon className={rescheduleEvent || bookingSourceEvent ? 'ri-calendar-check-line mr-1' : 'ri-check-line mr-1'}></AppIcon>{rescheduleEvent ? 'Save New Time' : bookingSourceEvent ? 'Book Session' : 'Send Request'}</>}
               </button>
             </div>
           </div>
@@ -1911,7 +1932,7 @@ function LearnerCalendarBody() {
                           className={`group flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition-all duration-150 hover:-translate-y-0.5 hover:shadow-sm cursor-pointer ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
                         >
                           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/75 shadow-sm">
-                            <AppIcon className={`${eventSource === 'live-session' ? 'ri-video-chat-line' : eventSource === 'mcr' ? 'ri-calendar-check-line' : eventSource === 'progress-review' ? 'ri-line-chart-line' : eventSource === 'student-support' ? 'ri-heart-2-line' : eventSource === 'busy' ? 'ri-lock-line' : 'ri-chat-3-line'} text-primary-600`}></AppIcon>
+                            <AppIcon className={`${eventSource === 'live-session' ? 'ri-video-chat-line' : eventSource === 'mcr' ? 'ri-calendar-check-line' : eventSource === 'progress-review' ? 'ri-line-chart-line' : eventSource === 'student-support' ? 'ri-heart-2-line' : eventSource === 'other' ? 'ri-more-line' : eventSource === 'busy' ? 'ri-lock-line' : 'ri-chat-3-line'} text-primary-600`}></AppIcon>
                           </span>
                           <div className="min-w-0 flex-1">
                             <div className="mb-1 flex min-w-0 items-center gap-1.5">

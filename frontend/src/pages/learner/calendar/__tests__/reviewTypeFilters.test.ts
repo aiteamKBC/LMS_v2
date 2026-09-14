@@ -74,6 +74,7 @@ const gatewayReview = (title = 'Gateway Check') => reviewEvent({
 const liveSession = () => event({ title: 'Module 3 live', source: 'live-session', club: 'Data Module' });
 const catchUp = () => event({ title: 'Catch-up', source: 'catch-up' });
 const support = () => event({ title: 'Support', source: 'student-support' });
+const other = () => event({ title: 'Other session', source: 'other' });
 const personal = () => event({ title: 'Dentist', club: 'Personal', type: 'Personal' });
 const busy = () => event({ title: 'Busy', type: 'Busy' });
 
@@ -119,6 +120,7 @@ describe('bucketing one event', () => {
     expect(learnerEventSource(liveSession())).toBe('live-session');
     expect(learnerEventSource(catchUp())).toBe('catch-up');
     expect(learnerEventSource(support())).toBe('student-support');
+    expect(learnerEventSource(other())).toBe('other');
     expect(learnerEventSource(personal())).toBe('personal');
     expect(learnerEventSource(busy())).toBe('busy');
   });
@@ -141,7 +143,7 @@ describe('building the filter row', () => {
     expect(labels).toEqual([
       'All', 'Live Session',
       'Monthly Coaching Meeting', 'Progress Review', 'Career Review', 'Gateway Review',
-      'Catch-up', 'Support',
+      'Catch-up', 'Support', 'Other',
     ]);
     expect(labels).not.toContain('Review');
   });
@@ -172,7 +174,7 @@ describe('building the filter row', () => {
 
   it('offers no review chips at all when the learner has no reviews', () => {
     const labels = buildSourceFilters([liveSession(), catchUp()]).map((option) => option.label);
-    expect(labels).toEqual(['All', 'Live Session', 'Catch-up', 'Support']);
+    expect(labels).toEqual(['All', 'Live Session', 'Catch-up', 'Support', 'Other']);
   });
 
   it('gives each Review Type a stable colour across rebuilds', () => {

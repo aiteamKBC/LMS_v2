@@ -3141,7 +3141,7 @@ def monthly_learning_tone(entry: dict) -> str:
 def monthly_status_label(status: str) -> str:
     value = clean_text(status).lower()
     if value == CoachCalendarEvent.STATUS_NOT_SCHEDULED:
-        return "Needs schedule"
+        return "Not Scheduled"
     if value == CoachCalendarEvent.STATUS_IN_PROGRESS:
         return "In progress"
     return value.replace("-", " ").title() if value else "--"
@@ -4433,7 +4433,7 @@ TEAMS_SYNC_TEMPORARY_MESSAGE = (
     "The event was saved locally only; try again later or ask an admin to check Microsoft permissions."
 )
 TEAMS_SYNC_LINK_MISSING_MESSAGE = (
-    "Teams did not return a meeting link, so this event was moved back to Needs Schedule. "
+    "Teams did not return a meeting link, so this event was moved back to Not Scheduled. "
     "Try scheduling again after Microsoft sync is available."
 )
 
@@ -4471,7 +4471,7 @@ def repair_calendar_record_to_needs_schedule(
     *,
     reason: str | None = None,
 ) -> CoachCalendarEvent:
-    default_reason = "Teams meeting details were not stored, so this event has been returned to Needs Schedule."
+    default_reason = "Teams meeting details were not stored, so this event has been returned to Not Scheduled."
     if clean_text(record.graph_event_id):
         delete_calendar_event_from_graph(record)
 
@@ -8707,7 +8707,7 @@ def coach_timetable_event_action(request):
             record,
             reason=clean_text(record.last_graph_sync_error),
         )
-        return JsonResponse({"detail": "This event does not have a Teams link anymore and was moved back to Needs Schedule."}, status=409)
+        return JsonResponse({"detail": "This event does not have a Teams link anymore and was moved back to Not Scheduled."}, status=409)
 
     record.owner_name = owner_name
     warning = ""

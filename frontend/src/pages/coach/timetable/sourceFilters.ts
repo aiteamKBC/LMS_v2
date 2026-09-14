@@ -22,7 +22,7 @@ import {
 } from '@/lib/reviewTypeFilters';
 
 /** Fixed event-domain sources. */
-export type NonReviewSourceFilter = 'all' | 'live-session' | 'catch-up' | 'student-support';
+export type NonReviewSourceFilter = 'all' | 'live-session' | 'catch-up' | 'student-support' | 'other';
 export type SourceFilter = NonReviewSourceFilter | ReviewFilterKey;
 
 /** What this module needs off a timetable event. The page's `TimetableEvent`
@@ -32,7 +32,7 @@ export interface CoachFilterableEvent extends ReviewTypeClassifiedEvent {
 }
 
 export const NON_REVIEW_SOURCE_FILTER_ORDER: NonReviewSourceFilter[] = [
-  'all', 'live-session', 'catch-up', 'student-support',
+  'all', 'live-session', 'catch-up', 'student-support', 'other',
 ];
 
 export const NON_REVIEW_SOURCE_FILTER_LABELS: Record<NonReviewSourceFilter, string> = {
@@ -40,6 +40,7 @@ export const NON_REVIEW_SOURCE_FILTER_LABELS: Record<NonReviewSourceFilter, stri
   'live-session': 'Live Sessions',
   'catch-up': 'Catch-up',
   'student-support': 'Support',
+  other: 'Other',
 };
 
 export const NON_REVIEW_SOURCE_FILTER_DOTS: Record<NonReviewSourceFilter, string> = {
@@ -47,6 +48,7 @@ export const NON_REVIEW_SOURCE_FILTER_DOTS: Record<NonReviewSourceFilter, string
   'live-session': 'bg-violet-500',
   'catch-up': 'bg-red-500',
   'student-support': 'bg-blue-500',
+  other: 'bg-slate-500',
 };
 
 /** Display names for the routing `source` values -- used by the schedule
@@ -60,6 +62,7 @@ export const EVENT_SOURCE_LABELS: Record<string, string> = {
   review: 'Reviews',
   'catch-up': 'Catch-up',
   'student-support': 'Support',
+  other: 'Other',
 };
 
 export function eventSourceLabel(source?: string): string {
@@ -97,7 +100,7 @@ export function isSourceFilterValue(value?: string): value is SourceFilter {
   if (!value) return false;
   if (isReviewFilterKey(value)) return true;
   return value === 'all' || value === 'live-session'
-    || value === 'catch-up' || value === 'student-support';
+    || value === 'catch-up' || value === 'student-support' || value === 'other';
 }
 
 /**
@@ -115,6 +118,7 @@ export function eventMatchesSourceFilter(event: CoachFilterableEvent, source: So
   // routing source says.
   if (reviewBucketFor(event)) return false;
   if (source === 'student-support') return event.source === 'student-support' || event.type === 'welfare';
+  if (source === 'other') return event.source === 'other' && event.type !== 'welfare';
   return event.source === source;
 }
 
@@ -146,6 +150,7 @@ export function buildCoachSourceChips(events: CoachFilterableEvent[]): CoachSour
     ...reviewChips,
     fixed('catch-up'),
     fixed('student-support'),
+    fixed('other'),
   ];
 }
 

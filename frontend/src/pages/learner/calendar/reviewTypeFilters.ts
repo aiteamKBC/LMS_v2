@@ -26,7 +26,7 @@ export { REVIEW_FILTER_PREFIX } from '@/lib/reviewTypeFilters';
 
 /** The non-review buckets. These are event-domain sources and stay fixed. */
 export type LearnerNonReviewSource =
-  | 'all' | 'live-session' | 'catch-up' | 'student-support' | 'personal' | 'busy';
+  | 'all' | 'live-session' | 'catch-up' | 'student-support' | 'other' | 'personal' | 'busy';
 
 export type LearnerReviewSource = ReviewFilterKey;
 
@@ -49,6 +49,7 @@ export const LEARNER_NON_REVIEW_SOURCE_META: Record<
   'live-session': { label: 'Live Sessions', short: 'Live Session', dot: 'bg-violet-500' },
   'catch-up': { label: 'Catch-up', short: 'Catch-up', dot: 'bg-rose-500' },
   'student-support': { label: 'Student Support', short: 'Support', dot: 'bg-blue-500' },
+  other: { label: 'Other', short: 'Other', dot: 'bg-slate-500' },
   personal: { label: 'Personal Events', short: 'Personal', dot: 'bg-sky-500' },
   busy: { label: 'Busy Time', short: 'Busy', dot: 'bg-slate-500' },
 };
@@ -71,6 +72,7 @@ export function learnerEventSource(event: CalendarEvent): LearnerSourceFilter {
   if (isReviewEvent(event)) return reviewFilterKey(event.reviewTypeId);
   if (event.source === 'catch-up') return 'catch-up';
   if (event.source === 'student-support') return 'student-support';
+  if (event.source === 'other') return 'other';
   return 'personal';
 }
 
@@ -109,6 +111,7 @@ export function buildSourceFilters(events: CalendarEvent[]): SourceFilterOption[
     ...reviewTypeBuckets(events),
     fixed('catch-up'),
     fixed('student-support'),
+    fixed('other'),
   ];
 }
 

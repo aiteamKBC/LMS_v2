@@ -25,6 +25,7 @@ import AbsenceReportForm from '../attendance/components/AbsenceReportForm';
 import { meetingCalendarHref } from '../reviews/meetingBooking';
 import { useMeetingBooking } from '../reviews/useMeetingBooking';
 import MeetingSchedulingAction from '../reviews/MeetingSchedulingAction';
+import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
 
 const learnerNav = roleNavMap.learner;
 
@@ -71,15 +72,77 @@ function importedValue(value: unknown): string {
   try { return JSON.stringify(value); } catch { return String(value); }
 }
 
+/** Older Aptem exports kept question/answer pairs only in raw_text. */
+function rawTextFields(rawText: string): Array<{ label: string; value: string }> {
+  const blocks = rawText.split(/\r?\n\s*\r?\n+/)
+    .map((block) => block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))
+    .filter((lines) => lines.length);
+  return blocks.flatMap((lines) => {
+    const first = lines[0];
+    const separator = first.indexOf(':');
+    if (separator > 0) return [{ label: first.slice(0, separator).trim(), value: [first.slice(separator + 1).trim(), ...lines.slice(1)].filter(Boolean).join('\n') || '-' }];
+    return [{ label: first, value: lines.slice(1).join('\n') || '-' }];
+  });
+}
+
+function importedSectionName(name: string): string {
+  return name.trim().replace(/\s+(completed|incomplete)$/i, '').trim().toLowerCase();
+}
+
+function ImportedAttachmentLinks({ section }: { section: NonNullable<LearnerCalendarEvent['importedReview']>['sections'][number] }) {
+  const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
+  const links = section.fields.flatMap((field) => 'links' in field && Array.isArray(field.links) ? field.links : []);
+  if (!links.length) return null;
+  return <><div className="mt-2 space-y-1">{links.map((link, index) => {
+    const url = link.azure_url || link.url || link.href;
+    const name = link.text || link.title || `Attachment ${index + 1}`;
+    return url ? <button key={index} type="button" onClick={() => setPreview({ url, name })} className="block max-w-full truncate text-left text-xs font-semibold text-primary-600 underline hover:text-primary-800">{name}</button> : null;
+  })}</div>{preview && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(null); }}><div role="dialog" aria-modal="true" aria-label={preview.name} className="flex h-[min(88vh,900px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"><div className="flex items-center justify-between gap-3 border-b border-background-200 px-4 py-3"><p className="truncate text-sm font-bold text-foreground-900">{preview.name}</p><button type="button" aria-label="Close attachment preview" onClick={() => setPreview(null)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-500 hover:bg-background-100"><AppIcon className="ri-close-line" /></button></div><iframe title={preview.name} src={preview.url} className="min-h-0 flex-1 bg-background-100" /></div></div>}</>;
+}
+
+function ImportedReviewsSchedule({ section }: { section: NonNullable<LearnerCalendarEvent['importedReview']>['sections'][number] }) {
+  const tableRows = section.tables.flatMap((table) => table.rows || []);
+  if (tableRows.length > 1) return <div className="overflow-x-auto rounded-xl border border-background-200 bg-white"><table className="min-w-full text-left text-xs"><thead className="bg-background-100 text-[10px] uppercase tracking-wide text-foreground-500"><tr>{(tableRows[0] || []).map((cell, index) => <th key={index} className="px-4 py-3">{importedValue(cell)}</th>)}</tr></thead><tbody className="divide-y divide-background-200">{tableRows.slice(1).map((row, index) => <tr key={index}>{(Array.isArray(row) ? row : [row]).map((cell, cellIndex) => <td key={cellIndex} className="whitespace-pre-wrap px-4 py-3">{importedValue(cell)}</td>)}</tr>)}</tbody></table></div>;
+  const dates = [...(section.rawText || '').matchAll(/\b\d{2}\/\d{2}\/\d{4}\b/g)].map((match) => match[0]);
+  const rows = Array.from({ length: Math.ceil(dates.length / 2) }, (_, index) => [dates[index * 2] || '-', dates[index * 2 + 1] || '-']);
+  if (!rows.length) return null;
+  return <div className="overflow-x-auto rounded-xl border border-background-200 bg-white"><table className="min-w-full text-left text-xs"><thead className="bg-background-100 text-[10px] uppercase tracking-wide text-foreground-500"><tr><th className="px-4 py-3">Review Name / Review Type</th><th className="px-4 py-3">Planned Date</th><th className="px-4 py-3">Actual Date</th></tr></thead><tbody className="divide-y divide-background-200">{rows.map(([planned, actual], index) => <tr key={index}><td className="px-4 py-3"><p className="font-bold text-foreground-900">Progress Review</p><p className="text-foreground-500">Progress Review</p></td><td className="px-4 py-3">{planned}</td><td className="px-4 py-3">{actual}</td></tr>)}</tbody></table></div>;
+}
+
+function ImportedFunctionalSkills({ section }: { section: NonNullable<LearnerCalendarEvent['importedReview']>['sections'][number] }) {
+  const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
+  const text = section.rawText || '';
+  const beforeResults = text.split(/\bResults\b/i)[0];
+  const resultsText = text.split(/\bResults\b/i)[1] || '';
+  const assessments = [...beforeResults.matchAll(/\b(English|Maths)\s*\n+\s*Assessment Date:\s*([^\n]+)\s*\n+\s*(Level\s*\d+)/gi)].map((match) => ({ subject: match[1], date: match[2], level: match[3] }));
+  const exemptions = [...(text.match(/\bExemptions\b([\s\S]*?)(?=\bResults\b|$)/i)?.[1] || '').matchAll(/\b(English|Maths|ICT)\s*\n+\s*(Opt Out|Not Exempt)(?:\s*\n+\s*([^\n]+\.pdf))?/gi)].map((match) => ({ subject: match[1], status: match[2], attachment: match[3] }));
+  const results = [...resultsText.matchAll(/\b(English Reading|English Writing|English SLC|Maths|ICT)\s*\n+\s*Assessment Date:\s*\n+\s*([^\n]+)/gi)].map((match) => ({ subject: match[1], score: match[2] }));
+  if (!assessments.length && !exemptions.length && !results.length) return null;
+  const links = section.fields.flatMap((field) => 'links' in field && Array.isArray(field.links) ? field.links : []);
+  const attachment = links[0];
+  const attachmentUrl = attachment?.azure_url || attachment?.url || attachment?.href;
+  return <div className="space-y-4">
+    {assessments.length > 0 && <div><h4 className="mb-2 text-sm font-bold text-foreground-900">Initial Assessments</h4><div className="grid gap-3 sm:grid-cols-2">{assessments.map((item) => <div key={`${item.subject}:${item.date}`} className="rounded-lg border border-background-200 bg-white p-3"><p className="text-sm font-bold text-foreground-900">{item.subject}</p><p className="mt-1 text-xs text-foreground-500">Assessment Date: {item.date}</p><span className="mt-2 inline-flex rounded bg-primary-50 px-2 py-1 text-xs font-bold text-primary-700">{item.level}</span></div>)}</div></div>}
+    {exemptions.length > 0 && <div><h4 className="mb-2 text-sm font-bold text-foreground-900">Exemptions</h4><div className="grid gap-3 sm:grid-cols-3">{exemptions.map((item) => <div key={item.subject} className="rounded-lg border border-background-200 bg-white p-3"><div className="flex items-start justify-between gap-2"><p className="text-sm font-bold text-foreground-900">{item.subject}</p><span className="rounded bg-background-200 px-2 py-1 text-[10px] font-bold text-foreground-600">{item.status}</span></div>{item.attachment && attachmentUrl && <button type="button" onClick={() => setPreview({ url: attachmentUrl, name: item.attachment || 'Attachment' })} className="mt-3 block max-w-full truncate text-left text-xs font-semibold text-primary-600 underline">{item.attachment}</button>}</div>)}</div></div>}
+    {results.length > 0 && <div><h4 className="mb-2 text-sm font-bold text-foreground-900">Results</h4><div className="grid gap-3 sm:grid-cols-3">{results.map((item) => <div key={`${item.subject}:${item.score}`} className="rounded-lg border border-background-200 bg-white p-3"><p className="text-sm font-bold text-foreground-900">{item.subject}</p><p className="mt-1 text-xs text-foreground-500">Assessment Date:</p><span className="mt-2 inline-flex h-8 w-8 items-center justify-center rounded-full border-4 border-background-200 text-[10px] font-bold text-foreground-700">{item.score}</span></div>)}</div></div>}
+    {preview && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(null); }}><div role="dialog" aria-modal="true" aria-label={preview.name} className="flex h-[min(88vh,900px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"><div className="flex items-center justify-between gap-3 border-b border-background-200 px-4 py-3"><p className="truncate text-sm font-bold text-foreground-900">{preview.name}</p><button type="button" aria-label="Close attachment preview" onClick={() => setPreview(null)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-500 hover:bg-background-100"><AppIcon className="ri-close-line" /></button></div><iframe title={preview.name} src={preview.url} className="min-h-0 flex-1 bg-background-100" /></div></div>}
+  </div>;
+}
+
 function ImportedReviewSections({ review }: { review: NonNullable<LearnerCalendarEvent['importedReview']> }) {
   if (!review.sections.length) return <Empty>No section details were imported for this review.</Empty>;
   return <div className="space-y-3">
     {review.sections.map((section) => <section key={section.id} className="rounded-xl border border-background-200 bg-background-100/45 p-4">
-      <h3 className="text-sm font-bold text-foreground-900">{section.name}</h3>
+      <h3 className="text-sm font-bold text-foreground-900">{section.name.replace(/\s+(completed|incomplete)$/i, '').trim()}</h3>
       <div className="mt-3 space-y-3">
-        {section.fields.map((field, index) => <div key={`${field.label || 'field'}:${index}`} className="rounded-lg border border-background-200 bg-white p-3"><p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">{field.label || 'Response'}</p><p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-foreground-700">{importedValue(field.value)}</p></div>)}
+        {importedSectionName(section.name) === 'reviews schedule' && <ImportedReviewsSchedule section={section} />}
+        {importedSectionName(section.name) === 'functional skills' && <ImportedFunctionalSkills section={section} />}
+        {importedSectionName(section.name) !== 'reviews schedule' && <>
+        {(section.fields.length ? section.fields : rawTextFields(section.rawText)).map((field, index) => <div key={`${field.label || 'field'}:${index}`} className="rounded-lg border border-background-200 bg-white p-3"><p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">{field.label || 'Response'}</p><p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-foreground-700">{importedValue(field.value)}</p></div>)}
+        <ImportedAttachmentLinks section={section} />
         {section.tables.map((table, index) => <div key={index} className="overflow-x-auto rounded-lg border border-background-200 bg-white"><table className="min-w-full text-left text-xs"><tbody className="divide-y divide-background-200">{(table.rows || []).map((row, rowIndex) => <tr key={rowIndex} className={rowIndex === 0 ? 'bg-background-100 font-bold text-foreground-800' : 'text-foreground-700'}>{(Array.isArray(row) ? row : [row]).map((cell, cellIndex) => <td key={cellIndex} className="whitespace-pre-wrap px-3 py-2.5 align-top">{importedValue(cell)}</td>)}</tr>)}</tbody></table></div>)}
-        {section.rawText && section.rawText !== 'EMPTY_STRING' && <p className="whitespace-pre-wrap rounded-lg border border-background-200 bg-white p-3 text-sm leading-6 text-foreground-700">{section.rawText}</p>}
+        {!section.fields.length && !rawTextFields(section.rawText).length && section.rawText && section.rawText !== 'EMPTY_STRING' && <p className="whitespace-pre-wrap rounded-lg border border-background-200 bg-white p-3 text-sm leading-6 text-foreground-700">{section.rawText}</p>}
+        </>}
       </div>
     </section>)}
   </div>;
@@ -237,19 +300,20 @@ function ProgressReviewsList() {
   const pageSize = 10;
   const finishedReviews = reviews.filter((review) => review.status.toLowerCase() === 'completed');
   const plannedReviews = reviews.filter((review) => review.status.toLowerCase() !== 'completed');
-  const firstBookableReview = reviews.find((review) => review.status.toLowerCase() === 'not-scheduled');
   const tabReviews = view === 'finished' ? finishedReviews : plannedReviews;
   const totalPages = Math.max(1, Math.ceil(tabReviews.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const visibleReviews = tabReviews.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const completedCount = finishedReviews.length;
-  const scheduledCount = reviews.filter((review) => ['scheduled', 'in-progress'].includes(review.status.toLowerCase())).length;
+  const scheduledCount = reviews.filter((review) => review.status.toLowerCase() === 'scheduled').length;
+  const inProgressCount = reviews.filter((review) => review.status.toLowerCase() === 'in-progress').length;
   const planningCount = plannedReviews.filter((review) => ['not-scheduled', 'not scheduled', 'not_scheduled'].includes(review.status.toLowerCase())).length;
   const awaitingSignatureCount = reviews.filter(review => review.status.toLowerCase() === 'awaiting-signature').length;
   const reviewerName = reviews.find((review) => review.coachName)?.coachName || 'Your reviewer';
   const summaryMetrics = [
     { label: 'Total', value: reviews.length, icon: 'ri-stack-line', tone: 'brand' as const, iconClassName: 'bg-violet-100 text-violet-700' },
     { label: 'Scheduled', value: scheduledCount, icon: 'ri-calendar-check-line', tone: 'info' as const, iconClassName: 'bg-blue-100 text-blue-700' },
+    { label: 'In progress', value: inProgressCount, icon: 'ri-time-line', tone: 'caution' as const, iconClassName: 'bg-amber-100 text-amber-700' },
     { label: 'Completed', value: completedCount, icon: 'ri-checkbox-circle-line', tone: 'positive' as const, iconClassName: 'bg-emerald-100 text-emerald-700' },
     { label: 'Not Scheduled', value: planningCount, icon: 'ri-time-line', tone: 'neutral' as const, iconClassName: 'bg-amber-100 text-amber-700' },
     { label: 'Awaiting Signature', value: awaitingSignatureCount, icon: 'ri-quill-pen-line', tone: 'brand' as const, iconClassName: 'bg-violet-100 text-violet-700' },
@@ -293,7 +357,7 @@ function ProgressReviewsList() {
         <section aria-label="Reviews sessions" className="overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-sm">
           <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
             <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><AppIcon className="ri-file-list-3-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Reviews sessions</h2><p className="mt-0.5 text-xs text-foreground-500">Check each review status and open the full review record.</p></div></div>
-            <div className="flex flex-wrap items-center gap-2"><button type="button" disabled={!firstBookableReview} onClick={() => firstBookableReview && openBooking(firstBookableReview)} className="inline-flex h-9 items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-xs font-bold text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"><AppIcon className="ri-calendar-check-line" />Book review</button><Link to={`/learner/calendar?kind=${myLearner.kind}&learner=${myLearner.id}`} className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />Open calendar</Link></div>
+            <div className="flex flex-wrap items-center gap-2"><Link to={`/learner/calendar?kind=${myLearner.kind}&learner=${myLearner.id}`} className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />Open calendar</Link></div>
           </div>
           <div role="tablist" aria-label="Review status" className="flex overflow-x-auto border-b border-background-200 bg-white px-4 pt-3 sm:px-5">
             {(['planned', 'finished'] as const).map((tab) => {
@@ -437,6 +501,11 @@ export default function ProgressReviewsPage() {
   const selected = reviewId
     ? reviews.find(review => review.id === reviewId) || null
     : reviews.find(review => review.id === selectedId) || planned[0] || completed.at(-1) || reviews[0] || null;
+  const reviewInstance = useLearnerReviewInstance(
+    myLearner.kind,
+    myLearner.id,
+    selected?.reviewInstanceId ? (selected.eventKey || selected.id) : '',
+  );
   const selectedIndex = selected ? reviews.findIndex((review) => review.id === selected.id) : -1;
   const previousReview = selectedIndex > 0 ? reviews[selectedIndex - 1] : null;
 
@@ -616,7 +685,13 @@ export default function ProgressReviewsPage() {
                 </div>
               </section>
 
-              {selected.importedReview && <Accordion id="imported-review-details" title={`${reviewTypeLabel(selected)} details`} icon="ri-file-list-3-line" open={openSections.includes('imported-review-details')} onToggle={toggleSection}><ImportedReviewSections review={selected.importedReview} /></Accordion>}
+              {reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}</p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} /> : <>
+              {selected.importedReview ? <div className="space-y-3">
+                {selected.importedReview.sections.map((section, index) => <Accordion key={section.id} id={`imported-section:${section.id}`} title={section.name.replace(/\s+(completed|incomplete)$/i, '').trim()} icon="ri-file-list-3-line" open={openSections.includes(`imported-section:${section.id}`) || (!openSections.some((id) => id.startsWith('imported-section:')) && index === 0)} onToggle={toggleSection}>
+                  <ImportedReviewSections review={{ ...selected.importedReview, sections: [section] }} />
+                </Accordion>)}
+                {!selected.importedReview.sections.length && <Empty>Detailed questions and answers have not been imported for this review yet.</Empty>}
+              </div> : <>
               <Accordion id="progress-checks" title="Progress Checks" icon="ri-check-double-line" open={openSections.includes('progress-checks')} onToggle={toggleSection}>
                 <SavedReviewAnswers sectionId="progress-checks" responses={selected?.reviewResponses} emptyMessage="No progress checks have been recorded for this Progress Review." />
               </Accordion>
@@ -634,6 +709,8 @@ export default function ProgressReviewsPage() {
                 </div>
                 {responsesForSection(selected?.reviewResponses, 'rag').length > 0 && <div className="mt-4"><SavedReviewAnswers sectionId="rag" responses={selected?.reviewResponses} emptyMessage="No RAG assessment has been recorded for this Progress Review." /></div>}
               </Accordion>
+              </>}
+                  </>}
             </main>
           </div>
         )}

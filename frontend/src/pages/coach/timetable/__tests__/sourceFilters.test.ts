@@ -59,6 +59,7 @@ const unclassifiedReview = (title = 'Legacy review'): TestEvent => ({ title, sou
 const liveSession = (): TestEvent => ({ title: 'Module 3 live', source: 'live-session', type: 'live-session' });
 const catchUp = (): TestEvent => ({ title: 'Catch-up', source: 'catch-up', type: 'coaching' });
 const support = (): TestEvent => ({ title: 'Support', source: 'student-support', type: 'welfare' });
+const other = (): TestEvent => ({ title: 'Other session', source: 'other', type: 'coaching' });
 
 describe('bucketing one coach event', () => {
   it('puts an MCM event under Monthly Coaching Meeting', () => {
@@ -117,6 +118,8 @@ describe('bucketing one coach event', () => {
     expect(eventMatchesSourceFilter(liveSession(), 'live-session')).toBe(true);
     expect(eventMatchesSourceFilter(catchUp(), 'catch-up')).toBe(true);
     expect(eventMatchesSourceFilter(support(), 'student-support')).toBe(true);
+    expect(eventMatchesSourceFilter(other(), 'other')).toBe(true);
+    expect(eventMatchesSourceFilter({ source: 'other', type: 'welfare' }, 'other')).toBe(false);
     // The welfare `type` fallback the coach has always had.
     expect(eventMatchesSourceFilter({ source: 'other', type: 'welfare' }, 'student-support')).toBe(true);
   });
@@ -147,7 +150,7 @@ describe('building the coach filter row', () => {
       'All Sources', 'Live Sessions',
       'Monthly Coaching Meeting', 'Progress Review',
       'Career Review', 'Gateway Review', 'Personal Support Plan',
-      'Catch-up', 'Support',
+      'Catch-up', 'Support', 'Other',
     ]);
     expect(labels).not.toContain('Reviews');
     expect(labels).not.toContain('MCR');
@@ -178,7 +181,7 @@ describe('building the coach filter row', () => {
 
   it('offers no review chips when the coach has no review events', () => {
     expect(buildCoachSourceChips([liveSession(), catchUp()]).map((chip) => chip.label))
-      .toEqual(['All Sources', 'Live Sessions', 'Catch-up', 'Support']);
+      .toEqual(['All Sources', 'Live Sessions', 'Catch-up', 'Support', 'Other']);
   });
 
   it('uses the same colour for a Review Type as the learner calendar', () => {
