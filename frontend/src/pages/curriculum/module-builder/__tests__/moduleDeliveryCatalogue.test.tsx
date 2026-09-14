@@ -116,6 +116,9 @@ const modules = [
     tutor: 'Tutor One',
     weeks: 6,
     sessionsNumber: 6,
+    lessons: 3,
+    totalOtjh: 7.5,
+    ksbCount: 5,
     startDate: '2026-09-02',
     endDate: '2026-10-07',
     status: 'published',
@@ -275,6 +278,9 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     // stays quiet rather than repeating the same fact.
     expect(delivery.queryByText('6 sessions')).not.toBeInTheDocument();
     expect(cardFor('Data Foundations').getByText('6 weeks')).toBeInTheDocument();
+    expect(cardFor('Data Foundations').getByText('3 components')).toBeInTheDocument();
+    expect(cardFor('Data Foundations').getByText('7h 30m OTJH')).toBeInTheDocument();
+    expect(cardFor('Data Foundations').getByText('5 KSBs')).toBeInTheDocument();
   });
 
   it('puts the delivery workspace in the named action bar', async () => {
@@ -287,7 +293,7 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     expect(card.getByRole('button', { name: /Edit components/ })).toBeInTheDocument();
     expect(card.getByRole('button', { name: /Edit module/ })).toBeInTheDocument();
     expect(card.getByRole('button', { name: /Duplicate module/ })).toBeInTheDocument();
-    expect(card.getByRole('button', { name: /Delete module/ })).toBeInTheDocument();
+    expect(card.getByRole('button', { name: /Archive module/ })).toBeInTheDocument();
   });
 
   it('opens a newly added component in its editor immediately', async () => {
@@ -334,9 +340,9 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     await renderCatalogue();
 
     const card = cardFor('Data Foundations');
-    // A published module is the expected state, so it is not badged; a draft is.
+    // Status lives in filters and archive flows, not as a repeated catalogue badge.
     expect(card.queryByText('published')).not.toBeInTheDocument();
-    expect(cardFor('Network Basics').getByText('draft')).toBeInTheDocument();
+    expect(cardFor('Network Basics').queryByText('draft')).not.toBeInTheDocument();
     // Staffing is edited in the delivery, and the tutor filter still finds it.
     expect(card.queryByText('Tutor One')).not.toBeInTheDocument();
     expect(card.queryByRole('button', { name: /Change tutor/ })).not.toBeInTheDocument();

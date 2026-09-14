@@ -29,6 +29,7 @@ import { TutorClashNotice } from '@/components/feature/TutorClashNotice';
 import { useTutorAvailability } from '@/hooks/useTutorAvailability';
 import {
   createGroupModule,
+  curriculumErrorMessage,
   isTutorConflictError,
   previewModuleSessionPlan,
   tutorConflictMessage,
@@ -47,7 +48,9 @@ import {
   cohortsForProgramme,
   formatDateLabel,
   groupsForScope,
+  holidaysForScheduling,
   moduleCohortDateError,
+  moduleSoftStartDate,
   normaliseKey,
   programmeIdentity,
   programmeSelectValue,
@@ -376,14 +379,16 @@ export function ModuleFormDrawer({
     createdCatalogueId.current = '';
 
     const storedDelivery = module?.deliveryUsages?.[0];
-    const parentGroup = groups.find(group => (
-      sameIdentifier(group.id, module?.groupId || storedDelivery?.groupId || defaults?.groupId)
-      || sameIdentifier(group.name, storedDelivery?.group)
-    ));
-    const parentCohort = cohorts.find(cohort => (
-      sameIdentifier(cohort.id, module?.cohortId || storedDelivery?.cohortId || parentGroup?.cohortId || defaults?.cohortId)
-      || sameIdentifier(cohort.name, storedDelivery?.cohort)
-    ));
+    // Id across every row first, name only if that found nothing: group names
+    // ("G1") and cohort names ("October 2026") repeat across programmes, so an
+    // id-or-name predicate inside one `find` attached the module to whichever
+    // namesake happened to be listed first. See findByIdentifierThenName.
+    const parentGroupId = module?.groupId || storedDelivery?.groupId || defaults?.groupId;
+    const parentGroup = groups.find(group => sameIdentifier(group.id, parentGroupId))
+      || groups.find(group => sameIdentifier(group.name, storedDelivery?.group));
+    const parentCohortId = module?.cohortId || storedDelivery?.cohortId || parentGroup?.cohortId || defaults?.cohortId;
+    const parentCohort = cohorts.find(cohort => sameIdentifier(cohort.id, parentCohortId))
+      || cohorts.find(cohort => sameIdentifier(cohort.name, storedDelivery?.cohort));
     // Snapped onto the option values with programmeSelectValue: every source
     // below names the programme in whatever shape wrote it, and a <select>
     // matches by exact string. See the helper for what that used to cost.
@@ -515,12 +520,19 @@ export function ModuleFormDrawer({
     return Array.from(seen.values());
   }, [cohorts, selectedCohort, selectedGroups]);
 
-  // The holidays that apply are the ones the parent cohort selected â€” the same
-  // set the backend skips when it generates this module's session dates.
-  const cohortHolidays = useMemo(() => {
-    const ids = new Set((selectedCohort?.holidayIds || []).map(holidayId => normaliseKey(holidayId)));
-    return holidays.filter(holiday => ids.has(normaliseKey(holiday.id)));
-  }, [holidays, selectedCohort]);
+  // The holidays that move this module's sessions: every England bank holiday
+  // from the parent cohort's start date onwards. The same set the backend skips
+  // with (`scheduling_holidays_from`), so the end date this drawer projects is
+  // the one the save stores.
+  //
+  // Not `cohort.holidayIds`, which is the narrower set inside the cohort's own
+  // period: a plan pushed later by the holidays it stepped over finishes after
+  // the cohort's practical end date, and the sessions that overshoot still have
+  // to step over the bank holidays they land on.
+  const cohortHolidays = useMemo(
+    () => holidaysForScheduling(holidays, selectedCohort?.startDate, selectedCohort?.excludedHolidayIds),
+    [holidays, selectedCohort],
+  );
 
   // The end date is the backend's own session-plan calculation, so what the
   // drawer shows cannot drift from what the save stores.
@@ -593,6 +605,7 @@ export function ModuleFormDrawer({
     ? selectedCohorts.map(cohort => moduleCohortDateError(cohort, undefined, endDate)).find(Boolean) || null
     : moduleCohortDateError(selectedCohort, undefined, endDate);
   const dateWindowError = startDateError || endDateError;
+  const cohortSoftStart = moduleSoftStartDate(selectedCohort?.startDate) || cleanText(selectedCohort?.startDate);
   // Not a refusal -- a weekend or bank-holiday start is still saved -- just a
   // heads-up, since the module will not actually deliver on that day.
   const startDateNotice = useMemo(() => describeNonDeliveryDate(startDate, cohortHolidays), [startDate, cohortHolidays]);
@@ -902,7 +915,6 @@ export function ModuleFormDrawer({
         ? groupWeekDays.split(',').map(day => day.trim()).filter(Boolean).length
         : 0;
       const groupCohort = cohorts.find(item => sameIdentifier(item.id, group.cohortId));
-      const groupHolidayIds = new Set((groupCohort?.holidayIds || []).map(holidayId => normaliseKey(holidayId)));
       const isPrimary = sameIdentifier(group.id, primaryGroupId);
       return createGroupModule(group.id, {
         moduleName: trimmed,
@@ -921,7 +933,7 @@ export function ModuleFormDrawer({
         color,
         coverImage,
         notes: description,
-        holidays: holidays.filter(holiday => groupHolidayIds.has(normaliseKey(holiday.id))),
+        holidays: holidaysForScheduling(holidays, groupCohort?.startDate, groupCohort?.excludedHolidayIds),
       }) as Promise<{ created?: Array<Record<string, unknown>>; updatedModules?: Array<Record<string, unknown>> }>;
     };
 
@@ -931,6 +943,12 @@ export function ModuleFormDrawer({
     let failingGroup: CurriculumGroup | null = null;
     try {
       if (module) {
+        // Only sent when this drawer actually changed it. The Weeks box is
+        // seeded from the module's stored week count and falls back to 1 when
+        // the module carries none -- an imported module, most often -- and
+        // sending that 1 back told the save to resize the module to one week.
+        // An untouched box must leave the authored weeks exactly as they are.
+        const weeksChanged = String(sessionsNumber).trim() !== String(baseline.current?.sessionsNumber ?? '').trim();
         const patchPayload = {
           name: trimmed,
           notes: description,
@@ -943,7 +961,7 @@ export function ModuleFormDrawer({
           // is the calendar total (weeks x the group's delivery days) that the
           // session dates, the tutor conflict check and the Teams series run on.
           sessionsNumber: sessions,
-          weeks,
+          ...(weeksChanged ? { weeks } : {}),
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           tutor,
@@ -1027,17 +1045,32 @@ export function ModuleFormDrawer({
           ...selectedGroups.filter(group => sameIdentifier(group.id, primaryGroupId)),
           ...selectedGroups.filter(group => !sameIdentifier(group.id, primaryGroupId)),
         ];
+        // Groups where the save reattached a module that was already there under
+        // this name rather than creating a new one. The endpoint dedupes by
+        // title within the group, so pressing Create on an existing name
+        // rewrites that module's dates, tutor and weeks -- saying "created"
+        // there sent people looking for a second module that does not exist.
+        const reattached: string[] = [];
         for (const group of ordered) {
           if (attachedThisSession.current.has(group.id)) continue;
           failingGroup = group;
           const result = await attachToGroup(group);
           const saved = (result.created || [])[0] || (result.updatedModules || [])[0] || {};
+          if (!(result.created || []).length && (result.updatedModules || []).length) reattached.push(group.name);
           const id = String(saved.moduleCatalogueId || saved.catalogueId || saved.structureId || saved.id || '');
           if (!createdCatalogueId.current) createdCatalogueId.current = id;
           attachedThisSession.current.add(group.id);
         }
         if (!chained) onClose();
         await onSaved({ catalogueId: createdCatalogueId.current, name: trimmed, created: true, ...savedParents() });
+        if (!chained && reattached.length) {
+          await showCurriculumAlert({
+            title: 'Existing module updated',
+            text: `${trimmed} already ran for ${reattached.join(', ')}, so that module was updated with these dates and tutor rather than a second one being created. Its weeks and components are untouched.`,
+            timer: 4200,
+          });
+          return;
+        }
         if (!chained && ordered.length > 1) {
           // Worth saying out loud: one press produced one delivery per group, and
           // each of them is authored and scheduled separately from here on.
@@ -1072,8 +1105,15 @@ export function ModuleFormDrawer({
     } catch (err) {
       console.log('[TEMP-DEBUG moduleForm] submit() threw', err);
       // A tutor already booked in that slot is reported by the backend as a
-      // sentence worth showing verbatim.
-      setError(tutorConflictMessage(err) || (err instanceof Error ? err.message : 'The module could not be saved.'));
+      // sentence worth showing verbatim -- and so is every other refusal, such
+      // as a module whose programme has been archived. `curriculumErrorMessage`
+      // digs that sentence out of the response; falling through to
+      // `err.message` instead showed the reader "Curriculum API returned 400
+      // for /curriculum/modules/MOD-…/" with the sentence buried after it.
+      setError(
+        tutorConflictMessage(err)
+        || curriculumErrorMessage(err, err instanceof Error ? err.message : 'The module could not be saved.'),
+      );
       if (isTutorConflictError(err) && failingGroup) {
         setTutorConflictGroup({ groupId: failingGroup.id, groupName: failingGroup.name });
       }
@@ -1244,13 +1284,13 @@ export function ModuleFormDrawer({
           required={Boolean(selectedGroups.length)}
           value={startDate}
           onChange={changeStartDate}
-          min={selectedCohort?.startDate || undefined}
+          min={cohortSoftStart || undefined}
           max={selectedCohort?.practicalEndDate || selectedCohort?.endDate || undefined}
           error={startDateError || undefined}
           warning={startDateNotice || undefined}
           helper={
             selectedCohort
-              ? `Within ${formatDateLabel(selectedCohort.startDate)} - ${formatDateLabel(selectedCohort.practicalEndDate || selectedCohort.endDate)}.`
+              ? `Soft start allowed from ${formatDateLabel(cohortSoftStart || selectedCohort.startDate)}. Cohort window ${formatDateLabel(selectedCohort.startDate)} - ${formatDateLabel(selectedCohort.practicalEndDate || selectedCohort.endDate)}.`
               : "The module's own planned start. Checked against the cohort's window when you assign it."
           }
         />
@@ -1259,7 +1299,7 @@ export function ModuleFormDrawer({
           required={Boolean(selectedGroups.length)}
           value={endDate}
           onChange={changeEndDate}
-          min={startDate || selectedCohort?.startDate || undefined}
+          min={startDate || cohortSoftStart || undefined}
           max={selectedCohort?.practicalEndDate || selectedCohort?.endDate || undefined}
           placeholder={showSchedule ? 'Calculated or target' : 'Planned finish'}
           error={endDateError || undefined}
@@ -1369,7 +1409,7 @@ export function ModuleFormDrawer({
 }
 
 /**
- * A weekend or a ticked holiday isn't refused as a start date -- it's still saved
+ * A weekend or a bank holiday isn't refused as a start date -- it's still saved
  * as typed -- but the module won't actually deliver that day, so the picker warns
  * about it instead of staying silent.
  */
@@ -1386,7 +1426,7 @@ function describeNonDeliveryDate(dateValue: string, holidays: CurriculumHoliday[
     return start && end && start <= date && date <= end;
   });
   if (holiday) {
-    return `That date falls inside ${holiday.label || 'a ticked holiday'} — England's bank holiday period, so no delivery runs then.`;
+    return `That date is ${holiday.label || 'a bank holiday'} -- an England bank holiday, so no delivery runs then.`;
   }
   return '';
 }
@@ -1542,7 +1582,7 @@ function dateFromYmd(value: string): Date | null {
 /** One row of the session preview timeline: a normal session, a session a holiday blocked, or that session's replacement date. */
 type SessionTimelineEntry =
   | { kind: 'session'; date: string; day: string; sessionNumber: number }
-  | { kind: 'blocked'; date: string; sessionNumber: number; holidayNames: string[]; replacementDate: string }
+  | { kind: 'blocked'; date: string; sessionNumber: number; holidayName: string; replacementDate: string; replacementIsFinal: boolean }
   | { kind: 'replacement'; date: string; day: string; sessionNumber: number };
 
 function monthKeyOf(value: string): string {
@@ -1554,6 +1594,14 @@ function monthLabelOf(key: string): string {
   const parsed = new Date(`${key}-01T12:00:00`);
   if (Number.isNaN(parsed.getTime())) return key;
   return parsed.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+}
+
+function blockedSessionDetail(entry: Extract<SessionTimelineEntry, { kind: 'blocked' }>): string {
+  const holidayName = entry.holidayName || 'a selected holiday';
+  if (entry.replacementIsFinal) {
+    return `Blocked by ${holidayName}; final replacement scheduled on ${formatDateLabel(entry.replacementDate)}.`;
+  }
+  return `Blocked by ${holidayName}; shifted to ${formatDateLabel(entry.replacementDate)}, which was also closed.`;
 }
 
 /**
@@ -1625,12 +1673,16 @@ export function ModuleSessionPreview({
   plan.sessions.forEach(session => {
     const skippedDates = session.skippedHolidays || [];
     if (skippedDates.length) {
-      entries.push({
-        kind: 'blocked',
-        date: skippedDates[0],
-        sessionNumber: session.sessionNumber,
-        holidayNames: Array.from(new Set(skippedDates.map(holidayLabel))),
-        replacementDate: session.date,
+      skippedDates.forEach((date, index) => {
+        const nextSkippedDate = skippedDates[index + 1];
+        entries.push({
+          kind: 'blocked',
+          date,
+          sessionNumber: session.sessionNumber,
+          holidayName: holidayLabel(date),
+          replacementDate: nextSkippedDate || session.date,
+          replacementIsFinal: !nextSkippedDate,
+        });
       });
       entries.push({ kind: 'replacement', date: session.date, day: session.day, sessionNumber: session.sessionNumber });
     } else {
@@ -1791,7 +1843,7 @@ export function ModuleSessionPreview({
                             </span>
                           </div>
                           <div className="border-t border-red-100 bg-red-50/70 px-3 py-1.5 text-[11px] font-medium text-red-700">
-                            Blocked by {entry.holidayNames.join(', ')}; replacement scheduled on {formatDateLabel(entry.replacementDate)}.
+                            {blockedSessionDetail(entry)}
                           </div>
                         </div>
                       );

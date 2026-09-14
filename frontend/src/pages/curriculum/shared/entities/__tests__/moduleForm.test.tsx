@@ -83,7 +83,7 @@ const cohorts = [
     endDate: '2027-08-31',
     practicalEndDate: '2027-08-31',
     status: 'active',
-    holidayIds: ['1'],
+    holidayIds: ['1', '2'],
   },
 ] as unknown as CurriculumCohort[];
 
@@ -101,7 +101,8 @@ const groups = [
 ] as unknown as CurriculumGroup[];
 
 const holidays = [
-  { id: '1', label: 'Christmas closure', startDate: '2026-12-24', endDate: '2027-01-02', type: 'Christmas' },
+  { id: '1', label: 'Christmas Day', startDate: '2026-12-25', endDate: '2026-12-25', type: 'Bank holiday' },
+  { id: '2', label: "New Year's Day", startDate: '2027-01-01', endDate: '2027-01-01', type: 'Bank holiday' },
 ] as CurriculumHoliday[];
 
 const createGroupModuleMock = vi.mocked(createGroupModule);
@@ -294,11 +295,11 @@ describe('ModuleFormDrawer', () => {
   it('opens a session date preview and marks holiday shifts', async () => {
     previewModuleSessionPlanMock.mockResolvedValueOnce({
       sessions: [
-        { sessionNumber: 1, date: '2026-12-23', day: 'Wednesday', skippedHolidays: [] },
-        { sessionNumber: 2, date: '2027-01-06', day: 'Wednesday', skippedHolidays: ['2026-12-30'] },
+        { sessionNumber: 1, date: '2026-12-18', day: 'Friday', skippedHolidays: [] },
+        { sessionNumber: 2, date: '2027-01-08', day: 'Friday', skippedHolidays: ['2026-12-25', '2027-01-01'] },
       ],
-      skippedHolidays: ['2026-12-30'],
-      finalEndDate: '2027-01-06',
+      skippedHolidays: ['2026-12-25', '2027-01-01'],
+      finalEndDate: '2027-01-08',
       warnings: [],
     });
 
@@ -309,10 +310,12 @@ describe('ModuleFormDrawer', () => {
     await userEvent.click(previewButton);
 
     expect(screen.getByRole('dialog', { name: /module/i })).toBeInTheDocument();
-    expect(screen.getByText('30 Dec 2026')).toBeInTheDocument();
-    expect(screen.getByText('06 Jan 2027')).toBeInTheDocument();
-    expect(screen.getByText(/Blocked by Christmas closure/)).toBeInTheDocument();
-    expect(screen.getByText('Shifted to replacement')).toBeInTheDocument();
+    expect(screen.getByText('25 Dec 2026')).toBeInTheDocument();
+    expect(screen.getByText('01 Jan 2027')).toBeInTheDocument();
+    expect(screen.getByText('08 Jan 2027')).toBeInTheDocument();
+    expect(screen.getByText(/Blocked by Christmas Day; shifted to 01 Jan 2027, which was also closed/)).toBeInTheDocument();
+    expect(screen.getByText(/Blocked by New Year's Day; final replacement scheduled on 08 Jan 2027/)).toBeInTheDocument();
+    expect(screen.getAllByText('Shifted to replacement')).toHaveLength(2);
     expect(screen.getByText('Replacement delivered')).toBeInTheDocument();
   });
 
@@ -472,7 +475,7 @@ describe('ModuleFormDrawer', () => {
     expect(createNewModuleMock).not.toHaveBeenCalled();
   });
 
-  it('refuses a start date outside the cohort before it calls anything', async () => {
+  it('refuses a start date before the soft-start month before it calls anything', async () => {
     // The date field blocks an out-of-range date the user *types*; a stored one
     // arrives already set, so the form has to refuse it on the way out.
     renderDrawer({
@@ -483,7 +486,7 @@ describe('ModuleFormDrawer', () => {
         cohortId: 'COHORT-1',
         groupId: 'GROUP-1',
         sessionsNumber: 2,
-        startDate: '2026-08-03',
+        startDate: '2026-07-31',
         endDate: '2026-08-10',
         status: 'draft',
       },
@@ -492,7 +495,7 @@ describe('ModuleFormDrawer', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
 
     // Shown on the date field and again in the drawer's error line.
-    expect(await screen.findAllByText(/cannot start before the cohort start date/)).not.toHaveLength(0);
+    expect(await screen.findAllByText(/more than one month before the cohort start date/)).not.toHaveLength(0);
     expect(updateCurriculumModuleMock).not.toHaveBeenCalled();
   });
 
@@ -720,9 +723,9 @@ describe('ModuleFormDrawer tutor availability', () => {
       startTime: '10:00',
       endTime: '12:00',
       cohortId: 'COHORT-1',
-      // The ticked selection, not every holiday on file: it is what shifts a
-      // session onto the day the clash is really about.
-      holidays: [expect.objectContaining({ label: 'Christmas closure' })],
+      // The cohort holidays are what shift a session onto the day the clash is
+      // really about.
+      holidays: expect.arrayContaining([expect.objectContaining({ label: 'Christmas Day' })]),
     });
   });
 

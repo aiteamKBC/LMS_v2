@@ -248,8 +248,17 @@ def _belongs_to_current_cycle(record, mirror):
 
 
 def _generated_cycle_events(learner, mirror, stored_by_key):
-    """Curriculum occurrences applicable to this learner's current placement."""
+    """Generate the same Curriculum cycle the coach timetable exposes.
+
+    Learners with a programme use Curriculum review templates. Legacy learners
+    without a resolvable programme retain the historical fixed-interval slots.
+    """
+    from coach_api.models import CoachCalendarEvent
     from coach_api.views import (
+        TIMETABLE_MCR_INTERVAL,
+        TIMETABLE_PROGRESS_REVIEW_INTERVAL,
+        build_timetable_event_key,
+        iterate_generated_schedule_dates,
         resolve_curriculum_programme_id,
         resolve_curriculum_review_occurrences,
         resolve_review_anchor_date,
@@ -262,70 +271,122 @@ def _generated_cycle_events(learner, mirror, stored_by_key):
 
     if mirror is None:
         return []
+
     programme_id = resolve_curriculum_programme_id(
         getattr(mirror, 'programme_id', None) or getattr(mirror, 'programme', None),
     )
     source_rows = {mirror.id: learner} if learner is not None else {}
-    anchor, reason = resolve_review_anchor_date(mirror.id, {}, source_rows)
-    if anchor is None:
-        log_review_anchor_skip(mirror, reason, programme_id=programme_id, template_cache={})
-        return []
+    if programme_id:
+        anchor, reason = resolve_review_anchor_date(mirror.id, {}, source_rows)
+        if anchor is None:
+            log_review_anchor_skip(mirror, reason, programme_id=programme_id, template_cache={})
+            return []
+        start_date, end_date = resolve_schedule_window(mirror.id, {}, source_rows, mirror)
+        if not start_date or not end_date or end_date <= start_date:
+            return []
+        generated = []
+        for occurrence in resolve_curriculum_review_occurrences(
+            programme_id=programme_id,
+            learner_id=mirror.id,
+            learner_status=_s(
+                getattr(mirror, 'programme_status', None)
+                or getattr(mirror, 'status', None)
+                or getattr(learner, 'programme_status', None)
+                or getattr(learner, 'status', None)
+            ),
+            learner_start_date=anchor,
+            window_start=start_date,
+            window_end=end_date,
+            template_cache={},
+            learner_scope={
+                'cohort_id': getattr(mirror, 'cohort_id', None),
+                'cohort': getattr(mirror, 'cohort', None),
+                'group_id': getattr(mirror, 'group_id', None),
+                'group': getattr(mirror, 'group_name', None),
+            },
+        ):
+            sequence, target_date = occurrence['occurrenceNumber'], occurrence['targetDate']
+            event_type = review_event_type_for_type_code(occurrence.get('reviewTypeCode'))
+            event_key = review_calendar_event_key(mirror.id, occurrence['reviewTemplateId'], sequence)
+            if event_key in stored_by_key:
+                continue
+            generated.append({
+                "id": event_key,
+                "eventKey": event_key,
+                "learnerId": str(mirror.id),
+                "title": occurrence.get('reviewName') or EVENT_TITLES.get(event_type, 'Review'),
+                "reviewTemplateId": occurrence['reviewTemplateId'],
+                "reviewInstanceId": None,
+                "occurrenceNumber": sequence,
+                **review_type_event_fields(occurrence),
+                "source": event_type,
+                "type": EVENT_JSON_TYPES.get(event_type, "coaching"),
+                "sequence": sequence,
+                "status": CoachCalendarEvent.STATUS_NOT_SCHEDULED,
+                "date": target_date.isoformat(),
+                "targetDate": target_date.isoformat(),
+                "scheduledDate": None,
+                "scheduledTime": None,
+                "durationMinutes": 60,
+                "coachName": _s(mirror.coach_name),
+                "coachEmail": _s(mirror.coach_email),
+                "meetingProvider": "",
+                "meetingLink": "",
+                "notes": "",
+                "reviewResponses": {},
+                "reviewCompletedAt": None,
+                "invited": False,
+                "syncError": "",
+                "isTimeEstimated": True,
+                "generated": True,
+            })
+        return generated
+
+    # Legacy fallback for profiles that have no Curriculum programme mapping.
     start_date, end_date = resolve_schedule_window(mirror.id, {}, source_rows, mirror)
+    start_date = start_date or _as_date(getattr(learner, 'start_date', None))
+    end_date = end_date or _as_date(
+        getattr(learner, 'end_date', None)
+        or getattr(learner, 'practical_period_end_date', None)
+        or getattr(learner, 'apprenticeship_end_date', None)
+    )
     if not start_date or not end_date or end_date <= start_date:
         return []
-    coach_name = _s(mirror.coach_name)
-    coach_email = _s(mirror.coach_email)
     generated = []
-    for occurrence in resolve_curriculum_review_occurrences(
-        programme_id=programme_id, learner_id=mirror.id,
-        learner_status=_s(getattr(mirror, 'programme_status', None) or getattr(mirror, 'status', None)),
-        learner_start_date=anchor, window_start=start_date, window_end=end_date,
-        template_cache={}, learner_scope={
-            'cohort_id': getattr(mirror, 'cohort_id', None),
-            'cohort': getattr(mirror, 'cohort', None),
-            'group_id': getattr(mirror, 'group_id', None),
-            'group': getattr(mirror, 'group_name', None),
-        },
+    for event_type, interval in (
+        ('mcr', TIMETABLE_MCR_INTERVAL),
+        ('progress-review', TIMETABLE_PROGRESS_REVIEW_INTERVAL),
     ):
-        sequence, target_date = occurrence['occurrenceNumber'], occurrence['targetDate']
-        event_type = review_event_type_for_type_code(occurrence.get('reviewTypeCode'))
-        event_key = review_calendar_event_key(mirror.id, occurrence['reviewTemplateId'], sequence)
-        if event_key in stored_by_key:
-            continue
-        generated.append({
-            "id": event_key,
-            "eventKey": event_key,
-            "learnerId": str(mirror.id),
-            "title": occurrence['reviewName'],
-            "reviewTemplateId": occurrence['reviewTemplateId'],
-            "reviewInstanceId": None,
-            "occurrenceNumber": sequence,
-            **review_type_event_fields(occurrence),
-            "source": event_type,
-            "type": EVENT_JSON_TYPES.get(event_type, "coaching"),
-            "sequence": sequence,
-            "status": CoachCalendarEvent.STATUS_NOT_SCHEDULED,
-            # Dated on the target so it lands in the right month; the coach
-            # calendar shows the same date with the same caveat.
-            "date": target_date.isoformat(),
-            "targetDate": target_date.isoformat(),
-            "scheduledDate": None,
-            "scheduledTime": None,
-            "durationMinutes": 60,
-            "coachName": coach_name,
-            "coachEmail": coach_email,
-            "meetingProvider": "",
-            "meetingLink": "",
-            "notes": "",
-            "reviewResponses": {},
-            "reviewCompletedAt": None,
-            "invited": False,
-            "syncError": "",
-            # Nothing has been booked, so there is no time to show and no
-            # invitation to claim — see the coach's own generated event.
-            "isTimeEstimated": True,
-            "generated": True,
-        })
+        for sequence, target_date in iterate_generated_schedule_dates(start_date, end_date, interval):
+            event_key = build_timetable_event_key(mirror.id, event_type, sequence, target_date)
+            if event_key in stored_by_key:
+                continue
+            generated.append({
+                'id': event_key,
+                'eventKey': event_key,
+                'learnerId': str(mirror.id),
+                'title': EVENT_TITLES.get(event_type, 'Coaching Session'),
+                'source': event_type,
+                'type': EVENT_JSON_TYPES.get(event_type, 'coaching'),
+                'sequence': sequence,
+                'status': CoachCalendarEvent.STATUS_NOT_SCHEDULED,
+                'date': target_date.isoformat(),
+                'targetDate': target_date.isoformat(),
+                'scheduledDate': None,
+                'scheduledTime': None,
+                'durationMinutes': 60,
+                'coachName': _s(mirror.coach_name),
+                'coachEmail': _s(mirror.coach_email),
+                'meetingProvider': '',
+                'meetingLink': '',
+                'notes': '',
+                'reviewResponses': {},
+                'reviewCompletedAt': None,
+                'invited': False,
+                'syncError': '',
+                'isTimeEstimated': True,
+                'generated': True,
+            })
     return generated
 
 

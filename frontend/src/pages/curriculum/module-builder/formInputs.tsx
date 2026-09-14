@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { hoursMinutesToHours, splitHoursMinutes } from '@/lib/format';
 
 // Small labelled form atoms shared by the Module Builder page and the Teams
 // meeting modal. They live here rather than in page.tsx so the modal (which the
@@ -86,13 +87,9 @@ export function NumberInput({ label, value, onChange, min, max, step, error }: {
 
 /** Edit a duration as whole hours plus minutes while keeping the API value in decimal hours. */
 export function DurationInput({ label, value, onChange, error }: { label: string; value: number; onChange: (value: number) => void; error?: string }) {
-  const totalMinutes = Math.max(0, Math.round((Number(value) || 0) * 60));
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
+  const { hours, minutes } = splitHoursMinutes(value);
   const update = (nextHours: number, nextMinutes: number) => {
-    const safeHours = Number.isFinite(nextHours) ? Math.max(0, Math.floor(nextHours)) : 0;
-    const safeMinutes = Number.isFinite(nextMinutes) ? Math.min(59, Math.max(0, Math.floor(nextMinutes))) : 0;
-    onChange((safeHours * 60 + safeMinutes) / 60);
+    onChange(hoursMinutesToHours(nextHours, nextMinutes));
   };
   return (
     <div>

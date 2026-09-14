@@ -1,4 +1,4 @@
-import type { TrainingPlanDashboard, PlanSession } from '@/api/trainingPlanDashboard';
+import type { TrainingPlanDashboard, PlanSession, PlanCurriculumSlot, PlanSlotHoliday } from '@/api/trainingPlanDashboard';
 import type { Subject } from '../my-learning/SubjectWorkspace';
 import type { PlanSubjectSummary } from '@/api/learnerOverview';
 
@@ -78,6 +78,98 @@ export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], dat
   });
 }
 export type TimelineModule = ReturnType<typeof buildPlanModules>[number];
+
+/**
+ * The last date a module's bar has to cover: the delivery that actually happens.
+ *
+ * A closed delivery day moves the module's last session past its stored end
+ * date, so a bar drawn to `end` alone stops short of the final session it is
+ * meant to contain. `effectiveEndDate` is the scheduler's own answer -- the
+ * date of the last DELIVERED session, carried on the payload by
+ * `attach_curriculum_slots`. Nothing is recomputed here, no holiday is read,
+ * and no stored date is written: this is display only.
+ *
+ * It can only ever push the bar later. The scheduler states a DELIVERY end, not
+ * an authoring end, and the two disagree in both directions on real data: a
+ * module authored to run to October while teaching its last session in June has
+ * an earlier `effectiveEndDate` for reasons no holiday caused, and letting that
+ * win would collapse bars a closure never touched.
+ */
+export function moduleVisualEnd(module: { end: string; detail?: { effectiveEndDate?: string } }) {
+  const delivered = dateKey(module.detail?.effectiveEndDate);
+  return delivered > module.end ? delivered : module.end;
+}
+
+/** One row of the learner's curriculum timeline: a taught slot, or a closed one. */
+export type CurriculumRow =
+  | { kind: 'session'; slotNumber: number; date: string; sessionNumber: number;
+      title: string; start: string | null; minutes: number | null; attended: boolean | null; joinUrl: string | null }
+  | { kind: 'reading-week'; slotNumber: number; date: string; holidays: PlanSlotHoliday[] };
+
+/**
+ * The learner's curriculum timeline for one module, in curriculum slot order.
+ *
+ * The spine is the scheduler's `curriculumSlots` and nothing else, so the order
+ * is the curriculum's own — Session 4, Reading Week, Session 5 — rather than a
+ * list of session dates with the closure hidden somewhere else. A Reading Week
+ * is never inferred from a gap between session dates: only the scheduler knows
+ * a date was closed, and only it knows which holiday closed it.
+ *
+ * A taught slot is matched to the learner's REAL session (a Teams occurrence,
+ * with its title, time and attendance) by delivery date, because the slot and
+ * the occurrence describe the same teaching. When no occurrence has been created
+ * yet the row still appears, dated and numbered from the plan — the schedule is
+ * a fact about the module, not about whether a meeting has been booked.
+ */
+export function buildCurriculumTimeline(
+  slots: PlanCurriculumSlot[] | undefined,
+  sessions: PlanSession[],
+): CurriculumRow[] {
+  if (!slots?.length) return [];
+  const byDate = new Map<string, PlanSession>();
+  sessions.forEach(session => {
+    const day = sessionDay(session.start);
+    if (day && !byDate.has(day)) byDate.set(day, session);
+  });
+  return slots.map(slot => {
+    if (slot.type === 'reading-week') {
+      return { kind: 'reading-week' as const, slotNumber: slot.slotNumber, date: slot.date, holidays: slot.holidays || [] };
+    }
+    const session = byDate.get(slot.date);
+    const number = Number(slot.sessionNumber) || 0;
+    return {
+      kind: 'session' as const,
+      slotNumber: slot.slotNumber,
+      date: slot.date,
+      sessionNumber: number,
+      title: session?.title || `Session ${number}`,
+      start: session?.start || null,
+      minutes: session?.minutes ?? null,
+      attended: session?.attended ?? null,
+      joinUrl: session?.joinUrl || null,
+    };
+  });
+}
+
+/**
+ * The curriculum timeline grouped by the month each slot falls in.
+ *
+ * Grouped by the slot's own date, which for a taught slot is the date it is
+ * actually DELIVERED on — so a session a holiday pushed from May into June is
+ * read under June, while the Reading Week that pushed it stays at its own
+ * curriculum position in May. Groups are emitted in slot order rather than
+ * sorted, so the curriculum's sequence survives a month boundary.
+ */
+export function groupCurriculumTimeline(rows: CurriculumRow[]) {
+  const groups: Array<{ key: string; rows: CurriculumRow[] }> = [];
+  rows.forEach(row => {
+    const key = row.date.slice(0, 7);
+    const current = groups[groups.length - 1];
+    if (current && current.key === key) { current.rows.push(row); return; }
+    groups.push({ key, rows: [row] });
+  });
+  return groups;
+}
 
 export function uniquePlanSessions(modules: TimelineModule[]) {
   return [...new Map(modules.flatMap(module => module.sessions).map(session => [session.id, session])).values()];
